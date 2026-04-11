@@ -1,0 +1,99 @@
+{
+  "name": "@ra11y/core",
+  "version": "0.0.0",
+  "description": "Multi-standard accessibility scanner. Zero runtime dependencies. WCAG 2.2 / 2.1, Section 508, EN 301 549, and a plugin API for custom standards.",
+  "license": "MIT",
+  "author": "ra11y contributors",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/api/plugin.d.ts",
+      "default": "./dist/api/plugin.js"
+    }
+  },
+  "bin": {
+    "ra11y": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "check-deps": "bun scripts/check-zero-deps.ts",
+    "check-limits": "bun scripts/check-limits.ts",
+    "check-cycles": "bun scripts/check-cycles.ts",
+    "check-kb-drift": "bun scripts/check-kb-drift.ts",
+    "check-network-isolation": "bun scripts/check-network-isolation.ts",
+    "docs:check": "bun scripts/check-tsdoc.ts && bun scripts/check-mermaid.ts && bun scripts/check-docs-links.ts && bun scripts/check-api-docs-drift.ts",
+    "bench": "bun scripts/bench.ts",
+    "verify": "bun run typecheck && bun run lint && bun test && bun run check-deps",
+    "prepublishOnly": "bun run verify && bun run build"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "typescript": ">=5.4.0"
+  },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.11",
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/ra11y.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OWNER/ra11y/issues"
+  },
+  "homepage": "https://github.com/OWNER/ra11y#readme",
+  "keywords": [
+    "accessibility",
+    "a11y",
+    "wcag",
+    "wcag-2.1",
+    "wcag-2.2",
+    "section-508",
+    "en-301-549",
+    "scanner",
+    "linter",
+    "vpat",
+    "compliance",
+    "certification",
+    "jsx",
+    "tsx",
+    "html",
+    "css",
+    "tailwind",
+    "zero-dependencies",
+    "bun",
+    "typescript"
+  ]
+}

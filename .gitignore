@@ -1,0 +1,41 @@
+# Build output
+dist/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# Bun
+.bun-debug/
+
+# Test output
+coverage/
+.nyc_output/
+
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ra11y local artifacts
+.ra11y-baseline.json
+.ra11y-manual.json
+
+# .claude runtime state (keep the config, ignore logs)
+.claude/history.jsonl
+.claude/test-status.json
+.claude/env
+
+# OS junk
+Thumbs.db
+ehthumbs.db

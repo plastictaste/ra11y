@@ -1,0 +1,160 @@
+# ra11y
+
+> Multi-standard accessibility scanner. Zero runtime dependencies. Built for precommit speed and WCAG certification.
+
+[![npm version](https://img.shields.io/npm/v/@ra11y/core)](https://www.npmjs.com/package/@ra11y/core)
+[![license](https://img.shields.io/npm/l/@ra11y/core)](./LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/OWNER/ra11y/ci.yml?branch=main)](https://github.com/OWNER/ra11y/actions)
+
+**`ra11y`** (pronounced "rally") is an accessibility scanner for JSX/TSX, HTML, and CSS. It ships with four accessibility standards out of the box — WCAG 2.2, WCAG 2.1, Section 508, and EN 301 549 — and a plugin API for adding more. It produces VPAT-ready compliance reports and a certification readiness scorecard alongside line-level violations, so the same tool that catches the bug in your precommit also tells your legal team where you stand on ADA conformance.
+
+> **Status: early development (v0.0.x).** Phase 0 — autonomous Claude Code infrastructure — is in place. Phase 1 — the first rule, first standard, and end-to-end scan — is next. See [`.claude/backlog.md`](./.claude/backlog.md) for the current roadmap.
+
+## Why ra11y
+
+| | ra11y | axe-core | eslint-plugin-jsx-a11y | Pa11y |
+|---|:---:|:---:|:---:|:---:|
+| Zero runtime dependencies | ✅ | ❌ | ❌ | ❌ |
+| Multi-standard (WCAG + Section 508 + EN 301 549) | ✅ | partial | ❌ | partial |
+| VPAT + certification scorecard | ✅ | ❌ | ❌ | ❌ |
+| Runs in precommit (< 1s on typical commits) | ✅ | partial | ✅ | ❌ |
+| Context-aware fix suggestions | ✅ | partial | partial | ❌ |
+| Plugin API for custom standards | ✅ | ❌ | ❌ | ❌ |
+| First-class TSX + Tailwind class resolution | ✅ | partial | ✅ | ❌ |
+
+## Install
+
+```sh
+bun add -D @ra11y/core
+# or
+npm install -D @ra11y/core
+# or
+pnpm add -D @ra11y/core
+```
+
+Install is instantaneous — zero runtime dependencies means zero transitive downloads.
+
+## Quickstart
+
+```sh
+npx ra11y src/
+```
+
+```
+  ra11y  v0.1.0
+
+  ┌─ src/ui/Card.tsx ─────────────────────────────────────────────
+  │
+  │  ✗  12:5   contrast/minimum
+  │            Text color on background has ratio 3.2:1 (needs 4.5:1)
+  │            WCAG 2.2 · 1.4.3 Contrast (Minimum) · Level AA
+  │            Fix: Use #4A4A4A foreground for 5.2:1 ratio
+  │
+  │  ⚠  45:9   link/descriptive-text
+  │            Link text "here" is not descriptive
+  │            WCAG 2.2 · 2.4.4 Link Purpose · Level A
+  │            Fix: Describe the destination, e.g. "view settings"
+  │
+  └───────────────────────────────────────────────────────────────
+
+  ✗ 1 error   ⚠ 1 warning   ℹ 0 info          in 12 files · 340ms
+
+  Coverage   22 of 28 automatable SC checked · 27 need manual review
+  Next       Run `ra11y --checklist` for manual review guide
+             Run `ra11y --explain contrast/minimum` for detail
+```
+
+## Common commands
+
+```sh
+ra11y --changed                     # Scan only git-staged files (precommit)
+ra11y --standard wcag22,section508  # Run multiple standards at once
+ra11y --level AA                    # Enforce conformance level
+ra11y --format sarif --output out.sarif  # GitHub code scanning
+ra11y --coverage                    # Per-standard coverage summary
+ra11y --vpat                        # Generate VPAT-ready report
+ra11y --certification               # Generate readiness scorecard
+ra11y --checklist                   # Manual review checklist
+ra11y --explain contrast/minimum    # Rule detail, spec quote, examples
+ra11y --list-standards              # What's loaded
+ra11y --init                        # Scaffold ra11y.config.ts
+```
+
+Full CLI reference: [`docs/cli.md`](./docs/cli.md).
+
+## Configure
+
+`ra11y.config.ts`:
+
+```ts
+import { defineConfig } from "@ra11y/core";
+
+export default defineConfig({
+  standards: ["wcag22", "section508"],
+  level: "AA",
+  exclude: ["node_modules", "dist", "**/*.test.tsx"],
+  overrides: [
+    {
+      files: ["src/legacy/**/*.tsx"],
+      rules: { "contrast/minimum": "warn" },
+    },
+  ],
+});
+```
+
+## Precommit integration
+
+With [lefthook](https://github.com/evilmartians/lefthook), [husky](https://github.com/typicode/husky), or [pre-commit](https://pre-commit.com):
+
+```yaml
+# lefthook.yml
+pre-commit:
+  commands:
+    ra11y:
+      run: bunx ra11y --changed --fail-on error
+```
+
+Examples for each tool: [`examples/`](./examples).
+
+## Plugin API
+
+Standards and rules are both pluggable. Adding a new accessibility framework is one file:
+
+```ts
+import { defineStandard } from "@ra11y/core/plugin";
+
+export default defineStandard({
+  id: "coga",
+  name: "Cognitive Accessibility Guidelines",
+  version: "1.0",
+  publisher: "W3C WAI",
+  url: "https://www.w3.org/TR/coga-usable/",
+  levels: ["base"],
+  criteria: [
+    /* … */
+  ],
+});
+```
+
+Rules declare coverage across every loaded standard:
+
+```ts
+import { defineRule } from "@ra11y/core/plugin";
+
+export default defineRule({
+  id: "custom/no-placeholder-as-label",
+  satisfies: ["wcag22:3.3.2", "coga:clear-instructions"],
+  severity: "error",
+  // …
+});
+```
+
+Full plugin guide: [`docs/plugins/authoring-a-rule.md`](./docs/plugins/authoring-a-rule.md) and [`docs/plugins/authoring-a-standard.md`](./docs/plugins/authoring-a-standard.md).
+
+## Contributing
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md). TL;DR: TypeScript only, Bun-first, zero runtime deps, every rule cites WCAG, conventional commits, `bun run verify` before committing. Claude Code users: see [`CLAUDE.md`](./CLAUDE.md) for the autonomous-development workflow and the Orchestrator-Workers pattern the project is built around.
+
+## License
+
+MIT © ra11y contributors
