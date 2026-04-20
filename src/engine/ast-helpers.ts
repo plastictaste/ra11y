@@ -269,6 +269,28 @@ export function directHtmlChildren(element: HtmlElement): readonly HtmlNode[] {
   return element.children;
 }
 
+/**
+ * Caps a user-authored string before it is interpolated into an
+ * agent-visible response field (`message`, `suggestion`, `fix.description`,
+ * etc.). Returns `text` unchanged when within `max`; otherwise truncates
+ * to `text.slice(0, max)` plus a single ellipsis character (`U+2026`).
+ *
+ * Why: the same visible-text/attribute value is typically echoed twice
+ * per finding (once in `message`, once in `suggestion`), and many findings
+ * in one file multiplies the cost. A 1.5 KB lorem-ipsum label would have
+ * produced ~4.2 KB per finding before this cap; with 15 findings on the
+ * same fixture the response approached 62 KB. The agent loses no signal
+ * from a 200-character truncation — the snippet (with its own ±3-line
+ * budget) and the file:line citation remain authoritative.
+ *
+ * Apply at every interpolation of user-authored visible text into
+ * agent-visible response strings. Do NOT apply to rule-authored constants,
+ * file paths, criterion IDs, or to `snippet` (snippet has its own budget).
+ */
+export function truncateForEcho(text: string, max = 200): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
 /** Text content of an HTML element (concatenated descendant text, trimmed). */
 export function htmlTextContent(element: HtmlElement): string {
   const chunks: string[] = [];
