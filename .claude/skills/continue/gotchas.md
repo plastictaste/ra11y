@@ -37,3 +37,31 @@ Fix: `/continue` always runs `/verify` after every dispatch before checking off 
 Symptom: re-dispatch loop never converges.
 
 Fix: hard cap of 2 re-dispatches per item. After that, mark the item as BLOCKED in the summary and move on. Never loop forever.
+
+## Worktree agent cd's out into the main repo
+
+Symptom: after dispatch, main tree has modifications from the agent even though the agent was in `isolation: "worktree"`. Concurrent agents then see "unexpected dirt" in their worktree starting state and report BLOCKED, OR the main tree collects orphaned files that match one agent's scope but never land on their branch.
+
+Cause: scripts like `scripts/scaffold-rule.ts` compute ROOT via `import.meta.dir`, so they naturally resolve to the worktree's root — **but only if the agent runs them from within the worktree**. Agents that `cd /Users/van/dev/ra11y` (or any absolute path out of `$PWD`) before running a scaffolder silently write files into the main tree.
+
+Fix: every dispatch prompt for a parallel worktree agent MUST include an explicit **"NEVER `cd` out of your worktree"** line. Name this as the dominant escape failure mode, because `cd` feels innocuous. Scaffolder invocations specifically should be called out: `bun scripts/scaffold-rule.ts` is safe; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` is the corruption.
+
+If main tree dirt shows up post-dispatch and looks like one agent's orphaned scope, salvage it as commits split by concern (one per logical unit per `CLAUDE.md` §9) rather than discarding — the agent's work is real, it just landed in the wrong tree.
+
+## Biome "nested root configuration" lint failure after cherry-pick
+
+Symptom: `bun run verify` passes on the worktree but fails on main with `× Found a nested root configuration, but there's already a root configuration` pointing at `.claude/worktrees/agent-*/biome.json`.
+
+Cause: biome walks the entire repo by default. Worktrees sit under `.claude/worktrees/` inside the main repo's directory tree, so their copies of `biome.json` look like nested root configs to the root biome run.
+
+Fix: **remove worktrees BEFORE running the integration `bun run verify`.** Sequence: cherry-pick → `git worktree remove -f -f <path>` (double `-f` — locked worktrees need override + unlock) → `git branch -D <branch>` → verify. Or add `.claude/worktrees` to biome's ignore list, but removal is cleaner because leftover worktrees are already a lifecycle bug.
+
+## Cross-turn file collision produces cherry-pick conflicts
+
+Symptom: turn N enriched `src/rules/forms/autocomplete-missing.ts` message text; turn N+1 independently rewrote the same message string; cherry-picking turn N+1's branch hits a merge conflict on the exact lines turn N touched.
+
+Cause: selecting "non-overlapping files" at dispatch time only considers the current turn's picks, not prior turns' commits. The worktree branched from HEAD-before-turn-N, so turn N's edits look like new context the turn N+1 agent never saw.
+
+Fix: when picking items, inspect `git log --oneline -20` for commits touching the same file in this invocation. If found, **include a pointer in the dispatch prompt** — "turn {N} (commit {sha}) already touched this file for {reason}; work on top of current HEAD; if your edit collides, combine both enrichments rather than overwriting." This turns a merge-resolve round into a no-op.
+
+Conflicts at cherry-pick time are still recoverable: resolve inline by combining both edits, never by discarding the older one.
