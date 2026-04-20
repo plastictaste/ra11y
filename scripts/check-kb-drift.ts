@@ -28,8 +28,12 @@ const expectedWcag = WCAG22_CRITERIA.map((c) =>
 ).sort();
 const expectedStandards = ["wcag22", "wcag21", "section508", "en301549"];
 
+// Hand-maintained maintainer docs that live under docs/kb/rules/ but are
+// not 1:1 with a rule slug. Treated like coverage.md under standards/.
+const knownRuleExtras = new Set(["fix-suggestion-audit"]);
+
 const issues: string[] = [];
-diff("docs/kb/rules", expectedRules);
+diff("docs/kb/rules", expectedRules, knownRuleExtras);
 diff("docs/kb/wcag", expectedWcag);
 diffStandards("docs/kb/standards", expectedStandards);
 checkCoverageMatrix();
@@ -68,12 +72,21 @@ function checkCoverageMatrix(): void {
   }
 }
 
-function diff(relDir: string, expected: readonly string[]): void {
+function diff(
+  relDir: string,
+  expected: readonly string[],
+  knownExtras: ReadonlySet<string> = new Set(),
+): void {
   const dir = join(ROOT, relDir);
   const actual = new Set<string>();
   try {
     for (const name of readdirSync(dir)) {
-      if (name.endsWith(".md") && name !== "index.md" && name !== "README.md") {
+      if (
+        name.endsWith(".md") &&
+        name !== "index.md" &&
+        name !== "README.md" &&
+        !knownExtras.has(name.slice(0, -3))
+      ) {
         actual.add(name.slice(0, -3));
       }
     }

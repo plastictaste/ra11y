@@ -460,7 +460,7 @@ Source: same audit. Verified file:line hits on shape-honesty violations that sur
 
 Source: V1-FIX-AUDIT (`[~]` above) enumerates 11 rules with generic fix text. Acceptance requires zero generic rows before v1.0 tag. Each item is sized for one ≤400-LOC commit per CLAUDE.md §9. Plans derived from fix-suggestion-audit.md. Dispatch in parallel — independent rules.
 
-- [ ] **V1-FIX-DOC-LANG** `src/rules/document/lang-attribute.ts:71-72` — inspect `<meta charset>` + sibling pages' lang values to propose a concrete lang candidate ("Add lang=\"en\" (detected from <meta charset=\"utf-8\">); if the page is French, use lang=\"fr\""). Small.
+- [x] **V1-FIX-DOC-LANG** `src/rules/document/lang-attribute.ts:71-72` — inspect `<meta charset>` + sibling pages' lang values to propose a concrete lang candidate ("Add lang=\"en\" (detected from <meta charset=\"utf-8\">); if the page is French, use lang=\"fr\""). Small. [746ecee]
 - [ ] **V1-FIX-DOC-TITLE** `src/rules/document/page-titled.ts:68-86` — extract `<h1>` text + `<meta name="description">` as title candidate ("`<title>Contact Information — Acme</title>` — candidate from existing `<h1>` text"). Small.
 - [ ] **V1-FIX-TABINDEX-POSITIVE** `src/rules/focus/tabindex-positive.ts:210-223` — inline the offending tabindex value + branch on tag/role ("Remove tabindex=\"5\" from `<div>`; if focus is needed, use tabindex=\"0\" with role=\"button\""). Small.
 - [ ] **V1-FIX-NON-EMPTY-LABEL** `src/rules/forms/non-empty-label.ts:96-129` — read `for`/`htmlFor` + locate matching id ("Label references id=\"email\"; move the email-input description text inside the label"). Small.
