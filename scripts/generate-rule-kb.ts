@@ -6,7 +6,10 @@
  * Slug format: `<domain>__<name>` (slashes replaced with double
  * underscore so the filename is flat). This matches check-kb-drift.
  *
- * Never hand-edit these; they get overwritten on every run.
+ * Never hand-edit the generated `<slug>.md` pages; they get overwritten
+ * on every run. Hand-authored maintainer docs that live alongside
+ * (e.g. `fix-suggestion-audit.md`, `coverage.md`) are preserved — the
+ * unlink step only removes files this script would have produced.
  */
 
 import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
@@ -19,33 +22,81 @@ const ROOT = join(import.meta.dir ?? process.cwd(), "..");
 const OUT_DIR = join(ROOT, "docs", "kb", "rules");
 const STANDARDS_DIR = join(ROOT, "docs", "kb", "standards");
 
-mkdirSync(OUT_DIR, { recursive: true });
-mkdirSync(STANDARDS_DIR, { recursive: true });
+/**
+ * Hand-authored maintainer docs (by slug, no `.md`) that live under
+ * `docs/kb/rules/` and `docs/kb/standards/` but are NOT produced by
+ * this script. These must survive regeneration. Keep in sync with
+ * `knownRuleExtras` / `knownExtras` in `check-kb-drift.ts` — both
+ * enumerate the same exception set from opposite directions (drift
+ * check ignores them when comparing, generator skips unlinking them).
+ *
+ * Exported so the test can prove the allowlist covers the specific
+ * files the bug reports called out.
+ */
+export const HAND_AUTHORED_KB_SLUGS: ReadonlySet<string> = new Set([
+  "fix-suggestion-audit", // docs/kb/rules/fix-suggestion-audit.md
+  "coverage", // docs/kb/standards/coverage.md (owned by generate-coverage-matrix.ts)
+]);
 
-for (const name of safeReaddir(STANDARDS_DIR)) {
-  if (name.endsWith(".md") && name !== "index.md" && name !== "README.md") {
+/**
+ * Decides which filenames in a generator-owned directory should be
+ * unlinked before regenerating. Removes `.md` files whose slug is not
+ * in the `expected` set (stale generator output) but preserves:
+ *   - `index.md` / `README.md` (directory-wide conventions)
+ *   - any slug present in `HAND_AUTHORED_KB_SLUGS` (hand-authored
+ *     maintainer docs; owned by a different generator or by no
+ *     generator at all)
+ *
+ * Pure function — exported for unit testing.
+ *
+ * @param present - filenames currently on disk in the target directory
+ * @param expected - slugs (without `.md`) this run is about to write
+ * @returns the filenames that should be unlinked before writing
+ */
+export function chooseFilesToUnlink(
+  present: readonly string[],
+  expected: readonly string[],
+): readonly string[] {
+  const expectedSet = new Set(expected);
+  const result: string[] = [];
+  for (const name of present) {
+    if (!name.endsWith(".md")) continue;
+    if (name === "index.md" || name === "README.md") continue;
+    const slug = name.slice(0, -3);
+    if (expectedSet.has(slug)) continue; // will be overwritten anyway
+    if (HAND_AUTHORED_KB_SLUGS.has(slug)) continue; // hand-authored — preserve
+    result.push(name);
+  }
+  return result;
+}
+
+if (import.meta.main) {
+  mkdirSync(OUT_DIR, { recursive: true });
+  mkdirSync(STANDARDS_DIR, { recursive: true });
+
+  const expectedStandardSlugs = BUILTIN_STANDARDS.map((s) => s.id);
+  for (const name of chooseFilesToUnlink(safeReaddir(STANDARDS_DIR), expectedStandardSlugs)) {
     unlinkSync(join(STANDARDS_DIR, name));
   }
-}
 
-for (const standard of BUILTIN_STANDARDS) {
-  writeFileSync(join(STANDARDS_DIR, `${standard.id}.md`), renderStandardPage(standard));
-}
+  for (const standard of BUILTIN_STANDARDS) {
+    writeFileSync(join(STANDARDS_DIR, `${standard.id}.md`), renderStandardPage(standard));
+  }
 
-for (const name of safeReaddir(OUT_DIR)) {
-  if (name.endsWith(".md") && name !== "index.md" && name !== "README.md") {
+  const expectedRuleSlugs = BUILTIN_RULES.map((r) => r.id.replace(/\//g, "__"));
+  for (const name of chooseFilesToUnlink(safeReaddir(OUT_DIR), expectedRuleSlugs)) {
     unlinkSync(join(OUT_DIR, name));
   }
-}
 
-let written = 0;
-for (const rule of BUILTIN_RULES) {
-  const slug = rule.id.replace(/\//g, "__");
-  writeFileSync(join(OUT_DIR, `${slug}.md`), renderPage(rule));
-  written += 1;
-}
+  let written = 0;
+  for (const rule of BUILTIN_RULES) {
+    const slug = rule.id.replace(/\//g, "__");
+    writeFileSync(join(OUT_DIR, `${slug}.md`), renderPage(rule));
+    written += 1;
+  }
 
-console.log(`✓ generated ${written} rule KB pages → ${OUT_DIR}`);
+  console.log(`✓ generated ${written} rule KB pages → ${OUT_DIR}`);
+}
 
 function renderPage(rule: (typeof BUILTIN_RULES)[number]): string {
   const docs = rule.docs ?? {};
