@@ -31,6 +31,7 @@ import {
   hasJsxAttribute,
   htmlTextContent,
   jsxTextContent,
+  truncateForEcho,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
@@ -202,7 +203,10 @@ function buildSuggestion(href: string | null, phrase: string): string {
   if (!href) {
     return `Replace "${phrase}" with text that describes what the link does, e.g. "View the API reference" instead of "Click here".`;
   }
-  const destination = destinationHint(href);
+  // `destination` is derived from a user-authored href path tail —
+  // single-segment URLs with long slugs (`/blog/2026/<lorem-ipsum>`)
+  // would otherwise echo the slug straight into the suggestion text.
+  const destination = truncateForEcho(destinationHint(href));
   if (destination) {
     return `Replace "${phrase}" with text that describes the destination, e.g. "View ${destination}". Alternatively, add an aria-label describing the link's purpose.`;
   }

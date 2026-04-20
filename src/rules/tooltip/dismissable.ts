@@ -46,6 +46,7 @@ import {
   getHtmlAttribute,
   getJsxAttribute,
   getJsxAttributeString,
+  truncateForEcho,
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
@@ -194,7 +195,10 @@ function buildViolation(
   message: string;
   suggestion: string;
 } {
-  const display = title.length > 40 ? `${title.slice(0, 37)}...` : title;
+  // Tighter cap (40) than the helper default because `display` is
+  // echoed three times in the suggestion below and the tooltip label
+  // itself is usually short; a long value is almost certainly a bug.
+  const display = truncateForEcho(title, 40);
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },

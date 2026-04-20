@@ -23,6 +23,7 @@ import {
   getHtmlAttribute,
   getJsxAttribute,
   getJsxAttributeString,
+  truncateForEcho,
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
@@ -183,8 +184,12 @@ function rankFixPaths(
   visibleText: string,
   ariaLabel: string,
 ): { primary: string; alternatives: readonly string[] } {
-  const pathWiden = `widen aria-label to contain the visible text as a contiguous substring, e.g. aria-label="${visibleText} — additional context"`;
-  const pathRephrase = `rephrase aria-label so the visible text "${visibleText}" appears verbatim (contiguous), not with other words inserted between its tokens — e.g. aria-label="${visibleText}: <rest of context>"`;
+  // Cap before interpolating into agent-visible prose so a 1.5 KB
+  // lorem-ipsum label can't multiply into a multi-KB suggestion echo.
+  // The full visibleText still feeds the heuristic ranking below.
+  const echoVisible = truncateForEcho(visibleText);
+  const pathWiden = `widen aria-label to contain the visible text as a contiguous substring, e.g. aria-label="${echoVisible} — additional context"`;
+  const pathRephrase = `rephrase aria-label so the visible text "${echoVisible}" appears verbatim (contiguous), not with other words inserted between its tokens — e.g. aria-label="${echoVisible}: <rest of context>"`;
   const pathIconHidden = `if the visible text contains a decorative icon or symbol (arrows, glyphs, emoji), wrap the icon in a span and mark it \`aria-hidden="true"\` so it is not part of the visible label`;
   const pathRemove =
     "remove aria-label entirely and let the visible text serve as the accessible name directly";
@@ -287,8 +292,14 @@ function emitViolation(
   const ranked = rankFixPaths(visibleText, ariaLabel);
   const interleaved = isInterleavedExpansion(ariaLabel, visibleText);
   const caseMismatches = findCaseMismatchedWords(ariaLabel, visibleText);
+  // Cap before interpolating user-authored strings into agent-visible
+  // message / suggestion text. synthesizeEditCandidate below keeps the
+  // un-truncated values — its oldText is a literal-source locator and
+  // a truncated aria-label="..." would not match the file.
+  const echoVisible = truncateForEcho(visibleText);
+  const echoAria = truncateForEcho(ariaLabel);
   const expansionNote = interleaved
-    ? `Looks like an expanded label — every word of "${visibleText}" appears in aria-label in order, but with extra words inserted between them. WCAG 2.5.3 requires a contiguous substring, so the fix is to rephrase, not to replace. `
+    ? `Looks like an expanded label — every word of "${echoVisible}" appears in aria-label in order, but with extra words inserted between them. WCAG 2.5.3 requires a contiguous substring, so the fix is to rephrase, not to replace. `
     : "";
   const caseNote =
     caseMismatches.length > 0
@@ -317,7 +328,7 @@ function emitViolation(
   emit({
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> has visible text "${visibleText}" that is not contained in aria-label "${ariaLabel}" — voice-control users cannot activate this control by speaking its visible label.`,
+    message: `<${tagName}> has visible text "${echoVisible}" that is not contained in aria-label "${echoAria}" — voice-control users cannot activate this control by speaking its visible label.`,
     suggestion,
     fixPaths,
   });

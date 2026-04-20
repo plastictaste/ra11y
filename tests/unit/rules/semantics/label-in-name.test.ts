@@ -296,4 +296,46 @@ describe("rule semantics/label-in-name", () => {
       expect(v[0]?.fixPaths?.primary.editCandidate).toBeDefined();
     });
   });
+
+  describe("user-authored echo is size-capped", () => {
+    // Regression invariant for V1-SIZE-LABEL-ECHO-CAP: Bootstrap's
+    // floating-label.html had a 1.5 KB lorem-ipsum label that got
+    // echoed verbatim twice per finding, inflating a single-file scan
+    // response by tens of KB. The rule now caps user-authored visible
+    // text and aria-label echoes before interpolating them into the
+    // agent-visible `message` / `suggestion` strings. Unit coverage
+    // for the helper itself lives in
+    // tests/unit/engine/truncate-for-echo.test.ts — this test asserts
+    // the rule actually calls through to the cap, without rehearsing
+    // the mechanics.
+    it("does not echo the full visible text verbatim when it exceeds the 200-char cap", () => {
+      const longVisible = `The ${"quick ".repeat(60)}fox`; // ~400 chars.
+      const v = runRule(rule, `<button aria-label="Submit form">${longVisible}</button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const message = v[0]?.message ?? "";
+      const suggestion = v[0]?.suggestion ?? "";
+      // The full string is longer than the cap, so neither field
+      // should contain the closing "fox" from the far end — that
+      // proves a truncation happened rather than asserting a specific
+      // slice offset.
+      expect(longVisible.length).toBeGreaterThan(200);
+      expect(message).not.toContain(`${longVisible}`);
+      expect(suggestion).not.toContain(`${longVisible}`);
+      // And the ellipsis sentinel shows up where the truncation landed.
+      expect(message).toContain("\u2026");
+    });
+
+    it("does not echo the full aria-label verbatim when it exceeds the cap", () => {
+      const longAria = `Please ${"review ".repeat(60)}the form`; // ~430 chars.
+      const v = runRule(rule, `<button aria-label="${longAria}">Send</button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(longAria.length).toBeGreaterThan(200);
+      expect(v[0]?.message ?? "").not.toContain(longAria);
+      expect(v[0]?.suggestion ?? "").not.toContain(longAria);
+    });
+  });
 });

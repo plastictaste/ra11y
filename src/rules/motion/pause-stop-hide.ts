@@ -19,7 +19,12 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { findHtmlElementsByTag, walkCssAtRules, walkCssRules } from "../../engine/ast-helpers.ts";
+import {
+  findHtmlElementsByTag,
+  truncateForEcho,
+  walkCssAtRules,
+  walkCssRules,
+} from "../../engine/ast-helpers.ts";
 import type { CssAtRule, CssRule, CssStylesheet, HtmlDocument } from "../../types/ast.ts";
 
 const ANIMATION_PROPERTIES: ReadonlySet<string> = new Set([
@@ -101,6 +106,9 @@ function checkCssAnimations(stylesheet: CssStylesheet, emit: Emit): void {
       if (!ANIMATION_PROPERTIES.has(decl.property.toLowerCase())) continue;
       // Skip declarations that disable animation (e.g., animation: none)
       if (isNoneValue(decl.value)) continue;
+      // `cssRule.selector` is user-authored and echoed twice per
+      // finding; escaped Tailwind class selectors can be quite long.
+      const echoSelector = truncateForEcho(cssRule.selector);
       emit({
         severity: "warning",
         location: {
@@ -108,8 +116,8 @@ function checkCssAnimations(stylesheet: CssStylesheet, emit: Emit): void {
           line: decl.loc.start.line,
           column: decl.loc.start.column,
         },
-        message: `'${cssRule.selector}' uses ${decl.property} without a prefers-reduced-motion media query guard — users who prefer reduced motion cannot disable this animation.`,
-        suggestion: `Wrap the animation in @media (prefers-reduced-motion: reduce) { ${cssRule.selector} { ${decl.property}: none; } } or move the entire rule inside a prefers-reduced-motion query.`,
+        message: `'${echoSelector}' uses ${decl.property} without a prefers-reduced-motion media query guard — users who prefer reduced motion cannot disable this animation.`,
+        suggestion: `Wrap the animation in @media (prefers-reduced-motion: reduce) { ${echoSelector} { ${decl.property}: none; } } or move the entire rule inside a prefers-reduced-motion query.`,
       });
       // One violation per rule is enough — don't flag both animation and
       // animation-duration on the same selector.

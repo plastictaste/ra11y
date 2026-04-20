@@ -15,7 +15,7 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { getHtmlAttribute, walkHtmlElements } from "../../engine/ast-helpers.ts";
+import { getHtmlAttribute, truncateForEcho, walkHtmlElements } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 
 export const rule = defineRule({
@@ -64,6 +64,13 @@ export const rule = defineRule({
         continue;
       }
       const candidate = proposeUniqueId(id, allIds);
+      // `id` / `candidate` are user-authored id attribute values
+      // echoed multiple times per finding — cap both before
+      // interpolating into the agent-visible strings. IDs are
+      // conventionally short, so the cap rarely fires; when it does
+      // the user's source is still at the cited file:line.
+      const echoId = truncateForEcho(id);
+      const echoCandidate = truncateForEcho(candidate);
       ctx.emit({
         severity: "error",
         location: {
@@ -71,8 +78,8 @@ export const rule = defineRule({
           line: element.loc.start.line,
           column: element.loc.start.column,
         },
-        message: `Duplicate id="${id}" — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on <${element.tagName}> at line ${element.loc.start.line}.`,
-        suggestion: `Duplicate id="${id}" — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on this <${element.tagName}>. Rename the second to id="${candidate}" (next free suffix) or remove it if no aria-labelledby / aria-describedby / aria-controls / label[for] / href="#${id}" references it. ARIA attribute references and getElementById resolve to the first match silently, so the duplicate is currently unreachable by any of those hooks.`,
+        message: `Duplicate id="${echoId}" — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on <${element.tagName}> at line ${element.loc.start.line}.`,
+        suggestion: `Duplicate id="${echoId}" — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on this <${element.tagName}>. Rename the second to id="${echoCandidate}" (next free suffix) or remove it if no aria-labelledby / aria-describedby / aria-controls / label[for] / href="#${echoId}" references it. ARIA attribute references and getElementById resolve to the first match silently, so the duplicate is currently unreachable by any of those hooks.`,
       });
     }
   },

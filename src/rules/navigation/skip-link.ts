@@ -27,6 +27,7 @@ import { defineRule } from "../../api/plugin.ts";
 import {
   findHtmlElementsByTag,
   getHtmlAttribute,
+  truncateForEcho,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
@@ -103,6 +104,10 @@ export const rule = defineRule({
     const targetId = href.slice(1);
     const ids = collectIds(doc);
     if (!ids.has(targetId)) {
+      // `targetId` is a user-authored fragment — ids are conventionally
+      // short but pathological inputs can blow the echo. Cap before
+      // interpolation.
+      const echoTargetId = truncateForEcho(targetId);
       ctx.emit({
         severity: "warning",
         location: {
@@ -110,8 +115,8 @@ export const rule = defineRule({
           line: firstLink.loc.start.line,
           column: firstLink.loc.start.column,
         },
-        message: `Skip link targets '#${targetId}' but no element in the document has that id.`,
-        suggestion: `Add id="${targetId}" to your <main> (or the element the skip link should jump to) so browser focus lands there on activation.`,
+        message: `Skip link targets '#${echoTargetId}' but no element in the document has that id.`,
+        suggestion: `Add id="${echoTargetId}" to your <main> (or the element the skip link should jump to) so browser focus lands there on activation.`,
       });
     }
   },

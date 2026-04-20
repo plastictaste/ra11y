@@ -35,6 +35,7 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
+  truncateForEcho,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
@@ -159,9 +160,14 @@ function describeSource(src: string | null): SourceDescription {
       example: "Embedded content description",
     };
   }
-  const subject = guessSubjectFromUrl(src);
+  // `src` is a user-authored URL — data URLs, signed presigned URLs, or
+  // deeply-nested paths can be kilobytes long. Cap before interpolation;
+  // the agent reads the full value from the cited source when needed.
+  // `subject` is derived from the same src via path-tail extraction but
+  // passed through `guessSubjectFromUrl` — still wrap defensively.
+  const subject = truncateForEcho(guessSubjectFromUrl(src));
   return {
-    inMessage: ` pointing at '${src}'`,
+    inMessage: ` pointing at '${truncateForEcho(src)}'`,
     inSuggestion: ` describing the embedded content`,
     example: subject,
   };

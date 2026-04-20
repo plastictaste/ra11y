@@ -25,7 +25,11 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { findHtmlElementsByTag, getHtmlAttribute } from "../../engine/ast-helpers.ts";
+import {
+  findHtmlElementsByTag,
+  getHtmlAttribute,
+  truncateForEcho,
+} from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 
 export const rule = defineRule({
@@ -145,25 +149,29 @@ function buildViolation(
     line: meta.loc.start.line,
     column: meta.loc.start.column,
   };
+  // `parsed.targetUrl` is a user-authored URL attribute; data URLs and
+  // signed URLs can be kilobytes long, and we echo it up to three times
+  // per finding. Cap once here.
+  const echoUrl = parsed.targetUrl === null ? null : truncateForEcho(parsed.targetUrl);
   if (parsed.delaySeconds === 0) {
     return {
       severity: "warning",
       location,
-      message: parsed.targetUrl
-        ? `<meta http-equiv="refresh" content="0; url=${parsed.targetUrl}"> uses an instant client-side redirect — assistive tech can mishandle it, and it bypasses the browser's history/back-button semantics.`
+      message: echoUrl
+        ? `<meta http-equiv="refresh" content="0; url=${echoUrl}"> uses an instant client-side redirect — assistive tech can mishandle it, and it bypasses the browser's history/back-button semantics.`
         : `<meta http-equiv="refresh" content="0"> immediately reloads the page via the client — a server-side response is strongly preferred.`,
-      suggestion: parsed.targetUrl
-        ? `Replace this meta refresh with a real server-side HTTP 301/302 redirect to ${parsed.targetUrl}. If you cannot control the server, at minimum keep the delay at 0 and provide a visible link the user can follow: <a href="${parsed.targetUrl}">Continue to ${parsed.targetUrl}</a>.`
+      suggestion: echoUrl
+        ? `Replace this meta refresh with a real server-side HTTP 301/302 redirect to ${echoUrl}. If you cannot control the server, at minimum keep the delay at 0 and provide a visible link the user can follow: <a href="${echoUrl}">Continue to ${echoUrl}</a>.`
         : `Remove the meta refresh. If the page needs to change, use a server-side redirect or a user-activated link.`,
     };
   }
   const seconds = parsed.delaySeconds;
-  if (parsed.targetUrl !== null) {
+  if (echoUrl !== null) {
     return {
       severity: "error",
       location,
-      message: `<meta http-equiv="refresh" content="${seconds}; url=${parsed.targetUrl}"> auto-navigates after ${seconds}s. Users can't turn off, adjust, or extend this timer — fails WCAG 2.2.1 (Timing Adjustable) and 3.2.5 (Change on Request).`,
-      suggestion: `Remove the meta refresh and use a server-side HTTP redirect (301/302), or replace it with an explicit link: <a href="${parsed.targetUrl}">Go to ${parsed.targetUrl}</a>. Never auto-navigate on a timer.`,
+      message: `<meta http-equiv="refresh" content="${seconds}; url=${echoUrl}"> auto-navigates after ${seconds}s. Users can't turn off, adjust, or extend this timer — fails WCAG 2.2.1 (Timing Adjustable) and 3.2.5 (Change on Request).`,
+      suggestion: `Remove the meta refresh and use a server-side HTTP redirect (301/302), or replace it with an explicit link: <a href="${echoUrl}">Go to ${echoUrl}</a>. Never auto-navigate on a timer.`,
     };
   }
   return {

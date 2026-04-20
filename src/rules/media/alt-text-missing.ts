@@ -56,6 +56,7 @@ import {
   isDecorativeHtmlElement,
   isDecorativeJsxElement,
   jsxTextContent,
+  truncateForEcho,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
@@ -477,7 +478,10 @@ function emitJsxViolation(element: JsxElement, kind: SurfaceKind, emit: Emit): v
 function buildMessage(kind: SurfaceKind, tagName: string, src: string | null): string {
   if (kind === "svg-image") {
     if (src) {
-      const name = filenameFromPath(src);
+      // `name` derives from a user-authored `src` URL/path — long
+      // filenames (data URLs, signed URLs) would otherwise blow the
+      // echo size; cap before interpolation.
+      const name = truncateForEcho(filenameFromPath(src));
       return `SVG <image> referencing '${name}' is missing a text alternative — screen readers have no way to announce what the image represents.`;
     }
     return `SVG <image> has no text alternative — screen readers will announce nothing.`;
@@ -489,7 +493,7 @@ function buildMessage(kind: SurfaceKind, tagName: string, src: string | null): s
     return `<canvas> has neither fallback content nor an accessible name — assistive technology cannot describe what is rendered.`;
   }
   if (src) {
-    const name = filenameFromPath(src);
+    const name = truncateForEcho(filenameFromPath(src));
     return `<${tagName}> '${name}' is missing a text alternative — screen readers will announce the file name or nothing at all.`;
   }
   return `<${tagName}> has no text alternative — screen readers will announce nothing.`;
@@ -497,7 +501,11 @@ function buildMessage(kind: SurfaceKind, tagName: string, src: string | null): s
 
 function buildSuggestion(kind: SurfaceKind, tagName: string, src: string | null): string {
   if (kind === "svg-image") {
-    const subject = src ? guessSubject(filenameFromPath(src)) : "what the image shows";
+    // `subject` is filename-derived and echoed inside an example
+    // `<title>` value — same blow-up risk as above.
+    const subject = src
+      ? truncateForEcho(guessSubject(filenameFromPath(src)))
+      : "what the image shows";
     return `Add a <title> child with descriptive text (e.g., <title>${subject}</title>), or set aria-label / aria-labelledby on the <image>. If purely decorative, set role="presentation" or aria-hidden="true".`;
   }
   if (kind === "role-img") {
@@ -507,8 +515,7 @@ function buildSuggestion(kind: SurfaceKind, tagName: string, src: string | null)
     return `Put descriptive fallback text inside the <canvas> element (assistive tech exposes canvas children when the bitmap is unreachable) and / or add aria-label describing what the canvas renders. If the canvas is purely decorative, mark it aria-hidden="true".`;
   }
   if (src) {
-    const name = filenameFromPath(src);
-    const subject = guessSubject(name);
+    const subject = truncateForEcho(guessSubject(filenameFromPath(src)));
     return `Add alt describing what the image communicates (e.g., alt="${subject}"). If the image is purely decorative — the surrounding text already conveys the same information — mark it with alt="" instead.`;
   }
   return `Add an alt attribute describing what the ${tagName} communicates. If the image is decorative, mark it with alt="" explicitly.`;

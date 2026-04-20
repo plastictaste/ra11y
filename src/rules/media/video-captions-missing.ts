@@ -30,6 +30,7 @@ import {
   findJsxElementsByTag,
   getHtmlAttribute,
   getJsxAttributeString,
+  truncateForEcho,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
@@ -197,7 +198,10 @@ function buildViolation(
 
 function buildMessage(videoSrc: string | null): string {
   if (videoSrc !== null) {
-    const basename = filenameFromPath(videoSrc);
+    // `basename` derives from a user-authored `src` URL/path; long
+    // path tails (signed URLs, deeply-nested fixture paths) would
+    // otherwise blow up the echo.
+    const basename = truncateForEcho(filenameFromPath(videoSrc));
     return `<video src="${basename}"> has no <track kind="captions"> child — deaf and hard-of-hearing users can't follow the dialogue.`;
   }
   return `<video> has no <track kind="captions"> child — deaf and hard-of-hearing users can't follow the dialogue.`;
@@ -209,8 +213,11 @@ function buildSuggestion(videoSrc: string | null, docLang: string | null): strin
   const kindNote =
     'kind="captions" is for deaf/hard-of-hearing viewers (includes sound effects and speaker IDs); kind="subtitles" is for translation only.';
   if (videoSrc !== null) {
-    const basename = filenameFromPath(videoSrc);
-    const vttName = vttFilename(basename);
+    // Same rationale as the message: cap both user-derived names.
+    // `vttName` is derived from `basename` via extension swap, so
+    // capping the basename first keeps both echoes bounded.
+    const basename = truncateForEcho(filenameFromPath(videoSrc));
+    const vttName = truncateForEcho(vttFilename(filenameFromPath(videoSrc)));
     return `Add \`<track kind="captions" src="${vttName}" srclang="${srclang}" label="${label}" default>\` inside \`<video src="${basename}">\`, pointing at a VTT file with time-synced captions for that clip. ${kindNote} If the video is decorative (no audio content), mark it with aria-hidden="true" instead.`;
   }
   return `Add a \`<track kind="captions" src="captions.vtt" srclang="${srclang}" label="${label}" default>\` child of \`<video>\` pointing at a VTT file with time-synced captions. ${kindNote} If the video is decorative (no audio content), mark it with aria-hidden="true" instead.`;

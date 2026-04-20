@@ -56,7 +56,9 @@ describe("rule tooltip/dismissable", () => {
         filePath: "page.html",
       });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.message).toMatch(/\.\.\./);
+      // Ellipsis is the shared truncateForEcho sentinel (U+2026),
+      // not three ASCII dots. See src/engine/ast-helpers.ts.
+      expect(violations[0]?.message).toContain("\u2026");
     });
   });
 

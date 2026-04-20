@@ -26,7 +26,7 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { walkCssAtRules, walkCssRules } from "../../engine/ast-helpers.ts";
+import { truncateForEcho, walkCssAtRules, walkCssRules } from "../../engine/ast-helpers.ts";
 import type { CssRule as AstCssRule, CssAtRule, CssStylesheet } from "../../types/ast.ts";
 
 const REFLOW_THRESHOLD_PX = 320;
@@ -93,11 +93,17 @@ function scanRule(cssRule: AstCssRule, ctx: RuleCtx): void {
     const issue = describeFixedWidth(decl.value);
     if (!issue) continue;
     const value = decl.value.trim();
+    // Both `selector` (escaped Tailwind classes, deeply-nested
+    // compound selectors) and `value` (complex `calc()` expressions)
+    // are user-authored and echoed twice per suggestion — cap before
+    // interpolation.
+    const echoSelector = truncateForEcho(cssRule.selector);
+    const echoValue = truncateForEcho(value);
     ctx.emit({
       severity: "warning",
       location: { filePath: "", line: decl.loc.start.line, column: decl.loc.start.column },
-      message: `'${cssRule.selector}' sets ${prop}: ${value} — ${issue} may break WCAG 1.4.10 Reflow at 320px viewports.`,
-      suggestion: `Use \`max-width: ${value}\` instead (caps but allows shrinking), or scope the fixed ${prop} inside a \`@media (min-width: ${REFLOW_THRESHOLD_PX}px)\` block so the rule only applies above the reflow threshold.`,
+      message: `'${echoSelector}' sets ${prop}: ${echoValue} — ${issue} may break WCAG 1.4.10 Reflow at 320px viewports.`,
+      suggestion: `Use \`max-width: ${echoValue}\` instead (caps but allows shrinking), or scope the fixed ${prop} inside a \`@media (min-width: ${REFLOW_THRESHOLD_PX}px)\` block so the rule only applies above the reflow threshold.`,
     });
   }
 }

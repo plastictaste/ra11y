@@ -39,6 +39,7 @@ import {
   htmlTextContent,
   jsxHasContentChildren,
   jsxTextContent,
+  truncateForEcho,
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
@@ -482,7 +483,10 @@ function buildIconAwareSuggestion(subject: string, icon: IconContext): string {
     return `${host} wraps an <svg> with no <title>/<text> descendant. Two fixes: (1) add a <title> child inside the <svg> — e.g., <svg><title>Close</title>…</svg> — which counts toward the accessible name on the interactive ancestor (SVG 2 accessibility); or (2) add aria-label="Close" on the ${host}. Replace "Close" with the button's action verb (Submit, Save, Delete, etc.).`;
   }
   if (icon.kind === "img") {
-    const subjectHint = icon.subject ?? null;
+    // `subjectHint` is derived from a user-authored `src` filename and
+    // echoed twice per suggestion — a long filename path would otherwise
+    // double the echo cost. Cap before interpolation.
+    const subjectHint = icon.subject === null ? null : truncateForEcho(icon.subject);
     if (isImageInput) {
       // The image button IS the image — name alt on itself, not on a child.
       if (subjectHint !== null) {

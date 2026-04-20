@@ -39,6 +39,7 @@ import {
   getHtmlAttribute,
   getJsxAttribute,
   getJsxAttributeString,
+  truncateForEcho,
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
@@ -242,7 +243,12 @@ function buildViolation(
   message: string;
   suggestion: string;
 } {
-  const subject = `<${tagName} ${attrName}="${value}">`;
+  // `value` is a user-authored attribute value — valid tags are short
+  // but malformed inputs can be arbitrary pasted text. Cap once here so
+  // every branch (`subject`, the dashed rewrite in `underscore`) uses
+  // the bounded form.
+  const echoValue = truncateForEcho(value);
+  const subject = `<${tagName} ${attrName}="${echoValue}">`;
   switch (issue.kind) {
     case "empty":
       return {
@@ -256,7 +262,7 @@ function buildViolation(
         severity: "error",
         location: { filePath: "", line: loc.line, column: loc.column },
         message: `${subject} uses an underscore separator — BCP 47 requires hyphens, so screen readers will fail to match the language.`,
-        suggestion: `Replace underscores with hyphens: ${attrName}="${value.replace(/_/g, "-")}".`,
+        suggestion: `Replace underscores with hyphens: ${attrName}="${truncateForEcho(value.replace(/_/g, "-"))}".`,
       };
     case "uppercase-primary":
       return {

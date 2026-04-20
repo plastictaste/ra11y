@@ -39,6 +39,7 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
+  truncateForEcho,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
@@ -516,7 +517,11 @@ function buildMessage(tagName: string, type: string | null): string {
 }
 
 function buildSuggestion(tagName: string, type: string | null, id: string | null): string {
-  const idHint = id ?? "field";
+  // `id` is a user-authored attribute value echoed twice in this string
+  // (`for="..."` and the prose tail) — cap it before interpolation.
+  // `labelText` comes from a closed vocabulary in `inferLabelFromType`,
+  // so it doesn't need wrapping.
+  const idHint = truncateForEcho(id ?? "field");
   const labelText = inferLabelFromType(type);
   return `Add a \`<label for="${idHint}">${labelText}</label>\` referencing this ${tagName}'s id, or set an \`aria-label="${labelText}"\` attribute. If the control is decorative or duplicates a visible label, use \`aria-labelledby\` pointing at that element's id.`;
 }
@@ -526,7 +531,9 @@ function buildEditableMessage(tagName: string): string {
 }
 
 function buildEditableSuggestion(tagName: string, id: string | null): string {
-  const idHint = id ?? "editor";
+  // Same rationale as buildSuggestion above — `id` is user-authored and
+  // echoed twice; cap before interpolation.
+  const idHint = truncateForEcho(id ?? "editor");
   return `This <${tagName} contenteditable="true"> behaves like an <input>/<textarea> for assistive tech — it needs an accessible name. Add \`aria-label="…"\` describing the editable region (e.g., \`aria-label="Message"\` for a chat composer, \`aria-label="Document body"\` for a doc editor), or associate a visible \`<label for="${idHint}">\` by giving the ${tagName} \`id="${idHint}"\`. \`aria-labelledby\` pointing at an existing heading or visible label also works.`;
 }
 

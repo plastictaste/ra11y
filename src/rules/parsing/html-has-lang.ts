@@ -29,7 +29,7 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { walkHtmlElements } from "../../engine/ast-helpers.ts";
+import { truncateForEcho, walkHtmlElements } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 
 /**
@@ -101,8 +101,10 @@ function classifyLang(element: HtmlElement): LangProblem | null {
     };
   }
   if (!BCP47_BASIC.test(trimmed)) {
+    // `raw` is a user-authored attribute value — valid tags are short
+    // by spec, but malformed values can be arbitrary pasted text.
     return {
-      message: `${tag} has lang="${raw}" which is not a valid BCP 47 language tag — screen readers will ignore it and fall back to the default voice.`,
+      message: `${tag} has lang="${truncateForEcho(raw)}" which is not a valid BCP 47 language tag — screen readers will ignore it and fall back to the default voice.`,
       suggestion: buildInvalidSuggestion(raw, trimmed, element.tagName),
     };
   }
@@ -125,15 +127,19 @@ function buildInvalidSuggestion(raw: string, trimmed: string, tagName: string): 
   if (raw !== trimmed) {
     return `Remove the surrounding whitespace and use a valid BCP 47 tag on ${tag}, e.g. lang="en" or lang="en-US".`;
   }
+  // Cap user-authored echoes; `dashed`/`guess` are derived from the
+  // same `raw` (or a controlled vocabulary) so capping `raw` first
+  // keeps both echoes bounded.
+  const echoRaw = truncateForEcho(raw);
   if (trimmed.includes("_")) {
-    const dashed = trimmed.replace(/_/g, "-");
-    return `BCP 47 separates subtags with dashes, not underscores. Change lang="${raw}" to lang="${dashed}".`;
+    const dashed = truncateForEcho(trimmed.replace(/_/g, "-"));
+    return `BCP 47 separates subtags with dashes, not underscores. Change lang="${echoRaw}" to lang="${dashed}".`;
   }
   const guess = guessBcp47(trimmed);
   if (guess) {
-    return `Use the BCP 47 code for this language on ${tag}, e.g. lang="${guess}". Full-word names like "${raw}" are not valid — the primary subtag must be a 2- or 3-letter ISO 639 code.`;
+    return `Use the BCP 47 code for this language on ${tag}, e.g. lang="${guess}". Full-word names like "${echoRaw}" are not valid — the primary subtag must be a 2- or 3-letter ISO 639 code.`;
   }
-  return `Replace lang="${raw}" on ${tag} with a valid BCP 47 tag: a 2- or 3-letter primary language subtag (optionally followed by dash-separated region/script subtags), e.g. lang="en" or lang="en-US".`;
+  return `Replace lang="${echoRaw}" on ${tag} with a valid BCP 47 tag: a 2- or 3-letter primary language subtag (optionally followed by dash-separated region/script subtags), e.g. lang="en" or lang="en-US".`;
 }
 
 function guessBcp47(value: string): string | null {
