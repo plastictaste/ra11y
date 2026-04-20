@@ -285,6 +285,7 @@ function buildCoverageEntry(
 function primaryExtension(extensions: readonly string[]): string {
   const head = extensions[0]?.toLowerCase() ?? "";
   if (head === ".css") return "CSS";
+  if (head === ".scss") return "SCSS";
   if (head === ".html" || head === ".htm") return "HTML";
   if (head === ".tsx" || head === ".jsx" || head === ".ts" || head === ".js") {
     return "JSX/TSX";

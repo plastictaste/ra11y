@@ -223,9 +223,9 @@ describe("discoverFilesWithDiagnostics", () => {
     // source files have extensions PARSEABLE_EXTENSIONS doesn't cover.
     write(join(dir, "page.tsx"));
     write(join(dir, "Card.astro"));
-    write(join(dir, "theme.scss"));
+    write(join(dir, "Button.svelte"));
     write(join(dir, "app.vue"));
-    write(join(dir, "util.scss"));
+    write(join(dir, "Layout.svelte"));
     write(join(dir, "README"));
 
     const result = await discoverFilesWithDiagnostics([dir]);
@@ -234,7 +234,7 @@ describe("discoverFilesWithDiagnostics", () => {
     expect(result.diagnostics.skippedByExtension).toEqual({
       "(no-ext)": 1,
       ".astro": 1,
-      ".scss": 2,
+      ".svelte": 2,
       ".vue": 1,
     });
   });

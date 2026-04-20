@@ -25,6 +25,7 @@ const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".html",
   ".htm",
   ".css",
+  ".scss",
 ]);
 
 /**
@@ -57,5 +58,11 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
   if (allowList.includes(fileExt)) return true;
   if (fileExt === ".js" && allowList.includes(".jsx")) return true;
   if (fileExt === ".ts" && allowList.includes(".tsx")) return true;
+  // `.scss` is transformed into a CSS AST by the SCSS parser adapter,
+  // so any rule declaring `.css` as its extension (contrast/minimum,
+  // contrast/enhanced, contrast/non-text, layout/*) applies to `.scss`
+  // files too. This keeps rules and telemetry in sync without teaching
+  // every CSS-shaped rule about Sass.
+  if (fileExt === ".scss" && allowList.includes(".css")) return true;
   return false;
 }

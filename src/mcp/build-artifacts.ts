@@ -106,10 +106,13 @@ function matchesBuildDirMarker(filePath: string): boolean {
 }
 
 function isCssPath(filePath: string): boolean {
-  // Case-insensitive .css suffix check. Avoids a regex for what is a
-  // two-field string probe and keeps the hot-path allocation-free.
+  // Case-insensitive .css / .scss suffix check. Avoids a regex for what
+  // is a two-field string probe and keeps the hot-path
+  // allocation-free. `.scss` counts here because our SCSS parser emits
+  // the CSS AST shape; consumers of this predicate (fingerprint /
+  // build-artifact heuristics) treat the two identically.
   const lower = filePath.toLowerCase();
-  return lower.endsWith(".css");
+  return lower.endsWith(".css") || lower.endsWith(".scss");
 }
 
 function countLines(source: string): number {
