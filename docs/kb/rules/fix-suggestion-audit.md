@@ -77,7 +77,7 @@ violation fires.
 | media/video-captions-missing | guidance | context-aware | video src basename, first `<source>` src fallback, document `<html lang>`, derived VTT filename + language label | `buildSuggestion` ladder: video `src` → strip directory + swap extension into a concrete `src="<stem>.vtt"`; no `src` → fall back to first `<source>` child's basename; neither → `captions.vtt` with child-of-`<video>` phrasing. Inlines the nearest `<html lang="…">` (HTML doc root, or JSX root-layout shape) as `srclang`; defaults to `en` when absent. Humanizes common primary subtags into a `label="English captions"` style hint, and always names the captions-vs-subtitles distinction so the agent picks the right `kind`. |
 | motion/pause-stop-hide | guidance | context-aware | selector, animation property | Inlines the selector and property into a ready-to-copy `@media (prefers-reduced-motion: reduce)` override. |
 | navigation/link-descriptive-text | guidance | context-aware | href, generic-phrase token, derived destination hint | Inlines the offending phrase and a URL-derived destination candidate into the replacement suggestion. |
-| navigation/link-no-href | mechanical | generic | none | Constant "If this element navigates, add href=…" text. Does not inspect onClick body, aria-label, or parent. |
+| navigation/link-no-href | mechanical | context-aware | onClick expression text, intent probe | `describeJsxExpressionIntent` classifies the handler body as navigation (navigate/router/history/redirect/location/`.push(`/`.replace(`), mutation (React setter `set[A-Z]…(`, or camelCase verb-prefix `toggleMenu`/`openDialog`/…), or unknown. Navigation branch proposes `<a href="...">` + `preventDefault()` interception pattern; mutation branch proposes `<button type="button">`; unknown branch asks the agent to decide. Probe is text-level — no cross-file resolution, no type checking; weak-evidence cases honestly return unknown. Resolved by commit pending. |
 | navigation/skip-link | mechanical | context-aware | targetId branch | Missing-id branch inlines the expected `id="${targetId}"` value from the skip-link href. Missing-link and wrong-first-link branches are constants but coexist with a context-aware third branch. |
 | parsing/duplicate-id | mechanical | context-aware | duplicated id value, first occurrence's tag+line, current tag+line, next free numeric suffix (document-aware) | `proposeUniqueId` pre-scans the document for all ids and computes the next free numeric suffix; inlines the duplicated id, both binding sites (tag + line), and the concrete rename candidate. Ids already ending in digits strip the trailing run before incrementing (`section2` → `section3`, not `section22`). Names aria-labelledby / aria-describedby / aria-controls / label[for] / `href="#id"` as the reference hooks that silently resolve to the first match. |
 | parsing/html-has-lang | mechanical | context-aware | tagName, raw value, trimmed vs raw, underscore-vs-hyphen, guessed BCP 47 code | `buildInvalidSuggestion` computes a concrete rewrite per issue shape (dashed form, BCP-47 guess from full-word name). |
@@ -91,7 +91,7 @@ violation fires.
 | semantics/landmark-main | guidance | context-aware | tag, id, class, role, line, all-role-only flag | `buildMultipleMainSuggestion` ladder: all-`role="main"` branch inlines every binding's line and targets the attribute; `<main>` branch inlines each landmark's tag + `id=` / `class=` (+ role when role-bearing) and line for pairwise disambiguation; identity-free fallback degrades to line-only. Missing-`<main>` branch names the wrap target (primary article/content) and explicitly excludes `<header>` / `<nav>` / `<footer>`. Resolved by commit pending. |
 | semantics/list-structure | guidance | context-aware | parent tag, child tag, primitive-vs-wrong-child flag | Stray-li and primitive branches are tag-templated; wrong-child branch inlines both parent and child tags into the fix. |
 | semantics/nested-interactive | verify-in-source | context-aware | outer descriptor, inner descriptor, outer-open line number | `describeHtml` / `describeJsx` compose tag + identifying attrs into the descriptors; suggestion inlines both. |
-| semantics/table-headers | guidance | generic | none | Constant "Add `<th scope=\"col\">` cells in the first `<tr>`…" text. Does not inspect caption, layout-table signals, or cell structure. |
+| semantics/table-headers | guidance | context-aware | first-row `<td>` text content, first-column `<td>` text content, header-shape heuristic (short, title-cased, non-numeric), up to 5 inlined candidate strings | `buildSuggestionFromDetection` walks the first `<tr>` (or first-column cell per row) of the offending `<table>`, runs `looksHeaderShaped` (≤40 chars, starts-upper, not numeric/currency), and picks one of four branches: (1) first row + first column both header-shaped → inlines both candidate lists and mentions `<th scope="col">`, `<th scope="row">`, plus `<th scope="colgroup">` for complex tables; (2) first row only → inlines detected column headers (e.g. `Name`, `Email`, `Role`, `Last Login`) and recommends `<th scope="col">`; (3) first column only → inlines detected row labels and recommends `<th scope="row">`; (4) no header-shape signal → fallback naming both scopes and the `role="presentation"` layout-table escape. Nested tables are skipped at the traversal boundary so each table is judged on its own cells. Resolved by commit pending. |
 | tooltip/dismissable | guidance | context-aware | tagName, offending title text (truncated) | Inlines the title text into the proposed `aria-label="${title}"` replacement and the visible-label alternative. |
 | wrapper/drift | verify-in-source | context-aware | wrapper name, declared element, actual rendered element, definition file path | Proposes two concrete fixes and names the `ra11y.config.ts` entry to change, inlining the path the agent should read. |
 
@@ -99,14 +99,13 @@ violation fires.
 
 Verdict distribution:
 
-- context-aware: 50
-- generic: 2
+- context-aware: 52
+- generic: 0
 - caveat-only: 0
 
 Rules flagged `generic` (need per-rule `feat(rules): context-aware fix for <rule>` follow-up commits before v1.0):
 
-- `navigation/link-no-href`
-- `semantics/table-headers`
+_(none — v1.0 fix-suggestion debt cleared)_
 
 Resolved since publication (flipped to `context-aware`):
 
@@ -119,6 +118,8 @@ Resolved since publication (flipped to `context-aware`):
 - `semantics/button-name` — V1-FIX-BUTTON-NAME (commit cf53e34).
 - `semantics/landmark-main` — V1-FIX-LANDMARK-MAIN (commit 06035ee).
 - `semantics/empty-heading` — V1-FIX-EMPTY-HEADING (commit b374e12).
+- `navigation/link-no-href` — V1-FIX-LINK-NO-HREF (commit pending).
+- `semantics/table-headers` — V1-FIX-TABLE-HEADERS (commit pending).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted

@@ -74,6 +74,70 @@ describe("rule navigation/link-no-href", () => {
     });
   });
 
+  describe("context-aware fix suggestion", () => {
+    it("navigation-intent: onClick calls navigate(...) → suggests real href", () => {
+      const violations = runRule(
+        rule,
+        `const X = <a onClick={() => navigate("/dashboard")}>Go</a>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("navigation");
+      expect(violations[0]?.suggestion).toContain('href="..."');
+      expect(violations[0]?.suggestion).toContain("preventDefault");
+    });
+
+    it("navigation-intent: onClick calls history.push(...) → suggests real href", () => {
+      const violations = runRule(rule, `const X = <a onClick={() => history.push("/x")}>Go</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("navigation");
+    });
+
+    it("navigation-intent: onClick calls router.replace(...) → suggests real href", () => {
+      const violations = runRule(rule, `const X = <a onClick={() => router.replace("/y")}>Go</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("navigation");
+    });
+
+    it("mutation-intent: React setter pattern setOpen(...) → suggests <button>", () => {
+      const violations = runRule(rule, `const X = <a onClick={() => setOpen(true)}>Open</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("mutation");
+      expect(violations[0]?.suggestion).toContain(`<button type="button"`);
+    });
+
+    it("mutation-intent: onClick calls toggle(...) → suggests <button>", () => {
+      const violations = runRule(rule, `const X = <a onClick={() => toggleMenu()}>Menu</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("mutation");
+      expect(violations[0]?.suggestion).toContain(`<button type="button"`);
+    });
+
+    it("unknown-intent: empty arrow body → generic either-or suggestion", () => {
+      const violations = runRule(rule, `const X = <a onClick={() => {}}>Click</a>;`);
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("decide the intent");
+      expect(sugg).toContain("navigates");
+      expect(sugg).toContain("action");
+    });
+
+    it("unknown-intent: bare identifier handler → generic either-or suggestion", () => {
+      // The probe is text-level; a bare `handle` reference doesn't
+      // name any navigation or mutation keyword, so unknown is correct.
+      const violations = runRule(rule, `const X = <a onClick={handle}>Click</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("decide the intent");
+    });
+
+    it("HTML: onclick with window.location → navigation-intent", () => {
+      const violations = runRule(rule, `<a onclick="window.location='/go'">Go</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("navigation");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:2.1.1, wcag21:2.1.1, wcag22:4.1.2, wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:2.1.1");

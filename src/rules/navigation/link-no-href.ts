@@ -27,12 +27,17 @@
 
 import { defineRule } from "../../api/plugin.ts";
 import {
+  describeJsxExpressionIntent,
   findHtmlElementsByTag,
   findJsxElementsByTag,
+  getHtmlAttribute,
+  getJsxAttribute,
   hasHtmlAttribute,
   hasJsxAttribute,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+
+type Intent = "navigation" | "mutation" | "unknown";
 
 export const rule = defineRule({
   id: "navigation/link-no-href",
@@ -81,7 +86,8 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const anchor of findHtmlElementsByTag(doc, "a")) {
     if (hasHtmlAttribute(anchor, "href")) continue;
     if (!hasClickHandlerHtml(anchor)) continue;
-    emit(buildViolation(anchor.loc.start));
+    const intent = describeJsxExpressionIntent(getHtmlAttribute(anchor, "onclick"));
+    emit(buildViolation(anchor.loc.start, intent));
   }
 }
 
@@ -94,7 +100,8 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const anchor of findJsxElementsByTag(module, "a")) {
     if (hasJsxAttribute(anchor, "href")) continue;
     if (!hasClickHandlerJsx(anchor)) continue;
-    emit(buildViolation(anchor.loc.start));
+    const intent = describeJsxExpressionIntent(jsxOnClickExpressionText(anchor));
+    emit(buildViolation(anchor.loc.start, intent));
   }
 }
 
@@ -103,7 +110,24 @@ function hasClickHandlerJsx(element: JsxElement): boolean {
   return hasJsxAttribute(element, "onClick");
 }
 
-function buildViolation(loc: { line: number; column: number }): {
+/**
+ * Returns the raw source of the element's `onClick={…}` expression, or
+ * `null` when the attribute is absent, a string-literal, or shorthand.
+ * String-literal onClick is syntactically legal but semantically
+ * nothing an intent probe can read — return null and let the
+ * classifier fall through to "unknown".
+ */
+function jsxOnClickExpressionText(element: JsxElement): string | null {
+  const attr = getJsxAttribute(element, "onClick");
+  if (!attr?.value) return null;
+  if (attr.value.kind !== "Expression") return null;
+  return attr.value.raw;
+}
+
+function buildViolation(
+  loc: { line: number; column: number },
+  intent: Intent,
+): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
@@ -113,6 +137,16 @@ function buildViolation(loc: { line: number; column: number }): {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<a> with a click handler but no href is not keyboard-operable — it's not in the tab order and Enter won't activate it.`,
-    suggestion: `If this element navigates, add href="…". If it toggles or submits, use <button type="button"> instead. Bare <a> with only an onClick is never the right choice.`,
+    suggestion: buildSuggestion(intent),
   };
+}
+
+function buildSuggestion(intent: Intent): string {
+  if (intent === "navigation") {
+    return `<a onClick={...}> appears to perform navigation (keywords: navigate/router/history). Replace with a real <a href="..."> so the browser and assistive tech treat it as a link — if you need to intercept the click, keep the href and use onClick={(e) => { e.preventDefault(); navigate(url); }}.`;
+  }
+  if (intent === "mutation") {
+    return `<a onClick={...}> appears to perform a mutation (keywords: toggle/set/open). Use <button type="button" onClick={...}> instead — anchors convey navigation, buttons convey actions. Style the button to look like a link if the visual treatment matters.`;
+  }
+  return `<a onClick={...}> has no href — decide the intent: if it navigates, add a real href="..."; if it performs an action, use <button type="button"> instead. Anchors communicate navigation to assistive tech; buttons communicate action.`;
 }
