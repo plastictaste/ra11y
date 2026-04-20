@@ -38,6 +38,7 @@ import { scanProcessTool } from "./tool-scan-process.ts";
 import { scanProjectTool } from "./tool-scan-project.ts";
 import { suggestFixTool } from "./tool-suggest-fix.ts";
 import { suppressTool } from "./tool-suppress.ts";
+import { vpatTool } from "./tool-vpat.ts";
 import { wrapperIntrospectTool } from "./tool-wrapper-introspect.ts";
 import {
   buildConfigureOpts,
@@ -533,6 +534,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   suppressTool,
   attestTool,
   listAttestationsTool,
+  vpatTool,
   proposeConfigTool,
   proposeBaselineTool,
   sessionConfigureTool,
