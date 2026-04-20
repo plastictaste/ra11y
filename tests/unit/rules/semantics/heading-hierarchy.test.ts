@@ -58,6 +58,37 @@ describe("rule semantics/heading-hierarchy", () => {
       const skipV = v.find((x) => x.message.includes("skipped"));
       expect(skipV?.suggestion).toContain("<h2>");
     });
+
+    it("cites the previous heading's line number in the message", () => {
+      // Three blank lines between <h1> and <h5> so the previous-line
+      // citation resolves to something other than the current line —
+      // the whole point of the enrichment is that an agent can verify
+      // the previous heading without re-walking the file.
+      const source = `<h1>Title</h1>\n\n\n<h5>Way deeper</h5>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      const skipV = v.find((x) => x.message.includes("skipped"));
+      expect(skipV).toBeDefined();
+      expect(skipV?.message).toContain("at line 1");
+      expect(skipV?.message).toContain("<h1>");
+      expect(skipV?.message).toContain("<h5>");
+    });
+
+    it("suggestion cites the previous heading's line number", () => {
+      const source = `<h1>Title</h1>\n\n\n<h5>Way deeper</h5>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      const skipV = v.find((x) => x.message.includes("skipped"));
+      expect(skipV?.suggestion).toContain("line 1");
+    });
+
+    it("uses the most recent previous heading, not the first heading", () => {
+      // h1 at line 1, h2 at line 3, then h5 at line 5 — the previous
+      // heading cited should be <h2> at line 3, not <h1> at line 1.
+      const source = `<h1>Title</h1>\n\n<h2>Section</h2>\n\n<h5>Skipped</h5>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      const skipV = v.find((x) => x.message.includes("skipped"));
+      expect(skipV?.message).toContain("<h2>");
+      expect(skipV?.message).toContain("at line 3");
+    });
   });
 
   it("does nothing on a document with no headings", () => {

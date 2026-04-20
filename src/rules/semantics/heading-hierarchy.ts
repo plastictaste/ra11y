@@ -105,14 +105,15 @@ function reportMissingH1(headings: readonly HeadingEntry[], emit: Emit): void {
 }
 
 function reportSkippedLevels(headings: readonly HeadingEntry[], emit: Emit): void {
-  let previous = headings[0]?.level ?? 1;
+  let previous: HeadingEntry | undefined = headings[0];
   for (let i = 1; i < headings.length; i += 1) {
     const current = headings[i];
     if (!current) continue;
     // Going deeper is only allowed by +1 at a time. Going shallower
     // (to a lower number) is always fine — you can jump from h3 back
     // to h2 or h1.
-    if (current.level > previous + 1) {
+    if (previous && current.level > previous.level + 1) {
+      const previousLine = previous.element.loc.start.line;
       emit({
         severity: "warning",
         location: {
@@ -120,10 +121,12 @@ function reportSkippedLevels(headings: readonly HeadingEntry[], emit: Emit): voi
           line: current.element.loc.start.line,
           column: current.element.loc.start.column,
         },
-        message: `Heading level skipped: previous was <h${previous}> on an earlier line, this is <${current.element.tagName}>. Skipped ${current.level - previous - 1} level(s).`,
-        suggestion: `Change this to <h${previous + 1}> so the hierarchy is continuous, or add intermediate headings between the previous <h${previous}> and this one.`,
+        // Inline the previous heading's line so an agent can verify
+        // intent without re-walking the file.
+        message: `Heading level skipped: previous was <h${previous.level}> at line ${previousLine}, this is <${current.element.tagName}>. Skipped ${current.level - previous.level - 1} level(s).`,
+        suggestion: `Change this to <h${previous.level + 1}> so the hierarchy is continuous, or add intermediate headings between the previous <h${previous.level}> (line ${previousLine}) and this one.`,
       });
     }
-    previous = current.level;
+    previous = current;
   }
 }
