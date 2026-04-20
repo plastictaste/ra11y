@@ -9,9 +9,9 @@
 
 An AI agent scanning a project via the ra11y MCP server needs to route each
 finding to the right remediation lane — batch-apply the mechanical edits,
-rewrite the prose-only ones, defer the runtime-dependent ones to the axe-core
-side of the pipeline, and open the source file for the ones that only
-resolve after reading adjacent code.
+rewrite the prose-only ones, defer the runtime-dependent ones to a runtime
+harness, and open the source file for the ones that only resolve after
+reading adjacent code.
 
 Today that routing decision requires a per-finding round-trip: call
 `suggest_fix` for every violation and branch on the returned
@@ -29,7 +29,7 @@ actually wants to separate:
   nested-interactive) even though the scanner can emit no edit
 - rules that can only be fully verified at runtime (focus traps,
   live-region announcements) — static analysis flags the pattern but the
-  agent needs to route these into the Playwright/axe-core lane
+  agent needs to route these to a runtime harness
 
 ## Decision
 
@@ -40,7 +40,7 @@ values:
 export type FixClass =
   | "mechanical"       // deterministic source transform
   | "guidance"         // prose-only judgment
-  | "runtime-only"     // needs runtime harness (axe-core, Playwright)
+  | "runtime-only"     // needs a runtime harness
   | "verify-in-source" // agent reads adjacent code to decide
 ```
 

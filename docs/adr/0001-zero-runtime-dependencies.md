@@ -14,7 +14,7 @@ Accepted — enforced by `scripts/check-zero-deps.ts` in CI.
 
 ra11y is pitched as a trust-first tool: users run it against proprietary source and expect it to stay offline, not phone home, not pull in transitive code they haven't reviewed. We also want the install to be fast so precommit hooks using ra11y don't add seconds to every `git commit`.
 
-The accessibility-tooling space has a cautionary tale. `axe-core` itself is clean, but several popular CLI wrappers pull 200+ transitive packages, many of which have had supply-chain incidents (`event-stream`, `colors.js`, `ua-parser-js`). The install footprint becomes a liability — not because ra11y maintainers can't review it, but because *users* can't.
+The JavaScript tooling space has a cautionary tale. Popular CLI wrappers routinely pull 200+ transitive packages, several of which have had supply-chain incidents (`event-stream`, `colors.js`, `ua-parser-js`). The install footprint becomes a liability — not because ra11y maintainers can't review it, but because *users* can't.
 
 ## Decision
 

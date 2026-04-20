@@ -223,7 +223,6 @@ ADR: [`docs/adr/0006-real-world-fixture-harness.md`](./docs/adr/0006-real-world-
 - [`docs/kb/architecture/mcp-sampling.md`](./docs/kb/architecture/mcp-sampling.md) — bidirectional outbound rail and sampling client.
 - [`docs/kb/standards/coverage.md`](./docs/kb/standards/coverage.md) — authoritative per-criterion automatability coverage matrix.
 - [`docs/kb/patterns/suggest-fix-ranking.md`](./docs/kb/patterns/suggest-fix-ranking.md) — `suggest_fix` ranking and `fixClass` semantics.
-- [`benchmarks/a11y-tool-comparison.md`](./benchmarks/a11y-tool-comparison.md) — benchmark comparison scaffold.
 - ADR 0006 (real-world fixture harness), ADR 0008 (groupKey), ADR 0010 (coverage vs checklist boundary), ADR 0011 (Evidence primitive), ADR 0012 (wrapper introspection), ADR 0013 (rule-scoped attestations), ADR 0014 (inherited findings), ADR 0016 (process-level scope), ADR 0017 (conformance-statement output), ADR 0018 (v1.0 deferred decisions), ADR 0019 (v1.0 public API stability).
 
 ### Changed

@@ -16,7 +16,7 @@ Accessibility standards overlap massively. A contrast check satisfies WCAG 1.4.3
 
 We also anticipated plugin-authored standards: corporate guidelines, jurisdiction-specific regulations (JIS X 8341, EN 301 549 national derivatives), industry-specific overlays (HIPAA-adjacent, FedRAMP). Each of those ships a handful of criteria — mostly aliases for WCAG — and one or two genuinely new requirements.
 
-Co-locating rules with standards was the default choice for axe-core-style tools. It makes adding a new standard feel easy (drop in files) and makes the relationship between "what's checked" and "what the spec says" more obvious. We rejected it.
+Co-locating rules with standards is the common default. It makes adding a new standard feel easy (drop in files) and makes the relationship between "what's checked" and "what the spec says" more obvious. We rejected it.
 
 ## Decision
 
@@ -41,7 +41,7 @@ At registry init, the engine walks every loaded standard's `equivalentTo` and bu
 - Coverage + VPAT reports group by standard without any rule-side cooperation.
 
 **Costs**
-- The three-way split is harder to onboard onto than the axe-style flat layout. Readers have to understand that a rule's `satisfies` list is the source of truth and the standard-side `equivalentTo` list is its mirror.
+- The three-way split is harder to onboard onto than a flat standard-per-folder layout. Readers have to understand that a rule's `satisfies` list is the source of truth and the standard-side `equivalentTo` list is its mirror.
 - `equivalentTo` is a hand-curated claim. If we say `section508:1194.22.g` is equivalent to `wcag22:1.3.1` and it isn't, we propagate the mistake silently. `scripts/standards-audit.ts` runs a reciprocal-consistency check to catch asymmetric claims.
 - The engine has to run a graph closure at init to build the reciprocal index. It's O(n) in total criteria, trivially fast, but it's not free — one more thing the engine has to do before the first file is scanned.
 

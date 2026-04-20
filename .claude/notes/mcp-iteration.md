@@ -54,11 +54,11 @@ Emitted only when: `configSource === null` AND `cwd` wasn't explicitly passed AN
 
 ### Zero-dep invariant applies to MCP too
 
-In-house JSON-RPC 2.0 (`src/mcp/server.ts`), ~200 lines. Do not add `@modelcontextprotocol/sdk`. Do not add `axe-core`. The server instructions name axe-core-in-Playwright as the runtime companion — that's prose, not a dependency.
+In-house JSON-RPC 2.0 (`src/mcp/server.ts`), ~200 lines. Do not add `@modelcontextprotocol/sdk`. Do not bundle any runtime scanner as a dependency.
 
 ### Don't bundle runtime test generation
 
-Agents keep suggesting a `runtime_plan` tool or axe-playwright scaffolder. **No.** Different architecture (rendered DOM vs source), different product. ra11y points at the companion; it doesn't own it.
+Agents keep suggesting a `runtime_plan` tool or a runtime-harness scaffolder. **No.** Different architecture (rendered DOM vs source), different product.
 
 ### Coverage reports raw counts, not composite percentages
 
@@ -88,7 +88,7 @@ Patterns that look like improvements but aren't:
 
 1. **Re-adding a projectConfig cache.** Silent staleness is worse than a cheap reload.
 2. **Adding an `info` → `note` severity rename.** 100+ files; the confidence field already carries the signal.
-3. **Bundling axe-core or any runtime tester.** Different architecture, different zero-dep story.
+3. **Bundling a runtime tester of any kind.** Different architecture, different zero-dep story.
 4. **Hiding files by size threshold.** The user's call via `.gitignore` or `--exclude`, not ours.
 5. **Name-heuristic allowlisting** (e.g., "components ending in `Button` are safe"). Will bite on the first `MyButton` that wraps a `<div>`.
 6. **Composite coverage percentages** (passing / total including manual). Reads as failure; raw counts + summary prose is honest.

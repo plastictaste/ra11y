@@ -19,10 +19,10 @@ reconciling multiple sources of evidence per criterion:
    asserting "this criterion is satisfied (or not) for this reason."
    Today encoded as `<!-- ra11y-disable … -->` / `{/* ra11y-disable … */}`
    pragmas, filtered out at scan time rather than recorded as evidence.
-   Runtime-tool results (axe-core, Lighthouse, WAVE, Pa11y) also ride
-   on this kind — an agent runs the tool in its CI harness, reads the
-   vendor JSON, and calls `attest` with a reason citing the run. ra11y
-   does not ingest any vendor JSON schema directly.
+   Runtime-tool results also ride on this kind — an agent runs its
+   runtime harness in CI, reads the output, and calls `attest` with a
+   reason citing the run. ra11y does not ingest any vendor JSON schema
+   directly.
 4. **Sampling verdicts** — LLM-backed MCP sampling tools (ADR 0005
    follow-ups: `tool-verdict-candidate`, `tool-resolve-component`) emit
    per-candidate verdicts. No storage shape today.
@@ -166,19 +166,20 @@ MCP handlers in Phase 1.
 ## Amendment — 2026-04-18
 
 Dropped the `"runtime"` source kind from the union before any
-producer shipped. Vendor runtime scanners (axe-core, Lighthouse,
-WAVE, Pa11y) each have vendor-specific JSON schemas and
-vendor-specific rule-to-WCAG mappings; building an ingest adapter
-for any of them commits ra11y to that vendor's continued existence
-and shape. In the AI-first consumer model the agent is the
-integration layer — it runs the runtime tool in its CI harness,
-reads the output JSON with its existing tools, and calls `attest`
-with a descriptive `by` + `reason`. The resulting `attested` source
-carries full provenance without ra11y taking a vendor bet.
+producer shipped. Vendor runtime scanners each have vendor-specific
+JSON schemas and vendor-specific rule-to-WCAG mappings; building an
+ingest adapter for any of them commits ra11y to that vendor's
+continued existence and shape. In the AI-first consumer model the
+agent is the integration layer — it runs the runtime tool in its
+CI harness, reads the output with its existing tools, and calls
+`attest` with a descriptive `by` + `reason`. The resulting
+`attested` source carries full provenance without ra11y taking a
+vendor bet.
 
 `attested` gained an optional `verdict: "pass" | "fail" | "n/a"`
-field so an attestation can assert a failure state (e.g., "axe-core
-reported two violations") rather than being implicitly pass-only.
+field so an attestation can assert a failure state (e.g., "runtime
+harness reported two violations") rather than being implicitly
+pass-only.
 
 See `feedback_no_vendor_ingest_adapters` in auto-memory for the
 durable rule.

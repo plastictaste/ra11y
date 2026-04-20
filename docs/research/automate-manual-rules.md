@@ -184,7 +184,7 @@ Two independent reviewers pushed back. This section supersedes §3 on what to bu
 - **"Manual criterion never becomes a Rule" is false.** `src/rules/document/meta-refresh.ts` is a live Rule for SC 2.2.1/2.2.4/3.2.5 — criteria this report classified as manual. The Rule/CandidateFinder line is not as bright as §1 implies; some "manual" criteria have narrow slices already covered as Rules.
 - **`review/timing` double-counts `<meta refresh>`** — already a Rule. Drop that signal from the finder proposal. The remaining setTimeout/setInterval half is noisy (every debounce, poll, heartbeat) unless gated on session/idle/logout keywords, so Tier 1 placement is wrong.
 - **`review/flash` will fire on Tailwind `animate-pulse` / `animate-ping`** — both ship with WCAG-safe durations but match the opacity-toggling-infinite signal. Certification-surface boy-who-cried-wolf. Demote below Tier 2 until a precision-validated signal exists.
-- **"axe/eslint-jsx-a11y/Pa11y don't do this" is wrong.** axe has `incomplete` results. HTML_CodeSniffer emits WCAG2AA warnings. Neither structures it as a first-class typed surface, but the *existence* of needs-review output is not novel.
+- **"No other static a11y tool emits needs-review output" is wrong.** Several tools expose "incomplete" or "warning" categories. None structure it as a first-class typed surface, but the *existence* of needs-review output is not novel.
 - **VPAT integration is scaffolded, not built.** `src/reports/vpat.ts:133` emits generic "Not Evaluated" remarks today. Candidates do not flow through to the VPAT Remarks column. Treating VPAT-native output as a current feature is incorrect — it's a gap.
 - **Fixture maintenance cost understated.** `tests/fixtures/real-world/` does not exist. "Need 30 per finder" is really "need to start the corpus from zero."
 - **Reviewer-budget cap of 20/criterion/page is theatrical** on a 200-page site.
@@ -202,7 +202,7 @@ Promotions and demotions after review:
 
 ### Revised moat framing
 
-The moat is **not** "we have more finders than axe." It's the *workflow*: typed `CandidateFinder` → `ReviewCandidate[]` → persisted reviewer verdicts → VPAT evidence. Finders are the input; the differentiation is the full loop.
+The moat is **not** finder count. It's the *workflow*: typed `CandidateFinder` → `ReviewCandidate[]` → persisted reviewer verdicts → VPAT evidence. Finders are the input; the differentiation is the full loop.
 
 Ranked by hardness to copy and impact:
 
