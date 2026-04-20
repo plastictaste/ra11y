@@ -269,6 +269,61 @@ describe("propose_baseline: wrapper-undetected", () => {
   });
 });
 
+describe("propose_baseline: dedupe by findingId", () => {
+  // Regression: bootstrap scan of a real external codebase observed
+  // four `proposed[]` entries sharing `findingId c841a8fbf136` at
+  // `tooltip.html` (tooltip/dismissable fires once per interactive
+  // element carrying `title`, and identical line-context hashes for
+  // co-located violations collapse to the same findingId). Identical
+  // id = same finding, so `proposed[]` must emit it once — otherwise
+  // `counts.unclassified` inflates and `baseline mode:"create"` would
+  // persist duplicate entries to `.ra11y-baseline.json`.
+  //
+  // Synthetic stream: three `<button title="…">` on a single line
+  // share the same (ruleId, filePath, ±3-line source window) and
+  // therefore the same findingId; the handler must dedupe to one.
+  it("collapses violations that share a findingId to a single proposed entry", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "tooltip.html"),
+        '<!DOCTYPE html><html><head></head><body><button title="a">A</button><button title="b">B</button><button title="c">C</button></body></html>\n',
+      );
+      const body = await callTool(dir);
+      const tooltipEntries = body.proposed.filter((e) => e.ruleId === "tooltip/dismissable");
+      expect(tooltipEntries.length).toBeGreaterThan(0);
+      const findingIds = tooltipEntries.map((e) => e.findingId);
+      const unique = new Set(findingIds);
+      // All three violations collapse to one findingId (same line-context
+      // hash) — so after dedup we emit exactly one entry, not three.
+      expect(unique.size).toBe(findingIds.length);
+      expect(findingIds.length).toBe(1);
+    });
+  });
+
+  // Invariant guard: under any scan, `proposed[]` must never emit two
+  // entries with the same findingId. Sum of counts already equals
+  // `proposed.length` (invariants test); combined with this check, the
+  // response is now internally consistent — each finding contributes
+  // exactly once to exactly one reason bucket.
+  it("never emits two proposed entries with the same findingId", async () => {
+    await withScratch(async (dir) => {
+      // Mix of fixture shapes likely to produce a range of findings so
+      // the invariant is exercised across rules.
+      await writeFile(
+        join(dir, "page.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"><button title="x">X</button></body></html>\n',
+      );
+      await writeFile(
+        join(dir, "vendor.min.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/b.png"></body></html>\n',
+      );
+      const body = await callTool(dir);
+      const ids = body.proposed.map((e) => e.findingId);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+  });
+});
+
 describe("propose_baseline: unclassified default", () => {
   // Default bucket: a plain source-tree finding with no third-party
   // marker, no legacy glob, no design-system glob, no assumed-wrapper

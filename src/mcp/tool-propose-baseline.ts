@@ -175,12 +175,26 @@ export const proposeBaselineTool: McpTool = {
       level: session.config.level,
     });
 
-    const proposed = buildProposedEntries({
+    const rawProposed = buildProposedEntries({
       violations: result.violations,
       root,
       assumedWrappers: assumedSet,
       legacyMatcher,
       designMatcher,
+    });
+
+    // Dedupe by `findingId` — first-seen wins, order preserved. A stable
+    // `findingId` is a 12-hex SHA-256 truncation of the finding group
+    // key (see Q2-GROUPKEY); multiple `Violation` objects collapsing to
+    // the same id represent the same finding, not separate ones. Emitting
+    // duplicates inflates `counts.unclassified` and would persist dup
+    // entries to `.ra11y-baseline.json` if `baseline mode:"create"` ran
+    // against this proposal.
+    const seen = new Set<string>();
+    const proposed: typeof rawProposed = rawProposed.filter((e) => {
+      if (seen.has(e.findingId)) return false;
+      seen.add(e.findingId);
+      return true;
     });
 
     const counts = tallyReasons(proposed);
