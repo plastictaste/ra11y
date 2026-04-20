@@ -75,26 +75,41 @@ Each dispatch prompt includes:
 - The backlog item verbatim.
 - Pointers to `CLAUDE.md`, relevant `docs/kb/patterns/…`, and recent ADRs that govern the decision space.
 - An explicit "commit your own work before returning" instruction (per `CLAUDE.md` §11).
+- **Anti-stash rule (non-negotiable):** "Your worktree is isolated — the initial state is clean. Do not run `git stash` for any reason. If you encounter unexpected dirt in your worktree, treat it as a bug: stop and report, do not stash, do not `git clean`, do not `checkout --`. Commit only the changes you authored."
+- **Scope-lock rule:** "Edit only files listed in the backlog item and their direct test / snapshot / changelog counterparts. If an edit you think you need falls outside that set, stop and report."
 
-### 3. Dispatch — parallel, same message
+### 3. Dispatch — parallel, worktree-isolated
 
-**Send all 3 Agent calls in a single assistant message with multiple tool-use content blocks.** Do not dispatch serially. This is the single biggest velocity lever this skill unlocks; honor it.
+**Each parallel Agent call MUST pass `isolation: "worktree"`.** This is the single biggest safety lever this skill unlocks; never dispatch parallel work without it.
+
+Why: without isolation, every agent shares the main-session working tree. When agent A finishes its work and tries to commit, it finds dirty WIP from agent B still in the tree — the default reflex is `git stash` to clean-commit, which silently parks B's work. B then returns to a tree it no longer recognizes. We saw this failure mode in production; it created a 78-stash pile of parallel-tree debris and lost agent work. Worktrees make the race impossible.
+
+**Dispatch envelope:**
+
+- Send all 3 Agent calls in a single assistant message with multiple tool-use content blocks — in parallel, not serially.
+- Every call to a parallel item uses `isolation: "worktree"`.
+- Main-session items (scripts / docs/adr / release) run inline in the shared tree and count toward the 3-call budget. When a main-session item is in-flight, no other parallel Agent may dispatch that turn — the shared tree is not isolated and a parallel worktree-based agent branching from HEAD would miss the main-session's in-flight changes.
 
 Fanout limits — non-negotiable:
 
 - Never more than **3 concurrent** Agent calls in one turn. Keeps the audit log readable and sidesteps rate-limit edge cases.
 - Never **two agents on the same track** in the same turn. Within a track, items may touch overlapping files; serializing inside a track avoids merge conflicts.
-- Main-session items ("scripts, docs/adr, release") run inline on the main session and count toward the 3-call budget.
+- Never **two agents touching the same file** in the same turn, regardless of track. Inspect the backlog item's file:line anchor and serialize across turns if file-sets overlap.
 
-### 4. Collect results
+### 4. Collect results — serialized integration
 
-When all dispatched calls return:
+Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`.
 
-1. For each specialist, confirm it committed its own work: `git log --oneline <pre-turn-HEAD>..HEAD` should show commits by the specialist.
-2. Run `/verify`. If it fails:
-   - If the failure is clearly attributable to one specialist's change, re-dispatch that one with the verify output as feedback. Max 1 re-dispatch per item — if it still fails, mark that item BLOCKED and `git revert` the broken commits before continuing.
-   - If the failure is cross-cutting (multiple specialists contributed), stop the loop and report. Don't guess-revert.
-3. For each successful item, replace `- [ ]` with `- [x]` on the matching backlog line. Commit: `chore(backlog): check off <short item label>` — one commit per turn, batching all checked-off items.
+Integration loop (serialize, one agent at a time):
+
+1. For each returned `{ branch }` that has commits not on `main`:
+   a. `git cherry-pick <branch>` (or `git merge --ff-only <branch>` if the agent branched from the current HEAD and no earlier cherry-pick moved HEAD forward — fast-forward is cleaner when possible).
+   b. `bun run verify`. If it fails:
+      - If attributable to the just-picked branch, `git reset --hard HEAD~<n>` and mark the item BLOCKED in the turn summary. Do not re-dispatch on this turn — the worktree is gone; re-dispatch on the next turn with the verify output as feedback.
+      - If attributable to an earlier pick interacting badly with this one, stop the loop and report. Don't guess-revert.
+2. For each worktree whose agent reported "no changes," nothing to integrate.
+3. After all branches are integrated and `bun run verify` is green, replace `- [ ]` with `- [x]` on each completed backlog item. Commit: `chore(backlog): check off <short item label>` — one commit per turn, batching all checked-off items.
+4. **Never leave worktrees behind.** After integration, if the Agent tool didn't auto-clean, remove worktrees that were merged: `git worktree remove <path>` and `git branch -D <branch>`. If the agent made no changes, the tool already cleaned up.
 
 ### 5. Loop
 
