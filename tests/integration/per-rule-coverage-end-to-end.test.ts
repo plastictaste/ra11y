@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { type ParsedFile, runScan } from "../../src/engine/scanner.ts";
-import { parseCss, parseTsx } from "../../src/input/parsers/index.ts";
+import { parseCss, parseHtml, parseTsx } from "../../src/input/parsers/index.ts";
 import { buildRuleCoverageDerivative } from "../../src/mcp/rule-coverage-derivative.ts";
 import { BUILTIN_RULES } from "../../src/rules/index.ts";
 import { wcag22 } from "../../src/standards/wcag22/standard.ts";
@@ -29,6 +29,12 @@ function tsxFile(path: string, source: string): ParsedFile {
 function cssFile(path: string, source: string): ParsedFile {
   const parsed = parseCss(source);
   const ast: Ast = { language: "css", root: parsed.root, errors: parsed.errors };
+  return { filePath: path, source, ast };
+}
+
+function htmlFile(path: string, source: string): ParsedFile {
+  const parsed = parseHtml(source);
+  const ast: Ast = { language: "html", root: parsed.root, errors: parsed.errors };
   return { filePath: path, source, ast };
 }
 
@@ -112,5 +118,41 @@ describe("per-rule coverage end-to-end", () => {
     for (const row of perRuleCoverage) {
       expect(typeof row.findingsEmitted).toBe("number");
     }
+  });
+
+  // V1-NOISE-RULE-PER-FILE-ROLLUP: the per-rule concentration hint
+  // surfaces end-to-end through the scanner's `perRuleCoverage` array
+  // when one file's findings clear both thresholds. Canonical fixture:
+  // `media/alt-text-missing` firing 12× on one page and 1× on another —
+  // total 13 (> 10) and share 12/13 ≈ 0.92 (> 0.5).
+  it("stamps concentration on a per-rule row when one file dominates past both thresholds", () => {
+    const densePage = `<!doctype html><html lang="en"><head><title>gallery</title></head><body>${Array.from(
+      { length: 12 },
+      (_, i) => `<img src="img-${i}.png">`,
+    ).join("\n")}</body></html>`;
+    const otherPage = `<!doctype html><html lang="en"><head><title>other</title></head><body><img src="lone.png"></body></html>`;
+    const files = [
+      htmlFile("site/gallery.html", densePage),
+      htmlFile("site/other.html", otherPage),
+    ];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const row = perRuleCoverage.find((r) => r.ruleId === "media/alt-text-missing");
+    expect(row).toBeDefined();
+    // Sanity check: the fixture produced the expected total.
+    const emitted = result.violations.filter((v) => v.ruleId === "media/alt-text-missing").length;
+    expect(emitted).toBeGreaterThan(10);
+    expect(row!.findingsEmitted).toBe(emitted);
+    expect(row!.concentration).toBeDefined();
+    expect(row!.concentration!.file).toBe("site/gallery.html");
+    // Densest file holds a strict majority — the exact number depends
+    // on rule internals (alt-text-missing may also flag adjacent img
+    // patterns), but the winner's count must be > half the total.
+    expect(row!.concentration!.count).toBeGreaterThan(emitted / 2);
   });
 });

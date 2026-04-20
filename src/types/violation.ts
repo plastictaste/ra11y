@@ -242,6 +242,13 @@ export interface Violation {
  *   - `reason` / `remediation` — populated only on low-confidence
  *     entries, per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
  *     (conditional spread at the response-assembly site).
+ *   - `concentration` — present only when the rule's findings cluster
+ *     heavily on a single file (total > threshold, densest-file share
+ *     > threshold). Honest hint, not a suppression — every finding
+ *     remains in `files[].findings`; the field points the agent at the
+ *     file where the idiom likely lives so a single read can triage
+ *     many candidates. Omitted entirely when the rule doesn't clear
+ *     both thresholds (V1-NOISE-RULE-PER-FILE-ROLLUP).
  *
  * Rules with `scope: "project"` and no `appliesTo.fileExtensions` (e.g.
  * `focus/outline-visible`) are not tracked — the concept doesn't apply.
@@ -270,6 +277,21 @@ export interface PerRuleCoverage {
   readonly coverageConfidence: "high" | "low";
   readonly reason?: string;
   readonly remediation?: string;
+  /**
+   * Honest per-rule file-concentration hint: when a rule's findings
+   * cluster on one file (total > {@link findingsEmitted} threshold AND
+   * densest-file share strictly exceeds 50%), points at that file with
+   * its finding count. Zero information loss — every finding stays in
+   * `files[].findings`; this is additive scan-confidence telemetry on
+   * top of the per-rule row so agents can read the idiom's home once
+   * instead of N times. Omitted (conditional spread) when the rule
+   * doesn't clear both thresholds, per CLAUDE.md §1 "Ambiguous field
+   * shapes are dishonest" (V1-NOISE-RULE-PER-FILE-ROLLUP).
+   */
+  readonly concentration?: {
+    readonly file: string;
+    readonly count: number;
+  };
 }
 
 /** Aggregate result of a full scan. */

@@ -35,6 +35,29 @@ import type { StandardFilter } from "./standard-filter.ts";
 const MIN_FILES_FOR_HIGH_CONFIDENCE = 1;
 
 /**
+ * Minimum total-findings-per-rule before a per-file concentration hint
+ * is worth stamping on a {@link PerRuleCoverage} row. Below this floor
+ * the "one file dominates" observation is statistical noise — a rule
+ * with 3 findings, all on one file, tells the agent nothing it can't
+ * see from the underlying `files[].findings` listing. Surface-don't-
+ * suppress: the findings themselves are always present; this gates
+ * only the additive hint (V1-NOISE-RULE-PER-FILE-ROLLUP).
+ */
+const RULE_CONCENTRATION_MIN_TOTAL = 10;
+
+/**
+ * Minimum share of a rule's findings that must land on a single file
+ * for the concentration hint to fire. Strictly greater than the
+ * threshold — an exact 50/50 split is not concentrated. Paired with
+ * {@link RULE_CONCENTRATION_MIN_TOTAL}, these threshold choices are
+ * deliberately honest about what the hint names: "one file is where
+ * the idiom lives" is only true when the file holds a clear majority
+ * of the rule's findings, not just a plurality
+ * (V1-NOISE-RULE-PER-FILE-ROLLUP).
+ */
+const RULE_CONCENTRATION_MIN_SHARE = 0.5;
+
+/**
  * Derives {@link PerRuleCoverage} entries from the tracker the rule
  * runner filled during the scan loop. One entry per active rule that
  * carries an `appliesTo.fileExtensions` constraint (the shape the
@@ -57,6 +80,15 @@ const MIN_FILES_FOR_HIGH_CONFIDENCE = 1;
  * violations are the right input here: per-rule coverage describes
  * what the engine itself observed, not the post-severity / post-skip
  * view a particular consumer sees.
+ *
+ * `concentration` (V1-NOISE-RULE-PER-FILE-ROLLUP) is computed in the
+ * same linear pass over violations. It is stamped on the row only when
+ * both thresholds clear ({@link RULE_CONCENTRATION_MIN_TOTAL} and
+ * {@link RULE_CONCENTRATION_MIN_SHARE}); otherwise omitted via
+ * conditional spread. The hint never hides or groups findings — every
+ * violation continues to ship in `files[].findings`; this is additive
+ * telemetry pointing the agent at the densest file so one read triages
+ * many candidates.
  */
 export function buildPerRuleCoverage(
   tracker: RuleEvaluationTracker,
@@ -65,6 +97,7 @@ export function buildPerRuleCoverage(
   violations: readonly Violation[],
 ): readonly PerRuleCoverage[] {
   const findingsByRule = countFindingsByRule(violations);
+  const densestByRule = densestFileByRule(violations);
   const out: PerRuleCoverage[] = [];
   const ruleById = new Map<string, Rule>();
   for (const r of rules) ruleById.set(r.id, r);
@@ -78,8 +111,16 @@ export function buildPerRuleCoverage(
     const counts = tracker.counts.get(id);
     if (!counts) continue;
     const findingsEmitted = findingsByRule.get(id) ?? 0;
+    const concentration = computeConcentration(findingsEmitted, densestByRule.get(id));
     out.push(
-      buildCoverageEntry(id, counts.eligible, counts.evaluated, findingsEmitted, extensions),
+      buildCoverageEntry(
+        id,
+        counts.eligible,
+        counts.evaluated,
+        findingsEmitted,
+        extensions,
+        concentration,
+      ),
     );
   }
   return out;
@@ -101,6 +142,85 @@ function countFindingsByRule(violations: readonly Violation[]): ReadonlyMap<stri
 }
 
 /**
+ * Densest file per rule — one linear pass tallying
+ * (ruleId, filePath) pairs, then picking the winner per rule. Ties on
+ * max count are broken by lexicographic smallest filePath so cross-run
+ * output is deterministic even when two files share the peak. Used
+ * only for the optional `concentration` hint — the map is built
+ * regardless of thresholds; {@link computeConcentration} decides
+ * whether to stamp the row (V1-NOISE-RULE-PER-FILE-ROLLUP).
+ */
+function densestFileByRule(
+  violations: readonly Violation[],
+): ReadonlyMap<string, { file: string; count: number }> {
+  // Per-(rule, file) tallies built in one pass over the violation
+  // stream — cheaper than re-walking `files[].findings[]` at the
+  // consumer, and reuses the same input {@link countFindingsByRule}
+  // already scans.
+  const perRule = new Map<string, Map<string, number>>();
+  for (const v of violations) {
+    let byFile = perRule.get(v.ruleId);
+    if (!byFile) {
+      byFile = new Map<string, number>();
+      perRule.set(v.ruleId, byFile);
+    }
+    const file = v.location.filePath;
+    byFile.set(file, (byFile.get(file) ?? 0) + 1);
+  }
+  const out = new Map<string, { file: string; count: number }>();
+  for (const [ruleId, byFile] of perRule.entries()) {
+    const best = pickDensest(byFile);
+    if (best !== undefined) out.set(ruleId, best);
+  }
+  return out;
+}
+
+/**
+ * Picks the densest (file, count) entry from a per-file count map.
+ * Larger count wins; ties break by lexicographic smallest path so the
+ * result is deterministic across runs. Extracted from
+ * {@link densestFileByRule} to keep the caller's cognitive complexity
+ * under Biome's noExcessiveCognitiveComplexity threshold.
+ */
+function pickDensest(
+  byFile: ReadonlyMap<string, number>,
+): { file: string; count: number } | undefined {
+  let best: { file: string; count: number } | undefined;
+  for (const [file, count] of byFile.entries()) {
+    if (best === undefined) {
+      best = { file, count };
+    } else if (count > best.count || (count === best.count && file < best.file)) {
+      best = { file, count };
+    }
+  }
+  return best;
+}
+
+/**
+ * Decides whether to emit the `concentration` hint for a rule given
+ * its total finding count and densest file. Returns `undefined` when
+ * either threshold fails, so the caller spreads conditionally and the
+ * field is absent (not `null`, not an empty object) per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest"
+ * (V1-NOISE-RULE-PER-FILE-ROLLUP).
+ *
+ * Thresholds:
+ *   - total findings > {@link RULE_CONCENTRATION_MIN_TOTAL} (strict)
+ *   - densest / total > {@link RULE_CONCENTRATION_MIN_SHARE} (strict —
+ *     an exact 50/50 split is not concentrated)
+ */
+function computeConcentration(
+  findingsEmitted: number,
+  densest: { file: string; count: number } | undefined,
+): { file: string; count: number } | undefined {
+  if (findingsEmitted <= RULE_CONCENTRATION_MIN_TOTAL) return undefined;
+  if (densest === undefined) return undefined;
+  const share = densest.count / findingsEmitted;
+  if (share <= RULE_CONCENTRATION_MIN_SHARE) return undefined;
+  return { file: densest.file, count: densest.count };
+}
+
+/**
  * Assembles one {@link PerRuleCoverage} record. Low-confidence branches
  * name the condition (`"no files matching …"` vs `"all eligible files
  * were excluded or empty"`) and supply a one-line remediation the
@@ -109,6 +229,9 @@ function countFindingsByRule(violations: readonly Violation[]): ReadonlyMap<stri
  * remediation — the fields are present-when-meaningful (CLAUDE.md §1
  * "Ambiguous field shapes are dishonest"). `findingsEmitted` is
  * always populated (including zero) per V1-SHAPE-RULECOV-COUNT.
+ * `concentration` is spread conditionally on every branch — omitted
+ * (never `null`, never empty-object) when thresholds don't clear
+ * (V1-NOISE-RULE-PER-FILE-ROLLUP).
  */
 function buildCoverageEntry(
   ruleId: string,
@@ -116,7 +239,9 @@ function buildCoverageEntry(
   evaluated: number,
   findingsEmitted: number,
   extensions: readonly string[],
+  concentration: { file: string; count: number } | undefined,
 ): PerRuleCoverage {
+  const concentrationSpread = concentration ? { concentration } : {};
   if (eligible === 0) {
     return {
       ruleId,
@@ -126,6 +251,7 @@ function buildCoverageEntry(
       coverageConfidence: "low",
       reason: `no files matching ${extensions.join(", ")} were scanned`,
       remediation: `add ${primaryExtension(extensions)} source files to the scan path, or pass \`additionalPaths\` when the content is compiled output (e.g. \`additionalPaths: ["dist/assets"]\` for Tailwind)`,
+      ...concentrationSpread,
     };
   }
   if (evaluated < MIN_FILES_FOR_HIGH_CONFIDENCE) {
@@ -137,6 +263,7 @@ function buildCoverageEntry(
       coverageConfidence: "low",
       reason: "all eligible files were excluded or empty",
       remediation: "check exclude patterns and file contents",
+      ...concentrationSpread,
     };
   }
   return {
@@ -145,6 +272,7 @@ function buildCoverageEntry(
     filesEligible: eligible,
     findingsEmitted,
     coverageConfidence: "high",
+    ...concentrationSpread,
   };
 }
 
