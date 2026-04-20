@@ -37,7 +37,14 @@ import {
 } from "../../config/profiles.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
-import { parseCss, parseHtml, parseMdx, parseScss, parseTsx } from "../../input/parsers/index.ts";
+import {
+  parseAstro,
+  parseCss,
+  parseHtml,
+  parseMdx,
+  parseScss,
+  parseTsx,
+} from "../../input/parsers/index.ts";
 import { createGitStalenessProbe } from "../../reports/attestation-surface.ts";
 import {
   buildConformanceStatement,
@@ -380,6 +387,10 @@ function parseFor(filePath: string, source: string): Ast | null {
   if (filePath.endsWith(".mdx")) {
     const r = parseMdx(source);
     return { language: "tsx", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".astro")) {
+    const r = parseAstro(source);
+    return { language: "html", root: r.root, errors: r.errors };
   }
   if (
     filePath.endsWith(".tsx") ||

@@ -288,6 +288,7 @@ function primaryExtension(extensions: readonly string[]): string {
   if (head === ".scss") return "SCSS";
   if (head === ".html" || head === ".htm") return "HTML";
   if (head === ".mdx") return "MDX";
+  if (head === ".astro") return "Astro";
   if (head === ".tsx" || head === ".jsx" || head === ".ts" || head === ".js") {
     return "JSX/TSX";
   }
