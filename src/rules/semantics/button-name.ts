@@ -107,7 +107,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
 function checkHtmlNativeButtons(doc: HtmlDocument, emit: Emit): void {
   for (const button of findHtmlElementsByTag(doc, "button")) {
     if (hasAccessibleNameHtml(button)) continue;
-    emit(buildViolation("button", button.loc.start));
+    emit(buildViolation("button", button.loc.start, describeIconChildHtml(button)));
   }
 }
 
@@ -116,7 +116,9 @@ function checkHtmlInputButtons(doc: HtmlDocument, emit: Emit): void {
     if (!isButtonInputHtml(input)) continue;
     if (hasInputButtonNameHtml(input)) continue;
     const type = (getHtmlAttribute(input, "type") ?? "").toLowerCase();
-    emit(buildViolation(`input type="${type}"`, input.loc.start));
+    const iconCtx =
+      type === "image" ? describeImageInputHtml(input) : ({ kind: "empty" } satisfies IconContext);
+    emit(buildViolation(`input type="${type}"`, input.loc.start, iconCtx));
   }
 }
 
@@ -126,7 +128,7 @@ function checkHtmlRoleButtons(doc: HtmlDocument, emit: Emit): void {
     if (lowered === "button" || lowered === "input") continue;
     if (getHtmlAttribute(el, "role")?.toLowerCase() !== "button") continue;
     if (hasAccessibleNameHtml(el)) continue;
-    emit(buildViolation(`${el.tagName} role="button"`, el.loc.start));
+    emit(buildViolation(`${el.tagName} role="button"`, el.loc.start, describeIconChildHtml(el)));
   }
 }
 
@@ -234,7 +236,7 @@ function checkJsxNativeButtons(
     if (seen.has(button)) continue;
     seen.add(button);
     if (hasAccessibleNameJsx(button)) continue;
-    emit(buildJsxViolation("button", button));
+    emit(buildJsxViolation("button", button, describeIconChildJsx(button)));
   }
 }
 
@@ -243,7 +245,9 @@ function checkJsxInputButtons(module: TsxModule, emit: Emit): void {
     if (!isButtonInputJsx(input)) continue;
     if (hasInputButtonNameJsx(input)) continue;
     const type = getJsxAttributeString(input, "type") ?? "";
-    emit(buildJsxViolation(`input type="${type}"`, input));
+    const iconCtx =
+      type === "image" ? describeImageInputJsx(input) : ({ kind: "empty" } satisfies IconContext);
+    emit(buildJsxViolation(`input type="${type}"`, input, iconCtx));
   }
 }
 
@@ -252,11 +256,11 @@ function checkJsxRoleButtons(module: TsxModule, emit: Emit): void {
     if (el.tagName === "button" || el.tagName === "input") continue;
     if (getJsxAttributeString(el, "role") !== "button") continue;
     if (hasAccessibleNameJsx(el)) continue;
-    emit(buildJsxViolation(`${el.tagName} role="button"`, el));
+    emit(buildJsxViolation(`${el.tagName} role="button"`, el, describeIconChildJsx(el)));
   }
 }
 
-function buildJsxViolation(subject: string, el: JsxElement) {
+function buildJsxViolation(subject: string, el: JsxElement, icon: IconContext) {
   const loc = { filePath: "", line: el.loc.start.line, column: el.loc.start.column };
   if (el.hasSpreadProps) {
     return {
@@ -270,7 +274,7 @@ function buildJsxViolation(subject: string, el: JsxElement) {
     severity: "error" as const,
     location: loc,
     message: `<${subject}> has no accessible name — screen readers will announce it as "button" with no action.`,
-    suggestion: `Add visible text, aria-label="…", or aria-labelledby="<id>". If the button is icon-only, aria-label is the standard fix: <button aria-label="Close dialog"><svg>…</svg></button>.`,
+    suggestion: buildIconAwareSuggestion(subject, icon),
   };
 }
 
@@ -368,6 +372,7 @@ function hasImageInputNameJsx(element: JsxElement): boolean {
 function buildViolation(
   subject: string,
   loc: { line: number; column: number },
+  icon: IconContext,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
@@ -378,6 +383,123 @@ function buildViolation(
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<${subject}> has no accessible name — screen readers will announce it as "button" with no action.`,
-    suggestion: `Add visible text, aria-label="…", or aria-labelledby="<id>". If the button is icon-only, aria-label is the standard fix: <button aria-label="Close dialog"><svg>…</svg></button>.`,
+    suggestion: buildIconAwareSuggestion(subject, icon),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Icon-child inspection for context-aware fix suggestions.
+// ---------------------------------------------------------------------------
+
+/**
+ * What the unnamed button/role=button is currently wrapping — if
+ * anything. Drives the fix text so the agent gets a concrete
+ * aria-label candidate rather than a generic "add a name".
+ */
+type IconContext =
+  | { kind: "svg-no-title" }
+  | { kind: "img"; subject: string | null }
+  | { kind: "empty" };
+
+function describeIconChildHtml(element: HtmlElement): IconContext {
+  // The caller has already confirmed no accessible name — so
+  // htmlTextContent is empty, no SVG <title>/<text> descendant has
+  // text, and no child <img alt="…"> exists. We just need to know
+  // whether the icon shell is an <svg>, <img>, or nothing.
+  for (const child of element.children) {
+    if (child.kind !== "HtmlElement") continue;
+    const tag = child.tagName.toLowerCase();
+    if (tag === "svg") return { kind: "svg-no-title" };
+    if (tag === "img") {
+      const src = getHtmlAttribute(child, "src");
+      return { kind: "img", subject: src ? subjectFromSrc(src) : null };
+    }
+  }
+  return { kind: "empty" };
+}
+
+function describeIconChildJsx(element: JsxElement): IconContext {
+  for (const child of element.children) {
+    if (child.kind !== "JsxElement") continue;
+    if (child.tagName === "svg") return { kind: "svg-no-title" };
+    if (child.tagName === "img") {
+      const src = getJsxAttributeString(child, "src");
+      return { kind: "img", subject: src ? subjectFromSrc(src) : null };
+    }
+  }
+  return { kind: "empty" };
+}
+
+function describeImageInputHtml(input: HtmlElement): IconContext {
+  const src = getHtmlAttribute(input, "src");
+  return { kind: "img", subject: src ? subjectFromSrc(src) : null };
+}
+
+function describeImageInputJsx(input: JsxElement): IconContext {
+  const src = getJsxAttributeString(input, "src");
+  return { kind: "img", subject: src ? subjectFromSrc(src) : null };
+}
+
+/**
+ * Derive a Title-Cased action-verb candidate from an image src. The
+ * source filename is the strongest static signal we have for what
+ * the icon is ("close.svg" → "Close", "icons/trash-bin.png" →
+ * "Trash Bin"). Mirrors the `guessSubject` helper in
+ * `media/alt-text-missing` (rules are pure — kept local to preserve
+ * CLAUDE.md §3 invariant 6's no-cross-rule-imports rule).
+ */
+function subjectFromSrc(src: string): string | null {
+  const slash = Math.max(src.lastIndexOf("/"), src.lastIndexOf("\\"));
+  const filename = slash === -1 ? src : src.slice(slash + 1);
+  const words = filename
+    .replace(/\.[a-zA-Z0-9]+$/, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  if (words.length === 0) return null;
+  return words
+    .split(/\s+/)
+    .map((w) => (w.length > 0 ? (w[0]?.toUpperCase() ?? "") + w.slice(1) : w))
+    .join(" ");
+}
+
+/**
+ * Build a context-aware suggestion that references the actual icon
+ * shell the button is wrapping. Three branches:
+ *
+ *   - `svg-no-title`: inline the two fixes — add `<title>` inside the
+ *     SVG (counts as accessible name via SVG 2) *or* `aria-label` on
+ *     the button. Names a concrete example verb to anchor the edit.
+ *   - `img` with derived subject: inline the filename-derived subject
+ *     as the aria-label / alt candidate.
+ *   - `img` without subject / `empty`: fall back to naming concrete
+ *     action-verb examples (Close, Submit, Save, Delete) rather than
+ *     the generic "add a name" placeholder the audit flagged.
+ */
+function buildIconAwareSuggestion(subject: string, icon: IconContext): string {
+  const host = `<${subject}>`;
+  const isImageInput = subject === 'input type="image"';
+  if (icon.kind === "svg-no-title") {
+    return `${host} wraps an <svg> with no <title>/<text> descendant. Two fixes: (1) add a <title> child inside the <svg> — e.g., <svg><title>Close</title>…</svg> — which counts toward the accessible name on the interactive ancestor (SVG 2 accessibility); or (2) add aria-label="Close" on the ${host}. Replace "Close" with the button's action verb (Submit, Save, Delete, etc.).`;
+  }
+  if (icon.kind === "img") {
+    const subjectHint = icon.subject ?? null;
+    if (isImageInput) {
+      // The image button IS the image — name alt on itself, not on a child.
+      if (subjectHint !== null) {
+        return `${host} has no accessible name. Set alt="${subjectHint}" on the input (derived from the src filename), or aria-label="${subjectHint}". Per HTML §4.10.5.1.18, value is not a name source for image buttons — only alt, aria-label, aria-labelledby, or title count. Verify the derived subject matches the button's actual action.`;
+      }
+      return `${host} has no accessible name. Add alt="<action>" on the input, or aria-label="<action>", where <action> is the button's verb (Close, Submit, Save, Delete). Per HTML §4.10.5.1.18, value is not a name source for image buttons.`;
+    }
+    if (subjectHint !== null) {
+      return `${host} wraps an <img> with no alt text. Set alt="${subjectHint}" on the <img> (derived from the src filename), or aria-label="${subjectHint}" on the ${host}. Verify the derived subject matches the button's actual action — the filename is a hint, not a guarantee.`;
+    }
+    return `${host} wraps an <img> with no alt text and no src to infer from. Add alt="<action>" on the <img>, or aria-label="<action>" on the ${host}, where <action> is the button's verb (Close, Submit, Save, Delete).`;
+  }
+  if (isImageInput) {
+    return `${host} has no accessible name and no src to infer from. Add alt="<action>" or aria-label="<action>", where <action> is the button's verb (Close, Submit, Save, Delete). Per HTML §4.10.5.1.18, value is not a name source for image buttons.`;
+  }
+  if (subject.startsWith("input ")) {
+    return `${host} has no accessible name. Set value="Close" (or the button's action verb — Submit, Save, Delete), or add aria-label="Close". For input type="submit"/"reset" a non-empty value is the canonical name source.`;
+  }
+  return `${host} is empty. Add visible text — e.g., <${subject}>Close</${subject}> — or aria-label="Close" for icon-only variants. Replace "Close" with the button's action verb (Submit, Save, Delete, etc.), and use aria-labelledby="<id>" when the label already exists as visible text elsewhere in the DOM.`;
 }

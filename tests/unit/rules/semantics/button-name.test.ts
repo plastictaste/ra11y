@@ -272,6 +272,102 @@ describe("rule semantics/button-name", () => {
     });
   });
 
+  describe("fix suggestions are context-aware (V1-FIX-BUTTON-NAME)", () => {
+    it("button wrapping <svg> (no title) names <title> + aria-label fixes by shell kind", () => {
+      const v = runRule(rule, `<button><svg><circle /></svg></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // Must cite the actual icon shell (<svg>) and both fix paths.
+      expect(suggestion).toContain("<svg>");
+      expect(suggestion).toContain("<title>");
+      expect(suggestion).toContain("aria-label");
+      // Must NOT fall back to the generic <button>Close</button> text.
+      expect(suggestion).not.toContain("Add visible text");
+    });
+
+    it("button wrapping <img> inlines filename-derived subject", () => {
+      const v = runRule(rule, `<button><img src="icons/trash-bin.png"></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // Derived subject "Trash Bin" is the name hint the agent needs.
+      expect(suggestion).toContain("Trash Bin");
+      expect(suggestion).toContain("alt=");
+      expect(suggestion).toContain("aria-label=");
+    });
+
+    it("empty <button> fallback suggests visible text with the host tag", () => {
+      const v = runRule(rule, `<button></button>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("Add visible text");
+      expect(suggestion).toContain("<button>Close</button>");
+      // Must NOT mention wrapping an <img> or <svg> — nothing was wrapped.
+      expect(suggestion).not.toContain("wraps an <img>");
+      expect(suggestion).not.toContain("wraps an <svg>");
+    });
+
+    it('<input type="image"> fix text names alt/title/aria-label and never suggests nested text', () => {
+      const v = runRule(rule, `<input type="image" src="icons/submit.png">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // It IS the image — don't describe it as "wraps an <img>".
+      expect(suggestion).not.toContain("wraps an <img>");
+      // Don't recommend nested text children — <input> is void.
+      expect(suggestion).not.toContain("Add visible text");
+      // Must name the valid name sources per HTML §4.10.5.1.18.
+      expect(suggestion).toContain("alt=");
+      expect(suggestion).toContain("aria-label=");
+      // Should surface the filename-derived subject hint.
+      expect(suggestion).toContain("Submit");
+    });
+
+    it('<input type="image"> with no src still names alt/aria-label, not nested children', () => {
+      const v = runRule(rule, `<input type="image">`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).not.toContain("Add visible text");
+      expect(suggestion).not.toContain("wraps an <img>");
+      expect(suggestion).toContain("alt=");
+      expect(suggestion).toContain("aria-label=");
+    });
+
+    it('<input type="submit"> with empty value suggests value= / aria-label, not nested children', () => {
+      const v = runRule(rule, `<input type="button" value="">`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // Input controls cannot contain text children — must not say so.
+      expect(suggestion).not.toContain("Add visible text");
+      expect(suggestion).toContain("value=");
+      expect(suggestion).toContain("aria-label=");
+    });
+
+    it('JSX <input type="image"> with src inlines filename-derived subject', () => {
+      const v = runRule(rule, `const X = <input type="image" src="icons/submit.png" />;`);
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).not.toContain("wraps an <img>");
+      expect(suggestion).not.toContain("Add visible text");
+      expect(suggestion).toContain("Submit");
+      expect(suggestion).toContain("alt=");
+      expect(suggestion).toContain("aria-label=");
+    });
+
+    it("JSX empty <button /> fallback does not reference wrapped img/svg", () => {
+      const v = runRule(rule, `const X = <button />;`);
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("Add visible text");
+      expect(suggestion).not.toContain("wraps an <img>");
+      expect(suggestion).not.toContain("wraps an <svg>");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

@@ -84,7 +84,7 @@ violation fires.
 | pointer/cancellation | guidance | context-aware | tagName, list of down-events | Maps each down-event to its correct up-event (`onMouseDown` → `onMouseUp`, `onTouchStart` → `onTouchEnd`). |
 | pointer/drag-alternative | guidance | context-aware | tagName, drag-signal tokens, imported library name | Element-level builder names the tag and the exact drag-signal that fired; file-level builder cites the imported library. |
 | pointer/target-size | guidance | context-aware | selector/tag, declared width/height, padding, measured size text | Computes the exact pixel delta and proposes concrete `width: 24px` / `height: 24px` / `padding` deltas to reach the 24×24 floor. |
-| semantics/button-name | guidance | generic | none (two static strings) | Error branch and primitive-props branch each emit the same canonical "Add visible text, aria-label, or aria-labelledby" text. Does not inspect icon-child, form context, or action verb. |
+| semantics/button-name | guidance | context-aware | host subject (button / a / input type=… / div role="button" / …), icon-child shell (svg-no-title / img-with-src / img-without-src / empty), filename-derived subject for `<img>` and `<input type="image">` src | `buildIconAwareSuggestion` branches on what the unnamed control is actually wrapping: SVG-icon branch names the `<svg><title>…</title></svg>` fix alongside `aria-label`; `<img>`-icon branch inlines a Title-Cased subject derived from the src filename (`icons/trash-bin.png` → `Trash Bin`) and proposes both `alt="Trash Bin"` on the image and `aria-label="Trash Bin"` on the host; `<input type="image">` branch never says "wraps an <img>" (it IS the image) and cites HTML §4.10.5.1.18 that value is not a name source; empty `<input type="submit/button/reset">` branch proposes `value="…"` or `aria-label="…"` (no nested children); empty `<button>` / `<a>` / `[role="button"]` fallback keeps the visible-text example anchored on the actual host tag. Resolved by commit pending. |
 | semantics/empty-heading | guidance | generic | tagName only | `Add descriptive text inside <${tagName}>` — tag is the only dynamism. Does not inspect sibling context or page title. |
 | semantics/heading-hierarchy | guidance | context-aware | previous level, current level | Inlines the exact `h${previous+1}` the heading should become, plus the gap width. |
 | semantics/label-in-name | guidance | context-aware | visible text, aria-label, interleaved-expansion detection, case-mismatch words | Ranked `fixPaths`; optional `editCandidate` when visible-text tokens are non-contiguous in the aria-label. |
@@ -99,14 +99,13 @@ violation fires.
 
 Verdict distribution:
 
-- context-aware: 47
-- generic: 5
+- context-aware: 48
+- generic: 4
 - caveat-only: 0
 
 Rules flagged `generic` (need per-rule `feat(rules): context-aware fix for <rule>` follow-up commits before v1.0):
 
 - `navigation/link-no-href`
-- `semantics/button-name`
 - `semantics/empty-heading`
 - `semantics/landmark-main`
 - `semantics/table-headers`
@@ -119,6 +118,7 @@ Resolved since publication (flipped to `context-aware`):
 - `document/page-titled` — V1-FIX-DOC-TITLE (commit 1a639b3).
 - `media/video-captions-missing` — V1-FIX-VIDEO-CAPTIONS (commit pending).
 - `forms/non-empty-label` — V1-FIX-NON-EMPTY-LABEL (commit pending).
+- `semantics/button-name` — V1-FIX-BUTTON-NAME (commit pending).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted
@@ -135,9 +135,6 @@ commitments; the implementer reads the rule file and decides:
 - `navigation/link-no-href`: inspect the onClick body — if it's navigation,
   recommend `href={route}`; if it's a mutation, recommend `<button>` and
   name the handler's identifier.
-- `semantics/button-name`: inspect icon-only (`<svg>` / `<img>` only child)
-  vs. empty; name the icon filename or svg title child when present as the
-  aria-label candidate.
 - `semantics/empty-heading`: cite the document's existing heading outline so
   the suggestion can reference the section's surrounding context.
 - `semantics/landmark-main`: when two `<main>` elements exist, name both by
@@ -147,10 +144,6 @@ commitments; the implementer reads the rule file and decides:
 - `semantics/table-headers`: inspect the first row — if it contains `<td>`
   elements whose text looks header-shaped (short, title-case), suggest
   converting those specific cells to `<th scope="col">`.
-- `semantics/button-name`: can adopt the "name a concrete candidate" pattern
-  already used by `forms/label-for-id-mismatch`, `aria/invalid-role`, and
-  `parsing/duplicate-id` (surface the best candidate by name; let the agent
-  accept or override).
 
 The v1.0 acceptance gate is zero `generic` rows in this table. Each
 follow-up commit MUST re-run this audit (manually for the row under change)
