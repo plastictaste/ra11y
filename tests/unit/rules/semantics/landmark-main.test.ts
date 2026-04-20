@@ -33,6 +33,78 @@ describe("rule semantics/landmark-main", () => {
     });
   });
 
+  describe("fix suggestion", () => {
+    it("inlines both ids when two <main> elements have distinct ids", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>h</header>",
+        '    <main id="app-main">one</main>',
+        '    <main id="legacy-main">two</main>',
+        "    <footer>f</footer>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain('<main id="app-main">');
+      expect(suggestion).toContain('<main id="legacy-main">');
+      expect(suggestion).toContain("line 4");
+      expect(suggestion).toContain("line 5");
+      expect(suggestion).toContain("<section>");
+    });
+
+    it("missing <main> suggestion mentions wrapping primary content and avoiding header/nav/footer", () => {
+      const v = runRule(
+        rule,
+        "<html><body><header>h</header><div>content</div><footer>f</footer></body></html>",
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("Wrap the primary content");
+      expect(suggestion).toContain("<header>");
+      expect(suggestion).toContain("<nav>");
+      expect(suggestion).toContain("<footer>");
+    });
+
+    it("falls back to line-only disambiguation when <main> elements have no ids", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>h</header>",
+        "    <main>one</main>",
+        "    <main>two</main>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("Multiple <main> elements at lines 4 and 5");
+      expect(suggestion).not.toContain('id="');
+    });
+
+    it('targets the attribute when multiple role="main" declarations exist', () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>h</header>",
+        '    <div role="main">one</div>',
+        '    <section role="main">two</section>',
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain('role="main"');
+      expect(suggestion).toContain("lines 4, 5");
+      expect(suggestion).toContain("Remove the attribute");
+    });
+  });
+
   describe("does NOT fire when", () => {
     it("a document has exactly one <main>", () => {
       const v = runRule(

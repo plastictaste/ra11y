@@ -88,7 +88,7 @@ violation fires.
 | semantics/empty-heading | guidance | generic | tagName only | `Add descriptive text inside <${tagName}>` — tag is the only dynamism. Does not inspect sibling context or page title. |
 | semantics/heading-hierarchy | guidance | context-aware | previous level, current level | Inlines the exact `h${previous+1}` the heading should become, plus the gap width. |
 | semantics/label-in-name | guidance | context-aware | visible text, aria-label, interleaved-expansion detection, case-mismatch words | Ranked `fixPaths`; optional `editCandidate` when visible-text tokens are non-contiguous in the aria-label. |
-| semantics/landmark-main | guidance | generic | none (two static strings) | Missing-main and extra-main branches each emit a constant. Does not inspect which `<section>` / `<article>` looks like the strongest main candidate. |
+| semantics/landmark-main | guidance | context-aware | tag, id, class, role, line, all-role-only flag | `buildMultipleMainSuggestion` ladder: all-`role="main"` branch inlines every binding's line and targets the attribute; `<main>` branch inlines each landmark's tag + `id=` / `class=` (+ role when role-bearing) and line for pairwise disambiguation; identity-free fallback degrades to line-only. Missing-`<main>` branch names the wrap target (primary article/content) and explicitly excludes `<header>` / `<nav>` / `<footer>`. Resolved by commit pending. |
 | semantics/list-structure | guidance | context-aware | parent tag, child tag, primitive-vs-wrong-child flag | Stray-li and primitive branches are tag-templated; wrong-child branch inlines both parent and child tags into the fix. |
 | semantics/nested-interactive | verify-in-source | context-aware | outer descriptor, inner descriptor, outer-open line number | `describeHtml` / `describeJsx` compose tag + identifying attrs into the descriptors; suggestion inlines both. |
 | semantics/table-headers | guidance | generic | none | Constant "Add `<th scope=\"col\">` cells in the first `<tr>`…" text. Does not inspect caption, layout-table signals, or cell structure. |
@@ -99,15 +99,14 @@ violation fires.
 
 Verdict distribution:
 
-- context-aware: 48
-- generic: 4
+- context-aware: 49
+- generic: 3
 - caveat-only: 0
 
 Rules flagged `generic` (need per-rule `feat(rules): context-aware fix for <rule>` follow-up commits before v1.0):
 
 - `navigation/link-no-href`
 - `semantics/empty-heading`
-- `semantics/landmark-main`
 - `semantics/table-headers`
 
 Resolved since publication (flipped to `context-aware`):
@@ -119,6 +118,7 @@ Resolved since publication (flipped to `context-aware`):
 - `media/video-captions-missing` — V1-FIX-VIDEO-CAPTIONS (commit pending).
 - `forms/non-empty-label` — V1-FIX-NON-EMPTY-LABEL (commit pending).
 - `semantics/button-name` — V1-FIX-BUTTON-NAME (commit cf53e34).
+- `semantics/landmark-main` — V1-FIX-LANDMARK-MAIN (commit pending).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted
@@ -137,10 +137,6 @@ commitments; the implementer reads the rule file and decides:
   name the handler's identifier.
 - `semantics/empty-heading`: cite the document's existing heading outline so
   the suggestion can reference the section's surrounding context.
-- `semantics/landmark-main`: when two `<main>` elements exist, name both by
-  id/class so the reader knows which to demote; missing-main branch can
-  highlight the largest top-level block (already captured in
-  `looksLikeFullPage`).
 - `semantics/table-headers`: inspect the first row — if it contains `<td>`
   elements whose text looks header-shaped (short, title-case), suggest
   converting those specific cells to `<th scope="col">`.
