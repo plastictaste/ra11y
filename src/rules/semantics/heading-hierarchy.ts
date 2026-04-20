@@ -17,7 +17,10 @@
  * Heading hierarchy is how screen-reader users navigate a page — the
  * virtual cursor jumps between headings with a shortcut key, and
  * skipped levels break the mental model of "this is a subsection of
- * that". Missing an <h1> leaves the user without a document title.
+ * that". SC 1.3.1 does not mandate an <h1>, but a document without
+ * one loses the single top-of-document landmark AT relies on; authors
+ * should verify the page has a designated main heading (via <h1> or
+ * an equivalent role="heading" aria-level="1").
  *
  * Document-scoped. Works on HTML (not JSX — JSX heading detection is
  * handled by the upcoming semantics/headings-non-empty rule because
@@ -41,9 +44,9 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "Heading levels must follow a logical hierarchy. A document must have an <h1>, and headings must not skip levels (e.g., h1 → h3).",
+      'Heading levels should follow a logical hierarchy without skipping levels (e.g., h1 → h3); a document without an <h1> should have a designated main heading via <h1> or role="heading" aria-level="1".',
     rationale:
-      "Screen-reader users navigate by heading with the H key. A skipped level (h1 → h3) tells them 'this is a sub-sub-section of something that doesn't exist', breaking their mental model of the page structure. Missing an <h1> leaves the user without a document title anchor.",
+      'Screen-reader users navigate by heading with the H key. A skipped level (h1 → h3) tells them "this is a sub-sub-section of something that doesn\'t exist", breaking their mental model of the page structure. SC 1.3.1 does not mandate an <h1>, but a document without one loses the single top-of-document landmark AT relies on; verify the page has a designated main heading via <h1> or role="heading" aria-level="1".',
     goodExample: `<h1>Page</h1>\n  <h2>Section</h2>\n    <h3>Detail</h3>`,
     badExample: `<h1>Page</h1>\n    <h3>Detail</h3>  <!-- skipped h2 -->`,
     normativeQuote:
@@ -100,7 +103,7 @@ function reportMissingH1(headings: readonly HeadingEntry[], emit: Emit): void {
     },
     message: `Document has no <h1>. The first heading is <${first.element.tagName}> at line ${first.element.loc.start.line}.`,
     suggestion:
-      "Add an <h1> with the page title. Screen-reader users rely on <h1> as the document-level anchor; most landmark-navigation shortcuts assume it's there.",
+      'A document without an <h1> loses the single top-of-document landmark AT relies on; verify the page has a designated main heading via <h1> or role="heading" aria-level="1". If this page is a fragment or layout intentionally rendered inside a parent with its own <h1>, suppress with <!-- ra11y-disable wcag22:1.3.1 -->.',
   });
 }
 
