@@ -92,6 +92,30 @@ The programmatic counterpart to `checklist`. Returns tier-1 candidates as a flat
 
 **Use when:** the agent wants to iterate candidates one-by-one, reading source + answering pass/fail per item.
 
+### `vpat`
+
+Produces a VPAT 2.5 Rev conformance report (VPAT 2.5 Rev INT when EN 301 549 is in scope) from a fresh scan plus any durable attestations. MCP companion to `ra11y --vpat`.
+
+Required inputs: `productName`, `productVersion`. Optional: `contactEmail`, `contactOrganization`, `evaluationMethods`, `notesOnEvaluation`, `cwd`, `additionalPaths`, `standards`, `level`, `format` (`"markdown"` or `"json"`).
+
+Response carries structured entries per criterion (`standards[].entries[]`) with conformance verdicts (`Supports`, `Partially Supports`, `Does Not Support`, `Not Applicable`, `Not Evaluated`), procurement-grade remarks, and a `nextStep` + `nextStepStructured` pair routing to the canonical follow-up tool (`scan_project` when failures are present, `attest` when manual criteria remain, `conformance_statement` otherwise).
+
+`format: "markdown"` additionally attaches `markdownRendering` — a ready-to-paste VPAT table. `format: "json"` (default) omits it; the structured entries are already the machine shape.
+
+Empty-string product metadata carries through `<Product Name>` / `<Product Version>` placeholders AND raises `warnings: ["product_metadata_placeholders_in_use"]` so the agent knows to prompt the user before distributing the VPAT. Additional warnings: `scanned_zero_files` (tool ran against an empty tree) and `no_config_found` (no `ra11y.config.*` resolved from `cwd`).
+
+```jsonc
+// Minimal VPAT generation against the current project:
+{
+  "productName": "Acme App",
+  "productVersion": "1.2.3",
+  "contactOrganization": "Acme Inc.",
+  "format": "markdown"
+}
+```
+
+**Use when:** drafting the procurement artifact — VPAT for a RFP response, compliance review, or release audit.
+
 ### `suppress`
 
 Writes a source-level `ra11y-disable-next-line` pragma above a target line so a specific finding stops firing on subsequent scans. Required inputs: `file`, `line` (1-based), `ruleId` (rule ID like `keyboard/handler-missing` or criterion ID like `wcag22:2.4.5`), `reason` (non-empty justification).
