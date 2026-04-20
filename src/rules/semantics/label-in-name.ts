@@ -101,18 +101,29 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
 /** Text content excluding aria-hidden subtrees — the text a sighted user sees. */
 function visibleTextHtml(element: HtmlElement): string {
   const chunks: string[] = [];
-  for (const child of element.children) visitHtmlVisible(child, chunks);
+  // <select>'s accessible name per HTML AAM / WCAG 2.5.3 is aria-label /
+  // aria-labelledby / <label for> — its <option> descendants are the
+  // widget's VALUE set, not its visible label. Skip option text so
+  // patterns like Bootstrap's floating-label <select> with placeholder
+  // options don't falsely fail Label-in-Name.
+  const hostIsSelect = element.tagName.toLowerCase() === "select";
+  for (const child of element.children) visitHtmlVisible(child, chunks, hostIsSelect);
   return chunks.join("").trim();
 }
 
-function visitHtmlVisible(node: HtmlElement["children"][number], chunks: string[]): void {
+function visitHtmlVisible(
+  node: HtmlElement["children"][number],
+  chunks: string[],
+  hostIsSelect: boolean,
+): void {
   if (node.kind === "HtmlText") {
     chunks.push(node.value);
     return;
   }
   if (node.kind !== "HtmlElement") return;
   if (getHtmlAttribute(node, "aria-hidden") === "true") return;
-  for (const child of node.children) visitHtmlVisible(child, chunks);
+  if (hostIsSelect && node.tagName.toLowerCase() === "option") return;
+  for (const child of node.children) visitHtmlVisible(child, chunks, hostIsSelect);
 }
 
 function isInteractiveHtml(element: HtmlElement): boolean {
@@ -137,18 +148,26 @@ function checkJsx(module: TsxModule, emit: Emit): void {
 /** Text content excluding aria-hidden subtrees in JSX. */
 function visibleTextJsx(element: JsxElement): string {
   const chunks: string[] = [];
-  for (const child of element.children) visitJsxVisible(child, chunks);
+  // See visibleTextHtml — <option> descendants of a <select> are the
+  // widget's value set, not its visible label.
+  const hostIsSelect = element.tagName.toLowerCase() === "select";
+  for (const child of element.children) visitJsxVisible(child, chunks, hostIsSelect);
   return chunks.join("").trim();
 }
 
-function visitJsxVisible(node: JsxElement["children"][number], chunks: string[]): void {
+function visitJsxVisible(
+  node: JsxElement["children"][number],
+  chunks: string[],
+  hostIsSelect: boolean,
+): void {
   if (node.kind === "JsxText") {
     chunks.push(node.value);
     return;
   }
   if (node.kind !== "JsxElement") return;
   if (getJsxAttributeString(node, "aria-hidden") === "true") return;
-  for (const child of node.children) visitJsxVisible(child, chunks);
+  if (hostIsSelect && node.tagName.toLowerCase() === "option") return;
+  for (const child of node.children) visitJsxVisible(child, chunks, hostIsSelect);
 }
 
 function isInteractiveJsx(element: JsxElement): boolean {

@@ -69,6 +69,20 @@ describe("rule semantics/label-in-name", () => {
       });
       expect(v).toHaveLength(0);
     });
+
+    // WCAG 2.5.3 / HTML AAM: a <select>'s accessible name is its
+    // aria-label / aria-labelledby / associated <label for>, and
+    // <option> descendants are the widget's VALUE set — not part of
+    // its visible label. Harvesting option text would falsely fail
+    // canonical patterns like Bootstrap's floating-label select.
+    it("<select> ignores <option> descendant text (options are value set, not label)", () => {
+      const v = runRule(
+        rule,
+        `<select aria-label="Floating label select example"><option selected>Open this select menu</option><option>One</option><option>Two</option><option>Three</option></select>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -96,6 +110,14 @@ describe("rule semantics/label-in-name", () => {
 
     it("no visible text", () => {
       const v = runRule(rule, `const X = <button aria-label="Close" />;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("<select> ignores <option> descendant text", () => {
+      const v = runRule(
+        rule,
+        `const X = <select aria-label="Country"><option>Alpha</option><option>Beta</option></select>;`,
+      );
       expect(v).toHaveLength(0);
     });
   });
