@@ -219,6 +219,106 @@ describe("rule semantics/table-headers", () => {
     });
   });
 
+  describe("fix suggestion: header detection", () => {
+    it("inlines detected column headers when the first row is short title-cased text", () => {
+      const violations = runRule(
+        rule,
+        `<table>
+          <tr><td>Name</td><td>Email</td><td>Role</td><td>Last Login</td></tr>
+          <tr><td>ada lovelace</td><td>ada@example.com</td><td>admin</td><td>2026-04-01</td></tr>
+          <tr><td>grace hopper</td><td>grace@example.com</td><td>admin</td><td>2026-03-28</td></tr>
+        </table>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain("First row of <table> appears to contain header text");
+      expect(suggestion).toContain("`Name`");
+      expect(suggestion).toContain("`Email`");
+      expect(suggestion).toContain("`Role`");
+      expect(suggestion).toContain("`Last Login`");
+      expect(suggestion).toContain('scope="col"');
+    });
+
+    it('recommends scope="row" when the first column holds short title-cased labels', () => {
+      const violations = runRule(
+        rule,
+        `<table>
+          <tr><td>Widget</td><td>$50</td><td>12</td></tr>
+          <tr><td>Gadget</td><td>$75</td><td>8</td></tr>
+          <tr><td>Sprocket</td><td>$20</td><td>40</td></tr>
+        </table>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain("First column of <table>");
+      expect(suggestion).toContain("`Widget`");
+      expect(suggestion).toContain("`Gadget`");
+      expect(suggestion).toContain("`Sprocket`");
+      expect(suggestion).toContain('scope="row"');
+    });
+
+    it("falls back to the generic ladder when the first row is numeric-only", () => {
+      const violations = runRule(
+        rule,
+        `<table>
+          <tr><td>2024</td><td>2025</td><td>2026</td></tr>
+          <tr><td>100</td><td>200</td><td>300</td></tr>
+        </table>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).not.toContain("First row of <table>");
+      expect(suggestion).not.toContain("First column of <table>");
+      expect(suggestion).toContain('scope="col"');
+      expect(suggestion).toContain('scope="row"');
+      expect(suggestion).toContain('role="presentation"');
+    });
+
+    it("mentions both scopes + colgroup when both row and column look header-shaped", () => {
+      const violations = runRule(
+        rule,
+        `<table>
+          <tr><td>Metric</td><td>Q1</td><td>Q2</td><td>Q3</td></tr>
+          <tr><td>Revenue</td><td>100</td><td>120</td><td>150</td></tr>
+          <tr><td>Expenses</td><td>80</td><td>90</td><td>95</td></tr>
+        </table>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain("First row of <table> appears to contain column headers");
+      expect(suggestion).toContain("first column of each row appears to hold row headers");
+      expect(suggestion).toContain('scope="col"');
+      expect(suggestion).toContain('scope="row"');
+      expect(suggestion).toContain('scope="colgroup"');
+      expect(suggestion).toContain("`Metric`");
+      expect(suggestion).toContain("`Revenue`");
+      expect(suggestion).toContain("`Expenses`");
+    });
+
+    it("applies the same header detection to JSX tables", () => {
+      const violations = runRule(
+        rule,
+        `const X = (
+          <table>
+            <tr><td>Name</td><td>Email</td><td>Role</td></tr>
+            <tr><td>Ada</td><td>ada@example.com</td><td>admin</td></tr>
+          </table>
+        );`,
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain("First row of <table>");
+      expect(suggestion).toContain("`Name`");
+      expect(suggestion).toContain("`Email`");
+      expect(suggestion).toContain("`Role`");
+      expect(suggestion).toContain('scope="col"');
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:1.3.1 and wcag21:1.3.1", () => {
       expect(rule.satisfies).toContain("wcag22:1.3.1");
