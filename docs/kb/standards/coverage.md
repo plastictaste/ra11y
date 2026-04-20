@@ -73,7 +73,7 @@ Coverage: 35 rule · 35 finder · 13 attestation-only · 3 gap
 | `wcag22:1.4.11` | Non-text Contrast | AA | partial | contrast/non-text | — | **rule** |
 | `wcag22:1.4.12` | Text Spacing | AA | partial | layout/text-spacing | — | **rule** |
 | `wcag22:1.4.13` | Content on Hover or Focus | AA | partial | tooltip/dismissable | — | **rule** |
-| `wcag22:2.1.1` | Keyboard | A | partial | keyboard/accesskey-duplicate, keyboard/handler-missing +1 | — | **rule** |
+| `wcag22:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +2 | — | **rule** |
 | `wcag22:2.1.2` | No Keyboard Trap | A | manual | — | no-keyboard-trap | **finder** |
 | `wcag22:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
@@ -168,7 +168,7 @@ Coverage: 33 rule · 32 finder · 10 attestation-only · 3 gap
 | `wcag21:1.4.11` | Non-text Contrast | AA | partial | contrast/non-text | — | **rule** |
 | `wcag21:1.4.12` | Text Spacing | AA | partial | layout/text-spacing | — | **rule** |
 | `wcag21:1.4.13` | Content on Hover or Focus | AA | partial | tooltip/dismissable | — | **rule** |
-| `wcag21:2.1.1` | Keyboard | A | partial | keyboard/accesskey-duplicate, keyboard/handler-missing +1 | — | **rule** |
+| `wcag21:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +2 | — | **rule** |
 | `wcag21:2.1.2` | No Keyboard Trap | A | manual | — | no-keyboard-trap | **finder** |
 | `wcag21:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
@@ -240,7 +240,7 @@ Coverage: 19 rule · 18 finder · 1 attestation-only · 0 gap
 | `section508:1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `section508:1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
 | `section508:1.4.5` | Images of Text | base | manual | — | images-of-text | **finder** |
-| `section508:2.1.1` | Keyboard | base | partial | keyboard/accesskey-duplicate, keyboard/handler-missing +1 | — | **rule** |
+| `section508:2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +2 | — | **rule** |
 | `section508:2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `section508:2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
 | `section508:2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | — | **rule** |
@@ -293,7 +293,7 @@ Coverage: 29 rule · 20 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.4.11` | Non-text Contrast | base | partial | contrast/non-text | — | **rule** |
 | `en301549:9.1.4.12` | Text Spacing | base | partial | layout/text-spacing | — | **rule** |
 | `en301549:9.1.4.13` | Content on Hover or Focus | base | partial | tooltip/dismissable | — | **rule** |
-| `en301549:9.2.1.1` | Keyboard | base | partial | keyboard/accesskey-duplicate, keyboard/handler-missing +1 | — | **rule** |
+| `en301549:9.2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +2 | — | **rule** |
 | `en301549:9.2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `en301549:9.2.1.4` | Character Key Shortcuts | base | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
 | `en301549:9.2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |

@@ -2,12 +2,12 @@
 title: "aria/hidden-focus"
 severity: "error"
 scope: "node"
-satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"]
+satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.1.1", "wcag21:2.1.1"]
 ---
 # `aria/hidden-focus`
 - **Severity:** error
 - **Scope:** node
-- **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`
+- **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.1.1`, `wcag21:2.1.1`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
 Elements with aria-hidden="true" must not be focusable and must not contain focusable descendants. Keyboard focus and the accessibility tree must agree.
