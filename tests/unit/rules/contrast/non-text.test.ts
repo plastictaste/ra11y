@@ -182,6 +182,67 @@ describe("rule contrast/non-text", () => {
     });
   });
 
+  describe("image-backed backgrounds (unresolvable)", () => {
+    it("emits info for a border-color over background-image", () => {
+      const v = runRule(
+        rule,
+        `button.primary { border-color: #888; background-image: url('/btn-bg.png'); }`,
+        { filePath: "ui.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toContain("background_image_unresolvable");
+      expect(v[0]?.message).toContain("3");
+    });
+
+    it("emits info for an outline over a shorthand gradient background", () => {
+      const v = runRule(
+        rule,
+        `[role="button"].pill { outline: 2px solid #999; background: linear-gradient(#111, #333); }`,
+        { filePath: "ui.css" },
+      );
+      // Two foreground props may match (`outline`); one info finding.
+      expect(v.some((x) => x.severity === "info")).toBe(true);
+      expect(v.find((x) => x.severity === "info")?.couldBeWrongBecause).toContain(
+        "background_image_unresolvable",
+      );
+    });
+
+    it("emits info for fill/stroke on an SVG over an image background", () => {
+      const v = runRule(
+        rule,
+        `svg.mark { fill: #d8d8d8; stroke: #cccccc; background-image: url('/bg.png'); }`,
+        { filePath: "ui.css" },
+      );
+      const infos = v.filter((x) => x.severity === "info");
+      expect(infos.length).toBeGreaterThanOrEqual(2);
+      for (const i of infos) {
+        expect(i.couldBeWrongBecause).toContain("background_image_unresolvable");
+      }
+    });
+
+    it("does not emit when only the background is image-backed with no boundary color", () => {
+      const v = runRule(rule, `button { background-image: url('/bg.png'); }`, {
+        filePath: "ui.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("fires inside @media queries", () => {
+      const src = `@media (max-width: 480px) { button { border-color: #888; background-image: url('/m.png'); } }`;
+      const v = runRule(rule, src, { filePath: "ui.css" });
+      expect(v.some((x) => x.severity === "info")).toBe(true);
+    });
+
+    it("suggestion points at a background-color fallback", () => {
+      const v = runRule(rule, `button { border-color: #999; background-image: url('/x.png'); }`, {
+        filePath: "ui.css",
+      });
+      const info = v.find((x) => x.severity === "info");
+      expect(info?.suggestion).toContain("background-color");
+    });
+  });
+
   it("cites wcag22:1.4.11 and wcag21:1.4.11", () => {
     expect(rule.satisfies).toContain("wcag22:1.4.11");
     expect(rule.satisfies).toContain("wcag21:1.4.11");

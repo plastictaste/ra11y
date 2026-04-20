@@ -61,6 +61,40 @@ describe("rule contrast/enhanced (WCAG 1.4.6 AAA)", () => {
     });
   });
 
+  describe("image-backed backgrounds (unresolvable)", () => {
+    it("emits info when color is set over background-image: url(...)", () => {
+      const v = runRule(rule, `.hero { color: #111; background-image: url('/img/hero.jpg'); }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toContain("background_image_unresolvable");
+      expect(v[0]?.message).toContain("7");
+    });
+
+    it("emits info for a linear-gradient in a shorthand background", () => {
+      const v = runRule(rule, `.grad { color: #fff; background: linear-gradient(#222, #444); }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+
+    it("does not emit when no color declaration accompanies the image", () => {
+      const v = runRule(rule, `.wrap { background-image: url('/bg.png'); }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("fires inside @media queries", () => {
+      const src = `@media (prefers-color-scheme: dark) { .x { color: #fff; background-image: url('/dark.png'); } }`;
+      const v = runRule(rule, src, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+  });
+
   it("cites WCAG 1.4.6 across both 2.1 and 2.2", () => {
     expect(rule.satisfies).toContain("wcag22:1.4.6");
     expect(rule.satisfies).toContain("wcag21:1.4.6");
