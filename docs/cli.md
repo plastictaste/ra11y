@@ -161,16 +161,26 @@ See [Baseline mode](#baseline-mode) for the `create`/`check`/`update` workflow.
 
 ### ra11y attestations
 
-Subcommand namespace for managing the attestation ledger (`.ra11y/attestations.jsonl`). Currently exposes `prune`, which drops records pinned to files that no longer exist.
+Subcommand namespace for managing the attestation ledger (`.ra11y/attestations.jsonl`). Exposes `prune` (drops records pinned to deleted files) and `verify` (validates the ledger for tampering against git).
 
 ```bash
 ra11y attestations prune           # drop dead records and rewrite the ledger
 ra11y attestations prune --dry-run # report without mutating
+ra11y attestations verify          # check ledger integrity against HEAD
 ```
 
 Key flags:
 
-- `--dry-run` — report what would be dropped without writing.
+- `--dry-run` — (prune only) report what would be dropped without writing.
+
+`ra11y attestations verify` implements [ADR 0020](./adr/0020-attestation-ledger-integrity.md) — using git as the integrity trust root. It compares the working-tree ledger against `git show HEAD:.ra11y/attestations.jsonl` and against `git blame --line-porcelain` author-dates, flagging:
+
+- `removed-since-head` — an entry that exists in HEAD but is absent from the working tree (deleted via `vim` or a text editor after commit).
+- `backdated-attestation` — an entry whose `attestedAt` is later than the author-date of the commit that first added that line.
+- `future-attestation-before-commit` — an entry whose `attestedAt` is earlier than the adding commit's author-date (rarer; surfaces authoring-clock skew).
+- `uncommitted` — a working-tree entry that has not been committed yet; informational, not a failure.
+
+Exit codes: `0` when the ledger is clean (or only has informational `uncommitted` entries); `2` on any hard integrity finding, outside a git repo, or when the ledger file is missing.
 
 Attestation records are created by the `attest` MCP tool, by the `ra11y attest` CLI command (below), or by writing to `.ra11y/attestations.jsonl` directly. See [docs/mcp/tool-reference.md](mcp/tool-reference.md) for the `attest` tool shape.
 

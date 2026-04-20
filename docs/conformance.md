@@ -329,6 +329,20 @@ This rewrites `.ra11y/attestations.jsonl` dropping records whose `location.fileP
 
 Project-scoped attestations (no `location`) are never pruned — they assert something about the project as a whole, not a specific file. When a scoped file changes (rather than being deleted), the attestation's `stale: true` flag surfaces on the next `checklist` call automatically. The agent re-investigates and re-attests; the old record remains in the ledger as historical provenance.
 
+## Attestation integrity verification
+
+The ledger is plain JSONL — a caller with write access can edit it with `vim`. ra11y trusts git as the integrity root ([ADR 0020](./adr/0020-attestation-ledger-integrity.md)) rather than a per-record hash chain. To check the ledger against HEAD:
+
+```sh
+ra11y attestations verify
+```
+
+The command compares the working-tree ledger against `git show HEAD:.ra11y/attestations.jsonl` and against per-line `git blame` author-dates, flagging entries removed since HEAD, entries whose `attestedAt` is later than their adding-commit date (backdating), and entries whose `attestedAt` is earlier than their adding-commit date. Uncommitted working-tree entries are reported informationally.
+
+Exit codes: `0` when the ledger is clean; `2` on any hard integrity finding or precondition failure (not inside a git repo, ledger file missing).
+
+Run this in CI alongside `ra11y conformance --verify` to catch pre-emission ledger tampering that the statement signature itself cannot detect (the signature stamps the ledger state at scan time; `attestations verify` stamps the ledger state against git history).
+
 ## What this guide does not cover
 
 Runtime accessibility checks — live regions, focus traps, ARIA state changes, post-render contrast — are outside ra11y's scope. Run those in your Playwright or Vitest suite via axe-core. Once you have runtime results, feed them back through `attest` with a `reason` describing the run. That's the bridging pattern: ra11y handles static evidence and attestation provenance; your CI harness handles runtime execution.
