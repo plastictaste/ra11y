@@ -7,11 +7,18 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { conformanceStatementTool } from "../../../src/mcp/tool-conformance-statement.ts";
+import {
+  type ConformanceSignature,
+  type SignatureInput,
+  verifyConformanceBundle,
+} from "../../../src/reports/conformance-signature.ts";
+import { BUILTIN_STANDARDS } from "../../../src/standards/index.ts";
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-conform-"));
@@ -214,6 +221,158 @@ describe("conformance_statement: durable attestations clear blockers", () => {
       expect(isError).toBe(false);
       const blockerIds = (body["blockers"] as { criterionId: string }[]).map((b) => b.criterionId);
       expect(blockerIds).not.toContain("wcag22:2.4.7");
+    });
+  });
+});
+
+// ─── Signing flow (V1-CERT-STATEMENT-SIGN) ────────────────────────────────
+
+function runGit(cwd: string, ...args: string[]): void {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "ra11y-test",
+      GIT_AUTHOR_EMAIL: "test@ra11y.local",
+      GIT_COMMITTER_NAME: "ra11y-test",
+      GIT_COMMITTER_EMAIL: "test@ra11y.local",
+    },
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  }
+}
+
+async function initGitRepo(cwd: string): Promise<void> {
+  runGit(cwd, "init", "-q", "-b", "main");
+  await writeFile(join(cwd, "README.md"), "# scratch\n");
+  runGit(cwd, "add", ".");
+  runGit(cwd, "commit", "-q", "-m", "initial");
+}
+
+/**
+ * Seeds an attestation for every in-scope criterion of the given
+ * standard + level. Sufficient to drive `buildConformanceStatement`
+ * past the refusal gate so the signing path runs end-to-end.
+ */
+function attestationsForProfile(
+  standardId: string,
+  level: "A" | "AA" | "AAA" | "base",
+): readonly Record<string, unknown>[] {
+  const std = BUILTIN_STANDARDS.find((s) => s.id === standardId);
+  if (!std) throw new Error(`standard not found: ${standardId}`);
+  const inScope = std.criteria.filter((c) => {
+    if (level === "base") return true;
+    if (c.level === "A") return true;
+    if (c.level === "AA") return level === "AA" || level === "AAA";
+    if (c.level === "AAA") return level === "AAA";
+    return false;
+  });
+  return inScope.map((c) => ({
+    criterionId: c.id,
+    by: "test",
+    reason: "manual review for signing round-trip",
+    attestedAt: "2026-04-18T00:00:00.000Z",
+    verdict: "pass",
+    scope: "project",
+  }));
+}
+
+describe("conformance_statement: signing flow", () => {
+  it("emits warnings: [non_git_repo_signature_omitted] when the project is not a git repo", async () => {
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
+      // No commit hash → no signature and the warning fires.
+      expect(body["signature"]).toBeUndefined();
+      expect(body["warnings"]).toEqual(["non_git_repo_signature_omitted"]);
+    });
+  });
+
+  it("omits signature + warning on non-conformant git-repo scan", async () => {
+    await withScratch(async (cwd) => {
+      await initGitRepo(cwd);
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
+      // Conformant: false because nothing's attested — no signature
+      // emitted. The warning is non-git-only so it must not fire here.
+      expect(body["conformant"]).toBe(false);
+      expect(body["signature"]).toBeUndefined();
+      expect(body["warnings"]).toBeUndefined();
+    });
+  });
+
+  it("signs the statement when every criterion is attested and verifies round-trip", async () => {
+    await withScratch(async (cwd) => {
+      await initGitRepo(cwd);
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      // Attest every A-level criterion so the ledger has non-candidate
+      // evidence for every in-scope criterion — the refusal gate opens
+      // and the signing path runs.
+      await seedAttestations(cwd, attestationsForProfile("wcag22", "A"));
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "A", cwd });
+      expect(body["conformant"]).toBe(true);
+      const signature = body["signature"] as ConformanceSignature | undefined;
+      expect(signature).toBeDefined();
+      if (signature === undefined) return;
+      expect(signature.algorithm).toBe("sha256");
+      expect(signature.digest).toMatch(/^[0-9a-f]{64}$/);
+      // The fingerprint carries the full scan inputs — verify the key
+      // ones populated.
+      const fp = signature.inputFingerprint;
+      expect(fp.commitHash).toMatch(/^[0-9a-f]{40}$/);
+      expect(fp.toolVersion).toBeDefined();
+      expect(fp.fileManifest).toBeDefined();
+      expect((fp.fileManifest ?? []).length).toBeGreaterThan(0);
+      // Round-trip: verifying against the stamped fingerprint passes.
+      expect(verifyConformanceBundle(signature, fp)).toEqual({ valid: true });
+    });
+  });
+
+  it("mutating the file manifest invalidates the signature on re-verify", async () => {
+    await withScratch(async (cwd) => {
+      await initGitRepo(cwd);
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await seedAttestations(cwd, attestationsForProfile("wcag22", "A"));
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "A", cwd });
+      const signature = body["signature"] as ConformanceSignature | undefined;
+      expect(signature).toBeDefined();
+      if (signature === undefined) return;
+      // Synthesize a drifted current-state by flipping one file's
+      // digest — simulates "source edited since signing."
+      const original = signature.inputFingerprint;
+      const driftedManifest = (original.fileManifest ?? []).map((e, i) =>
+        i === 0 ? { ...e, sha256: "0".repeat(64) } : e,
+      );
+      const drifted: SignatureInput = { ...original, fileManifest: driftedManifest };
+      const result = verifyConformanceBundle(signature, drifted);
+      expect(result).toEqual({ valid: false, reason: "file-manifest-mismatch" });
+    });
+  });
+
+  it("mutating the config fingerprint invalidates the signature", async () => {
+    await withScratch(async (cwd) => {
+      await initGitRepo(cwd);
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await seedAttestations(cwd, attestationsForProfile("wcag22", "A"));
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "A", cwd });
+      const signature = body["signature"] as ConformanceSignature | undefined;
+      expect(signature).toBeDefined();
+      if (signature === undefined) return;
+      const original = signature.inputFingerprint;
+      const drifted: SignatureInput = {
+        ...original,
+        configFingerprint: { ...original.configFingerprint, level: "AAA" },
+      };
+      const result = verifyConformanceBundle(signature, drifted);
+      expect(result).toEqual({ valid: false, reason: "config-level-mismatch" });
     });
   });
 });
