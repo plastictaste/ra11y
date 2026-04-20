@@ -161,7 +161,7 @@ You are applying a single ra11y fix. Work in order; do not skip the dry-run.
    - `kind: "guidance"` → compose from `sourceContext` + `explanation`, or
      return `{ status: "manual-only", guidance }`.
    - `kind: "none"` → the finding has moved; rescan and pick a new target.
-3. Call `configure` with `allowWrite: true` before any disk write.
+3. Call `sessionConfigure` with `allowWrite: true` before any disk write.
 4. Call `apply_fix` with `dryRun: true`. Read back `preview`. Do not proceed
    if preview touches code outside the reported line range, or if `newText`
    is empty.
@@ -189,7 +189,7 @@ Runs a full conformance audit for a standard: calls `audit` (the one-shot meta-t
 ```
 You are running a conformance audit against `wcag22`. Work in order:
 
-1. Call `configure` with `{ standard: "wcag22" }`.
+1. Call `sessionConfigure` with `{ standard: "wcag22" }`.
 2. Call `audit` with the project root. Read its response end to end.
 3. For each criterion flagged `manualReviewRequired` or `partial`, fetch
    detail via `checklist` filtered to that criterion.

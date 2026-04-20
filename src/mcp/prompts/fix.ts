@@ -30,7 +30,7 @@ export const fixPrompt: Prompt = {
       '   - `kind: "edit"` → `primary.edit` has `oldText`/`newText`; proceed to step 3.',
       '   - `kind: "guidance"` → no mechanical edit; compose one from `sourceContext` + `explanation`, then feed that into `apply_fix` as a manual edit, or stop and return `{ status: "manual-only", guidance }`.',
       '   - `kind: "none"` → the finding has moved; rescan and pick a new target.',
-      "3. `apply_fix` writes to disk. Before any write call runs, the session must have `configure({ allowWrite: true })` in effect. Call `configure` with `allowWrite: true` now if you haven't already.",
+      "3. `apply_fix` writes to disk. Before any write call runs, the session must have `sessionConfigure({ allowWrite: true })` in effect. Call `sessionConfigure` with `allowWrite: true` now if you haven't already.",
       "4. Call `apply_fix` with `dryRun: true` first. Read back the `preview` and the reported `oldText`/`newText` spans. Do not proceed if the preview touches code outside the reported line range, or if `newText` is empty.",
       "5. Call `apply_fix` with `dryRun: false`. Confirm the response reports `applied: true` and echoes the same `newText` you approved in step 4.",
       '6. Call `scan_file` on the edited path. Confirm the original `ruleId` no longer fires on that `line`. If it still fires, revert the edit and return `{ status: "rejected", reason }`.',

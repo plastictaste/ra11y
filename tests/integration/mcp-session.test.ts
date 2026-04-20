@@ -81,7 +81,7 @@ describe("MCP session: full agent workflow", () => {
       // 6. Rescan with scan_file
       toolCall(5, "scan_file", { path: BAD_ALT }),
       // 7. Configure session
-      toolCall(6, "configure", { standard: "wcag21", level: "AA" }),
+      toolCall(6, "sessionConfigure", { standard: "wcag21", level: "AA" }),
       // 8. List rules filtered by standard
       toolCall(7, "list_rules", { standard: "wcag21" }),
     ]);

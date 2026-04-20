@@ -246,10 +246,10 @@ describe("MCP session state: reuse across requests", () => {
   it("configure(standard: wcag21) mutates session so a later list_rules without standard filters by wcag21", async () => {
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "configure", { standard: "wcag21" }),
+      toolCall(2, "sessionConfigure", { standard: "wcag21" }),
       // No explicit standard — list_rules doesn't read session config for filtering,
       // so use configure's own response to verify state was persisted.
-      toolCall(3, "configure", {}),
+      toolCall(3, "sessionConfigure", {}),
     ]);
     const afterMutate = JSON.parse(
       (responses[2].result as { content: Array<{ text: string }> }).content[0].text,
@@ -268,7 +268,7 @@ describe("MCP session state: reuse across requests", () => {
     );
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "configure", { rules: { "media/alt-text-missing": "off" } }),
+      toolCall(2, "sessionConfigure", { rules: { "media/alt-text-missing": "off" } }),
       toolCall(3, "scan_file", { path: bad }),
     ]);
     const scan = JSON.parse(
@@ -281,17 +281,17 @@ describe("MCP session state: reuse across requests", () => {
   it("configure(nativeWrappers) accumulates across calls", async () => {
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "configure", { nativeWrappers: ["Button"] }),
-      toolCall(3, "configure", { nativeWrappers: ["IconButton"] }),
+      toolCall(2, "sessionConfigure", { nativeWrappers: ["Button"] }),
+      toolCall(3, "sessionConfigure", { nativeWrappers: ["IconButton"] }),
     ]);
     // The second configure should reflect both registered wrappers via ruleCount
     // staying consistent; we verify via the active standard sticking AND by
     // calling a third time empty to read back state.
     const responsesB = await mcpSession([
       initMsg(1),
-      toolCall(2, "configure", { nativeWrappers: ["A", "B"] }),
-      toolCall(3, "configure", { nativeWrappers: ["C"] }),
-      toolCall(4, "configure", {}),
+      toolCall(2, "sessionConfigure", { nativeWrappers: ["A", "B"] }),
+      toolCall(3, "sessionConfigure", { nativeWrappers: ["C"] }),
+      toolCall(4, "sessionConfigure", {}),
     ]);
     // The third call's own response doesn't echo wrappers, but an earlier
     // path exercises the union via detect_native_wrappers' absentDeclared…

@@ -66,7 +66,7 @@ From any connected host, ask the agent to:
 
 > List the ra11y tools available to you.
 
-You should see a list of 12: `scan`, `scan_project`, `scan_file`, `detect_native_wrappers`, `explain_rule`, `explain_standard`, `suggest_fix`, `coverage`, `checklist`, `review_candidates`, `list_rules`, `configure`.
+You should see a list of 12: `scan`, `scan_project`, `scan_file`, `detect_native_wrappers`, `explain_rule`, `explain_standard`, `suggest_fix`, `coverage`, `checklist`, `review_candidates`, `list_rules`, `sessionConfigure`.
 
 If the list is missing, check your host's MCP logs. The ra11y server exits cleanly with a diagnostic on stderr if invoked incorrectly.
 
@@ -80,9 +80,9 @@ If the list is missing, check your host's MCP logs. The ra11y server exits clean
 
 ## Configuration
 
-Session-level config lives inside each MCP connection — use the `configure` tool:
+Session-level config lives inside each MCP connection — use the `sessionConfigure` tool:
 
-> Call `configure` with `{ standard: "wcag22", level: "AA", nativeWrappers: ["Button", "Link"] }`.
+> Call `sessionConfigure` with `{ standard: "wcag22", level: "AA", nativeWrappers: ["Button", "Link"] }`.
 
 Project-level config lives in `ra11y.config.ts` at the repo root. The server reads it fresh on every tool call, so edits take effect without reconnecting. Generate a starter with `ra11y --init`.
 

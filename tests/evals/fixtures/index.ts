@@ -53,7 +53,7 @@ export const PROMPT_FIXTURES: readonly PromptFixture[] = [
       "scan_project",
       "suggest_fix",
       "apply_fix",
-      "configure",
+      "sessionConfigure",
       "allowWrite",
       "dryRun: true",
       "dryRun: false",
@@ -82,7 +82,7 @@ export const PROMPT_FIXTURES: readonly PromptFixture[] = [
     args: {},
     anchors: [
       "wcag22",
-      "configure",
+      "sessionConfigure",
       "audit",
       "checklist",
       "explain_standard",
@@ -99,7 +99,7 @@ export const PROMPT_FIXTURES: readonly PromptFixture[] = [
     label: "audit — section508 standard",
     promptName: "ra11y/audit",
     args: { standard: "section508" },
-    anchors: ["section508", "configure", 'standard: "section508"', "criteria"],
+    anchors: ["section508", "sessionConfigure", 'standard: "section508"', "criteria"],
     forbiddenAnchors: ['standard: "wcag22"'],
   },
   {

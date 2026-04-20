@@ -333,7 +333,7 @@ describe("MCP baseline tool: create/check/update round-trips", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { standard: "wcag21", level: "AA" }),
+        toolCall(2, "sessionConfigure", { standard: "wcag21", level: "AA" }),
         toolCall(3, "baseline", { mode: "create", cwd: dir }),
       ]);
       const body = bodyOf(responses[2]) as {

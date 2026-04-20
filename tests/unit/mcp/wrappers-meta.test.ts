@@ -257,6 +257,6 @@ describe("wrappersMetaBlock: unified tagged list shape", () => {
       },
     });
     expect(meta["sessionOverridesNote"]).toBeDefined();
-    expect(meta["sessionOverridesNote"]).toContain("configure()");
+    expect(meta["sessionOverridesNote"]).toContain("sessionConfigure()");
   });
 });

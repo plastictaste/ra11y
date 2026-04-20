@@ -1,12 +1,12 @@
 ---
 title: "contrast/minimum"
 severity: "error"
-scope: "document"
+scope: "project"
 satisfies: ["wcag22:1.4.3", "wcag21:1.4.3"]
 ---
 # `contrast/minimum`
 - **Severity:** error
-- **Scope:** document
+- **Scope:** project
 - **Satisfies:** `wcag22:1.4.3`, `wcag21:1.4.3`
 - **Applies to:** .css
 ## What it checks

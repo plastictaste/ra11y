@@ -227,7 +227,7 @@ describe("MCP scan_diff tool: new-findings-only deltas", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { standard: "wcag21", level: "AA" }),
+        toolCall(2, "sessionConfigure", { standard: "wcag21", level: "AA" }),
         toolCall(3, "baseline", { mode: "create", cwd: dir }),
         toolCall(4, "scan_diff", { cwd: dir }),
       ]);

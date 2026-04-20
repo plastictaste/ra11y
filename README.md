@@ -262,7 +262,7 @@ Or start the server directly: `ra11y --mcp`
 | `checklist` | Manual review items with evaluation prompts |
 | `review_candidates` | Locations needing human judgment with the question to answer |
 | `list_rules` | Discover all loaded rules with metadata |
-| `configure` | Set session defaults (standard, level, excludes) |
+| `sessionConfigure` | Set session defaults (standard, level, excludes) |
 
 **Typical agent workflow:** `scan_project` to get findings → `explain_rule` for unclear ones → apply fixes → `scan_file` to verify → `coverage` to check overall compliance.
 

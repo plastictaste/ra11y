@@ -82,7 +82,7 @@ Canonical inventory: `MCP_TOOLS` in `src/mcp/tools.ts`, mirrored on the wire by 
 - `propose_config` — suggest `ra11y.config.ts` edits (nativeWrappers, per-rule severity) derived from current findings.
 
 **Session family.** Mutate per-connection state.
-- `sessionConfigure` — set `standard`/`level`/`exclude`/`rules`/`nativeWrappers`/`allowWrite` for the current connection. `configure` is accepted as a deprecated alias that layers `warnings: ["deprecated_tool_name_configure"]` onto responses.
+- `sessionConfigure` — set `standard`/`level`/`exclude`/`rules`/`nativeWrappers`/`allowWrite` for the current connection.
 
 ## Session lifecycle
 
@@ -91,7 +91,7 @@ Canonical inventory: `MCP_TOOLS` in `src/mcp/tools.ts`, mirrored on the wire by 
 3. Host calls `tools/list`. Server returns every entry in `MCP_TOOLS` with name, description, `inputSchema`, and annotations. Host may also call `prompts/list` and `resources/list` to discover the prompt and KB-resource surfaces.
 4. Host calls `tools/call` with a name + arguments. Server dispatches, runs the handler with the session object, returns the result.
 5. AST cache fills on first scan of a file; subsequent `scan_file` calls skip parsing when mtime hasn't changed.
-6. Session config mutates only via the `configure` tool. `loadProjectConfig(cwd)` runs fresh each tool call — no staleness.
+6. Session config mutates only via the `sessionConfigure` tool. `loadProjectConfig(cwd)` runs fresh each tool call — no staleness.
 7. Connection closes when stdin closes. Session state is discarded.
 
 ## Invariants (do not regress)

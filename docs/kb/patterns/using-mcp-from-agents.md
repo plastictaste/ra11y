@@ -13,7 +13,7 @@ This page is the opinionated workflow for agents. If you're a user setting up th
 The typical agent workflow on a repo is:
 
 1. **Orient.** Call `scan_project` once, no paths, no overrides — the server auto-promotes to the git root. Read the findings summary.
-2. **Configure if needed.** If you see a flood of `keyboard/handler-missing` on PascalCase components, run `detect_native_wrappers` and suggest the user populate `nativeWrappers` in `ra11y.config.ts`. If the project targets WCAG 2.1 instead of 2.2, call `configure`.
+2. **Configure if needed.** If you see a flood of `keyboard/handler-missing` on PascalCase components, run `detect_native_wrappers` and suggest the user populate `nativeWrappers` in `ra11y.config.ts`. If the project targets WCAG 2.1 instead of 2.2, call `sessionConfigure`.
 3. **Triage info findings.** `info` findings are exactly where you add value — static analysis couldn't resolve them, but reading the source can. Open the referenced file, read the component, verdict yes/no.
 4. **Fix errors and warnings.** For each, call `explain_rule` to get spec context + examples, then either apply the rule's suggestion or write a context-aware replacement.
 5. **Re-scan.** After editing a file, call `scan_file` — fast, uses the AST cache.

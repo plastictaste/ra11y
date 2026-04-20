@@ -7,7 +7,7 @@
  *   scan_project, detect_native_wrappers, explain_standard,
  *   suggest_fix, coverage, checklist, review_candidates
  *
- * (`scan`, `scan_file`, `explain_rule`, `configure`, `list_rules` already
+ * (`scan`, `scan_file`, `explain_rule`, `sessionConfigure`, `list_rules` already
  * have round-trips in mcp-session.test.ts.)
  */
 
@@ -689,7 +689,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.meta.analysisCoverage?.templateDirectivesFound).toContain("jinja-or-liquid");
   });
 
-  it("sessionConfigure is the canonical tool name in tools/list; configure is not listed", async () => {
+  it("sessionConfigure is listed in tools/list; the legacy `configure` alias is not", async () => {
     const responses = await mcpSession([
       initMsg(1),
       { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
@@ -700,30 +700,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(names).not.toContain("configure");
   });
 
-  it("legacy `configure` tool name still dispatches and emits a deprecation warning", async () => {
+  it("the legacy `configure` tool name no longer dispatches", async () => {
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "configure", { nativeWrappers: ["Button"] }),
     ]);
-    const body = bodyOf(responses[1]) as {
-      active?: { ruleCount?: number };
-      warnings?: readonly string[];
-    };
-    expect(body.active?.ruleCount).toBeGreaterThan(0);
-    expect(body.warnings).toContain("deprecated_tool_name_configure");
-  });
-
-  it("sessionConfigure does NOT emit the deprecation warning", async () => {
-    const responses = await mcpSession([
-      initMsg(1),
-      toolCall(2, "sessionConfigure", { nativeWrappers: ["Button"] }),
-    ]);
-    const body = bodyOf(responses[1]) as {
-      active?: { ruleCount?: number };
-      warnings?: readonly string[];
-    };
-    expect(body.active?.ruleCount).toBeGreaterThan(0);
-    expect(body.warnings ?? []).not.toContain("deprecated_tool_name_configure");
+    const error = (responses[1] as { error?: { code?: number } }).error;
+    expect(error?.code).toBe(-32601);
   });
 
   it("activeNativeWrappersNote is no longer repeated in every response", async () => {
@@ -732,7 +715,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // once per session; per-response only the tagged list remains.
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "configure", { nativeWrappers: ["Button"] }),
+      toolCall(2, "sessionConfigure", { nativeWrappers: ["Button"] }),
       toolCall(3, "scan", { paths: [BAD_ALT_DIR] }),
     ]);
     const body = bodyOf(responses[2]) as {

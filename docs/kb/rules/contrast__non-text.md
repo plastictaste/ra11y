@@ -1,12 +1,12 @@
 ---
 title: "contrast/non-text"
 severity: "error"
-scope: "document"
+scope: "project"
 satisfies: ["wcag22:1.4.11", "wcag21:1.4.11"]
 ---
 # `contrast/non-text`
 - **Severity:** error
-- **Scope:** document
+- **Scope:** project
 - **Satisfies:** `wcag22:1.4.11`, `wcag21:1.4.11`
 - **Applies to:** .css
 ## What it checks

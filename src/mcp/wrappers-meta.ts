@@ -298,7 +298,7 @@ export function wrappersMetaBlock(args: {
     // surfaces which names are session-only; this note explains the
     // operational consequence.
     out["sessionOverridesNote"] =
-      `${sessionOnly.length} wrapper${sessionOnly.length === 1 ? "" : "s"} added by this session's configure() call, not in ra11y.config.ts. If you've since removed these from the file, the session additions still apply for this connection — restart the MCP server or call configure() again to sync.`;
+      `${sessionOnly.length} wrapper${sessionOnly.length === 1 ? "" : "s"} added by this session's sessionConfigure() call, not in ra11y.config.ts. If you've since removed these from the file, the session additions still apply for this connection — restart the MCP server or call sessionConfigure() again to sync.`;
   }
   if (unusedWrappers.length > 0) {
     // Surface wrappers registered in config that didn't match any

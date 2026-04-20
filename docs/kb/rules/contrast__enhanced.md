@@ -1,12 +1,12 @@
 ---
 title: "contrast/enhanced"
 severity: "warning"
-scope: "document"
+scope: "project"
 satisfies: ["wcag22:1.4.6", "wcag21:1.4.6"]
 ---
 # `contrast/enhanced`
 - **Severity:** warning
-- **Scope:** document
+- **Scope:** project
 - **Satisfies:** `wcag22:1.4.6`, `wcag21:1.4.6`
 - **Applies to:** .css
 ## What it checks

@@ -111,9 +111,9 @@ The pragma is inserted on its own line directly above the target, with indentati
 
 ## Session
 
-### `configure`
+### `sessionConfigure`
 
-Sets session-level config: `standard`, `level`, `exclude`, `rules` (per-rule severity overrides), `nativeWrappers`.
+Sets session-level config: `standard`, `level`, `exclude`, `rules` (per-rule severity overrides), `nativeWrappers`, `allowWrite`.
 
 **Use when:** the user adjusts scope mid-session ("also run Section 508", "downgrade `contrast/enhanced` to info").
 

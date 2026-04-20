@@ -24,7 +24,7 @@ export const auditPrompt: Prompt = {
     const text = [
       `You are running a conformance audit against \`${standard}\`. Work in order:`,
       "",
-      `1. Call \`configure\` with \`{ standard: "${standard}" }\` so all subsequent calls inherit the standard.`,
+      `1. Call \`sessionConfigure\` with \`{ standard: "${standard}" }\` so all subsequent calls inherit the standard.`,
       "2. Call `audit` with the project root. This one-shot meta-tool runs the automated scan plus the manual checklist in a single round trip — read its response end to end.",
       "3. For each criterion in the audit response, fetch detail via `checklist` filtered to that criterion when the audit flagged it as `manualReviewRequired` or `partial`. Use `explain_standard` to retrieve the normative text and level for any criterion you will cite.",
       "4. Walk every file:line candidate the checklist returned. Use `Read` on the file to verify or dismiss — same rules as `ra11y/triage`. Do not downgrade by hunch.",
