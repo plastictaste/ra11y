@@ -14,7 +14,11 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { findHtmlElementsByTag, htmlTextContent } from "../../engine/ast-helpers.ts";
+import {
+  findHtmlElementsByTag,
+  getHtmlAttribute,
+  htmlTextContent,
+} from "../../engine/ast-helpers.ts";
 import type { HtmlDocument } from "../../types/ast.ts";
 
 export const rule = defineRule({
@@ -65,8 +69,7 @@ export const rule = defineRule({
         },
         message:
           "HTML document is missing a <title> element — browsers and screen readers have nothing to announce.",
-        suggestion:
-          "Add a <title>…</title> to <head> describing the page topic or purpose. Keep it specific — 'Settings — Acme' is better than 'Acme'.",
+        suggestion: buildSuggestion(doc),
       });
       return;
     }
@@ -82,8 +85,7 @@ export const rule = defineRule({
             column: title.loc.start.column,
           },
           message: "<title> is empty — screen readers will announce nothing when the page loads.",
-          suggestion:
-            "Fill in the title with a specific description of the page topic or purpose, e.g. 'Settings — Acme Dashboard'.",
+          suggestion: buildSuggestion(doc),
         });
       }
     }
@@ -102,4 +104,97 @@ function isInsideHead(doc: HtmlDocument, target: { range: { start: number } }): 
     }
   }
   return false;
+}
+
+/**
+ * Context-aware fix text. Walks the current document for in-file signals
+ * the author has already written — the page's own `<h1>` text and its
+ * `<meta name="description">` — and folds them into the suggestion so the
+ * agent sees a concrete title candidate rather than a generic "write
+ * something specific" instruction. Cross-file inspection (sibling pages,
+ * site-name detection) would violate the "rules are pure" invariant
+ * (CLAUDE.md §3.6), so the ladder uses only signals reachable from
+ * `ctx.ast`.
+ *
+ * Ladder (first match wins):
+ *   1. `<h1>` text present — inline it as the candidate title (shortest,
+ *      most specific signal the author has already written). When a
+ *      meta description also exists, mention it as the longer fallback.
+ *   2. `<meta name="description">` present but no `<h1>` — derive a
+ *      title candidate from the description (truncated to ~60 chars at
+ *      a word boundary, trailing punctuation trimmed).
+ *   3. Neither — fallback guidance naming the ≤60 char length budget and
+ *      the "differ from sibling pages" constraint.
+ */
+function buildSuggestion(doc: HtmlDocument): string {
+  const h1Text = findFirstH1Text(doc);
+  const metaDescription = findMetaDescription(doc);
+
+  if (h1Text !== null) {
+    const descNote =
+      metaDescription === null
+        ? ""
+        : ` A longer candidate from <meta name="description"> (line ${metaDescription.line}) is also available as a fallback.`;
+    return `Set <title>${h1Text.text}</title>. Candidate derived from the page's existing <h1> (line ${h1Text.line}). Append a site name if you have one, e.g. <title>${h1Text.text} — Acme</title>.${descNote}`;
+  }
+
+  if (metaDescription !== null) {
+    const candidate = truncateForTitle(metaDescription.content);
+    return `Set <title>${candidate}</title>. Candidate derived from <meta name="description" content="${metaDescription.content}"> (line ${metaDescription.line}); truncated to ~60 characters. Edit to a concise page-topic phrase and append a site name if you have one.`;
+  }
+
+  return "Set <title> to a concise (≤60 char) description of this page's primary purpose. A good title differs from sibling pages and does not duplicate the site name alone — e.g. <title>Contact — Acme</title>, not <title>Acme</title>.";
+}
+
+interface H1Text {
+  readonly text: string;
+  readonly line: number;
+}
+
+/** Returns the trimmed text + source line of the first non-empty `<h1>`. */
+function findFirstH1Text(doc: HtmlDocument): H1Text | null {
+  for (const h1 of findHtmlElementsByTag(doc, "h1")) {
+    const text = htmlTextContent(h1);
+    if (text.length === 0) continue;
+    return { text, line: h1.loc.start.line };
+  }
+  return null;
+}
+
+interface MetaDescription {
+  readonly content: string;
+  readonly line: number;
+}
+
+/** Returns the trimmed `content` + source line of the first `<meta name="description">`. */
+function findMetaDescription(doc: HtmlDocument): MetaDescription | null {
+  for (const meta of findHtmlElementsByTag(doc, "meta")) {
+    const name = getHtmlAttribute(meta, "name");
+    if (name === null || name.toLowerCase() !== "description") continue;
+    const content = getHtmlAttribute(meta, "content");
+    if (content === null) continue;
+    const trimmed = content.trim();
+    if (trimmed.length === 0) continue;
+    return { content: trimmed, line: meta.loc.start.line };
+  }
+  return null;
+}
+
+/**
+ * Truncates a meta-description candidate to roughly 60 characters at
+ * the nearest word boundary, then strips trailing punctuation (`.`,
+ * `,`, `;`, `:`, `—`, `-`) so the candidate reads as a title rather
+ * than a sentence fragment. Short descriptions pass through unchanged.
+ */
+function truncateForTitle(description: string): string {
+  const MAX_LEN = 60;
+  if (description.length <= MAX_LEN) return stripTrailingPunctuation(description);
+  const window = description.slice(0, MAX_LEN);
+  const lastSpace = window.lastIndexOf(" ");
+  const truncated = lastSpace > 20 ? window.slice(0, lastSpace) : window;
+  return stripTrailingPunctuation(truncated);
+}
+
+function stripTrailingPunctuation(text: string): string {
+  return text.replace(/[.,;:—\-\s]+$/, "");
 }

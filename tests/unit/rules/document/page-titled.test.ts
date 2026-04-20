@@ -49,4 +49,61 @@ describe("rule document/page-titled", () => {
   it("cites wcag22:2.4.2", () => {
     expect(rule.satisfies).toContain("wcag22:2.4.2");
   });
+
+  it("surfaces the existing <h1> text as the title candidate when one is present", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head></head><body><h1>Contact Information</h1></body></html>`,
+      { filePath: "contact.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("Contact Information");
+    expect(v[0]?.suggestion).toContain("existing <h1>");
+    expect(v[0]?.suggestion).toMatch(/line \d+/);
+  });
+
+  it('derives a title candidate from <meta name="description"> when no <h1> is present', () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><meta name="description" content="Acme's warranty policy, returns, and repair scheduling."></head><body><p>x</p></body></html>`,
+      { filePath: "warranty.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain('<meta name="description"');
+    expect(v[0]?.suggestion).toContain("Acme's warranty policy");
+    expect(v[0]?.suggestion).not.toContain("existing <h1>");
+  });
+
+  it("falls back to generic guidance when neither <h1> nor meta description is present", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head></head><body><p>just body text</p></body></html>`,
+      { filePath: "bare.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("≤60");
+    expect(v[0]?.suggestion).toContain("differs from sibling pages");
+  });
+
+  it("prefers the <h1> over the meta description when both are present, noting the description as fallback", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><meta name="description" content="Manage your account preferences, notifications, and billing details."></head><body><h1>Settings</h1></body></html>`,
+      { filePath: "settings.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("Settings");
+    expect(v[0]?.suggestion).toContain("existing <h1>");
+    expect(v[0]?.suggestion).toContain('<meta name="description">');
+  });
+
+  it("uses the same context-aware candidate for the empty-title branch", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title></title></head><body><h1>Product Catalog</h1></body></html>`,
+      { filePath: "catalog.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("Product Catalog");
+  });
 });
