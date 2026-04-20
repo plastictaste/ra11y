@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Disclosure — good (aria-expanded present)</title>
+  </head>
+  <body>
+    <!--
+      Canonical ARIA disclosure pattern: the trigger carries
+      aria-expanded (initial value `false`) plus aria-controls pointing
+      at the collapsible region. Any value on aria-expanded — true,
+      false, or a runtime expression — satisfies the rule; the rule
+      only flags the attribute's absence.
+    -->
+    <button aria-controls="panel-1" aria-expanded="false">Details</button>
+    <div id="panel-1" hidden>
+      <p>Hidden region toggled by the button above.</p>
+    </div>
+
+    <a href="#c1" data-bs-toggle="collapse" aria-expanded="false">Toggle collapse</a>
+    <div id="c1" class="collapse">Contents</div>
+  </body>
+</html>

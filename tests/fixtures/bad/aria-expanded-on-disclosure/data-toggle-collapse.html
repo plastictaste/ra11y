@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Disclosure — bad (data-*-toggle="collapse" without aria-expanded)</title>
+  </head>
+  <body>
+    <!--
+      The `data-*-toggle="collapse"` / "dropdown" / "offcanvas" shape is
+      a disclosure-trigger pattern regardless of which JS library wires
+      it up. The rule matches on the shape (suffix `-toggle`, value in
+      the disclosure set), not on the vendor prefix.
+    -->
+    <a href="#c1" data-bs-toggle="collapse">Bootstrap 5 link</a>
+    <a href="#c2" data-toggle="collapse">Bootstrap 4 / generic link</a>
+    <button data-ui-toggle="dropdown">Custom library dropdown</button>
+  </body>
+</html>

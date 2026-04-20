@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Disclosure — good (native &lt;details&gt;/&lt;summary&gt;, no ARIA needed)</title>
+  </head>
+  <body>
+    <!--
+      The native `<details>/<summary>` pair is a built-in disclosure
+      widget. The browser exposes the open/closed state via the
+      `<details open>` attribute; no aria-expanded is required (or
+      appropriate) on `<summary>`.
+    -->
+    <details>
+      <summary>More information</summary>
+      <p>Detailed content appears when the summary is activated.</p>
+    </details>
+  </body>
+</html>

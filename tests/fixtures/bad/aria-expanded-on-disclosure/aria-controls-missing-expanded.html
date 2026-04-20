@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Disclosure — bad (aria-controls points at existing panel, no aria-expanded)</title>
+  </head>
+  <body>
+    <!--
+      The button toggles a collapsible panel via aria-controls, so AT
+      can tell what it controls — but nothing announces whether the
+      panel is currently open or closed. WCAG 4.1.2 requires the state
+      be programmatically determinable.
+    -->
+    <button aria-controls="details-panel">Details</button>
+    <div id="details-panel" hidden>
+      <p>Hidden until the trigger is pressed.</p>
+    </div>
+  </body>
+</html>
