@@ -181,12 +181,27 @@ function postGtImpliesGeneric(src: string, endPos: number): boolean {
  * `arr.map<U>()`, `(fn)<T>()`) rather than the start of a JSX element?
  * Pure lookback: skip whitespace, classify the preceding char/word.
  * Returns `false` when in doubt so the content-based heuristic runs.
+ *
+ * Refuses to cross a blank line (two consecutive `\n`). TS formatters
+ * never split a generic call from its identifier across a blank line,
+ * so refusing the crossing is a no-op for real TS. It matters in MDX,
+ * where markdown prose ends with an identifier word separated from the
+ * next JSX block by a blank line — without this, prose like
+ * `# Top-level heading\n\n<a>…</a>` seeds the scan with sawGeneric=true
+ * and the `<a>` element is wrongly classified as a generic call.
  */
 function precedingIsGenericCall(src: string, pos: number): boolean {
   let p = pos - 1;
+  let newlineCount = 0;
   while (p >= 0) {
     const ch = src[p];
-    if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") {
+    if (ch === " " || ch === "\t" || ch === "\r") {
+      p -= 1;
+      continue;
+    }
+    if (ch === "\n") {
+      newlineCount += 1;
+      if (newlineCount >= 2) return false;
       p -= 1;
       continue;
     }
