@@ -443,7 +443,7 @@ Source: "find all violations" bar re-raised 2026-04-19. Four-agent gap audit aga
 
 Source: same audit. Verified file:line hits on shape-honesty violations that survived Q/Q2/Q2R2. Every item below is a null-sentinel that CLAUDE.md §1 "Ambiguous field shapes are dishonest" calls out directly — forcing agents to disambiguate "field unavailable" vs "field empty."
 
-- [ ] **V1-SHAPE-NULL-SWEEP** Replace 9 response-field null/empty sentinels with conditional-spread:
+- [x] **V1-SHAPE-NULL-SWEEP** (6b6349c) Replace 9 response-field null/empty sentinels with conditional-spread:
     - `src/mcp/tool-explain-standard.ts:65` `publisher: standard.publisher ?? null`
     - `src/mcp/tool-explain-standard.ts:66` `url: standard.url ?? null`
     - `src/mcp/tool-explain-standard.ts:68` `levelFilterApplied: level ?? null`
