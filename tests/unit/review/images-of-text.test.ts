@@ -124,4 +124,63 @@ describe("review/images-of-text", () => {
       expect(out.length).toBeGreaterThan(0);
     });
   });
+
+  describe("svg data URI text-free annotation", () => {
+    // Purely additive reason-text enrichment: when the src is a
+    // `data:image/svg+xml,...` URI whose decoded payload has no
+    // `<text>`/`<tspan>` tokens, append a note so the agent can dismiss
+    // in one read. Zero detection change — candidate still emits at the
+    // same confidence. See docs/kb/architecture/ai-first-consumer.md
+    // ("Enrich reason with dismissal signal; keep candidate in
+    // primary list").
+    it("annotates when the svg data URI payload has no text/tspan tokens", () => {
+      // `alt="Logo"` triggers keywordHint; the carousel-style SVG is a
+      // path-only placeholder decoded to `<svg><path d='M0 0h10v10H0z'/></svg>`.
+      const source = `<img class="logo" src="data:image/svg+xml,%3Csvg%3E%3Cpath%20d%3D%27M0%200h10v10H0z%27%2F%3E%3C%2Fsvg%3E" alt="Acme">`;
+      const out = runFinder(finder, source, { filePath: "input.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).toContain("data:image/svg+xml");
+      expect(out[0]?.reason).toContain("text-baked-in concern is provably lower");
+    });
+
+    it("does NOT annotate when the svg data URI payload contains a <text> element", () => {
+      // Decoded payload: `<svg><text x='0' y='10'>Hi</text></svg>`. The
+      // candidate still emits (logo keyword in class) but carries no
+      // dismissal hint — the text element is exactly the failure pattern.
+      const source = `<img class="logo" src="data:image/svg+xml,%3Csvg%3E%3Ctext%20x%3D%270%27%20y%3D%2710%27%3EHi%3C%2Ftext%3E%3C%2Fsvg%3E" alt="Acme">`;
+      const out = runFinder(finder, source, { filePath: "input.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).not.toContain("text-baked-in concern is provably lower");
+    });
+
+    it("does not annotate non-svg data URIs (e.g. png)", () => {
+      const source = `<img class="logo" src="data:image/png;base64,iVBORw0KGgoAAAANS" alt="Acme">`;
+      const out = runFinder(finder, source, { filePath: "input.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).not.toContain("data:image/svg+xml");
+      expect(out[0]?.reason).not.toContain("text-baked-in concern is provably lower");
+    });
+
+    it("does not annotate when the svg data URI payload contains a <tspan> element", () => {
+      // Decoded payload: `<svg><text><tspan>Hi</tspan></text></svg>`.
+      const source = `<img class="logo" src="data:image/svg+xml,%3Csvg%3E%3Ctext%3E%3Ctspan%3EHi%3C%2Ftspan%3E%3C%2Ftext%3E%3C%2Fsvg%3E" alt="Acme">`;
+      const out = runFinder(finder, source, { filePath: "input.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).not.toContain("text-baked-in concern is provably lower");
+    });
+
+    it("does not annotate base64-encoded svg data URIs (payload not inspected)", () => {
+      const source = `<img class="logo" src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=" alt="Acme">`;
+      const out = runFinder(finder, source, { filePath: "input.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).not.toContain("text-baked-in concern is provably lower");
+    });
+
+    it("annotates JSX img with a text-free svg data URI src", () => {
+      const source = `const x = <img className="logo" src="data:image/svg+xml,%3Csvg%3E%3Cpath%2F%3E%3C%2Fsvg%3E" alt="Acme" />;`;
+      const out = runFinder(finder, source);
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).toContain("text-baked-in concern is provably lower");
+    });
+  });
 });

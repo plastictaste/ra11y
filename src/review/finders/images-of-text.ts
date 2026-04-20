@@ -126,6 +126,7 @@ function emitHtmlImageCandidate(
     element.loc.start.column,
     renderReason(signals),
     logoLike(classVal, srcVal),
+    svgDataUriTextFreeHint(srcVal),
   );
 }
 
@@ -179,6 +180,7 @@ function emitJsxImageCandidate(
     element.loc.start.column,
     renderReason(signals),
     logoLike(classVal, srcVal),
+    svgDataUriTextFreeHint(srcVal),
   );
 }
 
@@ -316,12 +318,14 @@ function pushForAllCriteria(
   column: number,
   reason: string,
   logoLikelyExempt: boolean,
+  svgDataUriHint: string | null,
 ): void {
   for (const criterionId of CRITERION_IDS) {
-    const augmented =
+    const withLogoHint =
       logoLikelyExempt && criterionAllowsLogotypeExemption(criterionId)
         ? `${reason} — if this is a logo or brand mark, WCAG 1.4.5 has a logotype exemption (essential presentation); the AAA "no exception" variant (1.4.9) still applies`
         : reason;
+    const augmented = svgDataUriHint ? `${withLogoHint} ${svgDataUriHint}` : withLogoHint;
     // Confidence "low": alt/className/src pattern matching on
     // "logo"/"banner"/"heading" tokens and short-alt-duplicated-in-text
     // heuristics. Biased toward false positives by design (see
@@ -365,6 +369,53 @@ function logoLike(classValue: string | null, srcValue: string | null): boolean {
 
 function isLogoKeyword(match: string | null): boolean {
   return match === "logo";
+}
+
+/**
+ * When `src` is a `data:image/svg+xml,...` URI, decode the SVG payload
+ * (percent-escapes only) and check whether it contains `<text` or
+ * `<tspan` tokens. If neither appears, return an additive reason-text
+ * suffix noting that the text-baked-in concern is provably lower on
+ * deterministic evidence — path-only SVGs still *can* render text glyphs
+ * via path data, so the suffix is guidance for the agent to verify in
+ * one read, not a suppression signal. Per the AI-first consumer model
+ * (docs/kb/architecture/ai-first-consumer.md) the candidate still emits
+ * at the same confidence; only the reason text is enriched. Returns
+ * null for non-SVG-data-URI sources, non-decodable payloads, or
+ * payloads that do contain `<text>`/`<tspan>`.
+ */
+function svgDataUriTextFreeHint(srcValue: string | null): string | null {
+  if (srcValue === null) return null;
+  const trimmed = srcValue.trim();
+  if (!/^data:image\/svg\+xml/i.test(trimmed)) return null;
+  const commaIndex = trimmed.indexOf(",");
+  if (commaIndex < 0) return null;
+  const header = trimmed.slice(0, commaIndex).toLowerCase();
+  // Base64-encoded SVGs aren't in scope — only the percent-encoded
+  // form the backlog item references (`data:image/svg+xml,...%3C...`)
+  // is decoded here; we return null on base64 so no misleading claim
+  // is made about a payload we didn't inspect.
+  if (header.includes(";base64")) return null;
+  const payload = trimmed.slice(commaIndex + 1);
+  const decoded = percentDecode(payload);
+  if (decoded === null) return null;
+  if (/<text[\s/>]/i.test(decoded) || /<tspan[\s/>]/i.test(decoded)) return null;
+  return "(note: `src` is a `data:image/svg+xml` URI with no `<text>`/`<tspan>` tokens in the payload — text-baked-in concern is provably lower, but verify the SVG isn't rendering text glyphs directly in path data)";
+}
+
+/**
+ * Best-effort percent-decode. Returns the input with `%XX` escapes
+ * replaced by their byte values (interpreted as UTF-8 via
+ * decodeURIComponent). On malformed input (lone `%`, non-hex digits
+ * that decodeURIComponent rejects) returns null rather than throwing —
+ * the caller treats null as "couldn't inspect, don't annotate."
+ */
+function percentDecode(value: string): string | null {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
 
 interface ImageText {
