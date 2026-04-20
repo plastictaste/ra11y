@@ -26,6 +26,7 @@ const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".htm",
   ".css",
   ".scss",
+  ".mdx",
 ]);
 
 /**
@@ -64,5 +65,13 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
   // files too. This keeps rules and telemetry in sync without teaching
   // every CSS-shaped rule about Sass.
   if (fileExt === ".scss" && allowList.includes(".css")) return true;
+  // `.mdx` is transformed into a TSX AST by the MDX parser adapter —
+  // the embedded JSX in an MDX page IS the authoring surface. Any rule
+  // declaring `.tsx` or `.jsx` as its extension (alt-text/missing,
+  // link-text/missing, etc.) applies to `.mdx` files too, so MDX-based
+  // doc sites participate in the same rule coverage as a JSX app.
+  if (fileExt === ".mdx" && (allowList.includes(".tsx") || allowList.includes(".jsx"))) {
+    return true;
+  }
   return false;
 }
