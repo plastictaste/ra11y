@@ -37,6 +37,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ScanResult, Violation } from "../types/violation.ts";
+import { VERSION } from "../version.ts";
 
 export const BASELINE_FILENAME = ".ra11y-baseline.json";
 export const BASELINE_VERSION = 1;
@@ -132,7 +133,7 @@ export function buildBaselineFile(
   return {
     version: BASELINE_VERSION,
     generatedAt: now,
-    ra11yVersion: "0.0.0",
+    ra11yVersion: VERSION,
     standards: result.enabledStandards,
     violations: entries,
   };

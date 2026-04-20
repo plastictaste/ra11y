@@ -2,9 +2,10 @@
  * Help text for `--help` and `--version`.
  */
 
+import { VERSION } from "../version.ts";
 import { EXIT_CODE_LEGEND } from "./exit-codes.ts";
 
-export const VERSION = "0.0.0";
+export { VERSION };
 
 export function renderHelp(): string {
   return `ra11y v${VERSION} — multi-standard accessibility scanner

@@ -22,6 +22,7 @@
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Criterion, Standard } from "../types/standard.ts";
 import type { ScanResult, Violation } from "../types/violation.ts";
+import { VERSION } from "../version.ts";
 
 export type Conformance =
   | "Supports"
@@ -61,7 +62,7 @@ export interface VpatReport {
   readonly standards: readonly VpatStandardSection[];
 }
 
-const EVALUATOR = "ra11y v0.0.0";
+const EVALUATOR = `ra11y v${VERSION}`;
 
 export function buildVpatReport(
   result: ScanResult,

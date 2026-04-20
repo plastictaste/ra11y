@@ -16,6 +16,7 @@
 
 import { createInterface } from "node:readline";
 import { logger } from "../utils/logger.ts";
+import { VERSION } from "../version.ts";
 import {
   type CompletionArgument,
   type CompletionRef,
@@ -84,7 +85,7 @@ const INTERNAL_ERROR = -32603;
 
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_NAME = "ra11y";
-const SERVER_VERSION = "0.1.0";
+const SERVER_VERSION = VERSION;
 const LOGGER_SCAN = "ra11y.scan";
 
 const SERVER_INSTRUCTIONS = [

@@ -27,10 +27,9 @@
 import { defineFormatter } from "../../api/plugin.ts";
 import type { ReportData, ScanResult, Violation } from "../../types/violation.ts";
 import { bold, brightCyan, brightYellow, dim, gray, magenta, red } from "../../utils/ansi.ts";
+import { VERSION } from "../../version.ts";
 import { renderFileBox } from "../theme/layout.ts";
 import { GLYPHS } from "../theme/symbols.ts";
-
-const VERSION = "0.0.0";
 
 export const terminalFormatter = defineFormatter({
   id: "terminal",

@@ -15,6 +15,7 @@ import { defineFormatter } from "../../api/plugin.ts";
 import { EVALUATION_PROMPTS } from "../../review/evaluation-prompts.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 import type { ReportData, ScanResult, Violation } from "../../types/violation.ts";
+import { VERSION as TOOL_VERSION } from "../../version.ts";
 import { buildAgentFinding } from "../agent-response/build-finding.ts";
 import { buildAgentPlan } from "../agent-response/build-plan.ts";
 import type {
@@ -25,7 +26,6 @@ import type {
 } from "../agent-response/types.ts";
 
 const TOOL_NAME = "ra11y";
-const TOOL_VERSION = "0.1.0";
 
 // ─── Formatter ───────────────────────────────────────────────────────────────
 

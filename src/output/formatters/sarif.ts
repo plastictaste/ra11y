@@ -18,12 +18,12 @@
 
 import { defineFormatter } from "../../api/plugin.ts";
 import type { ReportData, ScanResult, Severity, Violation } from "../../types/violation.ts";
+import { VERSION as TOOL_VERSION } from "../../version.ts";
 
 const SARIF_VERSION = "2.1.0";
 const SARIF_SCHEMA =
   "https://docs.oasis-open.org/sarif/sarif/v2.1.0/cos02/schemas/sarif-schema-2.1.0.json";
 const TOOL_NAME = "ra11y";
-const TOOL_VERSION = "0.0.0";
 const INFORMATION_URI = "https://github.com/vanctran/ra11y";
 
 interface SarifLog {

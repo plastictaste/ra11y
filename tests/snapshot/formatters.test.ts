@@ -6,6 +6,7 @@ import {
 } from "../../src/output/formatters/index.ts";
 import type { ReportData, ScanResult } from "../../src/types/violation.ts";
 import { setColorEnabled } from "../../src/utils/ansi.ts";
+import { VERSION } from "../../src/version.ts";
 import { withFindingIds } from "../helpers/make-violation.ts";
 
 // Fixed input so snapshots are deterministic. Duration is zeroed to
@@ -131,7 +132,7 @@ describe("formatter: json", () => {
       };
       report: { coverage: unknown[] };
     };
-    expect(parsed.ra11y.version).toBe("0.0.0");
+    expect(parsed.ra11y.version).toBe(VERSION);
     expect(parsed.result.enabledStandards).toEqual(["wcag22"]);
     expect(parsed.result.filesScanned).toBe(12);
     expect(parsed.result.violations).toHaveLength(3);

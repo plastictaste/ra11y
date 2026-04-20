@@ -8,13 +8,14 @@
 
 import { defineFormatter } from "../../api/plugin.ts";
 import type { ReportData, ScanResult } from "../../types/violation.ts";
+import { VERSION } from "../../version.ts";
 
 export const jsonFormatter = defineFormatter({
   id: "json",
   format(result: ScanResult, report: ReportData): string {
     const payload = {
       ra11y: {
-        version: "0.0.0",
+        version: VERSION,
       },
       result: {
         enabledStandards: result.enabledStandards,
