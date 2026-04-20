@@ -90,6 +90,20 @@ With 18 < 25, the file-count cap never engages — `truncated` / `nextOffset` do
 
 **Scope.** Wired through `scan`, `scan_project`, and `scan_diff` (both baseline and hunks modes). `scan_file` is a single-file shape — the density cap's drop dimension (trailing file entries) does not exist there, so the helper is not called on that path. The coverage matches `V1-SIZE-RESPONSE-BUDGET-DENSITY` (b) — `suggest_fix` / `apply_fix` / `baseline` are skipped for the same reason: their response bodies don't carry a multi-file array the density cap can trim. `scan` has no `limit`/`offset` contract, so when the cap fires there it emits `truncated: true` + `totalFilesWithFindings` + the warning, but omits `nextOffset` — the remediation surfaced via the warning is "narrow `paths` or use `scan_project` which does paginate."
 
-**Measurement after amendment.** The `/tmp/bootstrap` measurement fixture is not present in this worktree, so the final byte count on that fixture is deferred to the main session's follow-up measurement pass. What we can verify in CI: a 50-file label-dense HTML fixture with `limit: 50` produces a truncated response ≈ 82 KB (previously unbounded-by-file-count), with `response_token_budget_truncated` emitted and `nextOffset` advancing past the kept files — see `tests/unit/mcp/token-budget-scan-project.test.ts`.
+**Measurement after amendment.** Verified post-merge against `/tmp/bootstrap` (twbs/bootstrap) via in-process handler call:
+
+| metric | pre-amendment (post-hoist) | post-amendment |
+|---|---:|---:|
+| response body bytes | 107,036 | 78,167 |
+| approx tokens | ~26,759 | ~19,542 |
+| envelope bytes | — | 86,098 |
+| envelope approx tokens | — | ~21,525 |
+| files in response | 18 | 8 |
+| totalFilesWithFindings | 18 | 18 |
+| truncated | false | **true** |
+| nextOffset | — | 8 |
+| warnings | `no_config_found`, `extensions_skipped_no_parser` | `no_config_found`, `extensions_skipped_no_parser`, **`response_token_budget_truncated`** |
+
+The 25k MCP ceiling is respected with ~3.5k tokens of envelope headroom. The second call against `nextOffset: 8` covers the remaining 10 files with findings. CI guardrail: a 50-file label-dense HTML fixture with `limit: 50` produces a truncated response ≈ 82 KB (previously unbounded-by-file-count), with `response_token_budget_truncated` emitted — see `tests/unit/mcp/token-budget-scan-project.test.ts`.
 
 **Non-reversal of prior decision.** The original decision (lower `DEFAULT_PAGE_LIMIT` from 200 to 25) still holds. File-count is still the primary guard — cheap to reason about, matches an existing contract. The token-density cap is a secondary guardrail for the case the original ADR flagged as the natural follow-up: "If a future measurement shows per-file bytes drift substantially (e.g., a new meta field that grows with finding count), the file-count cap gets inaccurate. At that point option (b) is the correct follow-up…" The present amendment lands that follow-up. Option (c) — shifting full `fix.description` prose off scan responses onto `suggest_fix` — remains on the table as a larger shape change if future measurements show the density cap can't hold typical codebases under 25k tokens.
