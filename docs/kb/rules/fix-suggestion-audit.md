@@ -55,7 +55,7 @@ violation fires.
 | document/lang-attribute | mechanical | context-aware | `<meta http-equiv="Content-Language">`, `<meta name="language">`, `<meta charset>` legacy encoding | Four-step ladder inlines an authoritative lang value from http-equiv, falls back to the non-standard name="language" meta, then to a legacy-charset region hint (shift_jis → ja, gb2312 → zh-Hans, …). Generic fallthrough still names four concrete BCP 47 examples. Resolved by 746ecee. |
 | document/lang-on-parts | mechanical | context-aware | attribute name, raw value, issue kind, canonical rewrite | Per-kind builders; underscore/uppercase branches compute the exact corrected value and inline it. |
 | document/meta-refresh | guidance | context-aware | target URL, delay seconds | Branches on zero-delay vs delayed redirect, inlines the target URL into the suggested replacement link. |
-| document/page-titled | mechanical | context-aware | first non-empty `<h1>` text + line, first `<meta name="description">` content + line | Shared `buildSuggestion` ladder: h1-text branch inlines the heading string as the candidate `<title>` (mentioning meta description as a fallback when both exist); meta-description branch truncates the description to ~60 chars at a word boundary and strips trailing punctuation; fallback names the ≤60 char length budget and the "differs from sibling pages" constraint. Resolved by PENDING_COMMIT. |
+| document/page-titled | mechanical | context-aware | first non-empty `<h1>` text + line, first `<meta name="description">` content + line | Shared `buildSuggestion` ladder: h1-text branch inlines the heading string as the candidate `<title>` (mentioning meta description as a fallback when both exist); meta-description branch truncates the description to ~60 chars at a word boundary and strips trailing punctuation; fallback names the ≤60 char length budget and the "differs from sibling pages" constraint. Resolved by 1a639b3. |
 | document/viewport-zoom | mechanical | context-aware | offending viewport directive, raw value | Inlines the offending directive name and value, with WCAG-specific threshold guidance per problem. |
 | focus/not-obscured | guidance | context-aware | selector, declared height | `buildSuggestion` inlines the anchor selector and the candidate `scroll-padding-*` value derived from the declared height. |
 | focus/outline-visible | guidance | context-aware | selector, scoped-vs-bare, Tailwind utility cross-reference | Inlines the selector in the remediation; appends a pragma-silencing note when the selector is class-scoped. |
@@ -118,7 +118,7 @@ Resolved since publication (flipped to `context-aware`):
 - `focus/tabindex-positive` — V1-FIX-TABINDEX-POSITIVE.
 - `document/lang-attribute` — V1-FIX-DOC-LANG (commit 746ecee).
 - `parsing/duplicate-id` — V1-FIX-DUPLICATE-ID (commit pending).
-- `document/page-titled` — V1-FIX-DOC-TITLE (commit PENDING_COMMIT).
+- `document/page-titled` — V1-FIX-DOC-TITLE (commit 1a639b3).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted
