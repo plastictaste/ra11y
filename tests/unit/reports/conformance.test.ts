@@ -342,4 +342,120 @@ describe("renderConformanceMarkdown", () => {
     expect(md).toContain("wcag22:1.4.3");
     expect(md).toContain("failing");
   });
+
+  it("emits the six WCAG §5.3.1 required claim fields in the markdown", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      files: ["src/a.tsx", "src/b.tsx"],
+      commitHash: "abc1234",
+      configSnapshot: { standard: "wcag22", level: "AA" },
+    });
+    const md = renderConformanceMarkdown(statement);
+    expect(md).toContain("- Date:");
+    expect(md).toContain("WCAG22 2.2");
+    expect(md).toContain("<https://www.w3.org/TR/WCAG22/>");
+    expect(md).toContain("- Conformance level: AA");
+    expect(md).toContain("## Scope");
+    expect(md).toContain("Files scanned: 2");
+    expect(md).toContain("`abc1234`");
+    expect(md).toContain("## Technologies relied upon");
+    expect(md).toContain("- HTML");
+    expect(md).toContain("- WAI-ARIA");
+    // technologiesNotReliedUpon defaults to [] → section omitted
+    expect(md).not.toContain("## Technologies not relied upon");
+  });
+
+  it("includes technologiesNotReliedUpon section only when non-empty", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      technologiesNotReliedUpon: ["JavaScript"],
+    });
+    const md = renderConformanceMarkdown(statement);
+    expect(md).toContain("## Technologies not relied upon");
+    expect(md).toContain("- JavaScript");
+  });
+});
+
+describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {
+  it("populates guidelinesTitle/version/uri from the resolved standard", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.guidelinesTitle).toBe("WCAG22");
+    expect(statement.guidelinesVersion).toBe("2.2");
+    expect(statement.guidelinesUri).toBe("https://www.w3.org/TR/WCAG22/");
+  });
+
+  it("defaults technologiesReliedUpon to HTML/CSS/ECMAScript/WAI-ARIA", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.technologiesReliedUpon).toEqual(["HTML", "CSS", "ECMAScript", "WAI-ARIA"]);
+    expect(statement.technologiesNotReliedUpon).toEqual([]);
+  });
+
+  it("forwards caller-supplied technologies and file manifest into scope", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      files: ["src/a.tsx", "src/b.tsx"],
+      technologiesReliedUpon: ["HTML"],
+      technologiesNotReliedUpon: ["JavaScript"],
+    });
+    expect(statement.scope.files).toEqual(["src/a.tsx", "src/b.tsx"]);
+    expect(statement.technologiesReliedUpon).toEqual(["HTML"]);
+    expect(statement.technologiesNotReliedUpon).toEqual(["JavaScript"]);
+  });
+
+  it("omits scope.commitHash and scope.configSnapshot when caller omits them", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.scope.commitHash).toBeUndefined();
+    expect(statement.scope.configSnapshot).toBeUndefined();
+    expect(statement.scope.files).toEqual([]);
+  });
+
+  it("populates scope.commitHash and scope.configSnapshot when provided", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      commitHash: "deadbeef",
+      configSnapshot: { standard: "wcag22", level: "AA" },
+    });
+    expect(statement.scope.commitHash).toBe("deadbeef");
+    expect(statement.scope.configSnapshot).toEqual({ standard: "wcag22", level: "AA" });
+  });
+
+  it("omits scope.commitHash when caller passes empty string (no sentinel)", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      commitHash: "",
+      configSnapshot: {},
+    });
+    expect(statement.scope.commitHash).toBeUndefined();
+    expect(statement.scope.configSnapshot).toBeUndefined();
+  });
 });

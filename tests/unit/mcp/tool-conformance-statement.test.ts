@@ -134,6 +134,62 @@ describe("conformance_statement: named profile scope", () => {
   });
 });
 
+describe("conformance_statement: WCAG §5.3.1 required claim fields", () => {
+  it("emits the six required claim fields", async () => {
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      const session = new McpSession();
+      const { isError, body } = await call(session, {
+        standard: "wcag22",
+        level: "AA",
+        cwd,
+      });
+      expect(isError).toBe(false);
+      expect(body["guidelinesTitle"]).toBe("WCAG 2.2");
+      expect(body["guidelinesVersion"]).toBe("2.2");
+      expect(body["guidelinesUri"]).toBe("https://www.w3.org/TR/WCAG22/");
+      expect(Array.isArray((body["scope"] as Record<string, unknown>)["files"])).toBe(true);
+      expect(Array.isArray(body["technologiesReliedUpon"])).toBe(true);
+      expect((body["technologiesReliedUpon"] as string[]).length).toBeGreaterThan(0);
+      expect(Array.isArray(body["technologiesNotReliedUpon"])).toBe(true);
+    });
+  });
+
+  it("forwards caller-declared technologies", async () => {
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      const session = new McpSession();
+      const { isError, body } = await call(session, {
+        standard: "wcag22",
+        level: "AA",
+        cwd,
+        technologiesReliedUpon: ["HTML", "CSS"],
+        technologiesNotReliedUpon: ["JavaScript"],
+      });
+      expect(isError).toBe(false);
+      expect(body["technologiesReliedUpon"]).toEqual(["HTML", "CSS"]);
+      expect(body["technologiesNotReliedUpon"]).toEqual(["JavaScript"]);
+    });
+  });
+
+  it("scope.configSnapshot carries session config fields", async () => {
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      const session = new McpSession();
+      const { isError, body } = await call(session, {
+        standard: "wcag22",
+        level: "AA",
+        cwd,
+      });
+      expect(isError).toBe(false);
+      const scope = body["scope"] as Record<string, unknown>;
+      const snapshot = scope["configSnapshot"] as Record<string, unknown>;
+      expect(snapshot["standard"]).toBe("wcag22");
+      expect(snapshot["level"]).toBe("AA");
+    });
+  });
+});
+
 describe("conformance_statement: durable attestations clear blockers", () => {
   it("picks up attestations from .ra11y/attestations.jsonl", async () => {
     await withScratch(async (cwd) => {
