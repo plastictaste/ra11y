@@ -94,6 +94,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 ## rules
 
 - [aria/conflicting-role](./rules/aria__conflicting-role.md)
+- [aria/expanded-on-disclosure](./rules/aria__expanded-on-disclosure.md)
 - [aria/hidden-focus](./rules/aria__hidden-focus.md)
 - [aria/invalid-role](./rules/aria__invalid-role.md)
 - [aria/live-region-valid](./rules/aria__live-region-valid.md)
@@ -108,7 +109,6 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [document/meta-refresh](./rules/document__meta-refresh.md)
 - [document/page-titled](./rules/document__page-titled.md)
 - [document/viewport-zoom](./rules/document__viewport-zoom.md)
-- [Fix-suggestion audit (v1.0 ship gate)](./rules/fix-suggestion-audit.md)
 - [focus/not-obscured](./rules/focus__not-obscured.md)
 - [focus/outline-visible](./rules/focus__outline-visible.md)
 - [focus/tabindex-positive](./rules/focus__tabindex-positive.md)
