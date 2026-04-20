@@ -179,6 +179,222 @@ export function pruneAttestations(
 }
 
 /**
+ * One finding produced by {@link verifyAttestationIntegrity}. Each
+ * finding describes a single ledger line that violates an integrity
+ * invariant defined in ADR 0020. `kind` discriminates the variant so
+ * consumers can route by failure mode; `line` is the 1-based line
+ * number in whichever file the finding is anchored to (working tree
+ * for `backdated-attestation` / `future-attestation-before-commit` /
+ * `uncommitted`; HEAD revision for `removed-since-head`).
+ */
+export type AttestationIntegrityFinding =
+  | {
+      readonly kind: "removed-since-head";
+      readonly line: number;
+      readonly record: AttestationRecord;
+    }
+  | {
+      readonly kind: "backdated-attestation";
+      readonly line: number;
+      readonly record: AttestationRecord;
+      readonly attestedAt: string;
+      readonly commitDate: string;
+    }
+  | {
+      readonly kind: "future-attestation-before-commit";
+      readonly line: number;
+      readonly record: AttestationRecord;
+      readonly attestedAt: string;
+      readonly commitDate: string;
+    }
+  | {
+      readonly kind: "uncommitted";
+      readonly line: number;
+      readonly record: AttestationRecord;
+    };
+
+/**
+ * Result of a verify pass over the attestation ledger. `findings` is
+ * every flagged entry — both hard failures (`removed-since-head`,
+ * `backdated-attestation`, `future-attestation-before-commit`) and
+ * informational ones (`uncommitted`, which is expected when a caller
+ * has just run `attest` and hasn't committed the ledger yet).
+ *
+ * The CLI wrapper treats the three hard-failure kinds as exit-2 signals
+ * and `uncommitted` as informational; the split lives on the finding's
+ * `kind` so the caller owns the policy.
+ */
+export interface AttestationVerifyResult {
+  readonly findings: readonly AttestationIntegrityFinding[];
+}
+
+/**
+ * Pure core of `ra11y attestations verify` (ADR 0020). Compares the
+ * working-tree ledger body against the HEAD revision body and flags
+ * integrity violations against git as the trust root.
+ *
+ * The function is deliberately pure — it takes both JSONL bodies and a
+ * per-line commit-date map as arguments, emits no I/O of its own, and
+ * exposes no git-shape dependency beyond the `ISO date string` typing
+ * on the blame map. The CLI wrapper materializes these inputs via
+ * `git show HEAD:<path>` + `git blame --line-porcelain`; tests
+ * construct them directly without a real git repo.
+ *
+ * Invariants enforced:
+ *
+ * 1. **Removed since HEAD.** Every line committed on HEAD that does not
+ *    appear (by exact JSON-line equality) in the working-tree body is
+ *    flagged as `removed-since-head`. Catches the `vim :g/<rec>/d`
+ *    attack — once an attestation has been committed, deleting it in
+ *    the working tree is surfaced.
+ * 2. **Backdated attestation.** A working-tree line's `attestedAt` is
+ *    compared against the author-date of the commit that first added
+ *    that line (keyed on the line's stable content hash via the
+ *    `workingTreeLineCommitDates` map). `attestedAt > commitDate` →
+ *    `backdated-attestation`. Catches "I wrote this in July but dated
+ *    it January before the known regression landed."
+ * 3. **Future attestation before commit.** `attestedAt < commitDate` →
+ *    `future-attestation-before-commit`. Rarer; plausible when the
+ *    authoring clock was wrong, still worth surfacing.
+ * 4. **Uncommitted.** A working-tree line that carries no entry in the
+ *    commit-date map (not yet committed to git) is flagged as
+ *    `uncommitted` — informational, not a failure. Expected right after
+ *    `ra11y attest` before `git commit`.
+ *
+ * @param workingTreeBody - Contents of `.ra11y/attestations.jsonl` in
+ *   the working tree.
+ * @param headBody - Contents of `.ra11y/attestations.jsonl` at
+ *   `HEAD` (from `git show HEAD:<path>`). Empty string when the path
+ *   is absent at HEAD — callers handle the precondition separately;
+ *   this helper treats it as "no committed ledger yet," so every
+ *   working-tree line reports as `uncommitted`.
+ * @param workingTreeLineCommitDates - Map keyed by working-tree line
+ *   number (1-based) to the author-date of the commit that added that
+ *   line (ISO 8601 string). Absent entries → line is uncommitted.
+ */
+export function verifyAttestationIntegrity(
+  workingTreeBody: string,
+  headBody: string,
+  workingTreeLineCommitDates: ReadonlyMap<number, string>,
+): AttestationVerifyResult {
+  const findings: AttestationIntegrityFinding[] = [];
+  const workingLines = splitLedgerLines(workingTreeBody);
+  const headLines = splitLedgerLines(headBody);
+
+  const workingSet = new Set<string>();
+  for (const { content } of workingLines) workingSet.add(content);
+  collectRemovedSinceHead(headLines, workingSet, findings);
+  classifyWorkingLines(workingLines, workingTreeLineCommitDates, findings);
+
+  return { findings };
+}
+
+/**
+ * Walks HEAD lines, emitting `removed-since-head` findings for every
+ * line whose exact-JSON content is missing from the working-tree
+ * body. We compare on raw JSON string rather than parsed objects so
+ * adversarial key reorderings inside one record can't mask a
+ * deletion — any edit beyond whitespace trimming flips equality,
+ * which is the honest signal.
+ */
+function collectRemovedSinceHead(
+  headLines: readonly LedgerLine[],
+  workingSet: ReadonlySet<string>,
+  out: AttestationIntegrityFinding[],
+): void {
+  for (const { content, lineNumber } of headLines) {
+    if (workingSet.has(content)) continue;
+    const record = parseLedgerLine(content);
+    if (record !== null) {
+      out.push({ kind: "removed-since-head", line: lineNumber, record });
+    }
+  }
+}
+
+/**
+ * Classifies every working-tree line against its adding-commit date,
+ * emitting `uncommitted` / `backdated-attestation` /
+ * `future-attestation-before-commit` per {@link classifyWorkingLine}.
+ */
+function classifyWorkingLines(
+  workingLines: readonly LedgerLine[],
+  commitDates: ReadonlyMap<number, string>,
+  out: AttestationIntegrityFinding[],
+): void {
+  for (const { content, lineNumber } of workingLines) {
+    const record = parseLedgerLine(content);
+    if (record === null) continue;
+    const finding = classifyWorkingLine(record, lineNumber, commitDates.get(lineNumber));
+    if (finding !== null) out.push(finding);
+  }
+}
+
+/**
+ * Classifies one working-tree ledger line against its adding-commit
+ * date. Pure: returns a finding or null.
+ */
+function classifyWorkingLine(
+  record: AttestationRecord,
+  lineNumber: number,
+  commitDate: string | undefined,
+): AttestationIntegrityFinding | null {
+  if (commitDate === undefined) {
+    return { kind: "uncommitted", line: lineNumber, record };
+  }
+  const attestedAt = record.attestedAt;
+  const attestedMs = Date.parse(attestedAt);
+  const commitMs = Date.parse(commitDate);
+  if (!(Number.isFinite(attestedMs) && Number.isFinite(commitMs))) {
+    // Unparseable date on either side — skip rather than fabricate a
+    // verdict. The adding-commit date is a git invariant (always
+    // ISO); an unparseable `attestedAt` indicates a malformed record
+    // the lenient reader would already skip, so there is nothing
+    // useful to flag here.
+    return null;
+  }
+  if (attestedMs > commitMs) {
+    return { kind: "backdated-attestation", line: lineNumber, record, attestedAt, commitDate };
+  }
+  if (attestedMs < commitMs) {
+    return {
+      kind: "future-attestation-before-commit",
+      line: lineNumber,
+      record,
+      attestedAt,
+      commitDate,
+    };
+  }
+  return null;
+}
+
+interface LedgerLine {
+  readonly lineNumber: number;
+  readonly content: string;
+}
+
+function splitLedgerLines(body: string): LedgerLine[] {
+  if (body.length === 0) return [];
+  const out: LedgerLine[] = [];
+  let lineNumber = 0;
+  for (const raw of body.split("\n")) {
+    lineNumber += 1;
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    out.push({ lineNumber, content: trimmed });
+  }
+  return out;
+}
+
+function parseLedgerLine(content: string): AttestationRecord | null {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    return coerceAttestationRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Validates the parsed JSON value against the {@link AttestationRecord}
  * contract and returns a normalized record, or `null` if the value is
  * not a valid record. Used by the lenient read path.
