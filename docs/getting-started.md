@@ -195,7 +195,3 @@ bunx ra11y --changed --fail-on error
 - [Plugin authoring (rules)](./plugins/authoring-a-rule.md)
 - [Plugin authoring (standards)](./plugins/authoring-a-standard.md)
 
-## Upgrading
-
-- [Migrating from 0.1 to 0.2](./migrations/0.1-to-0.2.md)
-- [Migrating from 0.2 to 1.0](./migrations/0.2-to-1.0.md)

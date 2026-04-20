@@ -40,5 +40,4 @@ Revisit if: (a) a sampling-capable host surfaces a concrete workflow demand, or 
 
 - v1.0 ships with current rule names, separate coverage/checklist tools, core-only parser, and no sampling-backed tools.
 - Backlog items V1-RULE-RENAME-DECIDE / V1-COV-CHECK-MERGE / V1-PARSER-SUBPKG-DECIDE / V1-SAMPLING-TOOL-PICK all check off.
-- `docs/migrations/0.2-to-1.0.md` reflects the deferred list so consumers know what is NOT changing in v1.0.
 - Each deferral lists its revisit signal so a future minor can revive the work on real evidence, not anticipated demand.

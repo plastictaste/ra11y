@@ -28,13 +28,12 @@ A target version (`0.1.0`, `0.2.0`, `1.0.0`). If not provided, infer from conven
 1. **Preflight**: clean tree, on `main`, up-to-date with origin.
 2. **Verify**: run `bun run verify && bun run build && bun run bench`. Every check must be green.
 3. **Changelog**: run `bun scripts/generate-changelog.ts` and review the Unreleased section. Rewrite in Keep-a-Changelog voice; do not merge the script's raw output without editing. Move the section under a `## [<version>] — YYYY-MM-DD` heading.
-4. **Migration guide**: if this is a minor with breaking changes or a major, delegate to `migration-author` first and wait for it to land.
-5. **Version bump**: update `package.json.version`. Commit: `chore(release): v<version>`.
-6. **Tag**: `git tag -a v<version> -m "ra11y v<version>"`.
-7. **Push**: `git push origin main && git push origin v<version>` — **confirm with the user before pushing the tag**. Pushing a tag triggers CI → npm publish, which is irreversible.
-8. **Verify CI**: watch `release.yml` in Actions. On success, `npm view @ra11y/core version` should match.
-9. **GitHub release**: create via `gh release create v<version> --notes-file <tmp>` with the changelog excerpt.
-10. **Post-release**: open a `chore(release): open <next>-dev cycle` PR that adds a new Unreleased section to `CHANGELOG.md`.
+4. **Version bump**: update `package.json.version`. Commit: `chore(release): v<version>`.
+5. **Tag**: `git tag -a v<version> -m "ra11y v<version>"`.
+6. **Push**: `git push origin main && git push origin v<version>` — **confirm with the user before pushing the tag**. Pushing a tag triggers CI → npm publish, which is irreversible.
+7. **Verify CI**: watch `release.yml` in Actions. On success, `npm view @ra11y/core version` should match.
+8. **GitHub release**: create via `gh release create v<version> --notes-file <tmp>` with the changelog excerpt.
+9. **Post-release**: open a `chore(release): open <next>-dev cycle` PR that adds a new Unreleased section to `CHANGELOG.md`.
 
 # Hard constraints
 

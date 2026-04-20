@@ -6,8 +6,6 @@ All notable changes to ra11y are documented in this file. The format is based on
 
 ## [1.0.0] - YYYY-MM-DD
 
-Migration guide (v0.2 → v1.0): [`docs/migrations/0.2-to-1.0.md`](./docs/migrations/0.2-to-1.0.md)
-
 Public API stability freeze: [ADR 0019](./docs/adr/0019-v1-api-stability.md)
 
 Deferred decisions: [ADR 0018](./docs/adr/0018-v1-deferred-decisions.md)
@@ -25,7 +23,7 @@ The `ExitCode` enum in `src/cli/exit-codes.ts` is now the canonical source of tr
 | `2` | `ExitCode.USER_ERROR` | Invalid arguments, unknown rule/profile, malformed input |
 | `3` | `ExitCode.NEW_VIOLATIONS` | `--diff` / `scan_diff` mode only: new violations absent from baseline |
 
-The observable behavior is unchanged from v0.2.0; the freeze makes the table a semver guarantee going forward. CI scripts that branch on `$?` should verify against the table, in particular that exit code 3 is only reachable via `--diff` (CLI) or `scan_diff` (MCP baseline mode). See [`docs/migrations/0.2-to-1.0.md`](./docs/migrations/0.2-to-1.0.md) for step-by-step migration guidance.
+The observable behavior is unchanged from v0.2.0; the freeze makes the table a semver guarantee going forward. CI scripts that branch on `$?` should verify against the table, in particular that exit code 3 is only reachable via `--diff` (CLI) or `scan_diff` (MCP baseline mode).
 
 ### Added
 
@@ -219,8 +217,6 @@ ADR: [`docs/adr/0006-real-world-fixture-harness.md`](./docs/adr/0006-real-world-
 
 #### Docs and knowledge base
 
-- [`docs/migrations/0.1-to-0.2.md`](./docs/migrations/0.1-to-0.2.md) — MCP shape migration guide for the v0.2.0 breaking changes.
-- [`docs/migrations/0.2-to-1.0.md`](./docs/migrations/0.2-to-1.0.md) — v1.0 upgrade guide.
 - [`docs/mcp/prompts.md`](./docs/mcp/prompts.md) — prompt library user guide.
 - [`docs/errors.md`](./docs/errors.md) — canonical error + exit-code index.
 - [`docs/conformance.md`](./docs/conformance.md) — end-to-end conformance guide.
@@ -244,10 +240,10 @@ ADR: [`docs/adr/0006-real-world-fixture-harness.md`](./docs/adr/0006-real-world-
 - `scan_project` response includes `plan.limitations` on every response for runtime-only checks the static scanner cannot perform.
 - `coverage` now includes per-criterion attestation evidence status when the evidence ledger has entries.
 
-### Deprecated
+### Removed
 
-- **`configure` → `sessionConfigure`**: the `configure` MCP tool name was renamed in v0.2.0. In v1.0 the `configure` alias remains but emits `{ "warnings": ["deprecated_tool_name_configure"] }`. Migrate to `sessionConfigure`; parameters are identical.
-- **`filePath` → `file` on `suggest_fix` and `apply_fix`**: the canonical parameter name is `file`. `filePath` is accepted as an alias and emits `{ "warnings": ["deprecated_param_filePath: use 'file' instead"] }`. Passing both returns a `conflicting-file-params` structured error.
+- **`configure` MCP tool alias** — the v0.2.0 `configure` name is removed; use `sessionConfigure`.
+- **`filePath` parameter alias on `suggest_fix` and `apply_fix`** — the v0.2.0 alias is removed; use `file`.
 
 ### Fixed
 

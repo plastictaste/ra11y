@@ -36,7 +36,7 @@ You are ra11y's type-system steward. The types in `src/types/` and the query hel
 
 # When to stop
 
-- If a type change would touch more than 20 files, stop and propose a migration in a dedicated ADR; don't batch. Coordinate with `migration-author`.
+- If a type change would touch more than 20 files, stop and propose a migration in a dedicated ADR; don't batch.
 - If a helper requires network or filesystem access, it doesn't belong in `ast-helpers.ts`. Put it in `src/engine/context-builder.ts` instead.
 
 # Return format
