@@ -78,10 +78,12 @@ type Emit = (v: {
 }) => void;
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
+  const docLang = findHtmlDocumentLang(doc);
   for (const video of findHtmlElementsByTag(doc, "video")) {
     if (getHtmlAttribute(video, "aria-hidden") === "true") continue;
     if (hasCaptionsChildHtml(video)) continue;
-    emit(buildViolation("video", video.loc.start));
+    const videoSrc = getHtmlAttribute(video, "src") ?? findFirstSourceSrcHtml(video);
+    emit(buildViolation(video.loc.start, videoSrc, docLang));
   }
 }
 
@@ -95,11 +97,44 @@ function hasCaptionsChildHtml(video: HtmlElement): boolean {
   return false;
 }
 
+/**
+ * First `<source src="…">` child's value, or `null` if the video has
+ * none. HTML `<video>` carries media URLs on either its own `src`
+ * attribute or on any number of `<source>` children; this fallback
+ * mirrors the browser's media-resource selection algorithm by picking
+ * the first source declared.
+ */
+function findFirstSourceSrcHtml(video: HtmlElement): string | null {
+  for (const child of video.children) {
+    if (child.kind !== "HtmlElement") continue;
+    if (child.tagName.toLowerCase() !== "source") continue;
+    const src = getHtmlAttribute(child, "src");
+    if (src !== null && src.length > 0) return src;
+  }
+  return null;
+}
+
+/**
+ * Reads the document root's `<html lang="…">` value for the srclang
+ * example. Returns the raw lang attribute (trimmed) or `null` when the
+ * document has no `<html>` element or no lang. The fix builder
+ * substitutes `"en"` when this is `null`.
+ */
+function findHtmlDocumentLang(doc: HtmlDocument): string | null {
+  for (const html of findHtmlElementsByTag(doc, "html")) {
+    const lang = getHtmlAttribute(html, "lang");
+    if (lang !== null && lang.trim().length > 0) return lang.trim();
+  }
+  return null;
+}
+
 function checkJsx(module: TsxModule, emit: Emit): void {
+  const docLang = findJsxDocumentLang(module);
   for (const video of findJsxElementsByTag(module, "video")) {
     if (getJsxAttributeString(video, "aria-hidden") === "true") continue;
     if (hasCaptionsChildJsx(video)) continue;
-    emit(buildViolation("video", video.loc.start));
+    const videoSrc = getJsxAttributeString(video, "src") ?? findFirstSourceSrcJsx(video);
+    emit(buildViolation(video.loc.start, videoSrc, docLang));
   }
 }
 
@@ -113,9 +148,39 @@ function hasCaptionsChildJsx(video: JsxElement): boolean {
   return false;
 }
 
+/**
+ * First `<source src="…">` child's value on a JSX `<video>`. JSX
+ * preserves case, so we compare the lowercase form — `<Source>` is
+ * almost always a wrapper component this rule deliberately skips.
+ */
+function findFirstSourceSrcJsx(video: JsxElement): string | null {
+  for (const child of video.children) {
+    if (child.kind !== "JsxElement") continue;
+    if (child.tagName !== "source") continue;
+    const src = getJsxAttributeString(child, "src");
+    if (src !== null && src.length > 0) return src;
+  }
+  return null;
+}
+
+/**
+ * Looks for an `<html lang="…">` in a JSX module — a common shape in
+ * Next.js / Remix root layouts (`<html lang="en"><body>…</body></html>`).
+ * Returns `null` when no `<html>` element is in the module or none
+ * carries a string-literal `lang`.
+ */
+function findJsxDocumentLang(module: TsxModule): string | null {
+  for (const html of findJsxElementsByTag(module, "html")) {
+    const lang = getJsxAttributeString(html, "lang");
+    if (lang !== null && lang.trim().length > 0) return lang.trim();
+  }
+  return null;
+}
+
 function buildViolation(
-  tagName: string,
   loc: { line: number; column: number },
+  videoSrc: string | null,
+  docLang: string | null,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
@@ -125,7 +190,75 @@ function buildViolation(
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> has no <track kind="captions"> child — deaf and hard-of-hearing users can't follow the dialogue.`,
-    suggestion: `Add a captions track: <track kind="captions" src="path/to/captions.vtt" srclang="en" label="English"> inside the <${tagName}>. If the video is decorative (no audio content), mark it with aria-hidden="true" instead.`,
+    message: buildMessage(videoSrc),
+    suggestion: buildSuggestion(videoSrc, docLang),
   };
+}
+
+function buildMessage(videoSrc: string | null): string {
+  if (videoSrc !== null) {
+    const basename = filenameFromPath(videoSrc);
+    return `<video src="${basename}"> has no <track kind="captions"> child — deaf and hard-of-hearing users can't follow the dialogue.`;
+  }
+  return `<video> has no <track kind="captions"> child — deaf and hard-of-hearing users can't follow the dialogue.`;
+}
+
+function buildSuggestion(videoSrc: string | null, docLang: string | null): string {
+  const srclang = docLang ?? "en";
+  const label = describeLangLabel(srclang);
+  const kindNote =
+    'kind="captions" is for deaf/hard-of-hearing viewers (includes sound effects and speaker IDs); kind="subtitles" is for translation only.';
+  if (videoSrc !== null) {
+    const basename = filenameFromPath(videoSrc);
+    const vttName = vttFilename(basename);
+    return `Add \`<track kind="captions" src="${vttName}" srclang="${srclang}" label="${label}" default>\` inside \`<video src="${basename}">\`, pointing at a VTT file with time-synced captions for that clip. ${kindNote} If the video is decorative (no audio content), mark it with aria-hidden="true" instead.`;
+  }
+  return `Add a \`<track kind="captions" src="captions.vtt" srclang="${srclang}" label="${label}" default>\` child of \`<video>\` pointing at a VTT file with time-synced captions. ${kindNote} If the video is decorative (no audio content), mark it with aria-hidden="true" instead.`;
+}
+
+/** Strips directory path; returns the final path segment. */
+function filenameFromPath(src: string): string {
+  const slash = Math.max(src.lastIndexOf("/"), src.lastIndexOf("\\"));
+  return slash === -1 ? src : src.slice(slash + 1);
+}
+
+/**
+ * Derives a VTT filename from a media basename by swapping the
+ * extension. `launch.mp4` → `launch.vtt`; `intro.webm` → `intro.vtt`;
+ * an extensionless input (`clip`) becomes `clip.vtt`. Query strings
+ * and fragments are dropped first — `launch.mp4?v=2` → `launch.vtt`.
+ */
+function vttFilename(basename: string): string {
+  const stripped = basename.replace(/[?#].*$/, "");
+  const dot = stripped.lastIndexOf(".");
+  const stem = dot > 0 ? stripped.slice(0, dot) : stripped;
+  return `${stem || "captions"}.vtt`;
+}
+
+/**
+ * Human-readable `label` for the generated track. The label attribute
+ * is surfaced in the browser's native track picker, so it should read
+ * like a sentence (`"English captions"`), not a tag (`"en captions"`).
+ * Only the common primary subtags are spelled out; anything else falls
+ * through to a generic `captions` label so the suggestion stays honest
+ * rather than guessing a language name from an unfamiliar code.
+ */
+function describeLangLabel(lang: string): string {
+  const primary = lang.split(/[-_]/)[0]?.toLowerCase() ?? "";
+  const names: Record<string, string> = {
+    en: "English",
+    es: "Spanish",
+    fr: "French",
+    de: "German",
+    it: "Italian",
+    pt: "Portuguese",
+    ja: "Japanese",
+    zh: "Chinese",
+    ko: "Korean",
+    ar: "Arabic",
+    ru: "Russian",
+    nl: "Dutch",
+  };
+  const pretty = names[primary];
+  return pretty ? `${pretty} captions` : "captions";
 }

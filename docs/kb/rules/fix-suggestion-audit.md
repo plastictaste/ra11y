@@ -74,7 +74,7 @@ violation fires.
 | layout/text-spacing | guidance | context-aware | CSS property name | Inlines the offending property into `Remove !important from '${property}'`; names specificity as the alternative lever. |
 | media/alt-text-missing | mechanical | context-aware | tagName, `src` filename, derived subject | `buildSuggestion` inlines a humanized filename as the example alt text (`alt="revenue chart 2026"`). |
 | media/autoplay-sound | guidance | context-aware | tag kind (audio vs video) | Two tag-specific suggestions with genuinely different advice: audio gets controls-or-muted guidance, video gets the `autoplay muted loop` pattern. |
-| media/video-captions-missing | guidance | generic | tagName only (always "video") | Constant "Add a captions track: `<track kind=\"captions\" …>`". Does not inspect src, aria-label, or existing tracks. |
+| media/video-captions-missing | guidance | context-aware | video src basename, first `<source>` src fallback, document `<html lang>`, derived VTT filename + language label | `buildSuggestion` ladder: video `src` → strip directory + swap extension into a concrete `src="<stem>.vtt"`; no `src` → fall back to first `<source>` child's basename; neither → `captions.vtt` with child-of-`<video>` phrasing. Inlines the nearest `<html lang="…">` (HTML doc root, or JSX root-layout shape) as `srclang`; defaults to `en` when absent. Humanizes common primary subtags into a `label="English captions"` style hint, and always names the captions-vs-subtitles distinction so the agent picks the right `kind`. |
 | motion/pause-stop-hide | guidance | context-aware | selector, animation property | Inlines the selector and property into a ready-to-copy `@media (prefers-reduced-motion: reduce)` override. |
 | navigation/link-descriptive-text | guidance | context-aware | href, generic-phrase token, derived destination hint | Inlines the offending phrase and a URL-derived destination candidate into the replacement suggestion. |
 | navigation/link-no-href | mechanical | generic | none | Constant "If this element navigates, add href=…" text. Does not inspect onClick body, aria-label, or parent. |
@@ -99,14 +99,13 @@ violation fires.
 
 Verdict distribution:
 
-- context-aware: 45
-- generic: 7
+- context-aware: 46
+- generic: 6
 - caveat-only: 0
 
 Rules flagged `generic` (need per-rule `feat(rules): context-aware fix for <rule>` follow-up commits before v1.0):
 
 - `forms/non-empty-label`
-- `media/video-captions-missing`
 - `navigation/link-no-href`
 - `semantics/button-name`
 - `semantics/empty-heading`
@@ -119,6 +118,7 @@ Resolved since publication (flipped to `context-aware`):
 - `document/lang-attribute` — V1-FIX-DOC-LANG (commit 746ecee).
 - `parsing/duplicate-id` — V1-FIX-DUPLICATE-ID (commit pending).
 - `document/page-titled` — V1-FIX-DOC-TITLE (commit 1a639b3).
+- `media/video-captions-missing` — V1-FIX-VIDEO-CAPTIONS (commit pending).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted
@@ -132,9 +132,6 @@ commitments; the implementer reads the rule file and decides:
 - `forms/non-empty-label`: when the label has a `for` / `htmlFor` target,
   inline the referenced control's tag and id in the suggestion
   (`the control at id="email"`).
-- `media/video-captions-missing`: derive the language from the document
-  `lang` attribute for the `srclang` example; check existing `<source>`
-  children and inline that filename's basename as the `.vtt` path hint.
 - `navigation/link-no-href`: inspect the onClick body — if it's navigation,
   recommend `href={route}`; if it's a mutation, recommend `<button>` and
   name the handler's identifier.

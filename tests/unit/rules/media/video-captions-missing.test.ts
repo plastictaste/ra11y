@@ -76,6 +76,55 @@ describe("rule media/video-captions-missing", () => {
     });
   });
 
+  describe("context-aware fix suggestion", () => {
+    it("HTML: inlines the video src basename + <html lang> into the VTT candidate", () => {
+      const source = `<!doctype html><html lang="en"><body><video src="videos/launch.mp4" controls></video></body></html>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      // basename extracted, extension swapped, srclang from <html lang>
+      expect(suggestion).toContain(`src="launch.vtt"`);
+      expect(suggestion).toContain(`srclang="en"`);
+      expect(suggestion).toContain(`<video src="launch.mp4">`);
+      // directory path stripped from the anchor video reference
+      expect(suggestion).not.toContain("videos/launch.mp4");
+      // captions vs. subtitles guidance is included
+      expect(suggestion).toContain('kind="captions"');
+      expect(suggestion).toContain('kind="subtitles"');
+    });
+
+    it("HTML: falls back to first <source> child when video has no src", () => {
+      const source = `<!doctype html><html lang="es"><body><video controls><source src="media/intro.webm" type="video/webm"></video></body></html>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain(`src="intro.vtt"`);
+      expect(suggestion).toContain(`srclang="es"`);
+      expect(suggestion).toContain(`label="Spanish captions"`);
+    });
+
+    it("HTML: fallback text when no src and no <html lang> — defaults to captions.vtt + srclang=en", () => {
+      const source = `<video controls></video>`;
+      const violations = runRule(rule, source, { filePath: "fragment.html" });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain(`src="captions.vtt"`);
+      expect(suggestion).toContain(`srclang="en"`);
+      // generic child-of-<video> phrasing, not the "inside <video src=…>" template
+      expect(suggestion).toContain("child of `<video>`");
+    });
+
+    it("JSX: inlines src basename from <video src=…> in a React root layout", () => {
+      const source = `const Layout = () => (<html lang="fr"><body><video src="/cdn/promo.mp4" controls /></body></html>);`;
+      const violations = runRule(rule, source);
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain(`src="promo.vtt"`);
+      expect(suggestion).toContain(`srclang="fr"`);
+      expect(suggestion).toContain(`label="French captions"`);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:1.2.2 and wcag21:1.2.2", () => {
       expect(rule.satisfies).toContain("wcag22:1.2.2");
