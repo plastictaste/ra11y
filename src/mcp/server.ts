@@ -22,7 +22,6 @@ import {
   complete,
   emptyCompletion,
 } from "./completions.ts";
-import { layerDeprecationWarning } from "./deprecation-warning.ts";
 import {
   LOG_LEVELS,
   type LogEmitter,
@@ -42,7 +41,7 @@ import {
 } from "./resources/index.ts";
 import { McpSession, type SessionRoot } from "./session.ts";
 import type { McpTool } from "./tools.ts";
-import { MCP_TOOLS, SESSION_CONFIGURE_ALIAS } from "./tools.ts";
+import { MCP_TOOLS } from "./tools.ts";
 
 // ─── JSON-RPC types ─────────────────────────────────────────────────────────
 
@@ -107,11 +106,6 @@ const SERVER_INSTRUCTIONS = [
 // ─── Tool index ─────────────────────────────────────────────────────────────
 
 const TOOL_BY_NAME = new Map<string, McpTool>(MCP_TOOLS.map((t) => [t.def.name, t]));
-// Dispatch-only alias (not listed in tools/list). Calls routed through
-// this entry still land on the canonical sessionConfigureTool; the
-// `deprecated_tool_name_configure` warning is layered onto the
-// response by `handleToolsCall` based on which name the caller used.
-TOOL_BY_NAME.set(SESSION_CONFIGURE_ALIAS.name, SESSION_CONFIGURE_ALIAS.tool);
 const PROMPT_BY_NAME = new Map(BUILTIN_PROMPTS.map((p) => [p.name, p]));
 
 // ─── Server ─────────────────────────────────────────────────────────────────
@@ -263,11 +257,7 @@ async function handleToolsCall(
     emitLog("debug", `${toolName}: starting`, { tool: toolName }, LOGGER_SCAN);
   }
   const t0 = performance.now();
-  const rawResult = await tool.handler(handlerArgs, session);
-  const toolResult =
-    toolName === SESSION_CONFIGURE_ALIAS.name
-      ? layerDeprecationWarning(rawResult, "deprecated_tool_name_configure")
-      : rawResult;
+  const toolResult = await tool.handler(handlerArgs, session);
   if (isScan) {
     const elapsedMs = Math.round(performance.now() - t0);
     const counts = extractScanCounts(toolResult);

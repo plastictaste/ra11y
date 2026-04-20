@@ -176,7 +176,7 @@ describe("MCP server dispatch — tools/call", () => {
     expect(payload.active?.standard).toBe("wcag22");
   });
 
-  it("layers deprecated_tool_name_configure when dispatched via the legacy alias", async () => {
+  it("rejects the removed `configure` alias as METHOD_NOT_FOUND", async () => {
     harness.send({
       jsonrpc: "2.0",
       id: 4,
@@ -184,16 +184,7 @@ describe("MCP server dispatch — tools/call", () => {
       params: { name: "configure", arguments: { level: "AA" } },
     });
     const reply = await harness.waitForReply(4);
-    const result = reply.result as {
-      content: Array<{ text: string }>;
-      structuredContent?: { warnings?: readonly string[] };
-    };
-    const body = JSON.parse(result.content[0]?.text ?? "{}") as {
-      warnings?: readonly string[];
-    };
-    const warnings =
-      body.warnings ?? result.structuredContent?.warnings ?? ([] as readonly string[]);
-    expect(warnings).toContain("deprecated_tool_name_configure");
+    expect(reply.error?.code).toBe(-32601);
   });
 });
 
