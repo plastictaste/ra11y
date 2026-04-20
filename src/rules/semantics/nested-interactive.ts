@@ -82,6 +82,30 @@ const INTERACTIVE_ROLES: ReadonlySet<string> = new Set([
   "spinbutton",
 ]);
 
+/**
+ * ARIA 1.2 composite-widget roles that delegate focus to interactive
+ * descendants rather than taking focus themselves. In these patterns
+ * the container carries the role semantic but focus lives on the
+ * child (roving-tabindex or aria-activedescendant); nesting an
+ * `<a href>` or `<button>` inside the container is idiomatic, not a
+ * two-focusables-one-control violation. The finding still fires
+ * because the DOM shape is unusual and assistive-tech behavior in
+ * ad-hoc nestings is not guaranteed — we surface it with additive
+ * framing so the consuming agent can dismiss-or-verify in one read
+ * (ARIA 1.2 composite-widget patterns: tablist/tab, menu/menuitem,
+ * listbox/option, tree/treeitem, grid/gridcell, grid/row).
+ *
+ * Spec: https://www.w3.org/TR/wai-aria-1.2/#composite
+ */
+const COMPOSITE_WIDGET_DELEGATING_ROLES: ReadonlySet<string> = new Set([
+  "tab",
+  "menuitem",
+  "option",
+  "treeitem",
+  "gridcell",
+  "row",
+]);
+
 export const rule = defineRule({
   id: "semantics/nested-interactive",
   satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
@@ -145,6 +169,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
         describeHtml(el),
         ancestor.loc.start.line,
         el.loc.start,
+        compositeWidgetRole(getHtmlAttribute(ancestor, "role")),
       ),
     );
   }
@@ -259,6 +284,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
         describeJsx(el),
         ancestor.loc.start.line,
         el.loc.start,
+        compositeWidgetRole(getJsxAttributeString(ancestor, "role")),
       ),
     );
   }
@@ -339,21 +365,47 @@ function buildJsxParentMap(module: TsxModule): Map<JsxElement, JsxElement> {
 // Violation builder
 // ---------------------------------------------------------------------------
 
+/**
+ * If the outer element's explicit role delegates focus to interactive
+ * children per an ARIA 1.2 composite-widget pattern, return the
+ * lowercased role so `buildHtmlViolation` can enrich the reason text.
+ * Otherwise `null` — no enrichment, default framing.
+ */
+function compositeWidgetRole(role: string | null): string | null {
+  if (role === null) return null;
+  const lower = role.toLowerCase();
+  return COMPOSITE_WIDGET_DELEGATING_ROLES.has(lower) ? lower : null;
+}
+
 function buildHtmlViolation(
   outer: string,
   inner: string,
   outerLine: number,
   loc: { line: number; column: number },
+  compositeRole: string | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
 } {
+  // Additive composite-widget framing — candidate stays visible, severity
+  // stays "error"; the ARIA 1.2 note lets a consuming agent dismiss-or-
+  // verify in one read when the pattern is an idiomatic tablist / menu /
+  // listbox / tree / grid composite (focus delegated to children via
+  // roving tabindex) rather than a genuine two-focusable nesting bug.
+  const compositeNote =
+    compositeRole === null
+      ? ""
+      : ` Note: outer role="${compositeRole}" is an ARIA 1.2 composite-widget role that delegates focus to interactive descendants — if this is a tablist / menu / listbox / tree / grid pattern, verify the container implements roving tabindex (or aria-activedescendant) so only one descendant is in the tab order.`;
+  const compositeSuggestion =
+    compositeRole === null
+      ? ""
+      : ` If this is an intentional composite widget (role="${compositeRole}" with focus delegated to the ${inner} via roving tabindex), the nesting is idiomatic — verify the focus-management implementation on the parent rather than flattening the markup, and suppress at source with <!-- ra11y-disable semantics/nested-interactive --> once confirmed.`;
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `${inner} is nested inside ${outer} (opened on line ${outerLine}) — interactive controls must not be nested. Click handling, focus order, and the accessible name/role become undefined.`,
-    suggestion: `Move ${inner} out of ${outer}, or flatten the markup: keep one interactive element and make the other a plain <span>/<div>. If the outer is a card link, place the ${inner} as a sibling and use CSS to overlay it.`,
+    message: `${inner} is nested inside ${outer} (opened on line ${outerLine}) — interactive controls must not be nested. Click handling, focus order, and the accessible name/role become undefined.${compositeNote}`,
+    suggestion: `Move ${inner} out of ${outer}, or flatten the markup: keep one interactive element and make the other a plain <span>/<div>. If the outer is a card link, place the ${inner} as a sibling and use CSS to overlay it.${compositeSuggestion}`,
   };
 }

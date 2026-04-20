@@ -241,6 +241,86 @@ describe("rule semantics/nested-interactive", () => {
     });
   });
 
+  describe("composite-widget role enrichment (ARIA 1.2)", () => {
+    // Per the ARIA 1.2 composite-widget pattern, `tab` / `menuitem` /
+    // `option` / `treeitem` / `gridcell` / `row` delegate focus to
+    // interactive descendants via roving tabindex rather than taking
+    // focus themselves. The finding still fires (surface-don't-suppress),
+    // but the reason text is enriched so a consuming agent can dismiss-
+    // or-verify in one read rather than flattening idiomatic markup.
+
+    it("HTML: <a href> inside <div role=tab> fires with composite-widget note", () => {
+      const v = runRule(rule, `<div role="tab"><a href="#panel">Section 1</a></div>`, {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain(`role="tab"`);
+      expect(v[0]?.message).toContain("composite-widget");
+      expect(v[0]?.message).toContain("roving tabindex");
+      expect(v[0]?.suggestion).toContain("composite widget");
+    });
+
+    it("HTML: <button> inside <li role=menuitem> fires with composite-widget note", () => {
+      const v = runRule(rule, `<li role="menuitem"><button type="button">Open</button></li>`, {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain(`role="menuitem"`);
+      expect(v[0]?.message).toContain("composite-widget");
+    });
+
+    it("HTML: <a href> inside <button> fires WITHOUT composite-widget note (both native interactives)", () => {
+      const v = runRule(rule, `<button>Go <a href="/x">link</a></button>`, {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).not.toContain("composite-widget");
+      expect(v[0]?.suggestion).not.toContain("composite widget");
+    });
+
+    it("HTML: <a href> inside <div role=tablist> does NOT fire (tablist is the container, not delegating role)", () => {
+      // `tablist` is the composite container, not in INTERACTIVE_ROLES —
+      // so the rule never triggers in the first place. This guards
+      // against regression where someone adds `tablist` to either set.
+      const v = runRule(rule, `<div role="tablist"><a href="#p1">Tab 1</a></div>`, {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: composite-widget framing fires for each delegating role that is also interactive-by-role", () => {
+      // The rule's outer-interactive predicate (INTERACTIVE_ROLES) covers
+      // tab/menuitem/option/treeitem today. `gridcell` and `row` are in
+      // COMPOSITE_WIDGET_DELEGATING_ROLES per ARIA 1.2 but don't currently
+      // trigger the rule as outer elements — the enrichment constant
+      // lists them so widening INTERACTIVE_ROLES in the future picks up
+      // the framing automatically.
+      for (const role of ["tab", "menuitem", "option", "treeitem"]) {
+        const v = runRule(rule, `<div role="${role}"><a href="/x">x</a></div>`, {
+          filePath: "a.html",
+        });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("composite-widget");
+      }
+    });
+
+    it("JSX: <button> inside <li role=menuitem> fires with composite-widget note", () => {
+      const v = runRule(rule, `const X = <li role="menuitem"><button>Open</button></li>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain(`role="menuitem"`);
+      expect(v[0]?.message).toContain("composite-widget");
+    });
+
+    it("JSX: <a href> inside <button> fires WITHOUT composite-widget note", () => {
+      const v = runRule(rule, `const X = <button>Go <a href="/x">link</a></button>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).not.toContain("composite-widget");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");
