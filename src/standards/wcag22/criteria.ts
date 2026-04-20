@@ -36,7 +36,13 @@ const NEW_IN_WCAG22: readonly WcagRow[] = [
     slug: "focus-not-obscured-minimum",
     description:
       "When a user interface component receives keyboard focus, the component is not entirely hidden due to author-created content.",
-    automatable: "manual",
+    // Partial, not manual: the focus/not-obscured rule statically detects
+    // the high-signal failure pattern (position: fixed/sticky with a top
+    // or bottom offset on the scroll container, paired with no matching
+    // non-zero scroll-padding). Perfect detection would require runtime
+    // layout, but the in-file CSS heuristic is real automation — VPAT /
+    // coverage that keys off this flag should credit it.
+    automatable: "partial",
   },
   {
     id: "2.4.12",
