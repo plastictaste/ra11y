@@ -31,7 +31,7 @@ A rule with `fixClass: "mechanical"` produces violations the engine routes to th
 ```
 mechanical       → batch-apply via apply_fix / Edit
 guidance         → agent reads source, writes tailored fix
-runtime-only     → defer to axe-core / Playwright lane
+runtime-only     → defer to runtime harness
 verify-in-source → open the referenced file, read adjacent code
 ```
 
@@ -41,7 +41,7 @@ The four values and their remediation lanes:
 
 **`"guidance"`** — The fix requires author judgment: choosing a color pair that passes contrast, rewriting link text to be descriptive, rearranging a label hierarchy. The scanner can explain the problem and rank the options; the agent writes the fix. Rules in this class: `contrast/minimum`, `contrast/enhanced`, `contrast/non-text`, `keyboard/character-shortcuts`, `semantics/label-in-name`, `forms/non-empty-label`, `navigation/link-descriptive-text`, `pointer/target-size`, `wrapper/drift`.
 
-**`"runtime-only"`** — The scanner flags the pattern, but only runtime verification (axe-core in Playwright or Vitest) can confirm the violation or measure the fix. Route these to the runtime harness. Rules in this class: `tooltip/dismissable`, `motion/pause-stop-hide`.
+**`"runtime-only"`** — The scanner flags the pattern, but only runtime verification (rendered DOM, manual QA) can confirm the violation or measure the fix. Route these to the runtime harness. Rules in this class: `tooltip/dismissable`, `motion/pause-stop-hide`.
 
 **`"verify-in-source"`** — The agent must read adjacent code to decide what the right fix is: the keyboard handler might be on a parent, the focus management might be in a different file, the nested-interactive structure requires DOM surgery that spans siblings. Rules in this class: `navigation/link-no-href`, `focus/outline-visible`, `semantics/table-headers`, `pointer/cancellation`, `media/video-captions-missing`, `media/autoplay-sound`, `focus/not-obscured`, `pointer/drag-alternative`, `semantics/nested-interactive`, `layout/reflow-hardcoded-width`, `forms/fieldset-legend`, `semantics/list-structure`, `layout/orientation-lock`, `keyboard/handler-missing`, `semantics/heading-hierarchy`, `semantics/landmark-main`, `layout/text-spacing`, `navigation/skip-link`, `semantics/empty-heading`, `aria/hidden-focus`, `forms/labels-required`, `aria/live-region-valid`, `aria/required-attrs`, `semantics/button-name`, `aria/conflicting-role`, `forms/required-indicator-missing`.
 

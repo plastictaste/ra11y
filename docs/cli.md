@@ -189,7 +189,7 @@ Attestation records are created by the `attest` MCP tool, by the `ra11y attest` 
 Appends a single durable attestation record to `.ra11y/attestations.jsonl`. Mirrors the `attest` MCP tool's safety posture: `--reason` is required and non-empty, the criterion must resolve to a loaded standard, any `--rule-ids` must actually satisfy the target criterion, and `--scope file|line` requires a parseable `--location`. Auditors without an MCP host use this command directly.
 
 ```bash
-ra11y attest wcag22:1.1.1 --reason "ran axe-core 2026-04-19; no img elements" --verdict na --by ci-bot
+ra11y attest wcag22:1.1.1 --reason "runtime harness 2026-04-19; no img elements" --verdict na --by ci-bot
 ra11y attest wcag22:2.4.7 --reason "manual keyboard test confirms focus" --scope file --location src/nav.tsx:14:3
 ```
 

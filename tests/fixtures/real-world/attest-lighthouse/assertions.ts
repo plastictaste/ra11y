@@ -2,11 +2,12 @@
  * attest-lighthouse — executable proof that the Lighthouse accessibility
  * audit → attest bridge pattern produces valid, parseable TypeScript.
  *
- * The fixture exists to lock in the bridge pattern described in
- * `docs/kb/patterns/bridging-runtime-a11y.md`. The bridge is a PATTERN
- * the agent performs — no Lighthouse adapter lives in src/. This fixture
- * proves the mapping code compiles, the scanner accepts it, and the
- * pattern round-trips without parser failures or spurious violations.
+ * The fixture exists to lock in the bridge pattern: an agent reads a
+ * vendor runtime report and calls `attest` per finding. The bridge is
+ * a PATTERN the agent performs — no Lighthouse adapter lives in src/.
+ * This fixture proves the mapping code compiles, the scanner accepts
+ * it, and the pattern round-trips without parser failures or spurious
+ * violations.
  *
  * Source files:
  *   lighthouse-report.json — synthetic Lighthouse JSON report (not parsed
@@ -44,10 +45,9 @@ export const assertions: FixtureAssertions = {
     "the documented bridging pattern is valid TypeScript the agent can author as-is.",
   origin: {
     notes:
-      "Synthetic fixture authored 2026-04-19 for V1-FIXTURE-ATTEST. " +
-      "Guards the no-vendor-adapter invariant: the bridge lives in agent code + " +
-      "docs, never in src/. The lighthouse-report.json is the canonical synthetic " +
-      "payload the bridging-runtime-a11y doc references.",
+      "Synthetic fixture authored 2026-04-19. Guards the no-vendor-adapter " +
+      "invariant: the bridge lives in agent code, never in src/. The " +
+      "lighthouse-report.json is a canonical synthetic payload.",
   },
   expectations: [
     // The bridge TypeScript must parse without errors. A parse failure

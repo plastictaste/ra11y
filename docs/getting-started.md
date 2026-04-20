@@ -78,7 +78,7 @@ See `docs/cli.md` for the full flag surface.
 
 ## The certification moat
 
-ra11y's distinguishing feature vs. axe-core / eslint-plugin-jsx-a11y / Pa11y is the certification-readiness surface:
+ra11y ships a certification-readiness surface on top of the static scan:
 
 ```sh
 ra11y src/ --coverage                # per-standard coverage summary

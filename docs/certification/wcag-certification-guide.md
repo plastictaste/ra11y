@@ -11,7 +11,7 @@ An end-to-end walkthrough of using ra11y to prepare for WCAG 2.2 AA certificatio
 
 - Decide the target: which standard, which level. Most teams target WCAG 2.2 AA (the current W3C recommendation, referenced by most jurisdictions) plus Section 508 (US federal procurement) or EN 301 549 (EU/UK).
 - Have the source tree ready. Ideally clean working tree on the main branch — you'll re-run scans many times.
-- Know what runtime testing you already do (axe-core in Playwright, manual screen-reader passes, keyboard-only sessions). ra11y covers source-time issues; runtime testing covers what the browser produces at execution time. **Both are required** for a credible conformance claim.
+- Know what runtime testing you already do (rendered-DOM scans, manual screen-reader passes, keyboard-only sessions). ra11y covers source-time issues; runtime testing covers what the browser produces at execution time. **Both are required** for a credible conformance claim.
 
 ## Step 1: Set up
 
@@ -92,7 +92,7 @@ See [`vpat-mapping.md`](./vpat-mapping.md) for how ra11y derives each verdict.
 
 ## Step 7: Complement with runtime testing
 
-ra11y's scope is source-time. Before claiming conformance, run a runtime test suite — typically axe-core in Playwright, a manual keyboard-only pass, and at least one screen-reader session (NVDA on Windows and/or VoiceOver on macOS). Runtime catches:
+ra11y's scope is source-time. Before claiming conformance, run a runtime test suite — typically a rendered-DOM scan in your E2E harness, a manual keyboard-only pass, and at least one screen-reader session (NVDA on Windows and/or VoiceOver on macOS). Runtime catches:
 
 - Live regions that never announce
 - Focus traps in modals that don't release on close

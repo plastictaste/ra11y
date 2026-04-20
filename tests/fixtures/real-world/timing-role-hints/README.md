@@ -16,9 +16,12 @@ This fixture locks in both sides of the revert:
 
 2. **Non-heuristic invariant** — No candidate reason may contain `"likely not user-facing"`. If the `FILENAME_ROLE_HINTS` table reappears, this assertion fails before the change ships.
 
-## Why axe / jsx-a11y miss this
+## What this fixture guards
 
-This fixture guards behavior of ra11y's review-candidate finder, not a static rule. Neither axe-core nor jsx-a11y have a `wcag22:2.2.1` timing-candidate surface; they check DOM properties at runtime. Ra11y surfaces `setTimeout`/`setInterval` call sites statically as manual-review candidates — the issue here is a design invariant in how the reason text is composed, not something these tools model.
+Ra11y's review-candidate finder for `wcag22:2.2.1`. `setTimeout`/`setInterval`
+call sites surface statically as manual-review candidates; this fixture
+locks the design invariant that reason text must not include filename-
+derived role hints.
 
 ## Sanitization decisions
 

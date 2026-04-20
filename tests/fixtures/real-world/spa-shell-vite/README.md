@@ -15,6 +15,6 @@ The reason text now includes a trailing annotation when the HTML structurally lo
 1. `zero-parse-errors` — the HTML and TSX files parse cleanly.
 2. `candidate-present` for `wcag22:2.4.5` with `reasonIncludes: "SPA index shell"` — the enrichment is present and the candidate is not suppressed.
 
-## Why existing tools miss this
+## Scanner behavior
 
-axe-core, jsx-a11y, and Pa11y evaluate rendered DOM or static JSX; none inspect the `index.html` shell at all. ra11y's HTML finder detects the shell structurally and enriches the candidate reason so the reviewing agent knows where to look.
+The HTML finder detects the SPA index shell structurally (root `<div id="root">` with no rendered content) and enriches the candidate reason so the reviewing agent knows where to look.

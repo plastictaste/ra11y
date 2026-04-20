@@ -49,7 +49,7 @@ ra11y certification readiness — WCAG 2.2 AA
 ## What it won't tell you
 
 - **Whether a third-party library you use is accessible.** The rule engine scans your source; it can't verify whether `@acme/date-picker` meets 4.1.2.
-- **Whether your runtime (live regions, focus management after route changes, focus traps in modals) passes.** Those need runtime testing — axe-core in a Playwright suite. ra11y's scope is source-time.
+- **Whether your runtime (live regions, focus management after route changes, focus traps in modals) passes.** Those need runtime testing in your E2E harness. ra11y's scope is source-time.
 - **Whether the accessibility tree you intend is the one browsers construct.** Close, but not quite — ra11y infers the tree from source; the browser computes it at runtime and can diverge (CSS display rules, ARIA inheritance).
 
 ## Relationship to the VPAT

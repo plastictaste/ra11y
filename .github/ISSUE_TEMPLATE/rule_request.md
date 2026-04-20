@@ -28,11 +28,11 @@ labels: rule-request
 ```html
 ```
 
-## Why existing tools miss this
+## Existing coverage
 
-<!-- Optional: does axe-core / jsx-a11y / Pa11y cover this? If so,
-     how does ra11y's version differ — better coverage, better
-     suggestions, cross-standard citations? -->
+<!-- Optional: is this pattern already covered by another tool you use?
+     If so, note how ra11y's version should differ — coverage, suggestions,
+     cross-standard citations, etc. -->
 
 ## Suggested rule ID
 

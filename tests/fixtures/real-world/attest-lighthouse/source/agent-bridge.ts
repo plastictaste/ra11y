@@ -3,8 +3,7 @@
  * accessibility audit results into the ra11y attestation ledger.
  *
  * This file is NOT executed by the ra11y scanner.
- * It is the executable proof that the pattern compiles cleanly and
- * forms the canonical reference for the bridging-runtime-a11y doc.
+ * It is the executable proof that the pattern compiles cleanly.
  *
  * Pattern overview:
  *   1. Read the Lighthouse JSON report your CI produced.
@@ -16,8 +15,6 @@
  *   4. Map audit IDs to WCAG criteria using the auditRef tags or a
  *      static lookup table.
  *   5. Call `attest` with the appropriate payload.
- *
- * See docs/kb/patterns/bridging-runtime-a11y.md for the full guide.
  */
 
 // ---------------------------------------------------------------------------
@@ -76,7 +73,6 @@ interface LighthouseReport {
 // ---------------------------------------------------------------------------
 // Mapping from Lighthouse audit ID to ra11y/WCAG criterion ID.
 //
-// Lighthouse audit IDs map 1:1 to axe-core rule IDs for most checks.
 // The criterion IDs are derived from Lighthouse's WCAG tags in the
 // full report, or from the published mapping at:
 //   https://web.dev/lighthouse-accessibility/

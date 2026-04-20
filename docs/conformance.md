@@ -121,14 +121,14 @@ Response includes a `coveredRules` array and a `coverage` summary that tells you
 
 **Scoping an attestation to specific rules.** When a criterion has many satisfying rules (WCAG 4.1.2 has over a dozen), you can attest coverage rule-by-rule. Omitting `ruleIds` claims all of them — the response's fan-out disclosure makes that explicit. Supplying `ruleIds` scopes the claim; the criterion flips to `pass` only once the union of all rule-scoped attestations covers every satisfying rule. A partially-covered criterion surfaces as `reason: "partially-attested"` in Step 5.
 
-**Runtime tool results.** ra11y does not ingest axe-core or Lighthouse JSON directly. Run your runtime tool in CI, read its output, and call `attest` with a reason describing the finding. For example:
+**Runtime tool results.** ra11y does not ingest any vendor runtime JSON directly. Run your runtime tool in CI, read its output, and call `attest` with a reason describing the finding. For example:
 
 ```jsonc
 {
   "name": "attest",
   "arguments": {
     "criterionId": "wcag22:1.4.11",
-    "reason": "axe-core 4.9 run 2026-04-18 against production build: zero violations reported for non-text-contrast rule.",
+    "reason": "runtime harness run 2026-04-18 against production build: zero violations reported for non-text-contrast rule.",
     "verdict": "pass",
     "by": "ci-bot"
   }
@@ -345,7 +345,7 @@ Run this in CI alongside `ra11y conformance --verify` to catch pre-emission ledg
 
 ## What this guide does not cover
 
-Runtime accessibility checks — live regions, focus traps, ARIA state changes, post-render contrast — are outside ra11y's scope. Run those in your Playwright or Vitest suite via axe-core. Once you have runtime results, feed them back through `attest` with a `reason` describing the run. That's the bridging pattern: ra11y handles static evidence and attestation provenance; your CI harness handles runtime execution.
+Runtime accessibility checks — live regions, focus traps, ARIA state changes, post-render contrast — are outside ra11y's scope. Run those in your E2E harness. Once you have runtime results, feed them back through `attest` with a `reason` describing the run. That's the bridging pattern: ra11y handles static evidence and attestation provenance; your CI harness handles runtime execution.
 
 ## Example end-to-end transcript
 

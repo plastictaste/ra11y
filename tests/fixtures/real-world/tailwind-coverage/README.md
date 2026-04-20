@@ -28,9 +28,8 @@ Before 4700a13 the hint was generic; after, Tailwind detection strengthens it.
 - Raising `MARKUP_FILES_FOR_CSS_HINT_MIN` above 41 → no hint fires at all
   → assertion 2 fails.
 
-## Why existing tools miss this
+## What this fixture guards
 
-axe-core, jsx-a11y, and Pa11y evaluate rendered DOM or static attribute
-semantics. None inspect the scanner's coverage telemetry. This fixture
-guards the MCP-facing `meta.analysisCoverage.hints` shape that the
-consuming agent uses to decide whether the scan had full CSS coverage.
+The MCP-facing `meta.analysisCoverage.hints` shape that consuming
+agents use to decide whether the scan had full CSS coverage (e.g.
+pre-build Tailwind utilities compiled to CSS after ra11y ran).
