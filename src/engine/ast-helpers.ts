@@ -305,6 +305,133 @@ export function jsxHasContentChildren(element: JsxElement): boolean {
   return false;
 }
 
+/**
+ * Classifies the intent of a JSX expression (handler body, bound prop,
+ * …) as navigation, mutation, or unknown — based on a text-level keyword
+ * probe over the raw expression source. Used by rules that want to
+ * branch their fix suggestion on what the expression *looks like* it's
+ * doing.
+ *
+ * Probe signals (order matters: navigation wins ties so things like
+ * `router.push()` don't get mis-classified by `push(` → mutation):
+ *
+ * - **navigation** — identifier tokens `navigate`, `router`, `history`,
+ *   `redirect`, `location`, `goto`, `useNavigate`, `useRouter`, OR
+ *   method-call patterns `.push(`, `.replace(`, `.go(` on any receiver,
+ *   OR `window.location.` / `document.location.` anywhere in the
+ *   expression.
+ * - **mutation** — identifier tokens `toggle`, `open`, `close`, `show`,
+ *   `hide`, `dispatch`, `mutate`, `delete`, `save`, `submit`, OR the
+ *   React setter pattern `set[A-Z]` as a callee (`setOpen(`,
+ *   `setVisible(`, …).
+ * - **unknown** — none of the above, or a null / empty expression.
+ *
+ * Deliberately text-level. No type checking, no cross-file resolution,
+ * no semantic analysis of the callee's origin. The goal is to shape a
+ * fix suggestion, not to prove intent — unknown is an honest answer
+ * when the evidence is weak, and the agent reads the source from there.
+ * Keeps the rule pure and the helper deterministic.
+ *
+ * The expression source is passed as a string (not a `JsxExpression`
+ * node) because both attribute values (`onClick={…}` → `{ kind:
+ * "Expression", raw }`) and expression children surface the same raw
+ * text — a single string parameter covers both callers without a
+ * discriminated-union dance.
+ */
+export function describeJsxExpressionIntent(
+  expression: string | null,
+): "navigation" | "mutation" | "unknown" {
+  if (!expression) return "unknown";
+  const src = expression;
+  if (src.trim().length === 0) return "unknown";
+
+  if (hasNavigationSignal(src)) return "navigation";
+  if (hasMutationSignal(src)) return "mutation";
+  return "unknown";
+}
+
+const NAVIGATION_IDENTIFIERS = [
+  "navigate",
+  "router",
+  "history",
+  "redirect",
+  "goto",
+  "useNavigate",
+  "useRouter",
+];
+
+// Identifier tokens whose presence alone signals a mutation intent. We
+// deliberately omit short / ambiguous tokens like `set` (too common as
+// a substring) and rely on the React setter regex below for the setFoo
+// pattern.
+const MUTATION_IDENTIFIERS = [
+  "toggle",
+  "open",
+  "close",
+  "show",
+  "hide",
+  "dispatch",
+  "mutate",
+  "delete",
+  "save",
+  "submit",
+  "setState",
+];
+
+function hasNavigationSignal(src: string): boolean {
+  // Whole-identifier matches (case-insensitive) so `onNavigate` doesn't
+  // incidentally match "ate". Boundary: not an identifier char on
+  // either side.
+  for (const ident of NAVIGATION_IDENTIFIERS) {
+    if (matchesWholeIdentifier(src, ident)) return true;
+  }
+  // `location` matches as a whole word, but `window.location` /
+  // `document.location` are strong enough to count regardless.
+  if (/\b(window|document)\s*\.\s*location\b/.test(src)) return true;
+  if (matchesWholeIdentifier(src, "location")) return true;
+  // Method-call patterns on any receiver: `.push(`, `.replace(`, `.go(`.
+  // Standalone `push(` / `replace(` are too ambiguous (Array.push,
+  // String.replace), so we require a member-access form.
+  if (/\.\s*(push|replace|go)\s*\(/.test(src)) return true;
+  return false;
+}
+
+function hasMutationSignal(src: string): boolean {
+  for (const ident of MUTATION_IDENTIFIERS) {
+    if (matchesWholeIdentifier(src, ident)) return true;
+  }
+  // React setter convention: `setFoo(`, `setIsOpen(`, … — capital
+  // letter after `set` and an open paren. Guards against tokens like
+  // `settings` or `setup`.
+  if (/\bset[A-Z][A-Za-z0-9_$]*\s*\(/.test(src)) return true;
+  // camelCase verb-prefix convention: `toggleMenu`, `openDialog`,
+  // `closeModal`, … — a known mutation verb immediately followed by
+  // an uppercase letter. Same shape as the setter rule above; guards
+  // against `opener` / `showcase` / `closer` / `hidden` which are not
+  // mutation verbs per se.
+  if (
+    /\b(toggle|open|close|show|hide|dispatch|save|submit|delete)[A-Z][A-Za-z0-9_$]*\s*\(/.test(src)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True when `ident` appears in `src` with no identifier character on
+ * either side. Case-insensitive match so `Navigate`, `navigate`, and
+ * `NAVIGATE` all count — identifier casing in user code is noisy and
+ * the intent signal is the root word, not its case.
+ */
+function matchesWholeIdentifier(src: string, ident: string): boolean {
+  const pattern = new RegExp(`(?:^|[^A-Za-z0-9_$])${escapeRegex(ident)}(?![A-Za-z0-9_$])`, "i");
+  return pattern.test(src);
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // ---------------------------------------------------------------------------
 // CSS walkers
 // ---------------------------------------------------------------------------
