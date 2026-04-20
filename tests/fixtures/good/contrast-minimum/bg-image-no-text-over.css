@@ -1,0 +1,10 @@
+/* No color declaration sits over the image-backed background, so
+   `contrast/minimum` has nothing to pair and does not fire — not a
+   violation nor an info finding. The image is a decorative wash for
+   the container; any text inside the container inherits from outer
+   scopes that `contrast/minimum` will evaluate separately. */
+.wrap {
+  background-image: url('/assets/tile.png');
+  min-height: 200px;
+  padding: 24px;
+}

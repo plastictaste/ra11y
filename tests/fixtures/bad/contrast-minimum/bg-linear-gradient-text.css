@@ -1,0 +1,8 @@
+/* WCAG 1.4.3 — color sits over a linear-gradient. Gradient luminance
+   varies across the element; the scanner cannot pick a single value
+   to check against. Emits info + `background_image_unresolvable`. */
+.cta {
+  color: #ffffff;
+  background: linear-gradient(90deg, #ff0000, #0000ff);
+  padding: 12px 24px;
+}

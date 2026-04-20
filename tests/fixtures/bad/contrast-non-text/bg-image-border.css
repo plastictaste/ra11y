@@ -1,0 +1,15 @@
+/* WCAG 1.4.11 — a boundary color sits over an image-backed background.
+   Static analysis cannot compute luminance against the image, so the
+   scanner emits an info finding with `couldBeWrongBecause:
+   [background_image_unresolvable]`. */
+button.primary {
+  border: 1px solid #888888;
+  background-image: url('/assets/btn-bg.png');
+  padding: 8px 16px;
+}
+
+svg.mark {
+  fill: #cccccc;
+  stroke: #bbbbbb;
+  background: linear-gradient(#222222, #555555);
+}

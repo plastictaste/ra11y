@@ -34,6 +34,16 @@
  * utility actually overrides the declared color. See
  * docs/adr/0009-violation-could-be-wrong-because.md.
  *
+ * Image-backed backgrounds (v1.0): when a selector declares `color`
+ * alongside `background-image: …url()…` / `background-image: *-gradient(…)`
+ * or a shorthand `background` containing either, the scanner cannot
+ * compute a luminance for the background. The rule emits an
+ * info-severity finding carrying `couldBeWrongBecause:
+ * [background_image_unresolvable]` so the agent knows the pair went
+ * unevaluated and can verify manually against the image. Never fabricates
+ * a ratio; honestly surfaces the unknown (CLAUDE.md §1 "Surface, don't
+ * suppress").
+ *
  * v0.0.x coverage: in-file CSS rules (standalone .css and <style>
  * blocks). Does NOT yet resolve inherited styles or CSS custom
  * properties — those land in Phase 5 polish with the theme resolver.
@@ -44,8 +54,12 @@ import type { CssStylesheet } from "../../types/ast.ts";
 import type { EmittedViolation, ProjectContext } from "../../types/rule.ts";
 import { WCAG_AA_MIN_LARGE, WCAG_AA_MIN_NORMAL } from "../../utils/contrast.ts";
 import {
+  BG_IMAGE_UNRESOLVABLE,
+  buildBgImageUnresolvableMessage,
+  buildBgImageUnresolvableSuggestion,
   buildContrastMessage,
   buildContrastSuggestion,
+  collectBgImageUnresolvable,
   collectTailwindOverrideClasses,
   extractPrimarySelectorClass,
   findContrastFailures,
@@ -86,7 +100,8 @@ export const rule = defineRule({
     const overrideClasses = collectTailwindOverrideClasses(ctx);
     for (const file of ctx.files) {
       if (file.language !== "css") continue;
-      const failures = findContrastFailures(file.ast as CssStylesheet, {
+      const stylesheet = file.ast as CssStylesheet;
+      const failures = findContrastFailures(stylesheet, {
         minNormal: WCAG_AA_MIN_NORMAL,
         minLarge: WCAG_AA_MIN_LARGE,
         scLabel: SC_LABEL,
@@ -94,9 +109,30 @@ export const rule = defineRule({
       for (const finding of failures) {
         emitFinding(ctx, file.filePath, finding, overrideClasses);
       }
+      // Image-backed backgrounds: `background-image: …url()…` and
+      // `background: …linear-gradient(…)` are unresolvable statically.
+      // Emit info-severity so the agent knows the pair went unevaluated.
+      for (const finding of collectBgImageUnresolvable(stylesheet)) {
+        emitUnresolvable(ctx, file.filePath, finding);
+      }
     }
   },
 });
+
+function emitUnresolvable(
+  ctx: ProjectContext,
+  filePath: string,
+  finding: ReturnType<typeof collectBgImageUnresolvable>[number],
+): void {
+  const emitted: EmittedViolation = {
+    severity: "info",
+    location: { filePath, line: finding.line, column: finding.column },
+    message: buildBgImageUnresolvableMessage(finding, WCAG_AA_MIN_NORMAL, SC_LABEL),
+    suggestion: buildBgImageUnresolvableSuggestion(finding, WCAG_AA_MIN_NORMAL),
+    couldBeWrongBecause: [BG_IMAGE_UNRESOLVABLE],
+  };
+  ctx.emit(emitted);
+}
 
 function emitFinding(
   ctx: ProjectContext,

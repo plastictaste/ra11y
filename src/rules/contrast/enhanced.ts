@@ -11,8 +11,9 @@
  *
  * Structurally identical to `contrast/minimum` — same walker, same
  * color extraction, same large-text heuristic, same cross-file
- * Tailwind `couldBeWrongBecause` opt-in — only the thresholds differ
- * (7:1 / 4.5:1 instead of 4.5:1 / 3:1). Shared logic lives in
+ * Tailwind `couldBeWrongBecause` opt-in, same info-severity surfacing
+ * of unresolvable image-backed backgrounds — only the thresholds
+ * differ (7:1 / 4.5:1 instead of 4.5:1 / 3:1). Shared logic lives in
  * `./_shared.ts`.
  *
  * Severity is `warning` (not `error`) because AAA is aspirational;
@@ -25,8 +26,12 @@ import type { CssStylesheet } from "../../types/ast.ts";
 import type { EmittedViolation, ProjectContext } from "../../types/rule.ts";
 import { WCAG_AAA_MIN_LARGE, WCAG_AAA_MIN_NORMAL } from "../../utils/contrast.ts";
 import {
+  BG_IMAGE_UNRESOLVABLE,
+  buildBgImageUnresolvableMessage,
+  buildBgImageUnresolvableSuggestion,
   buildContrastMessage,
   buildContrastSuggestion,
+  collectBgImageUnresolvable,
   collectTailwindOverrideClasses,
   extractPrimarySelectorClass,
   findContrastFailures,
@@ -66,7 +71,8 @@ export const rule = defineRule({
     const overrideClasses = collectTailwindOverrideClasses(ctx);
     for (const file of ctx.files) {
       if (file.language !== "css") continue;
-      const failures = findContrastFailures(file.ast as CssStylesheet, {
+      const stylesheet = file.ast as CssStylesheet;
+      const failures = findContrastFailures(stylesheet, {
         minNormal: WCAG_AAA_MIN_NORMAL,
         minLarge: WCAG_AAA_MIN_LARGE,
         scLabel: SC_LABEL,
@@ -74,9 +80,29 @@ export const rule = defineRule({
       for (const finding of failures) {
         emitFinding(ctx, file.filePath, finding, overrideClasses);
       }
+      // Image-backed backgrounds: info-severity finding per
+      // docs/adr/0009 — see `contrast/minimum` for the rationale.
+      for (const finding of collectBgImageUnresolvable(stylesheet)) {
+        emitUnresolvable(ctx, file.filePath, finding);
+      }
     }
   },
 });
+
+function emitUnresolvable(
+  ctx: ProjectContext,
+  filePath: string,
+  finding: ReturnType<typeof collectBgImageUnresolvable>[number],
+): void {
+  const emitted: EmittedViolation = {
+    severity: "info",
+    location: { filePath, line: finding.line, column: finding.column },
+    message: buildBgImageUnresolvableMessage(finding, WCAG_AAA_MIN_NORMAL, SC_LABEL),
+    suggestion: buildBgImageUnresolvableSuggestion(finding, WCAG_AAA_MIN_NORMAL),
+    couldBeWrongBecause: [BG_IMAGE_UNRESOLVABLE],
+  };
+  ctx.emit(emitted);
+}
 
 function emitFinding(
   ctx: ProjectContext,

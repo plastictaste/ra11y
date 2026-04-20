@@ -55,6 +55,60 @@ export interface ContrastFinding {
   readonly bgSource: string;
 }
 
+/**
+ * An emitted-alongside signal: this CSS rule has a text-or-boundary
+ * color declaration AND an image-backed background (`background-image`
+ * / gradient / `background: …url()…`), so the static scanner cannot
+ * compute a luminance for the background. Consumer rules surface this
+ * as an `info`-severity finding carrying
+ * `couldBeWrongBecause: [BG_IMAGE_UNRESOLVABLE]` — honest surfacing,
+ * no fabricated ratio. Per CLAUDE.md §1 "Surface, don't suppress."
+ */
+export interface BgImageUnresolvableFinding {
+  readonly selector: string;
+  readonly line: number;
+  readonly column: number;
+  /** Foreground property whose declaration triggered the pairing (e.g. `color`, `border-color`). */
+  readonly fgProperty: string;
+  readonly fgSource: string;
+  readonly bgSource: string;
+  /** Which CSS property surfaced the unresolvable background. */
+  readonly bgProperty: "background-image" | "background";
+}
+
+/**
+ * `couldBeWrongBecause` code surfaced on info findings emitted by the
+ * contrast rules when a foreground color declaration sits on a rule
+ * whose background is image-backed (url() / linear-gradient() / etc).
+ * Static analysis cannot compute a luminance for the image, so the
+ * scanner honestly surfaces "unevaluated — verify manually" rather
+ * than silently skipping the declaration. See CLAUDE.md §1 (Surface,
+ * don't suppress) and docs/adr/0009-violation-could-be-wrong-because.md.
+ */
+export const BG_IMAGE_UNRESOLVABLE = "background_image_unresolvable";
+
+/**
+ * Default foreground properties consulted by the text-contrast rules
+ * (`contrast/minimum`, `contrast/enhanced`) when pairing against an
+ * unresolvable image-backed background.
+ */
+export const TEXT_FOREGROUND_PROPERTIES: readonly string[] = ["color"];
+
+/**
+ * Foreground properties consulted by `contrast/non-text` when pairing
+ * a user-authored boundary/graphic color against an unresolvable
+ * image-backed background. Mirrors the property set the rule evaluates
+ * in its normal boundary loop.
+ */
+export const NON_TEXT_FOREGROUND_PROPERTIES: readonly string[] = [
+  "border-color",
+  "border",
+  "outline-color",
+  "outline",
+  "fill",
+  "stroke",
+];
+
 interface ColorPair {
   readonly fg: Rgb;
   readonly bg: Rgb;
@@ -186,6 +240,117 @@ function isBold(value: string): boolean {
   if (trimmed === "bolder") return true;
   const n = Number.parseInt(trimmed, 10);
   return Number.isFinite(n) && n >= 700;
+}
+
+// ---------------------------------------------------------------------------
+// Image-backed background detection (`couldBeWrongBecause` opt-in)
+// ---------------------------------------------------------------------------
+
+/**
+ * CSS values naming image-producing functions. Matches any occurrence
+ * of `url(` or a `*-gradient(` call anywhere inside the declaration
+ * value — shorthand `background: #fff url('bg.png') no-repeat` and
+ * `background-image: linear-gradient(...)` both resolve to "image-
+ * backed." Matching is case-insensitive per CSS syntax rules.
+ */
+const IMAGE_BACKED_VALUE_PATTERN =
+  /\burl\s*\(|\b(?:linear|radial|conic|repeating-linear|repeating-radial|repeating-conic)-gradient\s*\(/i;
+
+/**
+ * Returns the image-backed background declaration on `cssRule`, or
+ * `null` if neither `background` nor `background-image` names an
+ * image/gradient value. Prefers the most specific property
+ * (`background-image`) when both are present.
+ */
+function findImageBackedBackground(
+  cssRule: CssCssRule,
+): { readonly decl: CssDeclaration; readonly property: "background-image" | "background" } | null {
+  const bgImage = findDeclaration(cssRule, "background-image");
+  if (bgImage && IMAGE_BACKED_VALUE_PATTERN.test(bgImage.value)) {
+    return { decl: bgImage, property: "background-image" };
+  }
+  const bgShort = findDeclaration(cssRule, "background");
+  if (bgShort && IMAGE_BACKED_VALUE_PATTERN.test(bgShort.value)) {
+    return { decl: bgShort, property: "background" };
+  }
+  return null;
+}
+
+/**
+ * Walks every CSS rule in `stylesheet` and yields one
+ * `BgImageUnresolvableFinding` per (foreground-property, rule) pair
+ * where:
+ *
+ *   1. the rule declares one of `foregroundProperties` with a
+ *      resolvable color, AND
+ *   2. the rule declares `background-image: <image>` or
+ *      `background: …<image>…` (url() / any *-gradient()).
+ *
+ * The scanner cannot compute luminance for an image/gradient, so the
+ * caller emits an info-severity finding carrying `couldBeWrongBecause:
+ * [BG_IMAGE_UNRESOLVABLE]` instead of silently skipping the pair.
+ * Honest surfacing, no fabricated ratio. Per CLAUDE.md §1.
+ *
+ * Note: a rule that also has a resolvable `background-color` still
+ * counts — the image overlays the color and the scanner cannot predict
+ * which wins at the glyph's position. Emitting here preserves signal;
+ * the existing color-pair path also fires when it can, so the agent
+ * sees both the computed ratio and the "but there's an image on top"
+ * note.
+ */
+export function collectBgImageUnresolvable(
+  stylesheet: CssStylesheet,
+  foregroundProperties: readonly string[] = TEXT_FOREGROUND_PROPERTIES,
+): BgImageUnresolvableFinding[] {
+  const out: BgImageUnresolvableFinding[] = [];
+  for (const cssRule of walkCssRules(stylesheet)) {
+    const bg = findImageBackedBackground(cssRule);
+    if (!bg) continue;
+    for (const fgProperty of foregroundProperties) {
+      const fgDecl = findDeclaration(cssRule, fgProperty);
+      if (!fgDecl) continue;
+      const fg = parseColor(extractColorToken(fgDecl.value));
+      if (!fg) continue;
+      out.push({
+        selector: cssRule.selector,
+        line: cssRule.loc.start.line,
+        column: cssRule.loc.start.column,
+        fgProperty,
+        fgSource: fgDecl.value,
+        bgSource: bg.decl.value,
+        bgProperty: bg.property,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Context-aware message for an info-severity bg-image-unresolvable
+ * finding. Names the selector, the foreground property that surfaced
+ * the pair, and the minimum the agent should verify against — so the
+ * emitted finding carries enough context for the agent to investigate
+ * without round-tripping.
+ */
+export function buildBgImageUnresolvableMessage(
+  finding: BgImageUnresolvableFinding,
+  minimum: number,
+  scLabel: string,
+): string {
+  return `'${finding.selector}' declares ${finding.fgProperty} '${finding.fgSource}' against ${finding.bgProperty} '${finding.bgSource}' — contrast cannot be evaluated statically because the background is an image or gradient. ${scLabel} requires at least ${minimum}:1; verify manually against the image's actual luminance at the glyph position.`;
+}
+
+/**
+ * Fix text for an info-severity bg-image-unresolvable finding. Points
+ * the agent at the deterministic escape hatch (authoring a fallback
+ * `background-color` behind the image, which the scanner can then
+ * evaluate) while preserving the manual-verification option.
+ */
+export function buildBgImageUnresolvableSuggestion(
+  finding: BgImageUnresolvableFinding,
+  minimum: number,
+): string {
+  return `Set an explicit \`background-color\` as a fallback behind the image so contrast can be evaluated, or confirm manually that the \`${finding.fgProperty}: ${finding.fgSource}\` has at least ${minimum}:1 contrast against the visual background of the image at every glyph position. If the image has a dark/light overlay that guarantees contrast, keep the current CSS and note the overlay in a comment so future reviewers know why it is safe.`;
 }
 
 // ---------------------------------------------------------------------------

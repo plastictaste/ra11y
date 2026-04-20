@@ -47,6 +47,15 @@
  * border/outline. See docs/adr/0009-violation-could-be-wrong-because.md.
  * The boundary-override family set is distinct from the text-contrast
  * rules' `text-*` / `bg-*` set (see `_shared.ts`).
+ *
+ * Image-backed backgrounds (v1.0): when a selector declares a boundary
+ * or graphic color (`border-color`, `outline-color`, `fill`, `stroke`,
+ * or the corresponding shorthands) alongside `background-image: …`
+ * or a shorthand `background: …<image>…`, the scanner cannot compute
+ * a luminance for the background. The rule emits an info-severity
+ * finding carrying `couldBeWrongBecause:
+ * [background_image_unresolvable]` so the agent knows the boundary
+ * went unevaluated. Never fabricates a ratio.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -56,9 +65,14 @@ import type { EmittedViolation, ProjectContext } from "../../types/rule.ts";
 import { parseColor, type Rgb } from "../../utils/color.ts";
 import { contrast, WCAG_AA_MIN_NON_TEXT } from "../../utils/contrast.ts";
 import {
+  BG_IMAGE_UNRESOLVABLE,
+  buildBgImageUnresolvableMessage,
+  buildBgImageUnresolvableSuggestion,
+  collectBgImageUnresolvable,
   collectTailwindOverrideClasses,
   extractPrimarySelectorClass,
   NON_TEXT_CONTRAST_OVERRIDE_FAMILIES,
+  NON_TEXT_FOREGROUND_PROPERTIES,
   TAILWIND_CLASS_ON_CONSUMER,
 } from "./_shared.ts";
 
@@ -104,9 +118,35 @@ export const rule = defineRule({
       for (const cssRule of walkCssRules(stylesheet)) {
         checkRule(cssRule, file.filePath, overrideClasses, ctx);
       }
+      // Image-backed backgrounds: surface info-severity findings for
+      // any authored boundary/graphic color (border, outline, fill,
+      // stroke) sitting on a rule whose background is an image or
+      // gradient. The scanner cannot compute luminance; the agent
+      // verifies manually. Same doctrine as `contrast/minimum`.
+      for (const finding of collectBgImageUnresolvable(
+        stylesheet,
+        NON_TEXT_FOREGROUND_PROPERTIES,
+      )) {
+        emitUnresolvable(ctx, file.filePath, finding);
+      }
     }
   },
 });
+
+function emitUnresolvable(
+  ctx: ProjectContext,
+  filePath: string,
+  finding: ReturnType<typeof collectBgImageUnresolvable>[number],
+): void {
+  const emitted: EmittedViolation = {
+    severity: "info",
+    location: { filePath, line: finding.line, column: finding.column },
+    message: buildBgImageUnresolvableMessage(finding, WCAG_AA_MIN_NON_TEXT, SC_LABEL),
+    suggestion: buildBgImageUnresolvableSuggestion(finding, WCAG_AA_MIN_NON_TEXT),
+    couldBeWrongBecause: [BG_IMAGE_UNRESOLVABLE],
+  };
+  ctx.emit(emitted);
+}
 
 function checkRule(
   cssRule: CssRule,

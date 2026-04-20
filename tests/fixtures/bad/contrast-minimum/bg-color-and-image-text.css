@@ -1,0 +1,10 @@
+/* WCAG 1.4.3 — overlay ambiguity. A resolvable `background-color`
+   sits alongside `background-image`; the image overlays the color and
+   the scanner cannot predict which wins at the glyph position. Both
+   the color-pair path and the image-unresolvable path are eligible to
+   fire — emitting the info preserves signal for the agent. */
+.banner {
+  color: #ffffff;
+  background-color: #000000;
+  background-image: url('/assets/tile.png');
+}

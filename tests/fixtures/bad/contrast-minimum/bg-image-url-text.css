@@ -1,0 +1,9 @@
+/* WCAG 1.4.3 — color sits over a background-image URL. Static
+   analysis cannot compute luminance against the image, so the scanner
+   emits an info finding with `couldBeWrongBecause:
+   [background_image_unresolvable]` rather than silently skipping. */
+.hero-caption {
+  color: #ffffff;
+  background-image: url('/assets/hero.jpg');
+  padding: 16px;
+}

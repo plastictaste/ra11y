@@ -1,0 +1,7 @@
+/* Control case — resolvable background-color pair; normal contrast
+   evaluation applies. No image-backed finding because no image. */
+.body-text {
+  color: #1a1a1a;
+  background-color: #ffffff;
+  font-size: 16px;
+}
