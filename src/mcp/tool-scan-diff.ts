@@ -37,6 +37,7 @@ import {
 } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import {
   buildReferenceGuide,
   errorResult,
@@ -216,7 +217,7 @@ async function handleBaselineMode(
   const referenceGuide = buildReferenceGuide(newFiles);
   const fullMeta: Record<string, unknown> = {
     ...formatted.meta,
-    scannedRoot: cwd,
+    scanned: scannedProject(cwd),
     scanMode: describeMode(params),
     configSource: projectConfig.sourcePath,
     baselineVersion: baseline.version,
@@ -305,7 +306,7 @@ async function handleHunksMode(
       ...noHunksWarning,
       meta: {
         filesScanned: 0,
-        scannedRoot: cwd,
+        scanned: scannedProject(cwd),
         scanMode: "hunks",
         comparisonRef,
         configSource: projectConfig.sourcePath,
@@ -338,7 +339,7 @@ async function handleHunksMode(
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
     meta: {
       ...formatted.meta,
-      scannedRoot: cwd,
+      scanned: scannedProject(cwd),
       scanMode: "hunks",
       comparisonRef,
       configSource: projectConfig.sourcePath,
@@ -589,7 +590,7 @@ function buildEmptyFilesResponse(args: {
     resolved: [],
     meta: {
       filesScanned: 0,
-      scannedRoot: cwd,
+      scanned: scannedProject(cwd),
       scanMode: mode,
       baselineVersion: baseline.version,
     },

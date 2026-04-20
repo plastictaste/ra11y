@@ -16,6 +16,7 @@ All notable changes to ra11y are documented in this file. The format is based on
 ### Breaking
 
 - **`AgentFinding.snippet` shape change** (CLI `--format agent`, MCP `scan_project` / `scan` / `scan_file` / `scan_diff` response `files[].findings[].snippet`): the field is now `string | undefined` and omitted entirely when the violation has no snippet. Previously it was always a `{ before: [], highlighted: string, after: [] }` record where `before` and `after` had zero writers anywhere in the codebase — the empty-array sentinel was indistinguishable from "snippet builder failed" per CLAUDE.md §1 "Ambiguous field shapes are dishonest." Consumers that accessed `finding.snippet.highlighted` must now read `finding.snippet` directly; consumers that inspected `.before` / `.after` were reading dead fields and can drop the code. The `AgentSnippet` type is removed.
+- **Canonical `scanned` envelope across MCP scan-family tools**: `scan_project`, `scan`, `scan_file`, `scan_diff`, `detect_native_wrappers`, `propose_config`, `propose_baseline`, `bootstrap`, and `wrapper_introspect` now emit a single `scanned: { mode: "project" | "dir" | "file", root?, paths?, file? }` envelope in place of the three previous keys (`scannedRoot`, `scannedPaths`, `scannedFile`). Only the field matching `mode` is populated — the others are absent per CLAUDE.md §1 "present-when-meaningful." Consumers that branched on which key was present now read `scanned.mode` and pick the matching field; responses are otherwise unchanged.
 
 ## [1.0.0] - YYYY-MM-DD
 

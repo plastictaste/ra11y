@@ -37,7 +37,10 @@ interface BootstrapResponse {
   readonly ciSnippet: string;
   readonly nextStep: string;
   readonly nextStepStructured: { readonly tool: string; readonly args: Record<string, unknown> };
-  readonly meta: { readonly scannedRoot: string; readonly writeBaseline: boolean };
+  readonly meta: {
+    readonly scanned: { readonly mode: "project"; readonly root: string };
+    readonly writeBaseline: boolean;
+  };
   readonly warnings?: readonly string[];
 }
 
@@ -82,7 +85,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(response.baseline).toBeNull();
       expect(response.ciSnippet).toContain("ra11y");
       expect(response.ciSnippet).toContain("baseline check");
-      expect(response.meta.scannedRoot).toBe(dir);
+      expect(response.meta.scanned).toEqual({ mode: "project", root: dir });
       expect(response.meta.writeBaseline).toBe(false);
       expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
     });

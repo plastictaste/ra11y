@@ -185,7 +185,7 @@ describe("MCP meta-cache: opt-in delta mode", () => {
     // narrow or jsonEqual is wrong.
     expect("filesScanned" in delta).toBe(false);
     expect("rulesEvaluated" in delta).toBe(false);
-    expect("scannedFile" in delta).toBe(false);
+    expect("scanned" in delta).toBe(false);
     expect("configSource" in delta).toBe(false);
     expect("standards" in delta).toBe(false);
     expect("filesByExtension" in delta).toBe(false);

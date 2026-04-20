@@ -21,7 +21,7 @@
  *     headline counts are dishonest," we never sum them into a single
  *     `itemsProposed` number; the agent sizes per category.
  *   - `meta` carries the standard scan-confidence telemetry
- *     (`scannedRoot`, `configSource`, `rulesEvaluated`, `filesScanned`)
+ *     (`scanned.root`, `configSource`, `rulesEvaluated`, `filesScanned`)
  *     so the agent can cross-check against `scan_project` without a
  *     second round-trip.
  *   - `nextStep` prose + `nextStepStructured: { tool: "baseline", args:
@@ -41,7 +41,7 @@
  *     matches `*.min.{html,js,css}`. Canonical "not our code"
  *     locations; safe to grandfather without reading.
  *   - `legacy-route` — the finding's file path (relative to
- *     `scannedRoot`) matches a caller-supplied `legacyRoutes` glob.
+ *     `scanned.root`) matches a caller-supplied `legacyRoutes` glob.
  *     NOT auto-classified — per CLAUDE.md §1 "No heuristic
  *     suppression," we never guess which routes are legacy from
  *     filename patterns; the caller declares them explicitly.
@@ -85,6 +85,7 @@ import {
   buildProposedNextStep,
   tallyReasons,
 } from "./propose-baseline-classify.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -102,7 +103,7 @@ export const proposeBaselineTool: McpTool = {
   def: {
     name: "propose_baseline",
     description:
-      'Read-only: propose a structured baseline from the current scan state without writing anything to disk. Each would-be baseline entry carries a machine-readable `reason` code (`wrapper-undetected` / `third-party-html` / `legacy-route` / `design-system-internal` / `unclassified`) plus a one-line rationale so the agent can triage by category before calling `baseline` with mode: "create" to actually persist. Five distinct headline counters (one per reason) — never summed into a single "itemsProposed" number. Deterministic; no LLM; identical findings in, identical proposal out.\n\nUse `legacyRoutes` / `designSystemPaths` to tag findings in paths you (the agent) already know are legacy / design-system internals — glob patterns are matched against paths relative to `scannedRoot`. Heuristic reason codes (`third-party-html`, `wrapper-undetected`) fire automatically from the scan state; per "no heuristic suppression" we deliberately do NOT guess which routes are legacy from filename alone.',
+      'Read-only: propose a structured baseline from the current scan state without writing anything to disk. Each would-be baseline entry carries a machine-readable `reason` code (`wrapper-undetected` / `third-party-html` / `legacy-route` / `design-system-internal` / `unclassified`) plus a one-line rationale so the agent can triage by category before calling `baseline` with mode: "create" to actually persist. Five distinct headline counters (one per reason) — never summed into a single "itemsProposed" number. Deterministic; no LLM; identical findings in, identical proposal out.\n\nUse `legacyRoutes` / `designSystemPaths` to tag findings in paths you (the agent) already know are legacy / design-system internals — glob patterns are matched against paths relative to `scanned.root`. Heuristic reason codes (`third-party-html`, `wrapper-undetected`) fire automatically from the scan state; per "no heuristic suppression" we deliberately do NOT guess which routes are legacy from filename alone.',
     inputSchema: {
       type: "object",
       properties: {
@@ -115,13 +116,13 @@ export const proposeBaselineTool: McpTool = {
           type: "array",
           items: { type: "string" },
           description:
-            'Glob patterns (gitignore-style, `**` supported) naming file paths the caller has already identified as legacy routes — findings on matching files get `reason: "legacy-route"` so the agent can batch-grandfather them. Paths are matched relative to `scannedRoot`. Example: `["src/legacy/**", "app/old/**/*.html"]`. NOT auto-classified — per AI-first doctrine the caller is the authority on which routes are legacy.',
+            'Glob patterns (gitignore-style, `**` supported) naming file paths the caller has already identified as legacy routes — findings on matching files get `reason: "legacy-route"` so the agent can batch-grandfather them. Paths are matched relative to `scanned.root`. Example: `["src/legacy/**", "app/old/**/*.html"]`. NOT auto-classified — per AI-first doctrine the caller is the authority on which routes are legacy.',
         },
         designSystemPaths: {
           type: "array",
           items: { type: "string" },
           description:
-            'Glob patterns (gitignore-style, `**` supported) naming file paths the caller has already identified as design-system internals — findings on matching files get `reason: "design-system-internal"` so the agent can batch-grandfather them. Paths are matched relative to `scannedRoot`. Example: `["packages/ui/src/**"]`. NOT auto-classified — per AI-first doctrine the caller is the authority on which paths are design-system internals.',
+            'Glob patterns (gitignore-style, `**` supported) naming file paths the caller has already identified as design-system internals — findings on matching files get `reason: "design-system-internal"` so the agent can batch-grandfather them. Paths are matched relative to `scanned.root`. Example: `["packages/ui/src/**"]`. NOT auto-classified — per AI-first doctrine the caller is the authority on which paths are design-system internals.',
         },
       },
     },
@@ -188,7 +189,7 @@ export const proposeBaselineTool: McpTool = {
       proposed,
       counts,
       meta: {
-        scannedRoot: root,
+        scanned: scannedProject(root),
         configSource: projectConfig.sourcePath,
         filesScanned: files.length,
         rulesEvaluated: activeRules.length,

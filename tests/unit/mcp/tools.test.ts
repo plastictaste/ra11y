@@ -155,7 +155,7 @@ describe("MCP tool: scan", () => {
 });
 
 describe("MCP tool: scan_project", () => {
-  it("scans the provided cwd as a single root and reports scannedRoot", async () => {
+  it("scans the provided cwd as a single root and reports the scanned envelope", async () => {
     const tool = findTool("scan_project");
     const session = new McpSession();
     const fixtureDir = BAD_ALT.replace(/\/[^/]+$/, "");
@@ -164,14 +164,14 @@ describe("MCP tool: scan_project", () => {
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text) as {
       plan: { totalFindings: number };
-      meta: { filesScanned: number; scannedRoot: string };
-      scannedRoot?: string;
+      meta: { filesScanned: number; scanned: { mode: string; root: string } };
+      scanned?: unknown;
     };
-    // scannedRoot lives inside meta only — the top-level duplicate was
-    // removed. Assert the top-level field is gone so the shape stays
-    // de-duplicated.
-    expect(data.scannedRoot).toBeUndefined();
-    expect(data.meta.scannedRoot).toBe(fixtureDir);
+    // The scanned envelope lives inside meta only — the top-level
+    // duplicate was removed. Assert the top-level field is gone so the
+    // shape stays de-duplicated.
+    expect(data.scanned).toBeUndefined();
+    expect(data.meta.scanned).toEqual({ mode: "project", root: fixtureDir });
     expect(data.meta.filesScanned).toBeGreaterThan(0);
   });
 

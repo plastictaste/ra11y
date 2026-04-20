@@ -40,7 +40,7 @@ interface ProposeBaselineResponse {
     readonly unclassified: number;
   };
   readonly meta: {
-    readonly scannedRoot: string;
+    readonly scanned: { readonly mode: "project"; readonly root: string };
     readonly configSource: string | null;
     readonly filesScanned: number;
     readonly rulesEvaluated: number;

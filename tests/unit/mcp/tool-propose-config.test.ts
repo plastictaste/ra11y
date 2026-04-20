@@ -23,7 +23,7 @@ import { proposeConfigTool } from "../../../src/mcp/tool-propose-config.ts";
 interface ProposeConfigResponse {
   readonly suggestedConfig: string;
   readonly meta: {
-    readonly scannedRoot: string;
+    readonly scanned: { readonly mode: "project"; readonly root: string };
     readonly configSource: string | null;
     readonly filesScanned: number;
     readonly rulesEvaluated: number;
@@ -261,17 +261,17 @@ describe("propose_config: zero wrappers, zero build artifacts, zero findings", (
 
 describe("propose_config: meta telemetry", () => {
   // Guards the scan-confidence telemetry contract: every response
-  // carries scannedRoot, configSource, filesScanned, rulesEvaluated
+  // carries scanned, configSource, filesScanned, rulesEvaluated
   // so the agent can cross-check against scan_project without a
   // second round-trip. Per CLAUDE.md §1 "Verbose meta is signal."
-  it("populates scannedRoot, filesScanned, and rulesEvaluated on every response", async () => {
+  it("populates scanned, filesScanned, and rulesEvaluated on every response", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
       );
       const body = await callTool(dir);
-      expect(body.meta.scannedRoot).toBe(dir);
+      expect(body.meta.scanned).toEqual({ mode: "project", root: dir });
       expect(body.meta.configSource).toBeNull();
       expect(body.meta.filesScanned).toBe(1);
       expect(body.meta.rulesEvaluated).toBeGreaterThan(0);

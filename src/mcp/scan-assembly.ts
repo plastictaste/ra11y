@@ -83,7 +83,7 @@ export function buildScanPlan(args: {
 
 /**
  * Packs the `meta` block for `ScanFormatted`. Tool handlers layer the
- * response-level fields (scannedRoot, scanMode, configSource, etc.) on
+ * response-level fields (scanned, scanMode, configSource, etc.) on
  * top — this helper only emits the scan-derived fields every caller
  * shares. Returns a plain record so callers can spread additional keys
  * at the usage site.

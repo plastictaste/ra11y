@@ -18,6 +18,7 @@ import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { referenceGuideField } from "./reference-guide.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
 import {
   errorResult,
@@ -221,7 +222,7 @@ export const scanProjectTool: McpTool = {
     const fullMeta = {
       ...formatted.meta,
       ...skippedByCallerField(skipCriterion),
-      scannedRoot: root,
+      scanned: scannedProject(root),
       scanMode: actualMode,
       ...(fallbackReason === undefined ? {} : { fallbackReason }),
       rootSource,
@@ -572,7 +573,7 @@ function buildEmptyFilesResult(args: {
     files: [],
     meta: {
       filesScanned: 0,
-      scannedRoot: root,
+      scanned: scannedProject(root),
       scanMode: actualMode,
       ...(fallbackReason === undefined ? {} : { fallbackReason }),
     },

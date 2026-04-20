@@ -23,6 +23,7 @@
 import { existsSync } from "node:fs";
 import { BASELINE_FILENAME } from "../engine/baseline.ts";
 import { gitRoot } from "../utils/git.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import { baselineTool } from "./tool-baseline.ts";
 import { detectNativeWrappersTool } from "./tool-detect-wrappers.ts";
 import { proposeConfigTool } from "./tool-propose-config.ts";
@@ -146,7 +147,7 @@ export const bootstrapTool: McpTool = {
         writeBaseline,
       }),
       meta: {
-        scannedRoot: root,
+        scanned: scannedProject(root),
         writeBaseline,
         ...(additionalPaths.length > 0 ? { additionalPaths } : {}),
       },

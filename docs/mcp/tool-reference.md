@@ -157,7 +157,7 @@ Every tool returns `{ content: [{ type: "text", text: "<json>" }] }` where the J
       ]
     }
   ],
-  "meta": { "filesScanned", "configSource", "scannedRoot", ... }
+  "meta": { "filesScanned", "configSource", "scanned": { "mode": "project", "root": "..." }, ... }
 }
 ```
 

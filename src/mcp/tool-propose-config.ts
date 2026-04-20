@@ -15,9 +15,10 @@
  *     newline. The field is ALWAYS populated (a minimal
  *     `defineConfig({})` is still honest output when a scan is
  *     clean) — see the rationale below.
- *   - `meta` carries scan-confidence telemetry (scannedRoot,
- *     configSource, filesScanned, activeNativeWrappers,
- *     rulesEvaluated, plus the counts of items folded into the
+ *   - `meta` carries scan-confidence telemetry (the canonical
+ *     `scanned` envelope — `{ mode: "project", root }` for this tool,
+ *     `configSource`, `filesScanned`, `activeNativeWrappers`,
+ *     `rulesEvaluated`, plus the counts of items folded into the
  *     proposal) so an agent can tell whether the proposal had teeth
  *     without a separate `scan_project` round-trip.
  *   - The proposal NEVER takes effect on its own. It's a string the
@@ -59,6 +60,7 @@ import { gitRoot } from "../utils/git.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -124,7 +126,7 @@ export const proposeConfigTool: McpTool = {
     return textResult({
       suggestedConfig,
       meta: {
-        scannedRoot: root,
+        scanned: scannedProject(root),
         configSource: projectConfig.sourcePath,
         filesScanned: files.length,
         rulesEvaluated: activeRules.length,

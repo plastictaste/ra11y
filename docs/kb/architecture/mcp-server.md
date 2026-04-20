@@ -101,7 +101,7 @@ Canonical inventory: `MCP_TOOLS` in `src/mcp/tools.ts`, mirrored on the wire by 
 3. Severity names stay `error` / `warning` / `info`. The `confidence: "low"` field + explicit message text carries the "this needs verification" semantic; renaming `info` breaks ~100 files and the public API for cosmetic gain.
 4. `session.projectConfigs` cache was removed for correctness; don't re-add.
 5. Parsers maintain `#line` / `#col` incrementally in `#advance()`. The O(n²) position-recompute bug returns the moment someone writes `for (let i = 0; i < this.#pos; i++)` in a new parser.
-6. `scan_project` auto-promotes to git root silently. No "we promoted!" flag. `meta.scannedRoot` already tells the truth.
+6. `scan_project` auto-promotes to git root silently. No "we promoted!" flag. `meta.scanned.root` already tells the truth.
 
 Full decision log: `.claude/notes/mcp-iteration.md`. Read it before changing anything under `src/mcp/`.
 

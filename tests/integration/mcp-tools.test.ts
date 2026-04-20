@@ -75,16 +75,16 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 }
 
 describe("MCP tools/call round-trip: coverage for all registered tools", () => {
-  it("scan_project returns a scannedRoot and plan", async () => {
+  it("scan_project returns a scanned envelope and plan", async () => {
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
     const body = bodyOf(responses[1]) as {
       plan: { totalFindings: number };
-      meta: { scanMode: string; scannedRoot: string };
+      meta: { scanMode: string; scanned: { mode: string; root: string } };
     };
-    expect(body.meta.scannedRoot).toBe(BAD_ALT_DIR);
+    expect(body.meta.scanned).toEqual({ mode: "project", root: BAD_ALT_DIR });
     expect(body.plan.totalFindings).toBeGreaterThan(0);
     expect(body.meta.scanMode).toBe("full");
   });
@@ -198,11 +198,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "detect_native_wrappers", { cwd: BAD_ALT_DIR }),
     ]);
     const body = bodyOf(responses[1]) as {
-      scannedRoot: string;
+      scanned: { mode: string; root: string };
       candidates: unknown[];
       nextStep: string;
     };
-    expect(body.scannedRoot).toBe(BAD_ALT_DIR);
+    expect(body.scanned).toEqual({ mode: "project", root: BAD_ALT_DIR });
     expect(Array.isArray(body.candidates)).toBe(true);
     expect(typeof body.nextStep).toBe("string");
   });

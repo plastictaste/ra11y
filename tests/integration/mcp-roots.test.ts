@@ -109,7 +109,7 @@ describe("MCP roots: declared inline on initialize", () => {
     ]);
     const body = parseScanBody(responses[1]);
     const meta = body.meta as Record<string, unknown>;
-    expect(meta.scannedRoot).toBe(fixture);
+    expect(meta.scanned).toEqual({ mode: "project", root: fixture });
     expect(meta.rootSource).toBe("host-root");
     expect(meta.hostDeclaredRoots).toEqual([`file://${fixture}`]);
   });
@@ -123,7 +123,7 @@ describe("MCP roots: declared inline on initialize", () => {
     ]);
     const body = parseScanBody(responses[1]);
     const meta = body.meta as Record<string, unknown>;
-    expect(meta.scannedRoot).toBe(explicitFixture);
+    expect(meta.scanned).toEqual({ mode: "project", root: explicitFixture });
     expect(meta.rootSource).toBe("explicit");
     expect(meta.hostDeclaredRoots).toEqual([`file://${hostFixture}`]);
     // The overlap note names the host's first root so the agent can
@@ -140,7 +140,7 @@ describe("MCP roots: graceful degradation", () => {
     const responses = await mcpSession([initNoRoots(1), scanProject(2, { cwd: fixture })]);
     const body = parseScanBody(responses[1]);
     const meta = body.meta as Record<string, unknown>;
-    expect(meta.scannedRoot).toBe(fixture);
+    expect(meta.scanned).toEqual({ mode: "project", root: fixture });
     expect(meta.rootSource).toBe("explicit");
     // Empty-is-absent: no field rather than an empty list (see
     // CLAUDE.md "ambiguous field shapes are dishonest").
@@ -159,7 +159,7 @@ describe("MCP roots: graceful degradation", () => {
     // fallback chain continues to git-root / spawn-cwd. The declared
     // root still appears in meta as telemetry.
     expect(meta.hostDeclaredRoots).toEqual(["opaque://project/my-app"]);
-    expect(meta.scannedRoot).toBe(PROJECT_ROOT);
+    expect(meta.scanned).toEqual({ mode: "project", root: PROJECT_ROOT });
   });
 });
 
@@ -181,7 +181,7 @@ describe("MCP roots: notifications/roots push", () => {
     if (!scanResp) return;
     const body = parseScanBody(scanResp);
     const meta = body.meta as Record<string, unknown>;
-    expect(meta.scannedRoot).toBe(fixture);
+    expect(meta.scanned).toEqual({ mode: "project", root: fixture });
     expect(meta.rootSource).toBe("host-root");
   });
 });

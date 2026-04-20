@@ -16,6 +16,7 @@
 import { gitRoot } from "../utils/git.ts";
 import { buildSuggestedConfigSnippet } from "./config-snippet.ts";
 import { collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import { type McpTool, parseFiles, strParam, textResult } from "./tools-helpers.ts";
 
 export const detectNativeWrappersTool: McpTool = {
@@ -44,7 +45,7 @@ export const detectNativeWrappersTool: McpTool = {
     const files = await parseFiles([root], session, root);
     if (files.length === 0) {
       return textResult({
-        scannedRoot: root,
+        scanned: scannedProject(root),
         candidates: [],
         note: "No parseable files found.",
       });
@@ -68,7 +69,7 @@ export const detectNativeWrappersTool: McpTool = {
     const snippetField = snippet.length > 0 ? { suggestedConfigSnippet: snippet } : {};
 
     return textResult({
-      scannedRoot: root,
+      scanned: scannedProject(root),
       candidates,
       ...(absent.length > 0 ? { absentDeclaredWrappers: absent } : {}),
       ...snippetField,

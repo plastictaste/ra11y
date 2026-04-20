@@ -41,7 +41,7 @@ interface IntrospectRecord {
 interface IntrospectResponse {
   readonly records: readonly IntrospectRecord[];
   readonly meta: {
-    readonly scannedRoot: string;
+    readonly scanned: { readonly mode: "project"; readonly root: string };
     readonly filesScanned: number;
     readonly namesIntrospected: number;
     readonly cacheHits: number;

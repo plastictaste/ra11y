@@ -30,7 +30,7 @@ interface ProposeBaselineResponse {
     readonly unclassified: number;
   };
   readonly meta: {
-    readonly scannedRoot: string;
+    readonly scanned: { readonly mode: "project"; readonly root: string };
     readonly configSource: string | null;
     readonly filesScanned: number;
     readonly rulesEvaluated: number;
@@ -139,14 +139,14 @@ describe("propose_baseline: precedence + invariants", () => {
     });
   });
 
-  it("populates scannedRoot, filesScanned, and rulesEvaluated on every response", async () => {
+  it("populates scanned, filesScanned, and rulesEvaluated on every response", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
       );
       const body = await callTool(dir);
-      expect(body.meta.scannedRoot).toBe(dir);
+      expect(body.meta.scanned).toEqual({ mode: "project", root: dir });
       expect(body.meta.configSource).toBeNull();
       expect(body.meta.filesScanned).toBe(1);
       expect(body.meta.rulesEvaluated).toBeGreaterThan(0);

@@ -18,6 +18,7 @@ import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
 import { dedupeReviewCandidatesForSingleFile } from "./review-candidate-dedup.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
+import { scannedDir, scannedFile } from "./scanned-envelope.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
 import { attestTool } from "./tool-attest.ts";
 import { auditTool } from "./tool-audit.ts";
@@ -140,7 +141,7 @@ const scanTool: McpTool = {
       return textResult({
         plan: { totalFindings: 0, summary: "No parseable files found." },
         files: [],
-        meta: { filesScanned: 0, scannedPaths: paths },
+        meta: { filesScanned: 0, scanned: scannedDir(paths) },
         // `scan` takes paths directly and has no root-resolution step,
         // so rootSource is null — `root_source_defaulted` cannot fire
         // here by construction (it's a scan_project-only signal).
@@ -170,7 +171,7 @@ const scanTool: McpTool = {
 
     const fullMeta: Record<string, unknown> = {
       ...formatted.meta,
-      scannedPaths: paths,
+      scanned: scannedDir(paths),
       configSource: projectConfig.sourcePath,
       configSearchedFrom: cwd,
       ...(projectConfig.sourcePath === null
@@ -317,7 +318,7 @@ const scanFileTool: McpTool = {
     const fullMeta: Record<string, unknown> = {
       ...formatted.meta,
       filesScanned: 1,
-      scannedFile: parsed.filePath,
+      scanned: scannedFile(parsed.filePath),
       configSource: projectConfig.sourcePath,
       configSearchedFrom: configSearchBase,
       ...(projectConfig.sourcePath === null
@@ -337,7 +338,7 @@ const scanFileTool: McpTool = {
         : { referenceGuide: formatted.referenceGuide }),
       ...warningsFieldFromScanMeta({
         meta: formatted.meta,
-        // scan_file has no `scannedRoot` / `rootSource` concept — the
+        // scan_file has no project-root / `rootSource` concept — the
         // file IS the scope. Passing null here suppresses the
         // `root_source_defaulted` warning, which is a scan_project-only
         // signal.

@@ -28,6 +28,7 @@ import { existsSync } from "node:fs";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { indexFilesByComponentName, type ProbeFile } from "../engine/wrapper-probe.ts";
 import { gitRoot } from "../utils/git.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import {
   errorResult,
   type McpTool,
@@ -121,7 +122,7 @@ export const wrapperIntrospectTool: McpTool = {
     return textResult({
       records,
       meta: {
-        scannedRoot: root,
+        scanned: scannedProject(root),
         filesScanned: allFiles.length,
         namesIntrospected: names.length,
         // `cacheHits` / `cacheMisses` are scan-confidence telemetry
