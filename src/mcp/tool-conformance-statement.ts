@@ -25,6 +25,7 @@ import {
   resolveProfile,
 } from "../config/profiles.ts";
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
+import { createGitStalenessProbe } from "../reports/attestation-surface.ts";
 import {
   buildConformanceStatement,
   type ConformanceProfile,
@@ -167,6 +168,7 @@ export const conformanceStatementTool: McpTool = {
       params,
     });
 
+    const stalenessProbe = createGitStalenessProbe(cwd);
     const statement = buildConformanceStatement(
       assembleBuilderInputs({
         ledger,
@@ -176,24 +178,56 @@ export const conformanceStatementTool: McpTool = {
         session,
         namedProfile,
         signing: signingContext.signing,
+        stalenessProbe,
+        loadedConfig,
       }),
     );
 
-    const warnings =
-      signingContext.signing === undefined
-        ? (["non_git_repo_signature_omitted"] as const)
-        : ([] as const);
+    // Merge the tool-level signing warning with the builder's own
+    // warnings (e.g. `stale_probe_unavailable`) so the agent reads one
+    // deduplicated set. Order is alphabetical for determinism.
+    const toolWarnings = new Set<string>(statement.warnings ?? []);
+    if (signingContext.signing === undefined) toolWarnings.add("non_git_repo_signature_omitted");
+    const mergedWarnings = [...toolWarnings].sort();
 
     return textResult({
       ...statement,
       markdown: renderConformanceMarkdown(statement),
-      nextStep: statement.conformant
-        ? "Conformant. Drop the `markdown` block into your release notes or audit bundle; commit `.ra11y/attestations.jsonl` so the evidence trail persists."
-        : "Not conformant — read `blockers[]`. Each entry's `reason` tells you which tool to call next: `failing` → suggest_fix; `candidate-only` or `no-evidence` → attest (or checklist); `partially-attested` → attest with the missing ruleIds.",
-      ...(warnings.length > 0 ? { warnings } : {}),
+      nextStep: buildNextStep(statement),
+      ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
     });
   },
 };
+
+/**
+ * Builds the `nextStep` hint for the agent. Splits the hard "not
+ * conformant" case on whether the blockers include a structural gap
+ * (stale attestation, missing process config) vs a content gap (missing
+ * evidence, failing rules) so the agent routes to the right tool
+ * without scanning every blocker's reason.
+ */
+function buildNextStep(statement: ReturnType<typeof buildConformanceStatement>): string {
+  if (statement.conformant) {
+    return "Conformant. Drop the `markdown` block into your release notes or audit bundle; commit `.ra11y/attestations.jsonl` so the evidence trail persists.";
+  }
+  const hasStale = statement.blockers.some((b) => b.reason === "stale-attestation");
+  const hasMissingProcess = statement.blockers.some((b) => b.reason === "missing-process-config");
+  const extras: string[] = [];
+  if (hasStale) {
+    extras.push(
+      "`stale-attestation` → re-run `attest` for the cited criteria; files in the attestation's scope changed since it was recorded.",
+    );
+  }
+  if (hasMissingProcess) {
+    extras.push(
+      "`missing-process-config` → declare a `processes` entry in `ra11y.config.ts` covering the ordered page set (ADR 0016), then re-run.",
+    );
+  }
+  const base =
+    "Not conformant — read `blockers[]`. Each entry's `reason` tells you which tool to call next: `failing` → suggest_fix; `candidate-only` or `no-evidence` → attest (or checklist); `partially-attested` → attest with the missing ruleIds.";
+  if (extras.length === 0) return base;
+  return `${base} ${extras.join(" ")}`;
+}
 
 /**
  * Assembles the builder inputs from the tool's request context. Split
@@ -212,6 +246,10 @@ function assembleBuilderInputs(ctx: {
   readonly signing:
     | NonNullable<Parameters<typeof buildConformanceStatement>[0]["signing"]>
     | undefined;
+  readonly stalenessProbe:
+    | NonNullable<Parameters<typeof buildConformanceStatement>[0]["stalenessProbe"]>
+    | undefined;
+  readonly loadedConfig: LoadedConfig | null;
 }): Parameters<typeof buildConformanceStatement>[0] {
   const technologiesReliedUpon = strArrayParam(ctx.params, "technologiesReliedUpon");
   const technologiesNotReliedUpon = strArrayParam(ctx.params, "technologiesNotReliedUpon");
@@ -221,6 +259,7 @@ function assembleBuilderInputs(ctx: {
     exclude: [...ctx.session.config.exclude],
     nativeWrappers: [...ctx.session.config.nativeWrappers],
   };
+  const processes = ctx.loadedConfig?.processes;
   return {
     ledger: ctx.ledger,
     profile: ctx.profile,
@@ -233,6 +272,8 @@ function assembleBuilderInputs(ctx: {
     ...(technologiesNotReliedUpon !== undefined && { technologiesNotReliedUpon }),
     ...(ctx.namedProfile !== undefined && { scope: ctx.namedProfile }),
     ...(ctx.signing !== undefined && { signing: ctx.signing }),
+    ...(ctx.stalenessProbe !== undefined && { stalenessProbe: ctx.stalenessProbe }),
+    ...(processes !== undefined && processes.length > 0 && { processes }),
   };
 }
 

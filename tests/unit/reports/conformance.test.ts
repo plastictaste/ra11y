@@ -20,6 +20,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { buildEvidenceLedger } from "../../../src/engine/evidence-ledger.ts";
+import type { AttestationStalenessProbe } from "../../../src/reports/attestation-surface.ts";
 import {
   buildConformanceStatement,
   type ConformanceProfile,
@@ -169,15 +170,19 @@ describe("buildConformanceStatement", () => {
   });
 
   it("blocks a manual criterion backed only by candidates", () => {
-    const standard = mkStandard([{ localId: "2.4.5", level: "AA", automatable: "manual" }]);
+    // 1.2.2 (Captions, Prerecorded) is a per-page manual criterion — not
+    // in the process-level set (2.4.5 / 3.2.3 / 3.2.4), so the
+    // `candidate-only` reason surfaces without the builder routing it
+    // to `missing-process-config` first.
+    const standard = mkStandard([{ localId: "1.2.2", level: "A", automatable: "manual" }]);
     const statement = buildConformanceStatement({
-      ledger: buildLedger(standard, { candidates: [mkCandidate("wcag22:2.4.5")] }),
+      ledger: buildLedger(standard, { candidates: [mkCandidate("wcag22:1.2.2")] }),
       profile: AA_PROFILE,
       standards: [standard],
     });
     expect(statement.conformant).toBe(false);
     expect(statement.blockers[0]).toMatchObject({
-      criterionId: "wcag22:2.4.5",
+      criterionId: "wcag22:1.2.2",
       status: "unknown",
       reason: "candidate-only",
       candidateSources: 1,
@@ -457,5 +462,210 @@ describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {
     });
     expect(statement.scope.commitHash).toBeUndefined();
     expect(statement.scope.configSnapshot).toBeUndefined();
+  });
+});
+
+describe("buildConformanceStatement: stale-attestation blocker", () => {
+  const mkProbe = (answers: Record<string, boolean | null>): AttestationStalenessProbe => ({
+    isStale: (record: AttestationRecord) => {
+      // Key on `attestedAt` so tests can route each record to a
+      // deterministic answer. Unknown key → null (indeterminate).
+      if (!(record.attestedAt in answers)) return null;
+      return answers[record.attestedAt] ?? null;
+    },
+  });
+
+  it("flips an attested-pass criterion to a stale-attestation blocker when the probe says stale", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:1.4.3", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      stalenessProbe: mkProbe({ [FIXED_TIMESTAMP]: true }),
+    });
+    expect(statement.conformant).toBe(false);
+    expect(statement.blockers).toHaveLength(1);
+    expect(statement.blockers[0]).toMatchObject({
+      criterionId: "wcag22:1.4.3",
+      reason: "stale-attestation",
+      staleAttestedAt: FIXED_TIMESTAMP,
+    });
+    // Non-repo / indeterminate doesn't fire here — probe answered true.
+    expect(statement.warnings).toBeUndefined();
+  });
+
+  it("emits `stale_probe_unavailable` warning without blocking when the probe is indeterminate", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:1.4.3", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      stalenessProbe: mkProbe({ [FIXED_TIMESTAMP]: null }),
+    });
+    // Indeterminate probe must not fabricate staleness — the pass rides
+    // through and the warning tells the agent the probe couldn't answer.
+    expect(statement.conformant).toBe(true);
+    expect(statement.warnings).toEqual(["stale_probe_unavailable"]);
+  });
+
+  it("omits `stale_probe_unavailable` warning when the probe answered cleanly (false)", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:1.4.3", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      stalenessProbe: mkProbe({ [FIXED_TIMESTAMP]: false }),
+    });
+    expect(statement.conformant).toBe(true);
+    expect(statement.warnings).toBeUndefined();
+  });
+
+  it("does not run staleness when the builder already classified a failing blocker", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { violations: [mkViolation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      // Probe would say stale if asked — but there is no attested source
+      // to probe against, so the failing classification wins outright.
+      stalenessProbe: mkProbe({ [FIXED_TIMESTAMP]: true }),
+    });
+    expect(statement.blockers[0]?.reason).toBe("failing");
+    expect(statement.warnings).toBeUndefined();
+  });
+
+  it("ignores staleness on attested-fail sources (the fail already blocks)", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:1.4.3", "fail")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      stalenessProbe: mkProbe({ [FIXED_TIMESTAMP]: true }),
+    });
+    // Attested-fail → status "fail" → reason "failing". Staleness is
+    // irrelevant since the attestation is already blocking; the probe is
+    // not consulted for fail/pending verdicts.
+    expect(statement.blockers[0]?.reason).toBe("failing");
+  });
+
+  it("renders the stale-attestation reason in the markdown blocker table", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:1.4.3", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      stalenessProbe: mkProbe({ [FIXED_TIMESTAMP]: true }),
+    });
+    const md = renderConformanceMarkdown(statement);
+    expect(md).toContain("**NOT CONFORMANT**");
+    expect(md).toContain("stale-attestation");
+  });
+});
+
+describe("buildConformanceStatement: missing-process-config blocker", () => {
+  // 2.4.5 / 3.2.3 / 3.2.4 are the process-level criteria — evaluating
+  // them requires a declared `processes` config per ADR 0016.
+  it("emits missing-process-config when 2.4.5 is in scope and processes is absent", () => {
+    const standard = mkStandard([{ localId: "2.4.5", level: "AA", automatable: "manual" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:2.4.5", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      // processes omitted → structural gap.
+    });
+    expect(statement.conformant).toBe(false);
+    expect(statement.blockers[0]).toMatchObject({
+      criterionId: "wcag22:2.4.5",
+      reason: "missing-process-config",
+    });
+  });
+
+  it("emits missing-process-config for 3.2.3 and 3.2.4 as well", () => {
+    const standard = mkStandard([
+      { localId: "3.2.3", level: "AA", automatable: "manual" },
+      { localId: "3.2.4", level: "AA", automatable: "manual" },
+    ]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [
+          mkAttestation("wcag22:3.2.3", "pass"),
+          mkAttestation("wcag22:3.2.4", "pass"),
+        ],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.blockers.map((b) => b.reason)).toEqual([
+      "missing-process-config",
+      "missing-process-config",
+    ]);
+  });
+
+  it("clears the blocker when at least one process is declared", () => {
+    const standard = mkStandard([{ localId: "2.4.5", level: "AA", automatable: "manual" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:2.4.5", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      processes: [{ name: "checkout", pages: ["a.html", "b.html"] }],
+    });
+    expect(statement.conformant).toBe(true);
+    expect(statement.blockers).toEqual([]);
+  });
+
+  it("fires before staleness so the structural gap surfaces rather than a stale-attestation downstream", () => {
+    const standard = mkStandard([{ localId: "2.4.5", level: "AA", automatable: "manual" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:2.4.5", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      // Probe would say stale, but the missing-process-config blocker
+      // must win — it's the root cause; stale-attestation would hide it.
+      stalenessProbe: { isStale: () => true },
+      // processes omitted.
+    });
+    expect(statement.blockers).toHaveLength(1);
+    expect(statement.blockers[0]?.reason).toBe("missing-process-config");
+  });
+
+  it("does not fire for non-process-level criteria", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:1.4.3", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      // processes omitted — but 1.4.3 is not process-level.
+    });
+    expect(statement.conformant).toBe(true);
+  });
+
+  it("renders the missing-process-config reason in the markdown blocker table", () => {
+    const standard = mkStandard([{ localId: "2.4.5", level: "AA", automatable: "manual" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    const md = renderConformanceMarkdown(statement);
+    expect(md).toContain("**NOT CONFORMANT**");
+    expect(md).toContain("missing-process-config");
   });
 });
