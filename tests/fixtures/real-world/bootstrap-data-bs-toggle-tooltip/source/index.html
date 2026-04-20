@@ -1,0 +1,57 @@
+<!--
+  Sanitized from twbs/bootstrap js/tests/integration/index.html
+  (sixth-pass scan). Bootstrap's tooltip JS replaces the native
+  title="…" with an ARIA-aware runtime widget (aria-describedby +
+  role=tooltip + keyboard dismiss). The native `title` attribute is
+  a source string for the widget, not a rendered native browser
+  tooltip. Static analysis cannot tell one apart from the other,
+  so tooltip/dismissable still fires — but the scanner surfaces
+  the JS-enhancer signal in the message so the agent can read the
+  file and dismiss when the runtime behavior is in fact compliant.
+
+  Three variants, all expected to fire:
+    - BS5 button with data-bs-toggle="tooltip"
+    - BS4 legacy button with data-toggle="popover"
+    - Tippy.js <a> with data-tippy-content
+  Plus one negative control: a plain <button title="…"> with no
+  JS-enhancer attributes, whose message keeps the original phrasing.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture — data-bs-toggle tooltip</title>
+  </head>
+  <body>
+    <!-- Variant 1: Bootstrap 5 tooltip trigger. -->
+    <button
+      type="button"
+      class="btn btn-secondary"
+      data-bs-toggle="tooltip"
+      data-bs-placement="top"
+      title="Tooltip on top"
+    >
+      BS5 tooltip trigger
+    </button>
+
+    <!-- Variant 2: Bootstrap 4 legacy popover trigger. -->
+    <button
+      type="button"
+      class="btn btn-secondary"
+      data-toggle="popover"
+      data-placement="bottom"
+      title="BS4 popover title"
+    >
+      BS4 popover trigger
+    </button>
+
+    <!-- Variant 3: Tippy.js-enhanced anchor. -->
+    <a href="/help" data-tippy-content="Help center details" title="Help center">
+      Help
+    </a>
+
+    <!-- Negative control: plain <button title> with NO enhancer attribute.
+         This one keeps the original unenriched message. -->
+    <button type="button" title="Save document">Save</button>
+  </body>
+</html>
