@@ -191,7 +191,18 @@ function postGtImpliesGeneric(src: string, endPos: number): boolean {
  * and the `<a>` element is wrongly classified as a generic call.
  */
 function precedingIsGenericCall(src: string, pos: number): boolean {
-  let p = pos - 1;
+  const p = skipTriviaLookback(src, pos - 1);
+  if (p < 0) return false;
+  const ch = src[p];
+  if (ch === undefined) return false;
+  if (ch === ")" || ch === "]" || ch === ".") return true;
+  if (!/[a-zA-Z0-9_$]/.test(ch)) return false;
+  const word = readWordLookback(src, p);
+  return !JSX_EXPRESSION_PRECEDING_KEYWORDS.has(word);
+}
+
+function skipTriviaLookback(src: string, start: number): number {
+  let p = start;
   let newlineCount = 0;
   while (p >= 0) {
     const ch = src[p];
@@ -201,25 +212,23 @@ function precedingIsGenericCall(src: string, pos: number): boolean {
     }
     if (ch === "\n") {
       newlineCount += 1;
-      if (newlineCount >= 2) return false;
+      if (newlineCount >= 2) return -1;
       p -= 1;
       continue;
     }
     break;
   }
-  if (p < 0) return false;
-  const ch = src[p];
-  if (ch === undefined) return false;
-  if (ch === ")" || ch === "]" || ch === ".") return true;
-  if (!/[a-zA-Z0-9_$]/.test(ch)) return false;
-  let wordStart = p;
+  return p;
+}
+
+function readWordLookback(src: string, end: number): string {
+  let wordStart = end;
   while (wordStart >= 0) {
     const wc = src[wordStart];
     if (wc === undefined || !/[a-zA-Z0-9_$]/.test(wc)) break;
     wordStart -= 1;
   }
-  const word = src.slice(wordStart + 1, p + 1);
-  return !JSX_EXPRESSION_PRECEDING_KEYWORDS.has(word);
+  return src.slice(wordStart + 1, end + 1);
 }
 
 function isGenericStructuralChar(c: string): boolean {

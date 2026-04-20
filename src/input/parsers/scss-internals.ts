@@ -225,7 +225,7 @@ function isLiteralArgList(args: string): boolean {
   if (args.includes("$")) return false;
   if (args.includes("#{")) return false;
   if (/\d\s*[*/]\s*\d/.test(args)) return false;
-  if (/\d\s*[+\-]\s*\d/.test(args)) return false;
+  if (/\d\s*[+-]\s*\d/.test(args)) return false;
   return true;
 }
 
