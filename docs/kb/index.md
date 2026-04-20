@@ -172,7 +172,6 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 ## patterns
 
 - [Adding a fixture](./patterns/adding-a-fixture.md)
-- [Bridging runtime accessibility evidence into the attest ledger](./patterns/bridging-runtime-a11y.md)
 - [The evaluator-optimizer loop](./patterns/evaluator-optimizer-loop.md)
 - [suggest_fix ranking and fixClass semantics](./patterns/suggest-fix-ranking.md)
 - [Using AST helpers](./patterns/using-ast-helpers.md)
