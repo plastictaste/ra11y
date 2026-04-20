@@ -7,17 +7,17 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
 import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
 import { baselineStatusField, probeBaselineStatus } from "./baseline-status.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { buildConfigHint } from "./config-hint.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
-import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
-import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
+import { includeRuleDetailsSchema } from "./rule-catalog.ts";
+import { assembleScanProjectResponse } from "./scan-project-budget.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
 import {
@@ -33,7 +33,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField, warningsFieldFromScanMeta } from "./warnings.ts";
+import { warningsField, warningsFromScanMeta } from "./warnings.ts";
 import type { NativeWrapperSources } from "./wrappers-meta.ts";
 
 export const scanProjectTool: McpTool = {
@@ -258,21 +258,24 @@ export const scanProjectTool: McpTool = {
       nextStep: nextStep.prose,
       ...nextStepStructuredField,
     };
-    return textResult({
-      plan: formatted.plan,
-      files: hoisted.files,
-      ...page.paginationFields,
-      ...hoistedReferenceGuideField(hoisted),
-      ...ruleCatalogField(params, BUILTIN_RULES, formatted.files),
-      ...warningsFieldFromScanMeta({
-        meta: formatted.meta,
-        rootSource,
-        configSource: projectConfig.sourcePath,
-        scannedBuildArtifactsPresent: buildArtifacts.present,
-        storybookPresetActive,
+    return textResult(
+      assembleScanProjectResponse({
+        params,
+        session,
+        formatted,
+        hoisted,
+        page,
+        pageOffset: pageParams.offset,
+        fullMeta,
+        baseWarnings: warningsFromScanMeta({
+          meta: formatted.meta,
+          rootSource,
+          configSource: projectConfig.sourcePath,
+          scannedBuildArtifactsPresent: buildArtifacts.present,
+          storybookPresetActive,
+        }),
       }),
-      meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta, session }),
-    });
+    );
   },
 };
 
@@ -644,20 +647,6 @@ function structuredField(nextStep: { readonly structured?: unknown }): {
 } {
   if (nextStep.structured === undefined) return {};
   return { nextStepStructured: nextStep.structured };
-}
-
-/**
- * Conditional-spread for the post-hoist `referenceGuide` field —
- * omitted when no findings / no hoist context applies. Factored out so
- * the handler's cognitive complexity stays under the lint cap after
- * the V1-SIZE-RESPONSE-BUDGET-DENSITY hoist was added alongside the
- * existing `structuredField` / `baselineStatusField` helpers.
- */
-function hoistedReferenceGuideField<T>(hoisted: { readonly referenceGuide: T | undefined }): {
-  readonly referenceGuide?: T;
-} {
-  if (hoisted.referenceGuide === undefined) return {};
-  return { referenceGuide: hoisted.referenceGuide };
 }
 
 /**

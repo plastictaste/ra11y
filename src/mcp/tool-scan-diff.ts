@@ -38,6 +38,7 @@ import {
 import { logger } from "../utils/logger.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
+import { applyScanDiffTokenBudget } from "./scan-diff-budget.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import {
   buildReferenceGuide,
@@ -229,7 +230,7 @@ async function handleBaselineMode(
     configSource: projectConfig.sourcePath,
     baselineVersion: baseline.version,
   };
-  return textResult({
+  const tentative: Record<string, unknown> = {
     mode: "diff",
     baselinePath,
     baselineCount: baseline.violations.length,
@@ -250,7 +251,8 @@ async function handleBaselineMode(
       : { referenceGuide: hoistedGuide.referenceGuide }),
     meta: applyMetaCacheMode({ toolName: "scan_diff", params, fullMeta, session }),
     nextStep: buildNextStep(newCount, newFiles, resolved.length),
-  });
+  };
+  return textResult(applyScanDiffTokenBudget(tentative, hoistedGuide.files, "newViolations"));
 }
 
 /** Default comparison ref for hunks mode when the caller omits `comparisonRef`. */
@@ -342,7 +344,7 @@ async function handleHunksMode(
   // hunk-filter findings (symmetric with baseline mode above).
   const hoistedGuide = hoistAndBuildReferenceGuide(newFiles, buildReferenceGuide(newFiles));
 
-  return textResult({
+  const tentative: Record<string, unknown> = {
     mode: "diff",
     newCount,
     newViolations: hoistedGuide.files,
@@ -358,7 +360,8 @@ async function handleHunksMode(
       configSource: projectConfig.sourcePath,
     },
     nextStep: buildHunkNextStep(newCount, newFiles, comparisonRef, hunksResult.status),
-  });
+  };
+  return textResult(applyScanDiffTokenBudget(tentative, hoistedGuide.files, "newViolations"));
 }
 
 /**

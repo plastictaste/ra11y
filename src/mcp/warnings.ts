@@ -41,7 +41,21 @@ export type ScanWarningCode =
   // everything" when the scanner dropped the majority of source files
   // at discovery. Paired meta: `analysisCoverage.skippedByExtension`
   // carries the ext↦count map the warning points at.
-  | "extensions_skipped_no_parser";
+  | "extensions_skipped_no_parser"
+  // ADR 0021 amendment (2026-04-20): the token-density secondary
+  // budget dropped trailing file entries from this response to fit
+  // under the ~25k-token MCP host ceiling. Distinct from file-count
+  // truncation — the primary `limit` cap is a fixed integer, this
+  // code fires when per-file density pushes the response over the
+  // threshold regardless of file count (the motivating fixture had
+  // 18 files / 131 findings / ~107 KB after the fix.description
+  // hoist). Paired pagination: `truncated: true` + `nextOffset` are
+  // set alongside the warning so the caller's existing pagination
+  // contract carries the dropped entries over. Without this code,
+  // density truncation is indistinguishable from file-count
+  // truncation and an agent cannot tell whether raising `limit` will
+  // help.
+  | "response_token_budget_truncated";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */

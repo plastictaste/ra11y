@@ -20,6 +20,7 @@ import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { dedupeReviewCandidatesForSingleFile } from "./review-candidate-dedup.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
 import { scannedDir, scannedFile } from "./scanned-envelope.ts";
+import { applyTokenBudget } from "./token-budget.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
 import { attestTool } from "./tool-attest.ts";
 import { auditTool } from "./tool-audit.ts";
@@ -54,7 +55,12 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField, warningsFieldFromScanMeta } from "./warnings.ts";
+import {
+  type ScanWarningCode,
+  warningsField,
+  warningsFieldFromScanMeta,
+  warningsFromScanMeta,
+} from "./warnings.ts";
 import { buildWrapperSourcesFromConfig } from "./wrappers-meta.ts";
 
 export type { McpTool, McpToolDef, McpToolResult } from "./tools-helpers.ts";
@@ -188,17 +194,42 @@ const scanTool: McpTool = {
     // for the final files array. `scan` emits every file with findings
     // (no pagination), so the hoist source matches the response.
     const hoisted = hoistAndBuildReferenceGuide(formatted.files, formatted.referenceGuide);
-    return textResult({
+    const baseWarnings = warningsFromScanMeta({
+      meta: formatted.meta,
+      rootSource: null,
+      configSource: projectConfig.sourcePath,
+    });
+    // ADR 0021 amendment (2026-04-20): secondary token-density budget.
+    // `scan` has no `limit`/`offset` contract, so when the density cap
+    // fires we emit `truncated: true` + `totalFilesWithFindings` + the
+    // `response_token_budget_truncated` warning — no `nextOffset`,
+    // because the tool has no resumable paging primitive. The
+    // remediation the agent takes is "narrow `paths` or switch to
+    // scan_project which does paginate," surfaced via the warning
+    // code. Progress guarantee: the helper always keeps at least one
+    // file.
+    const tentative: Record<string, unknown> = {
       ...formatted,
       files: hoisted.files,
       ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
       ...ruleCatalogField(params, BUILTIN_RULES, formatted.files),
-      ...warningsFieldFromScanMeta({
-        meta: formatted.meta,
-        rootSource: null,
-        configSource: projectConfig.sourcePath,
-      }),
+      ...(baseWarnings.length > 0 ? { warnings: baseWarnings } : {}),
       meta: applyMetaCacheMode({ toolName: "scan", params, fullMeta, session }),
+    };
+    const budgeted = applyTokenBudget({
+      response: tentative,
+      filesKey: "files",
+      files: hoisted.files,
+      offset: 0,
+    });
+    if (budgeted.droppedCount === 0) return textResult(tentative);
+    const warnings: ScanWarningCode[] = [...baseWarnings, "response_token_budget_truncated"];
+    return textResult({
+      ...tentative,
+      files: budgeted.files,
+      truncated: true as const,
+      totalFilesWithFindings: hoisted.files.length,
+      warnings,
     });
   },
 };
