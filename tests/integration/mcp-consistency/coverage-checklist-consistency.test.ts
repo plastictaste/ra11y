@@ -95,7 +95,6 @@ interface ChecklistBody {
     readonly actionable: number;
     readonly untargetedCriteria: number;
     readonly likelyIrrelevant: number;
-    readonly manualReviewRequired: number;
   };
   readonly items: readonly { readonly criterionId: string }[];
   readonly likelyIrrelevant: readonly { readonly criterionId: string }[];

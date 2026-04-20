@@ -87,8 +87,8 @@ interface CoverageBody {
 }
 interface ChecklistBody {
   readonly summary: {
-    readonly manualReviewRequired: number;
     readonly actionable: number;
+    readonly untargetedCriteria: number;
   };
 }
 
@@ -110,13 +110,14 @@ async function gatherCounts(cwd: string): Promise<{
   const checklistBody = body<ChecklistBody>(responses[3]);
   return {
     // Re-derive the cross-tool total from the split top-level fields
-    // (P1-M): `manualReviewRequired` no longer ships on scan_project's
-    // plan — it would re-create the composite-headline dishonesty this
-    // split exists to kill. The invariant is still "all surfaces agree
-    // on the total", just computed from the honest parts.
+    // on every surface. `manualReviewRequired` no longer ships on
+    // scan_project's plan or on checklist's summary — both composites
+    // re-created the dishonest-headline pattern this split exists to
+    // kill. The invariant is still "all surfaces agree on the total",
+    // just computed from the honest parts on both sides.
     scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
     coverage: coverageBody.criteriaManualReviewRequired,
-    checklist: checklistBody.summary.manualReviewRequired,
+    checklist: checklistBody.summary.actionable + checklistBody.summary.untargetedCriteria,
     scanActionable: scanBody.plan.actionableManualItems,
     checklistActionable: checklistBody.summary.actionable,
   };
@@ -138,10 +139,11 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
   });
 
   it("scan.plan.actionableManualItems agrees with checklist.summary.actionable", async () => {
-    // Without this, an agent reading scan.plan.manualReviewRequired
-    // (e.g., 21) has to call checklist just to learn that only a
-    // handful (e.g., 4) are grounded in file:line candidates. Exposing
-    // the actionable count inline saves the round trip.
+    // Without this, an agent reading a (formerly inflated) composite
+    // manual-review headline (e.g., 21) would have to call checklist
+    // just to learn that only a handful (e.g., 4) are grounded in
+    // file:line candidates. Exposing the actionable count inline
+    // saves the round trip.
     const mediaFree = await gatherCounts(await makeMediaFreeFixture());
     expect(mediaFree.scanActionable).toBe(mediaFree.checklistActionable);
     expect(mediaFree.scanActionable).toBeLessThanOrEqual(mediaFree.scan);

@@ -895,11 +895,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       untargetedCriteriaList?: unknown;
       likelyIrrelevant: Array<{ criterionId: string }>;
       summary: {
-        manualReviewRequired: number;
         actionable: number;
         untargetedCriteria: number;
         likelyIrrelevant: number;
-      };
+      } & Record<string, unknown>;
     };
     expect(Array.isArray(body.items)).toBe(true);
     expect(Array.isArray(body.likelyIrrelevant)).toBe(true);
@@ -907,9 +906,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.items.every((i) => i.candidates.length > 0)).toBe(true);
     expect(body.summary.actionable).toBe(body.items.length);
     expect(body.summary.likelyIrrelevant).toBe(body.likelyIrrelevant.length);
-    expect(body.summary.manualReviewRequired).toBe(
-      body.summary.actionable + body.summary.untargetedCriteria,
-    );
+    // The previous composite `manualReviewRequired = actionable +
+    // untargetedCriteria` counter was the canonical dishonest-headline
+    // example in docs/kb/architecture/ai-first-consumer.md. It is now
+    // absent; callers read the two split counters separately.
+    expect(body.summary).not.toHaveProperty("manualReviewRequired");
     // WCAG principle is spec-defined data derived from criterionId;
     // surfacing it lets the agent sort beyond level without us
     // inventing a priority ranking.

@@ -280,12 +280,15 @@ export const checklistTool: McpTool = {
     // failure mode (CLAUDE.md §1).
     const byPriority = { high: 0, medium: 0, low: 0 };
     for (const item of actionable) byPriority[item.priority] += 1;
-    // `manualReviewRequired` is the single canonical count agents can
-    // expect to see agree across scan/scan_project/coverage/checklist:
-    // it excludes `likelyIrrelevant` because those criteria don't apply
-    // to the scanned files (irrelevance is itself a finding). The prior
-    // `totalManualCriteria` field counted everything and kept
-    // contradicting the other surfaces.
+    // The previous `manualReviewRequired = actionable + untargeted`
+    // headline summed two categorically different work kinds (grounded
+    // file:line candidates vs. bare-criterion WCAG prompts) into a
+    // single number that inflated the agent's work budget. Per CLAUDE.md §1
+    // "Composite headline counts are dishonest" (ai-first-consumer.md
+    // cites this as the canonical example), the field is removed;
+    // callers read `actionable` and `untargetedCriteria` separately
+    // and never sum them into one headline. The cross-tool invariant
+    // test now re-derives the total from the split parts on the fly.
     // ADR 0010 — `checklist.summary.automatedCoverage` is a one-field
     // gloss: `{ standardId, automatedCriteriaPassRate }`. The headline
     // pass-rate number is honest here (workflow-queue context for the
@@ -310,9 +313,9 @@ export const checklistTool: McpTool = {
     // Field order is load-bearing — the agent reads top-to-bottom and
     // uses the leading fields as the headline. Actionable-first puts
     // the thing the agent can work on right now above the volumetric
-    // counters. `manualReviewRequired` stays as the cross-tool total
-    // (must match scan / scan_project / coverage), but trails the
-    // actionable split so it no longer dominates the summary.
+    // counters. The composite `manualReviewRequired` counter (formerly
+    // `actionable + untargetedCriteria`) is deliberately absent — see
+    // the dishonest-composite note above.
     // Canonical count field is `untargetedCriteria` across all MCP tools.
     // scan_project uses it on `plan`; checklist matches here on `summary`;
     // coverage on its per-standard entry.
@@ -332,7 +335,6 @@ export const checklistTool: McpTool = {
       untargetedCriteriaMeaning:
         "manual-review criteria whose candidate finder could not ground them in code; pass `showUntargeted: true` to see the full WCAG prompts for them (emitted as `untargetedCriteriaList`).",
       likelyIrrelevant: filteredIrrelevant.length,
-      manualReviewRequired: actionable.length + untargeted.length,
       automatedCoverage,
       ...(skipSet === undefined ? {} : { skippedByCaller: [...skipSet].sort() }),
     };
