@@ -4,6 +4,10 @@ All notable changes to ra11y are documented in this file. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP `plan.summary` violations parenthetical** now breaks down by the rule-level `fixClass` lane (`mechanical` / `guidance` / `runtime-only` / `verify-in-source`) instead of summing `runtime-only` and `verify-in-source` findings under a single "guidance fixes" label. Zero-count lanes are omitted. Per CLAUDE.md §1 "Composite headline counts are dishonest" — agents budgeting against the summary string now see each work lane separately and can route without post-hoc re-categorizing.
+
 ## [1.0.0] - YYYY-MM-DD
 
 Public API stability freeze: [ADR 0019](./docs/adr/0019-v1-api-stability.md)

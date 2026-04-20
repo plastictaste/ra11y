@@ -9,30 +9,39 @@
  * grounded + bare-criterion into a single inflated headline. Per
  * CLAUDE.md §1 "Composite headline counts are dishonest," the count
  * consumers read first must match the count agents budget against.
+ *
+ * V1-SHAPE-FIXCLASS-HEADLINE: the violations parenthetical now breaks
+ * down by the rule-level `fixClass` lane (`mechanical` / `guidance` /
+ * `runtime-only` / `verify-in-source`) rather than summing prose-only
+ * items under a single "guidance fixes" label. The old label collided
+ * with the `fixClass: "guidance"` value and conflated four categorically
+ * different work lanes — agents budgeting against the headline got
+ * `runtime-only` and `verify-in-source` items counted as "guidance"
+ * without a way to split them back out from the prose.
  */
+
+import type { FixClass } from "../types/rule.ts";
+
+/** Count of violations per `fixClass` lane, used by the summary prose. */
+export type FixClassCounts = Readonly<Record<FixClass, number>>;
 
 /**
  * Arguments for {@link buildPlanSummary}. Keyed rather than positional
  * because the shape grew with the P1-M + P1-H split — callers now pass
- * mechanical-edit, guidance-fix, actionable-manual, and untargeted
- * counts, and a positional signature makes the call site unreadable.
+ * per-`fixClass` lane counts, actionable-manual, and untargeted counts,
+ * and a positional signature would be unreadable.
  */
 export interface PlanSummaryArgs {
   readonly violations: number;
   readonly notes: number;
-  readonly mechanicalEdits: number;
-  readonly guidanceFixes: number;
+  /** Violation count per `fixClass` lane (see {@link FixClassCounts}). */
+  readonly fixClassCounts: FixClassCounts;
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
 }
 
 export function buildPlanSummary(args: PlanSummaryArgs): string {
-  const parts = buildFindingParts(
-    args.violations,
-    args.notes,
-    args.mechanicalEdits,
-    args.guidanceFixes,
-  );
+  const parts = buildFindingParts(args.violations, args.notes, args.fixClassCounts);
   if (args.actionableManual > 0 || args.untargetedCriteria > 0) {
     parts.push(buildManualReviewPart(args.actionableManual, args.untargetedCriteria));
   }
@@ -42,27 +51,36 @@ export function buildPlanSummary(args: PlanSummaryArgs): string {
 function buildFindingParts(
   violations: number,
   notes: number,
-  mechanicalEdits: number,
-  guidanceFixes: number,
+  fixClassCounts: FixClassCounts,
 ): string[] {
   if (violations === 0 && notes === 0) return ["No automated findings"];
   const parts: string[] = [];
   if (violations > 0) {
     parts.push(
-      `${violations} violation${violations === 1 ? "" : "s"}${buildFixPart(mechanicalEdits, guidanceFixes)}`,
+      `${violations} violation${violations === 1 ? "" : "s"}${buildFixClassBreakdown(fixClassCounts)}`,
     );
   }
   if (notes > 0) parts.push(`${notes} note${notes === 1 ? "" : "s"} to review`);
   return parts;
 }
 
-function buildFixPart(mechanicalEdits: number, guidanceFixes: number): string {
+/**
+ * Build the parenthetical `fixClass` breakdown, e.g. `" (31 mechanical,
+ * 30 guidance, 24 runtime-only, 46 verify-in-source)"`. Zero-count lanes
+ * are omitted by default — they add noise without signal, and the lane
+ * order (mechanical → guidance → runtime-only → verify-in-source) keeps
+ * the prose stable across scans.
+ *
+ * Returns an empty string when no lane has any violations (defensive —
+ * the caller already checks `violations > 0`, but a rule that emits a
+ * violation without a `fixClass` would otherwise produce `" ()"`).
+ */
+function buildFixClassBreakdown(counts: FixClassCounts): string {
+  const lanes: readonly FixClass[] = ["mechanical", "guidance", "runtime-only", "verify-in-source"];
   const bits: string[] = [];
-  if (mechanicalEdits > 0) {
-    bits.push(`${mechanicalEdits} mechanical edit${mechanicalEdits === 1 ? "" : "s"}`);
-  }
-  if (guidanceFixes > 0) {
-    bits.push(`${guidanceFixes} guidance fix${guidanceFixes === 1 ? "" : "es"}`);
+  for (const lane of lanes) {
+    const n = counts[lane];
+    if (n > 0) bits.push(`${n} ${lane}`);
   }
   if (bits.length === 0) return "";
   return ` (${bits.join(", ")})`;

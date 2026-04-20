@@ -12,7 +12,7 @@ import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
-import { buildPlanSummary } from "./plan-summary.ts";
+import { buildPlanSummary, type FixClassCounts } from "./plan-summary.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 import { wrappersMetaBlock } from "./wrappers-meta.ts";
@@ -34,6 +34,15 @@ export function buildScanPlan(args: {
   readonly violationsWithoutAnyFix: number;
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
+  /**
+   * Violation count per `fixClass` lane — powers the honest breakdown
+   * in the plan-summary prose (V1-SHAPE-FIXCLASS-HEADLINE). Distinct
+   * axis from `mechanicalEdits` / `guidanceFixes`, which answer
+   * "payload-availability" (has `fixPaths.primary.edit` vs has prose
+   * suggestion only). Not interchangeable — see
+   * src/mcp/plan-summary.ts for rationale.
+   */
+  readonly fixClassCounts: FixClassCounts;
 }): Record<string, unknown> {
   const {
     totalFindings,
@@ -44,6 +53,7 @@ export function buildScanPlan(args: {
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,
+    fixClassCounts,
   } = args;
   return {
     totalFindings,
@@ -63,8 +73,7 @@ export function buildScanPlan(args: {
     summary: buildPlanSummary({
       violations,
       notes,
-      mechanicalEdits,
-      guidanceFixes,
+      fixClassCounts,
       actionableManual,
       untargetedCriteria,
     }),

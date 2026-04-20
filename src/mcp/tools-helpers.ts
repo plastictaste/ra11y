@@ -563,6 +563,21 @@ export async function runScanAndFormat(
   const { mechanicalEditsAvailable: mechanicalEdits, guidanceFixesAvailable: guidanceFixes } =
     countFixes(violations);
   const violationsWithoutAnyFix = violations.length - mechanicalEdits - guidanceFixes;
+  // Tally violations by their rule-level `fixClass` lane so the plan-
+  // summary prose can break the headline down honestly. This is a
+  // separate axis from `mechanicalEdits` / `guidanceFixes` above: those
+  // answer "does the Violation ship a ready-to-apply edit?"; this
+  // answers "which remediation lane does the rule route into?". Per
+  // V1-SHAPE-FIXCLASS-HEADLINE and CLAUDE.md §1 "Composite headline
+  // counts are dishonest," the prose must not sum `runtime-only` and
+  // `verify-in-source` findings under a single "guidance fixes" label.
+  const fixClassCounts = {
+    mechanical: 0,
+    guidance: 0,
+    "runtime-only": 0,
+    "verify-in-source": 0,
+  };
+  for (const v of violations) fixClassCounts[v.fixClass] += 1;
 
   const manualIds = collectManualCriteria(enabled, session.config.level, files);
   const manualCount = manualIds.size;
@@ -603,6 +618,7 @@ export async function runScanAndFormat(
       violationsWithoutAnyFix,
       actionableManual,
       untargetedCriteria,
+      fixClassCounts,
     }),
     files: fileEntries,
     meta: buildScanMeta({

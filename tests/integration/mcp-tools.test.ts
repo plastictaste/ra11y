@@ -1200,10 +1200,14 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     }
   });
 
-  it("plan.summary violations phrasing uses mechanical/guidance splits, not the old composite", async () => {
-    // The fix-side split reads too: instead of "(N with fix suggestions)"
-    // the prose names mechanical edits and guidance fixes separately so
-    // an agent can tell which lane the count lives in before routing.
+  it("plan.summary violations phrasing breaks down by fixClass lane, not the old composite", async () => {
+    // V1-SHAPE-FIXCLASS-HEADLINE: the parenthetical used to read
+    // "(N mechanical edits, M guidance fixes)" — where "guidance fixes"
+    // was a composite label that swept `fixClass: "runtime-only"` and
+    // `fixClass: "verify-in-source"` findings under the same bucket as
+    // `fixClass: "guidance"`. The prose now names each lane it actually
+    // has violations in, per CLAUDE.md §1 "Composite headline counts
+    // are dishonest."
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
@@ -1212,16 +1216,19 @@ describe("scan_project plan: composite counters split into honest top-level fiel
       plan: {
         summary: string;
         violations?: number;
-        mechanicalEditsAvailable?: number;
-        guidanceFixesAvailable?: number;
       };
     };
     if ((body.plan.violations ?? 0) === 0) return;
-    const hasAnyFix =
-      (body.plan.mechanicalEditsAvailable ?? 0) > 0 || (body.plan.guidanceFixesAvailable ?? 0) > 0;
-    if (hasAnyFix) {
-      expect(body.plan.summary).toMatch(/mechanical edit|guidance fix/);
-      expect(body.plan.summary).not.toMatch(/with fix suggestions\)/);
-    }
+    // At least one known fixClass lane name must appear in the prose —
+    // matching the enum values verbatim (no "edit"/"fix"/"fixes" suffix),
+    // which is the signal that the breakdown is per-lane rather than
+    // the old composite label.
+    expect(body.plan.summary).toMatch(
+      /\b\d+ (mechanical|guidance|runtime-only|verify-in-source)\b/,
+    );
+    // Old composite phrasings are gone.
+    expect(body.plan.summary).not.toMatch(/with fix suggestions\)/);
+    expect(body.plan.summary).not.toMatch(/\d+ mechanical edits?\b/);
+    expect(body.plan.summary).not.toMatch(/\d+ guidance fix(?:es)?\b/);
   });
 });
