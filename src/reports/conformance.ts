@@ -34,7 +34,9 @@ import type {
 } from "../types/evidence.ts";
 import type { Standard } from "../types/standard.ts";
 import {
+  type ConfigFingerprint,
   type ConformanceSignature,
+  type FileManifestEntry,
   type SignatureInput,
   signConformanceBundleAt,
 } from "./conformance-signature.ts";
@@ -276,17 +278,23 @@ export interface BuildConformanceStatementInputs {
    * conformant statement. When present and the claim is conformant,
    * the builder computes a SHA-256 over the canonicalized
    * (commit hash, attestation ledger, in-scope criterion set, config
-   * fingerprint) bundle and attaches it as `statement.signature`.
-   * Omitted → no signature field is emitted. The statement is still
-   * refused (no signature) when any blocker remains.
+   * fingerprint, optional file manifest, optional tool version) bundle
+   * and attaches it as `statement.signature`. Omitted → no signature
+   * field is emitted. The statement is still refused (no signature)
+   * when any blocker remains.
+   *
+   * `fileManifest` and `toolVersion` are optional — callers that only
+   * need the minimal (commit + attestations + criteria + config) scope
+   * can leave them unset. The MCP tool passes both so the signature
+   * catches both content drift on scanned files and ra11y version
+   * changes. See {@link SignatureInput} for the canonicalization rules.
    */
   readonly signing?: {
     readonly commitHash: string;
     readonly attestations: readonly AttestationRecord[];
-    readonly configFingerprint: {
-      readonly standards: readonly string[];
-      readonly level?: string;
-    };
+    readonly configFingerprint: ConfigFingerprint;
+    readonly fileManifest?: readonly FileManifestEntry[];
+    readonly toolVersion?: string;
   };
 }
 
@@ -393,6 +401,8 @@ function buildSignatureInput(
     attestations: signing.attestations,
     inScopeCriterionIds: inScope.map((c) => c.id),
     configFingerprint: signing.configFingerprint,
+    ...(signing.fileManifest === undefined ? {} : { fileManifest: signing.fileManifest }),
+    ...(signing.toolVersion === undefined ? {} : { toolVersion: signing.toolVersion }),
   };
 }
 

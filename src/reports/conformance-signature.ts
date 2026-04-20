@@ -36,6 +36,27 @@ import type { AttestationRecord } from "../types/evidence.ts";
  * The canonical inputs a conformance claim stands on. Kept small and
  * explicit — adding a field means a signature-scope change and a new
  * drift reason, not an incidental rollup.
+ *
+ * `configFingerprint` carries the resolved config slice that shaped the
+ * scan — `standards` + `level` are always populated; `profile`, `rules`,
+ * `nativeWrappers`, `processes`, and `additionalPaths` are
+ * present-when-meaningful (conditional-spread at the call site, never
+ * `[]`/`{}` sentinels). A later track can extend the structure without
+ * breaking consumers so long as every new field is optional and adds
+ * its own drift-reason code.
+ *
+ * `fileManifest` pins the scanned file set by content digest — an SHA-256
+ * per source file keyed by the relative path from the scan root. Any
+ * post-scan edit to a scanned file flips the digest, so a verifier can
+ * catch "the code changed since the claim was signed" without re-running
+ * the scan. Omitted when the caller did not pass one (e.g. a minimal
+ * sign call that only pins commit + attestations + criteria + config).
+ *
+ * `toolVersion` pins the ra11y version that produced the claim. Two
+ * versions with different rule inventories or shape changes can produce
+ * different claims over the same inputs; binding the version into the
+ * signature means a re-verify under a newer ra11y flags the drift rather
+ * than silently validating.
  */
 export interface SignatureInput {
   /** HEAD commit SHA at scan time. Empty string when not in a git repo. */
@@ -45,10 +66,54 @@ export interface SignatureInput {
   /** Criterion IDs in scope for the emitted statement. */
   readonly inScopeCriterionIds: readonly string[];
   /** Fingerprint of the scan-time config that shaped the claim. */
-  readonly configFingerprint: {
-    readonly standards: readonly string[];
-    readonly level?: string;
-  };
+  readonly configFingerprint: ConfigFingerprint;
+  /**
+   * Per-file content digest keyed by relative path from the scan root.
+   * Entries are canonicalized to lexical path order so concurrent
+   * discovery orderings don't drift the digest. Omitted when the caller
+   * did not supply a manifest — a minimal signature still stands on
+   * commit + attestations + criteria + config, just without the
+   * content-drift guard.
+   */
+  readonly fileManifest?: readonly FileManifestEntry[];
+  /**
+   * ra11y version that produced the claim (e.g. `"0.2.0"`). Pinned
+   * into the digest so a re-verify under a different tool version
+   * surfaces `tool-version-mismatch` rather than silently validating
+   * against a newer rule inventory or response shape.
+   */
+  readonly toolVersion?: string;
+}
+
+/**
+ * Resolved-config slice the signature digests. Only `standards` and
+ * optionally `level` are always-present; the rest are
+ * present-when-meaningful so empty user-config sections don't widen the
+ * digest with empty arrays. Every optional field has its own drift
+ * reason in {@link ConformanceVerificationReason}.
+ */
+export interface ConfigFingerprint {
+  readonly standards: readonly string[];
+  readonly level?: string;
+  readonly profile?: string;
+  /** Rule-setting map (ruleId → "error"|"warning"|"info"|"off"). */
+  readonly rules?: Readonly<Record<string, string>>;
+  /** Flat list of PascalCase wrapper names from `LoadedConfig.nativeWrappers`. */
+  readonly nativeWrappers?: readonly string[];
+  /** Declared process page-sets (ADR 0016). */
+  readonly processes?: readonly { readonly name: string; readonly pages: readonly string[] }[];
+  /** `scan_project` `additionalPaths` input, when supplied. */
+  readonly additionalPaths?: readonly string[];
+}
+
+/**
+ * One entry in the `fileManifest`. `path` is relative to the scan root
+ * (never absolute); `sha256` is the lowercase hex digest of the UTF-8
+ * source content.
+ */
+export interface FileManifestEntry {
+  readonly path: string;
+  readonly sha256: string;
 }
 
 /**
@@ -80,6 +145,13 @@ export type ConformanceVerificationReason =
   | "in-scope-criterion-mismatch"
   | "config-standards-mismatch"
   | "config-level-mismatch"
+  | "config-profile-mismatch"
+  | "config-rules-mismatch"
+  | "config-native-wrappers-mismatch"
+  | "config-processes-mismatch"
+  | "config-additional-paths-mismatch"
+  | "file-manifest-mismatch"
+  | "tool-version-mismatch"
   | "digest-mismatch";
 
 /**
@@ -133,11 +205,18 @@ export function verifyConformanceBundle(
   if (!sameStringList(stamped.inScopeCriterionIds, canonical.inScopeCriterionIds)) {
     return { valid: false, reason: "in-scope-criterion-mismatch" };
   }
-  if (!sameStringList(stamped.configFingerprint.standards, canonical.configFingerprint.standards)) {
-    return { valid: false, reason: "config-standards-mismatch" };
+  const configDrift = compareConfigFingerprint(
+    stamped.configFingerprint,
+    canonical.configFingerprint,
+  );
+  if (configDrift !== null) {
+    return { valid: false, reason: configDrift };
   }
-  if (stamped.configFingerprint.level !== canonical.configFingerprint.level) {
-    return { valid: false, reason: "config-level-mismatch" };
+  if (!sameOptionalManifest(stamped.fileManifest, canonical.fileManifest)) {
+    return { valid: false, reason: "file-manifest-mismatch" };
+  }
+  if (stamped.toolVersion !== canonical.toolVersion) {
+    return { valid: false, reason: "tool-version-mismatch" };
   }
   if (!sameAttestationList(stamped.attestations, canonical.attestations)) {
     return { valid: false, reason: "attestation-set-mismatch" };
@@ -147,6 +226,38 @@ export function verifyConformanceBundle(
     return { valid: false, reason: "digest-mismatch" };
   }
   return { valid: true };
+}
+
+/**
+ * Compares two canonicalized {@link ConfigFingerprint}s field by field,
+ * returning the first drift axis encountered. Order is stable so
+ * consumers can route on the returned reason string; every optional
+ * field has its own code so `config-rules-mismatch` is distinguishable
+ * from `config-native-wrappers-mismatch` without reading into
+ * `inputFingerprint` manually.
+ */
+function compareConfigFingerprint(
+  stamped: ConfigFingerprint,
+  canonical: ConfigFingerprint,
+): ConformanceVerificationReason | null {
+  if (!sameStringList(stamped.standards, canonical.standards)) {
+    return "config-standards-mismatch";
+  }
+  if (stamped.level !== canonical.level) return "config-level-mismatch";
+  if (stamped.profile !== canonical.profile) return "config-profile-mismatch";
+  if (!sameOptionalStringRecord(stamped.rules, canonical.rules)) {
+    return "config-rules-mismatch";
+  }
+  if (!sameOptionalStringList(stamped.nativeWrappers, canonical.nativeWrappers)) {
+    return "config-native-wrappers-mismatch";
+  }
+  if (!sameOptionalProcessList(stamped.processes, canonical.processes)) {
+    return "config-processes-mismatch";
+  }
+  if (!sameOptionalStringList(stamped.additionalPaths, canonical.additionalPaths)) {
+    return "config-additional-paths-mismatch";
+  }
+  return null;
 }
 
 // ─── Canonicalization ──────────────────────────────────────────────────────
@@ -161,13 +272,55 @@ function canonicalizeInput(input: SignatureInput): SignatureInput {
     commitHash: input.commitHash,
     attestations: canonicalizeAttestations(input.attestations),
     inScopeCriterionIds: [...input.inScopeCriterionIds].sort(),
-    configFingerprint: {
-      standards: [...input.configFingerprint.standards].sort(),
-      ...(input.configFingerprint.level === undefined
-        ? {}
-        : { level: input.configFingerprint.level }),
-    },
+    configFingerprint: canonicalizeConfigFingerprint(input.configFingerprint),
+    ...(input.fileManifest === undefined
+      ? {}
+      : { fileManifest: canonicalizeFileManifest(input.fileManifest) }),
+    ...(input.toolVersion === undefined ? {} : { toolVersion: input.toolVersion }),
   };
+}
+
+/**
+ * Normalizes a {@link ConfigFingerprint} to canonical form: sorts every
+ * list, sorts the rule-settings keys via {@link canonicalJsonStringify}
+ * at serialization time, drops `undefined` optional fields. Processes
+ * sort by `name` then their `pages` sort lexicographically — the user's
+ * declared page order is load-bearing for WCAG 3.2.3/3.2.4 evaluation,
+ * but two config files that differ only in process-declaration order
+ * produce the same claim, so the digest must treat them as equal.
+ */
+function canonicalizeConfigFingerprint(fp: ConfigFingerprint): ConfigFingerprint {
+  return {
+    standards: [...fp.standards].sort(),
+    ...(fp.level === undefined ? {} : { level: fp.level }),
+    ...(fp.profile === undefined ? {} : { profile: fp.profile }),
+    ...(fp.rules === undefined ? {} : { rules: { ...fp.rules } }),
+    ...(fp.nativeWrappers === undefined ? {} : { nativeWrappers: [...fp.nativeWrappers].sort() }),
+    ...(fp.processes === undefined
+      ? {}
+      : {
+          processes: [...fp.processes]
+            .map((p) => ({ name: p.name, pages: [...p.pages].sort() }))
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        }),
+    ...(fp.additionalPaths === undefined
+      ? {}
+      : { additionalPaths: [...fp.additionalPaths].sort() }),
+  };
+}
+
+/**
+ * Sorts manifest entries by relative path so concurrent discovery
+ * orderings don't drift the digest. `sha256` is already a content
+ * digest — two entries with the same path must share the same digest or
+ * the verifier surfaces `file-manifest-mismatch`.
+ */
+function canonicalizeFileManifest(
+  manifest: readonly FileManifestEntry[],
+): readonly FileManifestEntry[] {
+  return [...manifest]
+    .map((e) => ({ path: e.path, sha256: e.sha256 }))
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 /**
@@ -290,4 +443,53 @@ function sameOptionalLocation(
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
   return a.filePath === b.filePath && a.line === b.line && a.column === b.column;
+}
+
+function sameOptionalStringRecord(
+  a: Readonly<Record<string, string>> | undefined,
+  b: Readonly<Record<string, string>> | undefined,
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (!sameStringList(aKeys, bKeys)) return false;
+  for (const k of aKeys) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+function sameOptionalProcessList(
+  a: readonly { readonly name: string; readonly pages: readonly string[] }[] | undefined,
+  b: readonly { readonly name: string; readonly pages: readonly string[] }[] | undefined,
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const ai = a[i];
+    const bi = b[i];
+    if (ai === undefined || bi === undefined) return false;
+    if (ai.name !== bi.name) return false;
+    if (!sameStringList(ai.pages, bi.pages)) return false;
+  }
+  return true;
+}
+
+function sameOptionalManifest(
+  a: readonly FileManifestEntry[] | undefined,
+  b: readonly FileManifestEntry[] | undefined,
+): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const ai = a[i];
+    const bi = b[i];
+    if (ai === undefined || bi === undefined) return false;
+    if (ai.path !== bi.path) return false;
+    if (ai.sha256 !== bi.sha256) return false;
+  }
+  return true;
 }
