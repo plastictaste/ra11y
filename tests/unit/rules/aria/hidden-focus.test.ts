@@ -238,4 +238,101 @@ describe("rule aria/hidden-focus", () => {
       expect(v[0]?.fixPaths?.primary.edit).toBeUndefined();
     });
   });
+
+  describe("overlay-class runtime-toggle framing", () => {
+    // Per CLAUDE.md §1 and docs/kb/architecture/ai-first-consumer.md,
+    // widget-library overlays (Bootstrap modal, dialog, offcanvas,
+    // popover, toast, drawer, overlay, backdrop) toggle `aria-hidden`
+    // at runtime when the widget opens. Static analysis cannot observe
+    // the toggle. Surface-don't-suppress: the finding stays at
+    // `severity: error`; only the message text gains an additive
+    // runtime-toggle clause and a `couldBeWrongBecause` structured
+    // code so the agent can dismiss in one read.
+    const MARKERS = [
+      "modal",
+      "dialog",
+      "drawer",
+      "offcanvas",
+      "popover",
+      "toast",
+      "overlay",
+      "backdrop",
+    ] as const;
+
+    for (const marker of MARKERS) {
+      it(`enriches the message when the class token contains "${marker}"`, () => {
+        const html = `<div class="${marker} fade" aria-hidden="true"><button>X</button></div>`;
+        const v = runRule(rule, html, { filePath: "index.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.severity).toBe("error"); // no downgrade
+        expect(v[0]?.message).toContain("runtime-toggled overlay");
+        expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_aria_hidden_toggle"]);
+      });
+    }
+
+    it("matches a class token that contains the marker as a substring (modal-fullscreen)", () => {
+      const v = runRule(
+        rule,
+        `<div class="modal-fullscreen show" aria-hidden="true"><button>X</button></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("runtime-toggled overlay");
+    });
+
+    it("is case-insensitive (Modal uppercase)", () => {
+      const v = runRule(rule, `<div class="Modal" aria-hidden="true"><button>X</button></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("runtime-toggled overlay");
+    });
+
+    it("fires on direct-focus path (button with aria-hidden AND overlay class)", () => {
+      const v = runRule(rule, `<button class="modal-close" aria-hidden="true">X</button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("runtime-toggled overlay");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_aria_hidden_toggle"]);
+    });
+
+    it("does NOT enrich the message when no overlay marker is on the class", () => {
+      // Plain <div> with aria-hidden containing a focusable child: the
+      // rule still fires (surfacing is not suppression), but the
+      // runtime-toggle framing is absent and couldBeWrongBecause is
+      // omitted entirely (per CLAUDE.md §1 "Ambiguous field shapes are
+      // dishonest" — no empty-sentinel array).
+      const v = runRule(
+        rule,
+        `<div class="card section" aria-hidden="true"><button>X</button></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).not.toContain("runtime-toggled overlay");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT enrich when there is no class attribute at all", () => {
+      const v = runRule(rule, `<div aria-hidden="true"><button>X</button></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).not.toContain("runtime-toggled overlay");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("fires on JSX with className carrying an overlay marker", () => {
+      const v = runRule(
+        rule,
+        `const X = <div className="modal fade" aria-hidden="true"><button>X</button></div>;`,
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("runtime-toggled overlay");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_aria_hidden_toggle"]);
+    });
+  });
 });

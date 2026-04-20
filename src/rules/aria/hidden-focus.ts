@@ -45,6 +45,48 @@ import type {
 import type { FixPaths } from "../../types/violation.ts";
 
 /**
+ * Class-token substrings that, when present on an otherwise-flagged
+ * element, suggest the `aria-hidden` attribute is toggled at runtime
+ * by a widget library (Bootstrap modal / dialog / drawer / offcanvas
+ * / popover / toast / overlay / backdrop) rather than being a static
+ * authoring mistake. Static analysis cannot observe the toggle — the
+ * rule still fires at severity `error` (surface-don't-suppress per
+ * CLAUDE.md §1 and docs/kb/architecture/ai-first-consumer.md), but
+ * the message and `couldBeWrongBecause` are enriched so the agent
+ * dismisses in one read.
+ *
+ * Matching policy: split the element's `class` attribute on
+ * whitespace, lowercase each token, and check whether any token
+ * *contains* any of the markers as a substring. Token-scoped (not
+ * whole-string) so an unrelated class like `product-modality`
+ * doesn't match `modal`, while `modal-fullscreen` does. Markers are
+ * lowercased once so the check is case-insensitive.
+ */
+const OVERLAY_CLASS_MARKERS: readonly string[] = [
+  "modal",
+  "dialog",
+  "drawer",
+  "offcanvas",
+  "popover",
+  "toast",
+  "overlay",
+  "backdrop",
+];
+
+/**
+ * Structured `couldBeWrongBecause` code pointing at the widget-library
+ * runtime-toggle escape hatch. Emitted alongside the message
+ * enrichment so agents can also route on the code without parsing the
+ * reason prose. See docs/adr/0009-violation-could-be-wrong-because.md.
+ */
+const RUNTIME_ARIA_HIDDEN_TOGGLE = "runtime_aria_hidden_toggle";
+
+const OVERLAY_NOTE =
+  " note: class name suggests a runtime-toggled overlay " +
+  "(aria-hidden likely flips when the widget opens); static analysis " +
+  "cannot observe the toggle — verify the open-state runtime behavior.";
+
+/**
  * HTML tag names that are natively focusable. Some of these are
  * *conditionally* focusable (only when a specific attribute is present
  * or absent) — see `isConditionallyFocusable` below.
@@ -115,6 +157,7 @@ type Emit = (v: {
   message: string;
   suggestion: string;
   fixPaths: FixPaths;
+  couldBeWrongBecause?: readonly string[];
 }) => void;
 
 type Violation = {
@@ -123,6 +166,7 @@ type Violation = {
   message: string;
   suggestion: string;
   fixPaths: FixPaths;
+  couldBeWrongBecause?: readonly string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -132,7 +176,8 @@ type Violation = {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     if (!isHtmlAriaHiddenTrue(el)) continue;
-    const direct = checkHtmlDirectFocusable(el);
+    const overlay = hasOverlayMarker(getHtmlAttribute(el, "class"));
+    const direct = checkHtmlDirectFocusable(el, overlay);
     if (direct) {
       emit(direct);
       continue;
@@ -143,7 +188,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     // guaranteed-matching oldText without reading the raw source.
     // Ship guidance; let the agent do the one-line edit.
     if (descendant) {
-      emit(buildDescendantViolation(el.tagName, descendant.tagName, el.loc.start, false));
+      emit(buildDescendantViolation(el.tagName, descendant.tagName, el.loc.start, false, overlay));
     }
   }
 }
@@ -152,10 +197,10 @@ function isHtmlAriaHiddenTrue(el: HtmlElement): boolean {
   return getHtmlAttribute(el, "aria-hidden") === "true";
 }
 
-function checkHtmlDirectFocusable(el: HtmlElement): Violation | null {
+function checkHtmlDirectFocusable(el: HtmlElement, overlay: boolean): Violation | null {
   const tag = el.tagName.toLowerCase();
   if (isHtmlElementFocusable(el, tag)) {
-    return buildDirectViolation(el.tagName, el.loc.start, false);
+    return buildDirectViolation(el.tagName, el.loc.start, false, overlay);
   }
   return null;
 }
@@ -210,7 +255,10 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const el of walkJsxElements(module)) {
     if (isJsxPascalCase(el.tagName)) continue;
     if (!isJsxAriaHiddenTrue(el)) continue;
-    const direct = checkJsxDirectFocusable(el);
+    const overlay = hasOverlayMarker(
+      getJsxAttributeString(el, "className") ?? getJsxAttributeString(el, "class"),
+    );
+    const direct = checkJsxDirectFocusable(el, overlay);
     if (direct) {
       emit(direct);
       continue;
@@ -220,7 +268,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     // (and by Prettier default), so `aria-hidden="true"` is a
     // guaranteed source match — safe to emit a mechanical edit.
     if (descendant) {
-      emit(buildDescendantViolation(el.tagName, descendant.tagName, el.loc.start, true));
+      emit(buildDescendantViolation(el.tagName, descendant.tagName, el.loc.start, true, overlay));
     }
   }
 }
@@ -229,9 +277,9 @@ function isJsxAriaHiddenTrue(el: JsxElement): boolean {
   return getJsxAttributeString(el, "aria-hidden") === "true";
 }
 
-function checkJsxDirectFocusable(el: JsxElement): Violation | null {
+function checkJsxDirectFocusable(el: JsxElement, overlay: boolean): Violation | null {
   if (isJsxElementFocusable(el)) {
-    return buildDirectViolation(el.tagName, el.loc.start, true);
+    return buildDirectViolation(el.tagName, el.loc.start, true, overlay);
   }
   return null;
 }
@@ -322,6 +370,7 @@ function buildDirectViolation(
   tagName: string,
   loc: { line: number; column: number },
   canEdit: boolean,
+  overlay: boolean,
 ): Violation {
   const nonFocusablePath =
     tagName === "a" || tagName === "area"
@@ -344,12 +393,16 @@ function buildDirectViolation(
       },
     ],
   };
+  const baseMessage = `<${tagName}> has aria-hidden="true" but is still focusable — keyboard users will tab to it and the screen reader will announce nothing.`;
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> has aria-hidden="true" but is still focusable — keyboard users will tab to it and the screen reader will announce nothing.`,
+    message: overlay ? `${baseMessage}${OVERLAY_NOTE}` : baseMessage,
     suggestion: `Primary fix: ${fixPaths.primary.label}. Alternatives (less likely): (a) ${fixPaths.alternatives[0]?.label}; (b) ${fixPaths.alternatives[1]?.label}.`,
     fixPaths,
+    // Conditional spread — `couldBeWrongBecause: []` would be a dishonest
+    // empty-vs-unpopulated sentinel per CLAUDE.md §1.
+    ...(overlay ? { couldBeWrongBecause: [RUNTIME_ARIA_HIDDEN_TOGGLE] } : {}),
   };
 }
 
@@ -358,6 +411,7 @@ function buildDescendantViolation(
   childTag: string,
   loc: { line: number; column: number },
   canEdit: boolean,
+  overlay: boolean,
 ): Violation {
   const fixPaths: FixPaths = {
     primary: {
@@ -373,11 +427,43 @@ function buildDescendantViolation(
       },
     ],
   };
+  const baseMessage = `<${parentTag}> has aria-hidden="true" but contains a focusable <${childTag}> descendant — keyboard focus will land inside the hidden subtree and produce silent focus for AT users.`;
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${parentTag}> has aria-hidden="true" but contains a focusable <${childTag}> descendant — keyboard focus will land inside the hidden subtree and produce silent focus for AT users.`,
+    message: overlay ? `${baseMessage}${OVERLAY_NOTE}` : baseMessage,
     suggestion: `Primary fix: ${fixPaths.primary.label}. Alternatives (less likely): (a) ${fixPaths.alternatives[0]?.label}; (b) ${fixPaths.alternatives[1]?.label}.`,
     fixPaths,
+    ...(overlay ? { couldBeWrongBecause: [RUNTIME_ARIA_HIDDEN_TOGGLE] } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Overlay-class marker detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns `true` when `classString` contains at least one whitespace-
+ * separated token that, lowercased, includes any of the
+ * {@link OVERLAY_CLASS_MARKERS} substrings. Token-scoped substring
+ * match: a class like `modal-fullscreen` matches `modal`; a class like
+ * `my-custom-dialog` matches `dialog`; a class like `product-modality`
+ * does NOT match `modal` (different token) because its own token
+ * `product-modality` does not contain `modal`. The check is
+ * case-insensitive — CSS class names are case-sensitive per spec but
+ * widget libraries universally use lowercase, and the agent reading
+ * the file will have no trouble ignoring the framing if the match
+ * happens to be accidental (surface-don't-suppress lets the agent
+ * verify; misses are the expensive failure).
+ */
+function hasOverlayMarker(classString: string | null | undefined): boolean {
+  if (!classString) return false;
+  for (const rawToken of classString.split(/\s+/)) {
+    if (rawToken.length === 0) continue;
+    const token = rawToken.toLowerCase();
+    for (const marker of OVERLAY_CLASS_MARKERS) {
+      if (token.includes(marker)) return true;
+    }
+  }
+  return false;
 }
