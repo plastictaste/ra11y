@@ -29,7 +29,7 @@ async function scratch(): Promise<string> {
 }
 
 describe("runVpat", () => {
-  it("renders a VPAT 2.4 markdown report for a clean project at exit 0", async () => {
+  it("renders a VPAT 2.5 Rev markdown report for a clean project at exit 0", async () => {
     const dir = await scratch();
     await writeFile(
       join(dir, "page.html"),
@@ -40,7 +40,7 @@ describe("runVpat", () => {
     const r = await runVpat(parseCliArgs([]));
 
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("# VPAT 2.4 Conformance Report");
+    expect(r.stdout).toMatch(/# VPAT 2\.5 Rev( INT)? Conformance Report/);
     expect(r.stdout).toContain("Evaluator");
     expect(r.stdout).toContain("Generated");
   });
@@ -113,6 +113,51 @@ describe("runVpat", () => {
     const r = await runVpat(parseCliArgs([]));
 
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).toContain("VPAT 2.4");
+    expect(r.stdout).toMatch(/VPAT 2\.5 Rev/);
+  });
+
+  it("surfaces 'Not Applicable' for media SCs when scan has no <audio>/<video>", async () => {
+    const dir = await scratch();
+    await writeFile(
+      join(dir, "page.html"),
+      '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
+    );
+    chdir(dir);
+
+    const r = await runVpat(parseCliArgs([]));
+
+    expect(r.stdout).toContain("Not Applicable");
+    // 1.2.1 is the canonical media SC; with no media elements present
+    // the verdict must be Not Applicable, not Not Evaluated.
+    expect(r.stdout).toMatch(/1\.2\.1 Audio-only.*\|.*Not Applicable.*\|/);
+  });
+
+  it("threads RA11Y_VPAT_PRODUCT_NAME / _VERSION env vars into the header", async () => {
+    const dir = await scratch();
+    await writeFile(
+      join(dir, "page.html"),
+      '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
+    );
+    chdir(dir);
+
+    const prevName = process.env.RA11Y_VPAT_PRODUCT_NAME;
+    const prevVersion = process.env.RA11Y_VPAT_PRODUCT_VERSION;
+    const prevOrg = process.env.RA11Y_VPAT_CONTACT_ORGANIZATION;
+    process.env.RA11Y_VPAT_PRODUCT_NAME = "Acme Editor";
+    process.env.RA11Y_VPAT_PRODUCT_VERSION = "4.2.0";
+    process.env.RA11Y_VPAT_CONTACT_ORGANIZATION = "Acme Corp";
+    try {
+      const r = await runVpat(parseCliArgs([]));
+      expect(r.stdout).toContain("Acme Editor");
+      expect(r.stdout).toContain("4.2.0");
+      expect(r.stdout).toContain("Acme Corp");
+    } finally {
+      if (prevName === undefined) delete process.env.RA11Y_VPAT_PRODUCT_NAME;
+      else process.env.RA11Y_VPAT_PRODUCT_NAME = prevName;
+      if (prevVersion === undefined) delete process.env.RA11Y_VPAT_PRODUCT_VERSION;
+      else process.env.RA11Y_VPAT_PRODUCT_VERSION = prevVersion;
+      if (prevOrg === undefined) delete process.env.RA11Y_VPAT_CONTACT_ORGANIZATION;
+      else process.env.RA11Y_VPAT_CONTACT_ORGANIZATION = prevOrg;
+    }
   });
 });

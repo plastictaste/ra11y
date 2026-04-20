@@ -52,14 +52,13 @@ Element-presence override:
 
 ### Element-presence detection
 
-The `src/reports/checklist.ts` helper runs an element-presence scan alongside the rule scan. Results feed both `checklist` (to mark `likelyRelevant: false`) and `vpat` (to emit `Not Applicable`). Presence checks cover:
+`src/mcp/manual-applicability.ts` runs an element-presence scan alongside the rule scan. Results feed both `checklist` (to mark `likelyRelevant: false`) and `vpat` (to emit `Not Applicable`).
 
-- `<video>`, `<audio>` — media criteria (1.2.*)
-- `<canvas>`, `<svg>` — non-text alternatives (1.1.1 edges)
-- `<form>`, `<input>`, `<select>`, `<textarea>` — form criteria (3.3.*)
-- `<table>` — table semantics (1.3.1 tabular)
-- `<iframe>`, `<object>`, `<embed>` — embedded content criteria
-- Page-level landmarks — bypass-blocks criteria (2.4.1)
+Presence checks currently cover:
+
+- `<video>`, `<audio>` — media criteria (WCAG 1.2.1, 1.2.2, 1.2.3, 1.2.4, 1.2.5, 1.2.6, 1.2.7, 1.2.8, 1.2.9, 1.4.2, plus WCAG 2.1 equivalents)
+
+Additional presence checks (forms, tables, iframes, landmarks) are tracked on the v1 backlog and land with the finders that consume them. Until then, criteria outside the media set fall through to `Not Evaluated` on clean automated scans.
 
 ## Running the report
 

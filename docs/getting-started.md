@@ -83,7 +83,7 @@ ra11y's distinguishing feature vs. axe-core / eslint-plugin-jsx-a11y / Pa11y is 
 ```sh
 ra11y src/ --coverage                # per-standard coverage summary
 ra11y src/ --checklist > manual.md   # manual-review worksheet for human auditors
-ra11y src/ --vpat > vpat.md          # VPAT 2.4 conformance table
+ra11y src/ --vpat > vpat.md          # VPAT 2.5 Rev conformance table
 ra11y src/ --certification           # 0-100 readiness scorecard
 ```
 

@@ -65,9 +65,21 @@ Exit code is always `0`.
 
 ### ra11y vpat
 
-Runs a scan and produces a VPAT 2.4-shaped Markdown conformance table. Pipe to a file for your compliance documentation.
+Runs a scan and produces a VPAT 2.5 Rev–shaped Markdown conformance table (or VPAT 2.5 Rev INT when EN 301 549 is in scope). Pipe to a file for your compliance documentation.
 
 ```bash
+ra11y src/ --vpat > compliance/vpat.md
+```
+
+Supply product metadata for the header block via environment variables (unset fields render as `<Product Name>` / `<Product Version>` template placeholders so gaps are visible to the VPAT reader):
+
+```bash
+RA11Y_VPAT_PRODUCT_NAME="Acme Editor" \
+RA11Y_VPAT_PRODUCT_VERSION="4.2.0" \
+RA11Y_VPAT_CONTACT_ORGANIZATION="Acme Corp" \
+RA11Y_VPAT_CONTACT_EMAIL="accessibility@acme.example" \
+RA11Y_VPAT_EVALUATION_METHODS="Static source code analysis via ra11y + manual review" \
+RA11Y_VPAT_NOTES="Snapshot scan of main branch." \
 ra11y src/ --vpat > compliance/vpat.md
 ```
 
@@ -305,7 +317,7 @@ ra11y --explain contrast/minimum
 |------|-------------|
 | `--coverage` | Per-standard automatable coverage summary |
 | `--checklist` | Generate a Markdown manual-review worksheet for every criterion marked `automatable: "manual"` |
-| `--vpat` | Generate a VPAT 2.4 Markdown conformance table |
+| `--vpat` | Generate a VPAT 2.5 Rev Markdown conformance table |
 | `--certification` | Generate a 0–100 certification readiness scorecard |
 
 `--certification` reads `.ra11y-manual.json` from the cwd (if present) to factor human-reviewed manual criteria into the score. Without that file, manual criteria count as pending.

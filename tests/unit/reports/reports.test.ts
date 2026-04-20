@@ -138,16 +138,20 @@ describe("buildVpatReport + renderVpatMarkdown", () => {
   it("renders Markdown with conformance table", () => {
     const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, "2026-04-11T00:00:00Z");
     const md = renderVpatMarkdown(report);
-    expect(md).toContain("# VPAT 2.4 Conformance Report");
+    expect(md).toContain("# VPAT 2.5 Rev INT Conformance Report");
     expect(md).toContain("| Criterion | Level | Conformance | Remarks |");
     expect(md).toContain("Does Not Support");
+    expect(md).toContain("Chapter 5: Software");
   });
 
   it("falls back to generic manual-review remark when no candidates supplied", () => {
+    // No applicability passed — 1.2.1 stays "Not Evaluated" (N/A detection
+    // only fires when detectApplicability data is wired through).
     const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, "2026-04-11T00:00:00Z");
     const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
     const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.2.1");
-    expect(entry?.remarks).toContain("Manual review required");
+    expect(entry?.conformance).toBe("Not Evaluated");
+    expect(entry?.remarks).toContain("requires manual review");
     expect(entry?.remarks).not.toContain("candidate location(s)");
   });
 
@@ -231,7 +235,116 @@ describe("buildVpatReport + renderVpatMarkdown", () => {
     const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
     const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.1.1");
     expect(entry?.remarks).not.toContain("candidate location(s)");
-    expect(entry?.remarks).toContain("violation(s)");
+    expect(entry?.remarks).toContain("findings from rule");
+  });
+
+  it("emits header 'VPAT 2.5 Rev' when EN 301 549 is not enabled", () => {
+    const wcagOnly: ScanResult = {
+      ...RESULT,
+      enabledStandards: ["wcag22"],
+    };
+    const report = buildVpatReport(wcagOnly, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+    });
+    expect(report.templateVersion).toBe("VPAT 2.5 Rev");
+    expect(renderVpatMarkdown(report)).toContain("# VPAT 2.5 Rev Conformance Report");
+  });
+
+  it("emits header 'VPAT 2.5 Rev INT' when EN 301 549 is enabled", () => {
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+    });
+    expect(report.templateVersion).toBe("VPAT 2.5 Rev INT");
+    expect(renderVpatMarkdown(report)).toContain("# VPAT 2.5 Rev INT Conformance Report");
+  });
+
+  it("accepts product metadata and round-trips it into the report + markdown", () => {
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      product: {
+        productName: "ra11y",
+        productVersion: "1.0.0",
+        contactEmail: "accessibility@example.com",
+        contactOrganization: "Example Inc.",
+        evaluationMethods: "Static source code analysis via ra11y + manual review",
+        notesOnEvaluation: "Snapshot scan of main branch.",
+      },
+    });
+    expect(report.product.productName).toBe("ra11y");
+    expect(report.product.productVersion).toBe("1.0.0");
+    expect(report.product.contactEmail).toBe("accessibility@example.com");
+
+    const md = renderVpatMarkdown(report);
+    expect(md).toContain("- **Name**: ra11y");
+    expect(md).toContain("- **Version**: 1.0.0");
+    expect(md).toContain("- **Organization**: Example Inc.");
+    expect(md).toContain("- **Contact**: accessibility@example.com");
+    expect(md).toContain("Static source code analysis via ra11y");
+    expect(md).toContain("Snapshot scan of main branch.");
+  });
+
+  it("falls back to template placeholders when required metadata is missing", () => {
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+    });
+    // Placeholder is visible — the VPAT reader sees the gap instead of a
+    // silent empty string.
+    expect(report.product.productName).toBe("<Product Name>");
+    expect(report.product.productVersion).toBe("<Product Version>");
+    expect(report.product.contactEmail).toBeUndefined();
+    expect(report.product.contactOrganization).toBeUndefined();
+  });
+
+  it("marks media SCs as 'Not Applicable' when applicability.hasMedia is false", () => {
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      applicability: { hasMedia: false },
+    });
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    // 1.2.1 Audio-only and Video-only (Prerecorded) — manual, media-dependent
+    const c121 = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.2.1");
+    expect(c121?.conformance).toBe("Not Applicable");
+    expect(c121?.remarks).toContain("No <video> or <audio> elements");
+    // 1.4.2 Audio Control — also media-dependent
+    const c142 = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.2");
+    expect(c142?.conformance).toBe("Not Applicable");
+  });
+
+  it("leaves non-media manual SCs as 'Not Evaluated' even when applicability.hasMedia is false", () => {
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      applicability: { hasMedia: false },
+    });
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    // 2.1.4 Character Key Shortcuts — automatable partial, not media-dependent.
+    // Confirms N/A detection doesn't over-fire.
+    const c214 = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.1.4");
+    expect(c214?.conformance).not.toBe("Not Applicable");
+    // 1.4.1 Use of Color — manual, not media-dependent
+    const c141 = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.1");
+    expect(c141?.conformance).toBe("Not Evaluated");
+  });
+
+  it("keeps media SCs at 'Not Evaluated' when applicability.hasMedia is true", () => {
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      applicability: { hasMedia: true },
+    });
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    const c121 = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.2.1");
+    expect(c121?.conformance).toBe("Not Evaluated");
+  });
+
+  it("remarks are auditor-friendly and never mention internal tooling", () => {
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      applicability: { hasMedia: false },
+    });
+    for (const section of report.standards) {
+      for (const entry of section.entries) {
+        expect(entry.remarks).not.toMatch(/terminal|JSON report|--checklist/i);
+      }
+    }
   });
 });
 
