@@ -236,3 +236,198 @@ describe("verifyConformanceBundle", () => {
     expect(verifyConformanceBundle(signature, reordered)).toEqual({ valid: true });
   });
 });
+
+// ─── Extended fingerprint: file manifest, tool version, full config ────────
+
+describe("signConformanceBundle (extended fingerprint)", () => {
+  it("file manifest reordering does not change the digest", () => {
+    const base = mkInput({
+      fileManifest: [
+        { path: "src/a.tsx", sha256: "aa".repeat(32) },
+        { path: "src/b.tsx", sha256: "bb".repeat(32) },
+      ],
+    });
+    const reversed = mkInput({
+      fileManifest: [
+        { path: "src/b.tsx", sha256: "bb".repeat(32) },
+        { path: "src/a.tsx", sha256: "aa".repeat(32) },
+      ],
+    });
+    expect(signConformanceBundleAt(base, STAMP_A).digest).toBe(
+      signConformanceBundleAt(reversed, STAMP_A).digest,
+    );
+  });
+
+  it("file manifest content drift changes the digest", () => {
+    const base = mkInput({
+      fileManifest: [{ path: "src/a.tsx", sha256: "aa".repeat(32) }],
+    });
+    const drifted = mkInput({
+      fileManifest: [{ path: "src/a.tsx", sha256: "cc".repeat(32) }],
+    });
+    expect(signConformanceBundleAt(base, STAMP_A).digest).not.toBe(
+      signConformanceBundleAt(drifted, STAMP_A).digest,
+    );
+  });
+
+  it("tool version change flips the digest", () => {
+    const a = signConformanceBundleAt(mkInput({ toolVersion: "0.2.0" }), STAMP_A);
+    const b = signConformanceBundleAt(mkInput({ toolVersion: "0.3.0" }), STAMP_A);
+    expect(a.digest).not.toBe(b.digest);
+  });
+
+  it("config fingerprint profile change routes to config-profile-mismatch", () => {
+    const signature = signConformanceBundleAt(
+      mkInput({ configFingerprint: { standards: ["wcag22"], level: "AA", profile: "wcag22-aa" } }),
+      STAMP_A,
+    );
+    const result = verifyConformanceBundle(
+      signature,
+      mkInput({ configFingerprint: { standards: ["wcag22"], level: "AA", profile: "wcag22-a" } }),
+    );
+    expect(result).toEqual({ valid: false, reason: "config-profile-mismatch" });
+  });
+
+  it("config fingerprint rules drift routes to config-rules-mismatch", () => {
+    const signature = signConformanceBundleAt(
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          rules: { "contrast/minimum": "error" },
+        },
+      }),
+      STAMP_A,
+    );
+    const result = verifyConformanceBundle(
+      signature,
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          rules: { "contrast/minimum": "warning" },
+        },
+      }),
+    );
+    expect(result).toEqual({ valid: false, reason: "config-rules-mismatch" });
+  });
+
+  it("config fingerprint nativeWrappers drift routes to config-native-wrappers-mismatch", () => {
+    const signature = signConformanceBundleAt(
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          nativeWrappers: ["Button"],
+        },
+      }),
+      STAMP_A,
+    );
+    const result = verifyConformanceBundle(
+      signature,
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          nativeWrappers: ["Button", "Link"],
+        },
+      }),
+    );
+    expect(result).toEqual({ valid: false, reason: "config-native-wrappers-mismatch" });
+  });
+
+  it("config fingerprint processes drift routes to config-processes-mismatch", () => {
+    const signature = signConformanceBundleAt(
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          processes: [{ name: "checkout", pages: ["/cart", "/pay"] }],
+        },
+      }),
+      STAMP_A,
+    );
+    const result = verifyConformanceBundle(
+      signature,
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          processes: [{ name: "checkout", pages: ["/cart", "/pay", "/confirm"] }],
+        },
+      }),
+    );
+    expect(result).toEqual({ valid: false, reason: "config-processes-mismatch" });
+  });
+
+  it("config fingerprint additionalPaths drift routes to config-additional-paths-mismatch", () => {
+    const signature = signConformanceBundleAt(
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          additionalPaths: ["dist/assets"],
+        },
+      }),
+      STAMP_A,
+    );
+    const result = verifyConformanceBundle(
+      signature,
+      mkInput({
+        configFingerprint: {
+          standards: ["wcag22"],
+          level: "AA",
+          additionalPaths: ["build/assets"],
+        },
+      }),
+    );
+    expect(result).toEqual({ valid: false, reason: "config-additional-paths-mismatch" });
+  });
+
+  it("file manifest drift routes to file-manifest-mismatch", () => {
+    const signature = signConformanceBundleAt(
+      mkInput({ fileManifest: [{ path: "src/a.tsx", sha256: "aa".repeat(32) }] }),
+      STAMP_A,
+    );
+    const result = verifyConformanceBundle(
+      signature,
+      mkInput({ fileManifest: [{ path: "src/a.tsx", sha256: "cc".repeat(32) }] }),
+    );
+    expect(result).toEqual({ valid: false, reason: "file-manifest-mismatch" });
+  });
+
+  it("tool version drift routes to tool-version-mismatch", () => {
+    const signature = signConformanceBundleAt(mkInput({ toolVersion: "0.2.0" }), STAMP_A);
+    const result = verifyConformanceBundle(signature, mkInput({ toolVersion: "0.3.0" }));
+    expect(result).toEqual({ valid: false, reason: "tool-version-mismatch" });
+  });
+
+  it("full round-trip with every optional field populated verifies cleanly", () => {
+    const input = mkInput({
+      configFingerprint: {
+        standards: ["wcag22"],
+        level: "AA",
+        profile: "wcag22-aa",
+        rules: { "contrast/minimum": "error" },
+        nativeWrappers: ["Button", "Link"],
+        processes: [{ name: "checkout", pages: ["/cart", "/pay"] }],
+        additionalPaths: ["dist/assets"],
+      },
+      fileManifest: [
+        { path: "src/a.tsx", sha256: "aa".repeat(32) },
+        { path: "src/b.tsx", sha256: "bb".repeat(32) },
+      ],
+      toolVersion: "0.2.0",
+    });
+    const signature = signConformanceBundleAt(input, STAMP_A);
+    expect(verifyConformanceBundle(signature, input)).toEqual({ valid: true });
+  });
+
+  it("omitted optional fields on both sides still verify cleanly", () => {
+    // Minimal signature (only commit + attestations + criteria + config)
+    // — no file manifest, no tool version. Verifier must accept a
+    // current input that also omits those fields.
+    const signature = signConformanceBundleAt(mkInput(), STAMP_A);
+    expect(verifyConformanceBundle(signature, mkInput())).toEqual({ valid: true });
+  });
+});
