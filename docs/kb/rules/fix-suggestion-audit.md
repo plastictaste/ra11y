@@ -64,7 +64,7 @@ violation fires.
 | forms/fieldset-legend | guidance | context-aware | fieldset subject (id/name), reason kind | Subject describes the actual `<fieldset>` by id or name; reason-kind branch picks empty-vs-missing advice. |
 | forms/label-for-id-mismatch | mechanical | context-aware | `for` target, nearest existing id (Levenshtein-2), wraps-control flag | Emits `Did you mean id="X"?` when a typo-range match exists; appends a note when the label also wraps the control. |
 | forms/labels-required | verify-in-source | context-aware | tagName, type, id, spread-props flag | Non-primitive path inlines tag + type + id; primitive-props branch suggests a pragma scoped to the rule. |
-| forms/non-empty-label | guidance | generic | none (three static strings) | HTML / JSX / JSX-primitive branches each emit a constant. Does not reference the associated control's id or surrounding text. |
+| forms/non-empty-label | guidance | context-aware | `for` / `htmlFor` target, cross-file control (tag, type, name, placeholder, line), JSX-primitive flag | Four-branch ladder: (A) no `for` / `htmlFor` → dialect-aware generic advice; (B1) matching control + derivable hint → inlines `for="id"` (or `htmlFor="id"`), `<tag type="…">` descriptor, control line number, and a candidate derived from `type` (email → "Email address", tel → "Phone number", …), `placeholder` (verbatim), or `name` (humanized: `firstName` → "First name"); (B2) matching control with no hint → short-noun fallback naming the missing signals; (C) unmatched id → flags the missing control and suggests typo/cross-file verification. JSX-primitive ({...spread}) branch stays info-severity pragma guidance. Resolved by commit pending. |
 | forms/required-indicator-missing | verify-in-source | context-aware | wrapper component name, forwarded native tag | `buildSuggestion` inlines the component name and the native tag it forwards to; proposes concrete `aria-required` + indicator pair. |
 | keyboard/accesskey-duplicate | verify-in-source | context-aware | token, first binding's tag/line/column | Names the colliding access-key, points at the earlier binding by file coordinates, flags the case-insensitive comparison. |
 | keyboard/character-shortcuts | guidance | context-aware | first flagged key, event target, event name | Inlines the flagged key into a proposed `event.ctrlKey && event.key === "…"` guard and names the listener's target. |
@@ -99,13 +99,12 @@ violation fires.
 
 Verdict distribution:
 
-- context-aware: 46
-- generic: 6
+- context-aware: 47
+- generic: 5
 - caveat-only: 0
 
 Rules flagged `generic` (need per-rule `feat(rules): context-aware fix for <rule>` follow-up commits before v1.0):
 
-- `forms/non-empty-label`
 - `navigation/link-no-href`
 - `semantics/button-name`
 - `semantics/empty-heading`
@@ -119,6 +118,7 @@ Resolved since publication (flipped to `context-aware`):
 - `parsing/duplicate-id` — V1-FIX-DUPLICATE-ID (commit pending).
 - `document/page-titled` — V1-FIX-DOC-TITLE (commit 1a639b3).
 - `media/video-captions-missing` — V1-FIX-VIDEO-CAPTIONS (commit pending).
+- `forms/non-empty-label` — V1-FIX-NON-EMPTY-LABEL (commit pending).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted
