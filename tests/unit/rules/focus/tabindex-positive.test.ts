@@ -12,7 +12,11 @@ describe("rule focus/tabindex-positive", () => {
       expect(violations[0]?.ruleId).toBe("focus/tabindex-positive");
       expect(violations[0]?.severity).toBe("error");
       expect(violations[0]?.message).toContain("parsed as 5");
-      expect(violations[0]?.suggestion).toContain('tabindex="0"');
+      // Natively focusable branch: the ladder recommends removal, not
+      // tabindex="0", because <a href> already sits in the tab order.
+      expect(violations[0]?.suggestion).toContain('Remove tabindex="5"');
+      expect(violations[0]?.suggestion).toContain("<a>");
+      expect(violations[0]?.suggestion).toContain("natively focusable");
     });
 
     it("tabindex has leading/trailing whitespace around a positive integer", () => {
@@ -129,6 +133,116 @@ describe("rule focus/tabindex-positive", () => {
     it("element has no tabIndex attribute at all", () => {
       const violations = runRule(rule, `const X = <button>Hi</button>;`);
       expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("fix-suggestion ladder (HTML)", () => {
+    it('natively focusable tag: <button tabindex="5"> inlines the value + tag and names "natively focusable"', () => {
+      const violations = runRule(rule, `<button tabindex="5">Click</button>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="5"');
+      expect(suggestion).toContain("<button>");
+      expect(suggestion).toContain("natively focusable");
+      // A natively focusable element does not need tabindex="0" — the fix
+      // is to remove the attribute outright.
+      expect(suggestion).not.toContain('tabindex="0"');
+    });
+
+    it('non-focusable tag: <div tabindex="3"> suggests tabindex="0" + role="button" with tag inlined', () => {
+      const violations = runRule(rule, `<div tabindex="3">Fake button</div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="3"');
+      expect(suggestion).toContain("<div>");
+      expect(suggestion).toContain('tabindex="0"');
+      expect(suggestion).toContain('role="button"');
+      expect(suggestion).toContain("keydown");
+    });
+
+    it('non-focusable tag with explicit role: <span role="tab" tabindex="4"> keeps the declared role', () => {
+      const violations = runRule(rule, `<span role="tab" tabindex="4">Tab 1</span>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="4"');
+      expect(suggestion).toContain("<span>");
+      expect(suggestion).toContain('role="tab"');
+      expect(suggestion).toContain('tabindex="0"');
+      // Should not propose role="button" when a role is already declared.
+      expect(suggestion).not.toContain('role="button"');
+    });
+
+    it('contenteditable host: <div contenteditable tabindex="2"> recognizes contenteditable and recommends removal', () => {
+      const violations = runRule(rule, `<div contenteditable tabindex="2">type here</div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="2"');
+      expect(suggestion).toContain("contenteditable");
+      expect(suggestion).toContain("already in the sequential tab order");
+    });
+
+    it('contenteditable="true" host: explicit value also triggers the contenteditable branch', () => {
+      const violations = runRule(
+        rule,
+        `<section contenteditable="true" tabindex="7">Rich editor</section>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="7"');
+      expect(suggestion).toContain("contenteditable");
+      expect(suggestion).toContain("<section>");
+    });
+
+    it('contenteditable="false" is NOT a contenteditable host — falls through to the non-focusable branch', () => {
+      const violations = runRule(rule, `<div contenteditable="false" tabindex="6">disabled</div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="6"');
+      expect(suggestion).toContain('tabindex="0"');
+      expect(suggestion).not.toContain("already in the sequential tab order");
+    });
+  });
+
+  describe("fix-suggestion ladder (JSX)", () => {
+    it('natively focusable tag: <button tabIndex={5}> inlines tabindex="5" and names "natively focusable"', () => {
+      const violations = runRule(rule, `const X = <button tabIndex={5}>Go</button>;`);
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="5"');
+      expect(suggestion).toContain("<button>");
+      expect(suggestion).toContain("natively focusable");
+    });
+
+    it('non-focusable tag: <div tabIndex={3}> suggests tabindex="0" + role="button"', () => {
+      const violations = runRule(rule, `const X = <div tabIndex={3}>fake</div>;`);
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="3"');
+      expect(suggestion).toContain("<div>");
+      expect(suggestion).toContain('tabindex="0"');
+      expect(suggestion).toContain('role="button"');
+    });
+
+    it("contenteditable JSX host: <div contentEditable tabIndex={2}> hits the contenteditable branch", () => {
+      const violations = runRule(
+        rule,
+        `const X = <div contentEditable tabIndex={2}>editable</div>;`,
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain('Remove tabindex="2"');
+      expect(suggestion).toContain("contenteditable");
     });
   });
 

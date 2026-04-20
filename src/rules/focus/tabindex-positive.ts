@@ -36,6 +36,21 @@
  * to a positive integer, and flagging every runtime expression would
  * drown real violations in noise. This is the same tradeoff
  * eslint-plugin-jsx-a11y makes for similar rules.
+ *
+ * Fix-suggestion ladder: the `buildSuggestion` helper branches on
+ * three tiers of focusability so the agent gets a targeted recipe
+ * instead of a generic "remove tabindex or use 0/-1" boilerplate:
+ *   1. Natively focusable tag (`<button>`, `<a>`, `<input>`, …) —
+ *      the positive tabindex is strictly destructive; recommend
+ *      outright removal.
+ *   2. Contenteditable host — the element is already in the tab
+ *      order via its editable state; recommend outright removal.
+ *   3. Non-focusable tag (custom `<div>`, `<span>`, component name) —
+ *      if keyboard focus is actually needed, recommend `tabindex="0"`
+ *      plus a role (keep the declared role when present, otherwise
+ *      propose `role="button"`) and a keydown handler for
+ *      Enter/Space.
+ * The offending `tabindex="N"` value and the tag are always inlined.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -49,6 +64,30 @@ import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../typ
 
 /** React uses camelCase `tabIndex`; HTML uses lowercase `tabindex`. Accept both. */
 const JSX_ATTR_NAMES: readonly string[] = ["tabIndex", "tabindex"];
+
+/**
+ * HTML tag names that are natively focusable (tab-stop-capable in the
+ * browser's default tab order without any `tabindex` attribute). Aligned
+ * with the corresponding set in `src/rules/aria/hidden-focus.ts` so the
+ * two rules agree on what "natively focusable" means. `<a>`, `<area>`,
+ * `<audio>`, `<input>`, `<video>` are *conditionally* focusable — we
+ * still treat them as native here because the common case is that
+ * authors reach for `tabindex="N"` on an element whose tag already
+ * establishes tab-stop behavior, not the rarer `<a>` without `href`.
+ */
+const NATIVELY_FOCUSABLE_TAGS: ReadonlySet<string> = new Set([
+  "a",
+  "area",
+  "audio",
+  "button",
+  "details",
+  "iframe",
+  "input",
+  "select",
+  "summary",
+  "textarea",
+  "video",
+]);
 
 export const rule = defineRule({
   id: "focus/tabindex-positive",
@@ -107,16 +146,50 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (raw === null) continue;
     const parsed = parseTabindex(raw);
     if (parsed === null || parsed < 1) continue;
-    emitViolation(element.tagName, parsed, raw, element.loc.start, emit);
+    emitViolation(
+      {
+        tagName: element.tagName,
+        role: findHtmlAttrInsensitive(element, "role"),
+        contentEditable: readHtmlContentEditable(element),
+      },
+      parsed,
+      raw,
+      element.loc.start,
+      emit,
+    );
   }
 }
 
 /** Looks up `tabindex` (case-insensitive) on an HTML element. */
 function findHtmlTabindex(element: HtmlElement): string | null {
+  return findHtmlAttrInsensitive(element, "tabindex");
+}
+
+/** Case-insensitive attribute lookup shared across the HTML branch. */
+function findHtmlAttrInsensitive(element: HtmlElement, name: string): string | null {
+  const lowered = name.toLowerCase();
   for (const attr of element.attributes) {
-    if (attr.name.toLowerCase() === "tabindex") return attr.value;
+    if (attr.name.toLowerCase() === lowered) return attr.value;
   }
   return null;
+}
+
+/**
+ * Returns `true` when the element is an editable host per the HTML
+ * spec's enumerated-attribute semantics: bare `contenteditable`, `""`,
+ * and `"true"` (case-insensitive) all map to the editable state. The
+ * `"false"` and `"inherit"` values do not. Editable hosts are already
+ * in the sequential tab order as an implicit focusable, which changes
+ * the phrasing of the fix suggestion.
+ */
+function readHtmlContentEditable(element: HtmlElement): boolean {
+  for (const attr of element.attributes) {
+    if (attr.name.toLowerCase() !== "contenteditable") continue;
+    const raw = attr.value;
+    if (raw === null || raw === "") return true;
+    return raw.toLowerCase() === "true";
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +202,17 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (parsed === null) continue;
     const { value, rawText } = parsed;
     if (value < 1) continue;
-    emitViolation(element.tagName, value, rawText, element.loc.start, emit);
+    emitViolation(
+      {
+        tagName: element.tagName,
+        role: getJsxAttributeString(element, "role"),
+        contentEditable: readJsxContentEditable(element),
+      },
+      value,
+      rawText,
+      element.loc.start,
+      emit,
+    );
   }
 }
 
@@ -188,6 +271,29 @@ function stripBraces(raw: string): string {
   return out;
 }
 
+/**
+ * JSX counterpart to `readHtmlContentEditable`. React exposes
+ * `contentEditable` as a camelCase prop; authors sometimes hand-write
+ * the lowercase HTML spelling too. Accept both. `true`, `"true"`, and
+ * the bare shorthand all mean "editable host"; `false`, `"false"`, and
+ * `"inherit"` do not.
+ */
+function readJsxContentEditable(element: JsxElement): boolean {
+  const attr =
+    getJsxAttribute(element, "contentEditable") ?? getJsxAttribute(element, "contenteditable");
+  if (!attr) return false;
+  if (attr.value === null) return true; // Bare `<div contentEditable />`.
+  if (attr.value.kind === "StringLiteral") {
+    const v = attr.value.value.toLowerCase();
+    return v === "" || v === "true";
+  }
+  if (attr.value.kind === "Expression") {
+    const stripped = stripBraces(attr.value.raw).trim().toLowerCase();
+    return stripped === "true";
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -207,8 +313,17 @@ function parseTabindex(raw: string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+interface ViolationContext {
+  /** Source-casing tag name — `<div>` and `<MyButton>` reach this unchanged. */
+  readonly tagName: string;
+  /** Explicit `role` attribute value if set; `null` when absent. */
+  readonly role: string | null;
+  /** True when the element has `contenteditable="true"` (or the bare form). */
+  readonly contentEditable: boolean;
+}
+
 function emitViolation(
-  tagName: string,
+  ctx: ViolationContext,
   value: number,
   rawText: string,
   loc: { line: number; column: number },
@@ -217,7 +332,46 @@ function emitViolation(
   emit({
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> has tabindex="${rawText}" (parsed as ${value}). Positive tabindex values create a parallel tab order that overrides the document's natural order and is almost impossible to keep consistent.`,
-    suggestion: `Remove tabindex from <${tagName}> and let it receive focus at its natural DOM position, or use tabindex="0" if the element is non-interactive but needs to be focusable. Use tabindex="-1" only for programmatic focus (e.g., roving-tabindex patterns).`,
+    message: `<${ctx.tagName}> has tabindex="${rawText}" (parsed as ${value}). Positive tabindex values create a parallel tab order that overrides the document's natural order and is almost impossible to keep consistent.`,
+    suggestion: buildSuggestion(ctx, value, rawText),
   });
+}
+
+/**
+ * Builds the fix-suggestion ladder documented in the module header.
+ * Always inlines the offending `tabindex="N"` and the tag; branches
+ * on native focusability → contenteditable → non-focusable fallback.
+ */
+function buildSuggestion(ctx: ViolationContext, value: number, rawText: string): string {
+  const displayValue = rawText.trim() === String(value) ? rawText : String(value);
+  const tag = `<${ctx.tagName}>`;
+  const tabindexRef = `tabindex="${displayValue}"`;
+
+  if (isNativelyFocusable(ctx.tagName)) {
+    return (
+      `Remove ${tabindexRef} from ${tag} — it is natively focusable and will receive focus at its natural DOM position. ` +
+      `If you need to defer focus to scripted focus management, use tabindex="-1" instead.`
+    );
+  }
+
+  if (ctx.contentEditable) {
+    return (
+      `Remove ${tabindexRef} from the contenteditable ${tag} — a contenteditable host is already in the sequential tab order. ` +
+      `If you only want programmatic focus, set contenteditable="false" and use tabindex="-1" instead.`
+    );
+  }
+
+  const roleAdvice = ctx.role
+    ? `keep role="${ctx.role}"`
+    : `add an appropriate role (e.g., role="button")`;
+  return (
+    `Remove ${tabindexRef} from ${tag}. ` +
+    `If this element must receive keyboard focus, use tabindex="0" (not a positive value), ${roleAdvice}, and add a keydown handler for Enter/Space so assistive-tech users can activate it. ` +
+    `Use tabindex="-1" only for programmatic focus (e.g., roving-tabindex patterns).`
+  );
+}
+
+/** Case-insensitive membership in `NATIVELY_FOCUSABLE_TAGS`. */
+function isNativelyFocusable(tagName: string): boolean {
+  return NATIVELY_FOCUSABLE_TAGS.has(tagName.toLowerCase());
 }
