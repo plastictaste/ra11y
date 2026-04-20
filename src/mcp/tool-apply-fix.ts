@@ -3,8 +3,8 @@
  * search/replace edit, re-scan the touched file, and return the
  * before/after delta. This is the ONLY ra11y MCP tool that mutates the
  * user's source, so it's gated on the session's `allowWrite` flag: the
- * host must opt-in via `configure({ allowWrite: true })` (or the
- * `--allow-write` CLI equivalent) before any on-disk write happens.
+ * host must opt-in via `sessionConfigure({ allowWrite: true })` (or
+ * the `--allow-write` CLI equivalent) before any on-disk write happens.
  *
  * Edit shape matches what `suggest_fix` emits natively on `kind: "edit"`
  * — `{ oldText, newText }`. The handler requires `oldText` to appear
@@ -69,7 +69,7 @@ export const applyFixTool: McpTool = {
   def: {
     name: "apply_fix",
     description:
-      'Apply a `suggest_fix` edit to a single file, re-scan that file, and return the before/after delta. Consumes the `{ oldText, newText }` edit shape `suggest_fix` emits on `kind: "edit"` — paste `primary.edit` through directly. This is the only ra11y MCP tool that writes to disk; the session must have `allowWrite: true` (set via `configure({ allowWrite: true })`) or the call is rejected with an error envelope naming the flag.\n\nDefault behavior is NON-destructive: `dryRun: true` (default) computes the post-edit contents in memory, runs the delta scan, returns the result, and never touches disk. Flip `dryRun: false` to actually write. If the post-edit contents produce parse errors the original didn\'t, the write is aborted and the file is left untouched even in non-dry mode — you get a structured error naming the parse failure instead of a silently broken file.\n\n`oldText` must match exactly once in the source. Multiple matches come back as an error envelope with the match count so you can add disambiguating context from `sourceContext`; zero matches likewise surfaces so you don\'t silently drop the fix.\n\nThe delta uses the same `(ruleId, filePath, message)` fingerprint as the baseline tool, so a fix that changes a violation\'s line but not its shape still reads as "resolved" correctly. Both rule-level violations and review candidates are tracked — if the edit introduces a new manual-review burden, you\'ll see it in `delta.newCandidates`.\n\nParameter naming: use `file` as the canonical name for the file path. `filePath` is accepted as a deprecated alias for one release and fires `warnings: ["deprecated_param_filepath"]` in the response when used; passing both `file` and `filePath` is rejected with a structured error.',
+      "Apply a `suggest_fix` edit to a single file, re-scan that file, and return the before/after delta. Consumes the `{ oldText, newText }` edit shape `suggest_fix` emits on `kind: \"edit\"` — paste `primary.edit` through directly. This is the only ra11y MCP tool that writes to disk; the session must have `allowWrite: true` (set via `sessionConfigure({ allowWrite: true })`) or the call is rejected with an error envelope naming the flag.\n\nDefault behavior is NON-destructive: `dryRun: true` (default) computes the post-edit contents in memory, runs the delta scan, returns the result, and never touches disk. Flip `dryRun: false` to actually write. If the post-edit contents produce parse errors the original didn't, the write is aborted and the file is left untouched even in non-dry mode — you get a structured error naming the parse failure instead of a silently broken file.\n\n`oldText` must match exactly once in the source. Multiple matches come back as an error envelope with the match count so you can add disambiguating context from `sourceContext`; zero matches likewise surfaces so you don't silently drop the fix.\n\nThe delta uses the same `(ruleId, filePath, message)` fingerprint as the baseline tool, so a fix that changes a violation's line but not its shape still reads as \"resolved\" correctly. Both rule-level violations and review candidates are tracked — if the edit introduces a new manual-review burden, you'll see it in `delta.newCandidates`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -77,11 +77,6 @@ export const applyFixTool: McpTool = {
           type: "string",
           description:
             "Path to the file the edit applies to. Absolute paths must live inside `cwd`; relative paths resolve from `cwd`. Traversal attempts (`../../etc/hosts`) are rejected.",
-        },
-        filePath: {
-          type: "string",
-          description:
-            'DEPRECATED alias of `file`. Accepted for one release with `warnings: ["deprecated_param_filepath"]` in the response; prefer `file`. Passing both `file` and `filePath` is rejected.',
         },
         edit: {
           type: "object",
@@ -127,7 +122,7 @@ export const applyFixTool: McpTool = {
   async handler(params, session): Promise<McpToolResult> {
     const preflight = await preflightValidate(params, session);
     if ("error" in preflight) return preflight.error;
-    const { resolved, cwd, edit, ext, original, dryRun, usedDeprecatedAlias } = preflight;
+    const { resolved, cwd, edit, ext, original, dryRun } = preflight;
 
     const newSource = original.source.replace(edit.oldText, edit.newText);
     const newAst = parseFor(ext, newSource);
@@ -170,22 +165,10 @@ export const applyFixTool: McpTool = {
 
     const delta = computeDelta(before, after);
 
-    // When the caller used the deprecated `filePath` alias instead of
-    // `file`, surface a conditional-spread `warnings` array so they
-    // have a concrete migration signal. Omitted (not `warnings: []`)
-    // on the canonical path — CLAUDE.md §1 "Ambiguous field shapes
-    // are dishonest" — so downstream consumers can't confuse "no
-    // deprecation" with "unavailable."
-    const warnings: readonly string[] = usedDeprecatedAlias ? ["deprecated_param_filepath"] : [];
-
     return textResult({
       applied,
       dryRun,
       file: resolved,
-      // Kept alongside `file` for one release so existing consumers
-      // reading `body.filePath` don't break during the deprecation
-      // window. Removed in the next minor.
-      filePath: resolved,
       before: formatSlice(before),
       after: formatSlice(after),
       delta: {
@@ -206,7 +189,6 @@ export const applyFixTool: McpTool = {
         parseErrorsBefore: originalErrorCount,
         parseErrorsAfter: newErrorCount,
       },
-      ...(warnings.length ? { warnings } : {}),
       nextStep: buildNextStep({ applied, dryRun, delta, resolved }),
     });
   },

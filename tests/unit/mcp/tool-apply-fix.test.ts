@@ -10,9 +10,9 @@
  *
  * This file covers the load-bearing invariants (write gate, happy
  * dry-run + write paths, anchor uniqueness, parse-error guardrail,
- * deprecated-alias warning, no-delta nextStep). Shape-validation edge
- * cases (path escape, malformed `edit`, unsupported extensions) live
- * in `tool-apply-fix-edges.test.ts`.
+ * no-delta nextStep). Shape-validation edge cases (path escape,
+ * malformed `edit`, unsupported extensions) live in
+ * `tool-apply-fix-edges.test.ts`.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -32,7 +32,6 @@ interface SuccessBody {
   readonly applied: boolean;
   readonly dryRun: boolean;
   readonly file: string;
-  readonly filePath: string;
   readonly delta: {
     readonly resolvedViolations: Array<{ ruleId: string }>;
     readonly newViolations: Array<{ ruleId: string }>;
@@ -97,52 +96,6 @@ describe("apply_fix: write gate", () => {
       expect(code).toBe("allow-write-disabled");
       const after = await readFile(file, "utf8");
       expect(after).toContain('<img src="/logo.png">');
-    });
-  });
-});
-
-describe("apply_fix: deprecated filePath alias", () => {
-  it("emits `deprecated_param_filepath` warning when the deprecated `filePath` alias is used", async () => {
-    await withScratch(async (dir) => {
-      const file = await writeBadImg(dir);
-      const { isError, body } = await call(allowWriteSession(), {
-        filePath: file,
-        edit: { oldText: '<img src="/logo.png">', newText: '<img src="/logo.png" alt="Acme">' },
-        cwd: dir,
-        dryRun: true,
-      });
-      expect(isError).toBe(false);
-      const success = body as SuccessBody;
-      expect(success.warnings).toEqual(["deprecated_param_filepath"]);
-      expect(success.file).toBe(file);
-    });
-  });
-
-  it("omits `warnings` on the canonical `file` param path", async () => {
-    await withScratch(async (dir) => {
-      const file = await writeBadImg(dir);
-      const { body } = await call(allowWriteSession(), {
-        file,
-        edit: { oldText: '<img src="/logo.png">', newText: '<img src="/logo.png" alt="A">' },
-        cwd: dir,
-        dryRun: true,
-      });
-      const success = body as SuccessBody;
-      expect(success.warnings).toBeUndefined();
-    });
-  });
-
-  it("rejects `conflicting-file-params` when both `file` and `filePath` are supplied", async () => {
-    await withScratch(async (dir) => {
-      const file = await writeBadImg(dir);
-      const { isError, code } = await call(allowWriteSession(), {
-        file,
-        filePath: file,
-        edit: { oldText: '<img src="/logo.png">', newText: '<img src="/logo.png" alt="A">' },
-        cwd: dir,
-      });
-      expect(isError).toBe(true);
-      expect(code).toBe("conflicting-file-params");
     });
   });
 });

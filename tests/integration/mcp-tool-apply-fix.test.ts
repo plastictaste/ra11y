@@ -110,7 +110,7 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "apply_fix", {
-          filePath: file,
+          file,
           edit: { oldText: '<img src="/logo.png">', newText: '<img src="/logo.png" alt="Acme">' },
           cwd: dir,
           dryRun: false,
@@ -121,7 +121,7 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
       expect(result.structuredContent?.code).toBe("allow-write-disabled");
       const body = bodyOf(responses[1]) as { error: string };
       expect(body.error).toMatch(/allowwrite/i);
-      expect(body.error).toContain("configure");
+      expect(body.error).toContain("sessionConfigure");
       // The file must remain untouched.
       const contents = await readFile(file, "utf8");
       expect(contents).toContain('<img src="/logo.png">');
@@ -137,9 +137,9 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
       const before = await readFile(file, "utf8");
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { allowWrite: true }),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
         toolCall(3, "apply_fix", {
-          filePath: file,
+          file,
           edit: { oldText: '<img src="/logo.png">', newText: '<img src="/logo.png" alt="Acme">' },
           cwd: dir,
           dryRun: true,
@@ -148,12 +148,12 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
       const body = bodyOf(responses[2]) as {
         applied: boolean;
         dryRun: boolean;
-        filePath: string;
+        file: string;
         delta: { resolvedViolations: unknown[]; newViolations: unknown[] };
       };
       expect(body.applied).toBe(false);
       expect(body.dryRun).toBe(true);
-      expect(body.filePath).toBe(file);
+      expect(body.file).toBe(file);
       const after = await readFile(file, "utf8");
       expect(after).toBe(before);
     } finally {
@@ -166,9 +166,9 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { allowWrite: true }),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
         toolCall(3, "apply_fix", {
-          filePath: file,
+          file,
           edit: { oldText: '<img src="/logo.png">', newText: '<img src="/logo.png" alt="Acme">' },
           cwd: dir,
           dryRun: false,
@@ -198,9 +198,9 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { allowWrite: true }),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
         toolCall(3, "apply_fix", {
-          filePath: "../../../etc/hosts",
+          file: "../../../etc/hosts",
           edit: { oldText: "localhost", newText: "evil.example.com" },
           cwd: dir,
           dryRun: false,
@@ -224,9 +224,9 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { allowWrite: true }),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
         toolCall(3, "apply_fix", {
-          filePath: file,
+          file,
           edit: { oldText: "this text does not exist", newText: "irrelevant" },
           cwd: dir,
           dryRun: false,
@@ -253,9 +253,9 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { allowWrite: true }),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
         toolCall(3, "apply_fix", {
-          filePath: file,
+          file,
           edit: {
             // Drop the closing tag — parser should flag an unclosed JSX element.
             oldText: '<button aria-label="hi">click</button>',
@@ -292,9 +292,9 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { allowWrite: true }),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
         toolCall(3, "apply_fix", {
-          filePath: file,
+          file,
           edit: { oldText: '<img src="/a.png">', newText: '<img src="/a.png" alt="A">' },
           cwd: dir,
           dryRun: true,
@@ -326,9 +326,9 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     try {
       const responses = await mcpSession([
         initMsg(1),
-        toolCall(2, "configure", { allowWrite: true }),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
         toolCall(3, "apply_fix", {
-          filePath: file,
+          file,
           edit: {
             oldText: "<p>hello</p>",
             newText: '<p>hello</p><img src="/x.png">',

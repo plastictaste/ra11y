@@ -119,8 +119,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   const { ruleId, line, match, sourceContext, source, filePath, warnings } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
   // Response-level `warnings` for the zero-output-success doctrine
-  // (CLAUDE.md §1). The handler pre-computes scan-confidence codes +
-  // any caller-input warnings (e.g. the deprecated `filePath` alias)
+  // (CLAUDE.md §1). The handler pre-computes scan-confidence codes
   // and passes them here; `warningsSpreadField` handles the
   // conditional-spread so the field is absent when empty.
   const warningsField = warningsSpreadField(warnings);

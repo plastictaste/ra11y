@@ -9,7 +9,7 @@
  * delta (`computeDelta`), the parse-error envelope builder, the slice
  * formatter, and the `nextStep` string builder.
  *
- * The preflight collapses six guard branches (allowWrite → filePath →
+ * The preflight collapses six guard branches (allowWrite → file →
  * cwd-escape → edit shape → extension → search-hit count) into one
  * discriminated union so the handler can early-return via a single
  * `if ("error" in preflight)` check. Each envelope wording is exact
@@ -57,57 +57,9 @@ export interface PreflightOk {
   readonly ext: Ext;
   readonly original: ParsedFile;
   readonly dryRun: boolean;
-  /**
-   * True when the caller supplied the deprecated `filePath` alias
-   * instead of the canonical `file` parameter. The handler uses this
-   * to add `"deprecated_param_filepath"` to the response's `warnings`
-   * array so migrating agents have a concrete signal; silently
-   * accepting the alias would reproduce the ambiguous-shape failure
-   * mode CLAUDE.md §1 warns against.
-   */
-  readonly usedDeprecatedAlias: boolean;
 }
 
 export type PreflightResult = PreflightOk | { readonly error: McpToolResult };
-
-export interface FilePathParamResult {
-  readonly value: string | undefined;
-  readonly usedDeprecatedAlias: boolean;
-  readonly error: McpToolResult | undefined;
-}
-
-/**
- * Reads the canonical `file` parameter, falling back to the deprecated
- * `filePath` alias. Both names cannot be supplied simultaneously —
- * doing so raises a structured error so the caller picks one shape
- * instead of relying on silent precedence.
- */
-export function readFilePathParam(params: Record<string, unknown>): FilePathParamResult {
-  const canonical = strParam(params, "file");
-  const alias = strParam(params, "filePath");
-  const canonicalPresent = canonical !== undefined && canonical.length > 0;
-  const aliasPresent = alias !== undefined && alias.length > 0;
-  if (canonicalPresent && aliasPresent) {
-    return {
-      value: undefined,
-      usedDeprecatedAlias: false,
-      error: errorResult({
-        code: "conflicting-file-params",
-        message:
-          "Pass either `file` (canonical) or `filePath` (deprecated alias) — not both. `filePath` is accepted for one release only; prefer `file`.",
-        details: { file: canonical, filePath: alias },
-        remediation: "Drop `filePath` and send only `file`.",
-      }),
-    };
-  }
-  if (canonicalPresent) {
-    return { value: canonical, usedDeprecatedAlias: false, error: undefined };
-  }
-  if (aliasPresent) {
-    return { value: alias, usedDeprecatedAlias: true, error: undefined };
-  }
-  return { value: undefined, usedDeprecatedAlias: false, error: undefined };
-}
 
 export async function preflightValidate(
   params: Record<string, unknown>,
@@ -118,17 +70,12 @@ export async function preflightValidate(
       error: errorResult({
         code: "allow-write-disabled",
         message:
-          "apply_fix is disabled: session `allowWrite` flag is false. Call `configure` with `{ allowWrite: true }` to enable write access for this session, then retry. The flag is per-session and off by default so no ra11y tool mutates source without explicit host opt-in.",
-        remediation: "Call `configure` with `{ allowWrite: true }`, then retry apply_fix.",
+          "apply_fix is disabled: session `allowWrite` flag is false. Call `sessionConfigure` with `{ allowWrite: true }` to enable write access for this session, then retry. The flag is per-session and off by default so no ra11y tool mutates source without explicit host opt-in.",
+        remediation: "Call `sessionConfigure` with `{ allowWrite: true }`, then retry apply_fix.",
       }),
     };
   }
-  const filePathParamResult = readFilePathParam(params);
-  if (filePathParamResult.error) {
-    return { error: filePathParamResult.error };
-  }
-  const filePathParam = filePathParamResult.value;
-  const usedDeprecatedAlias = filePathParamResult.usedDeprecatedAlias;
+  const filePathParam = strParam(params, "file");
   if (!filePathParam || filePathParam.length === 0) {
     return {
       error: errorResult({
@@ -195,7 +142,7 @@ export async function preflightValidate(
       }),
     };
   }
-  return { resolved, cwd, edit, ext, original: original.parsed, dryRun, usedDeprecatedAlias };
+  return { resolved, cwd, edit, ext, original: original.parsed, dryRun };
 }
 
 async function readOriginal(

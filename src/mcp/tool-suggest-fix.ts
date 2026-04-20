@@ -1,13 +1,12 @@
 /**
  * The suggest_fix MCP tool. Lives in its own file so src/mcp/tools.ts
- * stays under the 500-line file budget after the P2-R `file`/`filePath`
- * alias logic + P0-D unique-anchor wiring landed.
+ * stays under the 500-line file budget after the P0-D unique-anchor
+ * wiring landed.
  */
 
 import { runScan } from "../engine/scanner.ts";
 import { BUILTIN_RULES } from "../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
-import { readFilePathParam } from "./tool-apply-fix-internals.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
@@ -32,7 +31,6 @@ export const suggestFixTool: McpTool = {
       properties: {
         ruleId: { type: "string", description: "Rule ID of the violation." },
         file: { type: "string", description: "File path containing the violation." },
-        filePath: { type: "string", description: "Deprecated alias of `file`." },
         line: { type: "number", description: "Line number of the violation." },
         sourceContext: {
           type: "string",
@@ -43,15 +41,13 @@ export const suggestFixTool: McpTool = {
           description: "Base directory for resolving the file path if relative.",
         },
       },
-      required: ["ruleId", "line"],
+      required: ["ruleId", "file", "line"],
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
     const ruleId = strParam(params, "ruleId");
-    const filePathResult = readFilePathParam(params);
-    if (filePathResult.error) return filePathResult.error;
-    const filePath = filePathResult.value;
+    const filePath = strParam(params, "file");
     const line = numParam(params, "line");
 
     if (!(ruleId && filePath) || line === undefined) {
@@ -100,10 +96,14 @@ export const suggestFixTool: McpTool = {
     const match = result.violations.find((v) => v.ruleId === ruleId && v.location.line === line);
     const sourceContext =
       strParam(params, "sourceContext") ?? buildSourceContext(parsed.source, line);
-    const combinedWarnings = composeSuggestFixWarnings({
-      filesScanned: result.filesScanned,
-      usedDeprecatedAlias: filePathResult.usedDeprecatedAlias,
-    });
+    const scanWarnings =
+      warningsField({
+        filesScanned: result.filesScanned,
+        rootSource: null,
+        configSource: undefined,
+        analysisCoverage: undefined,
+        filesByExtension: undefined,
+      }).warnings ?? [];
     const payload = buildSuggestFixPayload({
       ruleId,
       line,
@@ -111,36 +111,8 @@ export const suggestFixTool: McpTool = {
       sourceContext,
       source: parsed.source,
       filePath,
-      ...(combinedWarnings.length > 0 ? { warnings: combinedWarnings } : {}),
+      ...(scanWarnings.length > 0 ? { warnings: scanWarnings } : {}),
     });
     return textResult(payload as Record<string, unknown>);
   },
 };
-
-/**
- * Unified response-level `warnings` for `suggest_fix`. Combines
- * caller-input warnings (deprecated `filePath` alias) with scan-
- * confidence codes from the shared helper so both ride a single field
- * per the AI-first doctrine (CLAUDE.md §1 "Zero-output success is
- * ambiguous failure"). `suggest_fix` parses one file and hard-errors
- * when it can't, so `scanned_zero_files` won't fire in practice today —
- * but plumbing the helper through keeps the doctrine contract
- * consistent across tools and means future codes appear automatically
- * without another retrofit. Pass `rootSource: null` (no root-resolution
- * step) and `configSource: undefined` (the handler doesn't resolve
- * project config) so those codes stay silent.
- */
-function composeSuggestFixWarnings(inputs: {
-  readonly filesScanned: number;
-  readonly usedDeprecatedAlias: boolean;
-}): readonly string[] {
-  const scanWarnings =
-    warningsField({
-      filesScanned: inputs.filesScanned,
-      rootSource: null,
-      configSource: undefined,
-      analysisCoverage: undefined,
-      filesByExtension: undefined,
-    }).warnings ?? [];
-  return [...(inputs.usedDeprecatedAlias ? ["deprecated_param_filepath"] : []), ...scanWarnings];
-}

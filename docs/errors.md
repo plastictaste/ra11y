@@ -21,7 +21,6 @@ Two codes — `reason-required` and `line-out-of-range` — are local to the `su
 | `missing-required-param` | `scan`, `scan_file`, `scan_process`, `suggest_fix`, `apply_fix`, `attest`, `suppress`, `explain_standard` | A required parameter is absent or empty. `details.param` names the missing field. | Re-call with the parameter present and non-empty. |
 | `invalid-param` | `suppress`, `attest`, `conformance_statement` | A parameter is present but its value is semantically invalid (wrong type, out-of-range enum, empty array where non-empty is required). `details` carries the received value. | Inspect `details` and correct the value before retrying. |
 | `mode-invalid` | `baseline` | The `mode` parameter is not one of `create`, `check`, `update`. | Pass `mode` as `"create"`, `"check"`, or `"update"`. |
-| `conflicting-file-params` | `apply_fix`, `suggest_fix` | Both the canonical `file` and the deprecated `filePath` alias were supplied. | Drop `filePath`; use only `file`. |
 
 ### Registry lookups
 

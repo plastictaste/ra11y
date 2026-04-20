@@ -192,33 +192,33 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
 
 describe("buildSuggestFixPayload — response-level `warnings` plumbing", () => {
   // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
-  // suggest_fix unifies caller-input warnings (deprecated `filePath`
-  // alias) and scan-confidence codes under a single response-level
-  // `warnings` field. The payload builder is pure — it forwards the
-  // caller-supplied array verbatim and conditional-spreads so an empty
-  // or undefined input omits the field entirely (never `warnings: []`).
+  // suggest_fix surfaces scan-confidence codes under a single
+  // response-level `warnings` field. The payload builder is pure — it
+  // forwards the caller-supplied array verbatim and conditional-spreads
+  // so an empty or undefined input omits the field entirely (never
+  // `warnings: []`).
   it("forwards the caller-supplied warnings array verbatim on kind: 'edit'", () => {
     const payload = buildSuggestFixPayload(
-      baseArgs(violationWithFixPaths(), { warnings: ["deprecated_param_filepath"] }),
+      baseArgs(violationWithFixPaths(), { warnings: ["scanned_zero_files"] }),
     );
     expect(payload["kind"]).toBe("edit");
-    expect(payload["warnings"]).toEqual(["deprecated_param_filepath"]);
+    expect(payload["warnings"]).toEqual(["scanned_zero_files"]);
   });
 
   it("forwards the warnings array on kind: 'guidance'", () => {
     const payload = buildSuggestFixPayload(
-      baseArgs(violationGuidanceOnly(), { warnings: ["deprecated_param_filepath"] }),
+      baseArgs(violationGuidanceOnly(), { warnings: ["scanned_zero_files"] }),
     );
     expect(payload["kind"]).toBe("guidance");
-    expect(payload["warnings"]).toEqual(["deprecated_param_filepath"]);
+    expect(payload["warnings"]).toEqual(["scanned_zero_files"]);
   });
 
   it("forwards the warnings array on kind: 'none'", () => {
     const payload = buildSuggestFixPayload(
-      baseArgs(undefined, { warnings: ["deprecated_param_filepath"] }),
+      baseArgs(undefined, { warnings: ["scanned_zero_files"] }),
     );
     expect(payload["kind"]).toBe("none");
-    expect(payload["warnings"]).toEqual(["deprecated_param_filepath"]);
+    expect(payload["warnings"]).toEqual(["scanned_zero_files"]);
   });
 
   it("omits the `warnings` field entirely when the caller passes undefined", () => {
