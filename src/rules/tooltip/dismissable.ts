@@ -39,6 +39,22 @@
  * non-interactive elements where `title` is the canonical mechanism
  * for term expansion. The 1.4.13 failure is specifically about
  * interactive elements.
+ *
+ * JS-tooltip-enhancer signal (`couldBeWrongBecause` opt-in): when the
+ * titled element also carries a sibling attribute that a known JS
+ * tooltip library uses as a widget trigger — Bootstrap 5
+ * (`data-bs-toggle="tooltip"|"popover"`), Bootstrap 4 legacy
+ * (`data-toggle="tooltip"|"popover"`), or Tippy.js (`data-tippy-content`)
+ * — the rule surfaces `tooltip_js_enhancer_present` and appends a short
+ * enrichment clause to the message. Those libraries replace the native
+ * `title` with a runtime ARIA-aware widget (`aria-describedby` +
+ * `role="tooltip"` + keyboard dismiss), so the attribute-level evidence
+ * is weaker than the agent's file-level evidence. The finding STAYS
+ * LIVE at the same severity — this is reason-text enrichment, NOT
+ * suppression or downgrade. The agent reads the cited file, verifies
+ * the runtime widget is wired up, and dismisses with a
+ * `<!-- ra11y-disable -->` pragma when confirmed. Per CLAUDE.md §1
+ * "Surface, don't suppress" + "No heuristic suppression" and ADR 0009.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -124,7 +140,30 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  couldBeWrongBecause?: readonly string[];
 }) => void;
+
+/**
+ * `couldBeWrongBecause` code surfaced when the titled element also
+ * carries a JS-tooltip-library trigger attribute (Bootstrap's
+ * `data-bs-toggle="tooltip"|"popover"`, BS4 legacy `data-toggle=…`, or
+ * Tippy.js's `data-tippy-content`). Those libraries substitute an
+ * ARIA-aware runtime widget for the native title; static analysis
+ * cannot confirm the widget is actually wired up, so the rule stays
+ * live and the agent reads the file to decide. Informational only —
+ * never auto-suppresses. Per CLAUDE.md §1 and ADR 0009.
+ */
+export const TOOLTIP_JS_ENHANCER_PRESENT = "tooltip_js_enhancer_present";
+
+/**
+ * Enhancer-attribute match result: the trigger attribute the element
+ * carried and its value (when value-sensitive). Sibling-only — this is
+ * a single-element attribute check, no cross-file analysis.
+ */
+interface EnhancerSignal {
+  readonly attribute: string;
+  readonly value: string | null;
+}
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
@@ -132,7 +171,8 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (title === null) continue;
     if (title.trim().length === 0) continue;
     if (!isInteractiveHtml(el)) continue;
-    emit(buildViolation(el.tagName.toLowerCase(), title, el.loc.start));
+    const enhancer = detectHtmlEnhancer(el);
+    emit(buildViolation(el.tagName.toLowerCase(), title, el.loc.start, enhancer));
   }
 }
 
@@ -164,7 +204,8 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (titleString !== null && titleString.trim().length === 0) continue;
     if (!isInteractiveJsx(el)) continue;
     const displayTitle = titleString ?? "<expression>";
-    emit(buildViolation(el.tagName, displayTitle, el.loc.start));
+    const enhancer = detectJsxEnhancer(el);
+    emit(buildViolation(el.tagName, displayTitle, el.loc.start, enhancer));
   }
 }
 
@@ -189,20 +230,105 @@ function buildViolation(
   tag: string,
   title: string,
   loc: { line: number; column: number },
+  enhancer: EnhancerSignal | null,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  couldBeWrongBecause?: readonly string[];
 } {
   // Tighter cap (40) than the helper default because `display` is
   // echoed three times in the suggestion below and the tooltip label
   // itself is usually short; a long value is almost certainly a bug.
   const display = truncateForEcho(title, 40);
+  const baseMessage = `<${tag}> has title="${display}" — native browser tooltips are not dismissable with the keyboard, disappear on pointer approach, and are invisible to touch and many assistive-technology users, failing WCAG 1.4.13 (Content on Hover or Focus).`;
+  const enrichmentClause =
+    enhancer === null
+      ? ""
+      : ` Note: a JS tooltip library appears to enhance this element (sibling attribute ${describeEnhancerAttr(enhancer)}); the native title may be an input to a runtime ARIA-aware widget. Verify the runtime behavior at the call site before fixing.`;
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tag}> has title="${display}" — native browser tooltips are not dismissable with the keyboard, disappear on pointer approach, and are invisible to touch and many assistive-technology users, failing WCAG 1.4.13 (Content on Hover or Focus).`,
+    message: `${baseMessage}${enrichmentClause}`,
     suggestion: `Replace title="${display}" on this <${tag}> with one of: (a) a visible text label inside the element, (b) aria-label="${display}" if a visible label is impractical, or (c) a custom tooltip component that supports Escape-to-dismiss, hover-bridging, and stays visible until the trigger loses focus. The native title attribute remains acceptable on non-interactive elements like <abbr> for term expansion.`,
+    // Conditional spread — `couldBeWrongBecause: []` would be a dishonest
+    // empty-vs-unpopulated sentinel per CLAUDE.md §1.
+    ...(enhancer === null ? {} : { couldBeWrongBecause: [TOOLTIP_JS_ENHANCER_PRESENT] }),
   };
+}
+
+/**
+ * Human-readable attribute citation for the enrichment clause. Keeps
+ * the quoted value for `data-bs-toggle` / `data-toggle` (value-sensitive
+ * triggers) and omits it for `data-tippy-content` (attribute presence
+ * alone is the signal regardless of value).
+ */
+function describeEnhancerAttr(enhancer: EnhancerSignal): string {
+  if (enhancer.value === null) return `\`${enhancer.attribute}\``;
+  return `\`${enhancer.attribute}="${enhancer.value}"\``;
+}
+
+/**
+ * Attribute-name/value pairs that name a known JS tooltip library's
+ * trigger. Attribute names are matched case-insensitively via the
+ * existing `getHtmlAttribute` / `getJsxAttributeString` helpers; values
+ * are compared case-insensitively (Bootstrap examples in the wild
+ * normalize to lowercase but the HTML spec permits mixed case).
+ *
+ * Three families:
+ *   - Bootstrap 5: `data-bs-toggle="tooltip"|"popover"`
+ *   - Bootstrap 4 (legacy): `data-toggle="tooltip"|"popover"`
+ *   - Tippy.js: `data-tippy-content` (any non-empty value)
+ *
+ * If the ecosystem grows (e.g. a new widget library picks up
+ * `data-*-tooltip`), extend this table rather than the detection logic.
+ */
+const VALUE_SENSITIVE_ENHANCERS: ReadonlyArray<{
+  readonly attribute: string;
+  readonly values: ReadonlySet<string>;
+}> = [
+  { attribute: "data-bs-toggle", values: new Set(["tooltip", "popover"]) },
+  { attribute: "data-toggle", values: new Set(["tooltip", "popover"]) },
+];
+
+/** Attribute names whose mere presence is the enhancer signal. */
+const PRESENCE_ONLY_ENHANCERS: readonly string[] = ["data-tippy-content"];
+
+function detectHtmlEnhancer(element: HtmlElement): EnhancerSignal | null {
+  for (const { attribute, values } of VALUE_SENSITIVE_ENHANCERS) {
+    const raw = getHtmlAttribute(element, attribute);
+    if (raw === null) continue;
+    if (values.has(raw.trim().toLowerCase())) {
+      return { attribute, value: raw.trim().toLowerCase() };
+    }
+  }
+  for (const attribute of PRESENCE_ONLY_ENHANCERS) {
+    const raw = getHtmlAttribute(element, attribute);
+    // `data-tippy-content=""` / whitespace-only is not a wired trigger —
+    // Tippy requires a non-empty content string to render anything. Per
+    // CLAUDE.md §1, we avoid false-signal enrichment when the attribute
+    // is structurally inert; normal finding still fires.
+    if (raw !== null && raw.trim().length > 0) {
+      return { attribute, value: null };
+    }
+  }
+  return null;
+}
+
+function detectJsxEnhancer(element: JsxElement): EnhancerSignal | null {
+  for (const { attribute, values } of VALUE_SENSITIVE_ENHANCERS) {
+    const raw = getJsxAttributeString(element, attribute);
+    if (raw === null) continue;
+    if (values.has(raw.trim().toLowerCase())) {
+      return { attribute, value: raw.trim().toLowerCase() };
+    }
+  }
+  for (const attribute of PRESENCE_ONLY_ENHANCERS) {
+    const raw = getJsxAttributeString(element, attribute);
+    if (raw !== null && raw.trim().length > 0) {
+      return { attribute, value: null };
+    }
+  }
+  return null;
 }

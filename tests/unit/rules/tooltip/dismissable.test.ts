@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { rule } from "../../../../src/rules/tooltip/dismissable.ts";
+import { rule, TOOLTIP_JS_ENHANCER_PRESENT } from "../../../../src/rules/tooltip/dismissable.ts";
 import { runRule } from "../../../helpers/run-rule.ts";
 
 describe("rule tooltip/dismissable", () => {
@@ -197,6 +197,135 @@ describe("rule tooltip/dismissable", () => {
         `const x = <abbr title="World Health Organization">WHO</abbr>;`,
       );
       expect(violations).toHaveLength(0);
+    });
+  });
+
+  // Elements with a JS-tooltip-library trigger attribute on the same
+  // node as the title still fire the rule (surface-don't-suppress),
+  // but the emitted message gains a short enrichment clause and the
+  // violation carries the `tooltip_js_enhancer_present`
+  // couldBeWrongBecause code so the agent can read the file and
+  // dismiss quickly when the runtime widget is in fact compliant.
+  // See ADR 0009 and the bootstrap-data-bs-toggle-tooltip real-world
+  // fixture.
+  describe("JS-tooltip-enhancer enrichment", () => {
+    const ENRICHMENT_TOKEN = "JS tooltip library";
+
+    it("HTML: data-bs-toggle='tooltip' sibling enriches message + couldBeWrongBecause", () => {
+      const violations = runRule(
+        rule,
+        `<button data-bs-toggle="tooltip" title="Tooltip on top">x</button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.message).toContain(`data-bs-toggle="tooltip"`);
+      expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+      // Severity must not be downgraded — this is enrichment, not suppression.
+      expect(violations[0]?.severity).toBe("warning");
+    });
+
+    it("HTML: data-bs-toggle='popover' sibling enriches", () => {
+      const violations = runRule(
+        rule,
+        `<button data-bs-toggle="popover" title="Popover title">x</button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+    });
+
+    it("HTML: BS4 legacy data-toggle='tooltip' sibling enriches", () => {
+      const violations = runRule(
+        rule,
+        `<button data-toggle="tooltip" title="Legacy tooltip">x</button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+    });
+
+    it("HTML: BS4 legacy data-toggle='popover' sibling enriches", () => {
+      const violations = runRule(
+        rule,
+        `<a href="/x" data-toggle="popover" title="Legacy popover">x</a>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+    });
+
+    it("HTML: data-tippy-content sibling (any non-empty value) enriches", () => {
+      const violations = runRule(
+        rule,
+        `<a href="/x" data-tippy-content="Help center details" title="Help">x</a>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.message).toContain("data-tippy-content");
+      expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+    });
+
+    it("HTML: plain title with no enhancer attribute keeps the original message", () => {
+      // Negative control — the sibling-attribute absence must NOT add
+      // the enrichment or the couldBeWrongBecause code. This is the
+      // guard that prevents the enrichment from leaking onto every
+      // finding.
+      const violations = runRule(rule, `<button title="Save document">x</button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("HTML: data-bs-toggle='modal' does NOT enrich (value-sensitive)", () => {
+      // The trigger is tooltip/popover specifically — other
+      // data-bs-toggle values (collapse, modal, dropdown, …) do not
+      // replace the native title at all. Must not enrich.
+      const violations = runRule(
+        rule,
+        `<button data-bs-toggle="modal" title="Open modal">x</button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("HTML: empty data-tippy-content does NOT enrich", () => {
+      // Tippy needs a non-empty content string; an empty attribute is
+      // structurally inert, so we don't surface the enrichment signal.
+      const violations = runRule(rule, `<button data-tippy-content="" title="Save">x</button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("JSX: data-bs-toggle='tooltip' sibling enriches", () => {
+      const violations = runRule(
+        rule,
+        `const x = <button data-bs-toggle="tooltip" title="Tooltip">x</button>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+    });
+
+    it("JSX: data-tippy-content sibling enriches", () => {
+      const violations = runRule(
+        rule,
+        `const x = <a href="/x" data-tippy-content="Details" title="Help">x</a>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
+      expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
     });
   });
 });

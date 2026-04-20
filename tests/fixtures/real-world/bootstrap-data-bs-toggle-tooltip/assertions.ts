@@ -1,7 +1,6 @@
 /**
- * bootstrap-data-bs-toggle-tooltip — guards the
- * V1-FP-TOOLTIP-DATA-BS-TOGGLE reason-text enrichment for
- * `tooltip/dismissable` (wcag22:1.4.13).
+ * bootstrap-data-bs-toggle-tooltip — guards the JS-tooltip-enhancer
+ * reason-text enrichment for `tooltip/dismissable` (wcag22:1.4.13).
  *
  * On `twbs/bootstrap` at `js/tests/integration/index.html:18`, the
  * finding
@@ -53,11 +52,11 @@ export const assertions: FixtureAssertions = {
     "in fact WCAG 1.4.13-compliant.",
   origin: {
     notes:
-      "V1-FP-TOOLTIP-DATA-BS-TOGGLE (sixth-pass twbs/bootstrap scan). Sanitized from " +
-      "js/tests/integration/index.html:18. The native title attribute is a source string for a " +
-      "runtime ARIA-aware tooltip widget (aria-describedby + role=tooltip + keyboard dismiss); " +
-      "static analysis cannot prove the widget is actually wired up, so the finding stays live " +
-      "and the agent reads the file to confirm. No severity downgrade, no bucket.",
+      "Sanitized from js/tests/integration/index.html:18 (sixth-pass twbs/bootstrap scan). The " +
+      "native title attribute is a source string for a runtime ARIA-aware tooltip widget " +
+      "(aria-describedby + role=tooltip + keyboard dismiss); static analysis cannot prove the " +
+      "widget is actually wired up, so the finding stays live and the agent reads the file to " +
+      "confirm. No severity downgrade, no bucket.",
   },
   expectations: [
     { kind: "zero-parse-errors" },
