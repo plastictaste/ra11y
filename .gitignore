@@ -36,6 +36,12 @@ yarn-error.log*
 .claude/test-status.json
 .claude/env
 .claude/scheduled_tasks.lock
+# Agent-isolation worktrees (real git worktrees under .git/worktrees/;
+# their checkouts sit here so dispatched agents can work in parallel
+# without disturbing the main tree). Main-tree tooling must not descend
+# into them — biome/tsc/bun-test all honor this ignore via their
+# respective vcs-ignore hooks.
+.claude/worktrees/
 
 # OS junk
 Thumbs.db
