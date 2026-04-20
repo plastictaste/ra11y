@@ -17,18 +17,18 @@
 
 import { defineRule } from "../../api/plugin.ts";
 import {
-  findHtmlElementsByTag,
-  findJsxElementsByTag,
   getHtmlAttribute,
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
   htmlTextContent,
   jsxTextContent,
+  walkHtmlElements,
+  walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
-const HEADING_TAGS: readonly string[] = ["h1", "h2", "h3", "h4", "h5", "h6"];
+const HEADING_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 
 export const rule = defineRule({
   id: "semantics/empty-heading",
@@ -73,13 +73,69 @@ type Emit = (v: {
   suggestion: string;
 }) => void;
 
+/**
+ * A heading observed in document order. `text` is the trimmed text
+ * content (empty string for the offending headings the rule flags).
+ * `level` is parsed from the tag so the fix builder can compare
+ * level deltas without re-parsing.
+ */
+interface HeadingEntry {
+  readonly tagName: string;
+  readonly level: number;
+  readonly line: number;
+  readonly column: number;
+  readonly text: string;
+}
+
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
-  for (const tag of HEADING_TAGS) {
-    for (const element of findHtmlElementsByTag(doc, tag)) {
-      if (hasAccessibleContentHtml(element)) continue;
-      emitViolation(element.tagName, element.loc.start.line, element.loc.start.column, emit);
+  const headings = collectHtmlHeadings(doc);
+  for (let i = 0; i < headings.length; i++) {
+    const heading = headings[i];
+    if (heading === undefined) continue;
+    const el = findHtmlHeadingAt(doc, heading);
+    if (el === null) continue;
+    if (hasAccessibleContentHtml(el)) continue;
+    const preceding = findPrecedingNonEmpty(headings, i);
+    emitViolation(heading, preceding, emit);
+  }
+}
+
+/**
+ * Walks the HTML document once in document order and records every
+ * heading's tag, level, location, and trimmed text. The entries feed
+ * the fix builder so the suggestion can reference the section the
+ * empty heading appears under — the rule's detection logic is
+ * unchanged.
+ */
+function collectHtmlHeadings(doc: HtmlDocument): readonly HeadingEntry[] {
+  const out: HeadingEntry[] = [];
+  for (const el of walkHtmlElements(doc)) {
+    const lowered = el.tagName.toLowerCase();
+    if (!HEADING_TAGS.has(lowered)) continue;
+    const level = Number.parseInt(lowered.slice(1), 10);
+    if (!Number.isFinite(level)) continue;
+    out.push({
+      tagName: lowered,
+      level,
+      line: el.loc.start.line,
+      column: el.loc.start.column,
+      text: htmlTextContent(el),
+    });
+  }
+  return out;
+}
+
+function findHtmlHeadingAt(doc: HtmlDocument, entry: HeadingEntry): HtmlElement | null {
+  for (const el of walkHtmlElements(doc)) {
+    if (
+      el.tagName.toLowerCase() === entry.tagName &&
+      el.loc.start.line === entry.line &&
+      el.loc.start.column === entry.column
+    ) {
+      return el;
     }
   }
+  return null;
 }
 
 function hasAccessibleContentHtml(element: HtmlElement): boolean {
@@ -109,21 +165,54 @@ function hasChildImageWithAltHtml(element: HtmlElement): boolean {
 }
 
 function checkJsx(module: TsxModule, emit: Emit): void {
-  for (const tag of HEADING_TAGS) {
-    for (const element of findJsxElementsByTag(module, tag)) {
-      if (hasAccessibleContentJsx(element)) continue;
-      if (element.hasSpreadProps) {
-        emitPrimitiveViolation(
-          element.tagName,
-          element.loc.start.line,
-          element.loc.start.column,
-          emit,
-        );
-        continue;
-      }
-      emitViolation(element.tagName, element.loc.start.line, element.loc.start.column, emit);
+  const headings = collectJsxHeadings(module);
+  for (let i = 0; i < headings.length; i++) {
+    const heading = headings[i];
+    if (heading === undefined) continue;
+    const el = findJsxHeadingAt(module, heading);
+    if (el === null) continue;
+    if (hasAccessibleContentJsx(el)) continue;
+    if (el.hasSpreadProps) {
+      emitPrimitiveViolation(heading.tagName, heading.line, heading.column, emit);
+      continue;
+    }
+    const preceding = findPrecedingNonEmpty(headings, i);
+    emitViolation(heading, preceding, emit);
+  }
+}
+
+function collectJsxHeadings(module: TsxModule): readonly HeadingEntry[] {
+  const entries: HeadingEntry[] = [];
+  for (const el of walkJsxElements(module)) {
+    if (!HEADING_TAGS.has(el.tagName)) continue;
+    const level = Number.parseInt(el.tagName.slice(1), 10);
+    if (!Number.isFinite(level)) continue;
+    entries.push({
+      tagName: el.tagName,
+      level,
+      line: el.loc.start.line,
+      column: el.loc.start.column,
+      text: jsxTextContent(el),
+    });
+  }
+  // Sort by source position so "preceding heading" is computed in
+  // document order (walkJsxElements yields outer-first / children
+  // after, which isn't document order for nested JSX).
+  entries.sort((a, b) => a.line - b.line || a.column - b.column);
+  return entries;
+}
+
+function findJsxHeadingAt(module: TsxModule, entry: HeadingEntry): JsxElement | null {
+  for (const el of walkJsxElements(module)) {
+    if (
+      el.tagName === entry.tagName &&
+      el.loc.start.line === entry.line &&
+      el.loc.start.column === entry.column
+    ) {
+      return el;
     }
   }
+  return null;
 }
 
 function hasAccessibleContentJsx(element: JsxElement): boolean {
@@ -162,13 +251,72 @@ function hasChildImageWithAltJsx(element: JsxElement): boolean {
   return false;
 }
 
-function emitViolation(tagName: string, line: number, column: number, emit: Emit): void {
+/**
+ * Walks backwards from index `i` and returns the nearest preceding
+ * heading that actually carries text. Anchors the fix text in the
+ * document's surrounding outline — "Empty <h3> follows <h2>Contact
+ * Information</h2>" rather than the generic "Add descriptive text"
+ * that the previous builder emitted. Returns `null` when no such
+ * heading exists (empty heading at the top of the document).
+ */
+function findPrecedingNonEmpty(headings: readonly HeadingEntry[], i: number): HeadingEntry | null {
+  for (let j = i - 1; j >= 0; j--) {
+    const prev = headings[j];
+    if (prev !== undefined && prev.text.length > 0) return prev;
+  }
+  return null;
+}
+
+function emitViolation(entry: HeadingEntry, preceding: HeadingEntry | null, emit: Emit): void {
   emit({
     severity: "error",
-    location: { filePath: "", line, column },
-    message: `<${tagName}> is empty — it appears in the heading outline but describes no topic or purpose.`,
-    suggestion: `Add descriptive text inside <${tagName}> that summarizes the section it introduces. If the heading is used for visual styling only, replace it with a styled <p> or <div> and apply CSS to achieve the same appearance.`,
+    location: { filePath: "", line: entry.line, column: entry.column },
+    message: `<${entry.tagName}> is empty — it appears in the heading outline but describes no topic or purpose.`,
+    suggestion: buildEmptyHeadingSuggestion(entry, preceding),
   });
+}
+
+/**
+ * Four-branch ladder that inlines the document's actual surrounding
+ * heading outline into the fix text:
+ *
+ * 1. Preceding heading one level higher (`<h2>` before `<h3>`) —
+ *    canonical "continue the hierarchy" case. Names the parent
+ *    heading's text so the agent can pick a sibling title.
+ * 2. Preceding heading at the same level — sibling branch. Suggests
+ *    the next section's title or removal.
+ * 3. Preceding heading at any other level (lower, or a skip) —
+ *    flags the hierarchy irregularity alongside the fill/remove
+ *    choice so the agent knows to check `semantics/heading-hierarchy`.
+ * 4. No preceding heading — top-of-document fallback. Names the
+ *    screen-reader navigation gap an empty heading creates and
+ *    retains the styled-`<p>`/`<div>` alternative.
+ *
+ * The final clause of every branch retains the "or remove the
+ * heading" option so the spec-anchored remediation (add content or
+ * stop being a heading) is always one of the two paths.
+ */
+function buildEmptyHeadingSuggestion(entry: HeadingEntry, preceding: HeadingEntry | null): string {
+  const tag = `<${entry.tagName}>`;
+  if (preceding === null) {
+    return `Empty ${tag} at start of document — fill with the page's primary section title or remove the heading; screen readers announce heading levels, so an empty heading creates a navigation gap. If the heading is used for visual styling only, replace it with a styled <p> or <div>.`;
+  }
+  const prevTag = `<${preceding.tagName}>`;
+  const prevText = truncate(preceding.text, 80);
+  const prevSnippet = `${prevTag}${prevText}</${preceding.tagName}>`;
+  if (preceding.level === entry.level - 1) {
+    return `Empty ${tag} follows ${prevSnippet} at line ${preceding.line} — fill with a subsection title that continues the "${prevText}" hierarchy, or remove the heading if no section follows.`;
+  }
+  if (preceding.level === entry.level) {
+    return `Empty ${tag} follows a sibling ${prevSnippet} at line ${preceding.line} — fill with the next section's title, or remove if this heading was left empty by mistake.`;
+  }
+  return `Empty ${tag} — heading hierarchy appears broken (previous heading was ${prevSnippet} at line ${preceding.line}, level h${preceding.level} before this h${entry.level}). Fill with a title that fits the outline or remove the heading; check semantics/heading-hierarchy for the level sequence.`;
+}
+
+function truncate(text: string, limit: number): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= limit) return collapsed;
+  return `${collapsed.slice(0, limit - 1).trimEnd()}…`;
 }
 
 function emitPrimitiveViolation(tagName: string, line: number, column: number, emit: Emit): void {

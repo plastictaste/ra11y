@@ -85,7 +85,7 @@ violation fires.
 | pointer/drag-alternative | guidance | context-aware | tagName, drag-signal tokens, imported library name | Element-level builder names the tag and the exact drag-signal that fired; file-level builder cites the imported library. |
 | pointer/target-size | guidance | context-aware | selector/tag, declared width/height, padding, measured size text | Computes the exact pixel delta and proposes concrete `width: 24px` / `height: 24px` / `padding` deltas to reach the 24×24 floor. |
 | semantics/button-name | guidance | context-aware | host subject (button / a / input type=… / div role="button" / …), icon-child shell (svg-no-title / img-with-src / img-without-src / empty), filename-derived subject for `<img>` and `<input type="image">` src | `buildIconAwareSuggestion` branches on what the unnamed control is actually wrapping: SVG-icon branch names the `<svg><title>…</title></svg>` fix alongside `aria-label`; `<img>`-icon branch inlines a Title-Cased subject derived from the src filename (`icons/trash-bin.png` → `Trash Bin`) and proposes both `alt="Trash Bin"` on the image and `aria-label="Trash Bin"` on the host; `<input type="image">` branch never says "wraps an <img>" (it IS the image) and cites HTML §4.10.5.1.18 that value is not a name source; empty `<input type="submit/button/reset">` branch proposes `value="…"` or `aria-label="…"` (no nested children); empty `<button>` / `<a>` / `[role="button"]` fallback keeps the visible-text example anchored on the actual host tag. Resolved by commit cf53e34. |
-| semantics/empty-heading | guidance | generic | tagName only | `Add descriptive text inside <${tagName}>` — tag is the only dynamism. Does not inspect sibling context or page title. |
+| semantics/empty-heading | verify-in-source | context-aware | tagName, document heading outline, nearest preceding heading's tag/level/text/line | `buildEmptyHeadingSuggestion` walks the document once, collects every heading in source order, and picks the nearest preceding non-empty heading for the fix builder. Four-branch ladder: preceding heading one level higher → names it as the parent section and asks for a continuation title ("continues the Contact Information hierarchy"); preceding heading at the same level → sibling branch, suggests the next section's title or removal; preceding heading at any other level → flags the hierarchy break and cross-references `semantics/heading-hierarchy`; no preceding heading → top-of-document fallback naming the screen-reader navigation gap plus the styled-`<p>`/`<div>` option. Long preceding-heading text is truncated to ~80 chars with an ellipsis so the suggestion stays readable. Resolved by V1-FIX-EMPTY-HEADING (commit pending). |
 | semantics/heading-hierarchy | guidance | context-aware | previous level, current level | Inlines the exact `h${previous+1}` the heading should become, plus the gap width. |
 | semantics/label-in-name | guidance | context-aware | visible text, aria-label, interleaved-expansion detection, case-mismatch words | Ranked `fixPaths`; optional `editCandidate` when visible-text tokens are non-contiguous in the aria-label. |
 | semantics/landmark-main | guidance | context-aware | tag, id, class, role, line, all-role-only flag | `buildMultipleMainSuggestion` ladder: all-`role="main"` branch inlines every binding's line and targets the attribute; `<main>` branch inlines each landmark's tag + `id=` / `class=` (+ role when role-bearing) and line for pairwise disambiguation; identity-free fallback degrades to line-only. Missing-`<main>` branch names the wrap target (primary article/content) and explicitly excludes `<header>` / `<nav>` / `<footer>`. Resolved by commit pending. |
@@ -99,14 +99,13 @@ violation fires.
 
 Verdict distribution:
 
-- context-aware: 49
-- generic: 3
+- context-aware: 50
+- generic: 2
 - caveat-only: 0
 
 Rules flagged `generic` (need per-rule `feat(rules): context-aware fix for <rule>` follow-up commits before v1.0):
 
 - `navigation/link-no-href`
-- `semantics/empty-heading`
 - `semantics/table-headers`
 
 Resolved since publication (flipped to `context-aware`):
@@ -118,7 +117,8 @@ Resolved since publication (flipped to `context-aware`):
 - `media/video-captions-missing` — V1-FIX-VIDEO-CAPTIONS (commit pending).
 - `forms/non-empty-label` — V1-FIX-NON-EMPTY-LABEL (commit pending).
 - `semantics/button-name` — V1-FIX-BUTTON-NAME (commit cf53e34).
-- `semantics/landmark-main` — V1-FIX-LANDMARK-MAIN (commit pending).
+- `semantics/landmark-main` — V1-FIX-LANDMARK-MAIN (commit 06035ee).
+- `semantics/empty-heading` — V1-FIX-EMPTY-HEADING (commit pending).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted
@@ -135,8 +135,6 @@ commitments; the implementer reads the rule file and decides:
 - `navigation/link-no-href`: inspect the onClick body — if it's navigation,
   recommend `href={route}`; if it's a mutation, recommend `<button>` and
   name the handler's identifier.
-- `semantics/empty-heading`: cite the document's existing heading outline so
-  the suggestion can reference the section's surrounding context.
 - `semantics/table-headers`: inspect the first row — if it contains `<td>`
   elements whose text looks header-shaped (short, title-case), suggest
   converting those specific cells to `<th scope="col">`.

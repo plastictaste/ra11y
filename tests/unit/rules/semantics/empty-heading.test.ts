@@ -142,6 +142,61 @@ describe("rule semantics/empty-heading", () => {
     });
   });
 
+  describe("context-aware fix: preceding heading", () => {
+    it("empty h3 after h2 inlines the h2's text and level", () => {
+      const source = `<h2>Contact Information</h2>\n<h3></h3>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      const empty = violations.find((v) => v.location.line === 2);
+      expect(empty?.suggestion).toContain("<h3>");
+      expect(empty?.suggestion).toContain("<h2>Contact Information</h2>");
+      expect(empty?.suggestion).toContain("line 1");
+      expect(empty?.suggestion).toContain("Contact Information");
+    });
+
+    it("empty h2 after a sibling h2 mentions the sibling branch", () => {
+      const source = `<h2>Overview</h2>\n<p>intro copy</p>\n<h2></h2>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      const empty = violations[0];
+      expect(empty?.location.line).toBe(3);
+      expect(empty?.suggestion).toContain("sibling");
+      expect(empty?.suggestion).toContain("<h2>Overview</h2>");
+    });
+
+    it("empty h2 after an h4 flags the hierarchy break", () => {
+      const source = `<h4>Details</h4>\n<h2></h2>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      const empty = violations.find((v) => v.location.line === 2);
+      expect(empty?.suggestion).toContain("hierarchy");
+      expect(empty?.suggestion).toContain("<h4>Details</h4>");
+      expect(empty?.suggestion).toContain("semantics/heading-hierarchy");
+    });
+
+    it("empty heading at start of document uses the fallback branch", () => {
+      const source = `<h1></h1>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations[0]?.suggestion).toContain("start of document");
+      expect(violations[0]?.suggestion).toContain("navigation gap");
+    });
+
+    it("truncates very long preceding heading text in the fix", () => {
+      const long = "A".repeat(120);
+      const source = `<h2>${long}</h2>\n<h3></h3>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      const empty = violations.find((v) => v.location.line === 2);
+      // Inlined text should be truncated with an ellipsis, not pasted raw.
+      expect(empty?.suggestion).not.toContain(long);
+      expect(empty?.suggestion).toMatch(/…/);
+    });
+
+    it("JSX empty h3 after h2 inlines the preceding heading", () => {
+      const source = `const Page = () => (<div><h2>Pricing</h2><h3></h3></div>);`;
+      const violations = runRule(rule, source);
+      const empty = violations[0];
+      expect(empty?.suggestion).toContain("<h2>Pricing</h2>");
+      expect(empty?.suggestion).toContain("<h3>");
+    });
+  });
+
   it("cites wcag22:2.4.6 and wcag21:2.4.6", () => {
     expect(rule.satisfies).toContain("wcag22:2.4.6");
     expect(rule.satisfies).toContain("wcag21:2.4.6");
