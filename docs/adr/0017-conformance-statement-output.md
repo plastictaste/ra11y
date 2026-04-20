@@ -1,6 +1,6 @@
 # 0017 — Conformance statement output
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-04-18
 - Supersedes: none
 - Superseded by: none
@@ -315,6 +315,39 @@ reads the index and fails if any criterion has an empty evidence set.
    attestation's commit anchor) is not pinned here. The threshold should be
    configurable and should appear in `configSnapshot`. Deferred to the
    attestation implementation track.
+
+## Implementation
+
+The six WCAG §5.3.1 required claim fields — `guidelinesTitle`,
+`guidelinesVersion`, `guidelinesUri`, `scope.files`,
+`technologiesReliedUpon`, `technologiesNotReliedUpon` — landed on the
+`ConformanceStatement` type, `buildConformanceStatement`, and
+`renderConformanceMarkdown` under backlog item
+`V1-CERT-STATEMENT-SHAPE`. The implementation follows this ADR with
+two present-when-meaningful deviations per the AI-first consumer
+model:
+
+- `scope.commitHash` and `scope.configSnapshot` are optional on the
+  emitted shape. The builder omits them when the caller does not
+  supply them (empty strings and empty objects map to omission, not to
+  sentinel values). The signing flow (`V1-CERT-STATEMENT-SIGN`) is the
+  call site that wires the commit hash through; until then the MCP
+  tool forwards `scope.configSnapshot` from the session config and
+  leaves `scope.commitHash` absent.
+- `technologiesReliedUpon` defaults to
+  `["HTML", "CSS", "ECMAScript", "WAI-ARIA"]` (a safe web-project
+  default) when the caller omits it. The per-extension derivation
+  described under "Technologies-relied-upon derivation" is deferred;
+  the caller-declared override is the supported path today.
+
+The `ConformanceBlockerReason` union in `src/reports/conformance.ts`
+uses `no-evidence | failing | candidate-only | partially-attested`
+rather than the `no_positive_source | attested_fail | stale_attestation
+| missing_process_config` sketch in the Decision section above. That
+divergence predates this ADR — the implementation's enum maps to the
+evidence-ledger classification model — and is tracked under
+`V1-CERT-STALE-ATTEST`, which adds the `stale-attestation` and
+`missing-process-config` variants without dropping the existing set.
 
 ## References
 

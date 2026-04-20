@@ -98,10 +98,80 @@ export interface ConformanceBlocker {
   readonly missingRuleIds?: readonly string[];
 }
 
+/**
+ * Scope of the conformance claim in a static-scanner context — a file
+ * set (not a URL set, since ra11y inspects source trees rather than
+ * deployed pages). ADR 0017 reserves space here for the commit anchor,
+ * config snapshot, and process definitions; the commit/config fields
+ * are optional and follow the AI-first consumer model's
+ * present-when-meaningful rule. The signing flow
+ * (V1-CERT-STATEMENT-SIGN) is the call site that wires the commit
+ * hash through.
+ */
+export interface ConformanceStatementScope {
+  /**
+   * File paths included in the scan — the manifest the claim stands on.
+   * Paths are mirrored verbatim from the caller; the builder does not
+   * normalize. Always populated; an empty array means nothing was
+   * scanned.
+   */
+  readonly files: readonly string[];
+  /**
+   * Git commit hash at scan time. Omitted when the caller did not
+   * supply one (e.g., scan outside a git repo, or the signing flow is
+   * not yet wired). Never emitted as an empty string.
+   */
+  readonly commitHash?: string;
+  /**
+   * Snapshot of the `ra11y.config.ts` fields active during the scan —
+   * `standard`, `level`, `exclude`, `nativeWrappers`, etc. Reproduces
+   * the scan conditions from the statement alone. Omitted when the
+   * caller did not supply one; never `{}`.
+   */
+  readonly configSnapshot?: Record<string, unknown>;
+}
+
 export interface ConformanceStatement {
   readonly profile: ConformanceProfile;
   readonly generatedAt: string;
   readonly conformant: boolean;
+  /**
+   * Human-readable title of the guidelines being claimed against
+   * (WCAG §5.3.1(2)). Mirrored from `Standard.name`; always populated
+   * so the required claim field never reads as absent.
+   */
+  readonly guidelinesTitle: string;
+  /**
+   * Version string of the guidelines — e.g. "2.2", "2.1". Mirrored from
+   * `Standard.version` so the claim pins the exact spec edition the
+   * statement was generated against.
+   */
+  readonly guidelinesVersion: string;
+  /**
+   * Canonical URI of the guidelines document, per WCAG §5.3.1(2).
+   * Mirrored from `Standard.url`; e.g. "https://www.w3.org/TR/WCAG22/".
+   */
+  readonly guidelinesUri: string;
+  /**
+   * File manifest + (when the caller supplied them) commit/config
+   * anchors that pin the claim. See {@link ConformanceStatementScope}.
+   */
+  readonly scope: ConformanceStatementScope;
+  /**
+   * Web content technologies the claim relies upon (WCAG §5.3.1(5)).
+   * Caller-supplied; defaults to
+   * {@link DEFAULT_TECHNOLOGIES_RELIED_UPON} when omitted. A future
+   * track will derive this from the scanned file set in the evidence
+   * ledger (ADR 0017); until then the default covers typical web
+   * projects and the override is the supported path. Always populated.
+   */
+  readonly technologiesReliedUpon: readonly string[];
+  /**
+   * Technologies explicitly not relied upon. Empty array by default —
+   * the common case where no technology is deliberately excluded.
+   * Always populated for schema stability.
+   */
+  readonly technologiesNotReliedUpon: readonly string[];
   /**
    * Criteria the profile asked about. `criteriaInScope` is the
    * denominator of the claim; `blockers.length` is the gap. When
@@ -127,10 +197,53 @@ export interface ConformanceStatement {
   readonly signature?: ConformanceSignature;
 }
 
+/**
+ * Safe default for web projects when the caller does not declare the
+ * technologies the claim relies upon. Derivation from the scanned file
+ * set is deferred to a later track (ADR 0017 open question); until
+ * then, the default matches what a typical React/HTML/CSS project
+ * would declare and keeps the required field populated.
+ */
+export const DEFAULT_TECHNOLOGIES_RELIED_UPON: readonly string[] = [
+  "HTML",
+  "CSS",
+  "ECMAScript",
+  "WAI-ARIA",
+];
+
 export interface BuildConformanceStatementInputs {
   readonly ledger: EvidenceLedger;
   readonly profile: ConformanceProfile;
   readonly standards: readonly Standard[];
+  /**
+   * Scanned file manifest — the set of paths the claim stands on.
+   * Mirrored into `statement.scope.files`. Pass an empty array when no
+   * files were scanned; downstream consumers can distinguish that case
+   * from "field absent" (the field is always present on the scope).
+   */
+  readonly files?: readonly string[];
+  /**
+   * Web content technologies the claim relies upon (WCAG §5.3.1(5)).
+   * When omitted, {@link DEFAULT_TECHNOLOGIES_RELIED_UPON} is used so
+   * the required field always has a defensible value.
+   */
+  readonly technologiesReliedUpon?: readonly string[];
+  /**
+   * Technologies explicitly not relied upon. Defaults to `[]`.
+   */
+  readonly technologiesNotReliedUpon?: readonly string[];
+  /**
+   * Commit hash at scan time. Forwarded verbatim into
+   * `statement.scope.commitHash`. Omitted from the output when absent
+   * or empty (no `""` sentinel).
+   */
+  readonly commitHash?: string;
+  /**
+   * Snapshot of `ra11y.config.ts` fields active during the scan.
+   * Forwarded into `statement.scope.configSnapshot`. Omitted from the
+   * output when absent or empty.
+   */
+  readonly configSnapshot?: Record<string, unknown>;
   /**
    * Optional named conformance profile (see `src/config/profiles.ts`)
    * whose `standards` + `level?` tuple narrows the claim's scope:
@@ -228,14 +341,39 @@ export function buildConformanceStatement(
         )
       : undefined;
   const effectiveProfile: ConformanceProfile = { ...inputs.profile, level: effectiveLevel };
+  const scope = buildStatementScope(inputs);
   return {
     profile: effectiveProfile,
     generatedAt: inputs.ledger.meta.generatedAt,
     conformant,
+    guidelinesTitle: standard.name,
+    guidelinesVersion: standard.version,
+    guidelinesUri: standard.url,
+    scope,
+    technologiesReliedUpon: inputs.technologiesReliedUpon ?? DEFAULT_TECHNOLOGIES_RELIED_UPON,
+    technologiesNotReliedUpon: inputs.technologiesNotReliedUpon ?? [],
     criteriaInScope: inScope.length,
     blockers,
     summary,
     ...(signature !== undefined && { signature }),
+  };
+}
+
+/**
+ * Assembles the statement's {@link ConformanceStatementScope} from the
+ * builder inputs. `files` is always present (defaults to `[]`); the
+ * commit hash and config snapshot are present-when-meaningful — empty
+ * strings and empty objects map to field omission, not sentinel
+ * values, per the AI-first consumer model's absent-vs-empty rule.
+ */
+function buildStatementScope(inputs: BuildConformanceStatementInputs): ConformanceStatementScope {
+  const hasCommit = inputs.commitHash !== undefined && inputs.commitHash.length > 0;
+  const hasSnapshot =
+    inputs.configSnapshot !== undefined && Object.keys(inputs.configSnapshot).length > 0;
+  return {
+    files: inputs.files ?? [],
+    ...(hasCommit && { commitHash: inputs.commitHash }),
+    ...(hasSnapshot && { configSnapshot: inputs.configSnapshot }),
   };
 }
 
@@ -302,19 +440,65 @@ function buildBlocker(
 /**
  * Markdown renderer for the conformance statement — the shape an
  * auditor or release process can drop into a release note or
- * compliance bundle. Minimal: title, profile, verdict, counts, and
- * a blocker table when not conformant.
+ * compliance bundle. Emits the WCAG §5.3.1 required claim fields
+ * (date, guidelines title/version/URI, conformance level, scope,
+ * technologies relied upon) plus the ra11y-specific verdict and
+ * blocker table. Sections whose array is empty are omitted (e.g.
+ * `technologiesNotReliedUpon` is usually `[]`).
  */
 export function renderConformanceMarkdown(statement: ConformanceStatement): string {
   const lines: string[] = [];
-  const { profile, generatedAt, conformant, criteriaInScope, summary, blockers } = statement;
+  const {
+    profile,
+    generatedAt,
+    conformant,
+    guidelinesTitle,
+    guidelinesVersion,
+    guidelinesUri,
+    scope,
+    technologiesReliedUpon,
+    technologiesNotReliedUpon,
+    criteriaInScope,
+    summary,
+    blockers,
+  } = statement;
   lines.push(`# Conformance Statement — ${profile.standardId} ${profile.level}`);
   lines.push("");
-  lines.push(`- Generated: ${generatedAt}`);
+  lines.push(`- Date: ${generatedAt}`);
+  lines.push(`- Guidelines: ${guidelinesTitle} ${guidelinesVersion} (<${guidelinesUri}>)`);
+  lines.push(`- Conformance level: ${profile.level}`);
   lines.push(`- Criteria in scope: ${criteriaInScope}`);
   lines.push(
     `- Status: **${conformant ? "CONFORMANT" : "NOT CONFORMANT"}** (pass=${summary.pass}, fail=${summary.fail}, partial=${summary.partial}, unknown=${summary.unknown}, n/a=${summary.na})`,
   );
+  lines.push("");
+  lines.push(`## Scope`);
+  lines.push("");
+  lines.push(`- Files scanned: ${scope.files.length}`);
+  if (scope.commitHash !== undefined) {
+    lines.push(`- Commit: \`${scope.commitHash}\``);
+  }
+  if (scope.configSnapshot !== undefined) {
+    lines.push(`- Config snapshot:`);
+    lines.push("");
+    lines.push("```json");
+    lines.push(JSON.stringify(scope.configSnapshot, null, 2));
+    lines.push("```");
+  }
+  lines.push("");
+  lines.push(`## Technologies relied upon`);
+  lines.push("");
+  if (technologiesReliedUpon.length === 0) {
+    lines.push(`_None declared._`);
+  } else {
+    for (const t of technologiesReliedUpon) lines.push(`- ${t}`);
+  }
+  if (technologiesNotReliedUpon.length > 0) {
+    lines.push("");
+    lines.push(`## Technologies not relied upon`);
+    lines.push("");
+    for (const t of technologiesNotReliedUpon) lines.push(`- ${t}`);
+  }
   lines.push("");
   if (conformant) {
     lines.push(

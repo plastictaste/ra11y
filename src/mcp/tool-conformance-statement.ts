@@ -80,6 +80,18 @@ export const conformanceStatementTool: McpTool = {
           description:
             "Named conformance profile (e.g. `wcag22-aa`, `wcag21-aa`, `section508`, `en301549`). When supplied the claim's in-scope criterion set narrows to the profile's `standards` + `level?` tuple — the same scope `/coverage` honors — so the statement only stands on evidence for criteria inside the profile. Resolves against built-in profiles first, then `Config.profiles` user overrides. Omit to claim against the full `standard` + `level` pair above.",
         },
+        technologiesReliedUpon: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Web content technologies the claim relies upon, per WCAG §5.3.1(5) — e.g. `["HTML", "CSS", "ECMAScript", "WAI-ARIA"]`. Omit to fall back to the safe web-project default; override when the product declares a narrower or broader set.',
+        },
+        technologiesNotReliedUpon: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Technologies explicitly excluded from the claim — useful for e.g. no-JS fallback claims. Defaults to `[]`.",
+        },
       },
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
@@ -164,13 +176,9 @@ export const conformanceStatementTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
-    const statement = buildConformanceStatement({
-      ledger,
-      profile,
-      standards: BUILTIN_STANDARDS,
-      rulesForCriterion: satisfyingRulesForCriterion,
-      ...(namedProfile !== undefined && { scope: namedProfile }),
-    });
+    const statement = buildConformanceStatement(
+      assembleBuilderInputs({ ledger, profile, files, params, session, namedProfile }),
+    );
 
     return textResult({
       ...statement,
@@ -181,6 +189,42 @@ export const conformanceStatementTool: McpTool = {
     });
   },
 };
+
+/**
+ * Assembles the builder inputs from the tool's request context. Split
+ * from the handler body to keep the handler under the project's
+ * complexity budget; the work done here is mechanical forwarding —
+ * extract `files[].filePath`, snapshot the session config for the
+ * scope, and conditional-spread the optional technology overrides.
+ */
+function assembleBuilderInputs(ctx: {
+  readonly ledger: Parameters<typeof buildConformanceStatement>[0]["ledger"];
+  readonly profile: ConformanceProfile;
+  readonly files: ReadonlyArray<{ readonly filePath: string }>;
+  readonly params: Record<string, unknown>;
+  readonly session: Parameters<typeof conformanceStatementTool.handler>[1];
+  readonly namedProfile: NamedConformanceProfile | undefined;
+}): Parameters<typeof buildConformanceStatement>[0] {
+  const technologiesReliedUpon = strArrayParam(ctx.params, "technologiesReliedUpon");
+  const technologiesNotReliedUpon = strArrayParam(ctx.params, "technologiesNotReliedUpon");
+  const configSnapshot: Record<string, unknown> = {
+    standard: ctx.session.config.standard,
+    level: ctx.session.config.level,
+    exclude: [...ctx.session.config.exclude],
+    nativeWrappers: [...ctx.session.config.nativeWrappers],
+  };
+  return {
+    ledger: ctx.ledger,
+    profile: ctx.profile,
+    standards: BUILTIN_STANDARDS,
+    rulesForCriterion: satisfyingRulesForCriterion,
+    files: ctx.files.map((f) => f.filePath),
+    configSnapshot,
+    ...(technologiesReliedUpon !== undefined && { technologiesReliedUpon }),
+    ...(technologiesNotReliedUpon !== undefined && { technologiesNotReliedUpon }),
+    ...(ctx.namedProfile !== undefined && { scope: ctx.namedProfile }),
+  };
+}
 
 function resolveProfileLevel(
   raw: string | undefined,
