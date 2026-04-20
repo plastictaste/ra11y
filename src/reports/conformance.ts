@@ -25,6 +25,7 @@
  */
 
 import type { ConformanceProfile as ConfigConformanceProfile } from "../config/profiles.ts";
+import type { Process } from "../types/config.ts";
 import type {
   AttestationRecord,
   CriterionEvidence,
@@ -33,6 +34,7 @@ import type {
   EvidenceStatus,
 } from "../types/evidence.ts";
 import type { Standard } from "../types/standard.ts";
+import type { AttestationStalenessProbe } from "./attestation-surface.ts";
 import {
   type ConfigFingerprint,
   type ConformanceSignature,
@@ -40,6 +42,23 @@ import {
   type SignatureInput,
   signConformanceBundleAt,
 } from "./conformance-signature.ts";
+
+/**
+ * Local WCAG criterion IDs that can only be evaluated across a declared
+ * set of pages — 2.4.5 "Multiple ways", 3.2.3 "Consistent navigation",
+ * 3.2.4 "Consistent identification" (ADR 0016). When a conformance
+ * profile puts any of these in scope without a `processes` config, the
+ * builder emits a `missing-process-config` blocker: the criterion
+ * cannot be evaluated from per-page static analysis alone.
+ */
+const PROCESS_LEVEL_CRITERIA: ReadonlySet<string> = new Set([
+  "wcag22:2.4.5",
+  "wcag22:3.2.3",
+  "wcag22:3.2.4",
+  "wcag21:2.4.5",
+  "wcag21:3.2.3",
+  "wcag21:3.2.4",
+]);
 
 /**
  * Defines the scope of a conformance claim. For WCAG, `level` narrows
@@ -69,7 +88,9 @@ export type ConformanceBlockerReason =
   | "no-evidence"
   | "failing"
   | "candidate-only"
-  | "partially-attested";
+  | "partially-attested"
+  | "stale-attestation"
+  | "missing-process-config";
 
 export interface ConformanceBlocker {
   readonly criterionId: string;
@@ -98,6 +119,14 @@ export interface ConformanceBlocker {
    * coverage gap. Omitted for other blocker reasons.
    */
   readonly missingRuleIds?: readonly string[];
+  /**
+   * Present when `reason === "stale-attestation"`: the `attestedAt`
+   * timestamp of the attestation that became stale against the current
+   * tree. Agents use this to cite which attestation needs refreshing
+   * without having to re-enumerate the ledger. Omitted for other
+   * blocker reasons.
+   */
+  readonly staleAttestedAt?: string;
 }
 
 /**
@@ -197,6 +226,14 @@ export interface ConformanceStatement {
    * so the field is not a false assurance over a partial claim.
    */
   readonly signature?: ConformanceSignature;
+  /**
+   * Response-level warnings — structured codes the agent acts on. Only
+   * populated when the builder degraded gracefully rather than emitting
+   * a hard blocker: `"stale_probe_unavailable"` when the git staleness
+   * probe couldn't answer (non-repo, git missing, shallow clone). The
+   * field is omitted when empty per the AI-first consumer model.
+   */
+  readonly warnings?: readonly string[];
 }
 
 /**
@@ -296,6 +333,32 @@ export interface BuildConformanceStatementInputs {
     readonly fileManifest?: readonly FileManifestEntry[];
     readonly toolVersion?: string;
   };
+  /**
+   * Optional git-backed staleness probe. When provided, the builder
+   * checks every attested-pass (or n/a) source against the probe: an
+   * attestation recorded at commit A against a file changed at commit B
+   * flips the criterion to a `stale-attestation` blocker rather than
+   * silently riding the pass through. When omitted (non-repo, caller
+   * opted out), attestations are trusted as-is — matching the previous
+   * behavior. When the probe returns `null` (indeterminate — stamp
+   * couldn't resolve, git failed), the builder emits a
+   * `stale_probe_unavailable` warning rather than guessing.
+   */
+  readonly stalenessProbe?: AttestationStalenessProbe;
+  /**
+   * Declared processes (page sets) from the loaded config — per
+   * ADR 0016. When empty/undefined and the profile puts process-level
+   * criteria (2.4.5 / 3.2.3 / 3.2.4) in scope, the builder refuses to
+   * emit a conformance statement for those criteria: static per-page
+   * analysis cannot evaluate "the nav order is the same across the
+   * ordered page set" without an explicit page set. Each such criterion
+   * surfaces as a `missing-process-config` blocker citing the criterion
+   * ID. When at least one process is present, the check is satisfied —
+   * deeper process-level evaluation (consistency across the ordered
+   * page set) lives in `scan_process` and is expected to flow through
+   * as `static`/`attested` evidence against those criteria.
+   */
+  readonly processes?: readonly Process[];
 }
 
 /**
@@ -307,38 +370,8 @@ export interface BuildConformanceStatementInputs {
 export function buildConformanceStatement(
   inputs: BuildConformanceStatementInputs,
 ): ConformanceStatement {
-  // `scope` (optional named profile from src/config/profiles.ts) narrows
-  // the claim when present: filters the standard gate + overrides the
-  // effective level. Absent → original `inputs.profile` drives scope
-  // exactly as before.
-  const standard = inputs.standards.find((s) => s.id === inputs.profile.standardId);
-  if (!standard) {
-    throw new Error(
-      `ra11y: conformance profile references standard '${inputs.profile.standardId}' which is not loaded.`,
-    );
-  }
-  const scopeStandards = inputs.scope === undefined ? null : new Set(inputs.scope.standards);
-  const inScopeStandard = scopeStandards === null || scopeStandards.has(inputs.profile.standardId);
-  const effectiveLevel: ConformanceProfile["level"] = inputs.scope?.level ?? inputs.profile.level;
-  const inScope = inScopeStandard
-    ? standard.criteria.filter((c) => isInLevel(c.level, effectiveLevel))
-    : [];
-  const ledgerByCriterion = new Map(inputs.ledger.entries.map((e) => [e.criterionId, e] as const));
-
-  const blockers: ConformanceBlocker[] = [];
-  const summary = { pass: 0, fail: 0, partial: 0, unknown: 0, na: 0 };
-  for (const criterion of inScope) {
-    const entry = ledgerByCriterion.get(criterion.id);
-    const counts = countSources(entry?.sources ?? []);
-    const status: EvidenceStatus = entry?.status ?? "unknown";
-    tallySummary(summary, status);
-    const reason = classifyBlocker(status, counts, entry);
-    if (reason !== null) {
-      blockers.push(
-        buildBlocker(criterion, status, reason, counts, entry, inputs.rulesForCriterion),
-      );
-    }
-  }
+  const { standard, inScope, effectiveLevel } = resolveScope(inputs);
+  const { blockers, summary, warnings } = evaluateCriteria(inputs, inScope);
 
   const conformant = blockers.length === 0;
   const signature =
@@ -364,6 +397,271 @@ export function buildConformanceStatement(
     blockers,
     summary,
     ...(signature !== undefined && { signature }),
+    ...(warnings.size > 0 && { warnings: [...warnings].sort() }),
+  };
+}
+
+/**
+ * Resolves the in-scope criterion set and effective level. `scope`
+ * (optional named profile from src/config/profiles.ts) narrows the
+ * claim when present: filters the standard gate + overrides the
+ * effective level. Absent → original `inputs.profile` drives scope
+ * exactly as before. Throws when the caller's standardId doesn't
+ * resolve to a loaded standard — that's a configuration error the
+ * caller must surface.
+ */
+function resolveScope(inputs: BuildConformanceStatementInputs): {
+  readonly standard: Standard;
+  readonly inScope: readonly Standard["criteria"][number][];
+  readonly effectiveLevel: ConformanceProfile["level"];
+} {
+  const standard = inputs.standards.find((s) => s.id === inputs.profile.standardId);
+  if (!standard) {
+    throw new Error(
+      `ra11y: conformance profile references standard '${inputs.profile.standardId}' which is not loaded.`,
+    );
+  }
+  const scopeStandards = inputs.scope === undefined ? null : new Set(inputs.scope.standards);
+  const inScopeStandard = scopeStandards === null || scopeStandards.has(inputs.profile.standardId);
+  const effectiveLevel: ConformanceProfile["level"] = inputs.scope?.level ?? inputs.profile.level;
+  const inScope = inScopeStandard
+    ? standard.criteria.filter((c) => isInLevel(c.level, effectiveLevel))
+    : [];
+  return { standard, inScope, effectiveLevel };
+}
+
+/**
+ * Walks the in-scope criterion set, tallies the summary, and produces
+ * the blocker list + any response-level warnings. Split from
+ * {@link buildConformanceStatement} to keep the builder itself under
+ * the project's cognitive-complexity budget — the loop body interleaves
+ * per-criterion classification + shared-state mutation which compounds
+ * the outer function's score.
+ */
+function evaluateCriteria(
+  inputs: BuildConformanceStatementInputs,
+  inScope: readonly Standard["criteria"][number][],
+): {
+  readonly blockers: readonly ConformanceBlocker[];
+  readonly summary: SummaryTally;
+  readonly warnings: ReadonlySet<string>;
+} {
+  const ledgerByCriterion = new Map(inputs.ledger.entries.map((e) => [e.criterionId, e] as const));
+  const blockers: ConformanceBlocker[] = [];
+  const warnings = new Set<string>();
+  const summary: SummaryTally = { pass: 0, fail: 0, partial: 0, unknown: 0, na: 0 };
+  const hasProcessConfig = (inputs.processes?.length ?? 0) > 0;
+  for (const criterion of inScope) {
+    const entry = ledgerByCriterion.get(criterion.id);
+    const counts = countSources(entry?.sources ?? []);
+    const status: EvidenceStatus = entry?.status ?? "unknown";
+    tallySummary(summary, status);
+    const blocker = classifyOneCriterion({
+      criterion,
+      entry,
+      counts,
+      status,
+      hasProcessConfig,
+      stalenessProbe: inputs.stalenessProbe,
+      rulesForCriterion: inputs.rulesForCriterion,
+      warnings,
+    });
+    if (blocker !== null) blockers.push(blocker);
+  }
+  return { blockers, summary, warnings };
+}
+
+/**
+ * Classifies one in-scope criterion against the blocker taxonomy.
+ * Returns the blocker to append (or `null` when the criterion passes
+ * cleanly). Side effect: may add `stale_probe_unavailable` to
+ * {@link ClassifyCriterionArgs.warnings} when the probe answered
+ * indeterminately on an otherwise-clean attested pass.
+ *
+ * Split out of {@link buildConformanceStatement} to keep the builder
+ * under the project's cognitive-complexity budget — the loop body
+ * previously interleaved three classification layers (process-config
+ * gate → standard blocker classifier → staleness probe) with
+ * shared-state mutation, pushing the function over the limit.
+ */
+interface ClassifyCriterionArgs {
+  readonly criterion: Standard["criteria"][number];
+  readonly entry: CriterionEvidence | undefined;
+  readonly counts: SourceCounts;
+  readonly status: EvidenceStatus;
+  readonly hasProcessConfig: boolean;
+  readonly stalenessProbe: AttestationStalenessProbe | undefined;
+  readonly rulesForCriterion: ((criterionId: string) => readonly string[]) | undefined;
+  readonly warnings: Set<string>;
+}
+
+function classifyOneCriterion(args: ClassifyCriterionArgs): ConformanceBlocker | null {
+  const { criterion, entry, counts, status, hasProcessConfig, stalenessProbe, warnings } = args;
+  // Process-level criteria (ADR 0016) require a `processes` config.
+  // Without one, static per-page analysis cannot answer 2.4.5 / 3.2.3
+  // / 3.2.4, and riding whatever pass-by-default the ledger produced
+  // would be a dishonest claim. This check fires *before* the other
+  // blocker classifications so an agent sees the structural gap rather
+  // than a downstream "no-evidence" that hides the real cause.
+  if (!hasProcessConfig && PROCESS_LEVEL_CRITERIA.has(criterion.id)) {
+    return buildBlocker(
+      criterion,
+      status,
+      "missing-process-config",
+      counts,
+      entry,
+      args.rulesForCriterion,
+    );
+  }
+  const reason = classifyBlocker(status, counts, entry);
+  if (reason !== null) {
+    return buildBlocker(criterion, status, reason, counts, entry, args.rulesForCriterion);
+  }
+  // Pass/n/a with non-candidate evidence fell through `classifyBlocker`
+  // as "no blocker." Before accepting that, check the staleness probe
+  // against any attested source: an attestation recorded at commit A
+  // against a file changed at commit B is not honest evidence the
+  // current tree still satisfies the criterion. Probe === undefined
+  // means the caller opted out (non-repo tests, CLI with no git) —
+  // behave exactly as before. Probe returning `null` means the probe
+  // itself failed — emit a `stale_probe_unavailable` warning rather
+  // than guessing either direction.
+  const stale = evaluateStaleness(entry, stalenessProbe);
+  if (stale.outcome === "stale") {
+    return buildStaleBlocker(criterion, status, counts, stale.attestedAt);
+  }
+  if (stale.outcome === "indeterminate") {
+    warnings.add("stale_probe_unavailable");
+  }
+  return null;
+}
+
+/**
+ * Result of the staleness check for one criterion's attested sources.
+ *
+ * - `"clean"` — probe ran and no attested source flagged stale, or the
+ *   criterion had no attested sources to check. No blocker, no warning.
+ * - `"indeterminate"` — at least one attested source probed `null`
+ *   (stamp didn't resolve, git call failed). Caller adds a
+ *   `stale_probe_unavailable` warning and lets the pass through; the
+ *   builder does not fabricate staleness.
+ * - `"stale"` — probe returned `true` for at least one attested-pass /
+ *   attested-n/a source. Caller emits a `stale-attestation` blocker
+ *   with the earliest stale `attestedAt` as citation.
+ */
+type StalenessOutcome =
+  | { readonly outcome: "clean" }
+  | { readonly outcome: "indeterminate" }
+  | { readonly outcome: "stale"; readonly attestedAt: string };
+
+/**
+ * Rebuilds an {@link AttestationRecord} from one `attested`
+ * {@link EvidenceSource} so the staleness probe (which was designed
+ * against records, not sources) can be called without requiring the
+ * builder's caller to hand the original record list through. Optional
+ * fields are conditional-spread per the AI-first consumer model.
+ */
+function recordFromAttestedSource(
+  criterionId: string,
+  source: Extract<EvidenceSource, { kind: "attested" }>,
+): AttestationRecord {
+  return {
+    criterionId,
+    by: source.by,
+    reason: source.reason,
+    attestedAt: source.attestedAt,
+    ...(source.ruleIds !== undefined && { ruleIds: source.ruleIds }),
+    ...(source.scope !== undefined && { scope: source.scope }),
+    ...(source.location !== undefined && { location: source.location }),
+    ...(source.verdict !== undefined && { verdict: source.verdict }),
+  };
+}
+
+/**
+ * Probes every attested-pass / attested-n/a source on the entry and
+ * collapses the per-source answers into one outcome for the criterion.
+ *
+ * `"stale"` wins over `"indeterminate"`: a definitive stale answer on
+ * any source is enough to block, regardless of whether another source
+ * probed cleanly-or-indeterminately. `"indeterminate"` only surfaces
+ * when every attested source that could have been stale was answered
+ * `null`.
+ */
+function evaluateStaleness(
+  entry: CriterionEvidence | undefined,
+  probe: AttestationStalenessProbe | undefined,
+): StalenessOutcome {
+  if (probe === undefined || entry === undefined) return { outcome: "clean" };
+  let sawIndeterminate = false;
+  let earliestStale: string | null = null;
+  for (const source of entry.sources) {
+    const result = probeAttestedSource(entry.criterionId, source, probe);
+    if (result.kind === "skip") continue;
+    if (result.kind === "indeterminate") {
+      sawIndeterminate = true;
+      continue;
+    }
+    if (result.kind === "stale" && (earliestStale === null || result.attestedAt < earliestStale)) {
+      earliestStale = result.attestedAt;
+    }
+  }
+  if (earliestStale !== null) return { outcome: "stale", attestedAt: earliestStale };
+  if (sawIndeterminate) return { outcome: "indeterminate" };
+  return { outcome: "clean" };
+}
+
+/**
+ * Per-source branch of {@link evaluateStaleness}: given one
+ * {@link EvidenceSource}, returns whether the source is irrelevant to
+ * staleness ({@link ProbeResult.kind} = `"skip"`, for non-`attested`
+ * and non-pass/n-a verdicts), answered indeterminately, or definitively
+ * stale. Extracting this branch drops the outer loop's complexity
+ * under the project's cognitive-complexity budget without changing
+ * behavior — the three source-level signals still collapse identically
+ * at the caller.
+ */
+type ProbeResult =
+  | { readonly kind: "skip" }
+  | { readonly kind: "clean" }
+  | { readonly kind: "indeterminate" }
+  | { readonly kind: "stale"; readonly attestedAt: string };
+
+function probeAttestedSource(
+  criterionId: string,
+  source: EvidenceSource,
+  probe: AttestationStalenessProbe,
+): ProbeResult {
+  if (source.kind !== "attested") return { kind: "skip" };
+  const verdict = source.verdict ?? "pass";
+  if (verdict !== "pass" && verdict !== "n/a") return { kind: "skip" };
+  const result = probe.isStale(recordFromAttestedSource(criterionId, source));
+  if (result === null) return { kind: "indeterminate" };
+  if (result === true) return { kind: "stale", attestedAt: source.attestedAt };
+  return { kind: "clean" };
+}
+
+/**
+ * Variant of {@link buildBlocker} that carries the stale attestation's
+ * timestamp into `staleAttestedAt`. Agents read this field to cite
+ * which attestation needs refreshing without having to re-enumerate
+ * the ledger.
+ */
+function buildStaleBlocker(
+  criterion: Standard["criteria"][number],
+  status: EvidenceStatus,
+  counts: SourceCounts,
+  attestedAt: string,
+): ConformanceBlocker {
+  return {
+    criterionId: criterion.id,
+    title: criterion.title,
+    level: criterion.level,
+    status,
+    reason: "stale-attestation",
+    attestedSources: counts.attested,
+    staticSources: counts.static,
+    candidateSources: counts.candidate,
+    staleAttestedAt: attestedAt,
   };
 }
 
