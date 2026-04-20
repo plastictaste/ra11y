@@ -96,7 +96,7 @@ Coverage: 35 rule · 35 finder · 13 attestation-only · 3 gap
 | `wcag22:2.4.8` | Location | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.4.9` | Link Purpose (Link Only) | AAA | partial | — | — | **gap** |
 | `wcag22:2.4.10` | Section Headings | AAA | manual | — | section-headings | **finder** |
-| `wcag22:2.4.11` | Focus Not Obscured (Minimum) | AA | manual | focus/not-obscured | — | **rule** |
+| `wcag22:2.4.11` | Focus Not Obscured (Minimum) | AA | partial | focus/not-obscured | — | **rule** |
 | `wcag22:2.4.12` | Focus Not Obscured (Enhanced) | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.4.13` | Focus Appearance | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.5.1` | Pointer Gestures | A | manual | — | pointer-input | **finder** |
