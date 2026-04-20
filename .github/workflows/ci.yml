@@ -92,7 +92,7 @@ jobs:
         run: bun src/cli.ts scan src/ --format sarif --fail-on never > ra11y.sarif
 
       - name: Upload SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ra11y.sarif
           category: ra11y-self-scan
