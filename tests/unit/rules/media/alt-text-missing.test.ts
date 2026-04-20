@@ -201,6 +201,246 @@ describe("rule media/alt-text-missing", () => {
     });
   });
 
+  describe("SVG <image> (HTML): fires when", () => {
+    it("has no title child, aria-label, or aria-labelledby", () => {
+      const violations = runRule(
+        rule,
+        `<svg width="40" height="40"><image href="icon.svg"/></svg>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("media/alt-text-missing");
+      expect(violations[0]?.message).toContain("SVG <image>");
+    });
+
+    it("the <title> child is empty (whitespace only)", () => {
+      const violations = runRule(
+        rule,
+        `<svg><image href="icon.svg"><title>   </title></image></svg>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("SVG <image>");
+    });
+  });
+
+  describe("SVG <image> (HTML): does not fire when", () => {
+    it("has a <title> child with text", () => {
+      const violations = runRule(
+        rule,
+        `<svg><image href="icon.svg"><title>Company logo</title></image></svg>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("has aria-label", () => {
+      const violations = runRule(
+        rule,
+        `<svg><image href="icon.svg" aria-label="Company logo"/></svg>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("has aria-hidden='true' (decorative)", () => {
+      const violations = runRule(
+        rule,
+        `<svg><image href="flourish.svg" aria-hidden="true"/></svg>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("SVG <image> (JSX): fires when", () => {
+    it("<image> has no accessible name", () => {
+      const violations = runRule(rule, `const X = <svg><image href="icon.svg"/></svg>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("SVG <image>");
+    });
+
+    it("suggests an SVG-appropriate fix (mentions <title>)", () => {
+      const violations = runRule(rule, `const X = <svg><image href="company-logo.svg"/></svg>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("<title>");
+    });
+  });
+
+  describe("SVG <image> (JSX): does not fire when", () => {
+    it("<image> has a <title> child with text", () => {
+      const violations = runRule(
+        rule,
+        `const X = <svg><image href="icon.svg"><title>Logo</title></image></svg>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("<image> has aria-labelledby", () => {
+      const violations = runRule(
+        rule,
+        `const X = <svg><image href="icon.svg" aria-labelledby="caption"/></svg>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("role='img' (HTML): fires when", () => {
+    it("<div role='img'> has no accessible name", () => {
+      const violations = runRule(rule, `<div role="img"></div>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`role="img"`);
+    });
+
+    it("<span role='img'> with only text content but no aria-label still fires", () => {
+      // Visible text children are not a reliable accessible-name
+      // source for role="img" — WAI-ARIA requires aria-label /
+      // aria-labelledby. Surface honestly; the agent can decide.
+      const violations = runRule(rule, `<span role="img">🎉</span>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+  });
+
+  describe("role='img' (HTML): does not fire when", () => {
+    it("has aria-label", () => {
+      const violations = runRule(rule, `<div role="img" aria-label="Party popper emoji"></div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("has aria-labelledby", () => {
+      const violations = runRule(rule, `<div role="img" aria-labelledby="caption"></div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("<svg role='img'> has a <title> child with text", () => {
+      const violations = runRule(rule, `<svg role="img"><title>Revenue chart</title></svg>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("is aria-hidden", () => {
+      const violations = runRule(rule, `<div role="img" aria-hidden="true"></div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("role='img' (JSX): fires when", () => {
+    it("<div role='img'> has no accessible name", () => {
+      const violations = runRule(rule, `const X = <div role="img" />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`role="img"`);
+    });
+
+    it("suggestion text names aria-label as the fix", () => {
+      const violations = runRule(rule, `const X = <span role="img">🎉</span>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("aria-label");
+    });
+  });
+
+  describe("role='img' (JSX): does not fire when", () => {
+    it("has aria-label", () => {
+      const violations = runRule(
+        rule,
+        `const X = <div role="img" aria-label="Party popper">🎉</div>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("<svg role='img'> has <title> child with text", () => {
+      const violations = runRule(rule, `const X = <svg role="img"><title>Chart</title></svg>;`);
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("<canvas> (HTML): fires when", () => {
+    it("canvas has no fallback and no aria-label", () => {
+      const violations = runRule(rule, `<canvas width="400" height="300"></canvas>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("<canvas>");
+    });
+
+    it("canvas fallback is whitespace only", () => {
+      const violations = runRule(rule, `<canvas>   </canvas>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+    });
+  });
+
+  describe("<canvas> (HTML): does not fire when", () => {
+    it("has fallback text content", () => {
+      const violations = runRule(rule, `<canvas>Live bar chart of revenue per month.</canvas>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("has a child element as fallback", () => {
+      const violations = runRule(rule, `<canvas><p>Fallback</p></canvas>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("has aria-label", () => {
+      const violations = runRule(rule, `<canvas aria-label="Revenue chart"></canvas>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("is aria-hidden", () => {
+      const violations = runRule(rule, `<canvas aria-hidden="true"></canvas>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("<canvas> (JSX): fires when", () => {
+    it("canvas has no fallback and no aria-label", () => {
+      const violations = runRule(rule, `const X = <canvas width={400} height={300} />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("<canvas>");
+    });
+
+    it("suggestion text names canvas fallback content", () => {
+      const violations = runRule(rule, `const X = <canvas />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("fallback");
+    });
+  });
+
+  describe("<canvas> (JSX): does not fire when", () => {
+    it("has an expression child (runtime-computed fallback)", () => {
+      const violations = runRule(rule, `const X = <canvas>{fallbackText}</canvas>;`);
+      expect(violations).toHaveLength(0);
+    });
+
+    it("has aria-label", () => {
+      const violations = runRule(rule, `const X = <canvas aria-label="Revenue chart" />;`);
+      expect(violations).toHaveLength(0);
+    });
+
+    it("has a child element as fallback", () => {
+      const violations = runRule(
+        rule,
+        `const X = <canvas><p>Bar chart of revenue per month.</p></canvas>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+  });
+
   describe("polymorphic as/asChild resolution (Q2R2-POLYMORPHIC)", () => {
     it('fires on <Box as="img" src=... /> with no alt', () => {
       const violations = runRule(rule, `const X = <Box as="img" src="u.png" />;`);
