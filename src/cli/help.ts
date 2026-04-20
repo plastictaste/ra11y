@@ -56,6 +56,18 @@ ATTESTATIONS
                          Reason is required and non-empty. Bare invocations
                          (missing --reason or empty) exit with code 2.
 
+CONFORMANCE
+  ra11y conformance [--profile <name>] [--output markdown|json] [--scan-root <path>]
+                         Render a conformance statement (defaults to Markdown).
+                         Signs the claim with a SHA-256 digest when inside a
+                         git repo; outside a repo the signature is omitted and
+                         warnings=non_git_repo_signature_omitted is emitted.
+  ra11y conformance --verify <bundle.json>
+                         Verify a previously emitted signed bundle against the
+                         current tree. Exits 0 when valid; 2 on drift with
+                         the reason code (commit-drift, file-manifest-mismatch,
+                         tool-version-mismatch, …).
+
 META
   -h, --help             Show this help
   -v, --version          Print version

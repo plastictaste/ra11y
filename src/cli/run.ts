@@ -12,6 +12,7 @@ import { runAttestationsCommand } from "./commands/attestations.ts";
 import { runBaselineCommand } from "./commands/baseline.ts";
 import { runCertification } from "./commands/certification.ts";
 import { runChecklist } from "./commands/checklist.ts";
+import { runConformance } from "./commands/conformance.ts";
 import { runCoverage } from "./commands/coverage.ts";
 import { runDoctor } from "./commands/doctor.ts";
 import { runExplain } from "./commands/explain.ts";
@@ -61,6 +62,8 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
       return runAttestationsCommand(options);
     case "attest":
       return runAttestCommand(options);
+    case "conformance":
+      return runConformance(options);
     case "scan":
       return runScanCommand(options);
   }

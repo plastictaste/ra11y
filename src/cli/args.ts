@@ -23,6 +23,7 @@ export interface CliOptions {
     | "baseline"
     | "attestations"
     | "attest"
+    | "conformance"
     | "help"
     | "version";
   readonly positionals: readonly string[];
@@ -84,6 +85,15 @@ export interface CliOptions {
   readonly attestScope: "project" | "file" | "line" | undefined;
   readonly attestBy: string | undefined;
   readonly attestLocation: string | undefined;
+  /**
+   * `ra11y conformance` flags. `conformanceVerify` carries a path to a
+   * signed bundle JSON; when set the command skips the scan and runs
+   * the verifier. `conformanceOutput` picks `markdown` (default) or
+   * `json` for the emitted statement.
+   */
+  readonly conformanceVerify: string | undefined;
+  readonly conformanceOutput: "markdown" | "json";
+  readonly conformanceScanRoot: string | undefined;
 }
 
 /**
@@ -136,6 +146,9 @@ interface RawCliOptions {
   readonly scope: string | undefined;
   readonly by: string | undefined;
   readonly location: string | undefined;
+  readonly verify: string | undefined;
+  readonly output: string | undefined;
+  readonly scanRoot: string | undefined;
 }
 
 const FLAGS = [
@@ -200,6 +213,7 @@ const SUBCOMMAND_KEYWORDS: ReadonlyArray<{
   { keyword: "baseline", command: "baseline" },
   { keyword: "attestations", command: "attestations" },
   { keyword: "attest", command: "attest" },
+  { keyword: "conformance", command: "conformance" },
 ];
 
 export function parseCliArgs(argv: readonly string[]): CliOptions {
@@ -270,6 +284,9 @@ function translate(
     scope: stringAt(raw, "scope"),
     by: stringAt(raw, "by"),
     location: stringAt(raw, "location"),
+    verify: stringAt(raw, "verify"),
+    output: stringAt(raw, "output"),
+    scanRoot: stringAt(raw, "scan-root"),
   };
 }
 
@@ -330,6 +347,7 @@ function baseOpts(
       command === "attestations" && positionals[0] === "prune" ? "prune" : undefined,
     attestationsDryRun: raw?.dryRun === true,
     ...attestOpts(raw),
+    ...conformanceOpts(raw),
   };
 }
 
@@ -352,6 +370,21 @@ function attestOpts(raw?: RawCliOptions): AttestOpts {
     attestBy: typeof raw?.by === "string" && raw.by.length > 0 ? raw.by : undefined,
     attestLocation:
       typeof raw?.location === "string" && raw.location.length > 0 ? raw.location : undefined,
+  };
+}
+
+type ConformanceOpts = Pick<
+  CliOptions,
+  "conformanceVerify" | "conformanceOutput" | "conformanceScanRoot"
+>;
+
+function conformanceOpts(raw?: RawCliOptions): ConformanceOpts {
+  return {
+    conformanceVerify:
+      typeof raw?.verify === "string" && raw.verify.length > 0 ? raw.verify : undefined,
+    conformanceOutput: normalizeConformanceOutput(raw?.output ?? raw?.format),
+    conformanceScanRoot:
+      typeof raw?.scanRoot === "string" && raw.scanRoot.length > 0 ? raw.scanRoot : undefined,
   };
 }
 
@@ -423,4 +456,9 @@ function normalizeVerdict(value: string | undefined): CliOptions["attestVerdict"
 function normalizeAttestScope(value: string | undefined): CliOptions["attestScope"] {
   if (value === "project" || value === "file" || value === "line") return value;
   return undefined;
+}
+
+function normalizeConformanceOutput(value: string | undefined): CliOptions["conformanceOutput"] {
+  if (value === "json") return "json";
+  return "markdown";
 }
