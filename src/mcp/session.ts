@@ -11,6 +11,7 @@ import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { loadConfig } from "../config/index.ts";
 import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
+import { createBuiltinRegistry, type Registry } from "../engine/registry/registry.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import {
   parseAstro,
@@ -101,6 +102,14 @@ export type SendRequest = (method: string, params: unknown, timeoutMs: number) =
 export class McpSession {
   readonly config: SessionConfig;
   readonly logging: LoggingState;
+  /**
+   * Aggregate of loaded rules, standards, and candidate finders for
+   * this session. Constructed once from the shipped built-ins via
+   * {@link createBuiltinRegistry}; downstream consumers (MCP tools,
+   * helpers) read through `session.registry` instead of reaching for
+   * the `BUILTIN_*` barrels directly. See ADR 0022.
+   */
+  readonly registry: Registry;
   private readonly cache: Map<string, CacheEntry> = new Map();
   /**
    * Session-scoped meta-cache for the opt-in `metaMode: "delta"` path.
@@ -133,6 +142,7 @@ export class McpSession {
       allowWrite: false,
     };
     this.logging = new LoggingState();
+    this.registry = createBuiltinRegistry();
   }
 
   /**
