@@ -18,7 +18,7 @@
  */
 
 import type { Rule } from "../types/rule.ts";
-import type { PerRuleCoverage } from "../types/violation.ts";
+import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import type { RuleEvaluationTracker } from "./rule-runner.ts";
 import type { StandardFilter } from "./standard-filter.ts";
 
@@ -50,13 +50,21 @@ const MIN_FILES_FOR_HIGH_CONFIDENCE = 1;
  * {@link PerRuleCoverage} is assembled with conditional spread on
  * `reason` / `remediation` per CLAUDE.md §1 "Ambiguous field shapes
  * are dishonest" — the fields are present only on low-confidence
- * entries.
+ * entries. `findingsEmitted` is computed from `violations` (a single
+ * pass tally per rule ID) and ALWAYS populated — including zero, which
+ * is the load-bearing "rule ran and found nothing" signal that pairs
+ * with `coverageConfidence` (V1-SHAPE-RULECOV-COUNT). Pre-filter
+ * violations are the right input here: per-rule coverage describes
+ * what the engine itself observed, not the post-severity / post-skip
+ * view a particular consumer sees.
  */
 export function buildPerRuleCoverage(
   tracker: RuleEvaluationTracker,
   rules: readonly Rule[],
   filter: StandardFilter,
+  violations: readonly Violation[],
 ): readonly PerRuleCoverage[] {
+  const findingsByRule = countFindingsByRule(violations);
   const out: PerRuleCoverage[] = [];
   const ruleById = new Map<string, Rule>();
   for (const r of rules) ruleById.set(r.id, r);
@@ -69,9 +77,27 @@ export function buildPerRuleCoverage(
     if (!extensions || extensions.length === 0) continue;
     const counts = tracker.counts.get(id);
     if (!counts) continue;
-    out.push(buildCoverageEntry(id, counts.eligible, counts.evaluated, extensions));
+    const findingsEmitted = findingsByRule.get(id) ?? 0;
+    out.push(
+      buildCoverageEntry(id, counts.eligible, counts.evaluated, findingsEmitted, extensions),
+    );
   }
   return out;
+}
+
+/**
+ * One linear pass over the post-scan violation stream tallying per-rule
+ * counts. Cheaper than re-walking `files[].findings[]` at the consumer,
+ * and lets the response-assembly layer drop the derivation entirely
+ * (V1-SHAPE-RULECOV-COUNT). `internal/rule-crash` records still tally
+ * under their synthetic ruleId — they don't surface in
+ * {@link buildPerRuleCoverage}'s output (no extension gate), so the
+ * count is harmless and the helper stays general.
+ */
+function countFindingsByRule(violations: readonly Violation[]): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const v of violations) counts.set(v.ruleId, (counts.get(v.ruleId) ?? 0) + 1);
+  return counts;
 }
 
 /**
@@ -81,12 +107,14 @@ export function buildPerRuleCoverage(
  * agent can act on without docs — e.g. "add built CSS via
  * additionalPaths." High-confidence entries omit both reason and
  * remediation — the fields are present-when-meaningful (CLAUDE.md §1
- * "Ambiguous field shapes are dishonest").
+ * "Ambiguous field shapes are dishonest"). `findingsEmitted` is
+ * always populated (including zero) per V1-SHAPE-RULECOV-COUNT.
  */
 function buildCoverageEntry(
   ruleId: string,
   eligible: number,
   evaluated: number,
+  findingsEmitted: number,
   extensions: readonly string[],
 ): PerRuleCoverage {
   if (eligible === 0) {
@@ -94,6 +122,7 @@ function buildCoverageEntry(
       ruleId,
       filesEvaluated: evaluated,
       filesEligible: eligible,
+      findingsEmitted,
       coverageConfidence: "low",
       reason: `no files matching ${extensions.join(", ")} were scanned`,
       remediation: `add ${primaryExtension(extensions)} source files to the scan path, or pass \`additionalPaths\` when the content is compiled output (e.g. \`additionalPaths: ["dist/assets"]\` for Tailwind)`,
@@ -104,6 +133,7 @@ function buildCoverageEntry(
       ruleId,
       filesEvaluated: evaluated,
       filesEligible: eligible,
+      findingsEmitted,
       coverageConfidence: "low",
       reason: "all eligible files were excluded or empty",
       remediation: "check exclude patterns and file contents",
@@ -113,6 +143,7 @@ function buildCoverageEntry(
     ruleId,
     filesEvaluated: evaluated,
     filesEligible: eligible,
+    findingsEmitted,
     coverageConfidence: "high",
   };
 }

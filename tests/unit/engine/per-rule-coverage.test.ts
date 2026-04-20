@@ -14,6 +14,14 @@
  *   - Unconstrained rules (no fileExtensions) are omitted from the
  *     output — they can't produce a low-confidence row by definition,
  *     so including them would be noise.
+ *
+ * `findingsEmitted` (V1-SHAPE-RULECOV-COUNT) is a schema-required
+ * counter on every entry — zero means "rule ran and found nothing,"
+ * which paired with `coverageConfidence` is the load-bearing signal
+ * agents use to distinguish "confidently clean" from "didn't exercise
+ * the pattern." The covering tests assert presence-on-every-row, the
+ * zero-as-meaningful semantics, and that the counter equals the number
+ * of `Violation` records the rule produced.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -21,6 +29,7 @@ import { buildPerRuleCoverage } from "../../../src/engine/per-rule-coverage.ts";
 import type { RuleEvaluationTracker } from "../../../src/engine/rule-runner.ts";
 import type { StandardFilter } from "../../../src/engine/standard-filter.ts";
 import type { Rule } from "../../../src/types/rule.ts";
+import type { Violation } from "../../../src/types/violation.ts";
 
 function mkRule(id: string, extensions?: readonly string[]): Rule {
   return {
@@ -54,6 +63,19 @@ function tracker(
   return { counts };
 }
 
+function mkViolation(ruleId: string): Violation {
+  return {
+    ruleId,
+    fixClass: "guidance",
+    criteria: ["wcag22:1.4.3"],
+    severity: "warning",
+    location: { filePath: "a.css", line: 1, column: 1 },
+    message: "test",
+    findingId: `${ruleId}-fid`,
+    groupKey: `${ruleId}-gk`,
+  };
+}
+
 describe("buildPerRuleCoverage", () => {
   it("marks a rule with 0 eligible files as low confidence with reason + remediation", () => {
     const rules = [mkRule("contrast/minimum", [".css"])];
@@ -61,6 +83,7 @@ describe("buildPerRuleCoverage", () => {
       tracker({ "contrast/minimum": { eligible: 0, evaluated: 0 } }),
       rules,
       passAllFilter,
+      [],
     );
     expect(entries.length).toBe(1);
     const [row] = entries;
@@ -78,6 +101,7 @@ describe("buildPerRuleCoverage", () => {
       tracker({ "media/alt-text-missing": { eligible: 3, evaluated: 3 } }),
       rules,
       passAllFilter,
+      [],
     );
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("high");
@@ -93,6 +117,7 @@ describe("buildPerRuleCoverage", () => {
       tracker({ noop: { eligible: 5, evaluated: 5 } }),
       rules,
       passAllFilter,
+      [],
     );
     expect(entries.length).toBe(0);
   });
@@ -108,6 +133,7 @@ describe("buildPerRuleCoverage", () => {
       tracker({ "contrast/minimum": { eligible: 0, evaluated: 0 } }),
       rules,
       filter,
+      [],
     );
     expect(entries.length).toBe(0);
   });
@@ -126,6 +152,7 @@ describe("buildPerRuleCoverage", () => {
       }),
       rules,
       passAllFilter,
+      [],
     );
     expect(entries.map((e) => e.ruleId)).toEqual(["a/first", "m/middle", "z/last"]);
   });
@@ -144,10 +171,86 @@ describe("buildPerRuleCoverage", () => {
       }),
       rules,
       passAllFilter,
+      [],
     );
     const byId = new Map(entries.map((e) => [e.ruleId, e]));
     expect(byId.get("contrast/minimum")!.remediation).toContain("CSS");
     expect(byId.get("page/titled")!.remediation).toContain("HTML");
     expect(byId.get("nav/skip-link")!.remediation).toContain("JSX/TSX");
+  });
+
+  // V1-SHAPE-RULECOV-COUNT: findingsEmitted is schema-required and zero
+  // is meaningful — these tests pin the invariant so consumers (Bootstrap
+  // and other MCP scan responses) can budget against the counter without
+  // re-deriving it from `files[].findings[]`.
+  it("populates findingsEmitted on every entry — zero is the meaningful 'rule ran clean' signal", () => {
+    const rules = [
+      mkRule("contrast/minimum", [".css"]),
+      mkRule("media/alt-text-missing", [".html", ".tsx"]),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({
+        "contrast/minimum": { eligible: 0, evaluated: 0 },
+        "media/alt-text-missing": { eligible: 4, evaluated: 4 },
+      }),
+      rules,
+      passAllFilter,
+      [],
+    );
+    expect(entries.length).toBe(2);
+    for (const row of entries) {
+      // Schema-required: never undefined, never null. Zero is the
+      // meaningful "rule ran (or had nothing eligible) and emitted no
+      // findings" signal.
+      expect(row.findingsEmitted).toBe(0);
+      expect(typeof row.findingsEmitted).toBe("number");
+    }
+  });
+
+  it("findingsEmitted equals the number of Violations for that rule (invariant)", () => {
+    const rules = [
+      mkRule("contrast/minimum", [".css"]),
+      mkRule("media/alt-text-missing", [".html", ".tsx"]),
+    ];
+    const violations: Violation[] = [
+      mkViolation("contrast/minimum"),
+      mkViolation("contrast/minimum"),
+      mkViolation("contrast/minimum"),
+      mkViolation("media/alt-text-missing"),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({
+        "contrast/minimum": { eligible: 5, evaluated: 5 },
+        "media/alt-text-missing": { eligible: 5, evaluated: 5 },
+      }),
+      rules,
+      passAllFilter,
+      violations,
+    );
+    const byId = new Map(entries.map((e) => [e.ruleId, e]));
+    expect(byId.get("contrast/minimum")!.findingsEmitted).toBe(
+      violations.filter((v) => v.ruleId === "contrast/minimum").length,
+    );
+    expect(byId.get("media/alt-text-missing")!.findingsEmitted).toBe(
+      violations.filter((v) => v.ruleId === "media/alt-text-missing").length,
+    );
+  });
+
+  it("findingsEmitted is 0 when a rule had no eligible files (rule never ran)", () => {
+    // The Tailwind-pre-build acute case: contrast/minimum gets the
+    // "low confidence + 0 eligible" row AND findingsEmitted: 0,
+    // mirroring "the rule never had a chance to find anything." The
+    // agent uses coverageConfidence + filesEvaluated to disambiguate
+    // "didn't run" from "ran clean."
+    const rules = [mkRule("contrast/minimum", [".css"])];
+    const entries = buildPerRuleCoverage(
+      tracker({ "contrast/minimum": { eligible: 0, evaluated: 0 } }),
+      rules,
+      passAllFilter,
+      [mkViolation("media/alt-text-missing")], // unrelated rule fired
+    );
+    const [row] = entries;
+    expect(row!.findingsEmitted).toBe(0);
+    expect(row!.coverageConfidence).toBe("low");
   });
 });

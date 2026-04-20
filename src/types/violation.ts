@@ -230,6 +230,12 @@ export interface Violation {
  *   - `filesEvaluated` — subset of eligible files the rule actually
  *     ran over (non-eligible files are filtered out before invocation;
  *     evaluated <= eligible by construction).
+ *   - `findingsEmitted` — count of violations this rule emitted in this
+ *     scan. Always populated, including zero — `0` is the meaningful
+ *     "rule ran and found nothing" signal that pairs with
+ *     `coverageConfidence` to distinguish "confidently clean" from
+ *     "clean but didn't exercise the pattern." Schema-required: never
+ *     omit, never `null` (V1-SHAPE-RULECOV-COUNT).
  *   - `coverageConfidence` — `"low"` when `filesEligible === 0` or the
  *     rule ran on fewer than `MIN_FILES_FOR_HIGH_CONFIDENCE` files;
  *     `"high"` otherwise.
@@ -254,6 +260,13 @@ export interface PerRuleCoverage {
   readonly ruleId: string;
   readonly filesEvaluated: number;
   readonly filesEligible: number;
+  /**
+   * Count of findings this rule emitted in this scan. Zero is meaningful
+   * — "rule ran and found nothing." Always populated; pair with
+   * {@link coverageConfidence} to distinguish "confidently clean" from
+   * "clean but didn't exercise the pattern."
+   */
+  readonly findingsEmitted: number;
   readonly coverageConfidence: "high" | "low";
   readonly reason?: string;
   readonly remediation?: string;

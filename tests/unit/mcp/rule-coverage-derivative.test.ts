@@ -19,7 +19,13 @@ import { buildRuleCoverageDerivative } from "../../../src/mcp/rule-coverage-deri
 import type { PerRuleCoverage, Violation } from "../../../src/types/violation.ts";
 
 function highRow(ruleId: string, eligible = 3): PerRuleCoverage {
-  return { ruleId, filesEvaluated: eligible, filesEligible: eligible, coverageConfidence: "high" };
+  return {
+    ruleId,
+    filesEvaluated: eligible,
+    filesEligible: eligible,
+    findingsEmitted: 0,
+    coverageConfidence: "high",
+  };
 }
 
 function lowRow(ruleId: string): PerRuleCoverage {
@@ -27,6 +33,7 @@ function lowRow(ruleId: string): PerRuleCoverage {
     ruleId,
     filesEvaluated: 0,
     filesEligible: 0,
+    findingsEmitted: 0,
     coverageConfidence: "low",
     reason: "no files matching .css were scanned",
     remediation: "add CSS sources to the scan path",

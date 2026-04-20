@@ -60,6 +60,21 @@ describe("per-rule coverage end-to-end", () => {
       expect(row.coverageConfidence).toBe("low");
       expect(row.reason).toBeDefined();
       expect(row.remediation).toBeDefined();
+      // V1-SHAPE-RULECOV-COUNT: zero is meaningful — the rule didn't
+      // run because nothing eligible existed, and 0 findings is the
+      // honest read of that state. Pairs with coverageConfidence: "low"
+      // for the agent to disambiguate "didn't run" from "ran clean."
+      expect(row.findingsEmitted).toBe(0);
+    }
+
+    // V1-SHAPE-RULECOV-COUNT invariant: findingsEmitted on each entry
+    // must equal the number of violations the scan produced for that
+    // rule. The whole point is letting consumers skip the
+    // re-derivation walk over `files[].findings[]`.
+    for (const row of perRuleCoverage) {
+      const fromStream = result.violations.filter((v) => v.ruleId === row.ruleId).length;
+      expect(row.findingsEmitted).toBe(fromStream);
+      expect(typeof row.findingsEmitted).toBe("number");
     }
 
     const derivative = buildRuleCoverageDerivative(perRuleCoverage, result.violations);
@@ -76,7 +91,7 @@ describe("per-rule coverage end-to-end", () => {
       tsxFile("src/App.tsx", `export function App() { return <main><h1>Hi</h1></main>; }`),
       cssFile("src/styles.css", `body { color: #000; background: #fff; }`),
     ];
-    const { perRuleCoverage } = runScan({
+    const { result, perRuleCoverage } = runScan({
       standards: [wcag22],
       rules: BUILTIN_RULES,
       enabled: ["wcag22"],
@@ -87,5 +102,15 @@ describe("per-rule coverage end-to-end", () => {
     expect(contrastMinRow).toBeDefined();
     expect(contrastMinRow!.filesEligible).toBeGreaterThan(0);
     expect(contrastMinRow!.coverageConfidence).toBe("high");
+    // V1-SHAPE-RULECOV-COUNT: the field is present even when the rule
+    // ran cleanly — zero here is "ran on N files, found nothing,"
+    // which paired with high confidence is the "trust the clean tally"
+    // signal.
+    expect(contrastMinRow!.findingsEmitted).toBe(
+      result.violations.filter((v) => v.ruleId === "contrast/minimum").length,
+    );
+    for (const row of perRuleCoverage) {
+      expect(typeof row.findingsEmitted).toBe("number");
+    }
   });
 });
