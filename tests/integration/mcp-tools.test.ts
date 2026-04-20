@@ -536,6 +536,67 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.referenceGuide?.suppressPlacement).not.toHaveProperty("css");
   });
 
+  it("duplicated fix.description prose hoists into referenceGuide.fixDescriptions", async () => {
+    // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): when the same
+    // `(ruleId, description)` pair appears on ≥2 findings, the
+    // description hoists into `referenceGuide.fixDescriptions[ruleId]
+    // [hash]` and each affected finding drops inline `fix.description`
+    // in favour of `fixDescriptionRef: { hash }`. Findings whose
+    // description is unique-in-response stay inline.
+    //
+    // Three orphan inputs fire `forms/labels-required` with the
+    // identical short-template description (no per-finding
+    // interpolation), so the hoist's ≥2-duplicate threshold reliably
+    // engages on this fixture.
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-fixdesc-hoist-"));
+    try {
+      const fixturePath = join(dir, "form.html");
+      await writeFile(
+        fixturePath,
+        `<!DOCTYPE html>
+<html lang="en">
+<head><title>Form</title></head>
+<body>
+  <input type="text">
+  <input type="text">
+  <input type="text">
+</body>
+</html>
+`,
+      );
+      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: dir })]);
+      const body = bodyOf(responses[1]) as {
+        files: readonly {
+          findings: readonly {
+            ruleId: string;
+            fix?: { description?: string };
+            fixDescriptionRef?: { hash: string };
+          }[];
+        }[];
+        referenceGuide?: {
+          fixDescriptions?: Record<string, Record<string, string>>;
+        };
+      };
+      // At least one rule fired with ≥2 duplicates that hoisted.
+      const hoistedRuleIds = Object.keys(body.referenceGuide?.fixDescriptions ?? {});
+      expect(hoistedRuleIds.length).toBeGreaterThan(0);
+      // Every hoisted finding has a ref + missing inline description.
+      let hoistedFindings = 0;
+      for (const file of body.files) {
+        for (const f of file.findings) {
+          if (f.fixDescriptionRef === undefined) continue;
+          hoistedFindings += 1;
+          const desc = body.referenceGuide?.fixDescriptions?.[f.ruleId]?.[f.fixDescriptionRef.hash];
+          expect(typeof desc).toBe("string");
+          expect(f.fix?.description).toBeUndefined();
+        }
+      }
+      expect(hoistedFindings).toBeGreaterThanOrEqual(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("clean scan omits referenceGuide entirely (no findings → no guide)", async () => {
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
