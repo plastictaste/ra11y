@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Static content</title>
+  </head>
+  <body>
+    <!--
+      contenteditable="false" explicitly opts out of the editable-host
+      behaviour — the element is NOT a form control and needs no
+      accessible name. Same for contenteditable="inherit".
+    -->
+    <div contenteditable="false">This block is deliberately non-editable.</div>
+    <div contenteditable="inherit">Inherits from its ancestor.</div>
+  </body>
+</html>

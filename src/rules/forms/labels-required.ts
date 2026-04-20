@@ -19,8 +19,16 @@
  *      accessible names (value attribute)
  *
  * Covers: <input> (except hidden/submit/reset/button types),
- * <select>, <textarea>. Does NOT cover custom widgets built with
- * div/span + ARIA — those are covered by aria/name-role-value.
+ * <select>, <textarea>, and contenteditable hosts (any element with
+ * `contenteditable="true"` / `contentEditable={true}` / bare
+ * `contenteditable` — Slack-style composers, Notion-style editors).
+ * A contenteditable host acts as a form control under WCAG 1.3.2 and
+ * 3.3.2 and carries the same accessible-name requirement.
+ * `contenteditable="false"` and `contenteditable="inherit"` do NOT
+ * make an element a form control and are not flagged.
+ *
+ * Does NOT cover custom widgets built with div/span + ARIA — those
+ * are covered by aria/name-role-value.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -111,7 +119,16 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   const labelFors = collectLabelFors(doc);
   const implicitLabelIds = collectImplicitlyLabeledIds(doc);
+  checkHtmlNativeControls(doc, labelFors, implicitLabelIds, emit);
+  checkHtmlEditableHosts(doc, labelFors, implicitLabelIds, emit);
+}
 
+function checkHtmlNativeControls(
+  doc: HtmlDocument,
+  labelFors: ReadonlySet<string>,
+  implicitLabelIds: ReadonlySet<string>,
+  emit: Emit,
+): void {
   for (const tag of LABELABLE_TAGS) {
     for (const el of findHtmlElementsByTag(doc, tag)) {
       if (isExcludedHtmlControl(el)) continue;
@@ -134,6 +151,35 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   }
 }
 
+// contenteditable hosts — any element with contenteditable="true" (or
+// bare, or empty value — both equate to "true" per the HTML spec's
+// enumerated default) behaves as a form control. Same accessible-name
+// requirement as <input>/<select>/<textarea>; same label association
+// channels (aria-label, aria-labelledby, <label for> → matching id,
+// wrapping <label>).
+function checkHtmlEditableHosts(
+  doc: HtmlDocument,
+  labelFors: ReadonlySet<string>,
+  implicitLabelIds: ReadonlySet<string>,
+  emit: Emit,
+): void {
+  for (const el of walkHtmlElements(doc)) {
+    if (LABELABLE_TAGS.has(el.tagName.toLowerCase())) continue;
+    if (!isHtmlEditableHost(el)) continue;
+    if (htmlHasLabel(el, labelFors, implicitLabelIds)) continue;
+    emit({
+      severity: "error",
+      location: {
+        filePath: "",
+        line: el.loc.start.line,
+        column: el.loc.start.column,
+      },
+      message: buildEditableMessage(el.tagName),
+      suggestion: buildEditableSuggestion(el.tagName, getHtmlAttribute(el, "id")),
+    });
+  }
+}
+
 function collectLabelFors(doc: HtmlDocument): Set<string> {
   const fors = new Set<string>();
   for (const label of findHtmlElementsByTag(doc, "label")) {
@@ -147,7 +193,9 @@ function collectImplicitlyLabeledIds(doc: HtmlDocument): Set<string> {
   const ids = new Set<string>();
   for (const label of findHtmlElementsByTag(doc, "label")) {
     for (const descendant of walkHtmlElements(label)) {
-      if (!LABELABLE_TAGS.has(descendant.tagName.toLowerCase())) continue;
+      const isLabelable =
+        LABELABLE_TAGS.has(descendant.tagName.toLowerCase()) || isHtmlEditableHost(descendant);
+      if (!isLabelable) continue;
       const id = getHtmlAttribute(descendant, "id");
       if (id) ids.add(id);
       // Wrapped control without an id still counts — use a placeholder
@@ -156,6 +204,24 @@ function collectImplicitlyLabeledIds(doc: HtmlDocument): Set<string> {
     }
   }
   return ids;
+}
+
+/**
+ * True when the element has `contenteditable` with a value the HTML
+ * spec treats as "true" — i.e. the element is an editable host and
+ * acts as a form control. Per the HTML Living Standard's enumerated
+ * attribute semantics, the empty string `""` and the bare attribute
+ * (no value) both map to the "true" state. Only the literal values
+ * `"false"` and `"inherit"` (case-insensitive) are non-editable.
+ */
+function isHtmlEditableHost(el: HtmlElement): boolean {
+  if (!hasHtmlAttribute(el, "contenteditable")) return false;
+  const raw = getHtmlAttribute(el, "contenteditable");
+  // Bare attribute → parser yields value === null (or "" depending on
+  // source). Either means "true" per HTML spec.
+  if (raw === null || raw === "") return true;
+  const value = raw.toLowerCase();
+  return value === "true";
 }
 
 function isExcludedHtmlControl(el: HtmlElement): boolean {
@@ -193,15 +259,25 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
   // first, then check each control. Implicit labeling (control nested
   // inside label) handled by JSX element children structure.
   const labelHtmlFors = collectJsxLabelHtmlFors(module);
-  const implicitlyLabeledElementIds = collectJsxImplicitlyLabeledControls(module, wrappersForInput);
+  const implicitIds = collectJsxImplicitlyLabeledControls(module, wrappersForInput);
 
-  // `<input>` has three resolution channels (native, mapped wrapper,
-  // polymorphic `as="input"` / `asChild` → `<input>`); `findJsxElementsForTag`
-  // unifies all three. `<select>` and `<textarea>` keep native-only iteration
-  // — `wrapperTreatsAsElement` carries a single target tag, so polymorphic
-  // opt-in is scoped to `"input"` per Q2R2-POLYMORPHIC. Rule scope for
-  // those tags is unchanged.
   const seen = new Set<JsxElement>();
+  checkJsxInputs(module, wrappersForInput, labelHtmlFors, implicitIds, seen, emit);
+  checkJsxSelectsAndTextareas(module, labelHtmlFors, implicitIds, emit);
+  checkJsxEditableHosts(module, labelHtmlFors, implicitIds, seen, emit);
+}
+
+// `<input>` has three resolution channels (native, mapped wrapper,
+// polymorphic `as="input"` / `asChild` → `<input>`); `findJsxElementsForTag`
+// unifies all three.
+function checkJsxInputs(
+  module: TsxModule,
+  wrappersForInput: ReadonlySet<string>,
+  labelHtmlFors: ReadonlySet<string>,
+  implicitIds: ReadonlySet<number>,
+  seen: Set<JsxElement>,
+  emit: Emit,
+): void {
   for (const el of findJsxElementsForTag(module, "input", wrappersForInput)) {
     if (seen.has(el)) continue;
     seen.add(el);
@@ -211,15 +287,96 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
     // doesn't change the decision — `type="submit"` on a polymorphic
     // `<Button as="input">` still excludes it.
     if (isExcludedJsxControl(el)) continue;
-    if (jsxHasLabel(el, labelHtmlFors, implicitlyLabeledElementIds)) continue;
+    if (jsxHasLabel(el, labelHtmlFors, implicitIds)) continue;
     emit(buildJsxViolation(el));
   }
+}
+
+// `<select>` and `<textarea>` keep native-only iteration —
+// `wrapperTreatsAsElement` carries a single target tag, so polymorphic
+// opt-in is scoped to `"input"` per Q2R2-POLYMORPHIC. Rule scope for
+// those tags is unchanged.
+function checkJsxSelectsAndTextareas(
+  module: TsxModule,
+  labelHtmlFors: ReadonlySet<string>,
+  implicitIds: ReadonlySet<number>,
+  emit: Emit,
+): void {
   for (const tag of ["select", "textarea"] as const) {
     for (const el of findJsxElementsByTag(module, tag)) {
-      if (jsxHasLabel(el, labelHtmlFors, implicitlyLabeledElementIds)) continue;
+      if (jsxHasLabel(el, labelHtmlFors, implicitIds)) continue;
       emit(buildJsxViolation(el));
     }
   }
+}
+
+// contenteditable hosts — any JSX element with `contentEditable={true}`,
+// `contentEditable="true"`, or the bare `contentEditable` attribute
+// behaves as a form control (Slack-style composers, Notion-style
+// editors). Same accessible-name requirement as <input>. JSX attribute
+// names are case-sensitive — React's convention is camelCase
+// (`contentEditable`), but authors sometimes use the HTML spelling
+// (`contenteditable`); accept either.
+function checkJsxEditableHosts(
+  module: TsxModule,
+  labelHtmlFors: ReadonlySet<string>,
+  implicitIds: ReadonlySet<number>,
+  seen: Set<JsxElement>,
+  emit: Emit,
+): void {
+  for (const el of walkJsxElements(module)) {
+    if (seen.has(el)) continue;
+    if (LABELABLE_TAGS.has(el.tagName.toLowerCase())) continue;
+    if (el.tagName === "select" || el.tagName === "textarea") continue;
+    if (!isJsxEditableHost(el)) continue;
+    if (jsxHasLabel(el, labelHtmlFors, implicitIds)) continue;
+    emit(buildJsxEditableViolation(el));
+  }
+}
+
+/**
+ * True when the JSX element has `contentEditable` / `contenteditable`
+ * with a value the HTML spec treats as "true". Accepts:
+ *   - Bare attribute (`<div contentEditable />`) — value `null`, maps
+ *     to "true" per the HTML enumerated-attribute default.
+ *   - String literal `"true"` (case-insensitive) or `""`.
+ *   - Expression `{true}` — raw source interior is the literal `true`.
+ * Rejects `"false"`, `"inherit"`, `{false}`, and dynamic expressions
+ * (`{isEditing}`) — the last is ambiguous and the agent reading the
+ * source is better positioned than a static heuristic.
+ */
+function isJsxEditableHost(el: JsxElement): boolean {
+  const attr = getJsxAttribute(el, "contentEditable") ?? getJsxAttribute(el, "contenteditable");
+  if (!attr) return false;
+  // Bare attribute (`<div contentEditable />`).
+  if (attr.value === null) return true;
+  if (attr.value.kind === "StringLiteral") {
+    const v = attr.value.value;
+    if (v === "") return true;
+    return v.toLowerCase() === "true";
+  }
+  // Expression — strip braces, trim, accept only the literal `true`.
+  const inner = attr.value.raw.replace(/^\{/, "").replace(/\}$/, "").trim();
+  return inner === "true";
+}
+
+function buildJsxEditableViolation(el: JsxElement) {
+  const id = getJsxAttributeString(el, "id");
+  const location = { filePath: "", line: el.loc.start.line, column: el.loc.start.column };
+  if (el.hasSpreadProps) {
+    return {
+      severity: "info" as const,
+      location,
+      message: `<${el.tagName} contentEditable> has no static accessible name but receives {...spread} props — whether the editable region is labeled at render time depends on what the caller passes (aria-label, aria-labelledby, id matched by an external <label>). Verify at usage sites.`,
+      suggestion: `If this primitive is only consumed by callers that pass \`aria-label\`, this is fine — add \`{/* ra11y-disable forms/labels-required */}\` at the top of the file to silence this info note. Otherwise require callers to pass a label via props.`,
+    };
+  }
+  return {
+    severity: "error" as const,
+    location,
+    message: buildEditableMessage(el.tagName),
+    suggestion: buildEditableSuggestion(el.tagName, id),
+  };
 }
 
 function buildJsxViolation(el: JsxElement) {
@@ -271,6 +428,13 @@ function collectJsxImplicitlyLabeledControls(
         ranges.add(descendant.range.start);
         continue;
       }
+      // contenteditable host nested inside a <label> — e.g.
+      // `<label>Message<div contentEditable /></label>`. Same implicit-
+      // labeling semantics as a nested <input>.
+      if (isJsxEditableHost(descendant)) {
+        ranges.add(descendant.range.start);
+        continue;
+      }
       // Polymorphic `<Field as="input" />` nested inside a <label> — the
       // resolved tag is the labeled control even though the call-site tag
       // isn't. Keeps implicit labeling consistent with the rule's
@@ -305,6 +469,7 @@ import {
   findJsxElementsByTag,
   findJsxElementsForTag,
   resolvePolymorphicTag,
+  walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 
 function isExcludedJsxControl(el: JsxElement): boolean {
@@ -354,6 +519,15 @@ function buildSuggestion(tagName: string, type: string | null, id: string | null
   const idHint = id ?? "field";
   const labelText = inferLabelFromType(type);
   return `Add a \`<label for="${idHint}">${labelText}</label>\` referencing this ${tagName}'s id, or set an \`aria-label="${labelText}"\` attribute. If the control is decorative or duplicates a visible label, use \`aria-labelledby\` pointing at that element's id.`;
+}
+
+function buildEditableMessage(tagName: string): string {
+  return `<${tagName} contenteditable="true"> acts as a form control but has no accessible name — screen readers will announce the editable region with no context.`;
+}
+
+function buildEditableSuggestion(tagName: string, id: string | null): string {
+  const idHint = id ?? "editor";
+  return `This <${tagName} contenteditable="true"> behaves like an <input>/<textarea> for assistive tech — it needs an accessible name. Add \`aria-label="…"\` describing the editable region (e.g., \`aria-label="Message"\` for a chat composer, \`aria-label="Document body"\` for a doc editor), or associate a visible \`<label for="${idHint}">\` by giving the ${tagName} \`id="${idHint}"\`. \`aria-labelledby\` pointing at an existing heading or visible label also works.`;
 }
 
 function inferLabelFromType(type: string | null): string {

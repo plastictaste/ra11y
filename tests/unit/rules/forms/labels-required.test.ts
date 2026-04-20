@@ -162,6 +162,180 @@ describe("rule forms/labels-required", () => {
     });
   });
 
+  describe("HTML: contenteditable hosts (V1-DETECT-LABELS-CONTENTEDITABLE)", () => {
+    it('fires on <div contenteditable="true"> with no label', () => {
+      const v = runRule(rule, `<div contenteditable="true"></div>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("contenteditable");
+      expect(v[0]?.message).toContain("accessible name");
+    });
+
+    it("fires on bare <div contenteditable> (bare == true per HTML spec)", () => {
+      const v = runRule(rule, `<div contenteditable></div>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it('fires on <div contenteditable=""> (empty string == true per HTML spec)', () => {
+      const v = runRule(rule, `<div contenteditable=""></div>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it('fires on <span contenteditable="true"> (not just <div>)', () => {
+      const v = runRule(rule, `<span contenteditable="true"></span>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("accepts aria-label as the accessible name", () => {
+      const v = runRule(rule, `<div contenteditable="true" aria-label="Message composer"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("accepts aria-labelledby as the accessible name", () => {
+      const v = runRule(
+        rule,
+        `<h2 id="h">Compose</h2><div contenteditable="true" aria-labelledby="h"></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it('accepts <label for="id"> matching the contenteditable id', () => {
+      const v = runRule(
+        rule,
+        `<label for="editor">Message</label><div id="editor" contenteditable="true"></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("accepts a wrapping <label> (implicit label)", () => {
+      const v = runRule(rule, `<label>Message<div contenteditable="true"></div></label>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it('does NOT fire on <div contenteditable="false"> — not a form control', () => {
+      const v = runRule(rule, `<div contenteditable="false">static</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it('does NOT fire on <div contenteditable="inherit"> — not a form control', () => {
+      const v = runRule(rule, `<div contenteditable="inherit">inherits</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on <div> without any contenteditable attribute", () => {
+      const v = runRule(rule, `<div>just content</div>`, { filePath: "index.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("suggestion references aria-label and <label for> with the element's id", () => {
+      const v = runRule(rule, `<div id="composer" contenteditable="true"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("aria-label");
+      expect(v[0]?.suggestion).toContain("composer");
+    });
+  });
+
+  describe("JSX: contenteditable hosts (V1-DETECT-LABELS-CONTENTEDITABLE)", () => {
+    it('fires on <div contentEditable="true"> with no label', () => {
+      const v = runRule(rule, `const X = <div contentEditable="true" />;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("contenteditable");
+    });
+
+    it("fires on <div contentEditable={true}> (boolean expression)", () => {
+      const v = runRule(rule, `const X = <div contentEditable={true} />;`);
+      expect(v).toHaveLength(1);
+    });
+
+    it("fires on bare <div contentEditable />", () => {
+      const v = runRule(rule, `const X = <div contentEditable />;`);
+      expect(v).toHaveLength(1);
+    });
+
+    it('fires on lowercase <div contenteditable="true"> (author used HTML spelling)', () => {
+      const v = runRule(rule, `const X = <div contenteditable="true" />;`);
+      expect(v).toHaveLength(1);
+    });
+
+    it("accepts aria-label", () => {
+      const v = runRule(rule, `const X = <div contentEditable="true" aria-label="Message" />;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("accepts aria-labelledby", () => {
+      const v = runRule(
+        rule,
+        `const X = <><h2 id="h">Compose</h2><div contentEditable="true" aria-labelledby="h" /></>;`,
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("accepts label[htmlFor] matching id", () => {
+      const v = runRule(
+        rule,
+        `const X = <><label htmlFor="e">Message</label><div id="e" contentEditable="true" /></>;`,
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("accepts wrapping <label>", () => {
+      const v = runRule(rule, `const X = <label>Message<div contentEditable={true} /></label>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it('does NOT fire on <div contentEditable="false">', () => {
+      const v = runRule(rule, `const X = <div contentEditable="false">static</div>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on <div contentEditable={false}>", () => {
+      const v = runRule(rule, `const X = <div contentEditable={false}>static</div>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it('does NOT fire on <div contentEditable="inherit">', () => {
+      const v = runRule(rule, `const X = <div contentEditable="inherit">inherits</div>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on dynamic contentEditable={isEditing} — ambiguous, agent decides", () => {
+      // Expression values that aren't literal `true`/`false` stay unflagged:
+      // we can't prove the element is editable at render time, and firing
+      // would produce false positives on conditionally-editable regions.
+      const v = runRule(rule, `const X = <div contentEditable={isEditing} />;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on <div> without contentEditable", () => {
+      const v = runRule(rule, `const X = <div>content</div>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("emits info (not error) when the editable host has {...spread} props", () => {
+      const v = runRule(
+        rule,
+        `const Editor = (props) => <div contentEditable={true} {...props} />;`,
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("spread");
+    });
+  });
+
   describe("polymorphic as/asChild resolution (Q2R2-POLYMORPHIC)", () => {
     it('fires on <Field as="input" /> with no label', () => {
       const v = runRule(rule, `const X = <Field as="input" />;`);
