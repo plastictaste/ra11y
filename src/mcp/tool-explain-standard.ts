@@ -58,22 +58,29 @@ export const explainStandardTool: McpTool = {
     const level = strParam(params, "level");
     const criteria = level ? filterByLevel(standard.criteria, level) : standard.criteria;
 
+    // Per CLAUDE.md §1 "Ambiguous field shapes are dishonest": optional
+    // fields are conditional-spread at the assembly site rather than
+    // emitted as `null` / `[]` sentinels. `publisher` and `url` are
+    // schema-required on `Standard` so the spread is effectively
+    // unconditional — the form still documents the shape as
+    // present-when-meaningful and removes the misleading `?? null`
+    // fallback that suggested the value could be unknown.
     return textResult({
       id: standard.id,
       name: standard.name,
       version: standard.version,
-      publisher: standard.publisher ?? null,
-      url: standard.url ?? null,
+      ...(standard.publisher ? { publisher: standard.publisher } : {}),
+      ...(standard.url ? { url: standard.url } : {}),
       levels: standard.levels,
-      levelFilterApplied: level ?? null,
+      ...(level ? { levelFilterApplied: level } : {}),
       criteriaCount: criteria.length,
       criteria: criteria.map((c) => ({
         id: c.id,
         title: c.title,
         level: c.level,
         automatable: c.automatable ?? "unknown",
-        url: c.url ?? null,
-        equivalentTo: c.equivalentTo ?? [],
+        ...(c.url ? { url: c.url } : {}),
+        ...(c.equivalentTo && c.equivalentTo.length > 0 ? { equivalentTo: c.equivalentTo } : {}),
       })),
     });
   },

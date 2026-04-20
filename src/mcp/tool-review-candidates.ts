@@ -172,10 +172,16 @@ export const reviewCandidatesTool: McpTool = {
         // ambiguity -> "medium", narrow-heuristic -> "low"). Passed
         // through verbatim so an agent's threshold/filter logic reads
         // the same across automated findings and review candidates.
+        // `title` / `level` come from the standard's criterion record;
+        // they're populated when the candidate's criterionId resolves
+        // to a loaded criterion and omitted otherwise (per CLAUDE.md §1
+        // "Ambiguous field shapes are dishonest" — don't emit `null` as
+        // "unknown," conditional-spread so the field is absent when no
+        // value is available).
         return {
           criterionId: c.criterionId,
-          title: criterion?.title ?? null,
-          level: criterion?.level ?? null,
+          ...(criterion?.title ? { title: criterion.title } : {}),
+          ...(criterion?.level ? { level: criterion.level } : {}),
           location: c.location,
           reason: c.reason,
           confidence: c.confidence,

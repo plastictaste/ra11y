@@ -88,7 +88,12 @@ interface NextStepInputs {
   readonly notes: number;
   readonly first: FirstFinding | null;
   readonly iterativeTip: string;
-  readonly singleFilePath: string | null;
+  /**
+   * Present-when-meaningful per CLAUDE.md §1 — omitted on the project-
+   * wide scan branches that don't have a single-file anchor rather
+   * than sentineled to `null`.
+   */
+  readonly singleFilePath?: string;
   /**
    * True when every violation-severity finding in `files` already
    * carries an inline `fixClass === "mechanical"` discriminator — i.e.
@@ -144,7 +149,9 @@ export function buildNextStep(
     notes: numFromPlan(formatted.plan, "notes"),
     first: firstCallableFinding(formatted.files),
     iterativeTip: options.iterativeTip ?? "",
-    singleFilePath: options.singleFilePath ?? null,
+    // Conditional-spread per CLAUDE.md §1 — omit entirely when the
+    // caller has no single-file anchor rather than emit `null`.
+    ...(options.singleFilePath ? { singleFilePath: options.singleFilePath } : {}),
     allViolationsMechanical: allViolationsMechanical(formatted.files),
   };
   if (inputs.violations === 0 && inputs.notes === 0) return cleanScanNextStep(inputs);

@@ -45,7 +45,12 @@ export function parseIncludeRuleDetails(raw: unknown): IncludeRuleDetails {
 export interface RuleCatalogEntry {
   readonly description: string;
   readonly rationale: string;
-  readonly normativeQuote: string | null;
+  /**
+   * Present-when-meaningful per CLAUDE.md §1 "Ambiguous field shapes
+   * are dishonest" — omitted when the source rule has no
+   * `normativeQuote`, rather than emitted as `null`.
+   */
+  readonly normativeQuote?: string;
   readonly goodExample: string;
   readonly badExample: string;
   readonly references: readonly string[];
@@ -74,7 +79,9 @@ export function buildRuleCatalog(
     out[rule.id] = {
       description: rule.docs.description,
       rationale: rule.docs.rationale,
-      normativeQuote: rule.docs.normativeQuote ?? null,
+      // Conditional-spread per CLAUDE.md §1: omit the field entirely
+      // when the rule has no normative quote rather than emit `null`.
+      ...(rule.docs.normativeQuote ? { normativeQuote: rule.docs.normativeQuote } : {}),
       goodExample: rule.docs.goodExample,
       badExample: rule.docs.badExample,
       references: [...rule.docs.references],
