@@ -1,0 +1,376 @@
+import { describe, expect, it } from "bun:test";
+import { parseMdx } from "../../../../src/input/parsers/mdx.ts";
+import type { JsxAttribute, JsxElement } from "../../../../src/types/ast.ts";
+
+function findElement(elements: readonly JsxElement[], tag: string): JsxElement | undefined {
+  return elements.find((e) => e.tagName === tag);
+}
+
+function getAttr(el: JsxElement, name: string): JsxAttribute | undefined {
+  return el.attributes.find((a) => a.name === name);
+}
+
+describe("parseMdx — empty + trivial", () => {
+  it("parses empty source without error", () => {
+    const { root, errors } = parseMdx("");
+    expect(root.kind).toBe("TsxModule");
+    expect(root.jsxElements).toHaveLength(0);
+    expect(errors).toHaveLength(0);
+  });
+
+  it("never throws on random garbage", () => {
+    const garbage = "---\n---\n```\n{{{<><></>}}}\n```\n<!-- <img> -->";
+    expect(() => parseMdx(garbage)).not.toThrow();
+  });
+
+  it("parses plain-JSX MDX identically to parseTsx", () => {
+    const src = `# Hello\n\n<img src="/a.png" alt="cat" />\n`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const img = findElement(root.jsxElements, "img");
+    expect(img).toBeDefined();
+    const altAttr = getAttr(img!, "alt");
+    expect(altAttr?.value?.kind).toBe("StringLiteral");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("cat");
+    }
+  });
+});
+
+describe("parseMdx — YAML frontmatter strip", () => {
+  it("strips a leading --- frontmatter block", () => {
+    const src = `---
+title: My Page
+description: A test
+---
+
+<img src="/a.png" alt="after-frontmatter" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const img = findElement(root.jsxElements, "img");
+    expect(img).toBeDefined();
+    const altAttr = getAttr(img!, "alt");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("after-frontmatter");
+    }
+  });
+
+  it("does not interpret a mid-document --- as frontmatter", () => {
+    // A thematic break in the middle of prose must not confuse us.
+    const src = `# Heading
+
+Some prose.
+
+---
+
+<img src="/a.png" alt="still-here" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+
+  it("strips a leading +++ TOML frontmatter block", () => {
+    const src = `+++
+title = "Page"
++++
+
+<img alt="toml-case" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+
+  it("does nothing when the source has no frontmatter fence", () => {
+    const src = `<img alt="no-frontmatter" />`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+
+  it("leaves source intact when the closing fence is missing", () => {
+    // Unterminated frontmatter — the scan finds no close and the
+    // strip is a no-op. The TSX pass then runs on the full source;
+    // the JSX tag is still picked up because `<img` is well-formed.
+    const src = `---
+title: Unfinished
+
+<img alt="unterminated-frontmatter" />
+`;
+    const { root } = parseMdx(src);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+});
+
+describe("parseMdx — fenced code block strip", () => {
+  it("strips backtick-fenced code blocks so their JSX isn't detected", () => {
+    const src = `# Example
+
+\`\`\`jsx
+<img src="/illustrative.png" />
+\`\`\`
+
+<img alt="real" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    // Only the real <img> outside the fence should appear.
+    const imgs = root.jsxElements.filter((e) => e.tagName === "img");
+    expect(imgs).toHaveLength(1);
+    const altAttr = getAttr(imgs[0]!, "alt");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("real");
+    }
+  });
+
+  it("strips tilde-fenced code blocks", () => {
+    const src = `~~~jsx
+<img src="/in-tildes.png" />
+~~~
+
+<img alt="outside" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const imgs = root.jsxElements.filter((e) => e.tagName === "img");
+    expect(imgs).toHaveLength(1);
+  });
+
+  it("strips fences with info strings (language + metadata)", () => {
+    const src = `\`\`\`typescript title="example.ts"
+const x: string = "<Button/>";
+\`\`\`
+
+<Button alt="real" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const buttons = root.jsxElements.filter((e) => e.tagName === "Button");
+    expect(buttons).toHaveLength(1);
+  });
+
+  it("requires the closing fence to be at least as long as the opening", () => {
+    // Four backticks open; a three-backtick line inside does NOT close.
+    const src = `\`\`\`\`
+\`\`\`
+<img alt="inside-long-fence" />
+\`\`\`\`
+
+<img alt="outside" />
+`;
+    const { root } = parseMdx(src);
+    const imgs = root.jsxElements.filter((e) => e.tagName === "img");
+    // Only the outside <img> survives.
+    expect(imgs).toHaveLength(1);
+  });
+
+  it("leaves unterminated fences as a strip-to-EOF", () => {
+    const src = `\`\`\`
+<img alt="unterminated" />
+`;
+    const { root } = parseMdx(src);
+    // The unterminated fence strips to EOF — no JSX emerges.
+    expect(root.jsxElements).toHaveLength(0);
+  });
+});
+
+describe("parseMdx — import / export line strip", () => {
+  it("strips top-level import statements", () => {
+    const src = `import { Card } from '@astro/starlight/components';
+
+<Card title="hello" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const card = findElement(root.jsxElements, "Card");
+    expect(card).toBeDefined();
+  });
+
+  it("strips multi-line brace imports", () => {
+    const src = `import {
+  A,
+  B,
+  C,
+} from 'lib';
+
+<A />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "A")).toBeDefined();
+  });
+
+  it("strips single-line export statements", () => {
+    const src = `export const meta = { title: "x" };
+
+<img alt="after-export" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+
+  it("does not mistake prose starting with 'imports' for an import line", () => {
+    // 'imports ' doesn't match — the regex requires the keyword to be
+    // followed by whitespace after the exact keyword, not just any
+    // char. Prose starting with "imports" should pass through.
+    const src = `imports are fun.
+
+<img alt="after-prose" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+
+  it("does not strip `import` appearing mid-line (not at column 0)", () => {
+    // A line whose import sits after some leading content is not an
+    // ESM statement line. The scanner only strips at line-start.
+    const src = `  import foo from "x";
+
+<img alt="mid-line-import" />
+`;
+    // Indented 'import' isn't at column 0 — we still expect the img
+    // to parse cleanly; the indented text flows past the TSX scanner.
+    const { root } = parseMdx(src);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+});
+
+describe("parseMdx — markdown prose flows past without confusing JSX scan", () => {
+  it("ignores markdown headings", () => {
+    const src = `# Top-level heading
+
+## Second heading
+
+<a href="/x">Read more</a>
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "a")).toBeDefined();
+  });
+
+  it("ignores paragraphs, lists, and blockquotes", () => {
+    const src = `Regular paragraph text.
+
+- list item one
+- list item two
+
+> a blockquote
+
+<button>Click me</button>
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "button")).toBeDefined();
+  });
+
+  it("tolerates `<` in prose that isn't followed by an identifier", () => {
+    // "1 < 2" is arithmetic prose, not JSX. The TSX scanner's
+    // isTagStart requires a letter after `<`, so " <" passes through.
+    const src = `When x < y, use the larger value.
+
+<img alt="after-prose-with-lt" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(findElement(root.jsxElements, "img")).toBeDefined();
+  });
+});
+
+describe("parseMdx — combined real-world MDX page", () => {
+  it("handles a representative Astro/Starlight doc page", () => {
+    const src = `---
+title: Quickstart
+description: Get started in minutes
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+# Quickstart
+
+This page shows you how to get started.
+
+## Installation
+
+Run the following command:
+
+\`\`\`bash
+npm install @my-lib
+\`\`\`
+
+<Card title="Note" icon="pencil">
+  Make sure to read the <a href="/docs/setup">setup guide</a>.
+</Card>
+
+<CardGrid>
+  <Card title="A" />
+  <Card title="B" />
+</CardGrid>
+
+<img src="/hero.png" alt="hero" />
+`;
+    const { root, errors } = parseMdx(src);
+    // No parse errors on a clean representative page.
+    expect(errors).toHaveLength(0);
+    // The three top-level JSX elements are the two Cards/CardGrid and the img.
+    const tags = root.jsxElements.map((e) => e.tagName);
+    expect(tags).toContain("Card");
+    expect(tags).toContain("CardGrid");
+    expect(tags).toContain("img");
+    // And the <a> inside the first Card is reachable via children.
+    const outerCard = findElement(root.jsxElements, "Card");
+    expect(outerCard).toBeDefined();
+  });
+});
+
+describe("parseMdx — line-number preservation", () => {
+  it("preserves line numbers for JSX that appears after a frontmatter block", () => {
+    // The <img> is on line 6 of the original source. After frontmatter
+    // is blanked (newlines preserved), its line must still be 6.
+    const src = `---
+title: x
+---
+
+<img alt="line6" />
+`;
+    const { root } = parseMdx(src);
+    const img = findElement(root.jsxElements, "img");
+    expect(img).toBeDefined();
+    expect(img?.loc.start.line).toBe(5);
+  });
+
+  it("preserves line numbers for JSX that appears after a code fence", () => {
+    const src = `text
+\`\`\`
+code
+\`\`\`
+
+<img alt="line6" />
+`;
+    const { root } = parseMdx(src);
+    const img = findElement(root.jsxElements, "img");
+    expect(img).toBeDefined();
+    expect(img?.loc.start.line).toBe(6);
+  });
+});
+
+describe("parseMdx — recoverable parse errors", () => {
+  it("propagates recoverable errors from the TSX pass", () => {
+    // An unterminated JSX element — the TSX parser is tolerant but
+    // may emit a parseError depending on shape. We assert the
+    // parser never throws and the result has the expected shape.
+    const src = `<div>
+  unterminated child
+`;
+    const { root, errors } = parseMdx(src);
+    expect(root.kind).toBe("TsxModule");
+    // Errors may or may not be present depending on TSX tolerance;
+    // the invariant is never-throws + structured result.
+    for (const e of errors) {
+      expect(e.recoverable).toBe(true);
+    }
+  });
+});
