@@ -68,7 +68,7 @@ function buildSuppressPragma(filePath: string, ruleId: string): string {
   if (lower.endsWith(".html") || lower.endsWith(".htm")) {
     return `<!-- ra11y-disable-next-line ${ruleId} -->`;
   }
-  if (lower.endsWith(".tsx") || lower.endsWith(".jsx")) {
+  if (lower.endsWith(".tsx") || lower.endsWith(".jsx") || lower.endsWith(".mdx")) {
     return `{/* ra11y-disable-next-line ${ruleId} */}`;
   }
   return `// ra11y-disable-next-line ${ruleId}`;
@@ -80,7 +80,7 @@ function buildSuppressPragma(filePath: string, ruleId: string): string {
  */
 function buildSuppressPlacement(filePath: string): string {
   const lower = filePath.toLowerCase();
-  if (lower.endsWith(".tsx") || lower.endsWith(".jsx")) {
+  if (lower.endsWith(".tsx") || lower.endsWith(".jsx") || lower.endsWith(".mdx")) {
     return "Place on the line immediately above the opening JSX tag of the flagged element — not inside attributes, and not between adjacent JSX siblings without a wrapping expression. The `{/* … */}` wrapper is valid as a JSX expression or at module scope.";
   }
   if (lower.endsWith(".css") || lower.endsWith(".scss")) {

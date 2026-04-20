@@ -18,7 +18,7 @@ import {
 } from "../../engine/baseline.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
-import { parseCss, parseHtml, parseScss, parseTsx } from "../../input/parsers/index.ts";
+import { parseCss, parseHtml, parseMdx, parseScss, parseTsx } from "../../input/parsers/index.ts";
 import { BUILTIN_FORMATTERS } from "../../output/formatters/index.ts";
 import {
   buildChecklist,
@@ -300,6 +300,10 @@ function parseFor(filePath: string, source: string): Ast | null {
   if (filePath.endsWith(".scss")) {
     const r = parseScss(source);
     return { language: "css", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".mdx")) {
+    const r = parseMdx(source);
+    return { language: "tsx", root: r.root, errors: r.errors };
   }
   if (
     filePath.endsWith(".tsx") ||

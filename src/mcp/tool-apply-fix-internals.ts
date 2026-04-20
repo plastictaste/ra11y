@@ -20,7 +20,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { fingerprintOf } from "../engine/baseline.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
-import { parseCss, parseHtml, parseScss, parseTsx } from "../input/parsers/index.ts";
+import { parseCss, parseHtml, parseMdx, parseScss, parseTsx } from "../input/parsers/index.ts";
 import { buildAgentFinding } from "../output/agent-response/index.ts";
 import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
@@ -36,7 +36,7 @@ export interface ResolvedEdit {
   readonly newText: string;
 }
 
-export type Ext = "tsx" | "html" | "css" | "scss";
+export type Ext = "tsx" | "html" | "css" | "scss" | "mdx";
 
 export interface SingleFileScan {
   readonly violations: readonly Violation[];
@@ -317,6 +317,7 @@ function extensionOf(filePath: string): Ext | null {
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
   if (lower.endsWith(".css")) return "css";
   if (lower.endsWith(".scss")) return "scss";
+  if (lower.endsWith(".mdx")) return "mdx";
   return null;
 }
 
@@ -332,6 +333,10 @@ export function parseFor(ext: Ext, source: string): Ast {
   if (ext === "scss") {
     const r = parseScss(source);
     return { language: "css", root: r.root, errors: r.errors };
+  }
+  if (ext === "mdx") {
+    const r = parseMdx(source);
+    return { language: "tsx", root: r.root, errors: r.errors };
   }
   const r = parseTsx(source);
   return { language: "tsx", root: r.root, errors: r.errors };

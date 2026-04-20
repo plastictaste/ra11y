@@ -12,7 +12,7 @@ import { isAbsolute, resolve } from "node:path";
 import { loadConfig } from "../config/index.ts";
 import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
-import { parseCss, parseHtml, parseScss, parseTsx } from "../input/parsers/index.ts";
+import { parseCss, parseHtml, parseMdx, parseScss, parseTsx } from "../input/parsers/index.ts";
 import type { Ast } from "../types/ast.ts";
 import type { LoadedConfig, RuleSetting } from "../types/config.ts";
 import { LoggingState } from "./logging.ts";
@@ -356,6 +356,10 @@ function parseForExtension(filePath: string, source: string): Ast | null {
   if (filePath.endsWith(".scss")) {
     const r = parseScss(source);
     return { language: "css", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".mdx")) {
+    const r = parseMdx(source);
+    return { language: "tsx", root: r.root, errors: r.errors };
   }
   if (
     filePath.endsWith(".tsx") ||
