@@ -22,6 +22,7 @@ export interface CliOptions {
     | "doctor"
     | "baseline"
     | "attestations"
+    | "attest"
     | "help"
     | "version";
   readonly positionals: readonly string[];
@@ -72,6 +73,17 @@ export interface CliOptions {
   readonly attestationsAction: "prune" | undefined;
   /** `--dry-run` flag for `ra11y attestations prune`. */
   readonly attestationsDryRun: boolean;
+  /**
+   * `ra11y attest <criterionId>` flags. Typed at parse time so the
+   * command handler doesn't re-walk `RawCliOptions`. All optional here;
+   * the handler enforces the required-reason + scope↔location coupling.
+   */
+  readonly attestVerdict: "pass" | "fail" | "n/a" | "pending" | undefined;
+  readonly attestReason: string | undefined;
+  readonly attestRuleIds: readonly string[];
+  readonly attestScope: "project" | "file" | "line" | undefined;
+  readonly attestBy: string | undefined;
+  readonly attestLocation: string | undefined;
 }
 
 /**
@@ -118,6 +130,12 @@ interface RawCliOptions {
   readonly baseline: string | undefined;
   readonly baselineFile: string | undefined;
   readonly dryRun: boolean | undefined;
+  readonly verdict: string | undefined;
+  readonly reason: string | undefined;
+  readonly ruleIds: string | readonly string[] | undefined;
+  readonly scope: string | undefined;
+  readonly by: string | undefined;
+  readonly location: string | undefined;
 }
 
 const FLAGS = [
@@ -147,39 +165,61 @@ const ALIASES: Readonly<Record<string, string>> = {
   v: "version",
 };
 
-const REPEATABLE = ["exclude", "ignore"];
+const REPEATABLE = ["exclude", "ignore", "rule-ids"];
+
+/**
+ * Flag-toggle commands (`--list-rules`, `--coverage`, `--checklist`, …).
+ * Evaluated in declaration order — the first matching flag wins.
+ */
+const FLAG_COMMANDS: ReadonlyArray<{
+  readonly key: keyof RawCliOptions;
+  readonly command: CliOptions["command"];
+  readonly withOpts: boolean;
+}> = [
+  { key: "help", command: "help", withOpts: false },
+  { key: "version", command: "version", withOpts: false },
+  { key: "listRules", command: "list-rules", withOpts: false },
+  { key: "listStandards", command: "list-standards", withOpts: false },
+  { key: "coverage", command: "coverage", withOpts: true },
+  { key: "checklist", command: "checklist", withOpts: true },
+  { key: "vpat", command: "vpat", withOpts: true },
+  { key: "certification", command: "certification", withOpts: true },
+  { key: "mcp", command: "mcp", withOpts: false },
+  { key: "init", command: "init", withOpts: true },
+  { key: "doctor", command: "doctor", withOpts: true },
+];
+
+/**
+ * Subcommand keywords that consume the first positional as a namespace
+ * and dispatch to a command handler with the remaining positionals.
+ */
+const SUBCOMMAND_KEYWORDS: ReadonlyArray<{
+  readonly keyword: string;
+  readonly command: CliOptions["command"];
+}> = [
+  { keyword: "baseline", command: "baseline" },
+  { keyword: "attestations", command: "attestations" },
+  { keyword: "attest", command: "attest" },
+];
 
 export function parseCliArgs(argv: readonly string[]): CliOptions {
   const parsed = parseArgs(argv, { flags: FLAGS, aliases: ALIASES, repeatable: REPEATABLE });
   const opts = translate(parsed.options);
 
-  if (opts.help === true) return baseOpts(parsed.positionals, "help");
-  if (opts.version === true) return baseOpts(parsed.positionals, "version");
-  if (opts.listRules === true) return baseOpts(parsed.positionals, "list-rules");
-  if (opts.listStandards === true) return baseOpts(parsed.positionals, "list-standards");
-  if (opts.coverage === true) return baseOpts(parsed.positionals, "coverage", opts);
-  if (opts.checklist === true) return baseOpts(parsed.positionals, "checklist", opts);
-  if (opts.vpat === true) return baseOpts(parsed.positionals, "vpat", opts);
-  if (opts.certification === true) return baseOpts(parsed.positionals, "certification", opts);
-  if (opts.mcp === true) return baseOpts(parsed.positionals, "mcp");
-  if (opts.init === true) return baseOpts(parsed.positionals, "init", opts);
-  if (opts.doctor === true) return baseOpts(parsed.positionals, "doctor", opts);
+  for (const { key, command, withOpts } of FLAG_COMMANDS) {
+    if (opts[key] === true) {
+      return baseOpts(parsed.positionals, command, withOpts ? opts : undefined);
+    }
+  }
 
   if (typeof opts.explain === "string") {
     return { ...baseOpts(parsed.positionals, "explain"), ruleId: opts.explain };
   }
 
-  // `ra11y baseline <action>` — subcommand namespace. Drop the
-  // "baseline" literal from the positionals list so downstream
-  // handlers see only the action + any remaining args.
-  if (parsed.positionals[0] === "baseline") {
-    return baseOpts(parsed.positionals.slice(1), "baseline", opts);
-  }
-
-  // `ra11y attestations <action>` — sibling subcommand namespace for
-  // managing the attestation ledger. Same slice-and-dispatch shape.
-  if (parsed.positionals[0] === "attestations") {
-    return baseOpts(parsed.positionals.slice(1), "attestations", opts);
+  for (const { keyword, command } of SUBCOMMAND_KEYWORDS) {
+    if (parsed.positionals[0] === keyword) {
+      return baseOpts(parsed.positionals.slice(1), command, opts);
+    }
   }
 
   return baseOpts(parsed.positionals, "scan", opts);
@@ -224,6 +264,12 @@ function translate(
     baseline: stringAt(raw, "baseline"),
     baselineFile: stringAt(raw, "baseline-file"),
     dryRun: boolAt(raw, "dry-run"),
+    verdict: stringAt(raw, "verdict"),
+    reason: stringAt(raw, "reason"),
+    ruleIds: listAt(raw, "rule-ids"),
+    scope: stringAt(raw, "scope"),
+    by: stringAt(raw, "by"),
+    location: stringAt(raw, "location"),
   };
 }
 
@@ -283,6 +329,29 @@ function baseOpts(
     attestationsAction:
       command === "attestations" && positionals[0] === "prune" ? "prune" : undefined,
     attestationsDryRun: raw?.dryRun === true,
+    ...attestOpts(raw),
+  };
+}
+
+type AttestOpts = Pick<
+  CliOptions,
+  "attestVerdict" | "attestReason" | "attestRuleIds" | "attestScope" | "attestBy" | "attestLocation"
+>;
+
+function attestOpts(raw?: RawCliOptions): AttestOpts {
+  return {
+    attestVerdict: normalizeVerdict(raw?.verdict),
+    attestReason: typeof raw?.reason === "string" ? raw.reason : undefined,
+    attestRuleIds: normalizeList(raw?.ruleIds).flatMap((entry) =>
+      entry
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    ),
+    attestScope: normalizeAttestScope(raw?.scope),
+    attestBy: typeof raw?.by === "string" && raw.by.length > 0 ? raw.by : undefined,
+    attestLocation:
+      typeof raw?.location === "string" && raw.location.length > 0 ? raw.location : undefined,
   };
 }
 
@@ -338,4 +407,20 @@ function normalizeList(value: string | readonly string[] | undefined): readonly 
   if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string");
   if (typeof value === "string") return [value];
   return [];
+}
+
+/**
+ * CLI verdict values. Accepts `na` as a shorthand for `n/a` (slash is
+ * awkward in most shells); both map to the canonical `"n/a"` enum the
+ * attestation store validates on write.
+ */
+function normalizeVerdict(value: string | undefined): CliOptions["attestVerdict"] {
+  if (value === "pass" || value === "fail" || value === "pending") return value;
+  if (value === "n/a" || value === "na") return "n/a";
+  return undefined;
+}
+
+function normalizeAttestScope(value: string | undefined): CliOptions["attestScope"] {
+  if (value === "project" || value === "file" || value === "line") return value;
+  return undefined;
 }

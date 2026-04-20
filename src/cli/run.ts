@@ -7,6 +7,7 @@ import { startMcpServer } from "../mcp/server.ts";
 import { setColorEnabled } from "../utils/ansi.ts";
 import { setLogLevel } from "../utils/logger.ts";
 import { parseCliArgs } from "./args.ts";
+import { runAttestCommand } from "./commands/attest.ts";
 import { runAttestationsCommand } from "./commands/attestations.ts";
 import { runBaselineCommand } from "./commands/baseline.ts";
 import { runCertification } from "./commands/certification.ts";
@@ -58,6 +59,8 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
       return runBaselineCommand(options);
     case "attestations":
       return runAttestationsCommand(options);
+    case "attest":
+      return runAttestCommand(options);
     case "scan":
       return runScanCommand(options);
   }

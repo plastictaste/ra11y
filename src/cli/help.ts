@@ -49,6 +49,12 @@ BASELINE
 ATTESTATIONS
   ra11y attestations prune [--dry-run]
                          Drop attestations pinned to deleted files
+  ra11y attest <criterionId> --reason <text> [--verdict pass|fail|na|pending]
+                             [--rule-ids <id>,<id>] [--scope project|file|line]
+                             [--location <file>:<line>[:<col>]] [--by <who>]
+                         Append a durable attestation to .ra11y/attestations.jsonl.
+                         Reason is required and non-empty. Bare invocations
+                         (missing --reason or empty) exit with code 2.
 
 META
   -h, --help             Show this help
