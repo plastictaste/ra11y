@@ -83,6 +83,98 @@ describe("rule semantics/button-name", () => {
       const violations = runRule(rule, `<div></div>`, { filePath: "index.html" });
       expect(violations).toHaveLength(0);
     });
+
+    it("button with SVG <title> child is accessibly named (V1-DETECT-BUTTON-NAME-SVG)", () => {
+      const v = runRule(rule, `<button><svg><title>Close dialog</title></svg></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("button with SVG <text> child is accessibly named", () => {
+      const v = runRule(rule, `<button><svg><text>Close</text></svg></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("button with SVG <title> nested under <g> is accessibly named", () => {
+      const v = runRule(rule, `<button><svg><g><title>Close</title></g></svg></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("role=button with SVG <title> descendant is accessibly named", () => {
+      const v = runRule(
+        rule,
+        `<div role="button" tabindex="0"><svg><title>Close</title></svg></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("button with empty SVG still fires (no <title>/<text> text)", () => {
+      const v = runRule(rule, `<button><svg><circle /></svg></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+  });
+
+  describe('HTML: <input type="image"> (V1-DETECT-BUTTON-NAME-IMAGE-INPUT)', () => {
+    it("fires when image input has no accessible name", () => {
+      const v = runRule(rule, `<input type="image" src="submit.png">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.ruleId).toBe("semantics/button-name");
+    });
+
+    it("fires when image input has empty alt", () => {
+      const v = runRule(rule, `<input type="image" src="submit.png" alt="">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("does not fire when image input has alt", () => {
+      const v = runRule(rule, `<input type="image" src="submit.png" alt="Submit">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire when image input has title", () => {
+      const v = runRule(rule, `<input type="image" src="submit.png" title="Submit">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire when image input has aria-label", () => {
+      const v = runRule(rule, `<input type="image" src="submit.png" aria-label="Submit">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire when image input has aria-labelledby", () => {
+      const v = runRule(rule, `<input type="image" src="s.png" aria-labelledby="lbl">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("fires when image input only has `value` (not a name source for type=image)", () => {
+      // Per HTML §4.10.5.1.18, `value` is not an accessible-name source
+      // for <input type="image"> — it is submitted as form data, not
+      // rendered or announced. Only `alt`, aria-*, and `title` count.
+      const v = runRule(rule, `<input type="image" src="s.png" value="Submit">`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -113,6 +205,49 @@ describe("rule semantics/button-name", () => {
     it("button has runtime-valued aria-label", () => {
       const violations = runRule(rule, `const X = <button aria-label={t('close')} />;`);
       expect(violations).toHaveLength(0);
+    });
+
+    it("button has SVG <title> descendant (V1-DETECT-BUTTON-NAME-SVG)", () => {
+      const v = runRule(rule, `const X = <button><svg><title>Close</title></svg></button>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("button has SVG <text> descendant", () => {
+      const v = runRule(rule, `const X = <button><svg><text>Close</text></svg></button>;`);
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe('JSX: <input type="image"> (V1-DETECT-BUTTON-NAME-IMAGE-INPUT)', () => {
+    it("fires when image input has no accessible name", () => {
+      const v = runRule(rule, `const X = <input type="image" src="s.png" />;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.ruleId).toBe("semantics/button-name");
+    });
+
+    it("fires when image input only has `value` (not a name source)", () => {
+      const v = runRule(rule, `const X = <input type="image" src="s.png" value="Submit" />;`);
+      expect(v).toHaveLength(1);
+    });
+
+    it("does not fire when image input has alt", () => {
+      const v = runRule(rule, `const X = <input type="image" src="s.png" alt="Submit" />;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire when image input has runtime alt={x}", () => {
+      const v = runRule(rule, `const X = <input type="image" src="s.png" alt={label} />;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire when image input has aria-label", () => {
+      const v = runRule(rule, `const X = <input type="image" src="s.png" aria-label="Submit" />;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire when image input has title", () => {
+      const v = runRule(rule, `const X = <input type="image" src="s.png" title="Submit" />;`);
+      expect(v).toHaveLength(0);
     });
   });
 

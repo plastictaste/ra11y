@@ -11,12 +11,16 @@
  *
  * Flags `<button>` and `role="button"` elements with no accessible
  * name. A button's accessible name can come from:
- *   - visible text content
+ *   - visible text content (including SVG `<title>` / `<text>`
+ *     descendants — SVG 2 accessibility chapter specifies these as
+ *     accessible-name sources for the ancestor interactive control)
  *   - aria-label
  *   - aria-labelledby (pointer to another element's text)
  *   - title (last resort — not announced by every AT but counts)
  *   - for <input type="submit|button|reset">: the `value` attribute,
  *     or an implicit default string per HTML spec
+ *   - for <input type="image">: `alt`, `aria-label`, `aria-labelledby`,
+ *     or `title` (per HTML §4.10.5.1.18 image button labeling)
  *
  * A button with only an icon child and no label is the canonical
  * failure: screen readers announce "button" with no action.
@@ -127,9 +131,35 @@ function checkHtmlRoleButtons(doc: HtmlDocument, emit: Emit): void {
 }
 
 function hasAccessibleNameHtml(element: HtmlElement): boolean {
+  // `htmlTextContent` walks every descendant HtmlText — which already
+  // covers SVG `<title>` (raw-text element) and `<text>` children
+  // nested under an interactive control. Kept as the primary check so
+  // authors using `<button><svg><title>Close</title></svg></button>`
+  // pass cleanly. The explicit `hasSvgNameDescendantHtml` below is a
+  // belt-and-braces guard in case parser treatment of raw-text
+  // elements changes: it walks SVG descendants and returns true for a
+  // non-empty `<title>` / `<text>` even if `htmlTextContent` ever
+  // stopped surfacing it.
   if (htmlTextContent(element).length > 0) return true;
+  if (hasSvgNameDescendantHtml(element)) return true;
   if (hasHtmlAriaName(element)) return true;
   if (hasHtmlChildImgAlt(element)) return true;
+  return false;
+}
+
+/**
+ * True when the element has an SVG `<title>` or `<text>` descendant
+ * with non-empty text. SVG 2 accessibility chapter treats these as
+ * accessible-name sources for the ancestor interactive control
+ * (button, link, role="button").
+ */
+function hasSvgNameDescendantHtml(element: HtmlElement): boolean {
+  for (const child of element.children) {
+    if (child.kind !== "HtmlElement") continue;
+    const tag = child.tagName.toLowerCase();
+    if ((tag === "title" || tag === "text") && htmlTextContent(child).length > 0) return true;
+    if (hasSvgNameDescendantHtml(child)) return true;
+  }
   return false;
 }
 
@@ -154,23 +184,29 @@ function hasHtmlChildImgAlt(element: HtmlElement): boolean {
 
 function isButtonInputHtml(element: HtmlElement): boolean {
   const type = (getHtmlAttribute(element, "type") ?? "").toLowerCase();
-  return type === "button" || type === "submit" || type === "reset";
+  return type === "button" || type === "submit" || type === "reset" || type === "image";
 }
 
 function hasInputButtonNameHtml(element: HtmlElement): boolean {
+  const type = (getHtmlAttribute(element, "type") ?? "").toLowerCase();
+  // `<input type="image">` is named via `alt` / aria-* / `title` per
+  // HTML §4.10.5.1.18. `value` is not a name source for image buttons
+  // (it submits as form data), and there is no UA-default fallback.
+  if (type === "image") return hasImageInputNameHtml(element);
   const value = getHtmlAttribute(element, "value");
   if (value !== null && value.trim().length > 0) return true;
-  const ariaLabel = getHtmlAttribute(element, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
-  if (hasHtmlAttribute(element, "aria-labelledby")) return true;
-  const title = getHtmlAttribute(element, "title");
-  if (title !== null && title.trim().length > 0) return true;
+  if (hasHtmlAriaName(element)) return true;
   // type=submit and type=reset have a UA-default label ("Submit" / "Reset").
   // The spec considers that a valid accessible name even though it's locale-
   // dependent and unhelpful.
-  const type = (getHtmlAttribute(element, "type") ?? "").toLowerCase();
   if (type === "submit" || type === "reset") return true;
   return false;
+}
+
+function hasImageInputNameHtml(element: HtmlElement): boolean {
+  const alt = getHtmlAttribute(element, "alt");
+  if (alt !== null && alt.trim().length > 0) return true;
+  return hasHtmlAriaName(element);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,11 +276,33 @@ function buildJsxViolation(subject: string, el: JsxElement) {
 
 function hasAccessibleNameJsx(element: JsxElement): boolean {
   if (jsxTextContent(element).length > 0) return true;
+  // SVG `<title>` / `<text>` descendant with literal text is an
+  // accessible-name source (SVG 2 accessibility). Keep the check above
+  // the broad content-children heuristic below so the specific match
+  // wins — the two are compatible but the explicit path expresses
+  // intent for code-review.
+  if (hasSvgNameDescendantJsx(element)) return true;
   // Expression children like {label} likely produce text at runtime.
   // Flagging <button>{label}</button> as "no name" is a false positive.
   if (jsxHasContentChildren(element)) return true;
   if (hasJsxAriaName(element)) return true;
   if (hasJsxChildNameSource(element)) return true;
+  return false;
+}
+
+/**
+ * True when the JSX element has an SVG `<title>` or `<text>`
+ * descendant whose literal text content is non-empty. Matches the HTML
+ * counterpart in `hasSvgNameDescendantHtml`.
+ */
+function hasSvgNameDescendantJsx(element: JsxElement): boolean {
+  for (const child of element.children) {
+    if (child.kind !== "JsxElement") continue;
+    if (child.tagName === "title" || child.tagName === "text") {
+      if (jsxTextContent(child).length > 0) return true;
+    }
+    if (hasSvgNameDescendantJsx(child)) return true;
+  }
   return false;
 }
 
@@ -282,23 +340,29 @@ function isPascalCase(tag: string): boolean {
 
 function isButtonInputJsx(element: JsxElement): boolean {
   const type = getJsxAttributeString(element, "type");
-  return type === "button" || type === "submit" || type === "reset";
+  return type === "button" || type === "submit" || type === "reset" || type === "image";
 }
 
 function hasInputButtonNameJsx(element: JsxElement): boolean {
+  const type = getJsxAttributeString(element, "type");
+  // `<input type="image">`: `alt` / aria-* / `title` only; no UA default.
+  if (type === "image") return hasImageInputNameJsx(element);
   const value = getJsxAttributeString(element, "value");
   if (value !== null && value.trim().length > 0) return true;
-  const ariaLabel = getJsxAttributeString(element, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
-  if (hasJsxAttribute(element, "aria-labelledby")) return true;
-  const title = getJsxAttributeString(element, "title");
-  if (title !== null && title.trim().length > 0) return true;
+  if (hasJsxAriaName(element)) return true;
   // Runtime-valued value={x} — can't statically verify; assume OK.
   const valueAttr = getJsxAttribute(element, "value");
   if (valueAttr?.value?.kind === "Expression") return true;
-  const type = getJsxAttributeString(element, "type");
   if (type === "submit" || type === "reset") return true;
   return false;
+}
+
+function hasImageInputNameJsx(element: JsxElement): boolean {
+  const alt = getJsxAttributeString(element, "alt");
+  if (alt !== null && alt.trim().length > 0) return true;
+  const altAttr = getJsxAttribute(element, "alt");
+  if (altAttr?.value?.kind === "Expression") return true;
+  return hasJsxAriaName(element);
 }
 
 function buildViolation(
