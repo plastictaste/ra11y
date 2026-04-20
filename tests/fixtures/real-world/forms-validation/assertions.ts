@@ -10,7 +10,7 @@
  *
  *   violations:
  *     forms/labels-required     ContactForm.tsx:54  <input type="email"> has no accessible name
- *     forms/autocomplete-missing ContactForm.tsx:54  <input> appears to collect personal information
+ *     forms/autocomplete-missing ContactForm.tsx:54  <input> appears to collect information about the user
  *     forms/fieldset-legend     ContactForm.tsx:86  <fieldset> has no <legend> child
  *     forms/required-indicator-missing PhoneField.tsx:13  <PhoneField> forwards `required` to a native <input>
  *
@@ -73,7 +73,7 @@ export const assertions: FixtureAssertions = {
     {
       kind: "violation-present",
       ruleId: "forms/autocomplete-missing",
-      reasonIncludes: "appears to collect personal information but has no autocomplete",
+      reasonIncludes: "appears to collect information about the user but has no autocomplete",
     },
 
     // ── review/validation-timing (wcag22:3.3.3) ──────────────────────────────

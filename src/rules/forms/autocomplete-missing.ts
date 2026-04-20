@@ -78,13 +78,13 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "Input fields collecting personal information (name, email, address, phone) should declare an autocomplete value so browsers and assistive tech can autofill them.",
+      "Input fields collecting information about the user must declare an autocomplete value drawn from WCAG's 53 input-purpose tokens so the field's purpose can be programmatically determined (WCAG 2.2 SC 1.3.5, Level AA).",
     rationale:
-      "Autocomplete tokens are how password managers, symbol-based input aids, and browser autofill understand what an input is for. Users with cognitive disabilities rely on these aids heavily — an email field without autocomplete='email' turns a one-tap autofill into a manual re-entry.",
+      'SC 1.3.5 Identify Input Purpose is Level AA and conformance-mandatory for every input field collecting information about the user. The normative requirement is that the purpose can be programmatically determined via the `autocomplete` attribute, using one of the 53 tokens enumerated in the WCAG 2.1 Input Purposes for User Interface Components section (`name`, `given-name`, `family-name`, `email`, `tel`, `street-address`, `postal-code`, `country`, `bday`, `current-password`, and so on). Password managers, symbol-based input aids, and browser autofill all depend on these tokens to identify a field — users with cognitive disabilities rely on those aids heavily, so an unlabelled email field turns a one-tap autofill into a manual re-entry. "Should" understates the normative weight: if a field collects a purpose on the SC 1.3.5 list, the `autocomplete` attribute is required.',
     goodExample: `<input type="email" name="email" autocomplete="email">`,
     badExample: `<input type="email" name="email">`,
     normativeQuote:
-      "The purpose of each input field collecting information about the user can be programmatically determined.",
+      "The purpose of each input field collecting information about the user can be programmatically determined when: (1) The input field serves a purpose identified in the Input Purposes for User Interface Components section; and (2) The content is implemented using technologies with support for identifying the expected meaning for form input data.",
     references: [
       "https://www.w3.org/TR/WCAG22/#identify-input-purpose",
       "https://www.w3.org/TR/WCAG21/#input-purposes",
@@ -214,7 +214,7 @@ function buildViolation(
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> appears to collect personal information but has no autocomplete attribute — ${describeTrigger(match.trigger)}, so password managers and autofill can't identify its purpose.`,
-    suggestion: `Add autocomplete="${match.expected}" so browsers and assistive tech can autofill it. See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of tokens.`,
+    message: `<${tagName}> appears to collect information about the user but has no autocomplete attribute — ${describeTrigger(match.trigger)}. WCAG 2.2 SC 1.3.5 (AA) requires an autocomplete value drawn from the 53 input-purpose tokens so the field's purpose can be programmatically determined.`,
+    suggestion: `Add autocomplete="${match.expected}" so the field's purpose is programmatically determinable per SC 1.3.5. See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of 53 tokens.`,
   };
 }
