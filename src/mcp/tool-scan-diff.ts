@@ -387,7 +387,7 @@ function buildHunkNextStep(
     return `Comparison ref \`${comparisonRef}\` resolved but produced no hunks — nothing changed vs that ref. Check \`warnings\` for the signal; this is not a clean-scan result.`;
   }
   if (newCount === 0) {
-    return `No findings inside the hunks for \`${comparisonRef}\`. The PR didn't introduce a violation the scanner can detect statically — pair with runtime axe-core checks before claiming conformance.`;
+    return `No findings inside the hunks for \`${comparisonRef}\`. The PR didn't introduce a violation the scanner can detect statically.`;
   }
   const first = firstNewFinding(newFiles);
   const noun = newCount === 1 ? "finding" : "findings";
@@ -549,9 +549,9 @@ function buildNextStep(
   if (newCount === 0) {
     if (resolvedCount > 0) {
       const noun = resolvedCount === 1 ? "entry" : "entries";
-      return `No new violations versus the baseline — and ${resolvedCount} baseline ${noun} no longer appear in the scan (resolved). Run \`baseline\` with mode: "update" to prune the resolved ${noun} from the snapshot, then recommit. Pair with axe-core runtime checks before claiming a11y conformance.`;
+      return `No new violations versus the baseline — and ${resolvedCount} baseline ${noun} no longer appear in the scan (resolved). Run \`baseline\` with mode: "update" to prune the resolved ${noun} from the snapshot, then recommit.`;
     }
-    return 'No new violations versus the baseline. If you expected regressions here, double-check the baseline is current — run `baseline` with mode: "update" after confirmed cleanup. Pair with axe-core runtime checks before claiming a11y conformance.';
+    return 'No new violations versus the baseline. If you expected regressions here, double-check the baseline is current — run `baseline` with mode: "update" after confirmed cleanup.';
   }
   const first = firstNewFinding(newFiles);
   const noun = newCount === 1 ? "violation" : "violations";

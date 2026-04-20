@@ -341,7 +341,7 @@ function buildCheckNextStep(
     const noun = diff.resolved.length === 1 ? "entry is" : "entries are";
     return `Baseline check clean — no new violations. ${diff.resolved.length} baseline ${noun} resolved; call \`baseline\` with mode: "update" to prune them from the file.`;
   }
-  return "Baseline check clean — no new violations, nothing resolved. Pair with axe-core runtime checks before claiming a11y conformance.";
+  return "Baseline check clean — no new violations, nothing resolved.";
 }
 
 interface FirstFinding {

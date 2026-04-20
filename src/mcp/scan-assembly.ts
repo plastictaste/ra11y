@@ -57,8 +57,8 @@ export function buildScanPlan(args: {
     actionableManualItems: actionableManual,
     untargetedCriteria,
     limitations: [
-      "Runtime-only checks (focus traps, live regions, ARIA state updates, post-render color contrast) were not performed — pair with axe-core in Playwright/Vitest for the runtime half.",
       "Static analysis can prove failure but not conformance: a clean scan is necessary, not sufficient. Do not claim WCAG conformance on this result alone.",
+      "Runtime-only checks — live-region announcements, focus traps, ARIA state transitions, post-render contrast — are out of scope here; pair this with a Playwright/axe-core suite for full coverage.",
     ],
     summary: buildPlanSummary({
       violations,

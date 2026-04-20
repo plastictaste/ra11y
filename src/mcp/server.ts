@@ -95,8 +95,6 @@ const SERVER_INSTRUCTIONS = [
   "  3. For each candidate, read the cited file and decide — don't post-hoc filter or downgrade candidates in your own output; the tool already prunes by likelyIrrelevant and uniquePerCriterion.",
   "  4. Dismiss by reading. Suppress at the source only when genuinely N/A via `<!-- ra11y-disable -->` / `{/* ra11y-disable */}` (accepts rule IDs like `keyboard/handler-missing` and criterion IDs like `wcag22:2.4.5`).",
   "",
-  "Out of scope: runtime checks (live regions, focus traps, ARIA state, post-render contrast) live in your Playwright/Vitest suite via axe-core. Automated clean here ≠ WCAG compliant.",
-  "",
   "Consumption tips: verbose `meta` fields (configSource, activeNativeWrappers, rulesEvaluated, filesByExtension) are scan-confidence telemetry — pass them through when explaining a result. `nextStep` on each response tells you the canonical next call.",
   "",
   "Field semantics worth remembering so responses can stay terse:",

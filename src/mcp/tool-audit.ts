@@ -233,7 +233,7 @@ function suggestAuditNextStep(scan: unknown, checklist: unknown): string {
   if (actionable !== null && actionable > 0) {
     return `Automated leg clean. Checklist has ${actionable} actionable manual-review item${actionable === 1 ? "" : "s"} — work through checklist.items.`;
   }
-  return "Audit clean across all three legs. Pair with axe-core in Playwright/Vitest for runtime checks (focus traps, live regions, ARIA state, post-render contrast) before claiming conformance.";
+  return "Audit clean across all three legs.";
 }
 
 function readObject(value: unknown, key: string): unknown {

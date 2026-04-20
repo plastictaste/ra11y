@@ -178,7 +178,7 @@ function cleanScanNextStep(inputs: NextStepInputs): NextStepResult {
     };
   }
   return {
-    prose: `Automated checks clean. Call \`checklist\` for the manual-review half (criteria + grounded candidates).${inputs.iterativeTip} Pair with axe-core in Playwright/Vitest for runtime checks (focus traps, live regions, ARIA state, post-render contrast); do not claim "a11y clean" from this result alone. For a full end-to-end conformance audit, use the \`ra11y/audit\` prompt (via \`prompts/get\`).`,
+    prose: `Automated checks clean. Call \`checklist\` for the manual-review half (criteria + grounded candidates).${inputs.iterativeTip} For a full end-to-end conformance audit, use the \`ra11y/audit\` prompt (via \`prompts/get\`).`,
     structured: { tool: "checklist", args: {} },
   };
 }
