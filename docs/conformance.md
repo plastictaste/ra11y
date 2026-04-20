@@ -10,7 +10,7 @@ This guide is for an agent (MCP consumer) handed a codebase and a mandate such a
 ## Prerequisites
 
 - A ra11y config (`ra11y.config.ts`) that pins the target standard and level. The `conformance_statement` tool derives its scope from the active config; a missing config means the tool defaults to `wcag22` + `AA`.
-- The project must be a git repository. The conformance statement records the HEAD commit hash in its scope block. A non-git tree produces a statement with `scope.commitHash: ""` and a `no_commit_hash` warning in `meta.warnings`.
+- Git is recommended. When the signing flow wires the commit hash, `scope.commitHash` carries it. Outside a git repo (or before the signing flow is wired), `scope.commitHash` is absent — the field is omitted rather than set to an empty string, per the AI-first consumer model's absent-vs-empty rule.
 - Session `allowWrite: true` is required for `attest`. Call `sessionConfigure` with `{ allowWrite: true }` before the attestation step.
 
 ## The 5-step pipeline
@@ -196,31 +196,55 @@ A successful response:
 ```jsonc
 {
   "conformant": true,
-  "date": "2026-04-18",
+  "generatedAt": "2026-04-18T14:22:00.000Z",
+  "profile": { "standardId": "wcag22", "level": "AA" },
   "guidelinesTitle": "Web Content Accessibility Guidelines 2.2",
   "guidelinesUri": "https://www.w3.org/TR/WCAG22/",
   "guidelinesVersion": "2.2",
-  "conformanceLevel": "AA",
   "scope": {
-    "files": ["src/components/Button.tsx", "src/pages/checkout.tsx", ...],
+    "files": ["src/components/Button.tsx", "src/pages/checkout.tsx"],
     "commitHash": "a3f9c2d",
-    "configSnapshot": { "standard": "wcag22", "level": "AA", ... }
+    "configSnapshot": { "standard": "wcag22", "level": "AA", "exclude": [], "nativeWrappers": [] }
   },
-  "technologiesReliedUpon": ["HTML (React-derived)", "CSS", "JavaScript", "ARIA"],
-  "evidence": {
-    "findingIds": [...],
-    "attestationIds": [...]
-  },
+  "technologiesReliedUpon": ["HTML", "CSS", "ECMAScript", "WAI-ARIA"],
+  "technologiesNotReliedUpon": [],
+  "criteriaInScope": 50,
+  "blockers": [],
+  "summary": { "pass": 47, "fail": 0, "partial": 0, "unknown": 0, "na": 3 },
   "signature": {
     "algorithm": "sha256",
     "digest": "e3b0c44298fc1c149afb...",
-    "signedAt": "2026-04-18T14:22:00Z",
+    "signedAt": "2026-04-18T14:22:00.000Z",
     "inputFingerprint": { ... }
   },
-  "markdown": "## WCAG 2.2 AA Conformance Statement\n...",
-  "nextStep": "Conformant. Drop the markdown block into your release notes or audit bundle; commit .ra11y/attestations.jsonl so the evidence trail persists."
+  "markdown": "# Conformance Statement — wcag22 AA\n...",
+  "nextStep": "Conformant. Drop the `markdown` block into your release notes or audit bundle; commit `.ra11y/attestations.jsonl` so the evidence trail persists."
 }
 ```
+
+Fields emitted by `conformance_statement`:
+
+| Field | Always present | Description |
+|---|---|---|
+| `conformant` | yes | `true` only when all in-scope criteria are backed by a non-candidate positive source. |
+| `generatedAt` | yes | ISO 8601 timestamp from the evidence ledger. |
+| `profile` | yes | `{ standardId, level }` — the claim's scope parameters. |
+| `guidelinesTitle` | yes | Human-readable standard name (WCAG §5.3.1(2)). |
+| `guidelinesVersion` | yes | Version string, e.g. `"2.2"`. |
+| `guidelinesUri` | yes | Canonical spec URI, e.g. `"https://www.w3.org/TR/WCAG22/"`. |
+| `scope.files` | yes | File paths included in the scan — the manifest the claim stands on. |
+| `scope.commitHash` | when supplied | Git commit hash at scan time. Omitted when not wired by the signing flow. |
+| `scope.configSnapshot` | when supplied | Active `ra11y.config.ts` fields. Omitted when empty. |
+| `technologiesReliedUpon` | yes | Technologies the claim relies upon (WCAG §5.3.1(5)); defaults to `["HTML", "CSS", "ECMAScript", "WAI-ARIA"]`. |
+| `technologiesNotReliedUpon` | yes | Technologies explicitly excluded; `[]` by default. |
+| `criteriaInScope` | yes | Count of criteria the profile brought into scope. |
+| `blockers` | yes | Empty array when conformant; one entry per blocking criterion otherwise. |
+| `summary` | yes | Per-status tally: `{ pass, fail, partial, unknown, na }`. |
+| `signature` | when conformant and signing inputs supplied | SHA-256 over commit hash, attestation ledger, in-scope criteria, and config fingerprint. See [Signature verification](#signature-verification). |
+| `markdown` | yes | Rendered Markdown claim suitable for a release note or audit bundle. |
+| `nextStep` | yes | Routing hint — next tool to call. |
+
+Note: there is no `evidence.findingIds` or `evidence.attestationIds` top-level field. Per-criterion evidence detail lives in the evidence ledger (see [ADR 0017](./adr/0017-conformance-statement-output.md)) and is not surfaced in this response to keep the payload size bounded. The `blockers[]` array carries the routing signal the agent needs.
 
 Drop the `markdown` field into a release note or audit bundle. Commit `.ra11y/attestations.jsonl`.
 
@@ -392,13 +416,20 @@ Agent reads `Modal.tsx:47`, confirms focus management is implemented correctly.
 → conformance_statement({ "standard": "wcag22", "level": "AA" })
 ← {
     "conformant": true,
-    "date": "2026-04-18",
-    "conformanceLevel": "AA",
-    "scope": { "commitHash": "a3f9c2d", "files": [...] },
-    "technologiesReliedUpon": ["HTML (React-derived)", "CSS", "JavaScript", "ARIA"],
+    "generatedAt": "2026-04-18T14:22:00.000Z",
+    "profile": { "standardId": "wcag22", "level": "AA" },
+    "guidelinesTitle": "Web Content Accessibility Guidelines 2.2",
+    "guidelinesVersion": "2.2",
+    "guidelinesUri": "https://www.w3.org/TR/WCAG22/",
+    "scope": { "commitHash": "a3f9c2d", "files": ["src/components/Button.tsx", ...] },
+    "technologiesReliedUpon": ["HTML", "CSS", "ECMAScript", "WAI-ARIA"],
+    "technologiesNotReliedUpon": [],
+    "criteriaInScope": 50,
+    "blockers": [],
+    "summary": { "pass": 47, "fail": 0, "partial": 0, "unknown": 0, "na": 3 },
     "signature": { "algorithm": "sha256", "digest": "e3b0c4...", ... },
-    "markdown": "## WCAG 2.2 AA Conformance Statement\n...",
-    "nextStep": "Conformant. Drop the markdown block into your release notes..."
+    "markdown": "# Conformance Statement — wcag22 AA\n...",
+    "nextStep": "Conformant. Drop the `markdown` block into your release notes..."
   }
 ```
 
