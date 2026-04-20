@@ -1,7 +1,8 @@
 /**
  * Rule: aria/hidden-focus
- * Satisfies: wcag22:4.1.2, wcag21:4.1.2
- * Spec: https://www.w3.org/TR/WCAG22/#name-role-value
+ * Satisfies: wcag22:4.1.2, wcag21:4.1.2, wcag22:2.1.1, wcag21:2.1.1
+ * Spec (Name, Role, Value): https://www.w3.org/TR/WCAG22/#name-role-value
+ * Spec (Keyboard): https://www.w3.org/TR/WCAG22/#keyboard
  * ARIA guidance: https://www.w3.org/TR/using-aria/#4thrule
  *
  * > For all user interface components (including but not limited to:
@@ -23,6 +24,15 @@
  * The canonical anti-pattern is `<button aria-hidden="true">X</button>`:
  * the button is still in the tab order but assistive tech will not
  * announce it when it gains focus.
+ *
+ * Also a direct WCAG 2.1.1 Keyboard failure mode: the control is
+ * reachable by keyboard but its functionality cannot be operated via
+ * keyboard by an AT user, because the focused node has no
+ * programmatically determinable name or role to act on — the keyboard
+ * user tabs to it and the screen reader says nothing. SC 2.1.1 requires
+ * all functionality to be operable through a keyboard interface; a
+ * silently-focused aria-hidden control fails that for any user relying
+ * on AT announcements to drive keyboard interaction.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -116,7 +126,7 @@ const CONDITIONAL_FOCUSABLE: ReadonlySet<string> = new Set([
 
 export const rule = defineRule({
   id: "aria/hidden-focus",
-  satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
+  satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.1.1", "wcag21:2.1.1"],
   severity: "error",
   scope: "node",
   fixClass: "verify-in-source",

@@ -174,6 +174,15 @@ describe("rule aria/hidden-focus", () => {
       expect(rule.satisfies).toContain("wcag21:4.1.2");
     });
 
+    it("also cites wcag22:2.1.1 and wcag21:2.1.1 (keyboard-silence failure mode)", () => {
+      // Rationale: a keyboard user tabs into aria-hidden focusable
+      // content and hears nothing — that's SC 2.1.1 Keyboard (the
+      // control is not operable via keyboard by an AT user) in
+      // addition to SC 4.1.2 Name, Role, Value.
+      expect(rule.satisfies).toContain("wcag22:2.1.1");
+      expect(rule.satisfies).toContain("wcag21:2.1.1");
+    });
+
     it("has severity error", () => {
       expect(rule.severity).toBe("error");
     });
