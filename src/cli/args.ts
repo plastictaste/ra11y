@@ -70,8 +70,8 @@ export interface CliOptions {
   readonly baselineAction: "prune" | undefined;
   /** `--dry-run` flag for `ra11y baseline prune`. */
   readonly baselineDryRun: boolean;
-  /** Action for `ra11y attestations <action>` subcommand (currently only `prune`). */
-  readonly attestationsAction: "prune" | undefined;
+  /** Action for `ra11y attestations <action>` subcommand (`prune` or `verify`). */
+  readonly attestationsAction: "prune" | "verify" | undefined;
   /** `--dry-run` flag for `ra11y attestations prune`. */
   readonly attestationsDryRun: boolean;
   /**
@@ -344,7 +344,11 @@ function baseOpts(
     baselineAction: command === "baseline" && positionals[0] === "prune" ? "prune" : undefined,
     baselineDryRun: raw?.dryRun === true,
     attestationsAction:
-      command === "attestations" && positionals[0] === "prune" ? "prune" : undefined,
+      command === "attestations" && positionals[0] === "prune"
+        ? "prune"
+        : command === "attestations" && positionals[0] === "verify"
+          ? "verify"
+          : undefined,
     attestationsDryRun: raw?.dryRun === true,
     ...attestOpts(raw),
     ...conformanceOpts(raw),

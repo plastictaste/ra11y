@@ -49,6 +49,11 @@ BASELINE
 ATTESTATIONS
   ra11y attestations prune [--dry-run]
                          Drop attestations pinned to deleted files
+  ra11y attestations verify
+                         Verify ledger integrity against git (ADR 0020).
+                         Flags entries removed since HEAD, backdated vs
+                         their adding commit, or future-dated before
+                         commit. Exit 2 on any hard finding.
   ra11y attest <criterionId> --reason <text> [--verdict pass|fail|na|pending]
                              [--rule-ids <id>,<id>] [--scope project|file|line]
                              [--location <file>:<line>[:<col>]] [--by <who>]
