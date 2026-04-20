@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head><title>Non-focusable elements with tabindex -1</title></head>
+  <body>
+    <!-- Plain <div> / <span> without a widget role — the tabindex="-1" is
+         a no-op from a keyboard-navigation standpoint and not a focus-order
+         review trigger. -->
+    <div tabindex="-1">Wrapper</div>
+    <span tabindex="-1">Label-ish</span>
+    <section tabindex="-1">
+      <h2>Heading</h2>
+      <p>Body copy.</p>
+    </section>
+    <!-- <a> without href is not natively focusable. -->
+    <a tabindex="-1">Bookmark target</a>
+    <!-- Non-widget role values do not qualify. -->
+    <div role="presentation" tabindex="-1">Decorative</div>
+  </body>
+</html>
