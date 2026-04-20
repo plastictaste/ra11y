@@ -36,28 +36,6 @@ export interface ChecklistReport {
   readonly totalItems: number;
 }
 
-const GUIDANCE_BY_ID: Readonly<Record<string, string>> = {
-  // A curated set of guidance prompts for the most-cited manual SCs.
-  // The generator falls back to the criterion description when no
-  // guidance is registered.
-  "wcag22:1.2.1":
-    "Review every prerecorded audio-only and video-only asset. Each needs a transcript (audio) or a text or audio alternative (video).",
-  "wcag22:1.2.3":
-    "Review every prerecorded video. Each needs either audio description of important visual information or a full text/audio alternative.",
-  "wcag22:1.4.1":
-    "Scan for information conveyed by color alone (status pills, required-field markers, chart legends). Add a non-color signal — icon, pattern, or text label.",
-  "wcag22:2.1.2":
-    "Keyboard-trap check: Tab through every modal, date picker, and custom widget. Focus must be able to leave the widget with the keyboard.",
-  "wcag22:2.3.1":
-    "Review any flashing or blinking content — nothing flashes more than 3 times per second or stays below the general/red-flash thresholds.",
-  "wcag22:3.1.3":
-    "Identify unusual words, jargon, or restricted-meaning terms in your copy. Provide definitions via <dfn>, a glossary, or links.",
-  "wcag22:3.2.1":
-    "Review onFocus handlers. None should cause a change of context (page navigation, form submission, new window).",
-  "wcag22:3.2.2":
-    "Review onChange handlers on form controls. None should automatically submit or navigate without user warning.",
-};
-
 export function buildChecklist(
   coverage: readonly PerStandardCoverage[],
   standards: readonly Standard[],
@@ -82,7 +60,7 @@ export function buildChecklist(
         title: criterion.title,
         level: criterion.level,
         url: criterion.url,
-        guidance: GUIDANCE_BY_ID[criterion.id] ?? criterion.description,
+        guidance: criterion.description,
         candidates: candidatesByCriterion.get(criterion.id) ?? [],
       });
     }
