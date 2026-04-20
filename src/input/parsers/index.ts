@@ -3,6 +3,7 @@
  * dispatches to these based on file extension.
  */
 
+export { parseAstro } from "./astro.ts";
 export type { CssParseResult } from "./css.ts";
 export { parseCss } from "./css.ts";
 export type { HtmlParseResult } from "./html.ts";

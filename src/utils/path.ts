@@ -27,6 +27,7 @@ const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".css",
   ".scss",
   ".mdx",
+  ".astro",
 ]);
 
 /**
@@ -71,6 +72,15 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
   // link-text/missing, etc.) applies to `.mdx` files too, so MDX-based
   // doc sites participate in the same rule coverage as a JSX app.
   if (fileExt === ".mdx" && (allowList.includes(".tsx") || allowList.includes(".jsx"))) {
+    return true;
+  }
+  // `.astro` is transformed into an HTML AST by the Astro parser
+  // adapter — the template body of a `.astro` file is just HTML
+  // (with JSX-style expression braces that pass through as
+  // literal text). Any rule declaring `.html` as its extension
+  // applies to `.astro` files too, so Astro-authored sites
+  // participate in the same rule coverage as plain HTML.
+  if (fileExt === ".astro" && (allowList.includes(".html") || allowList.includes(".htm"))) {
     return true;
   }
   return false;

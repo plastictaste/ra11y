@@ -222,7 +222,6 @@ describe("discoverFilesWithDiagnostics", () => {
     // Simulates the Bootstrap shape: mixed-language repo where many
     // source files have extensions PARSEABLE_EXTENSIONS doesn't cover.
     write(join(dir, "page.tsx"));
-    write(join(dir, "Card.astro"));
     write(join(dir, "Button.svelte"));
     write(join(dir, "app.vue"));
     write(join(dir, "Layout.svelte"));
@@ -233,7 +232,6 @@ describe("discoverFilesWithDiagnostics", () => {
     expect(rel).toEqual(["page.tsx"]);
     expect(result.diagnostics.skippedByExtension).toEqual({
       "(no-ext)": 1,
-      ".astro": 1,
       ".svelte": 2,
       ".vue": 1,
     });
@@ -261,9 +259,9 @@ describe("discoverFilesWithDiagnostics", () => {
     write(join(dir, "bundle.tsx"));
     // Still count a true extension skip so we know the filter
     // distinguishes the two paths.
-    write(join(dir, "Card.astro"));
+    write(join(dir, "Card.svelte"));
 
     const result = await discoverFilesWithDiagnostics([dir]);
-    expect(result.diagnostics.skippedByExtension).toEqual({ ".astro": 1 });
+    expect(result.diagnostics.skippedByExtension).toEqual({ ".svelte": 1 });
   });
 });
