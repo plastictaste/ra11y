@@ -112,7 +112,7 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
         endLine?: number;
         endColumn?: number;
         message: string;
-        snippet: { before: string[]; highlighted: string; after: string[] };
+        snippet?: string;
         fix?: {
           oldText?: string;
           newText?: string;
@@ -349,21 +349,22 @@ describe("formatter: agent — files", () => {
     expect(kbd?.fixClass).toBe("verify-in-source");
   });
 
-  it("finding.snippet.highlighted is set when violation carries a snippet", () => {
+  it("finding.snippet is the raw snippet string when the violation carries one", () => {
     const { files } = parse();
     const card = files.find((f) => f.path === "src/ui/Card.tsx");
     // The third violation in RESULT (Card.tsx:14) has a snippet
     const withSnippet = card?.findings.find((f) => f.line === 14);
-    expect(withSnippet?.snippet.highlighted).toBe("<div onClick={handleClick}>");
+    expect(withSnippet?.snippet).toBe("<div onClick={handleClick}>");
   });
 
-  it("finding.snippet is empty placeholder when no snippet available", () => {
+  it("finding.snippet is absent when the violation carries no snippet", () => {
     const { files } = parse();
     const btn = files.find((f) => f.path === "src/ui/Button.tsx");
     const first = btn?.findings[0];
-    expect(first?.snippet.before).toEqual([]);
-    expect(first?.snippet.highlighted).toBe("");
-    expect(first?.snippet.after).toEqual([]);
+    // V1-SHAPE-SNIPPET-EMPTY: present-when-meaningful — omitted when
+    // the violation had no snippet, not emitted as an empty sentinel.
+    expect(first).toBeDefined();
+    expect(Object.hasOwn(first as object, "snippet")).toBe(false);
   });
 
   it("endLine and endColumn are forwarded when present", () => {

@@ -12,6 +12,10 @@ All notable changes to ra11y are documented in this file. The format is based on
 
 - **MCP `plan.summary` violations parenthetical** now breaks down by the rule-level `fixClass` lane (`mechanical` / `guidance` / `runtime-only` / `verify-in-source`) instead of summing `runtime-only` and `verify-in-source` findings under a single "guidance fixes" label. Zero-count lanes are omitted. Per CLAUDE.md §1 "Composite headline counts are dishonest" — agents budgeting against the summary string now see each work lane separately and can route without post-hoc re-categorizing.
 
+### Breaking
+
+- **`AgentFinding.snippet` shape change** (CLI `--format agent`, MCP `scan_project` / `scan` / `scan_file` / `scan_diff` response `files[].findings[].snippet`): the field is now `string | undefined` and omitted entirely when the violation has no snippet. Previously it was always a `{ before: [], highlighted: string, after: [] }` record where `before` and `after` had zero writers anywhere in the codebase — the empty-array sentinel was indistinguishable from "snippet builder failed" per CLAUDE.md §1 "Ambiguous field shapes are dishonest." Consumers that accessed `finding.snippet.highlighted` must now read `finding.snippet` directly; consumers that inspected `.before` / `.after` were reading dead fields and can drop the code. The `AgentSnippet` type is removed.
+
 ## [1.0.0] - YYYY-MM-DD
 
 Public API stability freeze: [ADR 0019](./docs/adr/0019-v1-api-stability.md)

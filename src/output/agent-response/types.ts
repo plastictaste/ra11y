@@ -49,12 +49,6 @@ export interface AgentFix {
   readonly description: string;
 }
 
-export interface AgentSnippet {
-  readonly before: readonly string[];
-  readonly highlighted: string;
-  readonly after: readonly string[];
-}
-
 export interface AgentFinding {
   /**
    * Stable identity — lets agents verify "did my edit close finding
@@ -109,7 +103,17 @@ export interface AgentFinding {
   readonly endLine?: number;
   readonly endColumn?: number;
   readonly message: string;
-  readonly snippet: AgentSnippet;
+  /**
+   * The flagged source text, when the rule produced one. Present-when-
+   * meaningful: omitted entirely when the violation had no snippet.
+   *
+   * V1-SHAPE-SNIPPET-EMPTY: previously `{ before: [], highlighted, after: [] }`
+   * where `before` and `after` had zero writers anywhere in src/. The
+   * empty-array sentinel was indistinguishable from "snippet builder
+   * failed" — canonical ambiguous-field-shape anti-pattern per
+   * docs/kb/architecture/ai-first-consumer.md.
+   */
+  readonly snippet?: string;
   /** Present when the violation has a mechanical edit or prose guidance; absent otherwise. */
   readonly fix?: AgentFix;
   readonly effort: Effort;

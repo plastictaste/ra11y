@@ -12,7 +12,7 @@
  */
 
 import type { Violation } from "../../types/violation.ts";
-import type { AgentFinding, AgentFix, AgentSnippet, Category, Confidence } from "./types.ts";
+import type { AgentFinding, AgentFix, Category, Confidence } from "./types.ts";
 
 /** @internal */
 export function severityToConfidence(severity: string): Confidence {
@@ -30,13 +30,6 @@ export function severityToConfidence(severity: string): Confidence {
 function resolveConfidence(v: Violation): Confidence {
   if (v.confidence !== undefined) return v.confidence;
   return severityToConfidence(v.severity);
-}
-
-function buildSnippet(v: Violation): AgentSnippet {
-  if (typeof v.snippet === "string" && v.snippet.length > 0) {
-    return { before: [], highlighted: v.snippet, after: [] };
-  }
-  return { before: [], highlighted: "", after: [] };
 }
 
 function buildFix(v: Violation): AgentFix | undefined {
@@ -153,7 +146,7 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     ...(v.location.endLine !== undefined && { endLine: v.location.endLine }),
     ...(v.location.endColumn !== undefined && { endColumn: v.location.endColumn }),
     message: v.message,
-    snippet: buildSnippet(v),
+    ...(typeof v.snippet === "string" && v.snippet.length > 0 ? { snippet: v.snippet } : {}),
     ...(fix === undefined ? {} : { fix }),
     effort: "trivial",
     category,

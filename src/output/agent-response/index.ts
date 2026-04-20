@@ -19,7 +19,6 @@ export type {
   AgentOutput,
   AgentPlan,
   AgentReviewCandidate,
-  AgentSnippet,
   Category,
   Confidence,
   Effort,
