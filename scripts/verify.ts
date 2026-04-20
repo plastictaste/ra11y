@@ -134,6 +134,13 @@ const CHECKS: readonly Check[] = [
     affectedBy: hasSrcTsChange,
   },
   {
+    name: "response-nullability",
+    cmd: ["bun", "scripts/check-response-nullability.ts"],
+    precommit: true,
+    full: true,
+    affectedBy: hasSrcTsChange,
+  },
+  {
     name: "tsdoc",
     cmd: ["bun", "scripts/check-tsdoc.ts"],
     precommit: true,

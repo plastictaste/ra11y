@@ -97,7 +97,10 @@ export const baselineTool: McpTool = {
       return errorResult({
         code: "mode-invalid",
         message: "mode is required and must be one of: create, check, update.",
-        details: { allowed: ["create", "check", "update"], received: mode ?? null },
+        details: {
+          allowed: ["create", "check", "update"],
+          ...(mode === undefined ? {} : { received: mode }),
+        },
       });
     }
     const cwd = strParam(params, "cwd") ?? process.cwd();

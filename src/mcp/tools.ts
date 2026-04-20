@@ -389,7 +389,7 @@ const explainRuleTool: McpTool = {
       satisfies: [...rule.satisfies],
       description: rule.docs.description,
       rationale: rule.docs.rationale,
-      normativeQuote: rule.docs.normativeQuote ?? null,
+      ...(rule.docs.normativeQuote ? { normativeQuote: rule.docs.normativeQuote } : {}),
       goodExample: rule.docs.goodExample,
       badExample: rule.docs.badExample,
       references: [...rule.docs.references],
