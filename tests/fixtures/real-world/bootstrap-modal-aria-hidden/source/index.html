@@ -1,0 +1,44 @@
+<!--
+  Sanitized repro of the Bootstrap js/tests/integration/index.html:41
+  canonical FP for aria/hidden-focus. The scanner correctly flags these
+  elements (static analysis cannot observe the runtime aria-hidden
+  toggle Bootstrap performs when the widget opens), but surface-don't-
+  suppress doctrine says keep the finding and enrich the reason text
+  with the runtime-toggle framing so the agent dismisses in one read.
+
+  Each element below exercises a different overlay class-marker token
+  from the 8-marker set declared in the backlog:
+
+    modal, dialog, drawer, offcanvas, popover, toast, overlay, backdrop
+
+  Every hidden subtree contains a real focusable descendant
+  (<button class="btn-close">) so aria/hidden-focus fires with a
+  descendant-style message, matching the production shape.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bootstrap modal aria-hidden repro</title>
+  </head>
+  <body>
+    <!-- modal — canonical Bootstrap 5 shape from js/tests/integration/index.html:41. -->
+    <div class="modal fade" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <button type="button" class="btn-close" aria-label="Close">&times;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- offcanvas — Bootstrap side-drawer widget, same runtime toggle. -->
+    <div class="offcanvas offcanvas-start" tabindex="-1" aria-hidden="true">
+      <button type="button" class="btn-close" aria-label="Close">&times;</button>
+    </div>
+
+    <!-- toast — transient notification widget, runtime show/hide. -->
+    <div class="toast" role="alert" aria-hidden="true">
+      <button type="button" class="btn-close" aria-label="Close">&times;</button>
+    </div>
+  </body>
+</html>
