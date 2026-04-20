@@ -20,10 +20,13 @@
  * without a way to split them back out from the prose.
  */
 
-import type { FixClass } from "../types/rule.ts";
+import {
+  buildFixClassBreakdown,
+  type FixClassCounts,
+} from "../output/agent-response/fix-class-breakdown.ts";
 
-/** Count of violations per `fixClass` lane, used by the summary prose. */
-export type FixClassCounts = Readonly<Record<FixClass, number>>;
+// Re-export so callers that typed against the MCP path keep compiling.
+export type { FixClassCounts };
 
 /**
  * Arguments for {@link buildPlanSummary}. Keyed rather than positional
@@ -62,28 +65,6 @@ function buildFindingParts(
   }
   if (notes > 0) parts.push(`${notes} note${notes === 1 ? "" : "s"} to review`);
   return parts;
-}
-
-/**
- * Build the parenthetical `fixClass` breakdown, e.g. `" (31 mechanical,
- * 30 guidance, 24 runtime-only, 46 verify-in-source)"`. Zero-count lanes
- * are omitted by default — they add noise without signal, and the lane
- * order (mechanical → guidance → runtime-only → verify-in-source) keeps
- * the prose stable across scans.
- *
- * Returns an empty string when no lane has any violations (defensive —
- * the caller already checks `violations > 0`, but a rule that emits a
- * violation without a `fixClass` would otherwise produce `" ()"`).
- */
-function buildFixClassBreakdown(counts: FixClassCounts): string {
-  const lanes: readonly FixClass[] = ["mechanical", "guidance", "runtime-only", "verify-in-source"];
-  const bits: string[] = [];
-  for (const lane of lanes) {
-    const n = counts[lane];
-    if (n > 0) bits.push(`${n} ${lane}`);
-  }
-  if (bits.length === 0) return "";
-  return ` (${bits.join(", ")})`;
 }
 
 /**

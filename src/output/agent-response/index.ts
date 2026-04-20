@@ -11,6 +11,7 @@
 
 export { buildAgentFinding, severityToConfidence } from "./build-finding.ts";
 export { buildAgentPlan, countFixes, type FixCounts } from "./build-plan.ts";
+export { buildFixClassBreakdown, type FixClassCounts } from "./fix-class-breakdown.ts";
 export type {
   AgentFile,
   AgentFinding,

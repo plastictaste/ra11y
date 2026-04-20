@@ -16,9 +16,19 @@
  * Effort is computed from the combined fix count
  * (mechanicalEditsAvailable + guidanceFixesAvailable) so the semantics
  * are equivalent to the former formula that summed fixSuggestionAvailable.
+ *
+ * V1-SHAPE-CLI-AGENT-HEADLINE: `buildSummary` now breaks the violations
+ * parenthetical down by the rule-level `fixClass` lane (`mechanical` /
+ * `guidance` / `runtime-only` / `verify-in-source`) rather than the old
+ * `mechanicalEdits` / `guidanceFixes` pair derived from `v.suggestion`
+ * presence. Those axes are orthogonal: `fixClass` names the *nature* of
+ * the fix the rule demands; `fixPaths` / `suggestion` names what the
+ * Violation *ships*. The shared helper lives at
+ * `./fix-class-breakdown.ts` so MCP and CLI emit the same format.
  */
 
 import type { Violation } from "../../types/violation.ts";
+import { buildFixClassBreakdown, type FixClassCounts } from "./fix-class-breakdown.ts";
 import type { AgentFile, AgentPlan, Effort } from "./types.ts";
 
 const MODERATE_THRESHOLD = 5;
@@ -37,23 +47,34 @@ function topN(map: Map<string, number>, n: number): [string, number][] {
 
 function buildSummary(
   total: number,
-  mechanicalEdits: number,
-  guidanceFixes: number,
+  fixClassCounts: FixClassCounts,
   reviewNeeded: number,
   manualOnly: number,
   ruleCounts: Map<string, number>,
 ): string {
   if (total === 0) return "No accessibility violations found.";
 
-  const parts: string[] = [];
-  if (mechanicalEdits > 0)
-    parts.push(`${mechanicalEdits} mechanical edit${mechanicalEdits === 1 ? "" : "s"}`);
-  if (guidanceFixes > 0)
-    parts.push(`${guidanceFixes} guidance fix${guidanceFixes === 1 ? "" : "es"}`);
-  if (reviewNeeded > 0) parts.push(`${reviewNeeded} need review`);
-  if (manualOnly > 0) parts.push(`${manualOnly} manual`);
+  // Build the fixClass-lane parenthetical for the violations count.
+  // Zero-count lanes are omitted by buildFixClassBreakdown.
+  const laneBreakdown = buildFixClassBreakdown(fixClassCounts);
 
-  const countSuffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  const trailingParts: string[] = [];
+  if (reviewNeeded > 0) trailingParts.push(`${reviewNeeded} need review`);
+  if (manualOnly > 0) trailingParts.push(`${manualOnly} manual`);
+
+  // Compose: "<N> findings (31 mechanical, …, 2 need review, 1 manual)."
+  // The lane breakdown and trailing parts are both in the same parenthetical
+  // so the shape stays compact and consistent with the MCP summary format.
+  let countSuffix = laneBreakdown;
+  if (trailingParts.length > 0) {
+    if (countSuffix.length > 0) {
+      // Already have "(31 mechanical, …)" — append trailing inside the parens.
+      countSuffix = `${countSuffix.slice(0, -1)}, ${trailingParts.join(", ")})`;
+    } else {
+      countSuffix = ` (${trailingParts.join(", ")})`;
+    }
+  }
+
   const noun = total === 1 ? "finding" : "findings";
   let summary = `${total} ${noun}${countSuffix}.`;
 
@@ -133,14 +154,21 @@ export function buildAgentPlan(
   const { reviewNeeded, manualOnly, ruleCounts } = countCategories(files);
   const fixCount = mechanicalEditsAvailable + guidanceFixesAvailable;
   const effort = computeEffort(totalFindings, fixCount);
-  const summary = buildSummary(
-    totalFindings,
-    mechanicalEditsAvailable,
-    guidanceFixesAvailable,
-    reviewNeeded,
-    manualOnly,
-    ruleCounts,
-  );
+
+  // Tally violations by `fixClass` lane for the summary parenthetical.
+  // This is a separate axis from mechanicalEditsAvailable/guidanceFixesAvailable:
+  // those count *what the Violation ships* (edit vs prose); fixClass counts
+  // *what the rule demands* (nature of the fix). Per V1-SHAPE-CLI-AGENT-HEADLINE.
+  const fixClassTally = {
+    mechanical: 0,
+    guidance: 0,
+    "runtime-only": 0,
+    "verify-in-source": 0,
+  };
+  for (const v of violations) fixClassTally[v.fixClass] += 1;
+  const fixClassCounts: FixClassCounts = fixClassTally;
+
+  const summary = buildSummary(totalFindings, fixClassCounts, reviewNeeded, manualOnly, ruleCounts);
 
   return {
     totalFindings,

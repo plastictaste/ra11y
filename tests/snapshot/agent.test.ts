@@ -193,6 +193,88 @@ describe("formatter: agent — plan", () => {
     expect(plan.reviewNeeded).toBe(0);
   });
 
+  // V1-SHAPE-CLI-AGENT-HEADLINE: plan.summary parenthetical breaks down by fixClass lane.
+  it("plan.summary parenthetical breaks down by fixClass lane, not by suggestion presence", () => {
+    const { plan } = parse();
+    // RESULT has 1 mechanical + 3 verify-in-source violations.
+    // The old format was "(4 guidance fixes)" — wrong because:
+    //   (a) none of these are fixClass:"guidance", and
+    //   (b) it conflated verify-in-source with guidance.
+    // New format: "(1 mechanical, 3 verify-in-source)".
+    expect(plan.summary).toContain("1 mechanical");
+    expect(plan.summary).toContain("3 verify-in-source");
+    // guidance and runtime-only lanes are zero — omitted.
+    expect(plan.summary).not.toContain("guidance");
+    expect(plan.summary).not.toContain("runtime-only");
+  });
+
+  it("plan.summary omits zero-count fixClass lanes", () => {
+    // Only non-zero lanes appear in the parenthetical.
+    // RESULT: 1 mechanical + 3 verify-in-source → guidance and runtime-only absent.
+    const { plan } = parse();
+    expect(plan.summary).not.toMatch(/0 (mechanical|guidance|runtime-only|verify-in-source)/);
+  });
+
+  it("plan.summary with all four fixClass lanes populated shows each lane", () => {
+    const mixedResult: ScanResult = {
+      ...RESULT,
+      violations: withFindingIds([
+        {
+          ruleId: "media/alt-text-missing",
+          fixClass: "mechanical",
+          criteria: ["wcag22:1.1.1"],
+          severity: "error",
+          location: { filePath: "src/a.tsx", line: 1, column: 1 },
+          message: "msg",
+          suggestion: "fix",
+        },
+        {
+          ruleId: "contrast/minimum",
+          fixClass: "guidance",
+          criteria: ["wcag22:1.4.3"],
+          severity: "warning",
+          location: { filePath: "src/a.tsx", line: 2, column: 1 },
+          message: "msg",
+          suggestion: "fix",
+        },
+        {
+          ruleId: "focus/visible",
+          fixClass: "runtime-only",
+          criteria: ["wcag22:2.4.7"],
+          severity: "warning",
+          location: { filePath: "src/a.tsx", line: 3, column: 1 },
+          message: "msg",
+          suggestion: "fix",
+        },
+        {
+          ruleId: "keyboard/handler-missing",
+          fixClass: "verify-in-source",
+          criteria: ["wcag22:2.1.1"],
+          severity: "error",
+          location: { filePath: "src/a.tsx", line: 4, column: 1 },
+          message: "msg",
+          suggestion: "fix",
+        },
+      ]),
+    };
+    const parsed = JSON.parse(agentFormatter.format(mixedResult, EMPTY_REPORT)) as {
+      plan: { summary: string };
+    };
+    // All four lanes are non-zero; all four must appear in the parenthetical.
+    expect(parsed.plan.summary).toContain("1 mechanical");
+    expect(parsed.plan.summary).toContain("1 guidance");
+    expect(parsed.plan.summary).toContain("1 runtime-only");
+    expect(parsed.plan.summary).toContain("1 verify-in-source");
+    // Lane order: mechanical → guidance → runtime-only → verify-in-source.
+    const mechanicalIdx = parsed.plan.summary.indexOf("1 mechanical");
+    const guidanceIdx = parsed.plan.summary.indexOf("1 guidance");
+    const runtimeIdx = parsed.plan.summary.indexOf("1 runtime-only");
+    const verifyIdx = parsed.plan.summary.indexOf("1 verify-in-source");
+    expect(mechanicalIdx).toBeLessThan(guidanceIdx);
+    expect(guidanceIdx).toBeLessThan(runtimeIdx);
+    expect(runtimeIdx).toBeLessThan(verifyIdx);
+  });
+
   it("zero violations produces plan.totalFindings: 0 and trivial effort", () => {
     const { plan } = parse(EMPTY_RESULT, EMPTY_REPORT);
     expect(plan.totalFindings).toBe(0);
