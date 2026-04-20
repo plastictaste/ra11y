@@ -103,6 +103,81 @@ describe("review/multiple-ways", () => {
     expect(out).toEqual([]);
   });
 
+  describe("reason-text enrichment (V1-FP-MULTIPLE-WAYS-CITE-COUNTS)", () => {
+    // Per AI-first doctrine the finder must surface the counted
+    // signals so the agent can dismiss a test-harness or empty shell
+    // without reopening the file. Counts are additive context, not a
+    // suppression threshold — the candidate still fires at zero-signal.
+    it("inlines counted nav signals into the reason for a minimal HTML shell", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("0 <nav>");
+      expect(reason).toContain("0 <a>");
+      expect(reason).toContain("no <input type='search'>");
+      expect(reason).toContain("no breadcrumb");
+      expect(reason).toContain("no sitemap link");
+    });
+
+    it("surfaces nonzero <a> and <nav> counts when the layout has partial navigation (below threshold)", () => {
+      // Two direct <a> under <nav> — below DIRECT_NAV_LINK_MIN of 3,
+      // so the finder still fires. Reason must report "1 <nav>, 2 <a>".
+      const source = `
+        <html>
+          <body>
+            <nav>
+              <a href="/a">A</a>
+              <a href="/b">B</a>
+            </nav>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("1 <nav>");
+      expect(reason).toContain("2 <a>");
+    });
+
+    it("inlines counts for a JSX root layout with no signals", () => {
+      const source = `
+        export function Shell() {
+          return (
+            <Layout>
+              <main>Dashboard</main>
+            </Layout>
+          );
+        }
+      `;
+      const out = runFinder(finder, source, { filePath: "shell.tsx" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("0 <nav>");
+      expect(reason).toContain("0 <a>");
+      expect(reason).toContain("no <input type='search'>");
+    });
+
+    it("keeps the SPA-shell annotation alongside the counts", () => {
+      const source = `
+        <html>
+          <body>
+            <div id="root"></div>
+            <script type="module" src="/src/main.tsx"></script>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("0 <nav>");
+      expect(reason).toContain("SPA index shell");
+    });
+  });
+
   it("emits one candidate per matching cross-standard criterion id", () => {
     const source = `
       <html>

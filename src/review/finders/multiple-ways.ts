@@ -74,14 +74,16 @@ function findHtmlCandidates(ctx: FileContext, root: HtmlDocument): readonly Revi
   // agent redirects its review to the router config instead of trying
   // to fix "missing nav" in the index HTML.
   const spaHint = looksLikeSpaShell(root) ? SPA_SHELL_HINT : null;
-  return candidatesForAllCriteria(ctx.filePath, location.line, location.column, spaHint);
+  const signals = summarizeHtmlSignals(root);
+  return candidatesForAllCriteria(ctx.filePath, location.line, location.column, signals, spaHint);
 }
 
 function findJsxCandidates(ctx: FileContext, root: TsxModule): readonly ReviewCandidate[] {
   if (!looksLikeJsxRootLayout(root, ctx.filePath)) return [];
   if (hasJsxMultipleWaysSignal(root)) return [];
   const location = firstJsxLocation(root);
-  return candidatesForAllCriteria(ctx.filePath, location.line, location.column);
+  const signals = summarizeJsxSignals(root);
+  return candidatesForAllCriteria(ctx.filePath, location.line, location.column, signals);
 }
 
 function isJsLike(language: Language): boolean {
@@ -269,11 +271,18 @@ function candidatesForAllCriteria(
   filePath: string,
   line: number,
   column: number,
+  signals: SignalSummary,
   annotation: string | null = null,
 ): readonly ReviewCandidate[] {
+  // Base prose stays stable; counted signals get appended so the
+  // agent can dismiss a test-harness or empty shell without reopening
+  // the file. Per AI-first doctrine, the numbers are additive context
+  // — not a suppression threshold.
   const base =
     "Likely root layout has no search, sitemap, breadcrumb, or 3-link navigation signal; verify users have more than one way to locate pages";
-  const reason = annotation === null ? base : `${base} — ${annotation}`;
+  const counts = formatSignalSummary(signals);
+  const withCounts = `${base} (${counts})`;
+  const reason = annotation === null ? withCounts : `${withCounts} — ${annotation}`;
   // Confidence "low": the finder infers the root-layout role from
   // filename/root-tag heuristics, and the "no multiple-ways signal"
   // determination rides on a small set of structural proxies
@@ -287,6 +296,92 @@ function candidatesForAllCriteria(
     reason,
     confidence: "low" as const,
   }));
+}
+
+interface SignalSummary {
+  readonly navCount: number;
+  readonly linkCount: number;
+  readonly hasSearch: boolean;
+  readonly hasBreadcrumb: boolean;
+  readonly hasSitemapLink: boolean;
+}
+
+function summarizeHtmlSignals(root: HtmlDocument): SignalSummary {
+  let navCount = 0;
+  let linkCount = 0;
+  let hasSearch = false;
+  let hasBreadcrumb = false;
+  let hasSitemapLink = false;
+  for (const el of walkHtmlElements(root)) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "nav") navCount += 1;
+    if (tag === "a") linkCount += 1;
+    if (!hasSearch && isHtmlSearchElement(el)) hasSearch = true;
+    if (!hasBreadcrumb && isHtmlBreadcrumbElement(el)) hasBreadcrumb = true;
+    if (!hasSitemapLink && isHtmlSitemapLink(el)) hasSitemapLink = true;
+  }
+  return { navCount, linkCount, hasSearch, hasBreadcrumb, hasSitemapLink };
+}
+
+function summarizeJsxSignals(root: TsxModule): SignalSummary {
+  let navCount = 0;
+  let linkCount = 0;
+  let hasSearch = false;
+  let hasBreadcrumb = false;
+  let hasSitemapLink = false;
+  for (const el of walkJsxElements(root)) {
+    if (el.tagName === "nav") navCount += 1;
+    if (el.tagName === "a") linkCount += 1;
+    if (!hasSearch && isJsxSearchElement(el)) hasSearch = true;
+    if (!hasBreadcrumb && isJsxBreadcrumbElement(el)) hasBreadcrumb = true;
+    if (!hasSitemapLink && isJsxSitemapLink(el)) hasSitemapLink = true;
+  }
+  return { navCount, linkCount, hasSearch, hasBreadcrumb, hasSitemapLink };
+}
+
+function isHtmlSearchElement(el: HtmlElement): boolean {
+  return isHtmlSearchInput(el) || isHtmlSearchForm(el);
+}
+
+function isHtmlBreadcrumbElement(el: HtmlElement): boolean {
+  return normalizeLower(getHtmlAttribute(el, "aria-label")) === "breadcrumb";
+}
+
+function isHtmlSitemapLink(el: HtmlElement): boolean {
+  return (
+    hasSitemapTarget(getHtmlAttribute(el, "href")) ||
+    hasSitemapTarget(getHtmlAttribute(el, "to")) ||
+    hasSitemapTarget(getHtmlAttribute(el, "path"))
+  );
+}
+
+function isJsxSearchElement(el: JsxElement): boolean {
+  return isJsxSearchInput(el) || isJsxSearchForm(el);
+}
+
+function isJsxBreadcrumbElement(el: JsxElement): boolean {
+  return (
+    BREADCRUMB_RE.test(el.tagName) ||
+    normalizeLower(getJsxAttributeString(el, "aria-label")) === "breadcrumb"
+  );
+}
+
+function isJsxSitemapLink(el: JsxElement): boolean {
+  return (
+    hasSitemapTarget(getJsxAttributeString(el, "href")) ||
+    hasSitemapTarget(getJsxAttributeString(el, "to")) ||
+    hasSitemapTarget(getJsxAttributeString(el, "path"))
+  );
+}
+
+function formatSignalSummary(s: SignalSummary): string {
+  return [
+    `${s.navCount} <nav>`,
+    `${s.linkCount} <a>`,
+    s.hasSearch ? "has <input type='search'>" : "no <input type='search'>",
+    s.hasBreadcrumb ? "has breadcrumb" : "no breadcrumb",
+    s.hasSitemapLink ? "has sitemap link" : "no sitemap link",
+  ].join(", ");
 }
 
 const SPA_SHELL_HINT =
