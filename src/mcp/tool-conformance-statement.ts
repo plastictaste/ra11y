@@ -16,21 +16,28 @@
  * `.ra11y/attestations.jsonl` (via `attest`).
  */
 
+import { createHash } from "node:crypto";
+import { isAbsolute, relative } from "node:path";
 import {
   BUILTIN_PROFILES,
   getProfile,
   type ConformanceProfile as NamedConformanceProfile,
   resolveProfile,
 } from "../config/profiles.ts";
-import { runScan } from "../engine/scanner.ts";
+import { type ParsedFile, runScan } from "../engine/scanner.ts";
 import {
   buildConformanceStatement,
   type ConformanceProfile,
   renderConformanceMarkdown,
 } from "../reports/conformance.ts";
+import type { ConfigFingerprint, FileManifestEntry } from "../reports/conformance-signature.ts";
 import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
 import { BUILTIN_RULES } from "../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
+import type { LoadedConfig } from "../types/config.ts";
+import type { AttestationRecord } from "../types/evidence.ts";
+import { headSha } from "../utils/git.ts";
+import { VERSION } from "../version.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -100,37 +107,9 @@ export const conformanceStatementTool: McpTool = {
     const cwd = strParam(params, "cwd") ?? process.cwd();
     const paths = strArrayParam(params, "paths") ?? [cwd];
 
-    const profileName = strParam(params, "profile");
-    let namedProfile: NamedConformanceProfile | undefined;
-    if (profileName !== undefined) {
-      // Load project config only when the caller asked for a profile —
-      // built-ins cover the common case without touching disk. User
-      // overrides layer on top via `LoadedConfig.profiles`; resolution
-      // falls through built-ins → user-declared per `resolveProfile`'s
-      // contract in src/config/profiles.ts.
-      let userProfiles: readonly NamedConformanceProfile[] = [];
-      try {
-        const loaded = await session.loadProjectConfig(cwd);
-        userProfiles = loaded.profiles;
-      } catch {
-        // Config-load failures (malformed user config) fall through to
-        // built-in-only resolution. The validity of user profiles is
-        // already enforced by the config loader; the tool should still
-        // be callable against the built-in set when no user config
-        // exists or fails to load.
-      }
-      namedProfile = getProfile(profileName) ?? resolveProfile(profileName, userProfiles);
-      if (namedProfile === undefined) {
-        const valid = [...BUILTIN_PROFILES.map((p) => p.name), ...userProfiles.map((p) => p.name)];
-        return errorResult({
-          code: "invalid-param",
-          message: `Unknown profile '${profileName}'. Valid profiles: ${valid.join(", ")}.`,
-          details: { requested: profileName, valid },
-          remediation:
-            "Pass a named profile from the built-in set (wcag22-aa, wcag21-aa, section508, en301549, …) or declare one in `ra11y.config.ts` `profiles[]`.",
-        });
-      }
-    }
+    const profileResolution = await resolveNamedProfile(strParam(params, "profile"), session, cwd);
+    if (profileResolution.error !== undefined) return profileResolution.error;
+    const namedProfile = profileResolution.profile;
 
     const standards = resolveStandards(strParam(params, "standard"), session);
     const unknown = firstUnknownStandard(standards);
@@ -166,6 +145,7 @@ export const conformanceStatementTool: McpTool = {
 
     const files = await parseFiles(paths, session, cwd);
     const attestations = await loadDurableAttestations(cwd);
+    const loadedConfig = await loadProjectConfigSafe(session, cwd);
     const { ledger } = runScan({
       standards: BUILTIN_STANDARDS,
       rules: applyRuleSettings(BUILTIN_RULES, session.config.rules),
@@ -176,9 +156,33 @@ export const conformanceStatementTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
+    const signingContext = buildSigningContext({
+      cwd,
+      files,
+      attestations,
+      loadedConfig,
+      session,
+      profile,
+      standardId,
+      params,
+    });
+
     const statement = buildConformanceStatement(
-      assembleBuilderInputs({ ledger, profile, files, params, session, namedProfile }),
+      assembleBuilderInputs({
+        ledger,
+        profile,
+        files,
+        params,
+        session,
+        namedProfile,
+        signing: signingContext.signing,
+      }),
     );
+
+    const warnings =
+      signingContext.signing === undefined
+        ? (["non_git_repo_signature_omitted"] as const)
+        : ([] as const);
 
     return textResult({
       ...statement,
@@ -186,6 +190,7 @@ export const conformanceStatementTool: McpTool = {
       nextStep: statement.conformant
         ? "Conformant. Drop the `markdown` block into your release notes or audit bundle; commit `.ra11y/attestations.jsonl` so the evidence trail persists."
         : "Not conformant — read `blockers[]`. Each entry's `reason` tells you which tool to call next: `failing` → suggest_fix; `candidate-only` or `no-evidence` → attest (or checklist); `partially-attested` → attest with the missing ruleIds.",
+      ...(warnings.length > 0 ? { warnings } : {}),
     });
   },
 };
@@ -204,6 +209,9 @@ function assembleBuilderInputs(ctx: {
   readonly params: Record<string, unknown>;
   readonly session: Parameters<typeof conformanceStatementTool.handler>[1];
   readonly namedProfile: NamedConformanceProfile | undefined;
+  readonly signing:
+    | NonNullable<Parameters<typeof buildConformanceStatement>[0]["signing"]>
+    | undefined;
 }): Parameters<typeof buildConformanceStatement>[0] {
   const technologiesReliedUpon = strArrayParam(ctx.params, "technologiesReliedUpon");
   const technologiesNotReliedUpon = strArrayParam(ctx.params, "technologiesNotReliedUpon");
@@ -219,10 +227,12 @@ function assembleBuilderInputs(ctx: {
     standards: BUILTIN_STANDARDS,
     rulesForCriterion: satisfyingRulesForCriterion,
     files: ctx.files.map((f) => f.filePath),
+    ...(ctx.signing !== undefined && { commitHash: ctx.signing.commitHash }),
     configSnapshot,
     ...(technologiesReliedUpon !== undefined && { technologiesReliedUpon }),
     ...(technologiesNotReliedUpon !== undefined && { technologiesNotReliedUpon }),
     ...(ctx.namedProfile !== undefined && { scope: ctx.namedProfile }),
+    ...(ctx.signing !== undefined && { signing: ctx.signing }),
   };
 }
 
@@ -232,4 +242,167 @@ function resolveProfileLevel(
 ): "A" | "AA" | "AAA" | "base" {
   if (raw === "base") return "base";
   return resolveLevel(raw, session as never);
+}
+
+/**
+ * Loads the project config, swallowing any error (malformed user
+ * config, missing file) and returning `null`. Called from the signing
+ * path so a broken config doesn't block statement emission — the
+ * signing fingerprint falls back to session-only values when this
+ * returns `null`, keeping standards + level pinned even without a
+ * file-loaded config.
+ */
+async function loadProjectConfigSafe(
+  session: Parameters<typeof conformanceStatementTool.handler>[1],
+  cwd: string,
+): Promise<LoadedConfig | null> {
+  try {
+    return await session.loadProjectConfig(cwd);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves the named-profile parameter. Returns `{ profile }` on
+ * success, `{ error }` with a structured-error result when the caller
+ * passed an unknown profile name. Split from the handler body to keep
+ * its complexity under the project budget — the profile resolution
+ * owns config-load + built-in/user overlay lookup + error envelope
+ * construction, which is enough branching to warrant its own scope.
+ */
+async function resolveNamedProfile(
+  profileName: string | undefined,
+  session: Parameters<typeof conformanceStatementTool.handler>[1],
+  cwd: string,
+): Promise<{
+  readonly profile: NamedConformanceProfile | undefined;
+  readonly error?: ReturnType<typeof errorResult>;
+}> {
+  if (profileName === undefined) return { profile: undefined };
+  // Load project config only when the caller asked for a profile —
+  // built-ins cover the common case without touching disk. User
+  // overrides layer on top via `LoadedConfig.profiles`; resolution
+  // falls through built-ins → user-declared per `resolveProfile`'s
+  // contract in src/config/profiles.ts.
+  let userProfiles: readonly NamedConformanceProfile[] = [];
+  try {
+    const loaded = await session.loadProjectConfig(cwd);
+    userProfiles = loaded.profiles;
+  } catch {
+    // Config-load failures (malformed user config) fall through to
+    // built-in-only resolution.
+  }
+  const resolved = getProfile(profileName) ?? resolveProfile(profileName, userProfiles);
+  if (resolved !== undefined) return { profile: resolved };
+  const valid = [...BUILTIN_PROFILES.map((p) => p.name), ...userProfiles.map((p) => p.name)];
+  return {
+    profile: undefined,
+    error: errorResult({
+      code: "invalid-param",
+      message: `Unknown profile '${profileName}'. Valid profiles: ${valid.join(", ")}.`,
+      details: { requested: profileName, valid },
+      remediation:
+        "Pass a named profile from the built-in set (wcag22-aa, wcag21-aa, section508, en301549, …) or declare one in `ra11y.config.ts` `profiles[]`.",
+    }),
+  };
+}
+
+/**
+ * Assembles the signing inputs used by the conformance-statement
+ * signature. Returns `{ signing: undefined }` when the project is not
+ * a git repo — `headSha()` returning `null` is the signal, and the
+ * caller surfaces a top-level `warnings: ["non_git_repo_signature_omitted"]`
+ * so the agent knows the claim stands on commit-less evidence.
+ *
+ * When inside a repo, packs `commitHash`, the durable attestation
+ * ledger, the file-content manifest, the config fingerprint, and the
+ * tool version into the shape `buildConformanceStatement` digests.
+ */
+function buildSigningContext(args: {
+  readonly cwd: string;
+  readonly files: readonly ParsedFile[];
+  readonly attestations: readonly AttestationRecord[];
+  readonly loadedConfig: LoadedConfig | null;
+  readonly session: Parameters<typeof conformanceStatementTool.handler>[1];
+  readonly profile: ConformanceProfile;
+  readonly standardId: string;
+  readonly params: Record<string, unknown>;
+}): {
+  readonly signing:
+    | NonNullable<Parameters<typeof buildConformanceStatement>[0]["signing"]>
+    | undefined;
+} {
+  const commitHash = headSha(args.cwd);
+  if (commitHash === null) return { signing: undefined };
+  const configFingerprint = buildConfigFingerprint({
+    standardId: args.standardId,
+    level: args.profile.level,
+    profileName: strParam(args.params, "profile"),
+    loadedConfig: args.loadedConfig,
+    sessionNativeWrappers: args.session.config.nativeWrappers,
+    additionalPaths: strArrayParam(args.params, "paths"),
+  });
+  return {
+    signing: {
+      commitHash,
+      attestations: args.attestations,
+      configFingerprint,
+      fileManifest: buildFileManifest(args.files, args.cwd),
+      toolVersion: VERSION,
+    },
+  };
+}
+
+/**
+ * Builds a per-file SHA-256 manifest over the parsed sources, keyed by
+ * relative path from the scan root. Path normalization to relative form
+ * means the signature doesn't drift across machines with different
+ * absolute cwds; sorting happens inside the signature canonicalizer.
+ */
+function buildFileManifest(
+  files: readonly ParsedFile[],
+  cwd: string,
+): readonly FileManifestEntry[] {
+  return files.map((f) => {
+    const path = isAbsolute(f.filePath) ? relative(cwd, f.filePath) : f.filePath;
+    const sha256 = createHash("sha256").update(f.source, "utf8").digest("hex");
+    return { path, sha256 };
+  });
+}
+
+/**
+ * Builds the {@link ConfigFingerprint} for the signing input. Pulls the
+ * resolved config slice the scan ran with — when a project config
+ * loaded, that's the source of truth (rules, nativeWrappers, processes).
+ * When no config resolved, falls back to the session's values so the
+ * fingerprint still pins standards + level + session wrappers. Optional
+ * fields are conditional-spread so empty user-config sections don't
+ * widen the digest with `[]` / `{}` sentinels.
+ */
+function buildConfigFingerprint(args: {
+  readonly standardId: string;
+  readonly level: "A" | "AA" | "AAA" | "base";
+  readonly profileName: string | undefined;
+  readonly loadedConfig: LoadedConfig | null;
+  readonly sessionNativeWrappers: readonly string[];
+  readonly additionalPaths: readonly string[] | undefined;
+}): ConfigFingerprint {
+  const standards = args.loadedConfig?.standards ?? [args.standardId];
+  const nativeWrappers = args.loadedConfig?.nativeWrappers ?? args.sessionNativeWrappers;
+  const rulesMap = args.loadedConfig?.rules;
+  const processes = args.loadedConfig?.processes;
+  return {
+    standards: [...standards],
+    ...(args.level !== "base" && { level: args.level }),
+    ...(args.profileName !== undefined && { profile: args.profileName }),
+    ...(rulesMap !== undefined && Object.keys(rulesMap).length > 0 && { rules: { ...rulesMap } }),
+    ...(nativeWrappers.length > 0 && { nativeWrappers: [...nativeWrappers] }),
+    ...(processes !== undefined &&
+      processes.length > 0 && {
+        processes: processes.map((p) => ({ name: p.name, pages: [...p.pages] })),
+      }),
+    ...(args.additionalPaths !== undefined &&
+      args.additionalPaths.length > 0 && { additionalPaths: [...args.additionalPaths] }),
+  };
 }
