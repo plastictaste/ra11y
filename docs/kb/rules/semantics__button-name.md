@@ -10,7 +10,7 @@ satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"]
 - **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
-Every button must have an accessible name — via visible text, aria-label, aria-labelledby, or (for input type=submit/button) the value attribute.
+Every button must have an accessible name — via visible text (including SVG <title>/<text> descendants), aria-label, aria-labelledby, title, or for input type=submit/button the value attribute. For input type=image, alt / aria-label / aria-labelledby / title are the valid name sources (value is not).
 ## Why it matters
 Screen readers announce a button by its accessible name. A button with only an icon child and no label is announced as 'button' — the user has no idea what it does. Icon-only buttons are one of the top-3 accessibility failures in audits.
 ## Normative quote
