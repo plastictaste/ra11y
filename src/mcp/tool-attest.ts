@@ -5,9 +5,9 @@
  * evidence ledger.
  *
  * Use cases:
- *   - "We ran axe-core in CI on 2026-04-18 and it confirms 2.4.7
- *     passes" → `{ criterionId: "wcag22:2.4.7", by: "ci-bot",
- *     reason: "axe-core run 2026-04-18 reported pass for
+ *   - "Our runtime harness ran 2026-04-18 and confirms 2.4.7 passes"
+ *     → `{ criterionId: "wcag22:2.4.7", by: "ci-bot",
+ *     reason: "runtime harness 2026-04-18 reported pass for
  *     focus-visible", verdict: "pass" }`.
  *   - "We don't render any `<video>`/`<audio>`, so 1.2.1 is n/a" →
  *     `{ criterionId: "wcag22:1.2.1", by: "alice",
@@ -48,7 +48,7 @@ export const attestTool: McpTool = {
   def: {
     name: "attest",
     description:
-      "Record a durable attestation that a WCAG (or other standard) criterion is satisfied (or not, or n/a) for this project. The record is appended to `<cwd>/.ra11y/attestations.jsonl` and picked up as an `attested` evidence source on subsequent scans, promoting the criterion's status on the evidence ledger.\n\nUse this when the evidence that a criterion is met lives outside static analysis — a runtime-tool result (axe-core, Lighthouse, WAVE, Pa11y) read and interpreted in your CI, a manual keyboard traversal, a design review, or a declaration that a criterion is n/a (e.g. media criteria in a text-only app).\n\nInline `ra11y-disable` pragmas with a `reason=` already produce attestations automatically, pinned to file:line. Use `attest` for claims that don't hang off one line — project-level, file-level, or durable CI-bot runs.\n\nWrites to disk — requires session `allowWrite: true` (same gate as `apply_fix` / `suppress`). `reason` text is REQUIRED and non-empty; an un-justified attestation is rejected with `reason-required` — the whole point of the primitive is provenance.",
+      "Record a durable attestation that a WCAG (or other standard) criterion is satisfied (or not, or n/a) for this project. The record is appended to `<cwd>/.ra11y/attestations.jsonl` and picked up as an `attested` evidence source on subsequent scans, promoting the criterion's status on the evidence ledger.\n\nUse this when the evidence that a criterion is met lives outside static analysis — a runtime harness result read and interpreted in your CI, a manual keyboard traversal, a design review, or a declaration that a criterion is n/a (e.g. media criteria in a text-only app).\n\nInline `ra11y-disable` pragmas with a `reason=` already produce attestations automatically, pinned to file:line. Use `attest` for claims that don't hang off one line — project-level, file-level, or durable CI-bot runs.\n\nWrites to disk — requires session `allowWrite: true` (same gate as `apply_fix` / `suppress`). `reason` text is REQUIRED and non-empty; an un-justified attestation is rejected with `reason-required` — the whole point of the primitive is provenance.",
     inputSchema: {
       type: "object",
       properties: {
@@ -71,7 +71,7 @@ export const attestTool: McpTool = {
         by: {
           type: "string",
           description:
-            'Who is attesting. Author identifier, bot name, CI run label, or similar. Default `"agent"`. For CI-bot writes, use a stable name like `"ci-bot"` or `"axe-core+ci"` so the audit trail stays consistent.',
+            'Who is attesting. Author identifier, bot name, CI run label, or similar. Default `"agent"`. For CI-bot writes, use a stable name like `"ci-bot"` so the audit trail stays consistent.',
         },
         verdict: {
           type: "string",

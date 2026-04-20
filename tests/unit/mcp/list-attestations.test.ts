@@ -150,7 +150,7 @@ describe("list_attestations: fresh attestation", () => {
       await appendAttestation(dir, {
         criterionId: "wcag22:2.4.7",
         by: "ci-bot",
-        reason: "axe-core run 2026-04-18 reported pass for focus-visible",
+        reason: "runtime harness 2026-04-18 reported pass for focus-visible",
         attestedAt: T1,
         verdict: "pass",
         scope: "project",
@@ -235,7 +235,7 @@ describe("list_attestations: probe unavailable", () => {
       await appendAttestation(dir, {
         criterionId: "wcag22:2.4.7",
         by: "ci-bot",
-        reason: "axe-core run reported pass for focus-visible",
+        reason: "runtime harness reported pass for focus-visible",
         attestedAt: "2026-04-18T00:00:00.000Z",
         verdict: "pass",
         scope: "project",

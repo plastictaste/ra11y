@@ -351,7 +351,7 @@ describe("buildEvidenceLedger", () => {
         {
           criterionId: "wcag22:2.4.5",
           by: "ci-bot",
-          reason: "axe-core reports pass for link-name rule",
+          reason: "runtime harness reports pass for link-name rule",
           attestedAt: FIXED_TIMESTAMP,
         },
       ],
@@ -449,10 +449,10 @@ describe("buildEvidenceLedger", () => {
       attestations: [
         mkAttestation("wcag22:4.1.2", { by: "reviewer", verdict: "pass" }),
         mkAttestation("wcag22:4.1.2", {
-          by: "axe-runtime",
+          by: "runtime-harness",
           verdict: "fail",
           ruleIds: ["aria/required-attrs"],
-          reason: "axe-core flagged missing aria-required on one form",
+          reason: "runtime harness flagged missing aria-required on one form",
         }),
       ],
       rulesForCriterion: (id) =>

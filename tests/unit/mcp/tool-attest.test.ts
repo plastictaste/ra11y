@@ -46,7 +46,7 @@ describe("attest: happy path", () => {
       const session = allowWriteSession();
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
-        reason: "axe-core run 2026-04-18 reported pass for focus-visible",
+        reason: "runtime harness 2026-04-18 reported pass for focus-visible",
         by: "ci-bot",
         verdict: "pass",
         attestedAt: "2026-04-18T00:00:00.000Z",
@@ -59,7 +59,7 @@ describe("attest: happy path", () => {
       expect(read[0]).toMatchObject({
         criterionId: "wcag22:2.4.7",
         by: "ci-bot",
-        reason: "axe-core run 2026-04-18 reported pass for focus-visible",
+        reason: "runtime harness 2026-04-18 reported pass for focus-visible",
         attestedAt: "2026-04-18T00:00:00.000Z",
         verdict: "pass",
       });

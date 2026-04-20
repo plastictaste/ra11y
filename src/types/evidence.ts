@@ -66,15 +66,11 @@ export type EvidenceStatus = "pass" | "fail" | "partial" | "unknown" | "n/a";
  * locked in so future code never has to migrate the discriminant.
  *
  * A note on runtime evidence: there is deliberately no `"runtime"`
- * source kind. Vendor runtime scanners (axe-core, Lighthouse, WAVE,
- * Pa11y) produce JSON with vendor-specific schemas and vendor-specific
- * rule-to-WCAG mappings. In the AI-first consumer model the agent
- * reads that JSON with its existing tools and calls `attest` — the
- * resulting `attested` source carries the provenance in its `by` and
- * `reason` fields, without ra11y committing to any vendor's schema.
+ * source kind. Runtime evidence rides through `attested` — the agent
+ * calls `attest` with the provenance encoded in `by` and `reason`,
+ * so the evidence ledger does not need to model external-tool schemas.
  * `sampled` is kept as its own kind because ra11y itself owns the
- * sampling-tool contract (Track S); `runtime` is not distinguishable
- * from `attested` in a way ra11y can defend without picking a vendor.
+ * sampling-tool contract.
  */
 export type EvidenceSource =
   | {

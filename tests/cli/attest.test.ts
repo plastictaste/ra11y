@@ -42,7 +42,7 @@ describe("ra11y attest", () => {
       "attest",
       "wcag22:1.1.1",
       "--reason",
-      "ran axe-core 2026-04-19 confirming no img elements",
+      "runtime harness 2026-04-19 confirms no img elements",
       "--verdict",
       "na",
       "--by",
@@ -58,7 +58,7 @@ describe("ra11y attest", () => {
     expect(records[0]).toMatchObject({
       criterionId: "wcag22:1.1.1",
       by: "ci-bot",
-      reason: "ran axe-core 2026-04-19 confirming no img elements",
+      reason: "runtime harness 2026-04-19 confirms no img elements",
       verdict: "n/a",
     });
   });

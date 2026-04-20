@@ -35,8 +35,8 @@ export type RuleScope =
  * - `"guidance"` — the fix requires judgment the scanner can't make
  *   (contrast ratios, copy rewrites, restructure decisions). Prose only.
  * - `"runtime-only"` — the scanner flags a pattern but only runtime
- *   verification (axe-core in Playwright/Vitest, manual QA) can decide.
- *   Route these to the runtime harness, not to the edit queue.
+ *   verification (rendered DOM, manual QA) can decide. Route these to
+ *   the runtime harness, not to the edit queue.
  * - `"verify-in-source"` — the agent has to read adjacent code to
  *   decide what the right fix is (keyboard handler on the parent?
  *   nested-interactive fixup requires DOM surgery? list-structure
