@@ -45,11 +45,11 @@ Example: a fixture with a `<button>` containing an unlabeled `<img>` exercises b
 
 Location: `tests/fixtures/real-world/`.
 
-Purpose: **the moat.** Edge cases discovered in production codebases that existing a11y tools miss. These are the cases that make ra11y visibly better than the competition on real projects.
+Purpose: durable regression coverage for edge cases discovered in real production codebases. These fixtures survive internal refactors because they assert observable scanner behavior, not implementation shape.
 
 Bar:
 - Sanitized from a real codebase (remove brand names, proprietary identifiers, PII).
-- Include a comment at the top explaining what the a11y issue is and what existing tools miss.
+- Include a comment at the top explaining the accessibility issue and why static analysis needs a bespoke fixture for it.
 - Owned by the `fixture-curator` agent — adding here is a dedicated operation.
 
 Example topics: React PascalCase component wrappers, Tailwind with CSS-in-JS, Next.js App Router layouts, shadcn/ui primitives, Material UI v5 composed components.

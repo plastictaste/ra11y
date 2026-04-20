@@ -76,7 +76,7 @@ ra11y src/ --format markdown        # PR comment
 
 See `docs/cli.md` for the full flag surface.
 
-## The certification moat
+## Certification surface
 
 ra11y ships a certification-readiness surface on top of the static scan:
 

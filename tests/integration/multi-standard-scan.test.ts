@@ -12,7 +12,7 @@
  *   wcag21:1.1.1       ↔   wcag22:1.1.1   (declared by both)
  *
  * so the standard-filter's citedCriteria() returns all four IDs for
- * every violation. This test proves that the moat actually works —
+ * every violation. This test proves the fan-out actually works —
  * rules stay standard-agnostic, standards are pure data, and the
  * engine does the fan-out automatically.
  *

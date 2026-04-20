@@ -12,7 +12,7 @@ Accepted. Unblocks Track F (v0.2.0). Implementation begins with a harness protot
 
 ## Context
 
-`CLAUDE.md` describes the `fixture-curator` subagent as "the project's moat — edge cases discovered in production codebases that existing a11y tools miss." The directory it is meant to write to — `tests/fixtures/real-world/` — does not exist yet. Current test shape is dominated by implementation-shaped unit tests ("the top-5 cap returns 5 entries," "the ranker orders alphabetically on ties") that have to change every time the code is refactored. Unit-as-regression breaks on the next refactor; real-world fixtures should not.
+`CLAUDE.md` describes the `fixture-curator` subagent as the owner of real-world fixtures — edge cases discovered in production codebases. The directory it is meant to write to — `tests/fixtures/real-world/` — does not exist yet. Current test shape is dominated by implementation-shaped unit tests ("the top-5 cap returns 5 entries," "the ranker orders alphabetically on ties") that have to change every time the code is refactored. Unit-as-regression breaks on the next refactor; real-world fixtures should not.
 
 Five design questions had to resolve before any fixture could land. They mostly ratify the approach prior work had already converged on, but writing them down makes the ADR load-bearing for future contributors and stops fixture authors from re-litigating shape with every new case.
 

@@ -177,7 +177,7 @@ Workflow to use: `/add-rule` is rule-shaped; this is finder-shaped. Either (a) e
 
 ## 6. Revised plan (post-review)
 
-Two independent reviewers pushed back. This section supersedes §3 on what to build and reframes the moat argument.
+Two independent reviewers pushed back. This section supersedes §3 on what to build and reframes the prioritization.
 
 ### Corrections to the original analysis
 
@@ -200,18 +200,18 @@ Promotions and demotions after review:
 - `review/timing` → **defer** until session/idle-gated signal has real fixtures.
 - `review/flash` → **defer** until animation-name exclusion list is validated.
 
-### Revised moat framing
+### Revised prioritization
 
-The moat is **not** finder count. It's the *workflow*: typed `CandidateFinder` → `ReviewCandidate[]` → persisted reviewer verdicts → VPAT evidence. Finders are the input; the differentiation is the full loop.
+The differentiator is **not** finder count. It's the *workflow*: typed `CandidateFinder` → `ReviewCandidate[]` → persisted reviewer verdicts → VPAT evidence. Finders are the input; the value is the full loop.
 
-Ranked by hardness to copy and impact:
+Ranked by implementation effort and impact:
 
-1. **Evidence ledger (new).** Extend `.ra11y-manual.json` (already referenced at `src/reports/certification.ts:14`) into a component-hash-keyed store of manual verdicts that survives rescans and invalidates on diff. Reviewed evidence compounds across audits. No other scanner does this; it ties component identity, diff invalidation, and audit history into one durable artifact. This is the real moat.
+1. **Evidence ledger (new).** Extend `.ra11y-manual.json` (already referenced at `src/reports/certification.ts:14`) into a component-hash-keyed store of manual verdicts that survives rescans and invalidates on diff. Reviewed evidence compounds across audits: it ties component identity, diff invalidation, and audit history into one durable artifact.
 2. **VPAT bridge.** Wire `ReviewCandidate` + ledger verdicts into `src/reports/vpat.ts:133` so "Remarks and Explanations" carries real per-SC evidence, not boilerplate. Fills a gap we currently over-state as a feature.
-3. **Fixture corpus (`tests/fixtures/real-world/`).** Sanitized real-world failure patterns. Prerequisite for safely expanding any finder; itself a detection-side moat (labeled failure corpora compound, competitors cannot fake them quickly).
+3. **Fixture corpus (`tests/fixtures/real-world/`).** Sanitized real-world failure patterns. Prerequisite for safely expanding any finder; labeled failure corpora compound across releases.
 4. **Project-scope finder API.** Unlocks 2.4.5 / 3.2.3 / 3.2.4 / 3.2.6 (cross-page consistency SCs). Real engineering — route canonicalization + identity matching. Do after #1–3 prove the workflow.
-5. Framework-aware finders — easy to copy; skip unless Tier A proves high recall gains are on the table.
-6. Optional LLM-assisted pre-draft — near-zero moat; feature, not differentiation.
+5. Framework-aware finders — skip unless Tier A proves high recall gains are on the table.
+6. Optional LLM-assisted pre-draft — feature, not core differentiation.
 
 ### Revised build order (supersedes §3 "Tier 1/2/3")
 
@@ -220,7 +220,7 @@ Ranked by hardness to copy and impact:
 1. `review/captcha` → covers 3.3.8, 3.3.9. Signal: known CAPTCHA component imports (`react-google-recaptcha`, `@hcaptcha/react-hcaptcha`, `react-turnstile`) + known CAPTCHA hostnames (`www.google.com/recaptcha`, `hcaptcha.com`, `challenges.cloudflare.com`) in `<script src>`. Near-zero FP.
 2. `review/motion-actuation` → covers 2.5.4. Signal: `DeviceMotionEvent` / `DeviceOrientationEvent` references, `addEventListener('devicemotion'|'deviceorientation', …)`. No other purpose for these APIs.
 
-**Tier B — the actual moat (ordered).**
+**Tier B — the durable workflow (ordered).**
 
 3. Evidence ledger.
 4. VPAT bridge.

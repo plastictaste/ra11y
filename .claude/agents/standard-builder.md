@@ -47,7 +47,7 @@ A standard ID (e.g., `section508`, `coga`), the spec source URL, and optionally 
 # Hard constraints
 
 - **Standards are pure data** — a `Standard` is a list of `Criterion` records with metadata, nothing more. No behavior.
-- **`equivalentTo` is the moat**: always map criteria to their WCAG equivalents when applicable. Thin modules (Section 508, EN 301 549) should add almost no new rules because the equivalence graph pulls existing WCAG rules in automatically.
+- **`equivalentTo` is load-bearing**: always map criteria to their WCAG equivalents when applicable. Thin modules (Section 508, EN 301 549) should add almost no new rules because the equivalence graph pulls existing WCAG rules in automatically.
 - **URLs are real**. Every `criterion.url` must resolve. CI runs `scripts/check-docs-links.ts` on them.
 - **Criterion IDs are globally unique**: `<standardId>:<localId>`. Never reuse a standardId across standards.
 - **Levels are strings**, not enums — WCAG uses `A|AA|AAA`, EN 301 549 uses `base`, corporate guidelines may use `foundation|enhanced`. Let the standard declare them.

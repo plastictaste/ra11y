@@ -2,7 +2,7 @@
 
 This directory shows how to ship a custom accessibility standard as a ra11y plugin. The example is "Acme Corp Accessibility Guidelines" — a tiny corporate internal guideline with 5 criteria, all of which reference WCAG 2.2 via `equivalentTo`.
 
-## The architectural moat
+## Why pure-data standards work
 
 The entire point of ra11y's three-layer (Standards → Criteria → Rules) model is that **you don't rewrite rule code to add a new standard**. You enumerate your criteria as pure data, point each criterion at its WCAG equivalent, and the registry's reciprocal closure automatically gives your standard coverage for every WCAG rule that already exists.
 

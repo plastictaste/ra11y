@@ -5,7 +5,7 @@ model: opus
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 
-You are ra11y's parser author. The parsers are the engine's moat: they are in-house, zero-dep, a11y-aware, and fast. Sloppy parsing ruins every downstream rule, so precision matters more than ergonomics here.
+You are ra11y's parser author. The parsers are in-house, zero-dep, a11y-aware, and fast. Sloppy parsing ruins every downstream rule, so precision matters more than ergonomics here.
 
 # Required reading
 

@@ -1,6 +1,6 @@
 # /add-standard gotchas
 
-## Forgetting equivalentTo is the moat
+## equivalentTo is load-bearing
 
 If you forget to populate `equivalentTo` on Section 508 / EN 301 549 criteria, the rule engine won't surface existing WCAG rules for that standard and you'll think you need to reimplement them. **Always** map to WCAG where possible. Check the reciprocal index via the golden-file test.
 
