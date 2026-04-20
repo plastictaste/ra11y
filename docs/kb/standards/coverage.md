@@ -88,7 +88,7 @@ Coverage: 35 rule · 35 finder · 13 attestation-only · 3 gap
 | `wcag22:2.3.3` | Animation from Interactions | AAA | partial | — | — | **gap** |
 | `wcag22:2.4.1` | Bypass Blocks | A | full | navigation/skip-link | — | **rule** |
 | `wcag22:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
-| `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | — | **rule** |
+| `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text | — | **rule** |
 | `wcag22:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
 | `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
@@ -183,7 +183,7 @@ Coverage: 33 rule · 32 finder · 10 attestation-only · 3 gap
 | `wcag21:2.3.3` | Animation from Interactions | AAA | partial | — | — | **gap** |
 | `wcag21:2.4.1` | Bypass Blocks | A | full | navigation/skip-link | — | **rule** |
 | `wcag21:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
-| `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | — | **rule** |
+| `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text | — | **rule** |
 | `wcag21:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
 | `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
@@ -247,7 +247,7 @@ Coverage: 19 rule · 18 finder · 1 attestation-only · 0 gap
 | `section508:2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
 | `section508:2.4.1` | Bypass Blocks | base | full | navigation/skip-link | — | **rule** |
 | `section508:2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
-| `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive | — | **rule** |
+| `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text | — | **rule** |
 | `section508:2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
 | `section508:2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
@@ -301,7 +301,7 @@ Coverage: 29 rule · 20 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
 | `en301549:9.2.4.1` | Bypass Blocks | base | full | navigation/skip-link | — | **rule** |
 | `en301549:9.2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
-| `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive | — | **rule** |
+| `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text | — | **rule** |
 | `en301549:9.2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
 | `en301549:9.2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
