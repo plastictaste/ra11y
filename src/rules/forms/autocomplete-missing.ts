@@ -115,10 +115,11 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const input of findHtmlElementsByTag(doc, "input")) {
     if (hasHtmlAttribute(input, "autocomplete")) continue;
     const type = (getHtmlAttribute(input, "type") ?? "text").toLowerCase();
-    const name = getHtmlAttribute(input, "name") ?? getHtmlAttribute(input, "id") ?? "";
-    const expected = expectedToken(type, name);
-    if (!expected) continue;
-    emit(buildViolation("input", expected, input.loc.start));
+    const nameAttr = getHtmlAttribute(input, "name");
+    const idAttr = getHtmlAttribute(input, "id");
+    const match = matchPurpose(type, nameAttr, idAttr);
+    if (!match) continue;
+    emit(buildViolation("input", match, input.loc.start));
   }
 }
 
@@ -131,26 +132,78 @@ function checkJsx(module: TsxModule, emit: Emit): void {
 function checkJsxInput(input: JsxElement, emit: Emit): void {
   if (hasJsxAttribute(input, "autoComplete") || hasJsxAttribute(input, "autocomplete")) return;
   const type = (getJsxAttributeString(input, "type") ?? "text").toLowerCase();
-  const name = getJsxAttributeString(input, "name") ?? getJsxAttributeString(input, "id") ?? "";
-  const expected = expectedToken(type, name);
-  if (!expected) return;
-  emit(buildViolation("input", expected, input.loc.start));
+  const nameAttr = getJsxAttributeString(input, "name");
+  const idAttr = getJsxAttributeString(input, "id");
+  const match = matchPurpose(type, nameAttr, idAttr);
+  if (!match) return;
+  emit(buildViolation("input", match, input.loc.start));
 }
 
-function expectedToken(type: string, nameOrId: string): string | null {
+/**
+ * Result of deciding an input needs autocomplete — carries the
+ * expected token plus the specific evidence (trigger attribute +
+ * value) that fired. The trigger is surfaced verbatim in the
+ * violation message so consumers can dismiss fixture-shaped inputs
+ * (e.g. `name="floatingInput"`) without cracking the rule open.
+ */
+interface PurposeMatch {
+  readonly expected: string;
+  readonly trigger: TriggerEvidence;
+}
+
+type TriggerEvidence =
+  | { readonly kind: "type"; readonly value: string }
+  | { readonly kind: "name" | "id"; readonly attrValue: string; readonly matchedToken: string };
+
+function matchPurpose(
+  type: string,
+  nameAttr: string | null | undefined,
+  idAttr: string | null | undefined,
+): PurposeMatch | null {
+  // Type is the more concrete signal — prefer it when both fire.
   const fromType = EXPECTED_BY_TYPE.get(type);
-  if (fromType) return fromType;
+  if (fromType) {
+    return { expected: fromType, trigger: { kind: "type", value: type } };
+  }
   if (type !== "text" && type !== "" && type !== "search") return null;
-  const lowered = nameOrId.toLowerCase().replace(/[^a-z_]/g, "");
-  for (const heuristic of NAME_HEURISTICS) {
-    if (lowered.includes(heuristic.needle)) return heuristic.token;
+  const fromName = matchNameHeuristic(nameAttr);
+  if (fromName) {
+    return {
+      expected: fromName.token,
+      trigger: { kind: "name", attrValue: nameAttr ?? "", matchedToken: fromName.needle },
+    };
+  }
+  const fromId = matchNameHeuristic(idAttr);
+  if (fromId) {
+    return {
+      expected: fromId.token,
+      trigger: { kind: "id", attrValue: idAttr ?? "", matchedToken: fromId.needle },
+    };
   }
   return null;
 }
 
+function matchNameHeuristic(
+  value: string | null | undefined,
+): { readonly needle: string; readonly token: string } | null {
+  if (!value) return null;
+  const lowered = value.toLowerCase().replace(/[^a-z_]/g, "");
+  for (const heuristic of NAME_HEURISTICS) {
+    if (lowered.includes(heuristic.needle)) return heuristic;
+  }
+  return null;
+}
+
+function describeTrigger(trigger: TriggerEvidence): string {
+  if (trigger.kind === "type") {
+    return `type="${trigger.value}" triggered the personal-info heuristic`;
+  }
+  return `${trigger.kind} "${trigger.attrValue}" matched the personal-info heuristic on token "${trigger.matchedToken}"`;
+}
+
 function buildViolation(
   tagName: string,
-  expected: string,
+  match: PurposeMatch,
   loc: { line: number; column: number },
 ): {
   severity: "warning";
@@ -161,7 +214,7 @@ function buildViolation(
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> appears to collect personal information but has no autocomplete attribute — password managers and autofill can't identify its purpose.`,
-    suggestion: `Add autocomplete="${expected}" so browsers and assistive tech can autofill it. See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of tokens.`,
+    message: `<${tagName}> appears to collect personal information but has no autocomplete attribute — ${describeTrigger(match.trigger)}, so password managers and autofill can't identify its purpose.`,
+    suggestion: `Add autocomplete="${match.expected}" so browsers and assistive tech can autofill it. See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of tokens.`,
   };
 }

@@ -12,6 +12,8 @@ describe("rule forms/autocomplete-missing", () => {
       expect(violations[0]?.ruleId).toBe("forms/autocomplete-missing");
       expect(violations[0]?.severity).toBe("warning");
       expect(violations[0]?.suggestion).toContain(`autocomplete="email"`);
+      // Reason cites the concrete trigger (type beats name when both fire).
+      expect(violations[0]?.message).toContain(`type="email"`);
     });
 
     it("type=tel has no autocomplete", () => {
@@ -20,6 +22,7 @@ describe("rule forms/autocomplete-missing", () => {
       });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.suggestion).toContain(`autocomplete="tel"`);
+      expect(violations[0]?.message).toContain(`type="tel"`);
     });
 
     it("type=password has no autocomplete", () => {
@@ -28,6 +31,7 @@ describe("rule forms/autocomplete-missing", () => {
       });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.suggestion).toContain(`current-password`);
+      expect(violations[0]?.message).toContain(`type="password"`);
     });
 
     it("type=text with name='firstName' infers given-name", () => {
@@ -36,6 +40,9 @@ describe("rule forms/autocomplete-missing", () => {
       });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.suggestion).toContain("given-name");
+      // Name-path citation: quote the actual attribute value + the matched token.
+      expect(violations[0]?.message).toContain(`name "firstName"`);
+      expect(violations[0]?.message).toContain(`"firstname"`);
     });
 
     it("type=text with id='zipCode' infers postal-code", () => {
@@ -44,6 +51,35 @@ describe("rule forms/autocomplete-missing", () => {
       });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.suggestion).toContain("postal-code");
+      // Id-path citation: different prefix than the name path.
+      expect(violations[0]?.message).toContain(`id "zipCode"`);
+      expect(violations[0]?.message).toContain(`"zipcode"`);
+    });
+
+    it("fixture-shaped input (type=text, name='floatingInput') does not fire — agent can dismiss from reason alone", () => {
+      // The exact shape Bootstrap's visual-regression fixtures produced —
+      // name token has no personal-info match, so rule stays silent. This
+      // is the dismissal path the reason-text enrichment supports for the
+      // cases that *do* fire on fixture-shaped inputs (e.g. name="emailInput").
+      const violations = runRule(rule, `<input type="text" name="floatingInput">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("fixture-shaped input with matching name token still fires, reason cites name", () => {
+      // e.g. `<input type="text" name="emailInput">` — the rule should fire
+      // (safe surface default), but the reason text must be specific enough
+      // that an agent reading the fixture file dismisses in one read rather
+      // than cracking the rule definition open.
+      const violations = runRule(rule, `<input type="text" name="emailInput">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`name "emailInput"`);
+      expect(violations[0]?.message).toContain(`"email"`);
+      // Must not falsely cite a type= trigger when only the name matched.
+      expect(violations[0]?.message).not.toContain(`type="email"`);
     });
   });
 
