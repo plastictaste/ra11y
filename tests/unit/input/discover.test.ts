@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { discoverFiles } from "../../../src/input/discover.ts";
+import { discoverFiles, discoverFilesWithDiagnostics } from "../../../src/input/discover.ts";
 
 function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "ra11y-discover-"));
@@ -204,5 +204,66 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(dir, "page.tsx"));
     const found = await discoverFiles([dir]);
     expect(found.map((p) => basename(p))).toEqual(["page.tsx"]);
+  });
+});
+
+describe("discoverFilesWithDiagnostics", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkTmp();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("counts files skipped because their extension isn't parseable", async () => {
+    // Simulates the Bootstrap shape: mixed-language repo where many
+    // source files have extensions PARSEABLE_EXTENSIONS doesn't cover.
+    write(join(dir, "page.tsx"));
+    write(join(dir, "Card.astro"));
+    write(join(dir, "theme.scss"));
+    write(join(dir, "app.vue"));
+    write(join(dir, "util.scss"));
+    write(join(dir, "README"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    const rel = result.files.map((p) => p.slice(dir.length + 1)).sort();
+    expect(rel).toEqual(["page.tsx"]);
+    expect(result.diagnostics.skippedByExtension).toEqual({
+      "(no-ext)": 1,
+      ".astro": 1,
+      ".scss": 2,
+      ".vue": 1,
+    });
+  });
+
+  it("returns an empty skip map for clean all-parseable directories", async () => {
+    write(join(dir, "page.tsx"));
+    write(join(dir, "styles.css"));
+    write(join(dir, "page.html"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.files.length).toBe(3);
+    expect(result.diagnostics.skippedByExtension).toEqual({});
+  });
+
+  it("does not count files rejected by default excludes or gitignore", async () => {
+    // test.* pattern rejects via DEFAULT_EXCLUDED_PATTERNS (user
+    // exclude), not via the extension check — must not surface in
+    // skippedByExtension, otherwise the warning fires on intentional
+    // suppression.
+    markGitRoot(dir);
+    write(join(dir, ".gitignore"), "bundle.tsx\n");
+    write(join(dir, "page.tsx"));
+    write(join(dir, "page.test.tsx"));
+    write(join(dir, "bundle.tsx"));
+    // Still count a true extension skip so we know the filter
+    // distinguishes the two paths.
+    write(join(dir, "Card.astro"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.skippedByExtension).toEqual({ ".astro": 1 });
   });
 });

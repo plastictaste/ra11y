@@ -38,14 +38,24 @@ export async function isDirectory(filePath: string): Promise<boolean> {
   }
 }
 
-/** Recursively lists every file under `root` that matches the filter. */
+/**
+ * Recursively lists every file under `root` that matches the filter.
+ *
+ * When `options.onRejected` is supplied, it fires once per file that
+ * cleared the dir-level ignore set but failed `filter` — used by
+ * discovery diagnostics to count files dropped on the parseable-
+ * extension check without walking the tree twice. Directory-level
+ * ignores do NOT trigger the callback; those are intentional skips
+ * surfaced elsewhere.
+ */
 export async function walkFiles(
   root: string,
   filter: (filePath: string) => boolean,
   ignore: ReadonlySet<string>,
+  options: { readonly onRejected?: (filePath: string) => void } = {},
 ): Promise<string[]> {
   const out: string[] = [];
-  await walk(root, out, filter, ignore);
+  await walk(root, out, filter, ignore, options.onRejected);
   return out;
 }
 
@@ -54,6 +64,7 @@ async function walk(
   out: string[],
   filter: (filePath: string) => boolean,
   ignore: ReadonlySet<string>,
+  onRejected: ((filePath: string) => void) | undefined,
 ): Promise<void> {
   // `readdir(..., { withFileTypes: true })` returns Dirent<string>[]; the
   // generic Awaited<ReturnType<typeof readdir>> picks up the default buffer
@@ -65,14 +76,28 @@ async function walk(
     return;
   }
   for (const entry of entries) {
-    if (ignore.has(entry.name)) continue;
-    if (entry.name.startsWith(".")) continue;
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await walk(full, out, filter, ignore);
-    } else if (entry.isFile() && filter(full)) {
-      out.push(full);
-    }
+    if (ignore.has(entry.name) || entry.name.startsWith(".")) continue;
+    await handleEntry(entry, join(dir, entry.name), out, filter, ignore, onRejected);
+  }
+}
+
+async function handleEntry(
+  entry: Dirent<string>,
+  full: string,
+  out: string[],
+  filter: (filePath: string) => boolean,
+  ignore: ReadonlySet<string>,
+  onRejected: ((filePath: string) => void) | undefined,
+): Promise<void> {
+  if (entry.isDirectory()) {
+    await walk(full, out, filter, ignore, onRejected);
+    return;
+  }
+  if (!entry.isFile()) return;
+  if (filter(full)) {
+    out.push(full);
+  } else if (onRejected !== undefined) {
+    onRejected(full);
   }
 }
 

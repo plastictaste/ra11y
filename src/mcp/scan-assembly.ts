@@ -8,6 +8,7 @@
  */
 
 import type { ParsedFile } from "../engine/scanner.ts";
+import type { DiscoveryDiagnostics } from "../input/discover.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
@@ -102,6 +103,15 @@ export function buildScanMeta(args: {
   readonly preset: ConfigPreset | undefined;
   readonly suppressions: Parameters<typeof suppressionsMetaBlock>[0];
   readonly perRuleCoverage: readonly PerRuleCoverage[];
+  /**
+   * Discovery diagnostics. When the `skippedByExtension` map is
+   * non-empty, it surfaces in `analysisCoverage.skippedByExtension` and
+   * the response-level `extensions_skipped_no_parser` warning code
+   * fires. Omitted = the caller didn't run discovery (e.g. scan_file
+   * takes explicit paths) or no files were skipped by the extension
+   * check.
+   */
+  readonly discoveryDiagnostics?: DiscoveryDiagnostics;
 }): Record<string, unknown> {
   const {
     filesScanned,
@@ -118,6 +128,7 @@ export function buildScanMeta(args: {
     preset,
     suppressions,
     perRuleCoverage,
+    discoveryDiagnostics,
   } = args;
   return {
     filesScanned,
@@ -150,6 +161,7 @@ export function buildScanMeta(args: {
       verboseMeta,
       wrapperProvenance.fromAutoDetect.confirmed.length,
       preset,
+      discoveryDiagnostics,
     ),
     // Audit trail for every in-source `ra11y-disable` pragma — keeps
     // suppressions visible and accountable. Omitted when no pragmas

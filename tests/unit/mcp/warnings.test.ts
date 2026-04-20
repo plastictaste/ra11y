@@ -180,6 +180,38 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
+  it("fires `extensions_skipped_no_parser` when the coverage block reports a non-empty skippedByExtension map", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".astro": 104, ".scss": 122 },
+      },
+      filesByExtension: { ".tsx": 120, ".css": 5 },
+    });
+    expect(codes).toContain("extensions_skipped_no_parser");
+  });
+
+  it("does NOT fire `extensions_skipped_no_parser` when the map is empty or absent", () => {
+    const empty = computeScanWarnings({
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { skippedByExtension: {} },
+      filesByExtension: { ".tsx": 125 },
+    });
+    const absent = computeScanWarnings({
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 125 },
+    });
+    expect(empty).not.toContain("extensions_skipped_no_parser");
+    expect(absent).not.toContain("extensions_skipped_no_parser");
+  });
+
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
     const codes = computeScanWarnings({
       filesScanned: 0,

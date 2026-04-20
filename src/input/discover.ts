@@ -19,7 +19,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { DEFAULT_IGNORED_DIRS, walkFiles } from "../utils/fs.ts";
 import { compileGlobs, type GlobMatcher } from "../utils/glob.ts";
-import { hasParseableExtension } from "../utils/path.ts";
+import { extension, hasParseableExtension } from "../utils/path.ts";
 
 /**
  * A minimal directory-ignore set used by `discoverExplicitPaths`.
@@ -125,11 +125,36 @@ export async function discoverExplicitPaths(
   return [...out].sort();
 }
 
-/** Resolves every input path into a flat list of parseable files. */
-export async function discoverFiles(
+/**
+ * Diagnostic signals from the discovery pass that are otherwise
+ * invisible to downstream consumers. Every field reports a structural
+ * gap the scanner chose not to fix but the agent should know about:
+ *
+ *   - `skippedByExtension`: files that cleared the dir-ignore + user
+ *     exclude filters but were rejected purely because their extension
+ *     isn't in `PARSEABLE_EXTENSIONS`. Canonical silent-miss case —
+ *     scanning a project with 226 source files but only 125 parseable
+ *     reads as "tool covered everything" when the walker dropped
+ *     `.astro` / `.scss` / `.vue` at discovery. Map keys are
+ *     ext-with-dot (`.astro`); empty-extension files land under
+ *     `(no-ext)`. Counters are raw file counts.
+ */
+export interface DiscoveryDiagnostics {
+  readonly skippedByExtension: Readonly<Record<string, number>>;
+}
+
+/**
+ * Like {@link discoverFiles} but also returns per-extension counts of
+ * files the walker considered (cleared dir-ignore + user-excludes) and
+ * then rejected because the extension isn't parseable.
+ * `DEFAULT_EXCLUDED_PATTERNS`, `.gitignore`, and user-`exclude`
+ * rejections are NOT counted — those are intentional suppressions
+ * surfaced elsewhere, not silent parser gaps.
+ */
+export async function discoverFilesWithDiagnostics(
   roots: readonly string[],
   options: DiscoverOptions = {},
-): Promise<string[]> {
+): Promise<{ readonly files: string[]; readonly diagnostics: DiscoveryDiagnostics }> {
   const userExcludes = options.excludes ?? [];
   const gitignore = options.respectGitignore === false ? [] : await loadGitignoreForRoots(roots);
   const dirPatterns = buildDirExcludes(
@@ -141,14 +166,41 @@ export async function discoverFiles(
   const dirMatcher = compileGlobs(dirPatterns);
   const userMatcher = compileGlobs([...userExcludes, ...gitignore]);
   const out = new Set<string>();
+  const skippedByExtension = new Map<string, number>();
 
   for (const raw of roots) {
     const absRoot = resolve(raw);
-    const found = await discoverOne(absRoot, userMatcher, dirMatcher);
+    const found = await discoverOne(absRoot, userMatcher, dirMatcher, skippedByExtension);
     for (const f of found) out.add(f);
   }
 
-  return [...out].sort();
+  return {
+    files: [...out].sort(),
+    diagnostics: {
+      skippedByExtension: Object.fromEntries(
+        [...skippedByExtension.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      ),
+    },
+  };
+}
+
+/** Resolves every input path into a flat list of parseable files. */
+export async function discoverFiles(
+  roots: readonly string[],
+  options: DiscoverOptions = {},
+): Promise<string[]> {
+  const { files } = await discoverFilesWithDiagnostics(roots, options);
+  return files;
+}
+
+/**
+ * Increments the skip count for `filePath`'s extension. Empty-extension
+ * files land under `(no-ext)` so the map key is always non-empty.
+ */
+function recordExtensionSkip(counts: Map<string, number>, filePath: string): void {
+  const ext = extension(filePath);
+  const key = ext === "" ? "(no-ext)" : ext;
+  counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
 /**
@@ -410,11 +462,20 @@ function prefixPattern(prefix: string, pattern: string): string {
   return `${prefix}/${stripped}`;
 }
 
-/** Resolves a single root path into matching files. */
+/**
+ * Resolves a single root path into matching files, accumulating
+ * per-extension rejection counts for files the walker actually
+ * considered (cleared dir-ignore + user-excludes) but failed the
+ * parseable-extension check. Exclusion patterns from
+ * `DEFAULT_EXCLUDED_PATTERNS` / `.gitignore` / user excludes are
+ * deliberately not counted — they're intentional suppressions, not
+ * silent parser gaps.
+ */
 async function discoverOne(
   abs: string,
   userMatcher: GlobMatcher,
   dirMatcher: GlobMatcher,
+  skippedByExtension: Map<string, number>,
 ): Promise<readonly string[]> {
   let info: Awaited<ReturnType<typeof stat>>;
   try {
@@ -425,7 +486,9 @@ async function discoverOne(
   if (info.isFile()) {
     // Explicit file paths bypass default test-file exclusions, but still
     // honor the user's own excludes.
-    if (hasParseableExtension(abs) && !userMatcher.matches(toRel(abs, abs))) return [abs];
+    if (userMatcher.matches(toRel(abs, abs))) return [];
+    if (hasParseableExtension(abs)) return [abs];
+    recordExtensionSkip(skippedByExtension, abs);
     return [];
   }
   if (info.isDirectory()) {
@@ -433,6 +496,16 @@ async function discoverOne(
       abs,
       (filePath) => hasParseableExtension(filePath) && !dirMatcher.matches(toRel(filePath, abs)),
       DEFAULT_IGNORED_DIRS,
+      {
+        // Fires only for files that passed the dir-level ignore set AND
+        // failed the inline filter — the filter is parseable-extension
+        // AND not-user-excluded. We only want to surface the extension
+        // gap, not user-intentional exclusions, so re-check here.
+        onRejected: (filePath) => {
+          if (dirMatcher.matches(toRel(filePath, abs))) return;
+          recordExtensionSkip(skippedByExtension, filePath);
+        },
+      },
     );
   }
   return [];

@@ -33,7 +33,15 @@ export type ScanWarningCode =
   // discovery AND Storybook primitives (`Meta`, `StoryObj`, `StoryFn`,
   // `Story`) were rendered transparent in the opaque-component
   // telemetry. Not an error; a label the agent can branch on.
-  | "storybook_preset_active";
+  | "storybook_preset_active"
+  // V1-DETECT-SILENT-EXT: the walker considered N files that cleared
+  // dir-ignore + user-excludes and rejected them purely because their
+  // extension isn't in PARSEABLE_EXTENSIONS (.astro, .scss, .vue, etc.).
+  // Without this code a mixed-language repo reads as "scanned
+  // everything" when the scanner dropped the majority of source files
+  // at discovery. Paired meta: `analysisCoverage.skippedByExtension`
+  // carries the ext↦count map the warning points at.
+  | "extensions_skipped_no_parser";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -135,7 +143,23 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // block.
     out.push("storybook_preset_active");
   }
+  if (hasSkippedExtensions(inputs.analysisCoverage)) {
+    // V1-DETECT-SILENT-EXT: coverage block carries a non-empty
+    // skippedByExtension map — surface the top-level signal so the
+    // agent can branch without reading into meta.
+    out.push("extensions_skipped_no_parser");
+  }
   return out;
+}
+
+function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {
+  if (coverage === undefined) return false;
+  const skipped = coverage["skippedByExtension"];
+  return (
+    skipped !== null &&
+    typeof skipped === "object" &&
+    Object.keys(skipped as Record<string, unknown>).length > 0
+  );
 }
 
 function hasTailwindHint(coverage: Record<string, unknown> | undefined): boolean {

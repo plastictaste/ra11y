@@ -165,6 +165,7 @@ export function buildAnalysisCoverage(
   verbose: boolean,
   autoDetectConfirmedCount = 0,
   preset?: ConfigPreset,
+  discoveryDiagnostics?: import("../input/discover.ts").DiscoveryDiagnostics,
 ): { analysisCoverage?: Record<string, unknown> } {
   const acc: CoverageAccumulator = {
     opaqueComponents: new Map(),
@@ -185,6 +186,7 @@ export function buildAnalysisCoverage(
     parseErrorFiles?: readonly string[];
     rulesByExtension?: Readonly<Record<string, readonly string[]>>;
     hints?: readonly string[];
+    skippedByExtension?: Readonly<Record<string, number>>;
   } = {};
   if (acc.opaqueComponents.size > 0) {
     assembleOpaqueComponentBlock(acc.opaqueComponents, verbose, coverage);
@@ -214,6 +216,16 @@ export function buildAnalysisCoverage(
   }
   const hints = buildHints(files, acc);
   if (hints.length > 0) coverage.hints = hints;
+  // V1-DETECT-SILENT-EXT: surface per-extension counts for files the
+  // walker considered but rejected purely on the parseable-extension
+  // check. Present-when-meaningful: omitted when the map is empty or
+  // the caller didn't run discovery (`scan_file` takes explicit paths).
+  if (
+    discoveryDiagnostics !== undefined &&
+    Object.keys(discoveryDiagnostics.skippedByExtension).length > 0
+  ) {
+    coverage.skippedByExtension = discoveryDiagnostics.skippedByExtension;
+  }
   return Object.keys(coverage).length > 0 ? { analysisCoverage: coverage } : {};
 }
 

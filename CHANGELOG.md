@@ -4,6 +4,10 @@ All notable changes to ra11y are documented in this file. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- **MCP scan meta** surfaces `analysisCoverage.skippedByExtension` — a map of `ext ↦ count` for files the discovery walker cleared past dir-ignore and user-excludes but then rejected purely because their extension isn't in `PARSEABLE_EXTENSIONS` (`.astro`, `.scss`, `.vue`, etc.). Paired with the top-level `warnings: ["extensions_skipped_no_parser"]` code, this closes the silent-miss case where a mixed-language repo scanned only 125 of 351 source files and `filesScanned: 125` read as "tool covered everything." Present-when-meaningful: omitted when the map is empty or when the caller's tool doesn't run discovery. Wired into `scan_project`.
+
 ### Changed
 
 - **MCP `plan.summary` violations parenthetical** now breaks down by the rule-level `fixClass` lane (`mechanical` / `guidance` / `runtime-only` / `verify-in-source`) instead of summing `runtime-only` and `verify-in-source` findings under a single "guidance fixes" label. Zero-count lanes are omitted. Per CLAUDE.md §1 "Composite headline counts are dishonest" — agents budgeting against the summary string now see each work lane separately and can route without post-hoc re-categorizing.

@@ -24,7 +24,7 @@ import {
   type McpTool,
   ms,
   parseExplicitPaths,
-  parseFiles,
+  parseFilesWithDiagnostics,
   resolveStandards,
   runScanAndFormat,
   type StructuredErrorCode,
@@ -129,7 +129,12 @@ export const scanProjectTool: McpTool = {
     const { roots, mode: actualMode, fallbackReason } = scanScope;
     const t0 = performance.now();
     const storybookPresetActive = projectConfig.preset === "storybook";
-    const baseFiles = await parseFiles(roots, session, root, discoverOptionsFor(projectConfig));
+    const { files: baseFiles, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
+      roots,
+      session,
+      root,
+      discoverOptionsFor(projectConfig),
+    );
     const additionalPaths = strArrayParam(params, "additionalPaths") ?? [];
     const additionalFiles =
       additionalPaths.length > 0 ? await parseExplicitPaths(additionalPaths, session, root) : [];
@@ -179,6 +184,10 @@ export const scanProjectTool: McpTool = {
       // absolute). The helper internally conditional-spreads onto
       // `runScan` when the array is non-empty.
       resolveProcessesForScan(projectConfig.processes, projectConfig.sourcePath, root),
+      // V1-DETECT-SILENT-EXT: surface per-extension skip counts from the
+      // discovery pass into `meta.analysisCoverage.skippedByExtension`
+      // + the response-level `extensions_skipped_no_parser` warning.
+      discoveryDiagnostics,
     );
     logger.debug(
       `scan_project: ${files.length} files, parse ${parseMs}ms + scan ${ms(t1)}ms = ${ms(t0)}ms`,

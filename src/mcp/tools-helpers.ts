@@ -11,7 +11,11 @@ import { readAttestations } from "../config/attestation-store.ts";
 import { CriteriaRegistry } from "../engine/registry/criteria.ts";
 import { RulesRegistry } from "../engine/registry/rules.ts";
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
-import { discoverExplicitPaths, discoverFiles } from "../input/discover.ts";
+import {
+  type DiscoveryDiagnostics,
+  discoverExplicitPaths,
+  discoverFilesWithDiagnostics,
+} from "../input/discover.ts";
 import {
   type AgentFinding,
   buildAgentFinding,
@@ -236,9 +240,31 @@ export async function parseFiles(
   cwd?: string,
   options: { readonly includeStoryFiles?: boolean } = {},
 ): Promise<readonly ParsedFile[]> {
+  const { files } = await parseFilesWithDiagnostics(paths, session, cwd, options);
+  return files;
+}
+
+/**
+ * Like {@link parseFiles} but also returns discovery diagnostics —
+ * per-extension counts of files the walker cleared past dir-ignore +
+ * user-excludes and then rejected purely on the parseable-extension
+ * check. Scan-surface tools (scan, scan_project, scan_file, scan_diff)
+ * use this to surface the silent-miss case (V1-DETECT-SILENT-EXT)
+ * where a mixed-language repo contributes hundreds of `.astro` /
+ * `.scss` / `.vue` files that the scanner never looked at.
+ */
+export async function parseFilesWithDiagnostics(
+  paths: readonly string[],
+  session: McpSession,
+  cwd?: string,
+  options: { readonly includeStoryFiles?: boolean } = {},
+): Promise<{
+  readonly files: readonly ParsedFile[];
+  readonly diagnostics: DiscoveryDiagnostics;
+}> {
   const base = cwd ?? process.cwd();
   const absPaths = paths.map((p) => (isAbsolute(p) ? p : resolve(base, p)));
-  const discovered = await discoverFiles(absPaths, {
+  const { files: discovered, diagnostics } = await discoverFilesWithDiagnostics(absPaths, {
     excludes: session.config.exclude,
     ...(options.includeStoryFiles === true ? { includeStoryFiles: true } : {}),
   });
@@ -247,7 +273,7 @@ export async function parseFiles(
     const result = await session.parseFile(filePath, cwd);
     if (result) parsed.push(result);
   }
-  return parsed;
+  return { files: parsed, diagnostics };
 }
 
 /**
@@ -504,6 +530,14 @@ export async function runScanAndFormat(
   // user declared no processes; empty/absent = no process-level
   // evidence, finders emit nothing rather than guess.
   processes?: readonly import("../types/config.ts").Process[],
+  // Discovery diagnostics from `parseFilesWithDiagnostics`. When
+  // present with a non-empty `skippedByExtension` map, the counts are
+  // surfaced in `meta.analysisCoverage.skippedByExtension` and the
+  // response-level `extensions_skipped_no_parser` warning fires. Omit
+  // (or pass an empty map) on scan surfaces that don't run discovery
+  // — the scan_file tool takes explicit paths and has no silent-miss
+  // axis to report on.
+  discoveryDiagnostics?: DiscoveryDiagnostics,
 ): Promise<{
   readonly formatted: ScanFormatted;
   readonly durationMs: number;
@@ -636,6 +670,7 @@ export async function runScanAndFormat(
       preset,
       suppressions,
       perRuleCoverage,
+      ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
     }),
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
     ...(ruleCoverageDerivative === null ? {} : { ruleCoverage: ruleCoverageDerivative }),
