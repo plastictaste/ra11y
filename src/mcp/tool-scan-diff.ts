@@ -37,6 +37,7 @@ import {
 } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import {
   buildReferenceGuide,
@@ -214,7 +215,13 @@ async function handleBaselineMode(
   );
   const resolved = resolvedFromBaseline(baseline.violations, scannedHashes);
 
-  const referenceGuide = buildReferenceGuide(newFiles);
+  // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist duplicated
+  // `fix.description` prose over the POST-FILTER new findings —
+  // pointers in the response resolve against the top-level map, and
+  // the map reflects exactly what ships. Doing the hoist on the
+  // pre-filter `formatted.files` would let the map carry prose for
+  // findings that are dropped here (findings already in the baseline).
+  const hoistedGuide = hoistAndBuildReferenceGuide(newFiles, buildReferenceGuide(newFiles));
   const fullMeta: Record<string, unknown> = {
     ...formatted.meta,
     scanned: scannedProject(cwd),
@@ -228,7 +235,7 @@ async function handleBaselineMode(
     baselineCount: baseline.violations.length,
     baselineGeneratedAt: baseline.generatedAt,
     newCount,
-    newViolations: newFiles,
+    newViolations: hoistedGuide.files,
     // Surface "new" and "resolved" as two independent top-level
     // counters so an agent can distinguish new debt from regressions
     // fixed without a composite counter papering over the two
@@ -238,7 +245,9 @@ async function handleBaselineMode(
     // is omitted entirely (see handleHunksMode).
     resolvedCount: resolved.length,
     resolved,
-    ...(referenceGuide === undefined ? {} : { referenceGuide }),
+    ...(hoistedGuide.referenceGuide === undefined
+      ? {}
+      : { referenceGuide: hoistedGuide.referenceGuide }),
     meta: applyMetaCacheMode({ toolName: "scan_diff", params, fullMeta, session }),
     nextStep: buildNextStep(newCount, newFiles, resolved.length),
   });
@@ -329,14 +338,18 @@ async function handleHunksMode(
   logger.debug(`scan_diff (hunks): ${files.length} files in ${ms(t0)}ms`);
 
   const { newFiles, newCount } = filterToHunkFindings(formatted.files, hunksByFile);
-  const referenceGuide = buildReferenceGuide(newFiles);
+  // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist over the POST-
+  // hunk-filter findings (symmetric with baseline mode above).
+  const hoistedGuide = hoistAndBuildReferenceGuide(newFiles, buildReferenceGuide(newFiles));
 
   return textResult({
     mode: "diff",
     newCount,
-    newViolations: newFiles,
+    newViolations: hoistedGuide.files,
     ...noHunksWarning,
-    ...(referenceGuide === undefined ? {} : { referenceGuide }),
+    ...(hoistedGuide.referenceGuide === undefined
+      ? {}
+      : { referenceGuide: hoistedGuide.referenceGuide }),
     meta: {
       ...formatted.meta,
       scanned: scannedProject(cwd),
@@ -449,15 +462,17 @@ function filterToNewFindings(
   files: ScanFormatted["files"],
   baselineHashes: ReadonlySet<string>,
 ): {
-  readonly newFiles: { readonly path: string; readonly findings: readonly unknown[] }[];
+  readonly newFiles: ScanFormatted["files"];
   readonly newCount: number;
   readonly scannedHashes: ReadonlySet<string>;
 } {
-  const newFiles: { readonly path: string; readonly findings: readonly unknown[] }[] = [];
+  type FileEntry = ScanFormatted["files"][number];
+  type Finding = FileEntry["findings"][number];
+  const newFiles: FileEntry[] = [];
   let newCount = 0;
   const scannedHashes = new Set<string>();
   for (const file of files) {
-    const kept: unknown[] = [];
+    const kept: Finding[] = [];
     for (const raw of file.findings) {
       const hash = hashOfFormattedFinding(raw);
       if (hash === null) continue;

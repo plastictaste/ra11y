@@ -246,7 +246,7 @@ function numFromPlan(plan: Record<string, unknown>, key: string): number {
  * text in that case.
  */
 function firstCallableFinding(
-  files: readonly { readonly path: string; readonly findings: unknown[] }[],
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
 ): FirstFinding | null {
   for (const file of files) {
     for (const raw of file.findings) {
@@ -291,7 +291,7 @@ function readFindingRuleIdAndLine(
  *     finding whose lane we can't confirm.
  */
 function allViolationsMechanical(
-  files: readonly { readonly path: string; readonly findings: unknown[] }[],
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
 ): boolean {
   let sawViolation = false;
   for (const file of files) {

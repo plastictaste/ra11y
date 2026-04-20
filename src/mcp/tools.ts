@@ -16,6 +16,7 @@ import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
+import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { dedupeReviewCandidatesForSingleFile } from "./review-candidate-dedup.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
 import { scannedDir, scannedFile } from "./scanned-envelope.ts";
@@ -182,8 +183,15 @@ const scanTool: McpTool = {
       nextStep: nextStep.prose,
       ...nextStepStructuredField,
     };
+    // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist duplicated
+    // `fix.description` prose into `referenceGuide.fixDescriptions`
+    // for the final files array. `scan` emits every file with findings
+    // (no pagination), so the hoist source matches the response.
+    const hoisted = hoistAndBuildReferenceGuide(formatted.files, formatted.referenceGuide);
     return textResult({
       ...formatted,
+      files: hoisted.files,
+      ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
       ...ruleCatalogField(params, BUILTIN_RULES, formatted.files),
       ...warningsFieldFromScanMeta({
         meta: formatted.meta,
@@ -298,7 +306,14 @@ const scanFileTool: McpTool = {
     // that — agents iterating the fix-verify loop key off the flat
     // `findings` array. `plan` and `meta` still ride along so the
     // envelope is honest about counts and scan-confidence telemetry.
-    const flatFindings = formatted.files[0]?.findings ?? [];
+    //
+    // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist duplicated
+    // `fix.description` prose. Single-file scans rarely cross the
+    // ≥2-duplicate threshold, but `semantics/label-in-name` on a file
+    // with many interactive elements can — the hoist fires only when
+    // duplicates exist, else findings pass through unchanged.
+    const hoisted = hoistAndBuildReferenceGuide(formatted.files, formatted.referenceGuide);
+    const flatFindings = hoisted.files[0]?.findings ?? [];
     const nextStep = buildNextStep(formatted, { singleFilePath: parsed.filePath });
     // P1-K: structured twin of the prose nextStep. Conditional-spread
     // per CLAUDE.md §1 "Ambiguous field shapes are dishonest": omit
@@ -333,9 +348,7 @@ const scanFileTool: McpTool = {
       findings: flatFindings,
       reviewCandidates: dedupedCandidates,
       plan: formatted.plan,
-      ...(formatted.referenceGuide === undefined
-        ? {}
-        : { referenceGuide: formatted.referenceGuide }),
+      ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
       ...warningsFieldFromScanMeta({
         meta: formatted.meta,
         // scan_file has no project-root / `rootSource` concept — the

@@ -38,6 +38,17 @@ export type Safety = "safe" | "unsafe";
  * string sentinels (`oldText: ""`) are a silent-miss hazard. Use the
  * `description` field for prose guidance in both cases.
  *
+ * `description` is present on every newly-built fix, but **optional**
+ * on the wire: in MCP scan-family responses (scan, scan_file,
+ * scan_project, scan_diff) `description` is stripped when the same
+ * `(ruleId, description)` pair appears ≥2 times in a response — the
+ * prose hoists into top-level `referenceGuide.fixDescriptions`
+ * (V1-SIZE-RESPONSE-BUDGET-DENSITY option b) and the finding gains a
+ * `fixDescriptionRef: { hash }` pointer. Never emit BOTH the pointer
+ * and the inline description; the two shapes are alternatives. On CLI
+ * `--format agent` output and tools that don't hoist (apply_fix,
+ * baseline), `description` stays inline.
+ *
  * Confidence lives on the parent {@link AgentFinding} — one confidence
  * per finding, derived from severity. A separate per-fix confidence
  * was redundant.
@@ -46,7 +57,7 @@ export interface AgentFix {
   readonly oldText?: string;
   readonly newText?: string;
   readonly safety: Safety;
-  readonly description: string;
+  readonly description?: string;
 }
 
 export interface AgentFinding {
@@ -116,6 +127,34 @@ export interface AgentFinding {
   readonly snippet?: string;
   /** Present when the violation has a mechanical edit or prose guidance; absent otherwise. */
   readonly fix?: AgentFix;
+  /**
+   * Pointer into `referenceGuide.fixDescriptions[ruleId][hash]` on the
+   * top-level scan response, present only when the prose that would
+   * otherwise live at `fix.description` was hoisted out of this finding
+   * because the same `(ruleId, description)` pair appears on two or
+   * more findings in the same response (V1-SIZE-RESPONSE-BUDGET-DENSITY
+   * option b).
+   *
+   * Contract — the hoist shape must never be ambiguous per
+   * `docs/kb/architecture/ai-first-consumer.md`:
+   *
+   *   - When `fixDescriptionRef` is present, `fix.description` is
+   *     absent on this finding. Resolve the prose via
+   *     `referenceGuide.fixDescriptions[ruleId][hash]`.
+   *   - When `fixDescriptionRef` is absent and `fix.description` is
+   *     present, the prose is unique-in-response and stays inline.
+   *   - Never emit both.
+   *
+   * The hash is a 12-hex-char truncated SHA-256 of the description —
+   * same recipe as `findingId` — so it reads cleanly in agent
+   * transcripts.
+   *
+   * Tools that don't hoist (apply_fix, baseline, CLI `--format agent`)
+   * never emit this field; their responses carry descriptions inline.
+   */
+  readonly fixDescriptionRef?: {
+    readonly hash: string;
+  };
   readonly effort: Effort;
   readonly category: Category;
   readonly suppressWith: string;

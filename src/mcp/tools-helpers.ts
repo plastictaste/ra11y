@@ -438,7 +438,10 @@ function collectManualCriteria(
  */
 export interface ScanFormatted {
   readonly plan: Record<string, unknown>;
-  readonly files: readonly { readonly path: string; readonly findings: AgentFinding[] }[];
+  readonly files: readonly {
+    readonly path: string;
+    readonly findings: readonly AgentFinding[];
+  }[];
   readonly meta: Record<string, unknown>;
   /**
    * Top-level prose map — findings reference by file extension rather than
@@ -449,10 +452,20 @@ export interface ScanFormatted {
    * Keys are file extensions without the leading dot (`tsx`, `css`, etc.).
    * The `default` key covers extensions that don't have a language-specific
    * placement variant — today that's `.ts` / `.js` / anything else.
+   *
+   * `fixDescriptions` rides in the same block — a nested
+   * `{ [ruleId]: { [hash]: description } }` map populated when the same
+   * `(ruleId, fix.description)` pair appears on ≥2 findings in the
+   * response, so the prose hoists once to the top level instead of
+   * repeating per-finding. Hoisted findings carry
+   * `fixDescriptionRef: { hash }` and omit `fix.description`; findings
+   * with unique-in-response descriptions keep the inline text. Omitted
+   * entirely when no duplicates cross the threshold (present-when-
+   * meaningful per CLAUDE.md §1). See
+   * V1-SIZE-RESPONSE-BUDGET-DENSITY and the
+   * `src/mcp/reference-guide.ts` implementation.
    */
-  readonly referenceGuide?: {
-    readonly suppressPlacement: Readonly<Record<string, string>>;
-  };
+  readonly referenceGuide?: import("./reference-guide.ts").ReferenceGuide;
   /**
    * Top-level split of rule IDs into "0 findings with high-confidence
    * coverage" vs "0 findings with low-confidence coverage" — derived
@@ -631,6 +644,15 @@ export async function runScanAndFormat(
   const actionableManual = actionableManualIds.size;
   const untargetedCriteria = manualCount - actionableManual;
   const suppressions = suppressionAudit(files);
+  // Findings keep their `fix.description` inline here. The optional
+  // V1-SIZE-RESPONSE-BUDGET-DENSITY hoist (see
+  // `src/mcp/reference-guide.ts`'s `hoistFixDescriptions`) runs per-
+  // tool at response-assembly time so it reflects the *final* findings
+  // array — post-pagination for scan_project, post-hunk/baseline-filter
+  // for scan_diff — rather than the scan-wide pre-filter shape. Doing
+  // the hoist upstream here would force downstream filters to know how
+  // to repair pointers when duplicates drop below the threshold, which
+  // is more moving parts than it's worth.
   const referenceGuide = buildReferenceGuide(fileEntries);
   // Per-rule trust telemetry (Q2R2-RULE-COV). The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative

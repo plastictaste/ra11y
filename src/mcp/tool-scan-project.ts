@@ -16,7 +16,7 @@ import { buildConfigHint } from "./config-hint.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
-import { referenceGuideField } from "./reference-guide.ts";
+import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
@@ -219,6 +219,14 @@ export const scanProjectTool: McpTool = {
     // omitted when the whole result fits.
     const pageParams = readPageParams(params);
     const page = paginateFiles(formatted.files, pageParams);
+    // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist duplicated
+    // `fix.description` prose into `referenceGuide.fixDescriptions`
+    // over the PAGED `files` — so pointers and the top-level map
+    // cover exactly what ships in this response. Running the hoist
+    // before pagination would let a description hoist on strength of
+    // findings that never reach the caller, leaving a pointer with
+    // no lookup target.
+    const hoisted = hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide);
     const fullMeta = {
       ...formatted.meta,
       ...skippedByCallerField(skipCriterion),
@@ -252,9 +260,9 @@ export const scanProjectTool: McpTool = {
     };
     return textResult({
       plan: formatted.plan,
-      files: page.files,
+      files: hoisted.files,
       ...page.paginationFields,
-      ...referenceGuideField(formatted),
+      ...hoistedReferenceGuideField(hoisted),
       ...ruleCatalogField(params, BUILTIN_RULES, formatted.files),
       ...warningsFieldFromScanMeta({
         meta: formatted.meta,
@@ -636,6 +644,20 @@ function structuredField(nextStep: { readonly structured?: unknown }): {
 } {
   if (nextStep.structured === undefined) return {};
   return { nextStepStructured: nextStep.structured };
+}
+
+/**
+ * Conditional-spread for the post-hoist `referenceGuide` field —
+ * omitted when no findings / no hoist context applies. Factored out so
+ * the handler's cognitive complexity stays under the lint cap after
+ * the V1-SIZE-RESPONSE-BUDGET-DENSITY hoist was added alongside the
+ * existing `structuredField` / `baselineStatusField` helpers.
+ */
+function hoistedReferenceGuideField<T>(hoisted: { readonly referenceGuide: T | undefined }): {
+  readonly referenceGuide?: T;
+} {
+  if (hoisted.referenceGuide === undefined) return {};
+  return { referenceGuide: hoisted.referenceGuide };
 }
 
 /**
