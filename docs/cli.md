@@ -160,7 +160,55 @@ Key flags:
 
 - `--dry-run` — report what would be dropped without writing.
 
-Attestation records are created by the `attest` MCP tool or by writing to `.ra11y/attestations.jsonl` directly. See [docs/mcp/tool-reference.md](mcp/tool-reference.md) for the `attest` tool shape.
+Attestation records are created by the `attest` MCP tool, by the `ra11y attest` CLI command (below), or by writing to `.ra11y/attestations.jsonl` directly. See [docs/mcp/tool-reference.md](mcp/tool-reference.md) for the `attest` tool shape.
+
+### ra11y attest
+
+Appends a single durable attestation record to `.ra11y/attestations.jsonl`. Mirrors the `attest` MCP tool's safety posture: `--reason` is required and non-empty, the criterion must resolve to a loaded standard, any `--rule-ids` must actually satisfy the target criterion, and `--scope file|line` requires a parseable `--location`. Auditors without an MCP host use this command directly.
+
+```bash
+ra11y attest wcag22:1.1.1 --reason "ran axe-core 2026-04-19; no img elements" --verdict na --by ci-bot
+ra11y attest wcag22:2.4.7 --reason "manual keyboard test confirms focus" --scope file --location src/nav.tsx:14:3
+```
+
+Key flags:
+
+- `<criterionId>` — required positional (e.g. `wcag22:2.4.7`).
+- `--reason <text>` — required; non-empty justification. Bare invocations exit `2`.
+- `--verdict <pass|fail|na|pending>` — defaults to `pass`. `na` is the shell-friendly alias for `n/a`.
+- `--rule-ids <id>,<id>` — optional; must satisfy the target criterion. Repeatable.
+- `--scope <project|file|line>` — defaults to project-wide. `file` and `line` require `--location`.
+- `--location <file>:<line>[:<col>]` — file + line (+ optional column) anchor.
+- `--by <who>` — records the attester. Defaults to `agent`.
+
+Exit codes: `0` on append; `2` on missing/empty `--reason`, unknown criterion, unknown rule IDs, malformed location, scope↔location mismatch, or file-write failure. Outside a git repo the command still appends but stderr carries `warnings=non_git_repo_commit_omitted`.
+
+### ra11y conformance
+
+Renders a [WCAG conformance statement](conformance.md) (default path) or verifies a previously emitted signed bundle (`--verify`). Wraps the `buildConformanceStatement` + `renderConformanceMarkdown` + `verifyConformanceBundle` primitives behind one subcommand.
+
+```bash
+# Emit a Markdown statement for wcag22 AA (default)
+ra11y conformance --standard wcag22 --level AA > conformance.md
+
+# Emit JSON with a signature block (when inside a git repo)
+ra11y conformance --output json > conformance.json
+
+# Verify a bundle round-trips cleanly
+ra11y conformance --verify conformance.json
+```
+
+Key flags:
+
+- `--profile <name>` — resolves to a built-in or user-declared conformance profile; wins over `--standard` / `--level`.
+- `--standard <id>` / `--level <A|AA|AAA>` — picks the single standard + level the statement targets. Conformance statements target one standard at a time by design.
+- `--output <markdown|json>` — output shape. Markdown is default; `json` emits the full statement + signature envelope.
+- `--scan-root <path>` — override the scan root (defaults to cwd).
+- `--verify <bundle.json>` — switches into verification mode; reads the bundle, reconstructs the signature input from the current tree, and calls `verifyConformanceBundle`.
+
+Exit codes: `0` when the command ran cleanly (emit mode) or the bundle verified (verify mode); `2` on unknown profile, malformed bundle, bundle missing a signature block, or verifier drift (with the reason code in stderr — `commit-drift`, `file-manifest-mismatch`, `tool-version-mismatch`, …).
+
+Outside a git repo the command emits `warnings=non_git_repo_signature_omitted` on stderr and omits the signature block; verify mode will then fail against any bundle stamped from inside a repo.
 
 ## Input
 
