@@ -181,4 +181,28 @@ describe("scan_project pagination (P1-OVF)", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("applies the default files-with-findings cap (ADR 0021) when no limit is passed", async () => {
+    // Build 30 files so the default of 25 triggers truncation on a
+    // call with no explicit `limit`. The value guarded here is the
+    // ADR-0021 calibration — changing the default without updating
+    // this test (and the ADR) rewrites response-size contract for
+    // every consumer that accepted the default.
+    const root = buildFixture(30);
+    try {
+      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
+      const body = bodyOf(responses[1]) as {
+        files: unknown[];
+        truncated?: boolean;
+        nextOffset?: number;
+        totalFilesWithFindings?: number;
+      };
+      expect(body.files.length).toBe(25);
+      expect(body.truncated).toBe(true);
+      expect(body.nextOffset).toBe(25);
+      expect(body.totalFilesWithFindings).toBe(30);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

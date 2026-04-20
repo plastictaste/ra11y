@@ -93,7 +93,7 @@ export const scanProjectTool: McpTool = {
         limit: {
           type: "number",
           description:
-            "Maximum number of files (with findings) to include in the response. Defaults to 200. The scan still runs over every file in scope — the cap only bounds response size to keep large monorepos from overflowing MCP token limits. When more files have findings than fit, the response includes `truncated: true` and `nextOffset: N`; call again with `offset: N` to page.",
+            "Maximum number of files (with findings) to include in the response. Defaults to 25 (calibrated per ADR 0021 so the first call stays under typical MCP host token ceilings on medium repos). The scan still runs over every file in scope — the cap only bounds response size. When more files have findings than fit, the response includes `truncated: true` and `nextOffset: N`; call again with `offset: N` to page.",
         },
         offset: {
           type: "number",
@@ -653,8 +653,15 @@ function buildArtifactsFields(files: readonly ParsedFile[]): {
   };
 }
 
-/** Default files-with-findings cap per scan_project response (P1-OVF). */
-const DEFAULT_PAGE_LIMIT = 200;
+/**
+ * Default files-with-findings cap per scan_project response (P1-OVF +
+ * ADR 0021). Calibrated at 25 so the first call stays under the ~100 KB
+ * MCP host token ceiling on typical medium repos (~2.9 KB/file amortized
+ * on the reported Bootstrap profile → ~72 KB at 25 files). Callers who
+ * want the old wider window set `limit: 200` explicitly; MAX_PAGE_LIMIT
+ * (2000) is unchanged. See docs/adr/0021-scan-response-size-budget.md.
+ */
+const DEFAULT_PAGE_LIMIT = 25;
 /** Minimum caller-supplied limit. Below this we clamp up. */
 const MIN_PAGE_LIMIT = 1;
 /** Maximum caller-supplied limit. Above this we clamp down. */
