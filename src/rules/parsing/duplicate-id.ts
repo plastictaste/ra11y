@@ -44,6 +44,15 @@ export const rule = defineRule({
   afterFile(ctx) {
     if (ctx.language !== "html") return;
     const doc = ctx.ast as HtmlDocument;
+
+    // First pass: collect every id in the document so we can propose a
+    // suffix candidate the agent can paste without re-checking uniqueness.
+    const allIds = new Set<string>();
+    for (const element of walkHtmlElements(doc)) {
+      const id = getHtmlAttribute(element, "id");
+      if (id && id.length > 0) allIds.add(id);
+    }
+
     const seen = new Map<string, HtmlElement>();
 
     for (const element of walkHtmlElements(doc)) {
@@ -54,6 +63,7 @@ export const rule = defineRule({
         seen.set(id, element);
         continue;
       }
+      const candidate = proposeUniqueId(id, allIds);
       ctx.emit({
         severity: "error",
         location: {
@@ -61,9 +71,29 @@ export const rule = defineRule({
           line: element.loc.start.line,
           column: element.loc.start.column,
         },
-        message: `Duplicate element id="${id}" — first seen on line ${first.loc.start.line}.`,
-        suggestion: `Change this <${element.tagName}>'s id to something unique, or remove it if the id wasn't intentional. IDs are referenced by aria-labelledby, label[for], and #-anchors — duplicates break all three.`,
+        message: `Duplicate id="${id}" — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on <${element.tagName}> at line ${element.loc.start.line}.`,
+        suggestion: `Duplicate id="${id}" — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on this <${element.tagName}>. Rename the second to id="${candidate}" (next free suffix) or remove it if no aria-labelledby / aria-describedby / aria-controls / label[for] / href="#${id}" references it. ARIA attribute references and getElementById resolve to the first match silently, so the duplicate is currently unreachable by any of those hooks.`,
       });
     }
   },
 });
+
+/**
+ * Proposes a unique id derived from `base` that does not collide with any
+ * id already present in the document.
+ *
+ * If `base` ends with a run of digits (e.g. `section2`), strip the digits and
+ * start counting from `(n + 1)`; otherwise start at `2`. Walks upward until a
+ * free slot is found.
+ */
+function proposeUniqueId(base: string, taken: ReadonlySet<string>): string {
+  const match = base.match(/^(.*?)(\d+)$/);
+  const root = match ? match[1] : base;
+  const start = match ? Number.parseInt(match[2] ?? "1", 10) + 1 : 2;
+  // Guard against pathological inputs that would loop forever.
+  for (let n = start; n < start + 1000; n++) {
+    const candidate = `${root}${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${base}-unique`;
+}

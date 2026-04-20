@@ -55,7 +55,7 @@ violation fires.
 | document/lang-attribute | mechanical | context-aware | `<meta http-equiv="Content-Language">`, `<meta name="language">`, `<meta charset>` legacy encoding | Four-step ladder inlines an authoritative lang value from http-equiv, falls back to the non-standard name="language" meta, then to a legacy-charset region hint (shift_jis → ja, gb2312 → zh-Hans, …). Generic fallthrough still names four concrete BCP 47 examples. Resolved by 746ecee. |
 | document/lang-on-parts | mechanical | context-aware | attribute name, raw value, issue kind, canonical rewrite | Per-kind builders; underscore/uppercase branches compute the exact corrected value and inline it. |
 | document/meta-refresh | guidance | context-aware | target URL, delay seconds | Branches on zero-delay vs delayed redirect, inlines the target URL into the suggested replacement link. |
-| document/page-titled | mechanical | generic | none (two static strings) | Missing-title and empty-title branches each emit a constant string. Does not derive a title candidate from `<h1>`, URL, or content. |
+| document/page-titled | mechanical | context-aware | first non-empty `<h1>` text + line, first `<meta name="description">` content + line | Shared `buildSuggestion` ladder: h1-text branch inlines the heading string as the candidate `<title>` (mentioning meta description as a fallback when both exist); meta-description branch truncates the description to ~60 chars at a word boundary and strips trailing punctuation; fallback names the ≤60 char length budget and the "differs from sibling pages" constraint. Resolved by PENDING_COMMIT. |
 | document/viewport-zoom | mechanical | context-aware | offending viewport directive, raw value | Inlines the offending directive name and value, with WCAG-specific threshold guidance per problem. |
 | focus/not-obscured | guidance | context-aware | selector, declared height | `buildSuggestion` inlines the anchor selector and the candidate `scroll-padding-*` value derived from the declared height. |
 | focus/outline-visible | guidance | context-aware | selector, scoped-vs-bare, Tailwind utility cross-reference | Inlines the selector in the remediation; appends a pragma-silencing note when the selector is class-scoped. |
@@ -79,7 +79,7 @@ violation fires.
 | navigation/link-descriptive-text | guidance | context-aware | href, generic-phrase token, derived destination hint | Inlines the offending phrase and a URL-derived destination candidate into the replacement suggestion. |
 | navigation/link-no-href | mechanical | generic | none | Constant "If this element navigates, add href=…" text. Does not inspect onClick body, aria-label, or parent. |
 | navigation/skip-link | mechanical | context-aware | targetId branch | Missing-id branch inlines the expected `id="${targetId}"` value from the skip-link href. Missing-link and wrong-first-link branches are constants but coexist with a context-aware third branch. |
-| parsing/duplicate-id | mechanical | generic | tagName only | "Change this `<${tag}>`'s id to something unique" — tag-only substitution. Does not propose a unique candidate or point at the earlier binding. |
+| parsing/duplicate-id | mechanical | context-aware | duplicated id value, first occurrence's tag+line, current tag+line, next free numeric suffix (document-aware) | `proposeUniqueId` pre-scans the document for all ids and computes the next free numeric suffix; inlines the duplicated id, both binding sites (tag + line), and the concrete rename candidate. Ids already ending in digits strip the trailing run before incrementing (`section2` → `section3`, not `section22`). Names aria-labelledby / aria-describedby / aria-controls / label[for] / `href="#id"` as the reference hooks that silently resolve to the first match. |
 | parsing/html-has-lang | mechanical | context-aware | tagName, raw value, trimmed vs raw, underscore-vs-hyphen, guessed BCP 47 code | `buildInvalidSuggestion` computes a concrete rewrite per issue shape (dashed form, BCP-47 guess from full-word name). |
 | pointer/cancellation | guidance | context-aware | tagName, list of down-events | Maps each down-event to its correct up-event (`onMouseDown` → `onMouseUp`, `onTouchStart` → `onTouchEnd`). |
 | pointer/drag-alternative | guidance | context-aware | tagName, drag-signal tokens, imported library name | Element-level builder names the tag and the exact drag-signal that fired; file-level builder cites the imported library. |
@@ -99,17 +99,15 @@ violation fires.
 
 Verdict distribution:
 
-- context-aware: 43
-- generic: 9
+- context-aware: 45
+- generic: 7
 - caveat-only: 0
 
 Rules flagged `generic` (need per-rule `feat(rules): context-aware fix for <rule>` follow-up commits before v1.0):
 
-- `document/page-titled`
 - `forms/non-empty-label`
 - `media/video-captions-missing`
 - `navigation/link-no-href`
-- `parsing/duplicate-id`
 - `semantics/button-name`
 - `semantics/empty-heading`
 - `semantics/landmark-main`
@@ -119,6 +117,8 @@ Resolved since publication (flipped to `context-aware`):
 
 - `focus/tabindex-positive` — V1-FIX-TABINDEX-POSITIVE.
 - `document/lang-attribute` — V1-FIX-DOC-LANG (commit 746ecee).
+- `parsing/duplicate-id` — V1-FIX-DUPLICATE-ID (commit pending).
+- `document/page-titled` — V1-FIX-DOC-TITLE (commit PENDING_COMMIT).
 
 No rows flagged `needs-review` — every rule's fix builder read cleanly under
 inspection. No runtime bugs (ReferenceErrors, unsafe expressions) were spotted
@@ -129,8 +129,6 @@ during the audit.
 Suggested context inputs by rule — these are read-only recommendations, not
 commitments; the implementer reads the rule file and decides:
 
-- `document/page-titled`: when `<h1>` text is present, surface it as the
-  candidate title (`<title>${h1Text}</title>`).
 - `forms/non-empty-label`: when the label has a `for` / `htmlFor` target,
   inline the referenced control's tag and id in the suggestion
   (`the control at id="email"`).
@@ -140,8 +138,6 @@ commitments; the implementer reads the rule file and decides:
 - `navigation/link-no-href`: inspect the onClick body — if it's navigation,
   recommend `href={route}`; if it's a mutation, recommend `<button>` and
   name the handler's identifier.
-- `parsing/duplicate-id`: cite the earlier binding's file coordinates (line,
-  column, tag) — the rule already has them in `first` on the local map.
 - `semantics/button-name`: inspect icon-only (`<svg>` / `<img>` only child)
   vs. empty; name the icon filename or svg title child when present as the
   aria-label candidate.
@@ -154,9 +150,10 @@ commitments; the implementer reads the rule file and decides:
 - `semantics/table-headers`: inspect the first row — if it contains `<td>`
   elements whose text looks header-shaped (short, title-case), suggest
   converting those specific cells to `<th scope="col">`.
-- `parsing/duplicate-id` + `semantics/button-name`: both can adopt the
-  "name a concrete candidate" pattern already used by `forms/label-for-id-mismatch`
-  and `aria/invalid-role` (Levenshtein-nearest "Did you mean?" suggestion).
+- `semantics/button-name`: can adopt the "name a concrete candidate" pattern
+  already used by `forms/label-for-id-mismatch`, `aria/invalid-role`, and
+  `parsing/duplicate-id` (surface the best candidate by name; let the agent
+  accept or override).
 
 The v1.0 acceptance gate is zero `generic` rows in this table. Each
 follow-up commit MUST re-run this audit (manually for the row under change)
