@@ -4,8 +4,16 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { finder } from "../../../src/review/finders/pointer-input.ts";
 import { runFinder } from "../../helpers/run-finder.ts";
+
+const FIXTURE_ROOT = join(import.meta.dir, "..", "..", "fixtures", "review", "pointer-input");
+
+function loadFixture(kind: "good" | "bad", name: string): string {
+  return readFileSync(join(FIXTURE_ROOT, kind, name), "utf8");
+}
 
 describe("review/pointer-input", () => {
   it("flags onPointerMove in JSX", () => {
@@ -51,5 +59,258 @@ describe("review/pointer-input", () => {
     const out = runFinder(finder, `el.addEventListener("gesturestart", handler);`);
     expect(out.length).toBeGreaterThan(0);
     expect(out[0]?.reason).toContain("gesturestart");
+  });
+
+  describe("co-occurrence detection (extension a)", () => {
+    it("flags touchstart + touchmove co-occurrence as path-based", () => {
+      const src = `
+        el.addEventListener('touchstart', onStart);
+        el.addEventListener('touchmove', onMove);
+      `;
+      const out = runFinder(finder, src, { filePath: "swipe-lib.js" });
+      const pathHits = out.filter((c) => c.reason.includes("path-based gesture"));
+      expect(pathHits.length).toBeGreaterThan(0);
+      expect(pathHits[0]?.reason).toContain("touchstart");
+      expect(pathHits[0]?.reason).toContain("touchmove");
+      // Path-based reason is anchored at the `touchmove` location.
+      const moveLineCount = src.slice(0, src.indexOf("'touchmove'")).split("\n").length;
+      expect(pathHits[0]?.location.line).toBe(moveLineCount);
+    });
+
+    it("flags pointerdown + pointermove co-occurrence as path-based", () => {
+      const src = `
+        el.addEventListener('pointerdown', onStart);
+        el.addEventListener('pointermove', onMove);
+      `;
+      const out = runFinder(finder, src, { filePath: "drag-lib.js" });
+      const pathHits = out.filter((c) => c.reason.includes("path-based gesture"));
+      expect(pathHits.length).toBeGreaterThan(0);
+      expect(pathHits[0]?.reason).toContain("pointerdown");
+      expect(pathHits[0]?.reason).toContain("pointermove");
+    });
+
+    it("does not double-emit: one candidate per criterion at the move offset when paired", () => {
+      const src = `
+        el.addEventListener('touchstart', onStart);
+        el.addEventListener('touchmove', onMove);
+      `;
+      const out = runFinder(finder, src, { filePath: "lib.js" });
+      // For wcag22:2.5.1 at the touchmove location, only the path-based
+      // reason should remain — the standalone addEventListener reason
+      // is superseded.
+      const atMove = out.filter(
+        (c) =>
+          c.criterionId === "wcag22:2.5.1" &&
+          c.reason.includes("touchmove") &&
+          !c.reason.includes("path-based"),
+      );
+      expect(atMove.length).toBe(0);
+    });
+
+    it("standalone touchmove (no touchstart) still reports the standalone reason", () => {
+      const src = `el.addEventListener('touchmove', onMove);`;
+      const out = runFinder(finder, src, { filePath: "lib.js" });
+      const pathHits = out.filter((c) => c.reason.includes("path-based gesture"));
+      const standaloneHits = out.filter((c) => c.reason.includes("addEventListener('touchmove')"));
+      expect(pathHits.length).toBe(0);
+      expect(standaloneHits.length).toBeGreaterThan(0);
+    });
+
+    it("touchstart alone (no touchmove) does not produce a path-based candidate", () => {
+      const src = `el.addEventListener('touchstart', onStart);`;
+      const out = runFinder(finder, src, { filePath: "lib.js" });
+      expect(out.filter((c) => c.reason.includes("path-based")).length).toBe(0);
+    });
+
+    it("mixed pair (touchstart + pointermove) does not pair across event families", () => {
+      const src = `
+        el.addEventListener('touchstart', a);
+        el.addEventListener('pointermove', b);
+      `;
+      const out = runFinder(finder, src, { filePath: "lib.js" });
+      expect(out.filter((c) => c.reason.includes("path-based")).length).toBe(0);
+    });
+  });
+
+  describe("name-pattern detection (extension b)", () => {
+    it("flags basename `swipe.js`", () => {
+      const out = runFinder(finder, `export const noop = () => {};`, {
+        filePath: "src/util/swipe.js",
+      });
+      const basenameHits = out.filter((c) => c.reason.includes("file basename"));
+      expect(basenameHits.length).toBeGreaterThan(0);
+      expect(basenameHits[0]?.reason).toContain("swipe");
+    });
+
+    it("flags basename for each of swipe/pan/pinch/rotate", () => {
+      for (const token of ["swipe", "pan", "pinch", "rotate"]) {
+        const out = runFinder(finder, `export const noop = () => {};`, {
+          filePath: `src/util/${token}.ts`,
+        });
+        const basenameHits = out.filter((c) => c.reason.includes("file basename"));
+        expect(basenameHits.length).toBeGreaterThan(0);
+        expect(basenameHits[0]?.reason).toContain(token);
+      }
+    });
+
+    it("flags `class Swipe`", () => {
+      const out = runFinder(finder, `class Swipe {}`, { filePath: "util.ts" });
+      const classHits = out.filter((c) => c.reason.includes("class") && c.reason.includes("Swipe"));
+      expect(classHits.length).toBeGreaterThan(0);
+    });
+
+    it("flags `class PinchZoom`", () => {
+      const out = runFinder(finder, `class PinchZoom {}`, { filePath: "util.ts" });
+      const classHits = out.filter(
+        (c) => c.reason.includes("class") && c.reason.includes("PinchZoom"),
+      );
+      expect(classHits.length).toBeGreaterThan(0);
+    });
+
+    it("flags `function rotate(` and `const panHandler =`", () => {
+      const src = `
+        function rotate(deg) { return deg; }
+        const panHandler = () => {};
+      `;
+      const out = runFinder(finder, src, { filePath: "util.ts" });
+      const fnHits = out.filter(
+        (c) => c.reason.includes("function") && c.reason.includes("rotate"),
+      );
+      const constHits = out.filter(
+        (c) => c.reason.includes("const") && c.reason.includes("panHandler"),
+      );
+      expect(fnHits.length).toBeGreaterThan(0);
+      expect(constHits.length).toBeGreaterThan(0);
+    });
+
+    it("word-boundary: does NOT flag `span`, `planet`, `expanded`", () => {
+      // No basename or identifier containing a gesture token at a
+      // word boundary; nothing should fire.
+      const out = runFinder(
+        finder,
+        `
+          const span = 1;
+          const planet = 'earth';
+          const expanded = true;
+        `,
+        { filePath: "util.ts" },
+      );
+      expect(out.filter((c) => c.reason.includes("suggests")).length).toBe(0);
+    });
+
+    it("word-boundary: DOES flag `pan` and `panelSlide`", () => {
+      const out = runFinder(
+        finder,
+        `
+          const pan = () => {};
+          const panelSlide = () => {};
+        `,
+        { filePath: "util.ts" },
+      );
+      const suggestHits = out.filter((c) => c.reason.includes("suggests"));
+      const panHit = suggestHits.find((c) => c.reason.includes("`pan`"));
+      const panelSlideHit = suggestHits.find((c) => c.reason.includes("`panelSlide`"));
+      expect(panHit).toBeDefined();
+      expect(panelSlideHit).toBeDefined();
+    });
+
+    it("ignores `class` keyword inside JSDoc-style block comments", () => {
+      const src = `
+        /**
+         * Example usage:
+         * class Swipe { move() {} }
+         */
+        export const noop = () => {};
+      `;
+      const out = runFinder(finder, src, { filePath: "util.ts" });
+      const classHits = out.filter((c) => c.reason.includes("class") && c.reason.includes("Swipe"));
+      expect(classHits.length).toBe(0);
+    });
+
+    it("ignores `class` keyword inside line comments", () => {
+      const src = `
+        // class Swipe {}
+        export const noop = () => {};
+      `;
+      const out = runFinder(finder, src, { filePath: "util.ts" });
+      const classHits = out.filter((c) => c.reason.includes("class") && c.reason.includes("Swipe"));
+      expect(classHits.length).toBe(0);
+    });
+
+    it("fixture: bad/swipe-lib.js fires pair + basename + class-name", () => {
+      const src = loadFixture("bad", "swipe-lib.js");
+      const out = runFinder(finder, src, {
+        filePath: join(FIXTURE_ROOT, "bad", "swipe-lib.js"),
+      });
+      expect(out.filter((c) => c.reason.includes("path-based")).length).toBeGreaterThan(0);
+      expect(out.filter((c) => c.reason.includes("file basename")).length).toBeGreaterThan(0);
+      expect(
+        out.filter((c) => c.reason.includes("class") && c.reason.includes("SwipeTracker")).length,
+      ).toBeGreaterThan(0);
+    });
+
+    it("fixture: bad/pinch-zoom.ts fires basename + class-name", () => {
+      const src = loadFixture("bad", "pinch-zoom.ts");
+      const out = runFinder(finder, src, {
+        filePath: join(FIXTURE_ROOT, "bad", "pinch-zoom.ts"),
+      });
+      expect(out.filter((c) => c.reason.includes("file basename")).length).toBeGreaterThan(0);
+      expect(
+        out.filter((c) => c.reason.includes("class") && c.reason.includes("PinchZoom")).length,
+      ).toBeGreaterThan(0);
+    });
+
+    it("fixture: bad/pointerdown-pointermove-pair.ts fires pair even without name tokens", () => {
+      const src = loadFixture("bad", "pointerdown-pointermove-pair.ts");
+      const out = runFinder(finder, src, {
+        filePath: join(FIXTURE_ROOT, "bad", "pointerdown-pointermove-pair.ts"),
+      });
+      expect(out.filter((c) => c.reason.includes("path-based")).length).toBeGreaterThan(0);
+    });
+
+    it("fixture: good/planet-span.ts produces no suggests/path-based candidates", () => {
+      const src = loadFixture("good", "planet-span.ts");
+      const out = runFinder(finder, src, {
+        filePath: join(FIXTURE_ROOT, "good", "planet-span.ts"),
+      });
+      expect(out.filter((c) => c.reason.includes("suggests")).length).toBe(0);
+      expect(out.filter((c) => c.reason.includes("path-based")).length).toBe(0);
+    });
+
+    it("fixture: good/click-only.ts produces zero candidates", () => {
+      const src = loadFixture("good", "click-only.ts");
+      const out = runFinder(finder, src, {
+        filePath: join(FIXTURE_ROOT, "good", "click-only.ts"),
+      });
+      expect(out).toEqual([]);
+    });
+
+    it("fixture: good/scroll-helper.ts produces zero candidates", () => {
+      const src = loadFixture("good", "scroll-helper.ts");
+      const out = runFinder(finder, src, {
+        filePath: join(FIXTURE_ROOT, "good", "scroll-helper.ts"),
+      });
+      expect(out).toEqual([]);
+    });
+
+    it("bootstrap-like swipe module triggers both the pair and the name pattern", () => {
+      const src = `
+        class Swipe {
+          constructor(el) {
+            el.addEventListener('touchstart', this.onStart);
+            el.addEventListener('touchmove', this.onMove);
+            el.addEventListener('pointerdown', this.onStart);
+            el.addEventListener('pointermove', this.onMove);
+          }
+        }
+      `;
+      const out = runFinder(finder, src, { filePath: "js/src/util/swipe.js" });
+      const pathHits = out.filter((c) => c.reason.includes("path-based"));
+      const basenameHits = out.filter((c) => c.reason.includes("file basename"));
+      const classHits = out.filter((c) => c.reason.includes("class") && c.reason.includes("Swipe"));
+      expect(pathHits.length).toBeGreaterThan(0);
+      expect(basenameHits.length).toBeGreaterThan(0);
+      expect(classHits.length).toBeGreaterThan(0);
+    });
   });
 });
