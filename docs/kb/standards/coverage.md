@@ -54,7 +54,7 @@ Coverage: 37 rule · 33 finder · 13 attestation-only · 3 gap
 | `wcag22:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag22:1.3.1` | Info and Relationships | A | partial | forms/fieldset-legend, forms/label-for-id-mismatch +9 | — | **rule** |
+| `wcag22:1.3.1` | Info and Relationships | A | partial | forms/fieldset-legend, forms/label-for-id-mismatch +10 | — | **rule** |
 | `wcag22:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag22:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag22:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -149,7 +149,7 @@ Coverage: 35 rule · 30 finder · 10 attestation-only · 3 gap
 | `wcag21:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag21:1.3.1` | Info and Relationships | A | partial | forms/fieldset-legend, forms/label-for-id-mismatch +9 | — | **rule** |
+| `wcag21:1.3.1` | Info and Relationships | A | partial | forms/fieldset-legend, forms/label-for-id-mismatch +10 | — | **rule** |
 | `wcag21:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag21:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag21:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -232,7 +232,7 @@ Coverage: 21 rule · 16 finder · 1 attestation-only · 0 gap
 | `section508:1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `section508:1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `section508:1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `section508:1.3.1` | Info and Relationships | base | partial | forms/fieldset-legend, forms/label-for-id-mismatch +9 | — | **rule** |
+| `section508:1.3.1` | Info and Relationships | base | partial | forms/fieldset-legend, forms/label-for-id-mismatch +10 | — | **rule** |
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only | use-of-color | **rule** |
@@ -279,7 +279,7 @@ Coverage: 31 rule · 18 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `en301549:9.1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `en301549:9.1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `en301549:9.1.3.1` | Info and Relationships | base | partial | forms/fieldset-legend, forms/label-for-id-mismatch +9 | — | **rule** |
+| `en301549:9.1.3.1` | Info and Relationships | base | partial | forms/fieldset-legend, forms/label-for-id-mismatch +10 | — | **rule** |
 | `en301549:9.1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `en301549:9.1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
