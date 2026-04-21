@@ -98,6 +98,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/hidden-focus](./rules/aria__hidden-focus.md)
 - [aria/invalid-role](./rules/aria__invalid-role.md)
 - [aria/live-region-valid](./rules/aria__live-region-valid.md)
+- [aria/progressbar-value-range](./rules/aria__progressbar-value-range.md)
 - [aria/required-attrs](./rules/aria__required-attrs.md)
 - [aria/role-from-class-only](./rules/aria__role-from-class-only.md)
 - [aria/valid-attr](./rules/aria__valid-attr.md)
@@ -147,6 +148,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [semantics/nested-interactive](./rules/semantics__nested-interactive.md)
 - [semantics/table-caption-missing](./rules/semantics__table-caption-missing.md)
 - [semantics/table-headers](./rules/semantics__table-headers.md)
+- [semantics/table-th-scope-missing](./rules/semantics__table-th-scope-missing.md)
 - [tooltip/dismissable](./rules/tooltip__dismissable.md)
 - [wrapper/drift](./rules/wrapper__drift.md)
 
