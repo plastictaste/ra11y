@@ -106,4 +106,41 @@ describe("rule document/page-titled", () => {
     expect(v).toHaveLength(1);
     expect(v[0]?.suggestion).toContain("Product Catalog");
   });
+
+  // Fragment-shape enrichment (Q4-PARTIAL-PAGE-TITLED). Head-partials
+  // open <html> + <head> but leave <body> to the parent layout, and
+  // often inject <title> via a template directive — surface, don't
+  // suppress, per docs/kb/architecture/ai-first-consumer.md.
+  it("enriches the missing-title finding when the file has no <body> (head-partial shape)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"></head></html>`,
+      { filePath: "_includes/head.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("template-injected");
+    expect(v[0]?.couldBeWrongBecause).toContain("title_may_be_template_injected");
+  });
+
+  it("enriches the empty-title finding with the template-injection signal on fragment shape", () => {
+    const v = runRule(rule, `<!DOCTYPE html><html lang="en"><head><title></title></head></html>`, {
+      filePath: "_includes/head.html",
+    });
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("template-injected");
+    expect(v[0]?.couldBeWrongBecause).toContain("title_may_be_template_injected");
+  });
+
+  it("does NOT attach the template-injection signal to full-document findings", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head></head><body><p>x</p></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).not.toContain("template-injected");
+    // Conditional spread means the field is absent, not empty — the
+    // dishonest-shape guard (CLAUDE.md §1) requires omission, not `[]`.
+    expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+  });
 });

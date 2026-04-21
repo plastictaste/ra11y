@@ -58,39 +58,100 @@ export const rule = defineRule({
     // name heuristic: a document <title> is inside <head>.
     const docTitles = titles.filter((t) => isInsideHead(doc, t));
 
+    // Fragment-shape detection (Q4-PARTIAL-PAGE-TITLED). SSG head-
+    // partials (Jekyll `_includes/head.html`, Hugo `partials/head.html`,
+    // Eleventy / Astro equivalents) open `<html>` + `<head>` but leave
+    // `<body>` to the parent layout, and often inject `<title>` via a
+    // template directive (`{% seo %}`, `{% include title.html %}`) that
+    // static analysis cannot observe. Per docs/kb/architecture/
+    // ai-first-consumer.md "Surface, don't suppress" and "No heuristic
+    // suppression," we do NOT skip the finding — the fragment might
+    // legitimately be missing a title generator — but we enrich the
+    // emit with a structured `couldBeWrongBecause` code and a message
+    // suffix so an agent reading the finding routes to the parent
+    // layout (or applies the source-level disable pragma) in one read.
+    // See docs/adr/0009-violation-could-be-wrong-because.md.
+    const fragmentShape = findHtmlElementsByTag(doc, "body").length === 0;
+
     if (docTitles.length === 0) {
       const htmlEl = htmlElements[0];
-      ctx.emit({
-        severity: "error",
-        location: {
-          filePath: "",
-          line: htmlEl?.loc.start.line ?? 1,
-          column: htmlEl?.loc.start.column ?? 1,
-        },
-        message:
-          "HTML document is missing a <title> element — browsers and screen readers have nothing to announce.",
-        suggestion: buildSuggestion(doc),
-      });
+      ctx.emit(
+        buildEmit(
+          doc,
+          fragmentShape,
+          htmlEl?.loc.start.line ?? 1,
+          htmlEl?.loc.start.column ?? 1,
+          MESSAGE_MISSING,
+        ),
+      );
       return;
     }
 
     for (const title of docTitles) {
       const text = htmlTextContent(title);
       if (text.length === 0) {
-        ctx.emit({
-          severity: "error",
-          location: {
-            filePath: "",
-            line: title.loc.start.line,
-            column: title.loc.start.column,
-          },
-          message: "<title> is empty — screen readers will announce nothing when the page loads.",
-          suggestion: buildSuggestion(doc),
-        });
+        ctx.emit(
+          buildEmit(
+            doc,
+            fragmentShape,
+            title.loc.start.line,
+            title.loc.start.column,
+            MESSAGE_EMPTY,
+          ),
+        );
       }
     }
   },
 });
+
+const MESSAGE_MISSING =
+  "HTML document is missing a <title> element — browsers and screen readers have nothing to announce.";
+const MESSAGE_EMPTY =
+  "<title> is empty — screen readers will announce nothing when the page loads.";
+const FRAGMENT_SUFFIX =
+  " This file has no <body> so it may be a template partial whose <title> is template-injected" +
+  " (e.g. Jekyll {% seo %} / Hugo partials / Eleventy includes) — verify against the parent layout before acting.";
+
+/**
+ * Builds the emit object shared between the missing-title and
+ * empty-title branches. Splits the fragment-shape enrichment out of
+ * the main `afterFile` body so the hot path stays under the cognitive-
+ * complexity budget — both branches route through the same `ctx.emit`
+ * shape, so duplicating the spread at each call site was both verbose
+ * and lint-hostile.
+ */
+function buildEmit(
+  doc: HtmlDocument,
+  fragmentShape: boolean,
+  line: number,
+  column: number,
+  baseMessage: string,
+): {
+  severity: "error";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+  couldBeWrongBecause?: readonly string[];
+} {
+  return {
+    severity: "error",
+    location: { filePath: "", line, column },
+    message: fragmentShape ? `${baseMessage}${FRAGMENT_SUFFIX}` : baseMessage,
+    suggestion: buildSuggestion(doc),
+    ...(fragmentShape ? { couldBeWrongBecause: [TITLE_MAY_BE_TEMPLATE_INJECTED] } : {}),
+  };
+}
+
+/**
+ * Structured `couldBeWrongBecause` code emitted on fragment-shape
+ * files (no `<body>`) where the `<title>` could be rendered by a
+ * template directive the static scanner cannot observe. Per
+ * docs/kb/architecture/ai-first-consumer.md §"No heuristic suppression,"
+ * the scanner surfaces the finding with this signal rather than
+ * silently skipping — the agent reading the file has categorically
+ * stronger evidence than our tag-level heuristic.
+ */
+const TITLE_MAY_BE_TEMPLATE_INJECTED = "title_may_be_template_injected";
 
 function isInsideHead(doc: HtmlDocument, target: { range: { start: number } }): boolean {
   // Heuristic: does any <head> element's range encompass the target's
