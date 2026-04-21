@@ -238,10 +238,11 @@ Fields emitted by `conformance_statement`:
 | `technologiesReliedUpon` | yes | Technologies the claim relies upon (WCAG §5.3.1(5)); defaults to `["HTML", "CSS", "ECMAScript", "WAI-ARIA"]`. |
 | `technologiesNotReliedUpon` | yes | Technologies explicitly excluded; `[]` by default. |
 | `criteriaInScope` | yes | Count of criteria the profile brought into scope. |
-| `blockers` | yes | Empty array when conformant; one entry per blocking criterion otherwise. |
+| `blockers` | yes | Empty array when conformant; one entry per blocking criterion otherwise. Blocker `status` may be `pass` / `fail` / `partial` / `unknown` / `n/a` / `undetermined`. |
 | `summary` | yes | Per-status tally: `{ pass, fail, partial, unknown, na }`. |
+| `limitations` | present-when-non-empty | Prose list, one entry per in-scope criterion whose only signal was absence-of-findings against a runtime-only requirement (keyboard, focus-visible, rendered contrast, heading adequacy, …). Each entry is shaped `"<criterionId>: <title> — runtime evidence required; …"`. Consumers reading `status === "pass"` unconditionally must also inspect this list to stay honest. Corresponds 1:1 with the `runtime-evidence-required` blockers. |
 | `signature` | when conformant and signing inputs supplied | SHA-256 over commit hash, attestation ledger, in-scope criteria, and config fingerprint. See [Signature verification](#signature-verification). |
-| `markdown` | yes | Rendered Markdown claim suitable for a release note or audit bundle. |
+| `markdown` | yes | Rendered Markdown claim suitable for a release note or audit bundle. The `## Limitations` section is emitted when `limitations[]` is non-empty. |
 | `nextStep` | yes | Routing hint — next tool to call. |
 
 Note: there is no `evidence.findingIds` or `evidence.attestationIds` top-level field. Per-criterion evidence detail lives in the evidence ledger (see [ADR 0017](./adr/0017-conformance-statement-output.md)) and is not surfaced in this response to keep the payload size bounded. The `blockers[]` array carries the routing signal the agent needs.
@@ -291,6 +292,7 @@ Route by `reason`:
 | `"partially-attested"` | Call `attest` with the missing `ruleIds` under the same criterion. |
 | `"missing_process_config"` | Add `processes` config to `ra11y.config.ts` (see ADR 0016); re-run. |
 | `"stale_attestation"` | The attestation's commit anchor is too old; re-investigate and re-attest. |
+| `"runtime-evidence-required"` | A runtime-dependent SC (keyboard, focus-visible, rendered contrast, …) has no fail-evidence but also no attested/sampled source proving pass. Blocker carries `status: "undetermined"` and the criterion appears in `limitations[]`. Run a runtime harness or manual audit, then call `attest` with the verdict. |
 
 After addressing each blocker, re-call `conformance_statement`. Repeat until `conformant: true`.
 
