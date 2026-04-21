@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Bootstrap modal toggle on non-focusable div</title>
+  </head>
+  <body>
+    <!-- data-bs-toggle="modal" declares interactive behavior, but
+         <div> is not focusable and receives no Enter/Space event.
+         Mouse users can click; keyboard users can't reach it. -->
+    <div data-bs-toggle="modal" data-bs-target="#demo-modal">
+      Open dialog
+    </div>
+
+    <div class="modal" id="demo-modal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">Dialog body</div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -9,19 +9,30 @@
  *
  * Source: https://www.w3.org/TR/WCAG22/#keyboard
  *
- * Flags JSX/HTML elements that attach a click handler to a non-
- * interactive element without a corresponding keyboard handler.
+ * Flags JSX/HTML elements that declare interactive behavior on a
+ * non-interactive element without a keyboard pathway. Two failure
+ * grammars are covered:
+ *
+ * 1. Event-handler grammar — `onclick="…"` in HTML or `onClick={…}`
+ *    in JSX on a bare `<div>`/`<span>` with no `onkeydown`/`onkeyup`.
+ *    Mouse users can click it; keyboard users can't reach it or
+ *    press Enter to activate it.
+ * 2. Attribute-interaction grammar — Bootstrap's `data-bs-toggle`,
+ *    `data-bs-dismiss`, `data-bs-ride` (and the BS4 `data-toggle` /
+ *    `data-dismiss` / `data-ride` predecessors) declare interactive
+ *    behavior at the attribute level. Bootstrap's JS wires up the
+ *    click handler, but on a bare `<div>`/`<span>` the element is
+ *    never focusable and Enter/Space never activate it. Putting
+ *    these attributes on a `<button>` or `<a href>` is fine — both
+ *    are focusable and keyboard-activate natively.
+ *
  * Non-interactive means: any element that isn't a native interactive
- * element (a[href], button, input, select, textarea, area[href])
- * and doesn't have role="button" / role="link".
- *
- * The WCAG failure pattern: `<div onClick={…}>` in React or
- * `<div onclick="…">` in HTML. Mouse users can click it; keyboard
- * users can't reach it or press Enter to activate it.
- *
- * v0.0.x covers JSX (the dominant source of this problem in React
- * codebases). HTML detection is simpler and added here too for
- * completeness.
+ * element (a[href], button, input, select, textarea, summary) and
+ * doesn't have role="button" / role="link". `<a>` with any non-null
+ * href value — including `href="#"` — is focusable and Enter
+ * activates it, so it's exempt from the attribute-interaction check
+ * even though the URL is degenerate. `<a>` without href is flagged
+ * separately because it is not focusable at all.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -47,6 +58,25 @@ const NATIVELY_INTERACTIVE_TAGS: ReadonlySet<string> = new Set([
   "summary",
 ]);
 
+/**
+ * Attributes that declare interactive behavior on their host element.
+ * Bootstrap 5 uses the `data-bs-*` prefix; Bootstrap 4 and earlier
+ * used `data-*` without the `bs-` segment. When any of these appears
+ * on a non-interactive host, the host is effectively a button in UX
+ * terms but not in accessibility terms — no focus, no Enter/Space.
+ *
+ * Attributes are lowercased; HTML attribute comparison is already
+ * case-insensitive via `getHtmlAttribute`.
+ */
+const INTERACTIVE_ATTRIBUTES: readonly string[] = [
+  "data-bs-toggle",
+  "data-bs-dismiss",
+  "data-bs-ride",
+  "data-toggle",
+  "data-dismiss",
+  "data-ride",
+];
+
 export const rule = defineRule({
   id: "keyboard/handler-missing",
   satisfies: ["wcag22:2.1.1", "wcag21:2.1.1"],
@@ -58,15 +88,16 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "Elements with onClick must be reachable by keyboard: either use a native button/link or attach an onKeyDown/onKeyUp and set tabIndex.",
+      "Elements that declare click or toggle behavior (onClick, data-bs-toggle, etc.) must be reachable by keyboard: use a native button/link or add tabIndex plus an onKeyDown/onKeyUp that handles Enter and Space.",
     rationale:
-      "Mouse users can click anywhere; keyboard users can't. An onClick on a bare <div> means the functionality is invisible to people who navigate with the keyboard — blind users, motor-impaired users, and anyone without a mouse. The fix is almost always to use a <button> instead.",
-    goodExample: `<button type="button" onClick={handleDelete}>Delete</button>`,
-    badExample: `<div onClick={handleDelete}>Delete</div>`,
+      "Mouse users can click anywhere; keyboard users can't. An onClick on a bare <div>, or a Bootstrap-style data-bs-toggle/data-bs-dismiss/data-bs-ride on a <div> or <span>, means the functionality is invisible to people who navigate with the keyboard — blind users, motor-impaired users, and anyone without a mouse. The attribute-based grammar is especially dangerous because the interaction still works for mouse users (Bootstrap's JS listens for click), so the bug is silent during sighted testing. The fix is almost always to host the attribute on a <button> instead.",
+    goodExample: `<button type="button" data-bs-toggle="modal" data-bs-target="#my-modal">Open</button>`,
+    badExample: `<div data-bs-toggle="modal" data-bs-target="#my-modal">Open</div>`,
     normativeQuote: "All functionality of the content is operable through a keyboard interface.",
     references: [
       "https://www.w3.org/TR/WCAG22/#keyboard",
       "https://www.w3.org/WAI/WCAG22/Techniques/general/G202",
+      "https://www.w3.org/WAI/ARIA/apg/patterns/button/",
     ],
   },
   check(ctx) {
@@ -111,15 +142,31 @@ function checkOneHtmlElement(el: import("../../types/ast.ts").HtmlElement): {
   message: string;
   suggestion: string;
 } | null {
-  if (!hasHtmlAttribute(el, "onclick")) return null;
-  if (isNativelyInteractive(el.tagName.toLowerCase())) return null;
+  const tag = el.tagName.toLowerCase();
+  const hasClick = hasHtmlAttribute(el, "onclick");
+  const interactiveAttr = findInteractiveHtmlAttribute(el);
+  if (!hasClick && interactiveAttr === null) return null;
+  if (isNativelyInteractive(tag)) return null;
   // role="button"/etc. does NOT exempt — see module doc comment.
   if (hasHtmlAttribute(el, "onkeydown") || hasHtmlAttribute(el, "onkeyup")) return null;
+  const role = getHtmlAttribute(el, "role") ?? null;
+  if (hasClick) {
+    return {
+      severity: "error",
+      location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
+      message: `<${el.tagName}> has onclick but no keyboard handler — keyboard users can't activate it.`,
+      suggestion: buildSuggestion(el.tagName, role),
+    };
+  }
+  // Attribute-interaction grammar (Bootstrap `data-bs-toggle`, etc.).
+  // Unreachable without interactiveAttr being non-null — the early
+  // return above guarantees at least one signal is present.
+  const attr = interactiveAttr as NonNullable<typeof interactiveAttr>;
   return {
     severity: "error",
     location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-    message: `<${el.tagName}> has onclick but no keyboard handler — keyboard users can't activate it.`,
-    suggestion: buildSuggestion(el.tagName, getHtmlAttribute(el, "role") ?? null),
+    message: `<${el.tagName}> declares interactive behavior via ${attr.name}="${attr.value}" but is not keyboard-focusable — keyboard users can't reach or activate it.`,
+    suggestion: buildAttributeSuggestion(el.tagName, attr.name, attr.value, role),
   };
 }
 
@@ -129,15 +176,29 @@ function checkOneHtmlAnchor(anchor: import("../../types/ast.ts").HtmlElement): {
   message: string;
   suggestion: string;
 } | null {
+  // <a> with any href value (including href="#") is focusable and
+  // Enter-activates natively; only href-less anchors are a keyboard
+  // problem here.
   if (hasHtmlAttribute(anchor, "href")) return null;
-  if (!hasHtmlAttribute(anchor, "onclick")) return null;
+  const hasClick = hasHtmlAttribute(anchor, "onclick");
+  const interactiveAttr = findInteractiveHtmlAttribute(anchor);
+  if (!hasClick && interactiveAttr === null) return null;
   if (hasHtmlAttribute(anchor, "onkeydown") || hasHtmlAttribute(anchor, "onkeyup")) return null;
+  if (hasClick) {
+    return {
+      severity: "error",
+      location: { filePath: "", line: anchor.loc.start.line, column: anchor.loc.start.column },
+      message: `<a> without href but with onclick is not keyboard-focusable. Add href, change to <button>, or set tabindex.`,
+      suggestion:
+        'Replace with <button type="button"> if the element triggers an action, or add a real href if it navigates.',
+    };
+  }
+  const attr = interactiveAttr as NonNullable<typeof interactiveAttr>;
   return {
     severity: "error",
     location: { filePath: "", line: anchor.loc.start.line, column: anchor.loc.start.column },
-    message: `<a> without href but with onclick is not keyboard-focusable. Add href, change to <button>, or set tabindex.`,
-    suggestion:
-      'Replace with <button type="button"> if the element triggers an action, or add a real href if it navigates.',
+    message: `<a> without href declares interactive behavior via ${attr.name}="${attr.value}" but is not keyboard-focusable.`,
+    suggestion: `Add href (even href="#") to make the link focusable, or replace with <button type="button"> — Bootstrap and similar libraries still wire the ${attr.name} handler to either element.`,
   };
 }
 
@@ -162,13 +223,15 @@ function checkOneJsxElement(el: import("../../types/ast.ts").JsxElement): {
   message: string;
   suggestion: string;
 } | null {
-  if (!hasJsxAttribute(el, "onClick")) return null;
+  const hasClick = hasJsxAttribute(el, "onClick");
+  const interactiveAttr = findInteractiveJsxAttribute(el);
+  if (!hasClick && interactiveAttr === null) return null;
   if (isNativelyInteractive(el.tagName.toLowerCase())) return null;
   if (hasJsxAttribute(el, "onKeyDown") || hasJsxAttribute(el, "onKeyUp")) return null;
   // Backdrop pattern: a div/span with onClick but no text content, no
   // aria-label, no role — this is a click-to-dismiss overlay, not a
   // button. Keyboard dismiss is via Escape on the parent dialog.
-  if (isBackdropPattern(el)) return null;
+  if (hasClick && isBackdropPattern(el)) return null;
   // PascalCase components (ActionButton, IconButton, etc.) are custom
   // components whose internals this rule can't see. Trust them by
   // default — "we can't verify" is not a finding. Users whose codebase
@@ -177,11 +240,21 @@ function checkOneJsxElement(el: import("../../types/ast.ts").JsxElement): {
   // element. Registering a wrapper in nativeWrappers is for explicit
   // allow-listing when desired.
   if (isPascalCaseComponent(el.tagName)) return null;
+  const role = getJsxAttributeString(el, "role");
+  if (hasClick) {
+    return {
+      severity: "error",
+      location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
+      message: `<${el.tagName}> has onClick but no keyboard handler — keyboard users can't activate it.`,
+      suggestion: buildSuggestion(el.tagName, role),
+    };
+  }
+  const attr = interactiveAttr as NonNullable<typeof interactiveAttr>;
   return {
     severity: "error",
     location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-    message: `<${el.tagName}> has onClick but no keyboard handler — keyboard users can't activate it.`,
-    suggestion: buildSuggestion(el.tagName, getJsxAttributeString(el, "role")),
+    message: `<${el.tagName}> declares interactive behavior via ${attr.name}${attr.value === null ? "" : `="${attr.value}"`} but is not keyboard-focusable — keyboard users can't reach or activate it.`,
+    suggestion: buildAttributeSuggestion(el.tagName, attr.name, attr.value, role),
   };
 }
 
@@ -192,14 +265,25 @@ function checkOneJsxAnchor(anchor: import("../../types/ast.ts").JsxElement): {
   suggestion: string;
 } | null {
   if (hasJsxAttribute(anchor, "href")) return null;
-  if (!hasJsxAttribute(anchor, "onClick")) return null;
+  const hasClick = hasJsxAttribute(anchor, "onClick");
+  const interactiveAttr = findInteractiveJsxAttribute(anchor);
+  if (!hasClick && interactiveAttr === null) return null;
   if (hasJsxAttribute(anchor, "onKeyDown") || hasJsxAttribute(anchor, "onKeyUp")) return null;
+  if (hasClick) {
+    return {
+      severity: "error",
+      location: { filePath: "", line: anchor.loc.start.line, column: anchor.loc.start.column },
+      message: `<a> without href but with onClick is not keyboard-focusable.`,
+      suggestion:
+        'Replace with <button type="button"> if it triggers an action, or add a real href if it navigates.',
+    };
+  }
+  const attr = interactiveAttr as NonNullable<typeof interactiveAttr>;
   return {
     severity: "error",
     location: { filePath: "", line: anchor.loc.start.line, column: anchor.loc.start.column },
-    message: `<a> without href but with onClick is not keyboard-focusable.`,
-    suggestion:
-      'Replace with <button type="button"> if it triggers an action, or add a real href if it navigates.',
+    message: `<a> without href declares interactive behavior via ${attr.name}${attr.value === null ? "" : `="${attr.value}"`} but is not keyboard-focusable.`,
+    suggestion: `Add href (even href="#") to make the link focusable, or replace with <button type="button"> — Bootstrap and similar libraries still wire the ${attr.name} handler to either element.`,
   };
 }
 
@@ -245,4 +329,49 @@ function buildSuggestion(tagName: string, role: string | null): string {
     return `This <${tagName}> has role="${role}" but no keyboard handler. Add onKeyDown/onKeyUp handling Enter and Space keys, and ensure the element has tabIndex={0} so it's focusable.`;
   }
   return `The simplest fix is to change <${tagName}> to <button type="button"> — buttons are focusable, announce as "button" to screen readers, and fire onClick on Enter/Space automatically.`;
+}
+
+function buildAttributeSuggestion(
+  tagName: string,
+  attrName: string,
+  attrValue: string | null,
+  role: string | null,
+): string {
+  const valueClause = attrValue === null ? "" : `="${attrValue}"`;
+  if (role) {
+    return `This <${tagName}> has role="${role}" and ${attrName}${valueClause} but is not keyboard-focusable. Change to <button type="button"> (preserves ${attrName} — the toggle library still wires it) or add tabIndex={0} plus onKeyDown handling Enter and Space.`;
+  }
+  return `The simplest fix is to change <${tagName}> to <button type="button"> and keep the ${attrName} attribute — Bootstrap and similar libraries wire the toggle/dismiss/ride behavior off the attribute, so the interaction still works and keyboard users get native focus + Enter/Space activation.`;
+}
+
+/**
+ * Returns the first interactive-behavior attribute on an HTML element,
+ * or null if none is present. Uses a case-insensitive lookup.
+ */
+function findInteractiveHtmlAttribute(
+  el: import("../../types/ast.ts").HtmlElement,
+): { readonly name: string; readonly value: string | null } | null {
+  for (const name of INTERACTIVE_ATTRIBUTES) {
+    if (hasHtmlAttribute(el, name)) {
+      return { name, value: getHtmlAttribute(el, name) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Returns the first interactive-behavior attribute on a JSX element,
+ * or null if none is present. JSX preserves the original attribute
+ * casing — `data-bs-toggle="modal"` in source stays that way in the
+ * AST — so the lookup is case-sensitive against the lower-case list.
+ */
+function findInteractiveJsxAttribute(
+  el: import("../../types/ast.ts").JsxElement,
+): { readonly name: string; readonly value: string | null } | null {
+  for (const name of INTERACTIVE_ATTRIBUTES) {
+    if (hasJsxAttribute(el, name)) {
+      return { name, value: getJsxAttributeString(el, name) };
+    }
+  }
+  return null;
 }

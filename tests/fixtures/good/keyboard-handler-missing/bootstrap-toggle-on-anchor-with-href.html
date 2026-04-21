@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Bootstrap dropdown toggle on &lt;a href&gt;</title>
+  </head>
+  <body>
+    <!-- <a href="#"> is Bootstrap's other canonical host for
+         data-bs-toggle (see dropdowns in the Bootstrap docs). The
+         href value is degenerate, but the element is in the tab
+         order and Enter activates it natively. Other rules may flag
+         href="#" as a placeholder URL, but this rule is specifically
+         about keyboard operability, which is satisfied. -->
+    <nav>
+      <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown" role="button">
+        Menu
+      </a>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item" href="/one">One</a></li>
+        <li><a class="dropdown-item" href="/two">Two</a></li>
+      </ul>
+    </nav>
+  </body>
+</html>

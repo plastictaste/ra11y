@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Bootstrap dismiss on bare span (close button antipattern)</title>
+  </head>
+  <body>
+    <div class="toast" role="alert">
+      <div class="toast-header">
+        Notification
+        <!-- <span> is not in the tab order; keyboard users can't
+             dismiss the toast via this affordance. Must be a
+             <button type="button"> to be focusable. -->
+        <span data-bs-dismiss="toast" aria-label="Close">&times;</span>
+      </div>
+      <div class="toast-body">Saved.</div>
+    </div>
+  </body>
+</html>

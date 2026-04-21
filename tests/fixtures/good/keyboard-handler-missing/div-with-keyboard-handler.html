@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Custom div widget with explicit keyboard handler</title>
+  </head>
+  <body>
+    <!-- If an author needs a non-button element to be interactive,
+         tabindex plus onkeydown (handling Enter and Space) is the
+         escape hatch. The rule exempts this shape. -->
+    <div
+      role="button"
+      tabindex="0"
+      data-bs-toggle="modal"
+      data-bs-target="#demo-modal"
+      onclick="openModal()"
+      onkeydown="if (event.key === 'Enter' || event.key === ' ') openModal();"
+    >
+      Open dialog
+    </div>
+  </body>
+</html>
