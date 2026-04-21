@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Length picker</title>
+  </head>
+  <body>
+    <!--
+      Canonical failing shape. The <label>Length</label> reads fine sighted,
+      but there is no for="length" attribute — screen readers announce an
+      unlabeled <input> and a floating text node. Fix is mechanical:
+      add for="length" to the <label>.
+    -->
+    <label>Length</label>
+    <input id="length" type="number" />
+  </body>
+</html>

@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Orphan input</title>
+  </head>
+  <body>
+    <!--
+      There is no <label> sibling here — `forms/labels-required` covers
+      the "no accessible name at all" case. This rule is scoped to the
+      adjacent-label-missing-for= shape only, so it stays silent.
+    -->
+    <input id="orphan" type="text" />
+  </body>
+</html>

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Length picker</title>
+  </head>
+  <body>
+    <!--
+      An aria-label supplies the control's accessible name. Even though a
+      sibling <label> sits above it (maybe legacy text left over from a
+      redesign), the control is not unlabeled — and this rule's job is to
+      catch unlabeled controls, not to audit redundant text. The rule does
+      not fire.
+    -->
+    <label>Legacy text</label>
+    <input id="length" aria-label="Length in inches" type="number" />
+  </body>
+</html>

@@ -1,0 +1,229 @@
+import { describe, expect, it } from "bun:test";
+import { rule } from "../../../../src/rules/forms/label-adjacent-unassociated.ts";
+import { runRule } from "../../../helpers/run-rule.ts";
+
+describe("rule forms/label-adjacent-unassociated", () => {
+  describe("fires a violation when", () => {
+    it("an HTML <label> with no for= sits immediately above an <input> with id", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Length</label>
+  <input id="length" type="number">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("forms/label-adjacent-unassociated");
+      expect(violations[0]?.suggestion).toMatch(/for="length"/);
+      // The mechanical edit should carry the concrete oldText/newText pair.
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit?.oldText).toBe("<label>");
+      expect(edit?.newText).toBe('<label for="length">');
+    });
+
+    it("fires on <textarea> with adjacent unassociated label", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Message</label>
+  <textarea id="msg"></textarea>
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toMatch(/for="msg"/);
+      expect(violations[0]?.fixPaths?.primary.edit?.newText).toBe('<label for="msg">');
+    });
+
+    it("fires on <select> with adjacent unassociated label", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Country</label>
+  <select id="country"><option>US</option></select>
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toMatch(/for="country"/);
+    });
+
+    it("fires when whitespace-only text sits between the label and the input", () => {
+      // The adjacency check allows newlines / indentation between the
+      // sibling <label> and the control — that's formatting, not content.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Amount</label>
+
+
+  <input id="amount" type="text">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("fires on JSX with adjacent <label> and <input> inside a fragment", () => {
+      const jsx = `function Quiz() {
+  return (
+    <form>
+      <label>Question</label>
+      <input id="q1" type="text" />
+    </form>
+  );
+}`;
+      const violations = runRule(rule, jsx, { filePath: "Quiz.tsx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toMatch(/htmlFor="q1"/);
+      expect(violations[0]?.fixPaths?.primary.edit?.newText).toBe('<label htmlFor="q1">');
+    });
+
+    it("fires TWICE when two adjacent-unassociated shapes live in the same file", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>First</label>
+  <input id="first" type="text">
+  <label>Second</label>
+  <input id="second" type="text">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(2);
+    });
+  });
+
+  describe("does not fire when", () => {
+    it("the label already has for= matching the input's id", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label for="length">Length</label>
+  <input id="length" type="number">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("the input has no id — this rule only fires when a mechanical fix is possible", () => {
+      // `forms/labels-required` covers the no-label-at-all case; this
+      // rule is scoped to the situation where the agent can insert a
+      // concrete for= without first inventing an id.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Length</label>
+  <input type="number">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("there is no label sibling at all — that's labels-required's territory", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <input id="orphan" type="text">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("the label wraps the input implicitly", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Length <input id="length" type="number"></label>
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("an aria-label provides the accessible name", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Legacy text</label>
+  <input id="length" aria-label="Length in inches" type="number">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("the adjacent element is a <br> or other intervening element, not a label", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Length</label>
+  <br>
+  <input id="length" type="number">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("prose text sits between the label and the input", () => {
+      // Non-whitespace text between the two means the adjacency claim
+      // is already weaker than "label sits on top of input" — let the
+      // agent read the file before we mechanically fuse them.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Length</label>
+  please enter a value
+  <input id="length" type="number">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("the input is type=submit / type=hidden / type=button", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Go</label>
+  <input id="go" type="submit" value="Submit">
+  <label>Meta</label>
+  <input id="csrf" type="hidden" value="x">
+  <label>Toggle</label>
+  <input id="togglebtn" type="button" value="Toggle">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("edge cases", () => {
+    it("does NOT fire on the truly-missing-label case so labels-required stays the canonical owner of that shape", () => {
+      // This file contains BOTH shapes:
+      //   1. <input id="first"> with no label sibling anywhere — out of scope for this rule.
+      //   2. <label>Last</label><input id="last"> — in scope; adjacent-no-for.
+      // Verifies the two rules are mutually exclusive by shape.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <input id="first" type="text">
+  <label>Last</label>
+  <input id="last" type="text">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      // Only the second shape fires — and on the label line, not the input line.
+      expect(violations[0]?.message).toMatch(/htmlFor="last"|for="last"/);
+    });
+
+    it("id values with ASCII-safe characters pass through verbatim in the edit", () => {
+      // Regression: the escaping path is only taken for `"` and `&`;
+      // ordinary ids like dashes, underscores, and digits should make it
+      // through without mutation.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>User name 2</label>
+  <input id="user-name_2" type="text">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.fixPaths?.primary.edit?.newText).toBe('<label for="user-name_2">');
+    });
+
+    it("labels that already have non-for attributes ship guidance-only (no mechanical edit)", () => {
+      // The edit is only safe when the open tag is the attribute-free
+      // `<label>` literal. With `<label class="form-label">` the
+      // insertion point is a style call — ship guidance, let the agent
+      // decide where to place for=.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label class="form-label">Length</label>
+  <input id="length" type="number">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      // Suggestion still names the fix, just without a concrete oldText/newText.
+      expect(violations[0]?.suggestion).toMatch(/for="length"/);
+      expect(violations[0]?.fixPaths?.primary.edit).toBeUndefined();
+    });
+  });
+});
