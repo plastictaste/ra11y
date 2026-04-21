@@ -18,6 +18,13 @@
  *     preserve CI wiring regardless of current violations.
  *   - `warnings` propagates scan-leg codes verbatim plus
  *     `bootstrap_<leg>_failed` entries; omitted when empty.
+ *   - `scan` subset preserves the upstream `plan` split verbatim —
+ *     `violationsCount` and `notesCount` stay separate (no
+ *     `totalFindings` re-sum), `mechanicalEditsAvailable` and the
+ *     per-lane `fixesByClass` tally forward from the upstream plan
+ *     when present. Per CLAUDE.md §1 "Composite headline counts are
+ *     dishonest," the former summed `totalFindings` inflated the
+ *     work budget by mixing info-severity notes with violations.
  */
 
 import { existsSync } from "node:fs";
@@ -204,11 +211,53 @@ function extractProposedConfig(
   return cfg;
 }
 
+interface FixesByClassSubset {
+  readonly mechanical: number;
+  readonly guidance: number;
+  readonly runtimeOnly: number;
+  readonly verifyInSource: number;
+}
+
 interface ScanSubset {
   readonly filesScanned: number;
-  readonly totalFindings: number;
+  /**
+   * Count of violations (severity `error` / `warning`) — the
+   * "things-needing-a-fix" headline the agent budgets against.
+   * Split out from the upstream `plan.violations` / `plan.notes` pair
+   * that {@link extractScanSubset} used to sum into a single
+   * `totalFindings` composite; per CLAUDE.md §1 "Composite headline
+   * counts are dishonest," a top-level counter must count one kind of
+   * thing, and violations vs. info-severity notes are categorically
+   * different work.
+   */
+  readonly violationsCount: number;
+  /**
+   * Count of info-severity notes — observations the engine surfaced
+   * without asserting a failure (wrapper-drift telemetry, etc.).
+   * Separated from {@link violationsCount} so the agent can decide
+   * whether to iterate (violations > 0) independently of whether any
+   * notes are worth inspecting.
+   */
+  readonly notesCount: number;
   readonly scanMode?: string;
   readonly actionableManualItems?: number;
+  /**
+   * Violations that ship an inline `fixPaths.primary.edit` — the
+   * `apply_fix` batch-apply lane. Forwarded verbatim from
+   * `plan.mechanicalEditsAvailable`; present-when-meaningful (omitted
+   * when upstream omits it, i.e. zero such violations).
+   */
+  readonly mechanicalEditsAvailable?: number;
+  /**
+   * Per-`fixClass` remediation-lane tally forwarded verbatim from the
+   * upstream `plan.fixesByClass` (set by `scan-assembly.ts` when
+   * violations > 0). Keyed by camelCased `FixClass` so callers can
+   * budget per-lane (mechanical edits vs. guidance rewrites vs.
+   * runtime harness vs. source-read decisions) without summing.
+   * Conditional-spread: omitted on clean scans where upstream also
+   * omits it.
+   */
+  readonly fixesByClass?: FixesByClassSubset;
   /**
    * Static-analysis caveat prose forwarded verbatim from
    * `scan_project`'s `plan.limitations`. Tells the agent (and, via
@@ -225,25 +274,65 @@ interface ScanSubset {
 
 function extractScanSubset(scan: unknown): ScanSubset {
   if (scan === null || typeof scan !== "object") {
-    return { filesScanned: 0, totalFindings: 0 };
+    return { filesScanned: 0, violationsCount: 0, notesCount: 0 };
   }
   const record = scan as Record<string, unknown>;
   const meta = record["meta"];
   const plan = record["plan"];
   const filesScanned = readNumberFromRecord(meta, "filesScanned") ?? 0;
-  const totalFindings = readNumberFromRecord(plan, "totalFindings") ?? 0;
+  // Forward the upstream split (scan-assembly.ts:75-79) verbatim
+  // rather than re-summing violations + notes into a single composite.
+  // The former `plan.totalFindings` sum was the exact dishonest-
+  // headline pattern CLAUDE.md §1 warns against — agents budgeting
+  // against it treated info-severity notes as work identical to
+  // violations.
+  const violationsCount = readNumberFromRecord(plan, "violations") ?? 0;
+  const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionable = readNumberFromRecord(plan, "actionableManualItems");
+  const mechanicalEdits = readNumberFromRecord(plan, "mechanicalEditsAvailable");
+  const fixesByClass = readFixesByClass(plan);
   const limitations = readStringArray(plan, "limitations");
   return {
     filesScanned,
-    totalFindings,
+    violationsCount,
+    notesCount,
     ...(scanMode === null ? {} : { scanMode }),
     ...(actionable === null || actionable === undefined
       ? {}
       : { actionableManualItems: actionable }),
+    ...(typeof mechanicalEdits === "number" ? { mechanicalEditsAvailable: mechanicalEdits } : {}),
+    ...(fixesByClass === null ? {} : { fixesByClass }),
     ...(limitations.length > 0 ? { limitations } : {}),
   };
+}
+
+/**
+ * Reads the upstream `plan.fixesByClass` record into the subset shape.
+ * Upstream emits the lane tally only when violations > 0 (see
+ * `scan-assembly.ts`'s `emitFixesByClass` gate) — mirror that: when the
+ * field is absent or malformed, return null so the subset omits it
+ * rather than emitting an all-zeros tally whose only signal is "no
+ * violations." Conditional-spread at the call site keeps the shape
+ * present-when-meaningful.
+ */
+function readFixesByClass(plan: unknown): FixesByClassSubset | null {
+  if (!plan || typeof plan !== "object") return null;
+  const raw = (plan as Record<string, unknown>)["fixesByClass"];
+  if (!raw || typeof raw !== "object") return null;
+  const mechanical = readNumberFromRecord(raw, "mechanical");
+  const guidance = readNumberFromRecord(raw, "guidance");
+  const runtimeOnly = readNumberFromRecord(raw, "runtimeOnly");
+  const verifyInSource = readNumberFromRecord(raw, "verifyInSource");
+  if (
+    typeof mechanical !== "number" ||
+    typeof guidance !== "number" ||
+    typeof runtimeOnly !== "number" ||
+    typeof verifyInSource !== "number"
+  ) {
+    return null;
+  }
+  return { mechanical, guidance, runtimeOnly, verifyInSource };
 }
 
 interface BaselineSummary {
@@ -355,25 +444,13 @@ interface NextStepArgs {
 
 function buildNextStep(args: NextStepArgs): string {
   const { scan, baseline, writeBaseline, failedLegs } = args;
-  const parts: string[] = [];
-  if (scan.filesScanned === 0) {
-    parts.push(
-      "Scan ran but parsed zero files — check `warnings` for why (nonexistent cwd, no matching extensions, or everything ignored).",
-    );
-  } else if (scan.totalFindings === 0) {
-    parts.push(
-      "Scan clean. Paste `proposedConfig` into ra11y.config.ts if a config is not already committed, then add the `ciSnippet` to your CI workflow.",
-    );
-  } else {
-    parts.push(
-      `${scan.totalFindings} finding${scan.totalFindings === 1 ? "" : "s"} from scan_project. Paste \`proposedConfig\` into ra11y.config.ts, then work through the findings — call \`scan_project\` again to iterate.`,
-    );
-  }
+  const parts: string[] = [buildHeadline(scan)];
+  const hasViolations = scan.violationsCount > 0;
   if (writeBaseline && baseline !== null) {
     parts.push(
       `Baseline written to ${baseline.path}. Commit the file and add the \`ciSnippet\` to catch regressions.`,
     );
-  } else if (!writeBaseline && scan.totalFindings > 0) {
+  } else if (!writeBaseline && hasViolations) {
     parts.push(
       "To grandfather the current violations and fail CI only on regressions, rerun `bootstrap` with `writeBaseline: true`.",
     );
@@ -386,6 +463,33 @@ function buildNextStep(args: NextStepArgs): string {
   return parts.join(" ");
 }
 
+/**
+ * Headline fragment for {@link buildNextStep}. Branch for the three
+ * scan shapes: zero files (warnings-referral), clean (success prose),
+ * or non-empty (split "N violations + M notes" by kind, never a
+ * summed composite per CLAUDE.md §1).
+ */
+function buildHeadline(scan: ScanSubset): string {
+  if (scan.filesScanned === 0) {
+    return "Scan ran but parsed zero files — check `warnings` for why (nonexistent cwd, no matching extensions, or everything ignored).";
+  }
+  if (scan.violationsCount === 0 && scan.notesCount === 0) {
+    return "Scan clean. Paste `proposedConfig` into ra11y.config.ts if a config is not already committed, then add the `ciSnippet` to your CI workflow.";
+  }
+  const fragments: string[] = [];
+  if (scan.violationsCount > 0) {
+    fragments.push(pluralize(scan.violationsCount, "violation"));
+  }
+  if (scan.notesCount > 0) {
+    fragments.push(pluralize(scan.notesCount, "note"));
+  }
+  return `${fragments.join(" + ")} from scan_project. Paste \`proposedConfig\` into ra11y.config.ts, then work through the findings — call \`scan_project\` again to iterate.`;
+}
+
+function pluralize(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 interface NextStepStructured {
   readonly tool: string;
   readonly args: Record<string, unknown>;
@@ -396,7 +500,13 @@ function buildNextStepStructured(args: {
   readonly baseline: BaselineSummary | null;
   readonly writeBaseline: boolean;
 }): NextStepStructured {
-  if (!args.writeBaseline && args.scanSubset.totalFindings > 0) {
+  // Violations are the only lane that merits the grandfather-via-
+  // baseline follow-up — info-severity notes are observations the
+  // engine surfaces without asserting a failure, and the baseline
+  // `check` mode filters against the violation set. Reading only
+  // `violationsCount` (not the former summed `totalFindings`) keeps
+  // the hint honest.
+  if (!args.writeBaseline && args.scanSubset.violationsCount > 0) {
     return { tool: "bootstrap", args: { writeBaseline: true } };
   }
   if (args.baseline?.written) {

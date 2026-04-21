@@ -30,8 +30,16 @@ interface BootstrapResponse {
   readonly proposedConfig?: string;
   readonly scan: {
     readonly filesScanned: number;
-    readonly totalFindings: number;
+    readonly violationsCount: number;
+    readonly notesCount: number;
     readonly scanMode?: string;
+    readonly mechanicalEditsAvailable?: number;
+    readonly fixesByClass?: {
+      readonly mechanical: number;
+      readonly guidance: number;
+      readonly runtimeOnly: number;
+      readonly verifyInSource: number;
+    };
     readonly limitations?: readonly string[];
   };
   readonly baseline: { readonly written: boolean; readonly path: string } | null;
@@ -82,7 +90,13 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(typeof response.proposedConfig).toBe("string");
       expect(response.proposedConfig).toContain('import { defineConfig } from "@ra11y/core";');
       expect(response.scan.filesScanned).toBeGreaterThan(0);
-      expect(response.scan.totalFindings).toBe(0);
+      expect(response.scan.violationsCount).toBe(0);
+      expect(response.scan.notesCount).toBe(0);
+      // Clean scan should not emit the per-lane fixesByClass tally —
+      // upstream scan-assembly only sets it when violations > 0 and
+      // the subset forwards that shape verbatim.
+      expect(response.scan.fixesByClass).toBeUndefined();
+      expect(response.scan.mechanicalEditsAvailable).toBeUndefined();
       expect(response.baseline).toBeNull();
       expect(response.ciSnippet).toContain("ra11y");
       expect(response.ciSnippet).toContain("baseline check");
@@ -128,11 +142,59 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
-      expect(response.scan.totalFindings).toBeGreaterThan(0);
+      expect(response.scan.violationsCount).toBeGreaterThan(0);
       expect(response.baseline).toBeNull();
       expect(response.nextStepStructured.tool).toBe("bootstrap");
       expect(response.nextStepStructured.args.writeBaseline).toBe(true);
       expect(response.nextStep).toContain("writeBaseline: true");
+    });
+  });
+
+  // Upstream `scan_project` intentionally splits violations from
+  // notes on `plan` (scan-assembly.ts) and emits per-lane
+  // counters (`mechanicalEditsAvailable`, `fixesByClass`) separately
+  // so agents budget per-kind rather than against a sum. The
+  // bootstrap subset must forward those split counters verbatim —
+  // re-summing them into a `totalFindings` composite is the
+  // dishonest-headline anti-pattern CLAUDE.md §1 warns against.
+  it("preserves the upstream violations/notes/fixesByClass split instead of re-summing", async () => {
+    await withScratch(async (dir) => {
+      // `img` without `alt` is a violation — at least one mechanical
+      // remediation lane should be populated.
+      await writeFile(
+        join(dir, "a.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      // Split shape: violations and notes live under separate keys;
+      // no `totalFindings` re-sum is present on the subset.
+      expect(response.scan.violationsCount).toBeGreaterThan(0);
+      expect(response.scan.notesCount).toBeGreaterThanOrEqual(0);
+      expect((response.scan as Record<string, unknown>)["totalFindings"]).toBeUndefined();
+      // `fixesByClass` is present when the upstream plan emits it
+      // (violations > 0 gate in scan-assembly.ts). Each lane counts
+      // one kind of thing per CLAUDE.md §1.
+      expect(response.scan.fixesByClass).toBeDefined();
+      const lanes = response.scan.fixesByClass ?? {
+        mechanical: 0,
+        guidance: 0,
+        runtimeOnly: 0,
+        verifyInSource: 0,
+      };
+      expect(typeof lanes.mechanical).toBe("number");
+      expect(typeof lanes.guidance).toBe("number");
+      expect(typeof lanes.runtimeOnly).toBe("number");
+      expect(typeof lanes.verifyInSource).toBe("number");
+      // Per-lane tally sums to the total violation count — honest
+      // invariant that fails the day the subset drops one lane.
+      const laneSum = lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource;
+      expect(laneSum).toBe(response.scan.violationsCount);
+      // The nextStep prose reads violations separately from notes —
+      // the former "N findings" sum is gone.
+      expect(response.nextStep).toContain(
+        `${response.scan.violationsCount} violation${response.scan.violationsCount === 1 ? "" : "s"}`,
+      );
+      expect(response.nextStep).not.toMatch(/\d+ findings from scan_project/);
     });
   });
 });
