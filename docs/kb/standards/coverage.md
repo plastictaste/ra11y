@@ -89,7 +89,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link | — | **rule** |
 | `wcag22:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
-| `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text | — | **rule** |
+| `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
 | `wcag22:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
 | `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
 | `wcag22:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
@@ -184,7 +184,7 @@ Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 | `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link | — | **rule** |
 | `wcag21:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
-| `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text | — | **rule** |
+| `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
 | `wcag21:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
 | `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
 | `wcag21:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
@@ -248,7 +248,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link | — | **rule** |
 | `section508:2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
-| `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text | — | **rule** |
+| `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
 | `section508:2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
 | `section508:2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
 | `section508:2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |
@@ -302,7 +302,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link | — | **rule** |
 | `en301549:9.2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
-| `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text | — | **rule** |
+| `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
 | `en301549:9.2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
 | `en301549:9.2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
 | `en301549:9.2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |

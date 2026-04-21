@@ -10,7 +10,7 @@ satisfies: ["wcag22:2.4.1", "wcag21:2.4.1"]
 - **Satisfies:** `wcag22:2.4.1`, `wcag21:2.4.1`
 - **Applies to:** .html, .htm
 ## What it checks
-Pages with a primary navigation should offer a skip link as the first focusable element so keyboard users can bypass the nav on every page.
+Pages with a primary navigation should offer a skip link as the first focusable element so keyboard users can bypass the nav on every page, and any skip-link-shaped anchor must resolve to an existing id in the same document.
 ## Why it matters
 Keyboard-only users (including people using screen readers and people with motor impairments) Tab through every focusable element in source order. On a page with a 12-item primary nav, that's 12 Tab presses on every navigation between pages — which compounds fast. The skip-link pattern is the standard answer: a link at the very top of the page that jumps to `#main`, hidden off-screen until focused.
 ## Normative quote
