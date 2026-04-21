@@ -71,7 +71,7 @@ import {
 import { buildScanMeta, buildScanPlan } from "./scan-assembly.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
-import type { ScanWarningCode, ScanWarningDetails } from "./warnings.ts";
+import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
 import { warningsField } from "./warnings.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 
@@ -308,4 +308,32 @@ export function assembleScanFamilyResponse(
     truncated: true,
     ...(budgetResult.nextOffset === undefined ? {} : { nextOffset: budgetResult.nextOffset }),
   };
+}
+
+/**
+ * Thin wrapper over {@link warningsField} for the scan-derivative tools
+ * (`checklist`, `coverage`, `conformance_statement`) — ADR 0024 stage 4.
+ *
+ * The derivative tools own bespoke outer shapes (checklist buckets,
+ * coverage per-criterion rollups, conformance narrative) so they do NOT
+ * flow through the full {@link assembleScanFamilyResponse} seam — there
+ * is no `{plan, meta, files}` sub-tree to emit. What they DO need is the
+ * same scan-confidence warnings predicate the primary scan tools use,
+ * exposed under a name that documents the derivative-tool use case so a
+ * future reader of the handler can tell at a glance that the tool is
+ * participating in the assembler-seam warnings contract rather than
+ * emitting its own bespoke warnings shape.
+ *
+ * Both return the spreadable fragment `{ warnings?, warningsDetails? }`
+ * per CLAUDE.md §1 "present-when-meaningful" — fields only appear when
+ * at least one code fires. Derivative handlers that already carry
+ * domain-specific warnings (e.g. `non_git_repo_signature_omitted` on
+ * `conformance_statement`) merge the structured codes returned here
+ * with their bespoke list before emitting the final `warnings` array.
+ */
+export function buildDerivativeScanWarnings(inputs: WarningInputs): {
+  readonly warnings?: readonly ScanWarningCode[];
+  readonly warningsDetails?: ScanWarningDetails;
+} {
+  return warningsField(inputs);
 }
