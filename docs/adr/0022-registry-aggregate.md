@@ -1,7 +1,8 @@
 # ADR 0022 — registry aggregate for rules, standards, and finders
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-04-20
+- Accepted: 2026-04-21
 - Supersedes: none
 - Superseded by: none
 - Related: ADR 0002 (three-layer standards/criteria/rules), ADR 0005 (in-house MCP server), ADR 0019 (v1.0 public API stability), `src/engine/registry/{criteria,rules,standards}.ts`, `src/api/plugin.ts`
