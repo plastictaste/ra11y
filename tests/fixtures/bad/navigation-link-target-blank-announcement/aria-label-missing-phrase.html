@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>target='_blank' with aria-label that lacks new-window phrase</title>
+  </head>
+  <body>
+    <!-- aria-label is present but doesn't include "new window", "new
+         tab", "external", or "opens in" — the link still changes
+         context without warning. -->
+    <a href="/support" target="_blank" aria-label="Contact support">
+      Support
+    </a>
+  </body>
+</html>

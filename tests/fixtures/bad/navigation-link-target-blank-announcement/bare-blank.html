@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Bare target='_blank' with no announcement</title>
+  </head>
+  <body>
+    <!-- target="_blank" opens a new tab on activation — a change of
+         context — but this link gives no warning. Screen-reader users
+         activating the link will find themselves in a new tab with no
+         notice. Fails WCAG 3.2.5 (Change on Request). -->
+    <p>
+      Read the
+      <a href="https://example.com/docs" target="_blank">documentation</a>
+      for details.
+    </p>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>target='_blank' with visually-hidden announcement</title>
+  </head>
+  <body>
+    <!-- Visually-hidden span inside the link carries the announcement.
+         Sighted users see just "Pricing"; screen-reader users hear
+         "Pricing opens in new window". -->
+    <a href="/pricing" target="_blank">
+      Pricing
+      <span class="sr-only"> (opens in new window)</span>
+    </a>
+  </body>
+</html>

@@ -48,6 +48,7 @@ import { rule as videoCaptionsMissing } from "./media/video-captions-missing.ts"
 import { rule as pauseStopHide } from "./motion/pause-stop-hide.ts";
 import { rule as linkDescriptiveText } from "./navigation/link-descriptive-text.ts";
 import { rule as linkNoHref } from "./navigation/link-no-href.ts";
+import { rule as linkTargetBlankAnnouncement } from "./navigation/link-target-blank-announcement.ts";
 import { rule as skipLink } from "./navigation/skip-link.ts";
 import { rule as duplicateId } from "./parsing/duplicate-id.ts";
 import { rule as htmlHasLang } from "./parsing/html-has-lang.ts";
@@ -103,6 +104,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   langOnParts,
   linkDescriptiveText,
   linkNoHref,
+  linkTargetBlankAnnouncement,
   listStructure,
   liveRegionValid,
   metaRefresh,
@@ -167,6 +169,7 @@ export {
   langOnParts,
   linkDescriptiveText,
   linkNoHref,
+  linkTargetBlankAnnouncement,
   listStructure,
   liveRegionValid,
   metaRefresh,
