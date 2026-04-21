@@ -84,7 +84,7 @@ describe("propose_baseline: empty scan → empty proposed array", () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
-        '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body></body></html>\n',
       );
       const body = await callTool(dir);
       expect(body.proposed).toEqual([]);

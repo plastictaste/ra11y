@@ -148,11 +148,11 @@ describe("runCli", () => {
       // fire and the scan exit code reflects only the threading delta.
       await writeFile(
         joinPath(dir, "cart.html"),
-        '<!doctype html><html lang="en"><head><title>Cart</title></head><body><button data-testid="primary">Save</button></body></html>',
+        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cart</title></head><body><button data-testid="primary">Save</button></body></html>',
       );
       await writeFile(
         joinPath(dir, "checkout.html"),
-        '<!doctype html><html lang="en"><head><title>Checkout</title></head><body><button data-testid="primary">Submit</button></body></html>',
+        '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout</title></head><body><button data-testid="primary">Submit</button></body></html>',
       );
       await writeFile(
         joinPath(dir, "ra11y.config.json"),

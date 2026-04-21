@@ -84,7 +84,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
-        '<!DOCTYPE html><html lang="en"><head><title>Hello</title></head><body><p>content</p></body></html>\n',
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hello</title></head><body><p>content</p></body></html>\n',
       );
       const { response, isError } = await callBootstrap({ cwd: dir });
       expect(isError).toBeUndefined();

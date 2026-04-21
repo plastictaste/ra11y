@@ -68,7 +68,7 @@ describe("propose_config: clean scan → minimal config", () => {
       // so no rule trips.
       await writeFile(
         join(dir, "index.html"),
-        '<!DOCTYPE html><html lang="en"><head><title>Hello</title></head><body><p>content</p></body></html>\n',
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hello</title></head><body><p>content</p></body></html>\n',
       );
       const body = await callTool(dir);
       expect(body.suggestedConfig).toContain('import { defineConfig } from "@ra11y/core";');
