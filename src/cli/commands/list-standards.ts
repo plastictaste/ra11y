@@ -3,26 +3,26 @@
  * version, publisher, URL, and criterion counts broken down by level.
  */
 
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import type { Standard } from "../../types/standard.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
-const LOADED: readonly Standard[] = BUILTIN_STANDARDS;
-
-export function runListStandards(): ScanExit {
+export function runListStandards(registry: Registry = createBuiltinRegistry()): ScanExit {
   const lines: string[] = [];
   lines.push("");
   lines.push("  Standards:");
   lines.push("");
-  for (const std of LOADED) {
+  for (const std of registry.standards) {
     lines.push(`    ${std.id}  ${std.name} v${std.version}  (${std.publisher})`);
     lines.push(`      ${std.url}`);
     const counts = countByLevel(std);
     lines.push(`      criteria: ${std.criteria.length} total · ${renderCounts(counts)}`);
     lines.push("");
   }
-  lines.push(`  ${LOADED.length} standard${LOADED.length === 1 ? "" : "s"} loaded.`);
+  lines.push(
+    `  ${registry.standards.length} standard${registry.standards.length === 1 ? "" : "s"} loaded.`,
+  );
   lines.push("");
   return { stdout: lines.join("\n"), stderr: "", exitCode: ExitCode.OK };
 }

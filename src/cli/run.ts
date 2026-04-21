@@ -44,9 +44,9 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
     case "version":
       return { stdout: `ra11y v${VERSION}\n`, stderr: "", exitCode: ExitCode.OK };
     case "list-rules":
-      return runListRules();
+      return runListRules(registry);
     case "list-standards":
-      return runListStandards();
+      return runListStandards(registry);
     case "explain":
       return runExplain(options.ruleId ?? "", registry);
     case "coverage":
