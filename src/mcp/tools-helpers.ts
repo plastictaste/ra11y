@@ -413,7 +413,7 @@ function isCountableManual(
   return !seen.has(c.id);
 }
 
-function collectManualCriteria(
+export function collectManualCriteria(
   enabledStandardIds: readonly string[],
   session: McpSession,
   maxLevel: "A" | "AA" | "AAA" = "AAA",
@@ -785,7 +785,7 @@ export function satisfyingRulesForCriterion(
  * surface stale entries that no longer correspond to any component in the
  * codebase.
  */
-function dropWrapperNoise(
+export function dropWrapperNoise(
   violations: readonly Violation[],
   nativeWrappers: readonly string[],
 ): { readonly violations: readonly Violation[] } {
