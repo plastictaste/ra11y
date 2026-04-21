@@ -149,6 +149,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [navigation/skip-link](./rules/navigation__skip-link.md)
 - [parsing/duplicate-id](./rules/parsing__duplicate-id.md)
 - [parsing/html-has-lang](./rules/parsing__html-has-lang.md)
+- [parsing/invalid-id-shape](./rules/parsing__invalid-id-shape.md)
 - [pointer/cancellation](./rules/pointer__cancellation.md)
 - [pointer/drag-alternative](./rules/pointer__drag-alternative.md)
 - [pointer/stretched-link-multiple-in-container](./rules/pointer__stretched-link-multiple-in-container.md)
