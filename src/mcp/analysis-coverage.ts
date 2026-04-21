@@ -339,7 +339,32 @@ function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): rea
   ) {
     hints.push(buildCssThinHint(files, counts.css, markupFiles));
   }
+  // ADR 0025 Option B: `.md` / `.markdown` files are parsed as an
+  // HTML-residue projection — the scanner reaches embedded HTML
+  // (tables, iframes, admonition divs) and image alt-text synthesized
+  // from `![alt](url)`, but link text, heading hierarchy, and prose
+  // readability are intentionally out of scope. Surface the hint
+  // whenever at least one `.md` or `.markdown` file participated in
+  // the scan so the agent can calibrate coverage expectations.
+  if (files.some((f) => isMarkdownFile(f.filePath))) {
+    hints.push(
+      "Markdown files parsed as HTML residue: embedded HTML, image alt-text, and " +
+        "kramdown IAL are checked; link text, heading hierarchy, and prose are not. " +
+        "For full coverage, build the site and point `scan_project` at the rendered " +
+        "output (`_site/`, `public/`, `dist/`) via `additionalPaths`.",
+    );
+  }
   return hints;
+}
+
+/**
+ * True when `filePath` is a markdown source file (`.md` or
+ * `.markdown`). Kept in sync with the PARSEABLE_EXTENSIONS entry and
+ * the parser dispatch in `src/mcp/session.ts`.
+ */
+function isMarkdownFile(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
 }
 
 /**

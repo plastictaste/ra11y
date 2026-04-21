@@ -17,6 +17,7 @@ import {
   parseAstro,
   parseCss,
   parseHtml,
+  parseMarkdown,
   parseMdx,
   parseScss,
   parseTsx,
@@ -463,6 +464,15 @@ function parseForExtension(filePath: string, source: string): Ast | null {
   }
   if (filePath.endsWith(".astro")) {
     const r = parseAstro(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  // `.md` / `.markdown` — ADR 0025 Option B. Strip markdown syntax
+  // and feed the HTML residue (embedded tables, iframes, admonition
+  // divs, `<img>` synthesized from `![alt](url)`) to parseHtml. Rules
+  // see the same `language: "html"` AST shape they would from a plain
+  // HTML file.
+  if (filePath.endsWith(".md") || filePath.endsWith(".markdown")) {
+    const r = parseMarkdown(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   if (

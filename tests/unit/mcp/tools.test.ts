@@ -829,11 +829,14 @@ describe("MCP tool: scan_project", () => {
 
       const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-ext-"));
       await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
-      await writeFile(joinPath(dir, "notes.md"), "# not parseable");
+      // Use `.txt` — `.md` is now parseable under ADR 0025 (markdown
+      // Option B). Any truly non-parseable extension demonstrates the
+      // `unsupported-extension` path.
+      await writeFile(joinPath(dir, "notes.txt"), "not parseable");
 
       const tool = findTool("scan_project");
       const session = new McpSession();
-      const result = await tool.handler({ cwd: dir, additionalPaths: ["notes.md"] }, session);
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["notes.txt"] }, session);
       const data = JSON.parse(result.content[0].text) as {
         meta: {
           additionalPathsScanned?: {
@@ -843,7 +846,7 @@ describe("MCP tool: scan_project", () => {
         };
       };
       expect(data.meta.additionalPathsScanned?.skipped).toEqual([
-        { path: "notes.md", reason: "unsupported-extension" },
+        { path: "notes.txt", reason: "unsupported-extension" },
       ]);
     });
 

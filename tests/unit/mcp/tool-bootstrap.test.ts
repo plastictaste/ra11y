@@ -452,9 +452,10 @@ describe("bootstrap: empty project edge case", () => {
   // codebase."
   it("propagates scanned_zero_files when the scan parses nothing", async () => {
     await withScratch(async (dir) => {
-      // Scratch directory with no parseable files — a README alone
-      // doesn't match any of the HTML/CSS/JSX/TSX extensions.
-      await writeFile(join(dir, "README.md"), "# nothing to scan\n");
+      // Scratch directory with no parseable files. `.md` is parseable
+      // under ADR 0025 (markdown Option B), so use `.txt` — a truly
+      // unsupported extension — to ensure the scan finds no input.
+      await writeFile(join(dir, "NOTES.txt"), "nothing to scan\n");
       const { response, isError } = await callBootstrap({ cwd: dir });
       expect(isError).toBeUndefined();
       expect(response.scan.filesScanned).toBe(0);
