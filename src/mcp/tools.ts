@@ -462,6 +462,7 @@ const listRulesTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   handler(params) {
+    const total = BUILTIN_RULES.length;
     let rules = BUILTIN_RULES;
 
     const standardFilter = strParam(params, "standard");
@@ -481,6 +482,11 @@ const listRulesTool: McpTool = {
     }
 
     return textResult({
+      // Echo the applied filter only when non-empty (present-when-meaningful);
+      // always emit matchedOf so callers can tell a no-op filter (matched === total)
+      // apart from a filter that actually narrowed the list.
+      ...(standardFilter ? { filter: { standard: standardFilter } } : {}),
+      matchedOf: { total, matched: rules.length },
       rules: rules.map((r) => ({
         id: r.id,
         description: r.docs.description,

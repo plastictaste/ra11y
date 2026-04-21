@@ -51,6 +51,63 @@ describe("MCP tool: list_rules", () => {
     expect(filteredRules.rules.length).toBeLessThanOrEqual(allRules.rules.length);
     expect(filteredRules.rules.length).toBeGreaterThan(0);
   });
+
+  it("omits filter field and reports matchedOf when no filter applied", async () => {
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      filter?: unknown;
+      matchedOf: { total: number; matched: number };
+      rules: unknown[];
+    };
+
+    // Conditional spread: no filter ⇒ no filter field (present-when-meaningful).
+    expect("filter" in data).toBe(false);
+    // matchedOf always present. No filter ⇒ matched equals total and both equal rules.length.
+    expect(data.matchedOf.total).toBe(data.rules.length);
+    expect(data.matchedOf.matched).toBe(data.rules.length);
+    expect(data.matchedOf.matched).toBe(data.matchedOf.total);
+  });
+
+  it("echoes filter and reports matched === total for a no-op filter (wcag22)", async () => {
+    // Every current rule satisfies at least one wcag22 criterion, so filtering
+    // by wcag22 is silently a no-op today. The matchedOf signal makes that
+    // honest: matched === total tells the agent the filter didn't narrow.
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag22" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      filter: { standard: string };
+      matchedOf: { total: number; matched: number };
+      rules: unknown[];
+    };
+
+    expect(data.filter).toEqual({ standard: "wcag22" });
+    expect(data.matchedOf.matched).toBe(data.matchedOf.total);
+    expect(data.rules.length).toBe(data.matchedOf.matched);
+  });
+
+  it("reports matched < total when filter narrows the list (wcag21)", async () => {
+    // wcag21 predates several wcag22-only rules (e.g. focus-appearance,
+    // target-size/minimum), so filtering by wcag21 is a genuine narrowing.
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      filter: { standard: string };
+      matchedOf: { total: number; matched: number };
+      rules: unknown[];
+    };
+
+    expect(data.filter).toEqual({ standard: "wcag21" });
+    expect(data.matchedOf.matched).toBeLessThan(data.matchedOf.total);
+    expect(data.matchedOf.matched).toBeGreaterThan(0);
+    expect(data.rules.length).toBe(data.matchedOf.matched);
+  });
 });
 
 describe("MCP tool: explain_rule", () => {
