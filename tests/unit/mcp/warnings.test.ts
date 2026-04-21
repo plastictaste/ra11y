@@ -294,6 +294,164 @@ describe("computeScanWarnings", () => {
     });
     expect(codes).not.toContain("scanned_build_artifacts_present");
   });
+
+  // Content-file skip signal. Canonical repro is the 307-`.md`
+  // Jekyll scan that otherwise reads as a clean 20-finding result
+  // because the content layer never reached the parser.
+  it("fires `content_files_skipped` when .md count crosses the threshold (Jekyll / Hugo / MkDocs profile)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 20,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".md": 307 },
+      },
+      filesByExtension: { ".html": 20 },
+    });
+    expect(codes).toContain("content_files_skipped");
+  });
+
+  it("fires `content_files_skipped` when summed .md + .markdown + .rst cross the threshold (mixed Sphinx + Jekyll profile)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // 25 + 15 + 15 = 55 — above the 50 threshold via summation.
+        skippedByExtension: { ".md": 25, ".markdown": 15, ".rst": 15 },
+      },
+      filesByExtension: { ".html": 5 },
+    });
+    expect(codes).toContain("content_files_skipped");
+  });
+
+  it("does NOT fire `content_files_skipped` just below the threshold — a stray bundle of READMEs is not a content-first repo", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 100,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // 49 total across the recognized exts — one shy of the threshold.
+        skippedByExtension: { ".md": 49 },
+      },
+      filesByExtension: { ".tsx": 100 },
+    });
+    expect(codes).not.toContain("content_files_skipped");
+  });
+
+  it("fires `content_files_skipped` at the threshold boundary (count === 50)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".md": 50 },
+      },
+      filesByExtension: { ".html": 10 },
+    });
+    expect(codes).toContain("content_files_skipped");
+  });
+
+  it("does NOT fire `content_files_skipped` for unrelated extensions even at high volume (e.g., 200 .astro files)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".astro": 200 },
+      },
+      filesByExtension: { ".tsx": 10 },
+    });
+    expect(codes).not.toContain("content_files_skipped");
+  });
+
+  // Dominant-ecosystem signal — both
+  // absolute (>50 files) AND share (>30% of total skipped) must hold
+  // so the code points at template-layer-dominant repos (Rails,
+  // Django, Go html/template, Laravel) rather than incidentally-
+  // present scripts.
+  it("fires `source_language_unsupported` with language=ruby on a Rails-shaped repo (.erb + .rb dominance)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // Rails: 80 erb templates + 120 rb files, plus incidental css/md.
+        skippedByExtension: { ".erb": 80, ".rb": 120, ".md": 5 },
+      },
+      filesByExtension: { ".html": 12 },
+    });
+    expect(codes).toContain("source_language_unsupported");
+  });
+
+  it("fires `source_language_unsupported` with language=python (Django template layer)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".py": 300, ".toml": 4 },
+      },
+      filesByExtension: { ".html": 5 },
+    });
+    expect(codes).toContain("source_language_unsupported");
+  });
+
+  it("does NOT fire `source_language_unsupported` below the absolute threshold (51 files would cross; 50 does not)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // 50 .py files tied with itself; count must be STRICTLY > 50.
+        skippedByExtension: { ".py": 50 },
+      },
+      filesByExtension: { ".html": 10 },
+    });
+    expect(codes).not.toContain("source_language_unsupported");
+  });
+
+  it("fires `source_language_unsupported` one over the absolute threshold AND above the share threshold", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // 51 .py + 40 other: 51/91 ≈ 56% — above the 30% share floor.
+        skippedByExtension: { ".py": 51, ".astro": 40 },
+      },
+      filesByExtension: { ".html": 10 },
+    });
+    expect(codes).toContain("source_language_unsupported");
+  });
+
+  it("does NOT fire `source_language_unsupported` when the absolute bar clears but share is below 30% (ambient scripts in JSX-first repo)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 500,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // 60 .py files alongside 500 skipped non-JSX assets:
+        // 60 / 560 ≈ 10.7% — absolute passes, share fails.
+        skippedByExtension: { ".py": 60, ".astro": 500 },
+      },
+      filesByExtension: { ".tsx": 500 },
+    });
+    expect(codes).not.toContain("source_language_unsupported");
+  });
+
+  it("does NOT fire `source_language_unsupported` when no recognized language is present (mixed .astro + .svelte only)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".astro": 200, ".svelte": 150 },
+      },
+      filesByExtension: { ".tsx": 10 },
+    });
+    expect(codes).not.toContain("source_language_unsupported");
+  });
 });
 
 describe("warningsFromScanMeta", () => {
@@ -481,6 +639,70 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.extensions_skipped_no_parser?.extensions).toEqual([".astro"]);
     expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(10);
   });
+
+  it("emits a `content_files_skipped` payload with per-extension breakdown (all three keys present, zero-filled for missing)", () => {
+    const codes = ["content_files_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 20,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".md": 300, ".rst": 7 },
+      },
+      filesByExtension: { ".html": 20 },
+    });
+    expect(details.content_files_skipped?.count).toBe(307);
+    // Keys always present — consumers never disambiguate absent-vs-zero.
+    expect(details.content_files_skipped?.exts).toEqual({
+      ".md": 300,
+      ".markdown": 0,
+      ".rst": 7,
+    });
+  });
+
+  it("returns no `content_files_skipped` entry when the code did NOT fire (membership-vs-payload invariant)", () => {
+    const details = computeScanWarningDetails([], {
+      filesScanned: 20,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".md": 307 },
+      },
+      filesByExtension: { ".html": 20 },
+    });
+    expect(details.content_files_skipped).toBeUndefined();
+  });
+
+  it("emits a `source_language_unsupported` payload with language + fileCount + rounded percentage", () => {
+    const codes = ["source_language_unsupported"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // Rails: 80 erb + 120 rb = 200 ruby; 5 md; total 205.
+        skippedByExtension: { ".erb": 80, ".rb": 120, ".md": 5 },
+      },
+      filesByExtension: { ".html": 12 },
+    });
+    expect(details.source_language_unsupported?.language).toBe("ruby");
+    expect(details.source_language_unsupported?.fileCount).toBe(200);
+    // 200 / 205 = 0.97560... → 97.6 (rounded to one decimal).
+    expect(details.source_language_unsupported?.percentageOfSkipped).toBe(97.6);
+  });
+
+  it("returns no `source_language_unsupported` entry when the code did NOT fire", () => {
+    const details = computeScanWarningDetails([], {
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".py": 300 },
+      },
+      filesByExtension: { ".html": 12 },
+    });
+    expect(details.source_language_unsupported).toBeUndefined();
+  });
 });
 
 describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", () => {
@@ -580,5 +802,22 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
     expect(out.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
     // No stray keys — only payload-bearing codes show up under warningsDetails.
     expect(Object.keys(out.warningsDetails ?? {})).toEqual(["extensions_skipped_no_parser"]);
+  });
+
+  it("Jekyll scan emits content_files_skipped + extensions_skipped_no_parser together with matching payloads", () => {
+    // Canonical Jekyll repro: 307 .md files + 20 html files parsed.
+    const out = warningsField({
+      filesScanned: 20,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".md": 307 },
+      },
+      filesByExtension: { ".html": 20 },
+    });
+    expect(out.warnings).toContain("content_files_skipped");
+    expect(out.warnings).toContain("extensions_skipped_no_parser");
+    expect(out.warningsDetails?.content_files_skipped?.count).toBe(307);
+    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".md");
   });
 });

@@ -77,7 +77,34 @@ export type ScanWarningCode =
   // silently silence findings after a target switch. Re-run
   // `sessionConfigure({ cwd, nativeWrappers: ... })` against the
   // current project to re-anchor.
-  | "session_wrappers_configured_for_different_cwd";
+  | "session_wrappers_configured_for_different_cwd"
+  // A non-trivial count of prose-dominant content files (.md,
+  // .markdown, .rst) landed in `skippedByExtension` because ra11y
+  // doesn't yet parse markdown / reStructuredText. Without this code a content-first repo
+  // (Jekyll, Hugo, Sphinx, MkDocs) reads as "20 findings, clean
+  // enough" when the content layer never reached the scanner — the
+  // canonical "zero-output success is ambiguous failure" case one
+  // layer deeper than `extensions_skipped_no_parser` (which is a
+  // generic signal; this code names the specific ecosystem gap so
+  // the agent can branch without decoding the ext map). Paired
+  // payload: `warningsDetails.content_files_skipped` carries
+  // `{ count, exts }` so the agent can answer "how much and in
+  // which dialect?" without reading `meta`. See ADR 0025 for the
+  // markdown-support plan.
+  | "content_files_skipped"
+  // The dominant language in `skippedByExtension` is an ecosystem
+  // ra11y doesn't scan
+  // (Ruby / Python / Go / PHP — typical template layers for Rails,
+  // Django, Go html/template, Laravel). The code fires only when
+  // the language crosses both an absolute threshold (>50 files)
+  // AND a share threshold (>30% of total skipped) so an
+  // incidentally-present `.py` script in a JSX repo doesn't trip
+  // it. Paired payload:
+  // `warningsDetails.source_language_unsupported` carries
+  // `{ language, fileCount, percentageOfSkipped }` so the agent
+  // can branch on the specific language without re-deriving it
+  // from the ext map.
+  | "source_language_unsupported";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -154,6 +181,66 @@ const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
 const WARNING_DETAILS_TOP_EXTENSIONS = 5;
 
 /**
+ * Extensions counted toward the {@link CONTENT_FILES_SKIPPED_THRESHOLD}
+ * check for the `content_files_skipped` code. Keeping the list small and
+ * explicit keeps the predicate honest — each entry is a format ra11y
+ * does not yet parse (ADR 0025). `.markdown` is the less-common
+ * long-form spelling of `.md`; both are accepted by GitHub, Jekyll,
+ * and Hugo so both must be counted. `.rst` covers reStructuredText
+ * (Sphinx, MkDocs, Python docs ecosystems).
+ */
+const CONTENT_FILE_EXTENSIONS = [".md", ".markdown", ".rst"] as const;
+
+/**
+ * Minimum count of prose-dominant content files in
+ * `skippedByExtension` required to fire `content_files_skipped`. Kept
+ * high enough that a stray README.md in a JSX repo doesn't trip the
+ * code — 50 is the empirical threshold between "incidental" and
+ * "content-first repo with a scanner coverage gap" observed across
+ * field reports (Jekyll blog: 307 `.md`; typical app repo: 1–3).
+ */
+const CONTENT_FILES_SKIPPED_THRESHOLD = 50;
+
+/**
+ * Languages the `source_language_unsupported` code recognizes, with
+ * the extension(s) that count toward each language's file tally. Keeping
+ * the mapping explicit (rather than "any skipped ext") keeps the code
+ * an honest ecosystem-foreign-dominance signal rather than a generic
+ * "some stuff got skipped" rebroadcast of `extensions_skipped_no_parser`.
+ * Each entry names a template-layer ecosystem ra11y doesn't parse:
+ * Ruby (Rails/Jekyll), Python (Django/Flask/Sphinx), Go (html/template),
+ * PHP (Laravel/Symfony/WordPress).
+ */
+const UNSUPPORTED_LANGUAGE_EXTENSIONS: Readonly<
+  Record<"ruby" | "python" | "go" | "php", readonly string[]>
+> = {
+  ruby: [".rb", ".erb", ".haml", ".slim"],
+  python: [".py"],
+  go: [".go", ".tmpl", ".gohtml"],
+  php: [".php", ".phtml"],
+};
+
+/**
+ * Absolute file-count floor for `source_language_unsupported`. A single
+ * `.py` helper script in a JSX repo should not fire this code — the
+ * floor keeps the signal pointed at ecosystems that actually dominate
+ * the repo. Same magnitude as the content threshold; picked together
+ * so the two codes fire on comparable scales.
+ */
+const SOURCE_LANGUAGE_FILE_THRESHOLD = 50;
+
+/**
+ * Share-of-skipped floor for `source_language_unsupported`. Even at
+ * 51 `.py` files, a repo where Python is 10% of skipped files (the
+ * rest being `.astro` / `.svelte` / `.vue`) is a JSX-first project
+ * with ambient scripts, not a Django app. 30% marks the language as
+ * the clear plurality; below that threshold the ecosystem-foreign
+ * framing is misleading and the generic `extensions_skipped_no_parser`
+ * code already says everything the agent needs to know.
+ */
+const SOURCE_LANGUAGE_SHARE_THRESHOLD = 0.3;
+
+/**
  * Structured sibling to the bare-string `warnings[]` channel — see
  * ADR 0023. Keyed by `ScanWarningCode`; only codes whose signal is
  * enriched by a payload appear here. Codes whose presence alone is
@@ -204,6 +291,38 @@ export interface ScanWarningDetails {
   readonly response_token_budget_truncated?: {
     readonly requestedLimit: number;
     readonly effectiveLimit: number;
+  };
+  /**
+   * Payload for `content_files_skipped`. Carries the aggregate
+   * content-file count plus a per-extension breakdown so an agent
+   * branching on the code can answer "how much, and in which
+   * dialect?" without descending into
+   * `meta.analysisCoverage.skippedByExtension`. `exts` always
+   * includes one entry per {@link CONTENT_FILE_EXTENSIONS}
+   * extension so consumers never have to disambiguate "absent"
+   * from "zero" on a known key — the same "split composite
+   * headline counts" reasoning as the per-class fix tally on
+   * `plan.fixesByClass`.
+   */
+  readonly content_files_skipped?: {
+    readonly count: number;
+    readonly exts: {
+      readonly [K in (typeof CONTENT_FILE_EXTENSIONS)[number]]: number;
+    };
+  };
+  /**
+   * Payload for `source_language_unsupported`. Carries the dominant
+   * language key (one of `ruby` / `python` / `go` / `php`), the
+   * aggregate file count that earned the label, and the share of
+   * total skipped files the language represents. `percentageOfSkipped`
+   * is a number in `[0, 100]` rounded to one decimal place so the
+   * wire shape stays deterministic across runs — the predicate
+   * threshold lives in code, not in the payload.
+   */
+  readonly source_language_unsupported?: {
+    readonly language: "ruby" | "python" | "go" | "php";
+    readonly fileCount: number;
+    readonly percentageOfSkipped: number;
   };
 }
 
@@ -273,6 +392,26 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // reading into meta; the count + path list still live there.
     out.push("parse_errors_present");
   }
+  if (computeContentFileCount(inputs.analysisCoverage) >= CONTENT_FILES_SKIPPED_THRESHOLD) {
+    // Canonical Jekyll repro — 307 `.md` files dropped at discovery
+    // because markdown isn't yet parseable. `extensions_skipped_no_parser` already fires for
+    // the same map; this code adds the named-ecosystem signal so
+    // an agent sees "this is a content-first repo with a scanner
+    // coverage gap" at the top level without pattern-matching on
+    // the ext map itself. See ADR 0025 for the markdown plan.
+    out.push("content_files_skipped");
+  }
+  if (dominantUnsupportedLanguage(inputs.analysisCoverage) !== undefined) {
+    // The dominant ecosystem in the skipped set is a template-layer
+    // ra11y doesn't parse — Rails
+    // view partials, Django templates, Go html/template, PHP.
+    // Crossing both the absolute and share thresholds names the
+    // repo as definitionally out-of-scope for static scanning in
+    // its source form; the agent's next step is usually "run ra11y
+    // against the emitted HTML after the build step" rather than
+    // "scan the template source."
+    out.push("source_language_unsupported");
+  }
   return out;
 }
 
@@ -290,6 +429,73 @@ function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): bo
     typeof skipped === "object" &&
     Object.keys(skipped as Record<string, unknown>).length > 0
   );
+}
+
+/**
+ * Reads `skippedByExtension` as a numeric ext↦count map. Returns an
+ * empty map on any of "no coverage block", "no skipped map", "wrong
+ * shape", so callers can operate on the returned map without
+ * re-checking shape invariants. Only keys whose values are numbers
+ * > 0 survive — the same hostile-input defense
+ * `summarizeSkippedExtensions` applies.
+ */
+function readSkippedMap(
+  coverage: Record<string, unknown> | undefined,
+): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  if (coverage === undefined) return out;
+  const skipped = coverage["skippedByExtension"];
+  if (skipped === null || typeof skipped !== "object") return out;
+  for (const [ext, count] of Object.entries(skipped as Record<string, unknown>)) {
+    if (typeof count === "number" && count > 0 && typeof ext === "string" && ext.length > 0) {
+      out.set(ext, count);
+    }
+  }
+  return out;
+}
+
+/** Sum of {@link CONTENT_FILE_EXTENSIONS} counts in the skipped map. */
+function computeContentFileCount(coverage: Record<string, unknown> | undefined): number {
+  const skipped = readSkippedMap(coverage);
+  let total = 0;
+  for (const ext of CONTENT_FILE_EXTENSIONS) total += skipped.get(ext) ?? 0;
+  return total;
+}
+
+/**
+ * Returns the dominant unsupported language (as a key of
+ * {@link UNSUPPORTED_LANGUAGE_EXTENSIONS}) when both the absolute and
+ * share thresholds clear for that language; otherwise `undefined`.
+ * "Dominant" means the language with the most skipped files among the
+ * four recognized candidates — tie-breaking by the declaration order
+ * of `UNSUPPORTED_LANGUAGE_EXTENSIONS` (Object.keys order in
+ * TypeScript literals is stable and matches source order) so the
+ * predicate is deterministic across runs.
+ */
+function dominantUnsupportedLanguage(
+  coverage: Record<string, unknown> | undefined,
+): "ruby" | "python" | "go" | "php" | undefined {
+  const skipped = readSkippedMap(coverage);
+  if (skipped.size === 0) return undefined;
+  let totalSkipped = 0;
+  for (const count of skipped.values()) totalSkipped += count;
+  if (totalSkipped === 0) return undefined;
+  let winner: "ruby" | "python" | "go" | "php" | undefined;
+  let winnerCount = 0;
+  for (const [language, exts] of Object.entries(UNSUPPORTED_LANGUAGE_EXTENSIONS) as Array<
+    ["ruby" | "python" | "go" | "php", readonly string[]]
+  >) {
+    let count = 0;
+    for (const ext of exts) count += skipped.get(ext) ?? 0;
+    if (count > winnerCount) {
+      winnerCount = count;
+      winner = language;
+    }
+  }
+  if (winner === undefined) return undefined;
+  if (winnerCount <= SOURCE_LANGUAGE_FILE_THRESHOLD) return undefined;
+  if (winnerCount / totalSkipped <= SOURCE_LANGUAGE_SHARE_THRESHOLD) return undefined;
+  return winner;
 }
 
 function hasTailwindHint(coverage: Record<string, unknown> | undefined): boolean {
@@ -361,12 +567,78 @@ export function computeScanWarningDetails(
 ): ScanWarningDetails {
   const details: {
     extensions_skipped_no_parser?: NonNullable<ScanWarningDetails["extensions_skipped_no_parser"]>;
+    content_files_skipped?: NonNullable<ScanWarningDetails["content_files_skipped"]>;
+    source_language_unsupported?: NonNullable<ScanWarningDetails["source_language_unsupported"]>;
   } = {};
   if (codes.includes("extensions_skipped_no_parser")) {
     const summary = summarizeSkippedExtensions(inputs.analysisCoverage);
     if (summary !== undefined) details.extensions_skipped_no_parser = summary;
   }
+  if (codes.includes("content_files_skipped")) {
+    const summary = summarizeContentFiles(inputs.analysisCoverage);
+    if (summary !== undefined) details.content_files_skipped = summary;
+  }
+  if (codes.includes("source_language_unsupported")) {
+    const summary = summarizeDominantLanguage(inputs.analysisCoverage);
+    if (summary !== undefined) details.source_language_unsupported = summary;
+  }
   return details;
+}
+
+/**
+ * Builds the `content_files_skipped` payload — raw count + per-ext
+ * breakdown that always includes every entry in
+ * {@link CONTENT_FILE_EXTENSIONS} (zero-valued when the ext wasn't
+ * skipped). Always-present keys keep the shape honest per the same
+ * reasoning as `plan.fixesByClass`: consumers never have to
+ * disambiguate "absent" from "zero" for a known dimension. Returns
+ * `undefined` when the total is zero so the caller omits the payload.
+ */
+function summarizeContentFiles(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly count: number;
+      readonly exts: {
+        readonly [K in (typeof CONTENT_FILE_EXTENSIONS)[number]]: number;
+      };
+    }
+  | undefined {
+  const skipped = readSkippedMap(coverage);
+  const exts = {
+    ".md": skipped.get(".md") ?? 0,
+    ".markdown": skipped.get(".markdown") ?? 0,
+    ".rst": skipped.get(".rst") ?? 0,
+  } as const;
+  const count = exts[".md"] + exts[".markdown"] + exts[".rst"];
+  if (count === 0) return undefined;
+  return { count, exts };
+}
+
+/**
+ * Builds the `source_language_unsupported` payload. Re-runs the
+ * dominance check so the payload is self-consistent with the code
+ * (i.e., never emits details for a language that didn't earn the
+ * code). `percentageOfSkipped` is rounded to one decimal place for
+ * deterministic wire output.
+ */
+function summarizeDominantLanguage(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly language: "ruby" | "python" | "go" | "php";
+      readonly fileCount: number;
+      readonly percentageOfSkipped: number;
+    }
+  | undefined {
+  const language = dominantUnsupportedLanguage(coverage);
+  if (language === undefined) return undefined;
+  const skipped = readSkippedMap(coverage);
+  let totalSkipped = 0;
+  for (const count of skipped.values()) totalSkipped += count;
+  let fileCount = 0;
+  for (const ext of UNSUPPORTED_LANGUAGE_EXTENSIONS[language]) {
+    fileCount += skipped.get(ext) ?? 0;
+  }
+  const percentageOfSkipped =
+    totalSkipped === 0 ? 0 : Math.round((fileCount / totalSkipped) * 1000) / 10;
+  return { language, fileCount, percentageOfSkipped };
 }
 
 /**
