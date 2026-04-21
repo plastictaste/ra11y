@@ -114,6 +114,13 @@ const CHECKS: readonly Check[] = [
     affectedBy: hasSrcTsChange,
   },
   {
+    name: "builtins-scope",
+    cmd: ["bun", "scripts/check-builtins-scope.ts"],
+    precommit: true,
+    full: true,
+    affectedBy: hasSrcTsChange,
+  },
+  {
     name: "limits",
     cmd: ["bun", "scripts/check-limits.ts"],
     precommit: true,
