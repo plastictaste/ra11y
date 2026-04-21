@@ -1024,6 +1024,87 @@ describe("MCP tool: scan_file", () => {
       expect(remediation).toContain(ext);
     }
   });
+
+  it("parses .scss end-to-end and fires CSS-shaped contrast rules on the AST", async () => {
+    // Invariant: `.scss` files reach the scanner through the same path
+    // as `.css` files — discovery accepts them (PARSEABLE_EXTENSIONS),
+    // `parseFile` dispatches to `parseScss` which emits the CSS AST
+    // shape, and CSS-targeting rules (contrast/minimum) run against
+    // that AST so authored Sass participates in conformance. Regression
+    // guard for Q4-SCSS-DISCOVERY-WIRE: the Jekyll field report
+    // observed `file-unsupported` on `.scss` + `skippedByExtension`
+    // with SCSS counts against a stale MCP subprocess; the wiring has
+    // been in place since feat(input): route .scss through the scss
+    // parser end-to-end (96620ec), and this test locks it in so a
+    // future refactor can't silently drop any link in the chain
+    // (discovery allow-list → parser dispatcher → rule eligibility).
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-scss-scan-file-"));
+    const scssPath = joinPath(dir, "button.scss");
+    // #777 on #fff is ~4.48:1 — below AA normal-text 4.5:1.
+    await writeFile(scssPath, ".btn { color: #777; background: #fff; }\n");
+
+    const tool = findTool("scan_file");
+    const session = new McpSession();
+    const result = await tool.handler({ path: scssPath }, session);
+
+    // Not the file-unsupported error the Jekyll agent observed.
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      findings: Array<{ ruleId: string; criteria: readonly string[] }>;
+      meta: {
+        filesByExtension: Readonly<Record<string, number>>;
+        perRuleCoverage: Array<{ ruleId: string; filesEligible: number }>;
+      };
+    };
+    // Discovery + parser dispatch: .scss surfaces as a scanned ext.
+    expect(data.meta.filesByExtension[".scss"]).toBe(1);
+    // Rule eligibility: contrast/minimum declares .css, and the
+    // `.scss → .css` alias in `extensionMatches` makes the rule
+    // eligible on SCSS files. One rule-eligible file, one finding.
+    const contrast = data.meta.perRuleCoverage.find((r) => r.ruleId === "contrast/minimum");
+    expect(contrast?.filesEligible).toBe(1);
+    const contrastFindings = data.findings.filter((f) => f.ruleId === "contrast/minimum");
+    expect(contrastFindings.length).toBe(1);
+    expect(contrastFindings[0]?.criteria).toContain("wcag22:1.4.3");
+  });
+
+  it("discovers .scss files and does not report them as skipped by extension", async () => {
+    // Sibling to the scan_file test above but at the scan-project
+    // entry: scan a directory tree containing `.scss` + `.css` and
+    // assert the walker accepts every `.scss` file and emits no
+    // `skippedByExtension` entry for `.scss`. The Jekyll field
+    // report observed `skippedByExtension: {".scss": 18}` on a tree
+    // that was already supposed to be parseable; if discovery ever
+    // silently drops `.scss` again this test is the tripwire.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-scss-scan-project-"));
+    await writeFile(joinPath(dir, "a.scss"), ".btn { color: #777; background: #fff; }\n");
+    await writeFile(joinPath(dir, "b.scss"), ".card { color: #888; background: #fff; }\n");
+    await writeFile(joinPath(dir, "c.css"), ".ok { color: #000; background: #fff; }\n");
+
+    const tool = findTool("scan_project");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      meta: {
+        filesScanned: number;
+        filesByExtension: Readonly<Record<string, number>>;
+        analysisCoverage?: { skippedByExtension?: Readonly<Record<string, number>> };
+      };
+    };
+    expect(data.meta.filesScanned).toBe(3);
+    expect(data.meta.filesByExtension[".scss"]).toBe(2);
+    expect(data.meta.filesByExtension[".css"]).toBe(1);
+    // .scss must NOT appear in skippedByExtension — the whole point.
+    expect(data.meta.analysisCoverage?.skippedByExtension ?? {}).not.toHaveProperty(".scss");
+  });
 });
 
 describe("MCP tool: detect_native_wrappers", () => {
