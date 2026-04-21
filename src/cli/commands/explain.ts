@@ -3,12 +3,12 @@
  * normative quote, rationale, good/bad examples, references.
  */
 
-import { BUILTIN_RULES } from "../../rules/index.ts";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
-export function runExplain(ruleId: string): ScanExit {
-  const rule = BUILTIN_RULES.find((r) => r.id === ruleId);
+export function runExplain(ruleId: string, registry: Registry = createBuiltinRegistry()): ScanExit {
+  const rule = registry.findRule(ruleId);
   if (!rule) {
     return {
       stdout: "",

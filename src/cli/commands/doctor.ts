@@ -16,15 +16,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { ExitCode } from "../exit-codes.ts";
 import { VERSION } from "../help.ts";
 import type { ScanExit } from "./scan.ts";
 
 const NODE_FLOOR_MAJOR = 22;
 
-export function runDoctor(): ScanExit {
+export function runDoctor(registry: Registry = createBuiltinRegistry()): ScanExit {
   const lines: string[] = [];
   const warnings: string[] = [];
   const errors: string[] = [];
@@ -60,9 +59,9 @@ export function runDoctor(): ScanExit {
 
   lines.push("  loaded content");
   lines.push(
-    `    standards ${BUILTIN_STANDARDS.length}  (${BUILTIN_STANDARDS.map((s) => s.id).join(", ")})`,
+    `    standards ${registry.standards.length}  (${registry.standards.map((s) => s.id).join(", ")})`,
   );
-  lines.push(`    rules     ${BUILTIN_RULES.length}`);
+  lines.push(`    rules     ${registry.rules.length}`);
   lines.push("");
 
   if (warnings.length > 0) {

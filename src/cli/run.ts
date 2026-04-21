@@ -48,7 +48,7 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
     case "list-standards":
       return runListStandards();
     case "explain":
-      return runExplain(options.ruleId ?? "");
+      return runExplain(options.ruleId ?? "", registry);
     case "coverage":
       return runCoverage(options, registry);
     case "checklist":
@@ -63,13 +63,13 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
     case "init":
       return runInit(options);
     case "doctor":
-      return runDoctor();
+      return runDoctor(registry);
     case "baseline":
       return runBaselineCommand(options);
     case "attestations":
       return runAttestationsCommand(options);
     case "attest":
-      return runAttestCommand(options);
+      return runAttestCommand(options, registry);
     case "conformance":
       return runConformance(options, registry);
     case "scan":

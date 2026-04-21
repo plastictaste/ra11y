@@ -22,8 +22,7 @@
  */
 
 import { appendAttestation } from "../../config/attestation-store.ts";
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { ATTESTATION_EVIDENCE_SOURCES, type AttestationRecord } from "../../types/evidence.ts";
 import { headSha } from "../../utils/git.ts";
 import { isIsoTimestamp } from "../../utils/iso-timestamp.ts";
@@ -34,9 +33,12 @@ import type { ScanExit } from "./scan.ts";
 const DEFAULT_BY = "agent";
 
 /** Entry point registered by `src/cli/run.ts`. */
-export async function runAttestCommand(options: CliOptions): Promise<ScanExit> {
+export async function runAttestCommand(
+  options: CliOptions,
+  registry: Registry = createBuiltinRegistry(),
+): Promise<ScanExit> {
   const cwd = process.cwd();
-  const pre = preflight(options);
+  const pre = preflight(options, registry);
   if ("error" in pre) return pre.error;
   const { record } = pre;
 
@@ -64,13 +66,13 @@ interface PreflightOk {
 
 type PreflightResult = PreflightOk | { readonly error: ScanExit };
 
-function preflight(options: CliOptions): PreflightResult {
-  const required = requireMinimumFlags(options);
+function preflight(options: CliOptions, registry: Registry): PreflightResult {
+  const required = requireMinimumFlags(options, registry);
   if ("error" in required) return required;
   const { criterionId, rawReason, evidenceSource } = required;
 
   const scope = options.attestScope;
-  const ruleIds = validateRuleIds(options.attestRuleIds, criterionId);
+  const ruleIds = validateRuleIds(options.attestRuleIds, criterionId, registry);
   if ("error" in ruleIds) return ruleIds;
   const location = parseLocation(options.attestLocation, scope);
   if ("error" in location) return location;
@@ -102,7 +104,10 @@ function preflight(options: CliOptions): PreflightResult {
  * required-flag failure paths compounded with the optional-flag
  * validation would push the single-function score over.
  */
-function requireMinimumFlags(options: CliOptions):
+function requireMinimumFlags(
+  options: CliOptions,
+  registry: Registry,
+):
   | {
       readonly criterionId: string;
       readonly rawReason: string;
@@ -115,7 +120,7 @@ function requireMinimumFlags(options: CliOptions):
       "ra11y attest: missing <criterionId>. Usage: `ra11y attest <criterionId> --reason <text> --evidence-source <runtime_tool|manual_review|human_study|declaration> [--verdict pass|fail|na|pending] [--rule-ids <id>,…] [--scope project|file|line] [--location <file>:<line>[:<col>]] [--by <who>] [--tool-name <name>] [--run-url <url>] [--observed-at <iso>]`.",
     );
   }
-  if (!criterionExists(criterionId)) {
+  if (registry.findCriterion(criterionId) === undefined) {
     return usage(
       `ra11y attest: unknown criterion '${criterionId}'. Must resolve to a loaded standard (e.g. 'wcag22:2.4.7').`,
     );
@@ -156,10 +161,10 @@ function validateOptionalIso(
 function validateRuleIds(
   raw: readonly string[],
   criterionId: string,
+  registry: Registry,
 ): { readonly value: readonly string[] | undefined } | { readonly error: ScanExit } {
   if (raw.length === 0) return { value: undefined };
-  const satisfying = satisfyingRulesForCriterion(criterionId);
-  const satisfyingSet = new Set(satisfying);
+  const satisfyingSet = new Set(registry.rulesForCriterion(criterionId).map((r) => r.id));
   const unknown = raw.filter((id) => !satisfyingSet.has(id));
   if (unknown.length > 0) {
     return usage(
@@ -236,23 +241,6 @@ function parsePositiveInt(
     return usage(`ra11y attest: --location ${field} must be a positive integer (got '${raw}').`);
   }
   return { value };
-}
-
-function criterionExists(criterionId: string): boolean {
-  for (const std of BUILTIN_STANDARDS) {
-    for (const c of std.criteria) {
-      if (c.id === criterionId) return true;
-    }
-  }
-  return false;
-}
-
-function satisfyingRulesForCriterion(criterionId: string): readonly string[] {
-  const out: string[] = [];
-  for (const rule of BUILTIN_RULES) {
-    if (rule.satisfies.includes(criterionId)) out.push(rule.id);
-  }
-  return out;
 }
 
 function renderReport(record: AttestationRecord, cwd: string): string {
