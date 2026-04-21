@@ -270,4 +270,68 @@ describe("hoistAndBuildReferenceGuide", () => {
       expect(file.findings[0]?.fixDescriptionRef?.hash).toBe(hash);
     }
   });
+
+  it("invariant: every post-hoist finding with a fix satisfies AgentFix-shape-is-honest", () => {
+    // Regression guard for Q3-FIX-PAYLOAD-EMPTY — the shape invariant
+    // spelled out in docs/kb/architecture/ai-first-consumer.md under
+    // "Ambiguous field shapes are dishonest." After any hoist pass,
+    // every finding with a `fix` must either carry more than
+    // `{ safety }` (oldText/newText or description inline) OR sit
+    // alongside a `fixDescriptionRef` that resolves in the returned
+    // reference guide. A bare `fix: { safety }` with no ref is silent-
+    // miss territory: a downstream consumer can't distinguish "no
+    // guidance available" from "guidance was eaten by the pipeline."
+    const dupDesc = "Add aria-label to interactive element.";
+    const uniqueDesc = "Raise contrast to 4.5:1.";
+    const files = [
+      {
+        path: "a.tsx",
+        findings: [
+          // Duplicated guidance — will hoist (fix → { safety } + ref).
+          finding({ ruleId: "aria/label", fix: { safety: "safe", description: dupDesc } }),
+          finding({ ruleId: "aria/label", fix: { safety: "safe", description: dupDesc } }),
+          // Mechanical duplicate — will hoist, oldText/newText kept.
+          finding({
+            ruleId: "semantics/prefer-native",
+            fix: {
+              safety: "safe",
+              oldText: "<div>",
+              newText: "<button>",
+              description: "Prefer native <button> over role=button.",
+            },
+          }),
+          finding({
+            ruleId: "semantics/prefer-native",
+            fix: {
+              safety: "safe",
+              oldText: "<div>",
+              newText: "<button>",
+              description: "Prefer native <button> over role=button.",
+            },
+          }),
+          // Unique guidance — stays inline.
+          finding({ ruleId: "contrast/minimum", fix: { safety: "safe", description: uniqueDesc } }),
+          // No fix at all.
+          finding({ ruleId: "other/rule" }),
+        ],
+      },
+    ];
+    const result = hoistAndBuildReferenceGuide(files, {
+      suppressPlacement: { tsx: "Place above the JSX." },
+    });
+    const fixDescs = result.referenceGuide?.fixDescriptions;
+    for (const f of result.files[0]?.findings ?? []) {
+      if (f.fix === undefined) continue;
+      const keyCount = Object.keys(f.fix).length;
+      const hasRef = f.fixDescriptionRef !== undefined;
+      // The AgentFix is honest when it carries more than safety alone,
+      // or sits next to a ref. Never bare `{ safety }` without a ref.
+      expect(keyCount > 1 || hasRef).toBe(true);
+      // When a ref is present, it must resolve in the reference guide.
+      if (hasRef) {
+        const resolved = fixDescs?.[f.ruleId]?.[f.fixDescriptionRef?.hash ?? ""];
+        expect(resolved).toBeDefined();
+      }
+    }
+  });
 });
