@@ -140,6 +140,20 @@ export interface ScanFamilyResponse {
   readonly nextOffset?: number;
 }
 
+/**
+ * Set of file paths that produced at least one finding in `violations`.
+ * Feeds the parse-error split in `analysisCoverage` — errored files
+ * whose path appears here land in `partialParseFiles` (rules fired on
+ * the recovered slice); the rest land in `parseErrorFiles`
+ * (invisible-to-rules). Extracted so {@link assembleScanFamilyResponse}
+ * stays under the cognitive-complexity cap.
+ */
+function findingFilePathSet(violations: readonly Violation[]): Set<string> {
+  const out = new Set<string>();
+  for (const v of violations) out.add(v.location.filePath);
+  return out;
+}
+
 /** Groups violations into AgentFile buckets keyed by path; sorted deterministically. */
 function groupByFile(violations: readonly Violation[]): AssembledFile[] {
   const byPath = new Map<string, Violation[]>();
@@ -222,8 +236,7 @@ export function assembleScanFamilyResponse(
   // notes still counts as "rules fired on it" — the point of the
   // partial-parse bucket is to distinguish "rules ran" from "rules
   // couldn't see anything," not to filter by severity.
-  const findingFilePaths = new Set<string>();
-  for (const v of violations) findingFilePaths.add(v.location.filePath);
+  const findingFilePaths = findingFilePathSet(violations);
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     files: parsedFiles,

@@ -432,9 +432,7 @@ function hasParseErrors(coverage: Record<string, unknown> | undefined): boolean 
   if (coverage === undefined) return false;
   const full = coverage["parseErrorFileCount"];
   const partial = coverage["partialParseFileCount"];
-  return (
-    (typeof full === "number" && full > 0) || (typeof partial === "number" && partial > 0)
-  );
+  return (typeof full === "number" && full > 0) || (typeof partial === "number" && partial > 0);
 }
 
 function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {
