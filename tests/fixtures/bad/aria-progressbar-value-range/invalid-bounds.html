@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Progressbar — bad (aria-valuemin > aria-valuemax)</title>
+  </head>
+  <body>
+    <!--
+      Edge case: aria-valuemin exceeds aria-valuemax. The scale is
+      inverted; any aria-valuenow the author picks is meaningless. The
+      rule reports the invalid-bounds gap explicitly and skips the
+      in-range check (the bounds violation already signals the problem).
+    -->
+    <div
+      role="progressbar"
+      aria-valuenow="50"
+      aria-valuemin="100"
+      aria-valuemax="0"
+      aria-label="Upload"
+    ></div>
+  </body>
+</html>

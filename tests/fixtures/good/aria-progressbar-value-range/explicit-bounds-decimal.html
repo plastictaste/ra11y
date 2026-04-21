@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Progressbar — good (explicit bounds, decimal value)</title>
+  </head>
+  <body>
+    <!--
+      Explicit bounds with a decimal aria-valuenow. The WAI-ARIA
+      <number> descriptor accepts integers and decimals alike; 0..1 is
+      a common scale for normalized progress.
+    -->
+    <div
+      role="progressbar"
+      aria-valuenow="0.75"
+      aria-valuemin="0"
+      aria-valuemax="1"
+      aria-label="Download progress"
+    ></div>
+  </body>
+</html>

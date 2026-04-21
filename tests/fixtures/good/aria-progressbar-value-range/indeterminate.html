@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Progressbar — good (indeterminate variants)</title>
+  </head>
+  <body>
+    <!--
+      Two valid indeterminate progressbars:
+        1. role="progressbar" + aria-busy="true" and no aria-valuenow — the
+           ARIA spec permits omitting aria-valuenow "if the value is
+           unknown".
+        2. Native <progress> with no `value` attribute is the HTML5
+           indeterminate form.
+    -->
+    <div role="progressbar" aria-busy="true" aria-label="Loading…"></div>
+    <progress aria-label="Thinking…"></progress>
+  </body>
+</html>

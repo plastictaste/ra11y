@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Progressbar — bad (Bootstrap-style, no aria-valuenow)</title>
+  </head>
+  <body>
+    <!--
+      Real-world pattern seen across popular component-library
+      documentation (Bootstrap's .progress snippet ships dozens of these
+      examples): the outer .progress wrapper carries role="progressbar"
+      and declares the scale, but no aria-valuenow is set — the width is
+      expressed visually via CSS on the inner bar. Screen readers hear
+      "progress bar, 0 to 100" with no current value.
+    -->
+    <div
+      class="progress"
+      role="progressbar"
+      aria-label="Upload"
+      aria-valuemin="0"
+      aria-valuemax="100"
+    >
+      <div class="progress-bar" style="width: 25%"></div>
+    </div>
+  </body>
+</html>

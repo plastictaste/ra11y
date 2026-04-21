@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Progressbar — bad (non-numeric aria-valuenow)</title>
+  </head>
+  <body>
+    <!--
+      aria-valuenow="fifty" — a word, not a number. WAI-ARIA 1.2
+      requires the <number> descriptor; assistive tech cannot compute
+      "fifty" against the scale.
+    -->
+    <div role="progressbar" aria-valuenow="fifty" aria-valuemax="100" aria-label="Upload"></div>
+  </body>
+</html>
