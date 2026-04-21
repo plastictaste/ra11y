@@ -348,6 +348,7 @@ New rules (ordered by ROI):
 
 - [ ] **Q3-FINDER-FORM-TIMING-BOOTSTRAP** Bootstrap validation docs teach `.needs-validation novalidate` + per-keystroke visual feedback. The existing `forms/validation-timing` finder (Q2R2-FORM-TIMING) should also recognize this Bootstrap pattern when parsing restores. Verify coverage after parser restart.
 - [ ] **Q3-FINDER-CAROUSEL-PATTERN** New review finder `motion/carousel-pattern`. Surface `data-bs-ride="carousel"` + role=region/aria-roledescription="carousel" + accessible name checks. WCAG 2.2.2. Companion to Q3-RULE-PAUSE-STOP-INLINE-STYLE.
+- [ ] **SCAFFOLDER-IMPORT-POSITION** `scripts/scaffold-rule.ts` appends the new rule's import at the end of `src/rules/index.ts`'s import block instead of inserting alphabetically within the correct path-group cluster (`forms/`, `navigation/`, `media/`, etc.). Observed independently by three rule-implementer agents in turn 29/30 (Q4-RULE-EXTERNAL-LINK, Q4-RULE-PLACEHOLDER-ALT, Q3-RULE-PLACEHOLDER-AS-LABEL) — each had to hand-reorder or ship a biome-cleanup `fix(rules): import position` follow-up commit, and cross-turn integration conflicts on `src/rules/index.ts` are almost entirely driven by the tail-append collision. Fix: teach the scaffolder to parse the existing import block, find the right path-group cluster for the new rule's path, and insert in alphabetical order inside that cluster. Fallback for unknown paths: append at end (current behavior).
 
 ### Considered and rejected (per CLAUDE.md §1)
 
