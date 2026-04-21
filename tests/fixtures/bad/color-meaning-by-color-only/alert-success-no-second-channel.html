@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Color-only status: alert-success with no icon / role / sr-only label</title>
+  </head>
+  <body>
+    <!-- Bootstrap's `.alert.alert-success` paints a green box. The
+         prose message never names itself as a success — a screen-reader
+         user hears only "Your changes have been saved" and has to
+         infer from context that it was a confirmation. Adding
+         role="alert" or a prefix "Success:" fixes it. -->
+    <main>
+      <div class="alert alert-success">Your changes have been saved.</div>
+    </main>
+  </body>
+</html>

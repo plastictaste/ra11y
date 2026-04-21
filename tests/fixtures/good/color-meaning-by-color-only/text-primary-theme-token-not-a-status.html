@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>text-primary / text-muted / text-body are theme tokens, not status</title>
+  </head>
+  <body>
+    <!-- The rule is scoped to semantically-loaded class tokens:
+         -danger, -success, -warning, -error, -info. Theme tokens like
+         text-primary (brand), text-muted (secondary), text-body (body
+         copy) do not name a status, so the rule leaves them alone. -->
+    <main>
+      <p class="text-primary">Brand accent text</p>
+      <p class="text-muted">Secondary hint</p>
+      <p class="text-body">Regular body copy</p>
+      <p class="text-secondary">Sidebar label</p>
+    </main>
+  </body>
+</html>

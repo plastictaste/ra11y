@@ -1,0 +1,226 @@
+import { describe, expect, it } from "bun:test";
+import { rule } from "../../../../src/rules/color/meaning-by-color-only.ts";
+import { runRule } from "../../../helpers/run-rule.ts";
+
+describe("rule color/meaning-by-color-only", () => {
+  describe("HTML: fires when", () => {
+    it("a bare <span class='text-danger'> conveys the status with color only", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><p><span class="text-danger">Access denied</span></p></body></html>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("color/meaning-by-color-only");
+      expect(violations[0]?.criteria).toContain("wcag22:1.4.1");
+      expect(violations[0]?.message).toMatch(/text-danger/);
+      expect(violations[0]?.message).toMatch(/danger/);
+      expect(violations[0]?.suggestion).toMatch(/Danger:/);
+    });
+
+    it("a <div class='alert alert-success'> with prose text fires", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><div class="alert alert-success">Your changes have been saved</div></body></html>`,
+        { filePath: "alert.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/alert-success/);
+    });
+
+    it("a <button class='btn btn-warning'> with plain text fires", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><button class="btn btn-warning">Delete</button></body></html>`,
+        { filePath: "button.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/btn-warning/);
+    });
+
+    it("a <span class='text-danger-emphasis'> (Bootstrap 5.3 emphasis variant) fires", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-danger-emphasis">Payment failed</span></body></html>`,
+        { filePath: "emphasis.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toMatch(/danger/);
+    });
+  });
+
+  describe("HTML: does not fire when", () => {
+    it("the text-danger element has a prose 'Error:' prefix", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-danger">Error: invalid email address</span></body></html>`,
+        { filePath: "prose-prefix.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("an icon sibling is inside the text-success element", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-success"><i class="bi bi-check-circle" aria-hidden="true"></i> Saved</span></body></html>`,
+        { filePath: "with-icon.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a visually-hidden label is inside the text-warning element", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-warning"><span class="visually-hidden">Warning:</span> Low battery</span></body></html>`,
+        { filePath: "sr-only.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("the element is decorative theme tokens (text-primary, text-muted)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-primary">Brand accent</span><span class="text-muted">Secondary text</span><span class="text-body">Body copy</span></body></html>`,
+        { filePath: "theme-tokens.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("role='alert' is present on the text-danger element", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><div class="text-danger" role="alert">Access denied</div></body></html>`,
+        { filePath: "alert-role.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("aria-label supplies the status word", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-danger" aria-label="Error: Access denied">Access denied</span></body></html>`,
+        { filePath: "aria-label.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("JSX: fires when", () => {
+    it("<span className='text-danger'>text</span> is bare", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <span className="text-danger">Access denied</span>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/className="text-danger"/);
+    });
+
+    it("<div className='alert alert-danger'>text</div> fires", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <div className="alert alert-danger">Upload failed</div>;`,
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("<button className='btn btn-outline-warning'>label</button> fires", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <button className="btn btn-outline-warning">Reset</button>;`,
+      );
+      expect(violations).toHaveLength(1);
+    });
+  });
+
+  describe("JSX: does not fire when", () => {
+    it("an <Icon> PascalCase component is inside", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <span className="text-danger"><CheckIcon /> Saved</span>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("role='alert' is on the element", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <div className="text-danger" role="alert">Access denied</div>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("the text prose starts with 'Success:'", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <span className="text-success">Success: saved</span>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("edge cases", () => {
+    it("empty text content does not fire (no visible text to be color-only about)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-danger"></span></body></html>`,
+        { filePath: "empty.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("substring collision: text-dangerous does NOT match text-danger", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-dangerous-wrapping">Normal text</span></body></html>`,
+        { filePath: "substring.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX aria-label={label} expression value is trusted (no fire)", () => {
+      const violations = runRule(
+        rule,
+        `export const X = ({ label }: { label: string }) => <span className="text-danger" aria-label={label}>Access denied</span>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("text-info token + prose prefix 'Info:' passes", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-info">Info: settings saved</span></body></html>`,
+        { filePath: "info-prefix.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("text-danger with aria-live='polite' passes (live region is a second channel)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-danger" aria-live="polite">Lost connection</span></body></html>`,
+        { filePath: "live-region.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX fa-* icon class on child <i> satisfies the rule", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <span className="text-danger"><i className="fa fa-times"></i> Failed</span>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("rule metadata", () => {
+    it("satisfies wcag22:1.4.1 and wcag21:1.4.1", () => {
+      expect(rule.satisfies).toContain("wcag22:1.4.1");
+      expect(rule.satisfies).toContain("wcag21:1.4.1");
+    });
+
+    it("has a normativeQuote citing WCAG 1.4.1 Use of Color", () => {
+      expect(rule.docs.normativeQuote.toLowerCase()).toContain("color");
+      expect(rule.docs.references[0]).toContain("use-of-color");
+    });
+  });
+});

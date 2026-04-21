@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>text-danger with icon + visually-hidden prefix</title>
+  </head>
+  <body>
+    <!-- Second channel #1: icon (`<i class="bi bi-exclamation-circle">`)
+         is decorative (aria-hidden), but the `.visually-hidden` prefix
+         reaches assistive tech with the word "Error:" before the
+         prose. Sighted users see a red icon + red text; screen-reader
+         users hear "Error: Access denied." -->
+    <main>
+      <span class="text-danger">
+        <i class="bi bi-exclamation-circle" aria-hidden="true"></i>
+        <span class="visually-hidden">Error:</span>
+        Access denied
+      </span>
+    </main>
+  </body>
+</html>
