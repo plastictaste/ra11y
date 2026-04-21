@@ -61,6 +61,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { relative } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { gitRoot } from "../utils/git.ts";
@@ -85,6 +86,19 @@ const INDENT = "  ";
 
 /** How many top-fired rules land in the commented stub. */
 const TOP_RULES_COUNT = 3;
+
+/**
+ * Minimum number of build-artifact files that must share a top-level
+ * directory under the scan root before the emitted `exclude` list
+ * collapses them to a single `<dir>/**` glob. Below the threshold the
+ * individual relative paths are emitted verbatim — a 2-file `dist/`
+ * directory is still specific enough that an unglobbed pair is clearer
+ * than a `dist/**` wildcard. The field-report that motivated this cap
+ * (website-templates repo, 301 emitted excludes) was dominated by a
+ * single `dist/` subtree; three-file collapse matches that pattern
+ * without overreaching on repos where artifacts are truly scattered.
+ */
+const EXCLUDE_GLOB_COLLAPSE_THRESHOLD = 3;
 
 export const proposeConfigTool: McpTool = {
   def: {
@@ -123,7 +137,7 @@ export const proposeConfigTool: McpTool = {
     const activeRules = applyRuleSettings(session.registry.rules, effective);
 
     const confirmedWrappers = deriveConfirmedWrappers(files);
-    const buildArtifacts = collectBuildArtifacts(files);
+    const buildArtifacts = normalizeExcludes(collectBuildArtifacts(files), root);
     const topRules = deriveTopRules(files, session);
     // Surface, don't suppress: foreign-ecosystem detection NEVER
     // withholds the config string — the agent may still want to add a
@@ -196,6 +210,98 @@ export const proposeConfigTool: McpTool = {
  * after reading the source — proposing it here would bake a guess
  * into committed config.
  */
+/**
+ * Converts build-artifact paths (absolute, as {@link ParsedFile.filePath}
+ * emits them) into the repo-root-relative, glob-collapsed form the
+ * emitted `exclude: [...]` entry must carry. Fixes the field-reported
+ * correctness bug where `propose_config` and `bootstrap` emitted paths
+ * like `/tmp/bootstrap/scss/_variables.scss` — absolute paths don't
+ * match ra11y's gitignore-style exclude globs (so the paste-in config
+ * silently does nothing), and leak the scan-host filesystem into a
+ * committed artifact.
+ *
+ * Steps, in order:
+ *   1. Relativize every path against `root`. POSIX-style separators
+ *      regardless of host OS, so the emitted config reads the same on
+ *      macOS and Linux CI (`node:path.relative` returns host separators;
+ *      we normalize to `/`).
+ *   2. Drop paths that escape the root (e.g. symlinked sources — rare
+ *      but possible). An exclude pattern outside the project is
+ *      meaningless; emitting it would leave the user confused.
+ *   3. Group the relative paths by their top-level segment (first
+ *      directory under root). Groups with at least
+ *      {@link EXCLUDE_GLOB_COLLAPSE_THRESHOLD} entries collapse to a
+ *      single `<dir>/**` glob — the canonical field-report case was a
+ *      repo with 301 entries all under one `dist/` tree, where the
+ *      single-glob form is strictly easier to review and edit than an
+ *      itemized dump. Groups below the threshold stay itemized; a
+ *      two-file `dist/` tree is still specific enough that an unglobbed
+ *      pair is clearer than a wildcard.
+ *   4. Files sitting directly under the root with no top-level
+ *      directory (e.g. `root/compiled.css`) stay itemized — there is no
+ *      parent to collapse against.
+ *
+ * Deterministic output: paths are sorted alphabetically, and collapsed
+ * globs appear in the same order as their first-seen top-level segment.
+ * Stable across runs even if the underlying scanner reorders its file
+ * discovery.
+ */
+function normalizeExcludes(paths: readonly string[], root: string): readonly string[] {
+  const relativized = relativizeToRoot(paths, root);
+  const { groups, rootLevelFiles } = partitionByTopDir(relativized);
+  return collapseGroups(groups, rootLevelFiles);
+}
+
+function relativizeToRoot(paths: readonly string[], root: string): readonly string[] {
+  const out: string[] = [];
+  for (const p of paths) {
+    const rel = relative(root, p).replace(/\\/g, "/");
+    // Skip paths outside the root (starts with `..`) and the root
+    // itself (empty string from `relative`). Both would be nonsense as
+    // exclude entries.
+    if (rel === "" || rel.startsWith("..")) continue;
+    out.push(rel);
+  }
+  out.sort();
+  return out;
+}
+
+function partitionByTopDir(paths: readonly string[]): {
+  readonly groups: ReadonlyMap<string, readonly string[]>;
+  readonly rootLevelFiles: readonly string[];
+} {
+  const groups = new Map<string, string[]>();
+  const rootLevelFiles: string[] = [];
+  for (const rel of paths) {
+    const slash = rel.indexOf("/");
+    if (slash === -1) {
+      rootLevelFiles.push(rel);
+      continue;
+    }
+    const topDir = rel.slice(0, slash);
+    const bucket = groups.get(topDir);
+    if (bucket === undefined) groups.set(topDir, [rel]);
+    else bucket.push(rel);
+  }
+  return { groups, rootLevelFiles };
+}
+
+function collapseGroups(
+  groups: ReadonlyMap<string, readonly string[]>,
+  rootLevelFiles: readonly string[],
+): readonly string[] {
+  const out: string[] = [];
+  for (const [topDir, members] of groups) {
+    if (members.length >= EXCLUDE_GLOB_COLLAPSE_THRESHOLD) {
+      out.push(`${topDir}/**`);
+    } else {
+      for (const m of members) out.push(m);
+    }
+  }
+  for (const f of rootLevelFiles) out.push(f);
+  return out;
+}
+
 function deriveConfirmedWrappers(files: readonly ParsedFile[]): readonly string[] {
   const candidates = collectWrapperCandidates(files);
   const names = candidates.map((c) => c.component);

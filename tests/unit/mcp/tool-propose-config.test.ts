@@ -152,6 +152,71 @@ describe("propose_config: wrappers + build-artifact excludes", () => {
       expect(body.nextStep).toContain("build-artifact path");
     });
   });
+
+  it("emits exclude paths relative to the scan root — no absolute leaked filesystem paths", async () => {
+    // Closes Q-SHARED-PROPOSE-CONFIG-RELATIVE-PATHS: prior behaviour
+    // emitted `/tmp/<scratch>/compiled.css` verbatim, which (a) does
+    // not match ra11y's gitignore-style exclude globs so the paste-in
+    // config silently does nothing, and (b) leaks the scan-host
+    // filesystem into a committed artifact. Relative-only is the
+    // honest, portable shape.
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "compiled.css"),
+        ".w-\\[400px\\] { width: 400px; }\n.h-\\[2rem\\] { height: 2rem; }\n",
+      );
+      const body = await callTool(dir);
+      expect(body.suggestedConfig).toContain("compiled.css");
+      expect(body.suggestedConfig).not.toContain(dir);
+      expect(body.suggestedConfig).not.toMatch(/"\//);
+    });
+  });
+
+  it("collapses 3+ build-artifact files sharing a top-level directory into a single <dir>/** glob", async () => {
+    // Motivating field report: website-templates repo emitted 301
+    // absolute `exclude` entries, all under one `dist/`-style tree.
+    // Collapsing to a single `<dir>/**` is strictly easier to review
+    // and edit than an itemized dump, and the glob is the honest
+    // semantic form for "the whole build output is a compiled
+    // artifact."
+    await withScratch(async (dir) => {
+      // Three compiled-CSS files under an `assets/` tree — the
+      // escape-bracket Tailwind selector is the signal every entry
+      // needs to land in the build-artifacts list.
+      const tailwindCss = ".w-\\[400px\\] { width: 400px; }\n.h-\\[2rem\\] { height: 2rem; }\n";
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "assets"), { recursive: true });
+      await writeFile(join(dir, "assets", "a.css"), tailwindCss);
+      await writeFile(join(dir, "assets", "b.css"), tailwindCss);
+      await writeFile(join(dir, "assets", "c.css"), tailwindCss);
+      const body = await callTool(dir);
+      expect(body.suggestedConfig).toContain('"assets/**"');
+      // Individual entries must NOT appear once the collapse fires —
+      // the whole point is that the emitted config is one line, not
+      // three.
+      expect(body.suggestedConfig).not.toContain('"assets/a.css"');
+      expect(body.suggestedConfig).not.toContain('"assets/b.css"');
+      expect(body.suggestedConfig).not.toContain('"assets/c.css"');
+    });
+  });
+
+  it("keeps 2 sibling build-artifact files itemized — below the collapse threshold a wildcard would overreach", async () => {
+    // A two-file `assets/` is still specific enough that the
+    // unglobbed pair is clearer than `assets/**`. The collapse cap
+    // applies only when the count starts to dominate the emitted
+    // config.
+    await withScratch(async (dir) => {
+      const tailwindCss = ".w-\\[400px\\] { width: 400px; }\n.h-\\[2rem\\] { height: 2rem; }\n";
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "assets"), { recursive: true });
+      await writeFile(join(dir, "assets", "a.css"), tailwindCss);
+      await writeFile(join(dir, "assets", "b.css"), tailwindCss);
+      const body = await callTool(dir);
+      expect(body.suggestedConfig).toContain('"assets/a.css"');
+      expect(body.suggestedConfig).toContain('"assets/b.css"');
+      expect(body.suggestedConfig).not.toContain('"assets/**"');
+    });
+  });
 });
 
 describe("propose_config: wrappers + findings → commented rules stub", () => {
