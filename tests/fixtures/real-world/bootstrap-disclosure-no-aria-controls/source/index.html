@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dropdown example</title>
+  </head>
+  <body>
+    <!--
+      Canonical Bootstrap 5 dropdown pattern. The trigger carries
+      aria-expanded="false" (Bootstrap's JS toggles it to "true" when
+      the menu opens) and a data-bs-toggle="dropdown" sibling to wire
+      the runtime behavior. It deliberately does NOT carry
+      aria-controls — Bootstrap's own examples omit it because the
+      controlled region is the adjacent <ul> sibling selected by
+      convention rather than by id reference. The WAI-ARIA Authoring
+      Practices disclosure pattern recommends aria-controls identify
+      the controlled region so assistive tech can move users to it
+      directly; the scanner should surface this gap honestly instead
+      of silently passing on the aria-expanded presence.
+    -->
+    <div class="dropdown">
+      <button
+        class="btn btn-secondary dropdown-toggle"
+        type="button"
+        data-bs-toggle="dropdown"
+        aria-expanded="false"
+      >
+        Dropdown button
+      </button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item" href="#">Action</a></li>
+        <li><a class="dropdown-item" href="#">Another action</a></li>
+      </ul>
+    </div>
+  </body>
+</html>
