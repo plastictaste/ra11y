@@ -32,6 +32,8 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
 1. **Preflight.** Confirm `git status --porcelain` is empty on `main`. If dirty, abort and return `{ "error": "dirty_main", "detail": "<first 10 lines of git status>" }`. Do not `stash`, do not `clean`, do not `checkout --`.
 
+   Dirty main at preflight is the signature of a worktree agent that escaped its isolation via absolute paths or `cd`. Surface the file list and stop — the orchestrator will recover (decide per-file whether to preserve or discard). Never attempt to clean up silently.
+
 2. **Cherry-pick loop** — in the order given, one pick at a time:
    - Skip picks where `changed: false`. Record them under `skipped` with `reason: "no_changes"`.
    - For picks with `changed: true`:

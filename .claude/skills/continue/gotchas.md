@@ -38,15 +38,25 @@ Symptom: re-dispatch loop never converges.
 
 Fix: hard cap of 2 re-dispatches per item. After that, mark the item as BLOCKED in the summary and move on. Never loop forever.
 
-## Worktree agent cd's out into the main repo
+## Worktree agent escapes into the main repo (`cd` OR absolute paths OR stale base)
 
 Symptom: after dispatch, main tree has modifications from the agent even though the agent was in `isolation: "worktree"`. Concurrent agents then see "unexpected dirt" in their worktree starting state and report BLOCKED, OR the main tree collects orphaned files that match one agent's scope but never land on their branch.
 
-Cause: scripts like `scripts/scaffold-rule.ts` compute ROOT via `import.meta.dir`, so they naturally resolve to the worktree's root — **but only if the agent runs them from within the worktree**. Agents that `cd /Users/van/dev/ra11y` (or any absolute path out of `$PWD`) before running a scaffolder silently write files into the main tree.
+Three distinct escape modes — dispatch prompts must prevent all three:
 
-Fix: every dispatch prompt for a parallel worktree agent MUST include an explicit **"NEVER `cd` out of your worktree"** line. Name this as the dominant escape failure mode, because `cd` feels innocuous. Scaffolder invocations specifically should be called out: `bun scripts/scaffold-rule.ts` is safe; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` is the corruption.
+1. **`cd` out of the worktree.** Scripts like `scripts/scaffold-rule.ts` compute `ROOT` via `import.meta.dir` and resolve to the agent's cwd — safe from the worktree, corrupting when run from main. `bun scripts/scaffold-rule.ts` is safe; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` is the corruption.
 
-If main tree dirt shows up post-dispatch and looks like one agent's orphaned scope, salvage it as commits split by concern (one per logical unit per `CLAUDE.md` §9) rather than discarding — the agent's work is real, it just landed in the wrong tree.
+2. **Absolute paths in Read/Edit/Write/Bash tool calls.** `Edit` with `/Users/van/dev/ra11y/src/mcp/foo.ts` as the target resolves to the main checkout, not the worktree — `isolation: "worktree"` walls off `cwd` and git state, but absolute paths bypass the wall silently. No tool error surfaces; the agent thinks it edited its worktree, the edit landed on main. Seen in the wild 2026-04-21 (/continue turn 2, SCAN-DERIVATIVE): agent couldn't find a file at the worktree-relative path (stale base — see mode 3), fell back to the absolute path, and its "edit" landed on main while its worktree stayed untouched.
+
+3. **Stale worktree base.** The harness may snapshot the worktree base at session start; if an integrator lands commits mid-session, subsequently-dispatched worktrees can still branch from the pre-integration base. Files the current plan assumes exist may not exist in the worktree. Mode 2 then triggers silently — agent falls back to absolute path looking for the missing file. Prevention: orchestrator captures `git rev-parse HEAD` *immediately before each dispatch* and passes it as `expectedBase: <sha>` in the prompt; agent's first command is `git rev-parse HEAD` and it returns `blocked: stale_worktree_base` on mismatch.
+
+Fix (prevention): every dispatch prompt for a parallel worktree agent MUST include:
+- Explicit "NEVER `cd` out of your worktree" line.
+- Explicit "NEVER use absolute paths in tool calls" line (no `/Users/`, `/tmp/`, `/private/`, `/Volumes/`, `/home/` prefixes).
+- An `expectedBase: <sha>` assertion with instruction to `git rev-parse HEAD` first and `blocked` on mismatch.
+- All three rules live in `dispatch-template.md` §2; individual dispatches reference the template and supply the sha.
+
+Fix (recovery): if main tree dirt shows up post-dispatch, integrator's preflight will catch it (`dirty_main` error). Don't try to silently absorb. Orchestrator decides per-file whether to preserve (salvage as scoped commits per `CLAUDE.md` §9) or discard and re-dispatch. If the agent's work was incomplete (killed mid-flight or returned `blocked`), re-dispatch is usually cleaner than curating a partial leak.
 
 ## Biome "nested root configuration" lint failure after cherry-pick
 
