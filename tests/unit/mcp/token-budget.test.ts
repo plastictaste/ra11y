@@ -53,7 +53,7 @@ describe("applyTokenBudget", () => {
 
   it("passes the response through unchanged when under budget", () => {
     const files = buildFiles(3, 500);
-    const response = { plan: { totalFindings: 3 }, files };
+    const response = { plan: { violations: 3, notes: 0 }, files };
     const result = applyTokenBudget({
       response,
       filesKey: "files",
@@ -70,7 +70,7 @@ describe("applyTokenBudget", () => {
 
   it("drops trailing files until the serialized response fits", () => {
     const files = buildFiles(10, 1000);
-    const response = { plan: { totalFindings: 10 }, files };
+    const response = { plan: { violations: 10, notes: 0 }, files };
     // Pick a budget comfortably under the full size (~10 KB of
     // payload) so at least a few files must drop.
     const result = applyTokenBudget({

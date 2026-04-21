@@ -673,13 +673,12 @@ export async function runScanAndFormat(
   // didn't see any eligible sources" so agents branch on a two-bucket
   // headline rather than walking every row. `filtered` is the
   // post-severity, post-criterion-skip list the consumer actually sees
-  // — matching the plan's `totalFindings` so a rule silenced by the
-  // session's minSeverity filter reads as "0 findings for this
-  // consumer" here too.
+  // — matching the plan's split `violations` / `notes` counters so a
+  // rule silenced by the session's minSeverity filter reads as "0
+  // findings for this consumer" here too.
   const ruleCoverageDerivative = buildRuleCoverageDerivative(perRuleCoverage, filtered);
   const formatted: ScanFormatted = {
     plan: buildScanPlan({
-      totalFindings: filtered.length,
       violations: violations.length,
       notes: notes.length,
       mechanicalEdits,

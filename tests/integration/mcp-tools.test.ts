@@ -81,11 +81,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
     const body = bodyOf(responses[1]) as {
-      plan: { totalFindings: number };
+      plan: { violations: number; notes: number };
       meta: { scanMode: string; scanned: { mode: string; root: string } };
     };
     expect(body.meta.scanned).toEqual({ mode: "project", root: BAD_ALT_DIR });
-    expect(body.plan.totalFindings).toBeGreaterThan(0);
+    expect(body.plan.violations + body.plan.notes).toBeGreaterThan(0);
     expect(body.meta.scanMode).toBe("full");
   });
 
@@ -345,8 +345,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: {
-        totalFindings: number;
         violations: number;
+        notes: number;
         limitations?: readonly string[];
       };
     };
@@ -844,7 +844,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
     const baselineBody = bodyOf(baseline[1]) as {
-      plan: { totalFindings: number };
+      plan: { violations: number; notes: number };
       files: Array<{ findings: Array<{ criteria: readonly string[] }> }>;
     };
     // Pick a criterion that every finding in the fixture satisfies —
@@ -865,11 +865,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       }),
     ]);
     const body = bodyOf(skipped[1]) as {
-      plan: { totalFindings: number };
+      plan: { violations: number; notes: number };
       meta: { skippedByCaller?: readonly string[] };
     };
     expect(body.meta.skippedByCaller).toEqual([everyFindingCrit]);
-    expect(body.plan.totalFindings).toBeLessThan(baselineBody.plan.totalFindings);
+    const skippedTotal = body.plan.violations + body.plan.notes;
+    const baselineTotal = baselineBody.plan.violations + baselineBody.plan.notes;
+    expect(skippedTotal).toBeLessThan(baselineTotal);
   });
 
   it("scan_project omits skippedByCaller when skipCriterion is absent", async () => {

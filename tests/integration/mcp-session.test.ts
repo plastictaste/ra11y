@@ -107,10 +107,10 @@ describe("MCP session: full agent workflow", () => {
     expect(scan.id).toBe(3);
     const scanResult = (scan.result as { content: Array<{ text: string }> }).content[0];
     const scanData = JSON.parse(scanResult.text) as {
-      plan: { totalFindings: number };
+      plan: { violations: number; notes: number };
       files: Array<{ findings: Array<{ ruleId: string; line: number }> }>;
     };
-    expect(scanData.plan.totalFindings).toBeGreaterThan(0);
+    expect(scanData.plan.violations + scanData.plan.notes).toBeGreaterThan(0);
 
     // 4. Explain rule response
     const explain = responses[3];

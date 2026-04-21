@@ -115,7 +115,7 @@ export const scanTool: McpTool = {
     const files = await parseFiles(paths, session, cwd);
     if (files.length === 0) {
       return textResult({
-        plan: { totalFindings: 0, summary: "No parseable files found." },
+        plan: { violations: 0, notes: 0, summary: "No parseable files found." },
         files: [],
         meta: { filesScanned: 0, scanned: scannedDir(paths) },
         // `scan` takes paths directly and has no root-resolution step,

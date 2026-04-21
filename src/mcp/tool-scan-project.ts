@@ -592,7 +592,7 @@ function buildEmptyFilesResult(args: {
 }) {
   const { root, actualMode, fallbackReason, rootSource, configSource } = args;
   return textResult({
-    plan: { totalFindings: 0, summary: "No parseable files found." },
+    plan: { violations: 0, notes: 0, summary: "No parseable files found." },
     files: [],
     meta: {
       filesScanned: 0,

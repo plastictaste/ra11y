@@ -207,7 +207,6 @@ export function assembleScanFamilyResponse(
 
   // (3) Plan — honest conditional-spread counters live inside buildScanPlan.
   const plan = buildScanPlan({
-    totalFindings: violations.length,
     violations: nonNote.length,
     notes: notes.length,
     mechanicalEdits,

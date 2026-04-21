@@ -242,11 +242,11 @@ describe("MCP tool: scan", () => {
 
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text) as {
-      plan: { totalFindings: number };
+      plan: { violations: number; notes: number };
       files: Array<{ path: string; findings: unknown[] }>;
       meta: { filesScanned: number };
     };
-    expect(data.plan.totalFindings).toBeGreaterThan(0);
+    expect(data.plan.violations + data.plan.notes).toBeGreaterThan(0);
     expect(data.files.length).toBeGreaterThan(0);
     expect(data.meta.filesScanned).toBe(1);
   });
@@ -308,7 +308,6 @@ describe("MCP tool: scan_project", () => {
 
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text) as {
-      plan: { totalFindings: number };
       meta: { filesScanned: number; scanned: { mode: string; root: string } };
       scanned?: unknown;
     };

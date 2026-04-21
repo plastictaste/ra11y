@@ -29,7 +29,6 @@ import { wrappersMetaBlock } from "./wrappers-meta.ts";
  * shape without re-stating the rules.
  */
 export function buildScanPlan(args: {
-  readonly totalFindings: number;
   readonly violations: number;
   readonly notes: number;
   readonly mechanicalEdits: number;
@@ -57,7 +56,6 @@ export function buildScanPlan(args: {
   readonly fixesByClass: FixesByClass;
 }): Record<string, unknown> {
   const {
-    totalFindings,
     violations,
     notes,
     mechanicalEdits,
@@ -74,7 +72,12 @@ export function buildScanPlan(args: {
   // present-when-meaningful shape honest.
   const emitFixesByClass = violations > 0;
   return {
-    totalFindings,
+    // `totalFindings` was removed — it summed severity-distinct lanes
+    // (violations + info-severity notes) under a single composite
+    // headline and inflated the work an agent budgeted against. Per
+    // CLAUDE.md §1 "Composite headline counts are dishonest," the
+    // honest shape keeps `violations` and `notes` as split siblings
+    // and trusts consumers to add them when they truly want a total.
     violations,
     notes,
     ...(mechanicalEdits > 0 ? { mechanicalEditsAvailable: mechanicalEdits } : {}),

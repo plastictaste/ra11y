@@ -160,7 +160,7 @@ describe("scan_project pagination (P1-OVF)", () => {
     }
   });
 
-  it("plan.totalFindings reports the full pre-truncation tally so page 1 doesn't mislead", async () => {
+  it("plan split counters report the full pre-truncation tally so page 1 doesn't mislead", async () => {
     const root = buildFixture(6);
     try {
       const responses = await mcpSession([
@@ -168,15 +168,18 @@ describe("scan_project pagination (P1-OVF)", () => {
         toolCall(2, "scan_project", { cwd: root, limit: 2 }),
       ]);
       const body = bodyOf(responses[1]) as {
-        plan: { totalFindings: number };
+        plan: { violations: number; notes: number };
       };
       // Each fixture file has one <img> without alt; the alt-text
       // rule fires under multiple criteria (WCAG 2.2, 2.1, etc.), so
       // the total finding count is >= file count. What matters for
       // P1-OVF is that the plan reports the PRE-TRUNCATION tally —
-      // limit:2 must not cut totalFindings down to the page-1 subset,
-      // otherwise the agent reads "found 2" when there's more work.
-      expect(body.plan.totalFindings).toBeGreaterThanOrEqual(6);
+      // limit:2 must not cut the split counters down to the page-1
+      // subset, otherwise the agent reads "found 2" when there's more
+      // work. `totalFindings` was removed (composite headline); the
+      // honest check is violations + notes.
+      const total = body.plan.violations + body.plan.notes;
+      expect(total).toBeGreaterThanOrEqual(6);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

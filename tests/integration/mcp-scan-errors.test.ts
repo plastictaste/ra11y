@@ -125,9 +125,9 @@ describe("scan_project hard-errors when cwd does not exist (P0-F)", () => {
     const result = resultOf(responses[1]);
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
-      plan?: { totalFindings?: number };
+      plan?: { violations?: number };
     };
-    expect(typeof body.plan?.totalFindings).toBe("number");
+    expect(typeof body.plan?.violations).toBe("number");
   });
 });
 
@@ -159,9 +159,9 @@ describe("scan hard-errors when every path is missing (P0-F)", () => {
     const result = resultOf(responses[1]);
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
-      plan?: { totalFindings?: number };
+      plan?: { violations?: number };
     };
-    expect(typeof body.plan?.totalFindings).toBe("number");
+    expect(typeof body.plan?.violations).toBe("number");
   });
 
   it("still emits the warnings envelope on a valid-but-empty directory", async () => {

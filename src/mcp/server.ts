@@ -319,12 +319,10 @@ function extractScanCounts(result: unknown): Record<string, unknown> {
   if (typeof text !== "string") return {};
   try {
     const parsed = JSON.parse(text) as {
-      plan?: { violations?: number; notes?: number; totalFindings?: number };
+      plan?: { violations?: number; notes?: number };
       meta?: { filesScanned?: number };
     };
     const out: Record<string, unknown> = {};
-    if (typeof parsed.plan?.totalFindings === "number")
-      out["totalFindings"] = parsed.plan.totalFindings;
     if (typeof parsed.plan?.violations === "number") out["violations"] = parsed.plan.violations;
     if (typeof parsed.plan?.notes === "number") out["notes"] = parsed.plan.notes;
     if (typeof parsed.meta?.filesScanned === "number")

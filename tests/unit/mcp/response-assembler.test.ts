@@ -95,7 +95,10 @@ function baseInput(overrides: Partial<ScanFamilyResponseInput> = {}): ScanFamily
 describe("assembleScanFamilyResponse", () => {
   it("emits an honest clean-scan shape — zero counters omitted, no warnings, no referenceGuide", () => {
     const r = assembleScanFamilyResponse(baseInput());
-    expect(r.plan["totalFindings"]).toBe(0);
+    // `totalFindings` was removed per CLAUDE.md §1 "Composite headline
+    // counts are dishonest" — `violations` and `notes` are the split
+    // siblings a caller reads instead.
+    expect(r.plan["totalFindings"]).toBeUndefined();
     expect(r.plan["violations"]).toBe(0);
     expect(r.plan["notes"]).toBe(0);
     // Conditional-spread zero-counts are absent, not zero.
@@ -205,7 +208,9 @@ describe("assembleScanFamilyResponse", () => {
     const r = assembleScanFamilyResponse(baseInput({ violations: [note, err] }));
     expect(r.plan["violations"]).toBe(1);
     expect(r.plan["notes"]).toBe(1);
-    expect(r.plan["totalFindings"]).toBe(2);
+    // `totalFindings` was removed per CLAUDE.md §1 — the split counters
+    // are the honest shape; consumers sum them if they want the total.
+    expect(r.plan["totalFindings"]).toBeUndefined();
   });
 
   it("omits reviewCandidates when includeReviewCandidates is not set", () => {
