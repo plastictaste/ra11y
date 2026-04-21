@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — bad (inline &lt;style&gt; transition + carousel auto-advance)</title>
+    <style>
+      /*
+        Canonical Bootstrap 5 carousel pattern: the slide transition lives
+        in an inline <style> block (not a separate .css file). The 2-second
+        transform transition is outside any prefers-reduced-motion guard —
+        users who prefer reduced motion cannot disable it. The coexistence of
+        the <style>-block transition with the data-bs-ride="carousel" auto-
+        advance attribute is the reported failure mode: the rule must fire on
+        the <style>-block path even when the carousel auto-advance finding is
+        also present in the same HTML document.
+      */
+      .carousel-item {
+        transition: transform 2s ease;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hero" class="carousel slide" data-bs-ride="carousel">
+      <div class="carousel-inner">
+        <div class="carousel-item active">
+          <img src="/hero-1.jpg" class="d-block w-100" alt="Product family one" />
+        </div>
+        <div class="carousel-item">
+          <img src="/hero-2.jpg" class="d-block w-100" alt="Product family two" />
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
