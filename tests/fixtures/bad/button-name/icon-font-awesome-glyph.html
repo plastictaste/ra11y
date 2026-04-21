@@ -1,0 +1,19 @@
+<!--
+  Q5-BUTTON-NAME-ICON-GLYPH-MAP — sanitized repro from 50projects50days.
+  Pattern: <button><i class="fa-*"></i></button> with no accessible name.
+  The rule fires (empty accessible name) and the fix suggestion now
+  derives the aria-label candidate from the Font Awesome glyph name
+  (fa-bars → "Menu", fa-times → "Close", fa-search → "Search").
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <body>
+    <nav>
+      <button><i class="fa-bars"></i></button>
+      <button><i class="fa fa-search"></i></button>
+      <button><i class="fas fa-times"></i></button>
+      <button><i class="fa fa-bell"></i></button>
+      <button><i class="fa fa-user"></i></button>
+    </nav>
+  </body>
+</html>

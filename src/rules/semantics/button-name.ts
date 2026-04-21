@@ -400,35 +400,109 @@ function buildViolation(
 type IconContext =
   | { kind: "svg-no-title" }
   | { kind: "img"; subject: string | null }
+  // `fa-icon` fires only when the only interesting child is an `<i>`
+  // whose class attribute carries a glyph token in FA_GLYPH_LABELS.
+  // Unknown glyphs (e.g. `fa-flux-capacitor`) fall through to `empty`
+  // so the existing generic fix stays primary — we only emit a
+  // glyph-derived aria-label when the map speaks for the glyph.
+  | { kind: "fa-icon"; label: string; glyph: string }
   | { kind: "empty" };
+
+/**
+ * Well-known Font Awesome glyph → UI action-verb mapping. Kept small
+ * and in-file (per Q5-BUTTON-NAME-ICON-GLYPH-MAP) so the fix text is
+ * concrete for the most-common icon-only `<button>` patterns without
+ * committing the tool to an exhaustive FA catalogue.
+ *
+ * Both FA4 (`fa-times`) and FA6 (`fa-xmark`) aliases for "close" are
+ * preserved — FA6 renamed several glyphs but projects still ship FA4
+ * class names for years, so both tokens map to the same label.
+ *
+ * The map is a suggestion surface, not a spec: the agent verifies the
+ * derived label against the button's actual action in one read. When
+ * the glyph isn't in this map, the rule falls back to the generic
+ * action-verb prompt — no silent suppression.
+ */
+const FA_GLYPH_LABELS: Readonly<Record<string, string>> = {
+  "fa-bars": "Menu",
+  "fa-times": "Close",
+  "fa-xmark": "Close",
+  "fa-arrow-left": "Previous",
+  "fa-arrow-right": "Next",
+  "fa-search": "Search",
+  "fa-magnifying-glass": "Search",
+  "fa-bell": "Notifications",
+  "fa-user": "Account",
+};
+
+/**
+ * Scans a space-separated class attribute for a `fa-*` glyph token
+ * present in FA_GLYPH_LABELS. Returns `{ glyph, label }` on the first
+ * hit, or null. FA-style tokens like `fas`, `far`, `fa-lg`, `fa-fw`
+ * are skipped implicitly — they are not keys in the label map.
+ */
+function matchFaGlyph(classValue: string): { glyph: string; label: string } | null {
+  for (const raw of classValue.split(/\s+/u)) {
+    const tok = raw.toLowerCase();
+    const label = FA_GLYPH_LABELS[tok];
+    if (label !== undefined) return { glyph: tok, label };
+  }
+  return null;
+}
 
 function describeIconChildHtml(element: HtmlElement): IconContext {
   // The caller has already confirmed no accessible name — so
   // htmlTextContent is empty, no SVG <title>/<text> descendant has
   // text, and no child <img alt="…"> exists. We just need to know
-  // whether the icon shell is an <svg>, <img>, or nothing.
+  // whether the icon shell is an <svg>, <img>, <i class="fa-…">, or
+  // nothing. Per-child classification is split into `classifyIconChildHtml`
+  // to keep this loop under Biome's cognitive-complexity ceiling.
   for (const child of element.children) {
     if (child.kind !== "HtmlElement") continue;
-    const tag = child.tagName.toLowerCase();
-    if (tag === "svg") return { kind: "svg-no-title" };
-    if (tag === "img") {
-      const src = getHtmlAttribute(child, "src");
-      return { kind: "img", subject: src ? subjectFromSrc(src) : null };
-    }
+    const ctx = classifyIconChildHtml(child);
+    if (ctx !== null) return ctx;
   }
   return { kind: "empty" };
+}
+
+function classifyIconChildHtml(child: HtmlElement): IconContext | null {
+  const tag = child.tagName.toLowerCase();
+  if (tag === "svg") return { kind: "svg-no-title" };
+  if (tag === "img") {
+    const src = getHtmlAttribute(child, "src");
+    return { kind: "img", subject: src ? subjectFromSrc(src) : null };
+  }
+  if (tag === "i" || tag === "span") {
+    const cls = getHtmlAttribute(child, "class");
+    if (cls === null) return null;
+    const hit = matchFaGlyph(cls);
+    if (hit !== null) return { kind: "fa-icon", label: hit.label, glyph: hit.glyph };
+  }
+  return null;
 }
 
 function describeIconChildJsx(element: JsxElement): IconContext {
   for (const child of element.children) {
     if (child.kind !== "JsxElement") continue;
-    if (child.tagName === "svg") return { kind: "svg-no-title" };
-    if (child.tagName === "img") {
-      const src = getJsxAttributeString(child, "src");
-      return { kind: "img", subject: src ? subjectFromSrc(src) : null };
-    }
+    const ctx = classifyIconChildJsx(child);
+    if (ctx !== null) return ctx;
   }
   return { kind: "empty" };
+}
+
+function classifyIconChildJsx(child: JsxElement): IconContext | null {
+  if (child.tagName === "svg") return { kind: "svg-no-title" };
+  if (child.tagName === "img") {
+    const src = getJsxAttributeString(child, "src");
+    return { kind: "img", subject: src ? subjectFromSrc(src) : null };
+  }
+  if (child.tagName === "i" || child.tagName === "span") {
+    const cls = getJsxAttributeString(child, "className") ?? getJsxAttributeString(child, "class");
+    if (cls === null) return null;
+    const hit = matchFaGlyph(cls);
+    if (hit !== null) return { kind: "fa-icon", label: hit.label, glyph: hit.glyph };
+  }
+  return null;
 }
 
 function describeImageInputHtml(input: HtmlElement): IconContext {
@@ -465,13 +539,19 @@ function subjectFromSrc(src: string): string | null {
 
 /**
  * Build a context-aware suggestion that references the actual icon
- * shell the button is wrapping. Three branches:
+ * shell the button is wrapping. Four branches:
  *
  *   - `svg-no-title`: inline the two fixes — add `<title>` inside the
  *     SVG (counts as accessible name via SVG 2) *or* `aria-label` on
  *     the button. Names a concrete example verb to anchor the edit.
  *   - `img` with derived subject: inline the filename-derived subject
  *     as the aria-label / alt candidate.
+ *   - `fa-icon`: the only interesting child is an `<i>` / `<span>`
+ *     whose class carries a known Font Awesome glyph token. The
+ *     glyph→label map speaks for the glyph, so emit
+ *     `aria-label="<label>"` as the primary fix and keep "add visible
+ *     text" as the secondary. Unknown glyphs do not reach this branch
+ *     — they fall through to `empty` so the generic fix stays primary.
  *   - `img` without subject / `empty`: fall back to naming concrete
  *     action-verb examples (Close, Submit, Save, Delete) rather than
  *     the generic "add a name" placeholder the audit flagged.
@@ -481,6 +561,14 @@ function buildIconAwareSuggestion(subject: string, icon: IconContext): string {
   const isImageInput = subject === 'input type="image"';
   if (icon.kind === "svg-no-title") {
     return `${host} wraps an <svg> with no <title>/<text> descendant. Two fixes: (1) add a <title> child inside the <svg> — e.g., <svg><title>Close</title>…</svg> — which counts toward the accessible name on the interactive ancestor (SVG 2 accessibility); or (2) add aria-label="Close" on the ${host}. Replace "Close" with the button's action verb (Submit, Save, Delete, etc.).`;
+  }
+  if (icon.kind === "fa-icon") {
+    // Primary: glyph-derived aria-label (the map speaks for the glyph).
+    // Secondary: visible text. The rule still fires — only the fix
+    // text changes. Verify the label against the button's actual
+    // action: the filename-hint caveat applies here too (the glyph is
+    // a strong hint, not a guarantee).
+    return `${host} wraps an <i class="${icon.glyph}"> icon-font glyph with no accessible name. Primary fix: aria-label="${icon.label}" on the ${host} — derived from the Font Awesome glyph name. Secondary: add visible text — e.g., <${subject}>${icon.label}</${subject}>. Also add aria-hidden="true" on the inner <i> so AT doesn't double-announce the icon alongside the label. Verify "${icon.label}" matches the button's actual action — the glyph is a hint, not a guarantee.`;
   }
   if (icon.kind === "img") {
     // `subjectHint` is derived from a user-authored `src` filename and

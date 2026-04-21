@@ -368,6 +368,111 @@ describe("rule semantics/button-name", () => {
     });
   });
 
+  describe("Font Awesome glyph-derived fix text (Q5-BUTTON-NAME-ICON-GLYPH-MAP)", () => {
+    it('button wrapping <i class="fa-bars"> suggests aria-label="Menu" as primary', () => {
+      const v = runRule(rule, `<button><i class="fa-bars"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // Primary fix names the glyph-derived label.
+      expect(suggestion).toContain('aria-label="Menu"');
+      expect(suggestion).toContain("fa-bars");
+      // Secondary fix path — visible text — is still mentioned.
+      expect(suggestion).toContain("visible text");
+      // Must echo the button host so the agent can apply the edit.
+      expect(suggestion).toContain("<button>");
+      // Must NOT fall back to the generic "<button>Close</button>" placeholder.
+      expect(suggestion).not.toContain("<button>Close</button>");
+    });
+
+    it('fa-times and fa-xmark both map to "Close" (FA4→FA6 rename preserved)', () => {
+      const times = runRule(rule, `<button><i class="fas fa-times"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(times[0]?.suggestion).toContain('aria-label="Close"');
+      const xmark = runRule(rule, `<button><i class="fa-solid fa-xmark"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(xmark[0]?.suggestion).toContain('aria-label="Close"');
+    });
+
+    it("fa-arrow-left → Previous, fa-arrow-right → Next", () => {
+      const prev = runRule(rule, `<button><i class="fa fa-arrow-left"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(prev[0]?.suggestion).toContain('aria-label="Previous"');
+      const next = runRule(rule, `<button><i class="fa fa-arrow-right"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(next[0]?.suggestion).toContain('aria-label="Next"');
+    });
+
+    it('fa-search and fa-magnifying-glass both map to "Search"', () => {
+      const s1 = runRule(rule, `<button><i class="fa fa-search"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(s1[0]?.suggestion).toContain('aria-label="Search"');
+      const s2 = runRule(rule, `<button><i class="fa-solid fa-magnifying-glass"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(s2[0]?.suggestion).toContain('aria-label="Search"');
+    });
+
+    it("fa-bell → Notifications, fa-user → Account", () => {
+      const bell = runRule(rule, `<button><i class="fa fa-bell"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(bell[0]?.suggestion).toContain('aria-label="Notifications"');
+      const user = runRule(rule, `<button><i class="fa fa-user"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(user[0]?.suggestion).toContain('aria-label="Account"');
+    });
+
+    it("unknown glyph (fa-flux-capacitor) keeps the generic empty-button fix primary", () => {
+      // Doctrine: no heuristic suppression. When the map doesn't speak
+      // for the glyph, we do not invent a label — the existing generic
+      // fix stays primary and the agent decides from surrounding code.
+      const v = runRule(rule, `<button><i class="fa fa-flux-capacitor"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // Falls back to the "empty" branch — must mention <button>Close</button>
+      // placeholder, not invent an aria-label.
+      expect(suggestion).toContain("<button>Close</button>");
+      expect(suggestion).not.toContain("fa-flux-capacitor");
+    });
+
+    it('role="button" div wrapping fa-bars glyph gets the same glyph-derived fix', () => {
+      const v = runRule(rule, `<div role="button" tabindex="0"><i class="fa fa-bars"></i></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain('aria-label="Menu"');
+    });
+
+    it('mentions aria-hidden="true" on the inner <i> so AT doesn\'t double-announce', () => {
+      // Pairs with aria/icon-font-hidden — once the <button> has a label,
+      // the icon should carry aria-hidden="true" to silence AT duplication.
+      const v = runRule(rule, `<button><i class="fa-bars"></i></button>`, {
+        filePath: "index.html",
+      });
+      expect(v[0]?.suggestion).toContain('aria-hidden="true"');
+    });
+
+    it('JSX: button wrapping <i className="fa-bars"> is not (yet) detected (existing heuristic)', () => {
+      // The JSX path's jsxHasContentChildren heuristic treats any
+      // JsxElement child as evidence the button has a name — so this
+      // doesn't fire today. Pinning this gap here documents that the
+      // icon-glyph fix-text change is HTML-only for now; widening JSX
+      // detection is a separate backlog change.
+      const v = runRule(rule, `const X = <button><i className="fa-bars"></i></button>;`);
+      expect(v).toHaveLength(0);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");
