@@ -94,6 +94,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 ## rules
 
 - [aria/conflicting-role](./rules/aria__conflicting-role.md)
+- [aria/disabled-link-surrogate](./rules/aria__disabled-link-surrogate.md)
 - [aria/expanded-on-disclosure](./rules/aria__expanded-on-disclosure.md)
 - [aria/hidden-focus](./rules/aria__hidden-focus.md)
 - [aria/icon-font-hidden](./rules/aria__icon-font-hidden.md)
