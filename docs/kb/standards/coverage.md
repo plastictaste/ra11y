@@ -54,7 +54,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, forms/fieldset-legend +12 | — | **rule** |
+| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, forms/fieldset-legend +13 | — | **rule** |
 | `wcag22:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag22:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag22:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -120,7 +120,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag22:3.2.6` | Consistent Help | A | manual | — | — | **attestation-only** |
 | `wcag22:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
-| `wcag22:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +3 | — | **rule** |
+| `wcag22:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +4 | — | **rule** |
 | `wcag22:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag22:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag22:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
@@ -128,7 +128,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +17 | — | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +18 | — | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
 
 ## WCAG 2.1
@@ -149,7 +149,7 @@ Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 | `wcag21:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, forms/fieldset-legend +12 | — | **rule** |
+| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, forms/fieldset-legend +13 | — | **rule** |
 | `wcag21:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag21:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag21:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -209,13 +209,13 @@ Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 | `wcag21:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
 | `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag21:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
-| `wcag21:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +3 | — | **rule** |
+| `wcag21:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +4 | — | **rule** |
 | `wcag21:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag21:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | parsing/duplicate-id | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +17 | — | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +18 | — | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -232,7 +232,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `section508:1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `section508:1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, forms/fieldset-legend +12 | — | **rule** |
+| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, forms/fieldset-legend +13 | — | **rule** |
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, forms/aria-invalid-missing | use-of-color | **rule** |
@@ -259,11 +259,11 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `section508:3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `section508:3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
-| `section508:3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-for-id-mismatch +3 | — | **rule** |
+| `section508:3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-for-id-mismatch +4 | — | **rule** |
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +17 | — | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +18 | — | **rule** |
 
 ## EN 301 549
 
@@ -279,7 +279,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `en301549:9.1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `en301549:9.1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, forms/fieldset-legend +12 | — | **rule** |
+| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, forms/fieldset-legend +13 | — | **rule** |
 | `en301549:9.1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `en301549:9.1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
@@ -317,9 +317,9 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `en301549:9.3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `en301549:9.3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
-| `en301549:9.3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-for-id-mismatch +3 | — | **rule** |
+| `en301549:9.3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-for-id-mismatch +4 | — | **rule** |
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +17 | — | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +18 | — | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
