@@ -30,6 +30,7 @@ import { rule as outlineVisible } from "./focus/outline-visible.ts";
 import { rule as tabindexPositive } from "./focus/tabindex-positive.ts";
 import { rule as ariaInvalidMissing } from "./forms/aria-invalid-missing.ts";
 import { rule as autocompleteMissing } from "./forms/autocomplete-missing.ts";
+import { rule as errorMessageNotAssociated } from "./forms/error-message-not-associated.ts";
 import { rule as fieldsetLegend } from "./forms/fieldset-legend.ts";
 import { rule as labelForIdMismatch } from "./forms/label-for-id-mismatch.ts";
 import { rule as labelsRequired } from "./forms/labels-required.ts";
@@ -83,6 +84,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   dragAlternative,
   duplicateId,
   emptyHeading,
+  errorMessageNotAssociated,
   expandedOnDisclosure,
   fieldsetLegend,
   handlerMissing,
@@ -146,6 +148,7 @@ export {
   dragAlternative,
   duplicateId,
   emptyHeading,
+  errorMessageNotAssociated,
   expandedOnDisclosure,
   fieldsetLegend,
   handlerMissing,

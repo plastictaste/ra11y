@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Error message associated: Bootstrap invalid-feedback wired via aria-describedby</title>
+  </head>
+  <body>
+    <!-- Canonical PASS: the <input> points aria-describedby at the
+         invalid-feedback's id. Screen-reader users tabbing into the
+         field hear the label, the invalid state, AND the error text
+         described to them. -->
+    <form>
+      <label for="email">Email</label>
+      <input
+        id="email"
+        type="email"
+        class="form-control is-invalid"
+        aria-invalid="true"
+        aria-describedby="email-error"
+        value="not-an-email"
+      />
+      <div class="invalid-feedback" id="email-error">
+        Please enter a valid email address.
+      </div>
+    </form>
+  </body>
+</html>

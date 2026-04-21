@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Error message not associated: invalid-feedback sibling missing aria-describedby</title>
+  </head>
+  <body>
+    <!-- Canonical Bootstrap 5 server-side validation markup. The
+         .invalid-feedback sibling carries an id, but the <input> never
+         wires it up with aria-describedby — screen-reader users tabbing
+         into the field hear "email, invalid" (if aria-invalid is set)
+         but never hear the "Please enter a valid email address." text. -->
+    <form>
+      <label for="email">Email</label>
+      <input
+        id="email"
+        type="email"
+        class="form-control is-invalid"
+        aria-invalid="true"
+        value="not-an-email"
+      />
+      <div class="invalid-feedback" id="email-error">
+        Please enter a valid email address.
+      </div>
+    </form>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Error message not associated: aria-describedby points at wrong id</title>
+  </head>
+  <body>
+    <!-- The author wired aria-describedby to the help-text id but
+         forgot to include the error id. aria-describedby accepts a
+         space-separated list, so the fix is additive — append
+         "email-error" to the existing value. -->
+    <form>
+      <label for="email">Email</label>
+      <input
+        id="email"
+        type="email"
+        class="form-control is-invalid"
+        aria-invalid="true"
+        aria-describedby="email-help"
+      />
+      <small id="email-help">We never share your email.</small>
+      <div class="invalid-feedback" id="email-error">
+        Please enter a valid email address.
+      </div>
+    </form>
+  </body>
+</html>

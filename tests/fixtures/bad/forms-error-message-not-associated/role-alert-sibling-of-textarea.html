@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Error message not associated: role=alert sibling of textarea</title>
+  </head>
+  <body>
+    <!-- Generic ARIA pattern without Bootstrap. The error paragraph
+         uses role="alert" so it'll announce once when first rendered,
+         but once the user tabs into the textarea the control has no
+         aria-describedby pointing at the error id, so subsequent focus
+         events never re-announce the error text with the field. -->
+    <form>
+      <label for="note">Note</label>
+      <textarea id="note" name="note" aria-invalid="true"></textarea>
+      <p role="alert" id="note-error">Note is required.</p>
+    </form>
+  </body>
+</html>
