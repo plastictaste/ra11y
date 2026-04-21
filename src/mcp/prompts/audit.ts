@@ -51,7 +51,7 @@ export const auditPrompt: Prompt = {
       "",
       "4. Walk the candidate locations yourself too — use `Read` on each `location.filePath` around the line to validate or override the sampled verdict. The sampled verdict is grounding, not a gate. Propose a source-level pragma (`{/* ra11y-disable wcag22:X.Y.Z */}` / `<!-- ra11y-disable wcag22:X.Y.Z -->` / `/* ra11y-disable wcag22:X.Y.Z */`) for anything you `dismiss`.",
       "",
-      `5. For each criterion the scan touched — every \`criterionId\` that appears in \`scan\` findings OR in \`checklist.actionableManualItems\` OR in \`checklist.prompts\` — classify its status as one of \`supports\`, \`partially-supports\`, \`does-not-support\`, \`not-applicable\` (cite evidence), or \`not-evaluated\` (name the runtime harness). Then call \`draft_vpat_narrative\` to draft the Remarks cell. Build the \`scanSummary\` from the audit response — per-criterion counts from \`coverage\` plus up to five representative findings in \`keyViolationExamples\`.`,
+      `5. For each criterion the scan touched — every \`criterionId\` that appears in \`scan\` findings OR in \`checklist.actionableManualItems\` OR in \`checklist.prompts\` — call \`explain_standard\` to retrieve the normative text and level, then classify its status as one of \`supports\`, \`partially-supports\`, \`does-not-support\`, \`not-applicable\` (cite evidence), or \`not-evaluated\` (name the runtime harness). Then call \`draft_vpat_narrative\` to draft the Remarks cell. Build the \`scanSummary\` from the audit response — per-criterion counts from \`coverage\` plus up to five representative findings in \`keyViolationExamples\`.`,
       "",
       "   ```json",
       "   {",
