@@ -16,6 +16,7 @@ import { describe, expect, it } from "bun:test";
 import {
   computeScanWarningDetails,
   computeScanWarnings,
+  tokenBudgetTruncatedDetailsField,
   warningsField,
   warningsFieldFromScanMeta,
   warningsFromScanMeta,
@@ -542,6 +543,27 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       ".scss",
       ".astro",
     ]);
+  });
+
+  it("emits a `response_token_budget_truncated` payload via the dedicated helper when the density cap trims files", () => {
+    // Density-cap settlement is decided at the budget-merge call site,
+    // not from scan meta — so the payload goes through its own
+    // spreadable fragment helper rather than `computeScanWarningDetails`.
+    // The fragment carries both the pre-density file count (what the
+    // cap saw entering) and the post-density count (what survived).
+    const out = tokenBudgetTruncatedDetailsField({
+      requestedLimit: 50,
+      effectiveLimit: 10,
+    });
+    expect(out.warningsDetails.response_token_budget_truncated).toEqual({
+      requestedLimit: 50,
+      effectiveLimit: 10,
+    });
+    // Shape: `warningsDetails` is the only top-level key — the
+    // fragment is designed to spread directly into a response body
+    // alongside `warnings: [...]` without fighting object-spread
+    // semantics.
+    expect(Object.keys(out)).toEqual(["warningsDetails"]);
   });
 
   it("`warnings[]` membership and `warningsDetails` keys never disagree — the code is both fired and mirrored (set-membership invariant)", () => {

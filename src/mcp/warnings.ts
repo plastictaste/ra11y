@@ -180,6 +180,31 @@ export interface ScanWarningDetails {
     readonly topCount: number;
     readonly totalSkipped: number;
   };
+  /**
+   * Density-cap settlement for the `response_token_budget_truncated`
+   * code. Without this payload, a caller seeing
+   * `warnings: ["response_token_budget_truncated"]` + `files.length: 10`
+   * cannot tell whether the density cap trimmed from 50→10 (aggressive)
+   * or 50→48 (marginal) — two distinct situations with identical
+   * visible shape.
+   *
+   * - `requestedLimit` is the file count the density cap saw entering
+   *   the guard (i.e., post-pagination but pre-density on `scan_project`;
+   *   full files-with-findings on `scan` and `scan_diff`, which have no
+   *   pagination primitive).
+   * - `effectiveLimit` is the file count the density cap settled on
+   *   after trimming trailing entries to fit under the char budget.
+   *
+   * Both fields are raw counts, not parameters — the `limit` kwarg on
+   * `scan_project` is clamped and resolved before the guard sees it,
+   * and `scan` / `scan_diff` have no `limit` axis at all. Emitted only
+   * when `response_token_budget_truncated` fires; omitted otherwise
+   * via conditional spread at the call site per "present-when-meaningful."
+   */
+  readonly response_token_budget_truncated?: {
+    readonly requestedLimit: number;
+    readonly effectiveLimit: number;
+  };
 }
 
 /**
@@ -401,6 +426,33 @@ export function warningsField(inputs: WarningInputs): {
   return {
     warnings: codes,
     ...(Object.keys(details).length > 0 ? { warningsDetails: details } : {}),
+  };
+}
+
+/**
+ * Builds the structured payload for the `response_token_budget_truncated`
+ * warning code. The density cap has already settled at the call site
+ * (post-trim file count vs. pre-trim file count), so this helper stays
+ * a pure shape-builder — no re-measurement, no decisions.
+ *
+ * Returned as a spreadable fragment (`{ warningsDetails: {...} }`) so
+ * callers can merge it into the response body without reaching into the
+ * `ScanWarningDetails` internal shape. Merge semantics: the caller is
+ * responsible for combining with any pre-existing `warningsDetails`
+ * from the scan-meta warnings channel (object spread wins last-write,
+ * which is safe because the two codes never share a key).
+ */
+export function tokenBudgetTruncatedDetailsField(args: {
+  readonly requestedLimit: number;
+  readonly effectiveLimit: number;
+}): { readonly warningsDetails: ScanWarningDetails } {
+  return {
+    warningsDetails: {
+      response_token_budget_truncated: {
+        requestedLimit: args.requestedLimit,
+        effectiveLimit: args.effectiveLimit,
+      },
+    },
   };
 }
 

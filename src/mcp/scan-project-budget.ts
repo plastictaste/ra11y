@@ -15,7 +15,7 @@ import { ruleCatalogField } from "./rule-catalog.ts";
 import type { McpSession } from "./session.ts";
 import { applyTokenBudget } from "./token-budget.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
-import type { ScanWarningCode } from "./warnings.ts";
+import { type ScanWarningCode, tokenBudgetTruncatedDetailsField } from "./warnings.ts";
 
 type FileEntry = ScanFormatted["files"][number];
 
@@ -75,6 +75,14 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     budgeted,
     baseWarnings,
     totalFilesWithFindings: formatted.files.length,
+    // `requestedLimit` is the file count the density cap saw entering
+    // the guard — `hoisted.files` is the post-pagination, pre-density
+    // page. `effectiveLimit` is what survived the trim. Together they
+    // name the settlement so a caller seeing `files.length: 10` +
+    // `truncated: true` can tell whether the density cap trimmed
+    // aggressively (50→10) or marginally (50→48) without a re-page.
+    requestedLimit: hoisted.files.length,
+    effectiveLimit: budgeted.files.length,
   });
 }
 
@@ -93,9 +101,19 @@ function mergeBudgetedFields(args: {
   readonly budgeted: ReturnType<typeof applyTokenBudget<FileEntry>>;
   readonly baseWarnings: readonly ScanWarningCode[];
   readonly totalFilesWithFindings: number;
+  readonly requestedLimit: number;
+  readonly effectiveLimit: number;
 }): Record<string, unknown> {
-  const { tentative, budgeted, baseWarnings, totalFilesWithFindings } = args;
+  const {
+    tentative,
+    budgeted,
+    baseWarnings,
+    totalFilesWithFindings,
+    requestedLimit,
+    effectiveLimit,
+  } = args;
   const warnings: ScanWarningCode[] = warningsWithDensityCode(baseWarnings);
+  const detailsField = tokenBudgetTruncatedDetailsField({ requestedLimit, effectiveLimit });
   return {
     ...tentative,
     files: budgeted.files,
@@ -108,6 +126,13 @@ function mergeBudgetedFields(args: {
     ...(budgeted.nextOffset === undefined ? {} : { nextOffset: budgeted.nextOffset }),
     totalFilesWithFindings,
     warnings,
+    // Echo the requested vs. effective file counts the density cap
+    // settled on, so a caller seeing
+    // `warnings: ["response_token_budget_truncated"]` can tell
+    // aggressive trims (50→10) from marginal ones (50→48) without a
+    // re-page. Structured payload lives under the ADR 0023 sibling
+    // channel; the bare-string warnings array stays unchanged.
+    ...detailsField,
   };
 }
 

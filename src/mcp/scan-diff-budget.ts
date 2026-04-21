@@ -12,6 +12,7 @@
  */
 
 import { applyTokenBudget } from "./token-budget.ts";
+import { tokenBudgetTruncatedDetailsField } from "./warnings.ts";
 
 /**
  * Applies the ADR 0021 amendment token-density secondary budget to a
@@ -42,11 +43,22 @@ export function applyScanDiffTokenBudget<TFile>(
   const warnings = existingList.includes("response_token_budget_truncated")
     ? existingList
     : [...existingList, "response_token_budget_truncated"];
+  // Echo requested vs. effective file counts — scan_diff has no
+  // pagination primitive, so `requestedLimit` is the full
+  // files-with-findings set the density cap saw entering the guard,
+  // and `effectiveLimit` is what survived the trim. Agents branching
+  // on `response_token_budget_truncated` can tell aggressive trims
+  // from marginal ones without a re-page.
+  const detailsField = tokenBudgetTruncatedDetailsField({
+    requestedLimit: files.length,
+    effectiveLimit: budgeted.files.length,
+  });
   return {
     ...tentative,
     [filesKey]: budgeted.files,
     truncated: true as const,
     totalFilesWithFindings: files.length,
     warnings,
+    ...detailsField,
   };
 }

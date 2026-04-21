@@ -20,6 +20,7 @@ import { pathExists } from "./path-exists.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { dedupeReviewCandidatesForSingleFile } from "./review-candidate-dedup.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
+import { mergeScanTokenBudget } from "./scan-budget.ts";
 import { scannedDir, scannedFile } from "./scanned-envelope.ts";
 import { applyTokenBudget } from "./token-budget.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
@@ -56,12 +57,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import {
-  type ScanWarningCode,
-  warningsField,
-  warningsFieldFromScanMeta,
-  warningsFromScanMeta,
-} from "./warnings.ts";
+import { warningsField, warningsFieldFromScanMeta, warningsFromScanMeta } from "./warnings.ts";
 import { buildWrapperSourcesFromConfig } from "./wrappers-meta.ts";
 
 export type { McpTool, McpToolDef, McpToolResult } from "./tools-helpers.ts";
@@ -224,14 +220,16 @@ const scanTool: McpTool = {
       offset: 0,
     });
     if (budgeted.droppedCount === 0) return textResult(tentative);
-    const warnings: ScanWarningCode[] = [...baseWarnings, "response_token_budget_truncated"];
-    return textResult({
-      ...tentative,
-      files: budgeted.files,
-      truncated: true as const,
-      totalFilesWithFindings: hoisted.files.length,
-      warnings,
-    });
+    return textResult(
+      mergeScanTokenBudget({
+        tentative,
+        budgeted,
+        baseWarnings,
+        totalFilesWithFindings: hoisted.files.length,
+        requestedLimit: hoisted.files.length,
+        effectiveLimit: budgeted.files.length,
+      }),
+    );
   },
 };
 

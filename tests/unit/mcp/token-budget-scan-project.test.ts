@@ -111,9 +111,16 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
       ]);
       const body = bodyOf(responses[1]) as {
         warnings?: readonly string[];
+        warningsDetails?: Record<string, unknown>;
       };
       const warnings = body.warnings ?? [];
       expect(warnings).not.toContain("response_token_budget_truncated");
+      // Conditional-spread per "present-when-meaningful": when the
+      // density cap did not trim, the structured payload is omitted
+      // entirely. An empty sentinel (`warningsDetails: {}` or a
+      // `response_token_budget_truncated` key with zeros) would be
+      // dishonest under the AI-first consumer rules.
+      expect(body.warningsDetails?.["response_token_budget_truncated"]).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -138,6 +145,12 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
         nextOffset?: number;
         totalFilesWithFindings?: number;
         warnings?: readonly string[];
+        warningsDetails?: {
+          response_token_budget_truncated?: {
+            requestedLimit: number;
+            effectiveLimit: number;
+          };
+        };
       };
       const warnings = body.warnings ?? [];
       expect(warnings).toContain("response_token_budget_truncated");
@@ -150,6 +163,18 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
       // nextOffset resumes at offset + keptFileCount so the next
       // page picks up the dropped tail.
       expect(body.nextOffset).toBe(body.files.length);
+      // Envelope echo of requested vs. effective file counts: a
+      // caller seeing `warnings: ["response_token_budget_truncated"]`
+      // + `files.length: N` cannot tell aggressive trims from
+      // marginal ones without this payload. `requestedLimit` is the
+      // file count the density cap saw entering (50 here — the
+      // file-count cap and the fixture size match), `effectiveLimit`
+      // is what survived the char-budget trim.
+      const details = body.warningsDetails?.response_token_budget_truncated;
+      expect(details).toBeDefined();
+      expect(details?.requestedLimit).toBe(50);
+      expect(details?.effectiveLimit).toBe(body.files.length);
+      expect(details?.effectiveLimit).toBeLessThan(details?.requestedLimit ?? 0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
