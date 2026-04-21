@@ -54,7 +54,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +14 | — | **rule** |
+| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +15 | — | **rule** |
 | `wcag22:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag22:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag22:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -86,7 +86,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag22:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.3.3` | Animation from Interactions | AAA | partial | — | — | **gap** |
-| `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link | — | **rule** |
+| `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `wcag22:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
@@ -149,7 +149,7 @@ Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 | `wcag21:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +14 | — | **rule** |
+| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +15 | — | **rule** |
 | `wcag21:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag21:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag21:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -181,7 +181,7 @@ Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 | `wcag21:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag21:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.3.3` | Animation from Interactions | AAA | partial | — | — | **gap** |
-| `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link | — | **rule** |
+| `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `wcag21:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
@@ -232,7 +232,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `section508:1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `section508:1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +14 | — | **rule** |
+| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +15 | — | **rule** |
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | use-of-color | **rule** |
@@ -245,7 +245,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
 | `section508:2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | — | **rule** |
 | `section508:2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
-| `section508:2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link | — | **rule** |
+| `section508:2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `section508:2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
@@ -279,7 +279,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `en301549:9.1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `en301549:9.1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +14 | — | **rule** |
+| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +15 | — | **rule** |
 | `en301549:9.1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `en301549:9.1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
@@ -299,7 +299,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
 | `en301549:9.2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | — | **rule** |
 | `en301549:9.2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
-| `en301549:9.2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link | — | **rule** |
+| `en301549:9.2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `en301549:9.2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | — | **rule** |
