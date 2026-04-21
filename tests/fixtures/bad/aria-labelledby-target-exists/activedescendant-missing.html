@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Activedescendant dangling</title>
+</head>
+<body>
+  <!--
+    aria-activedescendant="opt-3" on the listbox, but no element in the
+    document has id="opt-3" — the composite-widget focus delegation is
+    silently dead. Screen readers cannot announce the active option.
+  -->
+  <ul role="listbox" tabindex="0" aria-activedescendant="opt-3">
+    <li role="option" id="opt-1">One</li>
+    <li role="option" id="opt-2">Two</li>
+  </ul>
+</body>
+</html>

@@ -24,21 +24,34 @@
  *
  * Attributes covered (per WAI-ARIA 1.2 §5.4 IDREF value types):
  *
- *   - aria-labelledby   (IDREF list — the element's accessible name)
- *   - aria-describedby  (IDREF list — the element's accessible description)
- *   - aria-controls     (IDREF list — elements whose contents/presence
- *                         this control affects, e.g. a disclosure trigger
- *                         pointing at the panel it toggles)
- *   - aria-owns         (IDREF list — flattens descendants that aren't
- *                         DOM children into the accessibility tree)
- *   - aria-flowto       (IDREF list — recommended reading order override)
- *   - aria-errormessage (IDREF — points at the element holding the
- *                         error text for this input)
+ *   - aria-labelledby       (IDREF list — the element's accessible name)
+ *   - aria-describedby      (IDREF list — the element's accessible
+ *                             description)
+ *   - aria-controls         (IDREF list — elements whose contents/presence
+ *                             this control affects, e.g. a disclosure
+ *                             trigger pointing at the panel it toggles)
+ *   - aria-owns             (IDREF list — flattens descendants that aren't
+ *                             DOM children into the accessibility tree)
+ *   - aria-flowto           (IDREF list — recommended reading order
+ *                             override)
+ *   - aria-errormessage     (IDREF — points at the element holding the
+ *                             error text for this input)
+ *   - aria-activedescendant (IDREF — for composite-widget containers
+ *                             (listbox/tree/grid/…), names the currently
+ *                             active descendant without moving DOM focus)
+ *   - aria-details          (IDREF — points at the element providing
+ *                             detailed, extended information about the
+ *                             current element)
  *
  * The IDREF-list attributes (aria-labelledby, aria-describedby,
  * aria-controls, aria-owns, aria-flowto) accept a space-separated list
  * of ids. Each token must resolve independently; one broken token in
  * an otherwise valid list is still a broken link.
+ *
+ * The IDREF-single attributes (aria-errormessage, aria-activedescendant,
+ * aria-details) take exactly one id. A value with whitespace-separated
+ * tokens is a shape error — only the first token is consulted at
+ * runtime.
  *
  * Scope notes:
  *
@@ -84,7 +97,7 @@ import {
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
 
-/** The six ARIA IDREF / IDREF-list attributes in WAI-ARIA 1.2. */
+/** The eight ARIA IDREF / IDREF-list attributes in WAI-ARIA 1.2. */
 const IDREF_ATTRS = [
   "aria-labelledby",
   "aria-describedby",
@@ -92,10 +105,16 @@ const IDREF_ATTRS = [
   "aria-owns",
   "aria-flowto",
   "aria-errormessage",
+  "aria-activedescendant",
+  "aria-details",
 ] as const;
 type IdrefAttr = (typeof IDREF_ATTRS)[number];
 
-/** The five IDREF-list attributes. `aria-errormessage` is IDREF (single). */
+/**
+ * The five IDREF-list attributes. `aria-errormessage`,
+ * `aria-activedescendant`, and `aria-details` are IDREF (single value)
+ * per WAI-ARIA 1.2.
+ */
 const IDREF_LIST_ATTRS: ReadonlySet<string> = new Set([
   "aria-labelledby",
   "aria-describedby",
@@ -115,9 +134,9 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "ARIA IDREF attributes (aria-labelledby, aria-describedby, aria-controls, aria-owns, aria-flowto, aria-errormessage) must reference existing element ids in the same document.",
+      "ARIA IDREF attributes (aria-labelledby, aria-describedby, aria-controls, aria-owns, aria-flowto, aria-errormessage, aria-activedescendant, aria-details) must reference existing element ids in the same document.",
     rationale:
-      "WCAG 4.1.2 requires that the name, role, and states of UI components be programmatically determinable. aria-labelledby and aria-describedby ARE the programmatic name and description for the elements that set them; aria-controls, aria-owns, aria-flowto and aria-errormessage wire up relationships that assistive tech walks to expose state. When the referenced id does not exist in the document, the lookup fails silently — the screen reader falls back to the next naming source as if the attribute were never written. Authors who don't run a screen reader during development have no visible signal that the wire-up is dead, which is why this class of bug ships to production in widely-used component libraries. A broken token in an IDREF list is the same silent failure at finer granularity.",
+      "WCAG 4.1.2 requires that the name, role, and states of UI components be programmatically determinable. aria-labelledby and aria-describedby ARE the programmatic name and description for the elements that set them; aria-controls, aria-owns, aria-flowto, aria-errormessage, aria-activedescendant, and aria-details wire up relationships that assistive tech walks to expose state (active item in a composite widget, extended details, error text, owned children, reading order, controlled panels). When the referenced id does not exist in the document, the lookup fails silently — the screen reader falls back to the next naming source as if the attribute were never written. Authors who don't run a screen reader during development have no visible signal that the wire-up is dead, which is why this class of bug ships to production in widely-used component libraries. A broken token in an IDREF list is the same silent failure at finer granularity.",
     goodExample:
       '<h2 id="billing-heading">Billing</h2>\n<section aria-labelledby="billing-heading">…</section>',
     badExample:
@@ -131,6 +150,11 @@ export const rule = defineRule({
       "https://www.w3.org/TR/wai-aria-1.2/#aria-labelledby",
       "https://www.w3.org/TR/wai-aria-1.2/#aria-describedby",
       "https://www.w3.org/TR/wai-aria-1.2/#aria-controls",
+      "https://www.w3.org/TR/wai-aria-1.2/#aria-owns",
+      "https://www.w3.org/TR/wai-aria-1.2/#aria-flowto",
+      "https://www.w3.org/TR/wai-aria-1.2/#aria-errormessage",
+      "https://www.w3.org/TR/wai-aria-1.2/#aria-activedescendant",
+      "https://www.w3.org/TR/wai-aria-1.2/#aria-details",
     ],
   },
   check(ctx) {
@@ -329,7 +353,7 @@ function buildMultipleTokensViolation(
     severity: "error",
     location: { filePath: "", line: c.loc.line, column: c.loc.column },
     message: `<${c.tagName} ${c.attr}="${c.raw}"> — ${c.attr} is IDREF (single value) per WAI-ARIA 1.2, but the value contains ${tokens.length} whitespace-separated tokens. Only "${first}" will be consulted at runtime; ${quoteList(rest)} ${rest.length === 1 ? "is" : "are"} ignored.`,
-    suggestion: `Pick the one id you mean — likely the element holding the error text for this control — and drop the rest (e.g. ${c.attr}="${first}"). If you meant to name multiple related elements, use aria-describedby instead (which does accept an IDREF list).`,
+    suggestion: `Pick the one id you mean — the ${nameOrRelation(c.attr)} target — and drop the rest (e.g. ${c.attr}="${first}"). If you meant to name multiple related elements, use aria-describedby instead (which does accept an IDREF list).`,
   };
 }
 
@@ -375,6 +399,10 @@ function nameOrRelation(attr: IdrefAttr): string {
       return "description";
     case "aria-errormessage":
       return "error message";
+    case "aria-details":
+      return "details reference";
+    case "aria-activedescendant":
+      return "active descendant";
     case "aria-controls":
     case "aria-owns":
     case "aria-flowto":

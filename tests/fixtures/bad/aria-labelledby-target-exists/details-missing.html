@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Details dangling</title>
+</head>
+<body>
+  <!--
+    aria-details="footnote-1" on the paragraph, but no element in the
+    document has id="footnote-1". The extended-information wire-up is
+    silently dead; assistive tech has nothing to surface when the user
+    requests the extended description.
+  -->
+  <p aria-details="footnote-1">
+    Q4 revenue rose 12% year over year.
+  </p>
+</body>
+</html>

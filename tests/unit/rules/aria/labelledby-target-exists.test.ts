@@ -48,6 +48,24 @@ describe("rule aria/labelledby-target-exists", () => {
       );
       expect(v).toHaveLength(0);
     });
+
+    it("aria-activedescendant resolves to an existing id", () => {
+      const v = runRule(
+        rule,
+        `<ul role="listbox" tabindex="0" aria-activedescendant="opt-1"><li role="option" id="opt-1">One</li><li role="option" id="opt-2">Two</li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("aria-details resolves to an existing id", () => {
+      const v = runRule(
+        rule,
+        `<p aria-details="chart-note">Sales trend.</p><div id="chart-note">Data from FY24.</div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
   });
 
   describe("HTML: fires when", () => {
@@ -106,6 +124,47 @@ describe("rule aria/labelledby-target-exists", () => {
       );
       expect(v).toHaveLength(1);
       expect(v[0]?.message).toContain("email-error");
+    });
+
+    it("aria-activedescendant references a missing id", () => {
+      const v = runRule(
+        rule,
+        `<ul role="listbox" tabindex="0" aria-activedescendant="opt-3"><li role="option" id="opt-1">One</li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("opt-3");
+    });
+
+    it("aria-details references a missing id", () => {
+      const v = runRule(rule, `<p aria-details="footnote-1">See reference.</p>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("footnote-1");
+    });
+
+    it("aria-activedescendant with multiple whitespace-separated tokens is a shape error", () => {
+      // IDREF (single) per WAI-ARIA 1.2 — only the first token is consulted.
+      const v = runRule(
+        rule,
+        `<ul role="listbox" id="lb" aria-activedescendant="a b"><li role="option" id="a">A</li><li role="option" id="b">B</li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("IDREF");
+    });
+
+    it("aria-details with multiple whitespace-separated tokens is a shape error", () => {
+      const v = runRule(
+        rule,
+        `<p id="p" aria-details="fn1 fn2">Notes.</p><div id="fn1">1</div><div id="fn2">2</div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("IDREF");
     });
 
     it("id lookup is case-sensitive (token casing mismatches target)", () => {
