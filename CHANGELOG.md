@@ -4,6 +4,10 @@ All notable changes to ra11y are documented in this file. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP `bootstrap` `ciSnippet` now gates on actual baseline-existence** (`src/mcp/tool-bootstrap.ts` `buildCiSnippet`). Previously the snippet emitted `npx @ra11y/core --baseline check` verbatim on every call — including dry-run responses where `baseline: null` was returned and `.ra11y-baseline.json` did not exist on disk. A caller pasting the snippet into CI before committing the baseline file hit a first-run failure because `baseline check` has nothing to check against. The snippet now branches on disk state plus the `writeBaseline` param: (1) baseline already on disk — emit the plain `--baseline check` incantation; (2) baseline absent but this call wrote it — add a comment reminding the caller to commit `.ra11y-baseline.json` before pushing; (3) pure dry-run (no baseline, `writeBaseline: false`) — prepend a `npx @ra11y/core --baseline create` step and a `# create ... first` comment so the copy-paste-into-CI path is honest about first-run ordering. Same response-level shape (single `ciSnippet: string`); content differs by branch.
+
 ### Added
 
 - **MCP `bootstrap` response** now forwards `plan.limitations` prose from the composed `scan_project` leg onto `scan.limitations` in the bootstrap subset — the static-analysis caveat ("can prove failure but not conformance; runtime-only checks — live-region announcements, focus traps, ARIA state transitions, post-render contrast — are out of scope") that upstream `scan_project` has always emitted. Previously the subset extractor stripped this prose, so the bootstrap composer's `ciSnippet` advised running `baseline check` in CI with zero caveat about what the scan can't verify. Present-when-meaningful: omitted when upstream emits no limitations (not currently reachable on a real scan, but the shape stays conditional so the subset remains honest if upstream ever drops the field).

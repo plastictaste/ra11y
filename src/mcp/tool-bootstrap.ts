@@ -133,7 +133,17 @@ export const bootstrapTool: McpTool = {
       ...failedLegs.map((leg) => `bootstrap_${leg}_failed`),
     ];
 
-    const ciSnippet = buildCiSnippet();
+    // Snippet content tracks actual baseline-existence on disk: pasting
+    // a `baseline check` incantation into CI before `.ra11y-baseline.json`
+    // lands fails on the first run. Probe the scan root for the file so
+    // the three branches (exists / just-written-here / dry-run) emit
+    // honest instructions.
+    const baselineExistsOnDisk = existsSync(`${root}/${BASELINE_FILENAME}`);
+    const ciSnippet = buildCiSnippet({
+      baselineExists: baselineExistsOnDisk,
+      writeBaseline,
+      baselineWrittenByThisCall: baseline?.written === true,
+    });
     const nextStep = buildNextStep({
       scan: scanSubset,
       baseline,
@@ -416,9 +426,46 @@ function readStringFromRecord(value: unknown, key: string): string | null {
   return typeof raw === "string" ? raw : null;
 }
 
-/** GitHub Actions snippet wiring `baseline check` into CI. Dry; pasteable. */
-function buildCiSnippet(): string {
-  return [
+interface CiSnippetArgs {
+  /** True when `.ra11y-baseline.json` already exists at the scan root. */
+  readonly baselineExists: boolean;
+  /** Forwarded from the caller's `writeBaseline` param. */
+  readonly writeBaseline: boolean;
+  /**
+   * True only when this very `bootstrap` call wrote the baseline (i.e.
+   * `writeBaseline: true` AND the baseline leg succeeded). Distinguishes
+   * "baseline exists because we just wrote it" from "baseline exists
+   * because a prior run wrote it" — the commit-and-check prelude is
+   * relevant in the first case, not the second.
+   */
+  readonly baselineWrittenByThisCall: boolean;
+}
+
+/**
+ * GitHub Actions snippet wiring `baseline check` into CI. Dry; pasteable.
+ *
+ * Gates the snippet content on actual baseline-existence rather than
+ * emitting the happy-path incantation unconditionally — a caller
+ * pasting `npx @ra11y/core --baseline check` into CI before
+ * `.ra11y-baseline.json` is committed fails on the first run, and the
+ * silent-miss framing in `docs/kb/architecture/ai-first-consumer.md`
+ * ("Zero-output success is ambiguous failure") applies equally to a
+ * lying snippet as to a lying response field. Three branches:
+ *
+ *   1. baseline on disk already — emit the plain `--baseline check`
+ *      snippet; no prelude needed.
+ *   2. baseline absent but this call wrote it (`writeBaseline: true`,
+ *      baseline leg succeeded) — emit the plain `--baseline check`
+ *      snippet plus a comment reminding the caller to commit
+ *      `.ra11y-baseline.json` before CI runs.
+ *   3. pure dry-run (no baseline on disk, `writeBaseline: false`) —
+ *      prepend a `# create baseline first:` comment and a
+ *      `npx @ra11y/core --baseline create` step so the copy-paste path
+ *      is honest about first-run ordering.
+ */
+function buildCiSnippet(args: CiSnippetArgs): string {
+  const { baselineExists, writeBaseline, baselineWrittenByThisCall } = args;
+  const header = [
     "# .github/workflows/a11y.yml",
     "name: a11y",
     "on: [push, pull_request]",
@@ -430,6 +477,30 @@ function buildCiSnippet(): string {
     "      - uses: actions/setup-node@v4",
     "        with:",
     "          node-version: lts/*",
+  ];
+  if (baselineExists) {
+    const reminder: string[] = baselineWrittenByThisCall
+      ? [`      # commit ${BASELINE_FILENAME} before pushing so CI has a baseline to check against`]
+      : [];
+    return [...header, ...reminder, "      - run: npx @ra11y/core --baseline check", ""].join("\n");
+  }
+  if (writeBaseline) {
+    // writeBaseline: true but baseline absent means the baseline leg
+    // failed (degraded path). Mirror the dry-run snippet so CI can still
+    // bootstrap itself on first run.
+    return [
+      ...header,
+      `      # create ${BASELINE_FILENAME} first — commit it, then CI can run \`--baseline check\`:`,
+      "      - run: npx @ra11y/core --baseline create",
+      "      - run: npx @ra11y/core --baseline check",
+      "",
+    ].join("\n");
+  }
+  // Pure dry-run: no baseline on disk, no write requested this call.
+  return [
+    ...header,
+    `      # create ${BASELINE_FILENAME} first — commit it, then CI can run \`--baseline check\`:`,
+    "      - run: npx @ra11y/core --baseline create",
     "      - run: npx @ra11y/core --baseline check",
     "",
   ].join("\n");

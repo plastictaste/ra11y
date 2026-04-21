@@ -225,6 +225,93 @@ describe("bootstrap: writeBaseline opt-in", () => {
   });
 });
 
+describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
+  // V1-ENV-CISNIPPET-DRY-RUN-DISHONEST. `buildCiSnippet` used to emit
+  // `npx @ra11y/core --baseline check` verbatim regardless of whether
+  // `.ra11y-baseline.json` existed on disk — a caller pasting the
+  // dry-run response's snippet into CI before committing the baseline
+  // file hit a first-run failure. Each branch below pins the snippet
+  // content that matches the actual state so a copy-paste-into-CI path
+  // is always correct.
+
+  // Dry-run, no baseline on disk: snippet must prepend a `baseline
+  // create` step (with the `# create ... first` comment) so first-run
+  // CI bootstraps itself before `baseline check` executes.
+  it("emits a create-first prelude when dry-run and no baseline on disk", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "a.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      expect(response.baseline).toBeNull();
+      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
+      // Create step precedes check step — ordering is the contract.
+      // Match the yaml `- run:` lines, not just the substring, so the
+      // comment line (which names both commands) doesn't confuse the
+      // ordering assertion.
+      const snippet = response.ciSnippet;
+      const createRunIdx = snippet.indexOf("- run: npx @ra11y/core --baseline create");
+      const checkRunIdx = snippet.indexOf("- run: npx @ra11y/core --baseline check");
+      expect(createRunIdx).toBeGreaterThan(-1);
+      expect(checkRunIdx).toBeGreaterThan(-1);
+      expect(createRunIdx).toBeLessThan(checkRunIdx);
+      expect(snippet).toContain(".ra11y-baseline.json");
+      // Comment frames the reason a human CI-editor needs to see.
+      expect(snippet).toContain("create");
+    });
+  });
+
+  // Baseline absent going in, this call wrote it: snippet runs only
+  // `baseline check` but reminds the caller to commit the new file
+  // before pushing (otherwise CI still hits "baseline missing").
+  it("emits a commit-first reminder when this call just wrote the baseline", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "a.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir, writeBaseline: true });
+      expect(response.baseline?.written).toBe(true);
+      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(true);
+      const snippet = response.ciSnippet;
+      // `baseline check` is the only baseline step — no create prelude
+      // needed because this call just wrote the file.
+      expect(snippet).toContain("--baseline check");
+      expect(snippet).not.toContain("--baseline create");
+      // Commit reminder names the file so the caller knows what to
+      // stage before pushing.
+      expect(snippet).toContain(".ra11y-baseline.json");
+      expect(snippet.toLowerCase()).toContain("commit");
+    });
+  });
+
+  // Baseline already on disk from a prior run: snippet is the plain
+  // `baseline check` incantation — no prelude, no reminder. This is the
+  // steady-state CI shape.
+  it("emits a plain baseline-check snippet when baseline already exists on disk", async () => {
+    await withScratch(async (dir) => {
+      // Pre-seed the baseline file so the tool sees it on entry.
+      await writeFile(
+        join(dir, ".ra11y-baseline.json"),
+        JSON.stringify({ version: 1, violations: [] }),
+      );
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(true);
+      const snippet = response.ciSnippet;
+      expect(snippet).toContain("--baseline check");
+      expect(snippet).not.toContain("--baseline create");
+      // No commit-first comment either — the file is already on disk
+      // and (by virtue of being present) presumed committed.
+      expect(snippet.toLowerCase()).not.toContain("commit");
+    });
+  });
+});
+
 describe("bootstrap: partial failure (sub-handler rejects)", () => {
   // Monkey-patch one sub-handler to throw so we can assert the
   // allSettled contract: the OTHER legs still compose, and the
