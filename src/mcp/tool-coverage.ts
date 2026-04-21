@@ -5,11 +5,13 @@
  * unchanged from the original inline definition.
  */
 
+import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
 import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
 import { BUILTIN_RULES } from "../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
+import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import type { McpSession } from "./session.ts";
@@ -19,7 +21,7 @@ import {
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
-  parseFiles,
+  parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
   strArrayParam,
@@ -76,12 +78,17 @@ export const coverageTool: McpTool = {
       });
     }
     const level = resolveLevel(strParam(params, "level"), session);
-    const files = await parseFiles(paths, session, cwd);
+    const { files, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
+      paths,
+      session,
+      cwd,
+    );
     const attestations = await loadDurableAttestations(cwd);
 
+    const activeRules = applyRuleSettings(BUILTIN_RULES, session.config.rules);
     const { result, report } = runScan({
       standards: BUILTIN_STANDARDS,
-      rules: applyRuleSettings(BUILTIN_RULES, session.config.rules),
+      rules: activeRules,
       enabled: standards,
       files,
       finders: BUILTIN_CANDIDATE_FINDERS,
@@ -143,19 +150,49 @@ export const coverageTool: McpTool = {
       };
     });
 
+    // Scan-confidence telemetry mirroring `scan_project`'s
+    // `meta.analysisCoverage` block. Per CLAUDE.md §1 "Verbose meta is
+    // signal, not clutter," this is the same opaque-component /
+    // template-directive / skipped-extension signal an agent uses to
+    // decide whether the scan had teeth — if `coverage` said "20/20
+    // automatable passing" while discovery silently rejected 114 .scss
+    // files at the parseable-extension check, an agent gating "are we
+    // done?" on the coverage response alone hits the canonical
+    // silent-miss failure mode. The `coverage` handler doesn't compute
+    // auto-detected wrappers or a verbose-meta toggle, so the feature
+    // flags collapse to defaults: session wrappers for opaque-component
+    // filtering, non-verbose, 0 auto-detect-confirmed. Surfaced at the
+    // top level (not gated by `metaMode`) because the signal is
+    // load-bearing for a conformance-gating tool; the existing `meta`
+    // block stays opt-in so legacy callers still see no meta on a
+    // default call.
+    const analysisCoverageField = buildAnalysisCoverage(
+      files,
+      session.config.nativeWrappers,
+      activeRules,
+      false,
+      0,
+      undefined,
+      discoveryDiagnostics,
+    );
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
     // a coverage response with `criteriaAutomatable: 0` etc. is
     // indistinguishable from "tool never ran" unless we surface the
-    // honest "scanned_zero_files" code on a real-but-empty scan root.
-    // `coverage` has no root-resolution step (takes `paths` directly,
-    // defaulting to `[cwd]`) and doesn't load project config in this
-    // handler; mirror the `scan` tool's inputs for the other codes.
+    // honest "scanned_zero_files" / "extensions_skipped_no_parser"
+    // codes. `coverage` has no root-resolution step (takes `paths`
+    // directly, defaulting to `[cwd]`) and doesn't load project config
+    // in this handler; mirror the `scan` tool's inputs for the other
+    // codes. The `analysisCoverage` block we just built is passed in so
+    // `extensions_skipped_no_parser` fires whenever discovery rejected
+    // files on the parseable-extension check — same condition as
+    // scan_project.
+    const filesByExtension = countFilesByExtension(files);
     const warnings = warningsField({
       filesScanned: files.length,
       rootSource: null,
       configSource: undefined,
-      analysisCoverage: undefined,
-      filesByExtension: undefined,
+      analysisCoverage: analysisCoverageField.analysisCoverage,
+      filesByExtension,
     });
     // `meta` is opt-in per `metaMode` — legacy callers (no metaMode)
     // never saw a `meta` block on this tool, and additive surface
@@ -169,7 +206,7 @@ export const coverageTool: McpTool = {
       params,
       session,
       filesScanned: files.length,
-      rulesEvaluated: applyRuleSettings(BUILTIN_RULES, session.config.rules).length,
+      rulesEvaluated: activeRules.length,
       enabledStandards: standards,
       level,
       cwd,
@@ -205,7 +242,13 @@ export const coverageTool: McpTool = {
             level: strParam(params, "level"),
           })
         : {};
-      return textResult({ ...entry, ...nextStep, ...metaField, ...warnings });
+      return textResult({
+        ...entry,
+        ...nextStep,
+        ...analysisCoverageField,
+        ...metaField,
+        ...warnings,
+      });
     }
     return textResult(entries);
   },
@@ -315,4 +358,23 @@ function withTitles(
     }
     return { id, title: "", level: "" };
   });
+}
+
+/**
+ * Tallies parseable files by extension. Mirrors the private helper in
+ * {@link ./scan-assembly.ts `countByExtension`} — duplicated rather than
+ * re-exported so tool-coverage stays independent of scan-assembly's
+ * other coupling. The map feeds `warningsField` so the Tailwind-
+ * undercount condition can evaluate against the same signal `scan_project`
+ * uses; also allows a future `coverage` caller to diff `filesByExtension`
+ * across runs without re-parsing.
+ */
+function countFilesByExtension(files: readonly ParsedFile[]): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const f of files) {
+    const dot = f.filePath.lastIndexOf(".");
+    const ext = dot === -1 ? "(no-ext)" : f.filePath.slice(dot);
+    counts.set(ext, (counts.get(ext) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
