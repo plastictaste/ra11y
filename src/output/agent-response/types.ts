@@ -202,21 +202,47 @@ export interface AgentReviewCandidate {
 }
 
 /**
+ * Per-{@link FixClass} lane tally exposed on {@link AgentPlan#fixesByClass}.
+ *
+ * Keys are one-to-one with the `FixClass` union, renamed to camelCase for
+ * JSON ergonomics (`runtime-only` → `runtimeOnly`, `verify-in-source` →
+ * `verifyInSource`). Each value counts one kind of thing per CLAUDE.md §1
+ * "Composite headline counts are dishonest," so agents can budget
+ * per-lane (mechanical edits vs. guidance rewrites vs. runtime harness
+ * vs. source-read decisions) without a guess.
+ */
+export interface FixesByClass {
+  readonly mechanical: number;
+  readonly guidance: number;
+  readonly runtimeOnly: number;
+  readonly verifyInSource: number;
+}
+
+/**
  * Executive summary for the agent: counts, effort, and a natural-language blurb.
  *
  * `mechanicalEditsAvailable` counts violations where `fixPaths?.primary.edit`
- * is present — deterministic, batch-apply work.
- * `guidanceFixesAvailable` counts violations with prose-only guidance but no
- * mechanical edit — route-to-rewrite work.
+ * is present — deterministic, batch-apply work `apply_fix` can take without
+ * a round-trip.
  *
- * These two replace the former `fixSuggestionAvailable` composite, which summed
- * categorically different sub-buckets. Per CLAUDE.md §1 "Composite headline
- * counts are dishonest," split counters are the honest shape.
+ * `fixesByClass` is the structured per-{@link FixClass} tally — one count
+ * per remediation lane (`mechanical` / `guidance` / `runtimeOnly` /
+ * `verifyInSource`). It replaces the former `guidanceFixesAvailable`
+ * composite, which summed four categorically different lanes (anything
+ * with a prose `suggestion` but no mechanical edit) under one headline.
+ * Agents that previously budgeted against `guidanceFixesAvailable` read
+ * `fixesByClass.guidance` (prose-rewrite work) or
+ * `fixesByClass.mechanical + fixesByClass.guidance` (anything
+ * `suggest_fix` can act on) instead.
+ *
+ * Per CLAUDE.md §1 "Composite headline counts are dishonest," a
+ * top-level counter must count one kind of thing; when several kinds
+ * exist, a structured sibling keyed by kind is the honest shape.
  */
 export interface AgentPlan {
   readonly totalFindings: number;
   readonly mechanicalEditsAvailable: number;
-  readonly guidanceFixesAvailable: number;
+  readonly fixesByClass: FixesByClass;
   readonly reviewNeeded: number;
   readonly manualOnly: number;
   readonly estimatedEffort: Effort;

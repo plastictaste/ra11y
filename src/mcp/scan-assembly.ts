@@ -9,6 +9,7 @@
 
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { DiscoveryDiagnostics } from "../input/discover.ts";
+import type { FixesByClass } from "../output/agent-response/index.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
@@ -31,37 +32,52 @@ export function buildScanPlan(args: {
   readonly violations: number;
   readonly notes: number;
   readonly mechanicalEdits: number;
-  readonly guidanceFixes: number;
   readonly violationsWithoutAnyFix: number;
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
   /**
    * Violation count per `fixClass` lane — powers the honest breakdown
-   * in the plan-summary prose (V1-SHAPE-FIXCLASS-HEADLINE). Distinct
-   * axis from `mechanicalEdits` / `guidanceFixes`, which answer
-   * "payload-availability" (has `fixPaths.primary.edit` vs has prose
-   * suggestion only). Not interchangeable — see
+   * in the plan-summary prose. Distinct axis from `mechanicalEdits`,
+   * which answers "payload-availability" (has `fixPaths.primary.edit`)
+   * rather than remediation lane. Not interchangeable — see
    * src/mcp/plan-summary.ts for rationale.
    */
   readonly fixClassCounts: FixClassCounts;
+  /**
+   * Per-{@link FixClass} tally surfaced as the structured sibling
+   * `plan.fixesByClass`. Replaces the former `guidanceFixesAvailable`
+   * headline, which summed four categorically different lanes under
+   * one label — see `src/output/agent-response/build-plan.ts` for the
+   * rationale and CLAUDE.md §1 "Composite headline counts are
+   * dishonest." Always present on the response (zero-count lanes
+   * surface as `0` so consumers never have to disambiguate "absent"
+   * from "zero").
+   */
+  readonly fixesByClass: FixesByClass;
 }): Record<string, unknown> {
   const {
     totalFindings,
     violations,
     notes,
     mechanicalEdits,
-    guidanceFixes,
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,
     fixClassCounts,
+    fixesByClass,
   } = args;
+  // `fixesByClass` is meaningful only when the scan actually produced
+  // violations to bucket — emitting an all-zeros tally on a clean scan
+  // is noise that forces the agent to read a field whose only signal
+  // is "no violations." Conditional-spread per CLAUDE.md §1 keeps the
+  // present-when-meaningful shape honest.
+  const emitFixesByClass = violations > 0;
   return {
     totalFindings,
     violations,
     notes,
     ...(mechanicalEdits > 0 ? { mechanicalEditsAvailable: mechanicalEdits } : {}),
-    ...(guidanceFixes > 0 ? { guidanceFixesAvailable: guidanceFixes } : {}),
+    ...(emitFixesByClass ? { fixesByClass } : {}),
     ...(violationsWithoutAnyFix > 0
       ? { violationsWithoutSuggestion: violationsWithoutAnyFix }
       : {}),

@@ -91,7 +91,12 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
     plan: {
       totalFindings: number;
       mechanicalEditsAvailable: number;
-      guidanceFixesAvailable: number;
+      fixesByClass: {
+        mechanical: number;
+        guidance: number;
+        runtimeOnly: number;
+        verifyInSource: number;
+      };
       reviewNeeded: number;
       manualOnly: number;
       estimatedEffort: string;
@@ -184,12 +189,19 @@ describe("formatter: agent — plan", () => {
     expect(plan.summary).toContain("keyboard/handler-missing");
   });
 
-  it("plan splits fix suggestions into mechanical vs guidance counters", () => {
+  it("plan exposes mechanicalEditsAvailable and a per-fixClass fixesByClass tally", () => {
     const { plan } = parse();
-    // All 4 violations have a suggestion string but no fixPaths.primary.edit,
-    // so they are guidance fixes (prose only), not mechanical edits.
+    // None of the 4 violations ship an inline `fixPaths.primary.edit`,
+    // so `mechanicalEditsAvailable` is 0 — that counter only sees
+    // batch-applyable edits, not prose suggestions.
     expect(plan.mechanicalEditsAvailable).toBe(0);
-    expect(plan.guidanceFixesAvailable).toBe(4);
+    // `fixesByClass` is the honest per-lane tally — RESULT has 1
+    // mechanical (media/alt-text-missing) and 3 verify-in-source
+    // (keyboard/handler-missing x2, semantics/button-name) violations.
+    expect(plan.fixesByClass.mechanical).toBe(1);
+    expect(plan.fixesByClass.guidance).toBe(0);
+    expect(plan.fixesByClass.runtimeOnly).toBe(0);
+    expect(plan.fixesByClass.verifyInSource).toBe(3);
     expect(plan.reviewNeeded).toBe(0);
   });
 

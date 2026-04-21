@@ -20,6 +20,7 @@ import {
   type AgentFinding,
   buildAgentFinding,
   countFixes,
+  countFixesByClass,
 } from "../output/agent-response/index.ts";
 import { BUILTIN_RULES } from "../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
@@ -598,33 +599,37 @@ export async function runScanAndFormat(
 
   const violations = filtered.filter((v) => v.severity !== "info");
   const notes = filtered.filter((v) => v.severity === "info");
-  // Honest split counters for the plan headline, computed from the
-  // source violations via the shared `countFixes` helper — same recipe
-  // the CLI agent formatter uses through `buildAgentPlan`. Both labels
-  // are provable from the Violation shape alone (`fixPaths?.primary.
-  // edit` present → mechanical; a non-empty `suggestion` without a
-  // mechanical edit → guidance), so the split is honest per CLAUDE.md
-  // §1 "Composite headline counts are dishonest." Agents budgeting
-  // batch-apply vs route-to-rewrite pick the right lane at plan time
-  // without a second round-trip.
-  const { mechanicalEditsAvailable: mechanicalEdits, guidanceFixesAvailable: guidanceFixes } =
+  // Honest counters for the plan headline, computed from the source
+  // violations via the shared helpers in `build-plan.ts` — same recipe
+  // the CLI agent formatter uses through `buildAgentPlan`.
+  //   - `mechanicalEdits`: violations that ship an inline
+  //     `fixPaths.primary.edit` — `apply_fix` batch-apply work.
+  //   - `proseOnlySuggestions`: violations with prose `suggestion` but
+  //     no mechanical edit. Internal to the `violationsWithoutAnyFix`
+  //     math; NOT exposed on the plan because it sums across four
+  //     `fixClass` lanes and is therefore not honest on its own. Per-
+  //     lane budgeting rides on `plan.fixesByClass` below.
+  const { mechanicalEditsAvailable: mechanicalEdits, proseOnlySuggestions } =
     countFixes(violations);
-  const violationsWithoutAnyFix = violations.length - mechanicalEdits - guidanceFixes;
-  // Tally violations by their rule-level `fixClass` lane so the plan-
-  // summary prose can break the headline down honestly. This is a
-  // separate axis from `mechanicalEdits` / `guidanceFixes` above: those
-  // answer "does the Violation ship a ready-to-apply edit?"; this
-  // answers "which remediation lane does the rule route into?". Per
-  // V1-SHAPE-FIXCLASS-HEADLINE and CLAUDE.md §1 "Composite headline
-  // counts are dishonest," the prose must not sum `runtime-only` and
-  // `verify-in-source` findings under a single "guidance fixes" label.
+  const violationsWithoutAnyFix = violations.length - mechanicalEdits - proseOnlySuggestions;
+  // Tally violations by their rule-level `fixClass` lane. Two consumers:
+  //   1. `plan.fixesByClass` — structured per-lane tally the agent
+  //      reads for honest per-lane budgeting.
+  //   2. `plan.summary` parenthetical — prose breakdown by lane.
+  // Distinct axis from `mechanicalEdits`: that answers "does the
+  // Violation ship a ready-to-apply edit?"; this answers "which
+  // remediation lane does the rule route into?". Per CLAUDE.md §1
+  // "Composite headline counts are dishonest," the two axes stay
+  // separate — summing prose-only findings across `guidance`,
+  // `runtime-only`, and `verify-in-source` under one counter would be
+  // the dishonest shape this split replaces.
+  const fixesByClass = countFixesByClass(violations);
   const fixClassCounts = {
-    mechanical: 0,
-    guidance: 0,
-    "runtime-only": 0,
-    "verify-in-source": 0,
+    mechanical: fixesByClass.mechanical,
+    guidance: fixesByClass.guidance,
+    "runtime-only": fixesByClass.runtimeOnly,
+    "verify-in-source": fixesByClass.verifyInSource,
   };
-  for (const v of violations) fixClassCounts[v.fixClass] += 1;
 
   const manualIds = collectManualCriteria(enabled, session.config.level, files);
   const manualCount = manualIds.size;
@@ -670,11 +675,11 @@ export async function runScanAndFormat(
       violations: violations.length,
       notes: notes.length,
       mechanicalEdits,
-      guidanceFixes,
       violationsWithoutAnyFix,
       actionableManual,
       untargetedCriteria,
       fixClassCounts,
+      fixesByClass,
     }),
     files: fileEntries,
     meta: buildScanMeta({

@@ -50,7 +50,11 @@ describe("buildNextStep", () => {
   it("returns suggest_fix with aligned prose + structured args when a fixable violation exists", () => {
     const result = buildNextStep(
       formatted({
-        plan: { violations: 1, mechanicalEditsAvailable: 1 },
+        plan: {
+          violations: 1,
+          mechanicalEditsAvailable: 1,
+          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [{ path: "DemoComposer.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -140,7 +144,11 @@ describe("buildNextStep", () => {
     // would re-create the exact drift we ship both forms to prevent.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 2, mechanicalEditsAvailable: 2 },
+        plan: {
+          violations: 2,
+          mechanicalEditsAvailable: 2,
+          fixesByClass: { mechanical: 2, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [
           {
             path: "App.tsx",
@@ -172,7 +180,11 @@ describe("buildNextStep", () => {
     // from suggest_fix, we keep it for all of them.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 2, mechanicalEditsAvailable: 1, guidanceFixesAvailable: 1 },
+        plan: {
+          violations: 2,
+          mechanicalEditsAvailable: 1,
+          fixesByClass: { mechanical: 1, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [
           {
             path: "App.tsx",
@@ -204,7 +216,10 @@ describe("buildNextStep", () => {
     // the nudge when 100% of violations are mechanical.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 1, guidanceFixesAvailable: 1 },
+        plan: {
+          violations: 1,
+          fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [
           {
             path: "App.tsx",
@@ -243,7 +258,11 @@ describe("buildNextStep", () => {
     // nudge stays.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 1, mechanicalEditsAvailable: 1 },
+        plan: {
+          violations: 1,
+          mechanicalEditsAvailable: 1,
+          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [
           {
             path: "App.tsx",
@@ -292,7 +311,11 @@ describe("buildNextStep", () => {
   it("violation branch with fixable violations mentions ra11y/fix prompt", () => {
     const result = buildNextStep(
       formatted({
-        plan: { violations: 2, mechanicalEditsAvailable: 2 },
+        plan: {
+          violations: 2,
+          mechanicalEditsAvailable: 2,
+          fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [
           {
             path: "App.tsx",
@@ -319,7 +342,11 @@ describe("buildNextStep", () => {
   it("all-mechanical violations branch mentions ra11y/fix prompt", () => {
     const result = buildNextStep(
       formatted({
-        plan: { violations: 1, mechanicalEditsAvailable: 1 },
+        plan: {
+          violations: 1,
+          mechanicalEditsAvailable: 1,
+          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [
           {
             path: "App.tsx",
@@ -342,7 +369,11 @@ describe("buildNextStep", () => {
     // prevent.
     const cases: readonly ScanFormatted[] = [
       formatted({
-        plan: { violations: 1, mechanicalEditsAvailable: 1 },
+        plan: {
+          violations: 1,
+          mechanicalEditsAvailable: 1,
+          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        },
         files: [{ path: "A.tsx", findings: [sampleFinding] }],
       }),
       formatted({

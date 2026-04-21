@@ -135,16 +135,20 @@ export function buildNextStep(
   formatted: ScanFormatted,
   options: NextStepOptions = {},
 ): NextStepResult {
-  // After the P1-M + P1-H split, the plan no longer carries a
-  // composite `fixSuggestionAvailable`. Sum the two honest top-level
-  // counters (mechanical edits + prose-only guidance) so the prose
-  // `(N with fix suggestions)` tail keeps reading correctly without
-  // re-introducing the composite on the response.
+  // Sum the `fixClass` lanes `suggest_fix` can produce something
+  // useful for — `mechanical` (deterministic source transforms) and
+  // `guidance` (prose rewrites the tool can route). `runtime-only`
+  // and `verify-in-source` lanes are excluded because `suggest_fix`
+  // can't action them, so they shouldn't pad the "with fix
+  // suggestions" prose tail. Reads directly from `plan.fixesByClass`
+  // so the semantics track the structured per-lane tally exposed to
+  // agents rather than re-deriving from the conditional-spread
+  // `mechanicalEditsAvailable` field (which counts a stricter subset:
+  // only violations that ship an inline `fixPaths.primary.edit`).
   const inputs: NextStepInputs = {
     violations: numFromPlan(formatted.plan, "violations"),
     fixable:
-      numFromPlan(formatted.plan, "mechanicalEditsAvailable") +
-      numFromPlan(formatted.plan, "guidanceFixesAvailable"),
+      fixesByClassLane(formatted.plan, "mechanical") + fixesByClassLane(formatted.plan, "guidance"),
     actionableManual: numFromPlan(formatted.plan, "actionableManualItems"),
     notes: numFromPlan(formatted.plan, "notes"),
     first: firstCallableFinding(formatted.files),
@@ -236,6 +240,25 @@ function manualTail(inputs: NextStepInputs): string {
 function numFromPlan(plan: Record<string, unknown>, key: string): number {
   const raw = plan[key];
   return typeof raw === "number" ? raw : 0;
+}
+
+/**
+ * Reads one lane from `plan.fixesByClass`, defaulting to 0 when the
+ * field shape doesn't match. Defensive — the plan is typed at the
+ * call site but `nextStep` consumes a `Record<string, unknown>` so
+ * the pair of scan tools can stay in exact lockstep without coupling
+ * on the interface. `plan.fixesByClass` is conditional-spread on
+ * clean scans (see `src/mcp/scan-assembly.ts`), so a missing parent
+ * object is a valid "no violations" signal — we read it as lane-zero.
+ */
+function fixesByClassLane(
+  plan: Record<string, unknown>,
+  lane: "mechanical" | "guidance" | "runtimeOnly" | "verifyInSource",
+): number {
+  const raw = plan["fixesByClass"];
+  if (!raw || typeof raw !== "object") return 0;
+  const v = (raw as Record<string, unknown>)[lane];
+  return typeof v === "number" ? v : 0;
 }
 
 /**

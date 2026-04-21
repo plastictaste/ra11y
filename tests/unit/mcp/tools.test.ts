@@ -242,7 +242,12 @@ describe("MCP tool: scan_project", () => {
         plan: {
           violations?: number;
           mechanicalEditsAvailable?: number;
-          guidanceFixesAvailable?: number;
+          fixesByClass?: {
+            mechanical?: number;
+            guidance?: number;
+            runtimeOnly?: number;
+            verifyInSource?: number;
+          };
         };
         meta: { nextStep: string };
       };

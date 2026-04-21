@@ -1189,7 +1189,12 @@ describe("scan_project plan: composite counters split into honest top-level fiel
         actionableManualItems?: number;
         untargetedCriteria?: number;
         mechanicalEditsAvailable?: number;
-        guidanceFixesAvailable?: number;
+        fixesByClass?: {
+          mechanical?: number;
+          guidance?: number;
+          runtimeOnly?: number;
+          verifyInSource?: number;
+        };
       };
     };
     // Manual split: both counters are top-level integers, present even
@@ -1202,12 +1207,35 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     expect(body.plan.untargetedCriteria).toBeGreaterThanOrEqual(0);
     // The fixture has a full WCAG load, so untargeted is populated.
     expect(body.plan.untargetedCriteria ?? 0).toBeGreaterThan(0);
-    // Fix split: at least one of the two is populated on a violating
-    // fixture. Both fields are omitted when zero (CLAUDE.md §1
-    // "Ambiguous field shapes") so we assert the union.
-    const hasAnyFixCount =
-      (body.plan.mechanicalEditsAvailable ?? 0) > 0 || (body.plan.guidanceFixesAvailable ?? 0) > 0;
+    // Fix split: either the mechanical-edit counter fires or the per-
+    // fixClass tally has a non-zero lane. `mechanicalEditsAvailable`
+    // is conditional-spread (omitted when zero); `fixesByClass` is
+    // always present on violating scans so agents never have to
+    // disambiguate "absent" from "zero" per lane.
+    expect(body.plan.fixesByClass).toBeDefined();
+    const fbc = body.plan.fixesByClass ?? {};
+    const anyLanePopulated =
+      (fbc.mechanical ?? 0) > 0 ||
+      (fbc.guidance ?? 0) > 0 ||
+      (fbc.runtimeOnly ?? 0) > 0 ||
+      (fbc.verifyInSource ?? 0) > 0;
+    const hasAnyFixCount = (body.plan.mechanicalEditsAvailable ?? 0) > 0 || anyLanePopulated;
     expect(hasAnyFixCount).toBe(true);
+  });
+
+  it("plan.fixesByClass never carries a sentinel guidanceFixesAvailable composite", async () => {
+    // Regression guard: the pre-split shape summed four categorically
+    // different fixClass lanes into one `guidanceFixesAvailable`
+    // counter. Agents budgeting against it treated runtime-only and
+    // verify-in-source findings as prose-rewrite work. The honest
+    // shape exposes a structured per-lane sibling instead — no
+    // composite top-level field with the old name remains.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
+    ]);
+    const body = bodyOf(responses[1]) as { plan: Record<string, unknown> };
+    expect(body.plan).not.toHaveProperty("guidanceFixesAvailable");
   });
 
   it("removes the old composite fields (manualReviewRequired, fixSuggestionAvailable)", async () => {
