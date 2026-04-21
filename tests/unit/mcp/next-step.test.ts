@@ -52,7 +52,7 @@ describe("buildNextStep", () => {
       formatted({
         plan: {
           violations: 1,
-          mechanicalEditsAvailable: 1,
+          safeEditsAvailable: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [{ path: "DemoComposer.tsx", findings: [sampleFinding] }],
@@ -146,7 +146,7 @@ describe("buildNextStep", () => {
       formatted({
         plan: {
           violations: 2,
-          mechanicalEditsAvailable: 2,
+          safeEditsAvailable: 2,
           fixesByClass: { mechanical: 2, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -182,7 +182,7 @@ describe("buildNextStep", () => {
       formatted({
         plan: {
           violations: 2,
-          mechanicalEditsAvailable: 1,
+          safeEditsAvailable: 1,
           fixesByClass: { mechanical: 1, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -260,7 +260,7 @@ describe("buildNextStep", () => {
       formatted({
         plan: {
           violations: 1,
-          mechanicalEditsAvailable: 1,
+          safeEditsAvailable: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -313,7 +313,7 @@ describe("buildNextStep", () => {
       formatted({
         plan: {
           violations: 2,
-          mechanicalEditsAvailable: 2,
+          safeEditsAvailable: 2,
           fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -344,7 +344,7 @@ describe("buildNextStep", () => {
       formatted({
         plan: {
           violations: 1,
-          mechanicalEditsAvailable: 1,
+          safeEditsAvailable: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -371,7 +371,7 @@ describe("buildNextStep", () => {
       formatted({
         plan: {
           violations: 1,
-          mechanicalEditsAvailable: 1,
+          safeEditsAvailable: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [{ path: "A.tsx", findings: [sampleFinding] }],

@@ -221,9 +221,18 @@ export interface FixesByClass {
 /**
  * Executive summary for the agent: counts, effort, and a natural-language blurb.
  *
- * `mechanicalEditsAvailable` counts violations where `fixPaths?.primary.edit`
+ * `safeEditsAvailable` counts violations where `fixPaths?.primary.edit`
  * is present — deterministic, batch-apply work `apply_fix` can take without
- * a round-trip.
+ * a round-trip. These edits ride on rules whose `fixClass` is either
+ * `mechanical` (pure source rewrites) or `verify-in-source` (the edit
+ * lands in source, though the agent is expected to read the surrounding
+ * file to confirm). Those are the two lanes an agent can action with a
+ * local edit; `guidance` and `runtime-only` findings ship prose and are
+ * counted under `fixesByClass` instead. The former name
+ * `mechanicalEditsAvailable` was misleading — the counter has always
+ * included `verify-in-source` edits, so a scan with 14 edits could
+ * co-occur with `fixesByClass.mechanical === 0` when every editable
+ * finding routed through the `verify-in-source` lane.
  *
  * `fixesByClass` is the structured per-{@link FixClass} tally — one count
  * per remediation lane (`mechanical` / `guidance` / `runtimeOnly` /
@@ -238,10 +247,13 @@ export interface FixesByClass {
  * Per CLAUDE.md §1 "Composite headline counts are dishonest," a
  * top-level counter must count one kind of thing; when several kinds
  * exist, a structured sibling keyed by kind is the honest shape.
+ * `safeEditsAvailable` covers two kinds honestly by name — the
+ * rename fixes the composite-under-a-singular-name problem the former
+ * field had.
  */
 export interface AgentPlan {
   readonly totalFindings: number;
-  readonly mechanicalEditsAvailable: number;
+  readonly safeEditsAvailable: number;
   readonly fixesByClass: FixesByClass;
   readonly reviewNeeded: number;
   readonly manualOnly: number;

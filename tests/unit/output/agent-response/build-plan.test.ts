@@ -101,17 +101,17 @@ describe("buildAgentPlan: fixesByClass structured tally", () => {
   });
 });
 
-describe("buildAgentPlan: mechanicalEditsAvailable counter", () => {
+describe("buildAgentPlan: safeEditsAvailable counter", () => {
   it("counts only violations that ship an inline fixPaths.primary.edit", () => {
-    // `mechanicalEditsAvailable` is the "apply_fix can batch this"
-    // counter. `fixClass === "mechanical"` implies a mechanical lane
-    // but NOT that the violation necessarily ships a mechanical edit —
-    // mechanical-lane rules can emit prose-only findings when the
-    // AST lacks enough context. Without an explicit `fixPaths.primary.edit`
-    // on any test violation, the counter reports 0 even though the
-    // mechanical lane is populated.
+    // `safeEditsAvailable` is the "apply_fix can batch this" counter.
+    // It covers both the `mechanical` and `verify-in-source` rule
+    // lanes (the two lanes whose remediation lands in source). A rule
+    // with `fixClass === "mechanical"` can still emit prose-only
+    // findings when the AST lacks enough context — without an
+    // explicit `fixPaths.primary.edit` on any test violation, the
+    // counter reports 0 even though lanes are populated.
     const plan = buildAgentPlan(makeViolations(), [], 4);
-    expect(plan.mechanicalEditsAvailable).toBe(0);
+    expect(plan.safeEditsAvailable).toBe(0);
   });
 
   it("rises when a violation carries fixPaths.primary.edit", () => {
@@ -131,7 +131,39 @@ describe("buildAgentPlan: mechanicalEditsAvailable counter", () => {
       },
     };
     const plan = buildAgentPlan([withEdit, ...rest], [], 4);
-    expect(plan.mechanicalEditsAvailable).toBe(1);
+    expect(plan.safeEditsAvailable).toBe(1);
+  });
+
+  it("rises for a verify-in-source violation that ships an inline edit", () => {
+    // Regression guard for the rename's motivating case: the scan
+    // that surfaced `plan.mechanicalEditsAvailable: 14` co-occurring
+    // with `plan.fixesByClass.mechanical: 0` — every editable
+    // violation routed through the `verify-in-source` lane. Under the
+    // new honest name the counter captures that population; under the
+    // old name the composite-under-a-singular-name mismatch this
+    // fixes was invisible.
+    const makeVerifyInSource = (line: number): Violation =>
+      withFindingIds([
+        {
+          ruleId: "keyboard/handler-missing",
+          fixClass: "verify-in-source",
+          criteria: ["wcag22:2.1.1"],
+          severity: "error",
+          location: { filePath: "src/a.tsx", line, column: 1 },
+          message: "handler missing",
+          fixPaths: {
+            primary: {
+              label: "Add onKeyDown matching onClick",
+              edit: { oldText: "onClick=", newText: "onKeyDown onClick=" },
+            },
+            alternatives: [],
+          },
+        },
+      ])[0] as Violation;
+    const plan = buildAgentPlan([makeVerifyInSource(1), makeVerifyInSource(2)], [], 2);
+    expect(plan.safeEditsAvailable).toBe(2);
+    expect(plan.fixesByClass.mechanical).toBe(0);
+    expect(plan.fixesByClass.verifyInSource).toBe(2);
   });
 });
 

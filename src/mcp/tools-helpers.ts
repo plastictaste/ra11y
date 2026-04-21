@@ -610,27 +610,28 @@ export async function runScanAndFormat(
   // Honest counters for the plan headline, computed from the source
   // violations via the shared helpers in `build-plan.ts` — same recipe
   // the CLI agent formatter uses through `buildAgentPlan`.
-  //   - `mechanicalEdits`: violations that ship an inline
-  //     `fixPaths.primary.edit` — `apply_fix` batch-apply work.
+  //   - `safeEdits`: violations that ship an inline
+  //     `fixPaths.primary.edit` — `apply_fix` batch-apply work across
+  //     the mechanical + verify-in-source lanes (the two lanes whose
+  //     remediation lands in source).
   //   - `proseOnlySuggestions`: violations with prose `suggestion` but
-  //     no mechanical edit. Internal to the `violationsWithoutAnyFix`
+  //     no inline edit. Internal to the `violationsWithoutAnyFix`
   //     math; NOT exposed on the plan because it sums across four
   //     `fixClass` lanes and is therefore not honest on its own. Per-
   //     lane budgeting rides on `plan.fixesByClass` below.
-  const { mechanicalEditsAvailable: mechanicalEdits, proseOnlySuggestions } =
-    countFixes(violations);
-  const violationsWithoutAnyFix = violations.length - mechanicalEdits - proseOnlySuggestions;
+  const { safeEditsAvailable: safeEdits, proseOnlySuggestions } = countFixes(violations);
+  const violationsWithoutAnyFix = violations.length - safeEdits - proseOnlySuggestions;
   // Tally violations by their rule-level `fixClass` lane. Two consumers:
   //   1. `plan.fixesByClass` — structured per-lane tally the agent
   //      reads for honest per-lane budgeting.
   //   2. `plan.summary` parenthetical — prose breakdown by lane.
-  // Distinct axis from `mechanicalEdits`: that answers "does the
-  // Violation ship a ready-to-apply edit?"; this answers "which
-  // remediation lane does the rule route into?". Per CLAUDE.md §1
-  // "Composite headline counts are dishonest," the two axes stay
-  // separate — summing prose-only findings across `guidance`,
-  // `runtime-only`, and `verify-in-source` under one counter would be
-  // the dishonest shape this split replaces.
+  // Distinct axis from `safeEdits`: that answers "does the Violation
+  // ship a ready-to-apply edit?"; this answers "which remediation lane
+  // does the rule route into?". Per CLAUDE.md §1 "Composite headline
+  // counts are dishonest," the two axes stay separate — summing
+  // prose-only findings across `guidance`, `runtime-only`, and
+  // `verify-in-source` under one counter would be the dishonest shape
+  // this split replaces.
   const fixesByClass = countFixesByClass(violations);
   const fixClassCounts = {
     mechanical: fixesByClass.mechanical,
@@ -681,7 +682,7 @@ export async function runScanAndFormat(
     plan: buildScanPlan({
       violations: violations.length,
       notes: notes.length,
-      mechanicalEdits,
+      safeEdits,
       violationsWithoutAnyFix,
       actionableManual,
       untargetedCriteria,

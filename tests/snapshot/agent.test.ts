@@ -90,7 +90,7 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
   return JSON.parse(raw) as {
     plan: {
       totalFindings: number;
-      mechanicalEditsAvailable: number;
+      safeEditsAvailable: number;
       fixesByClass: {
         mechanical: number;
         guidance: number;
@@ -189,12 +189,13 @@ describe("formatter: agent — plan", () => {
     expect(plan.summary).toContain("keyboard/handler-missing");
   });
 
-  it("plan exposes mechanicalEditsAvailable and a per-fixClass fixesByClass tally", () => {
+  it("plan exposes safeEditsAvailable and a per-fixClass fixesByClass tally", () => {
     const { plan } = parse();
     // None of the 4 violations ship an inline `fixPaths.primary.edit`,
-    // so `mechanicalEditsAvailable` is 0 — that counter only sees
-    // batch-applyable edits, not prose suggestions.
-    expect(plan.mechanicalEditsAvailable).toBe(0);
+    // so `safeEditsAvailable` is 0 — that counter only sees
+    // batch-applyable edits (across the mechanical + verify-in-source
+    // lanes), not prose suggestions.
+    expect(plan.safeEditsAvailable).toBe(0);
     // `fixesByClass` is the honest per-lane tally — RESULT has 1
     // mechanical (media/alt-text-missing) and 3 verify-in-source
     // (keyboard/handler-missing x2, semantics/button-name) violations.

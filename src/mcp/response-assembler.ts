@@ -195,8 +195,8 @@ export function assembleScanFamilyResponse(
   // (2) Split notes from non-notes; tally fixes.
   const nonNote = violations.filter((v) => v.severity !== "info");
   const notes = violations.filter((v) => v.severity === "info");
-  const { mechanicalEditsAvailable: mechanicalEdits, proseOnlySuggestions } = countFixes(nonNote);
-  const violationsWithoutAnyFix = nonNote.length - mechanicalEdits - proseOnlySuggestions;
+  const { safeEditsAvailable: safeEdits, proseOnlySuggestions } = countFixes(nonNote);
+  const violationsWithoutAnyFix = nonNote.length - safeEdits - proseOnlySuggestions;
   const fixesByClass = countFixesByClass(nonNote);
   const fixClassCounts = {
     mechanical: fixesByClass.mechanical,
@@ -209,7 +209,7 @@ export function assembleScanFamilyResponse(
   const plan = buildScanPlan({
     violations: nonNote.length,
     notes: notes.length,
-    mechanicalEdits,
+    safeEdits,
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,

@@ -4,7 +4,7 @@
  *
  * Invariants guarded here (from docs/kb/architecture/ai-first-consumer.md):
  *
- *   - Clean scans carry no sentinel zeros — `mechanicalEditsAvailable`
+ *   - Clean scans carry no sentinel zeros — `safeEditsAvailable`
  *     and `fixesByClass` are absent, not zero.
  *   - `warnings` is entirely absent on a healthy scan, never `[]`.
  *   - Zero parsed files fires `scanned_zero_files`.
@@ -102,7 +102,7 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.plan["violations"]).toBe(0);
     expect(r.plan["notes"]).toBe(0);
     // Conditional-spread zero-counts are absent, not zero.
-    expect(r.plan["mechanicalEditsAvailable"]).toBeUndefined();
+    expect(r.plan["safeEditsAvailable"]).toBeUndefined();
     expect(r.plan["fixesByClass"]).toBeUndefined();
     expect(r.warnings).toBeUndefined();
     expect(r.referenceGuide).toBeUndefined();
@@ -183,7 +183,7 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.nextOffset).toBeUndefined();
   });
 
-  it("emits plan counters for mechanical edits when violations carry fix paths", () => {
+  it("emits plan counters for safe edits when violations carry fix paths", () => {
     const v: Violation = {
       ...violation("/src/a.tsx", 1),
       fixPaths: {
@@ -195,7 +195,7 @@ describe("assembleScanFamilyResponse", () => {
       },
     } as unknown as Violation;
     const r = assembleScanFamilyResponse(baseInput({ violations: [v] }));
-    expect(r.plan["mechanicalEditsAvailable"]).toBe(1);
+    expect(r.plan["safeEditsAvailable"]).toBe(1);
     expect(r.plan["fixesByClass"]).toBeDefined();
   });
 

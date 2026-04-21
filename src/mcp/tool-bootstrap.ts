@@ -20,7 +20,7 @@
  *     `bootstrap_<leg>_failed` entries; omitted when empty.
  *   - `scan` subset preserves the upstream `plan` split verbatim —
  *     `violationsCount` and `notesCount` stay separate (no
- *     `totalFindings` re-sum), `mechanicalEditsAvailable` and the
+ *     `totalFindings` re-sum), `safeEditsAvailable` and the
  *     per-lane `fixesByClass` tally forward from the upstream plan
  *     when present. Per CLAUDE.md §1 "Composite headline counts are
  *     dishonest," the former summed `totalFindings` inflated the
@@ -263,11 +263,13 @@ interface ScanSubset {
   readonly actionableManualItems?: number;
   /**
    * Violations that ship an inline `fixPaths.primary.edit` — the
-   * `apply_fix` batch-apply lane. Forwarded verbatim from
-   * `plan.mechanicalEditsAvailable`; present-when-meaningful (omitted
-   * when upstream omits it, i.e. zero such violations).
+   * `apply_fix` batch-apply lane. Covers both the `mechanical` and
+   * `verify-in-source` rule classes (the two lanes whose remediation
+   * lands in source). Forwarded verbatim from `plan.safeEditsAvailable`;
+   * present-when-meaningful (omitted when upstream omits it, i.e. zero
+   * such violations).
    */
-  readonly mechanicalEditsAvailable?: number;
+  readonly safeEditsAvailable?: number;
   /**
    * Per-`fixClass` remediation-lane tally forwarded verbatim from the
    * upstream `plan.fixesByClass` (set by `scan-assembly.ts` when
@@ -310,7 +312,7 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionable = readNumberFromRecord(plan, "actionableManualItems");
-  const mechanicalEdits = readNumberFromRecord(plan, "mechanicalEditsAvailable");
+  const safeEdits = readNumberFromRecord(plan, "safeEditsAvailable");
   const fixesByClass = readFixesByClass(plan);
   const limitations = readStringArray(plan, "limitations");
   return {
@@ -321,7 +323,7 @@ function extractScanSubset(scan: unknown): ScanSubset {
     ...(actionable === null || actionable === undefined
       ? {}
       : { actionableManualItems: actionable }),
-    ...(typeof mechanicalEdits === "number" ? { mechanicalEditsAvailable: mechanicalEdits } : {}),
+    ...(typeof safeEdits === "number" ? { safeEditsAvailable: safeEdits } : {}),
     ...(fixesByClass === null ? {} : { fixesByClass }),
     ...(limitations.length > 0 ? { limitations } : {}),
   };

@@ -36,7 +36,7 @@ interface BootstrapResponse {
     readonly violationsCount: number;
     readonly notesCount: number;
     readonly scanMode?: string;
-    readonly mechanicalEditsAvailable?: number;
+    readonly safeEditsAvailable?: number;
     readonly fixesByClass?: {
       readonly mechanical: number;
       readonly guidance: number;
@@ -106,7 +106,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       // upstream scan-assembly only sets it when violations > 0 and
       // the subset forwards that shape verbatim.
       expect(response.scan.fixesByClass).toBeUndefined();
-      expect(response.scan.mechanicalEditsAvailable).toBeUndefined();
+      expect(response.scan.safeEditsAvailable).toBeUndefined();
       expect(response.baseline).toBeNull();
       expect(response.ciSnippet).toContain("ra11y");
       expect(response.ciSnippet).toContain("baseline check");
@@ -210,7 +210,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
 
   // Upstream `scan_project` intentionally splits violations from
   // notes on `plan` (scan-assembly.ts) and emits per-lane
-  // counters (`mechanicalEditsAvailable`, `fixesByClass`) separately
+  // counters (`safeEditsAvailable`, `fixesByClass`) separately
   // so agents budget per-kind rather than against a sum. The
   // bootstrap subset must forward those split counters verbatim —
   // re-summing them into a `totalFindings` composite is the

@@ -143,8 +143,9 @@ export function buildNextStep(
   // suggestions" prose tail. Reads directly from `plan.fixesByClass`
   // so the semantics track the structured per-lane tally exposed to
   // agents rather than re-deriving from the conditional-spread
-  // `mechanicalEditsAvailable` field (which counts a stricter subset:
-  // only violations that ship an inline `fixPaths.primary.edit`).
+  // `safeEditsAvailable` field (which counts a different slice:
+  // violations that ship an inline `fixPaths.primary.edit` across the
+  // mechanical + verify-in-source lanes).
   const inputs: NextStepInputs = {
     violations: numFromPlan(formatted.plan, "violations"),
     fixable:

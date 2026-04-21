@@ -31,15 +31,16 @@ import { wrappersMetaBlock } from "./wrappers-meta.ts";
 export function buildScanPlan(args: {
   readonly violations: number;
   readonly notes: number;
-  readonly mechanicalEdits: number;
+  readonly safeEdits: number;
   readonly violationsWithoutAnyFix: number;
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
   /**
    * Violation count per `fixClass` lane — powers the honest breakdown
-   * in the plan-summary prose. Distinct axis from `mechanicalEdits`,
-   * which answers "payload-availability" (has `fixPaths.primary.edit`)
-   * rather than remediation lane. Not interchangeable — see
+   * in the plan-summary prose. Distinct axis from `safeEdits`, which
+   * answers "payload-availability" (has `fixPaths.primary.edit`) across
+   * the mechanical + verify-in-source lanes rather than routing by
+   * rule-demanded remediation lane. Not interchangeable — see
    * src/mcp/plan-summary.ts for rationale.
    */
   readonly fixClassCounts: FixClassCounts;
@@ -58,7 +59,7 @@ export function buildScanPlan(args: {
   const {
     violations,
     notes,
-    mechanicalEdits,
+    safeEdits,
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,
@@ -80,7 +81,7 @@ export function buildScanPlan(args: {
     // and trusts consumers to add them when they truly want a total.
     violations,
     notes,
-    ...(mechanicalEdits > 0 ? { mechanicalEditsAvailable: mechanicalEdits } : {}),
+    ...(safeEdits > 0 ? { safeEditsAvailable: safeEdits } : {}),
     ...(emitFixesByClass ? { fixesByClass } : {}),
     ...(violationsWithoutAnyFix > 0
       ? { violationsWithoutSuggestion: violationsWithoutAnyFix }
