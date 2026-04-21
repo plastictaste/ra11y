@@ -443,7 +443,7 @@ Deduped against Q3 where applicable. Items marked `[dup-Q3]` overlap and should 
 - [x] **Q4-RULE-PLACEHOLDER-ALT** New `media/alt-text-placeholder`. `<img alt="...">` / `alt="image"` / `alt="screenshot"` / `alt="TODO"` / `alt="placeholder"` — generic alt that teaches bad patterns when copy-pasted. WCAG 1.1.1. Jekyll's `_tutorials/` docs + `pages/showcase.html` + `_docs/posts.md` teach `![My helpful screenshot](...)` as canonical — docs propagate weak patterns to every user. (0177360, turn 30)
 - [ ] **Q4-RULE-PAGINATION-GLYPH-NAME** New review finder `navigation/pagination-glyph-accessible-name`. Pagination controls using `«` / `»` / `‹` / `›` as sole link text without `aria-label` or sr-only expansion. WCAG 2.4.4 + 4.1.2. Jekyll's `_docs/pagination.md:112-169` teaches the glyph pattern; similar patterns across design-system docs.
 - [ ] **Q4-RULE-DISABLED-LINK-SURROGATE** New `aria/disabled-link-surrogate`. `<span class="disabled">` / `<span class="previous">` used as a disabled control where the live state is a `<a>`. Without `aria-disabled="true"`, AT announces the span as static text, losing the disabled-state signal. WCAG 4.1.2.
-- [ ] **Q4-RULE-XMLLANG-LANG-MATCH** [cross-ref Q4-XMLLANG-LANG-MISMATCH] Same rule — the tightening doubles as a new rule if `document/lang-attribute` doesn't already cover `xml:lang`.
+- [x] **Q4-RULE-XMLLANG-LANG-MATCH** [cross-ref Q4-XMLLANG-LANG-MISMATCH] Same rule — the tightening doubles as a new rule if `document/lang-attribute` doesn't already cover `xml:lang`. (turn 32.5 — redundant: `document/lang-attribute.ts` already reads `xml:lang`, validates BCP 47 agreement at line 69-85, emits a tailored violation when the two disagree; Q4-XMLLANG-LANG-MISMATCH already closed this gap)
 
 ### v0.3.0 — accepted (P2)
 
