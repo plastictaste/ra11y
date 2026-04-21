@@ -50,7 +50,7 @@ const result = await Bun.build({
   target: "node",
   format: "esm",
   splitting: true,
-  sourcemap: "external",
+  sourcemap: "none",
   // Keep all node:* builtins and the optional typescript peer as externals.
   // Everything else in src/ is in-house and must be bundled.
   external: ["typescript"],
