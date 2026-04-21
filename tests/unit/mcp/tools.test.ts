@@ -793,6 +793,119 @@ describe("MCP tool: scan_project", () => {
       };
       expect(data.meta.additionalPathsScanned?.filesAdded).toBe(0);
     });
+
+    // Per-path skip reason reporting — filesAdded alone hides WHY a
+    // given additionalPath contributed zero. Three deterministic
+    // reasons are surfaced so the caller can distinguish unparseable
+    // extensions, missing paths, and config-excluded paths without
+    // a second round-trip.
+    it("surfaces `not-found` when an additional path does not exist on disk", async () => {
+      const { mkdtemp, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-missing-"));
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["does-not-exist"] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        meta: {
+          additionalPathsScanned?: {
+            filesAdded: number;
+            skipped?: { path: string; reason: string }[];
+          };
+        };
+      };
+      expect(data.meta.additionalPathsScanned?.skipped).toEqual([
+        { path: "does-not-exist", reason: "not-found" },
+      ]);
+    });
+
+    it("surfaces `unsupported-extension` when an additional file has no parseable extension", async () => {
+      const { mkdtemp, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-ext-"));
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+      await writeFile(joinPath(dir, "notes.md"), "# not parseable");
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["notes.md"] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        meta: {
+          additionalPathsScanned?: {
+            filesAdded: number;
+            skipped?: { path: string; reason: string }[];
+          };
+        };
+      };
+      expect(data.meta.additionalPathsScanned?.skipped).toEqual([
+        { path: "notes.md", reason: "unsupported-extension" },
+      ]);
+    });
+
+    it("surfaces `excluded-by-glob` when an additional path matches a configured exclude pattern", async () => {
+      const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-excluded-"));
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+      await mkdir(joinPath(dir, "generated"), { recursive: true });
+      await writeFile(
+        joinPath(dir, "generated", "out.css"),
+        ".foo { color: #eee; background: #fff; }",
+      );
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      session.configure({ exclude: ["generated/**", "generated"] });
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["generated"] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        meta: {
+          additionalPathsScanned?: {
+            filesAdded: number;
+            skipped?: { path: string; reason: string }[];
+          };
+        };
+      };
+      expect(data.meta.additionalPathsScanned?.skipped).toEqual([
+        { path: "generated", reason: "excluded-by-glob" },
+      ]);
+    });
+
+    it("omits the `skipped` field when every additional path contributed parseable files", async () => {
+      const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-clean-"));
+      await writeFile(joinPath(dir, ".gitignore"), "dist/\n");
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+      await mkdir(joinPath(dir, "dist", "assets"), { recursive: true });
+      await writeFile(
+        joinPath(dir, "dist", "assets", "main.css"),
+        ".foo { color: #eee; background: #fff; }",
+      );
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["dist/assets"] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        meta: {
+          additionalPathsScanned?: {
+            filesAdded: number;
+            skipped?: unknown;
+          };
+        };
+      };
+      expect(data.meta.additionalPathsScanned?.filesAdded).toBe(1);
+      expect(data.meta.additionalPathsScanned?.skipped).toBeUndefined();
+    });
   });
 
   describe("processes config threading", () => {

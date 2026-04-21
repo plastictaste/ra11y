@@ -9,6 +9,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
+import { additionalPathsScannedField } from "./additional-paths-classifier.ts";
 import { baselineStatusField, probeBaselineStatus } from "./baseline-status.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { buildConfigHint } from "./config-hint.ts";
@@ -246,15 +247,12 @@ export const scanProjectTool: McpTool = {
         : {}),
       ...(configHint === null ? {} : { configHint }),
       ...buildWrapperMeta({ autoDetect, configMissing, detectedNames }),
-      ...(additionalPaths.length > 0
-        ? {
-            additionalPathsScanned: {
-              paths: additionalPaths,
-              filesAdded: files.length - baseFiles.length,
-              note: "These paths bypassed `.gitignore` and the default build-dir skips. User `exclude` patterns still applied.",
-            },
-          }
-        : {}),
+      ...additionalPathsScannedField({
+        additionalPaths,
+        filesAdded: files.length - baseFiles.length,
+        root,
+        excludes: session.config.exclude,
+      }),
       nextStep: nextStep.prose,
       ...nextStepStructuredField,
     };
