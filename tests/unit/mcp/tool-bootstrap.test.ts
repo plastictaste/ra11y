@@ -2,9 +2,10 @@
  * Unit tests for the `bootstrap` MCP meta-tool.
  *
  * Covers:
- *   - Happy path: composition surfaces wrappers, proposedConfig, scan
- *     subset, ciSnippet, and nextStep on a real fixture tree with
- *     writeBaseline defaulting to false (no file written).
+ *   - Happy path: composition surfaces wrappers, suggestedConfig (with
+ *     the `proposedConfig` transition alias carrying the identical
+ *     value), scan subset, ciSnippet, and nextStep on a real fixture
+ *     tree with writeBaseline defaulting to false (no file written).
  *   - writeBaseline opt-in: `.ra11y-baseline.json` lands on disk at
  *     the scan root; the response's `baseline` field reports the
  *     path + entriesWritten.
@@ -24,9 +25,11 @@ import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { bootstrapTool } from "../../../src/mcp/tool-bootstrap.ts";
 import { detectNativeWrappersTool } from "../../../src/mcp/tool-detect-wrappers.ts";
+import { proposeConfigTool } from "../../../src/mcp/tool-propose-config.ts";
 
 interface BootstrapResponse {
   readonly wrappers: { readonly candidates: readonly unknown[] };
+  readonly suggestedConfig?: string;
   readonly proposedConfig?: string;
   readonly scan: {
     readonly filesScanned: number;
@@ -77,7 +80,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
   // Composition invariant: every top-level key the spec promises
   // must land, even on a clean codebase. Dry-run writes nothing — the
   // baseline file must NOT appear on disk when the flag is omitted.
-  it("returns wrappers, proposedConfig, scan, baseline:null, ciSnippet on a clean codebase", async () => {
+  it("returns wrappers, suggestedConfig (and proposedConfig alias), scan, baseline:null, ciSnippet on a clean codebase", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
@@ -87,8 +90,15 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(isError).toBeUndefined();
       expect(response.wrappers).toBeTruthy();
       expect(Array.isArray(response.wrappers.candidates)).toBe(true);
+      // Canonical key is `suggestedConfig` (Q3-PROPOSE-CONFIG-FIELD-
+      // DRIFT); `proposedConfig` is emitted alongside for one release
+      // as a transition alias so agents that learned the old name keep
+      // working. Both must carry the identical value.
+      expect(typeof response.suggestedConfig).toBe("string");
+      expect(response.suggestedConfig).toContain('import { defineConfig } from "@ra11y/core";');
       expect(typeof response.proposedConfig).toBe("string");
       expect(response.proposedConfig).toContain('import { defineConfig } from "@ra11y/core";');
+      expect(response.proposedConfig).toBe(response.suggestedConfig);
       expect(response.scan.filesScanned).toBeGreaterThan(0);
       expect(response.scan.violationsCount).toBe(0);
       expect(response.scan.notesCount).toBe(0);
@@ -378,7 +388,7 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
     (detectNativeWrappersTool as { handler: unknown }).handler = originalDetect;
   });
 
-  it("returns scan + proposedConfig and emits bootstrap_detect_failed warning when detect rejects", async () => {
+  it("returns scan + suggestedConfig (plus proposedConfig alias) and emits bootstrap_detect_failed warning when detect rejects", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
@@ -387,11 +397,49 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
       const { response, isError } = await callBootstrap({ cwd: dir });
       expect(isError).toBeUndefined();
       expect(response.wrappers.candidates).toEqual([]);
+      expect(typeof response.suggestedConfig).toBe("string");
       expect(typeof response.proposedConfig).toBe("string");
+      expect(response.proposedConfig).toBe(response.suggestedConfig);
       expect(response.scan.filesScanned).toBeGreaterThan(0);
       expect(response.warnings).toBeDefined();
       expect(response.warnings).toContain("bootstrap_detect_failed");
       expect(response.nextStep).toContain("Degraded legs");
+    });
+  });
+});
+
+describe("bootstrap: suggestedConfig/proposedConfig null-case parity", () => {
+  // Q3-PROPOSE-CONFIG-FIELD-DRIFT. When the `propose_config` leg
+  // degrades (handler rejects → extractProposedConfig returns null),
+  // neither the canonical `suggestedConfig` key nor the
+  // `proposedConfig` transition alias may appear on the response —
+  // conditional-spread for both under one gate. Asserting on both
+  // absence simultaneously prevents the alias from being emitted when
+  // the canonical key is omitted (half-populated shape ambiguity).
+  const originalPropose = proposeConfigTool.handler;
+
+  beforeEach(() => {
+    (proposeConfigTool as { handler: unknown }).handler = () => {
+      throw new Error("forced-propose-failure");
+    };
+  });
+
+  afterEach(() => {
+    (proposeConfigTool as { handler: unknown }).handler = originalPropose;
+  });
+
+  it("omits both suggestedConfig and proposedConfig when propose_config leg rejects", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
+      );
+      const { response, isError } = await callBootstrap({ cwd: dir });
+      expect(isError).toBeUndefined();
+      expect(response.suggestedConfig).toBeUndefined();
+      expect(response.proposedConfig).toBeUndefined();
+      expect(response.warnings).toBeDefined();
+      expect(response.warnings).toContain("bootstrap_propose_config_failed");
     });
   });
 });

@@ -50,7 +50,7 @@ export const bootstrapTool: McpTool = {
   def: {
     name: "bootstrap",
     description:
-      "One-shot onboarding: run `detect_native_wrappers` + `propose_config` + `scan_project` and (optionally) write a `.ra11y-baseline.json`, all in a single round-trip. Returns the wrapper candidates, the proposed ra11y.config.ts body, a subset of the scan payload, the baseline status, and a copy-pasteable CI snippet that wires `baseline check` into GitHub Actions.\n\nRead-only by default: `writeBaseline` is false unless the caller opts in. When `writeBaseline: true`, the tool writes `.ra11y-baseline.json` into `cwd` via the `baseline` tool's `create` mode — same on-disk shape as calling `baseline` directly. Use this once when adopting ra11y on a new codebase; prefer the individual tools for iterative work.",
+      "One-shot onboarding: run `detect_native_wrappers` + `propose_config` + `scan_project` and (optionally) write a `.ra11y-baseline.json`, all in a single round-trip. Returns the wrapper candidates, the proposed ra11y.config.ts body (as `suggestedConfig`; also emitted as `proposedConfig` for one release as a transition alias), a subset of the scan payload, the baseline status, and a copy-pasteable CI snippet that wires `baseline check` into GitHub Actions.\n\nRead-only by default: `writeBaseline` is false unless the caller opts in. When `writeBaseline: true`, the tool writes `.ra11y-baseline.json` into `cwd` via the `baseline` tool's `create` mode — same on-disk shape as calling `baseline` directly. Use this once when adopting ra11y on a new codebase; prefer the individual tools for iterative work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -120,7 +120,7 @@ export const bootstrapTool: McpTool = {
 
     const failedLegs: SubLeg[] = [];
     const wrappersPayload = extractWrappersSubset(detectSettled, failedLegs);
-    const proposedConfig = extractProposedConfig(proposeSettled, failedLegs);
+    const suggestedConfig = extractProposedConfig(proposeSettled, failedLegs);
 
     // Baseline runs sequentially when opted in. Dry-run returns null —
     // present-when-meaningful shape.
@@ -151,9 +151,17 @@ export const bootstrapTool: McpTool = {
       failedLegs,
     });
 
+    // Canonical key is `suggestedConfig` (matches `propose_config` +
+    // `detect_native_wrappers.suggestedConfigSnippet`). `proposedConfig`
+    // is emitted alongside for one release as a transition alias so
+    // agents that learned the old name keep working — silent, lossless,
+    // compatible (no input-side warning needed; this is output-side
+    // aliasing). Removed in the next minor release.
+    const configPair =
+      suggestedConfig === null ? {} : { suggestedConfig, proposedConfig: suggestedConfig };
     return textResult({
       wrappers: wrappersPayload,
-      ...(proposedConfig === null ? {} : { proposedConfig }),
+      ...configPair,
       scan: scanSubset,
       baseline,
       ciSnippet,
@@ -547,7 +555,7 @@ function buildHeadline(scan: ScanSubset): string {
     return "Scan ran but parsed zero files — check `warnings` for why (nonexistent cwd, no matching extensions, or everything ignored).";
   }
   if (scan.violationsCount === 0 && scan.notesCount === 0) {
-    return "Scan clean. Paste `proposedConfig` into ra11y.config.ts if a config is not already committed, then add the `ciSnippet` to your CI workflow.";
+    return "Scan clean. Paste `suggestedConfig` into ra11y.config.ts if a config is not already committed, then add the `ciSnippet` to your CI workflow.";
   }
   const fragments: string[] = [];
   if (scan.violationsCount > 0) {
@@ -556,7 +564,7 @@ function buildHeadline(scan: ScanSubset): string {
   if (scan.notesCount > 0) {
     fragments.push(pluralize(scan.notesCount, "note"));
   }
-  return `${fragments.join(" + ")} from scan_project. Paste \`proposedConfig\` into ra11y.config.ts, then work through the findings — call \`scan_project\` again to iterate.`;
+  return `${fragments.join(" + ")} from scan_project. Paste \`suggestedConfig\` into ra11y.config.ts, then work through the findings — call \`scan_project\` again to iterate.`;
 }
 
 function pluralize(count: number, noun: string): string {
