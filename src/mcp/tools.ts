@@ -11,8 +11,6 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { parseableExtensions } from "../utils/path.ts";
 import { buildListRulesNextStep } from "./list-rules-next-step.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
@@ -210,7 +208,7 @@ const scanTool: McpTool = {
       ...formatted,
       files: hoisted.files,
       ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
-      ...ruleCatalogField(params, BUILTIN_RULES, formatted.files),
+      ...ruleCatalogField(params, session.registry.rules, formatted.files),
       ...(baseWarnings.length > 0 ? { warnings: baseWarnings } : {}),
       meta: applyMetaCacheMode({ toolName: "scan", params, fullMeta, session }),
     };
@@ -469,18 +467,21 @@ const listRulesTool: McpTool = {
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
-  handler(params) {
-    const total = BUILTIN_RULES.length;
-    let rules = BUILTIN_RULES;
+  handler(params, session) {
+    const total = session.registry.rules.length;
+    let rules = session.registry.rules;
 
     const standardFilter = strParam(params, "standard");
     if (standardFilter) {
-      if (!BUILTIN_STANDARDS.some((s) => s.id === standardFilter)) {
-        const known = BUILTIN_STANDARDS.map((s) => s.id).join(", ");
+      if (!session.registry.standards.some((s) => s.id === standardFilter)) {
+        const known = session.registry.standards.map((s) => s.id).join(", ");
         return errorResult({
           code: "standard-not-found",
           message: `Unknown standard '${standardFilter}'. Loaded: ${known}.`,
-          details: { requested: standardFilter, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+          details: {
+            requested: standardFilter,
+            loaded: session.registry.standards.map((s) => s.id),
+          },
           remediation:
             "Pass `standard` with one of the loaded IDs, or omit to list rules from every loaded standard.",
         });
@@ -502,8 +503,8 @@ const listRulesTool: McpTool = {
     const meta: Record<string, unknown> = {
       rulesTotal: total,
       rulesMatched: rules.length,
-      standardsLoaded: BUILTIN_STANDARDS.length,
-      standards: BUILTIN_STANDARDS.map((s) => s.id),
+      standardsLoaded: session.registry.standards.length,
+      standards: session.registry.standards.map((s) => s.id),
     };
     const nextStep = buildListRulesNextStep(standardFilter, rules.length);
     return textResult({
@@ -578,7 +579,7 @@ const sessionConfigureTool: McpTool = {
   },
   handler(params, session) {
     const config = session.configure(buildConfigureOpts(params));
-    const ruleCount = BUILTIN_RULES.filter((r) =>
+    const ruleCount = session.registry.rules.filter((r) =>
       r.satisfies.some((s) => s.startsWith(`${config.standard}:`)),
     ).length;
     return textResult({

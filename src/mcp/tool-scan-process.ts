@@ -39,9 +39,6 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { runScan } from "../engine/scanner.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import type { Process } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { ScanResult } from "../types/violation.ts";
@@ -289,7 +286,7 @@ async function scanPages(args: {
     args;
   const attestations = await loadDurableAttestations(cwd);
   const effectiveRuleSettings = session.effectiveRules(projectConfig);
-  const activeRules = applyRuleSettings(BUILTIN_RULES, effectiveRuleSettings);
+  const activeRules = applyRuleSettings(session.registry.rules, effectiveRuleSettings);
 
   const pagesScanned: PageScanSummary[] = [];
   const perPageResults: ScanResult[] = [];
@@ -302,11 +299,11 @@ async function scanPages(args: {
       continue;
     }
     const { result } = runScan({
-      standards: BUILTIN_STANDARDS,
+      standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
       files: [parsed],
-      finders: BUILTIN_CANDIDATE_FINDERS,
+      finders: session.registry.finders,
       level,
       ...(attestations.length > 0 && { attestations }),
       // Thread the matched process through every per-page call. Known

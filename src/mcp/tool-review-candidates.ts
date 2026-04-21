@@ -23,9 +23,7 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
+import type { CandidateFinder } from "../types/review.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import {
   applyRuleSettings,
@@ -76,17 +74,17 @@ export const reviewCandidatesTool: McpTool = {
     const standards = resolveStandards(strParam(params, "standard"), session);
     const unknown = firstUnknownStandard(standards, session);
     if (unknown !== null) {
-      const known = BUILTIN_STANDARDS.map((s) => s.id).join(", ");
+      const known = session.registry.standards.map((s) => s.id).join(", ");
       return errorResult({
         code: "standard-not-found",
         message: `Unknown standard '${unknown}'. Loaded: ${known}.`,
-        details: { requested: unknown, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+        details: { requested: unknown, loaded: session.registry.standards.map((s) => s.id) },
         remediation:
           "Pass `standard` with one of the loaded IDs, or omit to use the session default.",
       });
     }
     const filterCriterion = strParam(params, "criterionId");
-    if (filterCriterion !== undefined && !isKnownCriterion(filterCriterion)) {
+    if (filterCriterion !== undefined && !isKnownCriterion(filterCriterion, session)) {
       return errorResult({
         code: "criterion-not-found",
         message: `Unknown criterion '${filterCriterion}'.`,
@@ -99,21 +97,21 @@ export const reviewCandidatesTool: McpTool = {
     const files = await parseFiles(paths, session, cwd);
 
     const { report } = runScan({
-      standards: BUILTIN_STANDARDS,
-      rules: applyRuleSettings(BUILTIN_RULES, session.config.rules),
+      standards: session.registry.standards,
+      rules: applyRuleSettings(session.registry.rules, session.config.rules),
       enabled: standards,
       files,
-      finders: BUILTIN_CANDIDATE_FINDERS,
+      finders: session.registry.finders,
       level,
     });
 
     const candidates = (report.candidates ?? []).filter((c) => {
       if (filterCriterion && c.criterionId !== filterCriterion) return false;
-      return isCriterionInLevel(c.criterionId, level);
+      return isCriterionInLevel(c.criterionId, level, session);
     });
 
-    const findersByCriterion = indexFindersByCriterion();
-    const standardsById = new Map(BUILTIN_STANDARDS.map((s) => [s.id, s]));
+    const findersByCriterion = indexFindersByCriterion(session);
+    const standardsById = new Map(session.registry.standards.map((s) => [s.id, s]));
     const sources = sourceIndex(files);
 
     // Build the keyed prompt map on the fly from the criterion IDs
@@ -222,9 +220,11 @@ function candidateSnippet(
   });
 }
 
-function indexFindersByCriterion(): Map<string, (typeof BUILTIN_CANDIDATE_FINDERS)[number]> {
-  const out = new Map<string, (typeof BUILTIN_CANDIDATE_FINDERS)[number]>();
-  for (const finder of BUILTIN_CANDIDATE_FINDERS) {
+function indexFindersByCriterion(
+  session: import("./session.ts").McpSession,
+): Map<string, CandidateFinder> {
+  const out = new Map<string, CandidateFinder>();
+  for (const finder of session.registry.finders) {
     for (const cid of finder.criterionIds) {
       if (!out.has(cid)) out.set(cid, finder);
     }
@@ -232,17 +232,24 @@ function indexFindersByCriterion(): Map<string, (typeof BUILTIN_CANDIDATE_FINDER
   return out;
 }
 
-function isCriterionInLevel(criterionId: string, level: string): boolean {
+function isCriterionInLevel(
+  criterionId: string,
+  level: string,
+  session: import("./session.ts").McpSession,
+): boolean {
   const rank: Record<string, number> = { A: 1, AA: 2, AAA: 3 };
-  for (const standard of BUILTIN_STANDARDS) {
+  for (const standard of session.registry.standards) {
     const c = standard.criteria.find((x) => x.id === criterionId);
     if (c) return (rank[c.level] ?? 0) <= (rank[level] ?? 3);
   }
   return true;
 }
 
-function isKnownCriterion(criterionId: string): boolean {
-  for (const std of BUILTIN_STANDARDS) {
+function isKnownCriterion(
+  criterionId: string,
+  session: import("./session.ts").McpSession,
+): boolean {
+  for (const std of session.registry.standards) {
     if (std.criteria.some((c) => c.id === criterionId)) return true;
   }
   return false;

@@ -20,8 +20,6 @@ import {
   countFixes,
   countFixesByClass,
 } from "../output/agent-response/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
 import type { Violation } from "../types/violation.ts";
@@ -417,6 +415,7 @@ function isCountableManual(
 
 function collectManualCriteria(
   enabledStandardIds: readonly string[],
+  session: McpSession,
   maxLevel: "A" | "AA" | "AAA" = "AAA",
   files: readonly ParsedFile[] = [],
 ): ReadonlySet<string> {
@@ -424,7 +423,7 @@ function collectManualCriteria(
   const maxRank = LEVEL_ORDER[maxLevel] ?? 3;
   const applicability = detectApplicability(files);
   const seen = new Set<string>();
-  for (const std of BUILTIN_STANDARDS) {
+  for (const std of session.registry.standards) {
     if (!enabled.has(std.id)) continue;
     for (const c of std.criteria) {
       if (!isCountableManual(c, maxRank, seen)) continue;
@@ -574,7 +573,7 @@ export async function runScanAndFormat(
   readonly reviewCandidates: readonly import("../types/review.ts").ReviewCandidate[];
 }> {
   const effective = ruleSettings ?? session.config.rules;
-  const activeRules = applyRuleSettings(BUILTIN_RULES, effective);
+  const activeRules = applyRuleSettings(session.registry.rules, effective);
   const attestations = await loadDurableAttestations(cwd ?? process.cwd());
   const {
     wrappers,
@@ -639,7 +638,7 @@ export async function runScanAndFormat(
     "verify-in-source": fixesByClass.verifyInSource,
   };
 
-  const manualIds = collectManualCriteria(enabled, session.config.level, files);
+  const manualIds = collectManualCriteria(enabled, session, session.config.level, files);
   const manualCount = manualIds.size;
   // Actionable = manual criteria that a finder grounded in a concrete
   // file:line. Before the split, `plan.manualReviewRequired` summed
