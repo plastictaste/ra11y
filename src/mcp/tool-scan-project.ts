@@ -21,6 +21,7 @@ import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import { assembleScanProjectResponse } from "./scan-project-budget.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
+import { detectSsgFramework, ssgEmptyResultMetaFields, withSsgHint } from "./ssg-detect.ts";
 import {
   errorResult,
   type McpTool,
@@ -228,8 +229,19 @@ export const scanProjectTool: McpTool = {
     // findings that never reach the caller, leaving a pointer with
     // no lookup target.
     const hoisted = hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide);
+    // Q4-SSG-BUILD-HINT: probe the scan root for an SSG config marker
+    // (Jekyll / Hugo / Astro / Eleventy / Gatsby / MkDocs). When a
+    // framework resolves, `detectedFramework` ships as a structured
+    // `meta` field and the `ssgHint` prose is appended to
+    // `analysisCoverage.hints` so the agent sees the "build then scan
+    // the emitted output" workflow inline with the other coverage
+    // advice. Additive surface only — no findings are filtered or
+    // downgraded by the detection (CLAUDE.md §1 "Surface, don't
+    // suppress").
+    const detectedFramework = detectSsgFramework(root);
+    const metaWithSsgHint = withSsgHint(formatted.meta, detectedFramework);
     const fullMeta = {
-      ...formatted.meta,
+      ...metaWithSsgHint,
       ...skippedByCallerField(skipCriterion),
       scanned: scannedProject(root),
       scanMode: actualMode,
@@ -247,6 +259,7 @@ export const scanProjectTool: McpTool = {
         : {}),
       ...(configHint === null ? {} : { configHint }),
       ...buildWrapperMeta({ autoDetect, configMissing, detectedNames }),
+      ...(detectedFramework === null ? {} : { detectedFramework }),
       ...additionalPathsScannedField({
         additionalPaths,
         filesAdded: files.length - baseFiles.length,
@@ -586,6 +599,11 @@ function buildEmptyFilesResult(args: {
       scanned: scannedProject(root),
       scanMode: actualMode,
       ...(fallbackReason === undefined ? {} : { fallbackReason }),
+      // Q4-SSG-BUILD-HINT: zero-parseable-files on an SSG root is
+      // canonically "all the markup lives in fragments the scanner
+      // doesn't parse." Surface the framework + hint so the agent has
+      // the build command and emit dir inline.
+      ...ssgEmptyResultMetaFields(root),
     },
     ...warningsField({
       filesScanned: 0,
