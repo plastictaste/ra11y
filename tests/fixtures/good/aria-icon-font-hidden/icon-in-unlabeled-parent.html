@@ -1,0 +1,17 @@
+<!--
+  Good (for THIS rule): icon-font glyph inside an interactive parent
+  that has NO accessible name. The double-announce risk does not apply
+  when there is no name to double-announce — the parent is the problem,
+  and `semantics/button-name` is the rule that catches it. Keeping this
+  case out of scope is the deliberate boundary between the two rules.
+  Expect: zero findings from aria/icon-font-hidden. (button-name fires
+  on the ancestor — that's a different rule's concern.)
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <button>
+      <i class="fas fa-times"></i>
+    </button>
+  </body>
+</html>

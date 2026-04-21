@@ -1,0 +1,14 @@
+<!--
+  Good: Font Awesome glyph inside a labeled button, explicitly hidden from
+  the accessibility tree. The canonical WAI-recommended pattern for
+  icon-font glyphs paired with an aria-label'ed button.
+  Expect: zero findings from aria/icon-font-hidden.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <button aria-label="Close dialog">
+      <i class="fas fa-times" aria-hidden="true"></i>
+    </button>
+  </body>
+</html>

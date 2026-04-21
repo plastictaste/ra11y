@@ -1,0 +1,15 @@
+<!--
+  Bad: Material Icons span inside a labeled anchor.
+  The link has visible "Home" text *plus* an unannotated Material Icons
+  span — AT users hear "home" twice ("home" glyph + "Home" word).
+  Expect: rule aria/icon-font-hidden fires once.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/home">
+      <span class="material-icons">home</span>
+      Home
+    </a>
+  </body>
+</html>

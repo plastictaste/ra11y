@@ -1,0 +1,16 @@
+<!--
+  Good: Material Icons glyph with role="presentation" inside a labeled
+  link. role="presentation" (and role="none") remove the element from
+  the accessibility tree — semantically equivalent to aria-hidden for
+  decorative-icon purposes.
+  Expect: zero findings from aria/icon-font-hidden.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/home">
+      <span class="material-icons" role="presentation">home</span>
+      Home
+    </a>
+  </body>
+</html>

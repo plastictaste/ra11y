@@ -1,0 +1,15 @@
+<!--
+  Bad: Font Awesome icon inside a labeled button with no aria-hidden.
+  The button is named by aria-label; the <i class="fas fa-times"> glyph
+  has no aria-hidden, so assistive tech may announce the private-use-area
+  codepoint alongside the "Close" label.
+  Expect: rule aria/icon-font-hidden fires once at severity "info".
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <button aria-label="Close dialog">
+      <i class="fas fa-times"></i>
+    </button>
+  </body>
+</html>

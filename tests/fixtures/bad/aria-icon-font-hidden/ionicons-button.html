@@ -1,0 +1,13 @@
+<!--
+  Bad: Ionicons <ion-icon> custom element inside a labeled button.
+  The <ion-icon> tag is itself the signal — no class-token check needed.
+  Expect: rule aria/icon-font-hidden fires once.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <button aria-label="Share this page">
+      <ion-icon name="share-social"></ion-icon>
+    </button>
+  </body>
+</html>

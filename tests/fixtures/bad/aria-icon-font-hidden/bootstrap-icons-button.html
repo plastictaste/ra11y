@@ -1,0 +1,15 @@
+<!--
+  Bad: Bootstrap Icons glyph inside a labeled button using aria-labelledby.
+  The rule considers aria-labelledby a sufficient name declaration for
+  the ancestor gate; the inner <i class="bi bi-search"> is still unhidden.
+  Expect: rule aria/icon-font-hidden fires once.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <span id="search-label">Search</span>
+    <button aria-labelledby="search-label">
+      <i class="bi bi-search"></i>
+    </button>
+  </body>
+</html>

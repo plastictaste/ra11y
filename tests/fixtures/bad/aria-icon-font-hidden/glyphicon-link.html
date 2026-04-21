@@ -1,0 +1,15 @@
+<!--
+  Bad: Legacy Bootstrap 3 Glyphicon inside a labeled link. Same shape as
+  the Font Awesome case — the ancestor has visible "Next" text, the inner
+  span wraps a decorative arrow glyph with no aria-hidden.
+  Expect: rule aria/icon-font-hidden fires once.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/page/2">
+      <span class="glyphicon glyphicon-arrow-right"></span>
+      Next
+    </a>
+  </body>
+</html>
