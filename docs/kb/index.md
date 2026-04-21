@@ -152,6 +152,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [pointer/stretched-link-multiple-in-container](./rules/pointer__stretched-link-multiple-in-container.md)
 - [pointer/target-size](./rules/pointer__target-size.md)
 - [semantics/button-name](./rules/semantics__button-name.md)
+- [semantics/duplicate-landmark-unlabeled](./rules/semantics__duplicate-landmark-unlabeled.md)
 - [semantics/empty-heading](./rules/semantics__empty-heading.md)
 - [semantics/heading-class-on-nonheading](./rules/semantics__heading-class-on-nonheading.md)
 - [semantics/heading-hierarchy](./rules/semantics__heading-hierarchy.md)
