@@ -64,6 +64,7 @@ import { rule as dragAlternative } from "./pointer/drag-alternative.ts";
 import { rule as stretchedLinkMultipleInContainer } from "./pointer/stretched-link-multiple-in-container.ts";
 import { rule as targetSize } from "./pointer/target-size.ts";
 import { rule as buttonName } from "./semantics/button-name.ts";
+import { rule as duplicateLandmarkUnlabeled } from "./semantics/duplicate-landmark-unlabeled.ts";
 import { rule as emptyHeading } from "./semantics/empty-heading.ts";
 import { rule as headingClassOnNonheading } from "./semantics/heading-class-on-nonheading.ts";
 import { rule as headingHierarchy } from "./semantics/heading-hierarchy.ts";
@@ -94,6 +95,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   contrastNonText,
   dragAlternative,
   duplicateId,
+  duplicateLandmarkUnlabeled,
   emptyHeading,
   errorMessageNotAssociated,
   expandedOnDisclosure,
@@ -167,6 +169,7 @@ export {
   contrastNonText,
   dragAlternative,
   duplicateId,
+  duplicateLandmarkUnlabeled,
   emptyHeading,
   errorMessageNotAssociated,
   expandedOnDisclosure,

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>One labeled, one unlabeled nav</title>
+  </head>
+  <body>
+    <nav aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/docs">Docs</a>
+    </nav>
+    <!-- Second nav has no aria-label. Even though the page has one
+         labeled landmark, this one still announces as just
+         "navigation" and becomes indistinguishable. -->
+    <nav>
+      <a href="/login">Log in</a>
+      <a href="/signup">Sign up</a>
+    </nav>
+  </body>
+</html>
