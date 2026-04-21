@@ -70,6 +70,18 @@ export interface HtmlAttribute extends BaseNode {
 export interface HtmlText extends BaseNode {
   readonly kind: "HtmlText";
   readonly value: string;
+  /**
+   * True when the parser stripped at least one template directive
+   * (`{{ … }}`, `{% … %}`, `<% … %>`, `<%= … %>`, `<%# … %>`, or a
+   * `{% capture %}…{% endcapture %}` / `{% comment %}…{% endcomment %}`
+   * block) from this node's rendered value. Rules that consume
+   * visible text use this flag to append a `template_directive_stripped`
+   * signal to their reason text so the agent knows the check ran
+   * against the rendered-text shape rather than the raw source.
+   * Absent when no directive was present — the shape stays terse on
+   * the no-template majority of HTML files.
+   */
+  readonly containsTemplateDirective?: boolean;
 }
 
 export interface HtmlComment extends BaseNode {

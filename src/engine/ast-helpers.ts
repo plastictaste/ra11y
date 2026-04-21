@@ -302,6 +302,30 @@ export function htmlTextContent(element: HtmlElement): string {
   return chunks.join("").trim();
 }
 
+/**
+ * True when any descendant text node under `element` had a template
+ * directive stripped during parsing (`{{ … }}`, `{% … %}`, or ERB
+ * variants). Rules that consume visible text use this to append the
+ * `template_directive_stripped` signal to their reason text so the
+ * agent knows the check ran against the rendered-text shape rather
+ * than the raw source.
+ */
+export function htmlSubtreeHasStrippedDirective(element: HtmlElement): boolean {
+  const visit = (node: HtmlNode): boolean => {
+    if (node.kind === "HtmlText") return node.containsTemplateDirective === true;
+    if (node.kind === "HtmlElement") {
+      for (const c of node.children) {
+        if (visit(c)) return true;
+      }
+    }
+    return false;
+  };
+  for (const child of element.children) {
+    if (visit(child)) return true;
+  }
+  return false;
+}
+
 /** Text content of a JSX element (concatenated literal text only). */
 export function jsxTextContent(element: JsxElement): string {
   const chunks: string[] = [];

@@ -29,6 +29,7 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
+  htmlSubtreeHasStrippedDirective,
   htmlTextContent,
   jsxTextContent,
   truncateForEcho,
@@ -116,6 +117,16 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     const generic = matchesGenericPhrase(text);
     if (!generic) continue;
 
+    // Honest signal: if the link text had template directives stripped
+    // (e.g. `<a>{{ icon }} Read more</a>` → "Read more"), let the agent
+    // know the generic-phrase match was against the stripped shape.
+    // Directives are not heuristically suppressed — they're removed
+    // because the rule's premise (visible text) genuinely excludes them
+    // — but the agent should be able to distinguish "literally 'read
+    // more'" from "rendered-into-'read more'".
+    const strippedSuffix = htmlSubtreeHasStrippedDirective(a)
+      ? " (template_directive_stripped: the link text contained template expressions that were stripped before the generic-phrase check; residual visible text still matches the generic phrase)"
+      : "";
     emit({
       severity: "warning",
       location: {
@@ -123,7 +134,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
         line: a.loc.start.line,
         column: a.loc.start.column,
       },
-      message: `Link text "${generic}" is not descriptive — screen readers reading this out of context tell users nothing about where they'll end up.`,
+      message: `Link text "${generic}" is not descriptive — screen readers reading this out of context tell users nothing about where they'll end up.${strippedSuffix}`,
       suggestion: buildSuggestion(getHtmlAttribute(a, "href"), generic),
     });
   }

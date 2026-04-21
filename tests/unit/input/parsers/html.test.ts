@@ -201,4 +201,86 @@ describe("parseHtml", () => {
     const garbage = "<><<<!doctype??? <x<y<>> &#xZZ; <p><<<";
     expect(() => parseHtml(garbage)).not.toThrow();
   });
+
+  // ─── template-directive stripping (Q4-LIQUID-TEXT-LITERAL) ─────────────
+  //
+  // Structural invariants the fixture harness also guards via
+  // jekyll-liquid-text-literal; these assert at the parser surface so a
+  // refactor that moves stripping elsewhere still has to keep the AST
+  // shape honest.
+
+  it("strips {{ … }} and {% … %} from text nodes and flags the node", () => {
+    const { root } = parseHtml("<p>Hello {{ user.name }} — {% if x %}ok{% endif %}!</p>");
+    const p = findFirst(root, "p");
+    const text = p?.children[0];
+    expect(text?.kind).toBe("HtmlText");
+    const value = (text as { value: string } | undefined)?.value.replace(/\s+/g, " ").trim();
+    expect(value).toBe("Hello — ok!");
+    expect((text as { containsTemplateDirective?: boolean }).containsTemplateDirective).toBe(true);
+  });
+
+  it("strips ERB directives from text nodes", () => {
+    const { root } = parseHtml("<p>Welcome, <%= user.name %>!<%# hidden %></p>");
+    const p = findFirst(root, "p");
+    const joined = (p?.children ?? [])
+      .filter((c) => c.kind === "HtmlText")
+      .map((c) => (c as { value: string }).value)
+      .join("")
+      .trim();
+    expect(joined).toBe("Welcome, !");
+  });
+
+  it("leaves template-free text unflagged", () => {
+    const { root } = parseHtml("<p>plain text</p>");
+    const p = findFirst(root, "p");
+    const text = p?.children[0] as { containsTemplateDirective?: boolean };
+    expect(text.containsTemplateDirective).toBeUndefined();
+  });
+
+  it("treats {% capture %}…{% endcapture %} as opaque text so inner <a> is not a <ul> child", () => {
+    const src =
+      "<ul>\n" +
+      "  {% capture link %}\n" +
+      '    <a href="/x">Inner</a>\n' +
+      "  {% endcapture %}\n" +
+      "  <li>{{ link }}</li>\n" +
+      "</ul>";
+    const { root } = parseHtml(src);
+    const ul = findFirst(root, "ul");
+    // Only <li> element children — the captured <a> must not surface
+    // as a sibling of <li>. Text nodes around it are allowed.
+    const elementChildren = (ul?.children ?? []).filter((c) => c.kind === "HtmlElement");
+    expect(elementChildren.every((c) => (c as HtmlElement).tagName === "li")).toBe(true);
+  });
+
+  it("treats {% comment %}…{% endcomment %} as opaque text", () => {
+    const src = "<div>{% comment %}<p>hidden</p>{% endcomment %}visible</div>";
+    const { root } = parseHtml(src);
+    const div = findFirst(root, "div");
+    const pInside = findFirst(root, "p");
+    // The <p> inside the comment block must not have been parsed as a
+    // real element.
+    expect(pInside).toBeNull();
+    expect(div?.children.length).toBeGreaterThan(0);
+  });
+
+  it("strips directives from <title> raw-text content", () => {
+    const { root } = parseHtml("<title>{{ page.title }} — Acme</title>");
+    const title = findFirst(root, "title");
+    const value = (title?.children[0] as { value: string }).value.trim();
+    expect(value).toBe("— Acme");
+    expect(
+      (title?.children[0] as { containsTemplateDirective?: boolean }).containsTemplateDirective,
+    ).toBe(true);
+  });
+
+  it("leaves unclosed {{ span as literal text (recovery)", () => {
+    // Unclosed directive: parser must not hang and must keep the
+    // source readable downstream. The backlog rule is "never throw";
+    // leaving the literal is honest.
+    const { root, errors } = parseHtml("<p>Hello {{ unclosed</p>");
+    const p = findFirst(root, "p");
+    expect(p).not.toBeNull();
+    expect(errors.length).toBe(0);
+  });
 });
