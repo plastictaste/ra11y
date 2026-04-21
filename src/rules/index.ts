@@ -61,6 +61,7 @@ import { rule as linkTargetBlankAnnouncement } from "./navigation/link-target-bl
 import { rule as skipLink } from "./navigation/skip-link.ts";
 import { rule as duplicateId } from "./parsing/duplicate-id.ts";
 import { rule as htmlHasLang } from "./parsing/html-has-lang.ts";
+import { rule as invalidIdShape } from "./parsing/invalid-id-shape.ts";
 import { rule as cancellation } from "./pointer/cancellation.ts";
 import { rule as dragAlternative } from "./pointer/drag-alternative.ts";
 import { rule as stretchedLinkMultipleInContainer } from "./pointer/stretched-link-multiple-in-container.ts";
@@ -112,6 +113,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
+  invalidIdShape,
   invalidRole,
   labelAdjacentUnassociated,
   labelForIdMismatch,
@@ -189,6 +191,7 @@ export {
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
+  invalidIdShape,
   invalidRole,
   labelAdjacentUnassociated,
   labelForIdMismatch,

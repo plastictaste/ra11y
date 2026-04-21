@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <body>
+    <!--
+      The id value is driven by a template directive. The scanner cannot
+      know the rendered shape — emitting a confident "invalid" here
+      would be dishonest. The agent reading the rendered output is the
+      correct arbiter.
+    -->
+    <section id="{{ page.slug }}">
+      <h1>{{ page.title }}</h1>
+    </section>
+  </body>
+</html>
