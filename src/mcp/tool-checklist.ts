@@ -23,6 +23,7 @@ import {
   isLikelyIrrelevant,
 } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
+import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import {
@@ -39,7 +40,6 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField } from "./warnings.ts";
 
 interface ChecklistCandidateOut {
   readonly path: string;
@@ -396,7 +396,7 @@ export const checklistTool: McpTool = {
       likelyIrrelevant: filteredIrrelevant,
       ...checklistNextStep,
       ...metaField,
-      ...warningsField({
+      ...buildDerivativeScanWarnings({
         filesScanned: files.length,
         rootSource: null,
         configSource: undefined,

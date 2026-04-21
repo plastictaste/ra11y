@@ -156,5 +156,34 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
   });
 });
 
+// ADR 0024 stage 4 (V1-RESPONSE-SCAN-DERIVATIVE): the scan-derivative
+// tools (`checklist`, `coverage`, `conformance_statement`) now route
+// their scan-confidence warnings through the same
+// `buildDerivativeScanWarnings` seam the primary scan tools use. The
+// invariant is that the structured codes fire consistently across the
+// primary + derivative surfaces on the same input — drift here is the
+// silent-miss failure mode ADR 0024 was written to close, where
+// `scan_project` says "nothing was scanned" via `scanned_zero_files`
+// but `checklist` reads as a clean manual queue over an empty
+// codebase.
+describe("MCP invariant: derivative tools emit the same scan-confidence warnings as the primary scan tools", () => {
+  it("scanned_zero_files fires on all four surfaces for the same empty scan root", async () => {
+    const empty = await mkdtemp(join(tmpdir(), "ra11y-derivative-warnings-"));
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: empty }),
+      toolCall(3, "coverage", { cwd: empty }),
+      toolCall(4, "checklist", { cwd: empty }),
+      toolCall(5, "conformance_statement", { cwd: empty, standard: "wcag22", level: "AA" }),
+    ]);
+    const shapes = responses
+      .slice(1, 5)
+      .map((r) => body<{ warnings?: readonly string[] }>(r).warnings ?? []);
+    for (const warnings of shapes) {
+      expect(warnings).toContain("scanned_zero_files");
+    }
+  });
+});
+
 // Silence the unused warning on the helper used implicitly above.
 void mkdir;

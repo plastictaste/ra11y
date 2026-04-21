@@ -36,6 +36,7 @@ import type { LoadedConfig } from "../types/config.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
 import { headSha } from "../utils/git.ts";
 import { VERSION } from "../version.ts";
+import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -181,9 +182,35 @@ export const conformanceStatementTool: McpTool = {
     );
 
     // Merge the tool-level signing warning with the builder's own
-    // warnings (e.g. `stale_probe_unavailable`) so the agent reads one
-    // deduplicated set. Order is alphabetical for determinism.
+    // warnings (e.g. `stale_probe_unavailable`) and the shared
+    // scan-confidence codes emitted by `buildDerivativeScanWarnings`
+    // (ADR 0024 stage 4) so the agent reads one deduplicated set.
+    // Order is alphabetical for determinism.
+    //
+    // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
+    // a `conformance_statement` response on a real-but-empty scan root
+    // would otherwise read as a conformance verdict over "the whole
+    // project" when the scanner saw zero parseable files — the
+    // `scanned_zero_files` code surfaces that honestly. `rootSource:
+    // null` mirrors `checklist` / `coverage`: this tool takes `paths`
+    // directly, defaulting to `[cwd]`, so `root_source_defaulted` has
+    // no meaning here. `configSource: undefined` suppresses
+    // `no_config_found` for parity with those sibling tools —
+    // conformance uses the loaded config for signing-fingerprint
+    // inputs, not as a scan gating signal, and emitting the code here
+    // would diverge from the derivative-tool contract. `analysisCoverage`
+    // / `filesByExtension` aren't computed in this handler, so
+    // extension-skip / Tailwind-undercount codes simply don't fire
+    // until those signals are plumbed through.
+    const derivativeWarnings = buildDerivativeScanWarnings({
+      filesScanned: files.length,
+      rootSource: null,
+      configSource: undefined,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+    });
     const toolWarnings = new Set<string>(statement.warnings ?? []);
+    for (const code of derivativeWarnings.warnings ?? []) toolWarnings.add(code);
     if (signingContext.signing === undefined) toolWarnings.add("non_git_repo_signature_omitted");
     const mergedWarnings = [...toolWarnings].sort();
 
@@ -192,6 +219,9 @@ export const conformanceStatementTool: McpTool = {
       markdown: renderConformanceMarkdown(statement),
       nextStep: buildNextStep(statement),
       ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
+      ...(derivativeWarnings.warningsDetails === undefined
+        ? {}
+        : { warningsDetails: derivativeWarnings.warningsDetails }),
     });
   },
 };

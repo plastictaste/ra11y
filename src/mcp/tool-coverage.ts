@@ -11,6 +11,7 @@ import { buildCoverageReport } from "../reports/coverage.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
+import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import type { McpSession } from "./session.ts";
 import {
   applyRuleSettings,
@@ -25,7 +26,6 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField } from "./warnings.ts";
 
 export const coverageTool: McpTool = {
   def: {
@@ -184,7 +184,7 @@ export const coverageTool: McpTool = {
     // files on the parseable-extension check — same condition as
     // scan_project.
     const filesByExtension = countFilesByExtension(files);
-    const warnings = warningsField({
+    const warnings = buildDerivativeScanWarnings({
       filesScanned: files.length,
       rootSource: null,
       configSource: undefined,
