@@ -24,7 +24,12 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { AttestationRecord } from "../types/evidence.ts";
+import {
+  ATTESTATION_EVIDENCE_SOURCES,
+  type AttestationEvidenceSource,
+  type AttestationRecord,
+  LEGACY_ATTESTATION_EVIDENCE_SOURCE,
+} from "../types/evidence.ts";
 
 /** Relative path from project root to the attestation store. */
 export const ATTESTATION_STORE_RELATIVE_PATH = ".ra11y/attestations.jsonl";
@@ -398,6 +403,14 @@ function parseLedgerLine(content: string): AttestationRecord | null {
  * Validates the parsed JSON value against the {@link AttestationRecord}
  * contract and returns a normalized record, or `null` if the value is
  * not a valid record. Used by the lenient read path.
+ *
+ * `evidenceSource` back-compat: records that predate the field (the
+ * ledger was empty pre-ship, but third-party tooling may have produced
+ * legacy entries) coerce to {@link LEGACY_ATTESTATION_EVIDENCE_SOURCE}
+ * on read. A *present* but unrecognized value is rejected — we skip the
+ * record rather than silently flatten "runtime_tool_v2" into something
+ * it wasn't. The write path (see {@link requireValidRecord}) rejects
+ * missing values so new records always carry explicit provenance.
  */
 function coerceAttestationRecord(value: unknown): AttestationRecord | null {
   if (typeof value !== "object" || value === null) return null;
@@ -406,17 +419,55 @@ function coerceAttestationRecord(value: unknown): AttestationRecord | null {
   if (typeof v["by"] !== "string" || v["by"].length === 0) return null;
   if (typeof v["reason"] !== "string" || v["reason"].length === 0) return null;
   if (typeof v["attestedAt"] !== "string" || v["attestedAt"].length === 0) return null;
-  const record: AttestationRecord = {
+  const evidenceSource = coerceEvidenceSource(v["evidenceSource"]);
+  if (evidenceSource === null) return null;
+  return {
     criterionId: v["criterionId"],
     by: v["by"],
     reason: v["reason"],
     attestedAt: v["attestedAt"],
+    evidenceSource,
+    ...coerceOptionalFields(v),
+  };
+}
+
+/**
+ * Extracted from {@link coerceAttestationRecord} so each function stays
+ * focused on one concern — required-field validation vs. optional-field
+ * spread — and the outer function's cognitive complexity stays under
+ * the project's budget. Pure: returns the partial shape to spread into
+ * the final record.
+ */
+function coerceOptionalFields(v: Record<string, unknown>): Partial<AttestationRecord> {
+  return {
+    ...(isNonEmptyString(v["toolName"]) ? { toolName: v["toolName"] } : {}),
+    ...(isNonEmptyString(v["runUrl"]) ? { runUrl: v["runUrl"] } : {}),
+    ...(isNonEmptyString(v["observedAt"]) ? { observedAt: v["observedAt"] } : {}),
     ...(isRuleIds(v["ruleIds"]) ? { ruleIds: v["ruleIds"] } : {}),
     ...(isScope(v["scope"]) ? { scope: v["scope"] } : {}),
     ...(isLocation(v["location"]) ? { location: v["location"] } : {}),
     ...(isVerdict(v["verdict"]) ? { verdict: v["verdict"] } : {}),
   };
-  return record;
+}
+
+/**
+ * Read-path coercion for `evidenceSource`. Absent → back-compat default
+ * ({@link LEGACY_ATTESTATION_EVIDENCE_SOURCE}). A string matching one of
+ * the enum values passes through. Anything else (unrecognized string,
+ * wrong type) → `null`, which causes the record to be skipped entirely
+ * by the lenient reader.
+ */
+function coerceEvidenceSource(raw: unknown): AttestationEvidenceSource | null {
+  if (raw === undefined) return LEGACY_ATTESTATION_EVIDENCE_SOURCE;
+  if (typeof raw !== "string") return null;
+  if ((ATTESTATION_EVIDENCE_SOURCES as readonly string[]).includes(raw)) {
+    return raw as AttestationEvidenceSource;
+  }
+  return null;
+}
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === "string" && v.length > 0;
 }
 
 function isRuleIds(v: unknown): v is readonly string[] {
@@ -429,13 +480,34 @@ function isRuleIds(v: unknown): v is readonly string[] {
  * Strict form of {@link coerceAttestationRecord} — throws instead of
  * returning null. Used by the write path so malformed data can't
  * enter the store through the sanctioned tool.
+ *
+ * Unlike the reader, write requires an explicit `evidenceSource` on
+ * every record. Read-path back-compat defaulting exists so old
+ * ledgers keep loading; the write path never uses it. A record that
+ * reaches the store without `evidenceSource` throws
+ * `missing evidenceSource` rather than silently stamping
+ * `"declaration"`.
  */
 function requireValidRecord(record: AttestationRecord): AttestationRecord {
+  const v = record as unknown as Record<string, unknown>;
+  if (v["evidenceSource"] === undefined) {
+    throw new Error(
+      "ra11y: invalid attestation record — missing evidenceSource. Required enum: 'runtime_tool' | 'manual_review' | 'human_study' | 'declaration'. Example: { criterionId: 'wcag22:1.1.1', by: 'agent', reason: 'reviewed', attestedAt: '2026-04-19T00:00:00Z', evidenceSource: 'manual_review' }.",
+    );
+  }
+  if (
+    typeof v["evidenceSource"] !== "string" ||
+    !(ATTESTATION_EVIDENCE_SOURCES as readonly string[]).includes(v["evidenceSource"])
+  ) {
+    throw new Error(
+      `ra11y: invalid attestation record — evidenceSource must be one of ${ATTESTATION_EVIDENCE_SOURCES.join(" | ")}. Got: ${JSON.stringify(v["evidenceSource"])}.`,
+    );
+  }
   const coerced = coerceAttestationRecord(record);
   if (coerced === null) {
     const missing = describeMissingFields(record);
     throw new Error(
-      `ra11y: invalid attestation record — ${missing}. Required non-empty strings: criterionId, by, reason, attestedAt. Example: { criterionId: "wcag22:1.1.1", by: "agent", reason: "reviewed", attestedAt: "2026-04-19T00:00:00Z", verdict: "pass", scope: "project" }.`,
+      `ra11y: invalid attestation record — ${missing}. Required non-empty strings: criterionId, by, reason, attestedAt. Example: { criterionId: "wcag22:1.1.1", by: "agent", reason: "reviewed", attestedAt: "2026-04-19T00:00:00Z", evidenceSource: "manual_review", verdict: "pass", scope: "project" }.`,
     );
   }
   return coerced;

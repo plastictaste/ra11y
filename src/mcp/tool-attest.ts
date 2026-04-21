@@ -30,8 +30,13 @@
 import { isAbsolute, resolve } from "node:path";
 import { appendAttestation } from "../config/attestation-store.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
-import type { AttestationRecord } from "../types/evidence.ts";
+import {
+  ATTESTATION_EVIDENCE_SOURCES,
+  type AttestationEvidenceSource,
+  type AttestationRecord,
+} from "../types/evidence.ts";
 import type { Standard } from "../types/standard.ts";
+import { isIsoTimestamp } from "../utils/iso-timestamp.ts";
 import {
   errorResult,
   type McpTool,
@@ -67,6 +72,27 @@ export const attestTool: McpTool = {
           type: "string",
           description:
             "REQUIRED free-form justification. Carries the provenance of the claim (which tool run, which reviewer, what observation). Surfaces to consumers of the ledger verbatim.",
+        },
+        evidenceSource: {
+          type: "string",
+          enum: [...ATTESTATION_EVIDENCE_SOURCES],
+          description:
+            "REQUIRED provenance classifier. Tells downstream consumers (conformance_statement, vpat, list_attestations) *how* the evidence was produced, not just *what* the reason text claims. `runtime_tool` — a runtime scanner (axe-core, Lighthouse, Pa11y, …) produced the verdict; pair with `toolName` / `runUrl` / `observedAt` so auditors can trace the run. `manual_review` — a human or agent inspected the source or rendered product (covers `ra11y-disable` pragmas with a reason, component-level keyboard checks, design reviews). `human_study` — a formal accessibility study with human subjects (usability testing with assistive-tech users). `declaration` — author self-declaration without external evidence (e.g. 'this app has no `<audio>` elements'). Required because a conformance statement reader asks 'how was this verified?' and a VPAT reader needs to distinguish a runtime-harness pass from an unverified declaration.",
+        },
+        toolName: {
+          type: "string",
+          description:
+            "OPTIONAL tool identifier when `evidenceSource = 'runtime_tool'`. Typical values: `axe-core 4.8.2`, `lighthouse 11.4.0`, `pa11y`, `wave`. Surfaces verbatim in VPAT remarks + conformance summaries. Ignored when present on a non-`runtime_tool` attestation.",
+        },
+        runUrl: {
+          type: "string",
+          description:
+            "OPTIONAL URL pointing at the run record that backs the attestation — CI log link, tool dashboard, published audit page. Surfaces verbatim so auditors can trace the claim.",
+        },
+        observedAt: {
+          type: "string",
+          description:
+            "OPTIONAL ISO-8601 timestamp for when the observation was originally made — distinct from `attestedAt` (when the record was written). Lets you record 'CI ran 2026-04-17, attestation written 2026-04-18'. Omit when the two are identical.",
         },
         by: {
           type: "string",
@@ -106,7 +132,7 @@ export const attestTool: McpTool = {
             "Project root — the `.ra11y/` directory is created under this path. Defaults to the MCP server's spawn directory; pass your project root explicitly when the server's cwd differs.",
         },
       },
-      required: ["criterionId", "reason"],
+      required: ["criterionId", "reason", "evidenceSource"],
     },
     // Mutates the attestation store; not idempotent (each call appends
     // a new line, even if the semantic claim is identical).
@@ -184,12 +210,45 @@ function preflight(
 
   const required = readRequired(params);
   if ("error" in required) return required;
-  const { criterionId, reason } = required;
+  const { criterionId, reason, evidenceSource } = required;
   const satisfyingRules = satisfyingRulesForCriterion(criterionId);
 
-  const ruleIds = readRuleIds(params, criterionId, satisfyingRules);
-  if ("error" in ruleIds) return ruleIds;
+  const optional = readOptional(params);
+  if ("error" in optional) return optional;
 
+  const record = assembleRecord({
+    criterionId,
+    reason,
+    evidenceSource,
+    optional: optional.value,
+    params,
+    satisfyingRules,
+  });
+  if ("error" in record) return record;
+
+  const cwdParam = strParam(params, "cwd");
+  const cwd = cwdParam === undefined ? process.cwd() : resolveCwd(cwdParam);
+  return { record: record.record, cwd, satisfyingRules };
+}
+
+interface OptionalParsed {
+  readonly verdict: "pass" | "fail" | "n/a" | undefined;
+  readonly scope: "project" | "file" | "line" | undefined;
+  readonly location: { filePath: string; line: number; column: number } | undefined;
+  readonly observedAt: string | undefined;
+  readonly attestedAt: string;
+}
+
+/**
+ * Parses every optional param in one pass. Extracted from
+ * {@link preflight} so the outer function stays under the
+ * cognitive-complexity budget — each optional carries its own
+ * shape-validation branch and interleaving them in one function
+ * compounds the score fast.
+ */
+function readOptional(
+  params: Record<string, unknown>,
+): { readonly value: OptionalParsed } | { readonly error: McpToolResult } {
   const verdict = readVerdict(params);
   if (verdict instanceof Error) {
     return { error: errorResult({ code: "invalid-param", message: verdict.message }) };
@@ -202,23 +261,86 @@ function preflight(
   if (location instanceof Error) {
     return { error: errorResult({ code: "invalid-param", message: location.message }) };
   }
+  const observedAt = readIsoParam(params, "observedAt");
+  if (observedAt instanceof Error) {
+    return { error: errorResult({ code: "invalid-param", message: observedAt.message }) };
+  }
+  const attestedAtRaw = readIsoParam(params, "attestedAt");
+  if (attestedAtRaw instanceof Error) {
+    return { error: errorResult({ code: "invalid-param", message: attestedAtRaw.message }) };
+  }
+  return {
+    value: {
+      verdict,
+      scope,
+      location,
+      observedAt,
+      attestedAt: attestedAtRaw ?? new Date().toISOString(),
+    },
+  };
+}
 
+interface AssembleArgs {
+  readonly criterionId: string;
+  readonly reason: string;
+  readonly evidenceSource: AttestationEvidenceSource;
+  readonly optional: OptionalParsed;
+  readonly params: Record<string, unknown>;
+  readonly satisfyingRules: readonly string[];
+}
+
+/**
+ * Builds the final {@link AttestationRecord} from the validated inputs.
+ * Kept separate from {@link preflight} so each function stays focused
+ * on one concern — parsing the optional params vs. assembling the
+ * record — and the outer function's complexity score stays under the
+ * project's budget.
+ */
+function assembleRecord(
+  args: AssembleArgs,
+): { readonly record: AttestationRecord } | { readonly error: McpToolResult } {
+  const { criterionId, reason, evidenceSource, optional, params, satisfyingRules } = args;
+  const ruleIds = readRuleIds(params, criterionId, satisfyingRules);
+  if ("error" in ruleIds) return ruleIds;
   const by = strParam(params, "by") ?? DEFAULT_BY;
-  const attestedAt = strParam(params, "attestedAt") ?? new Date().toISOString();
-  const cwdParam = strParam(params, "cwd");
-  const cwd = cwdParam === undefined ? process.cwd() : resolveCwd(cwdParam);
-
+  const toolName = strParam(params, "toolName");
+  const runUrl = strParam(params, "runUrl");
   const record: AttestationRecord = {
     criterionId,
     by: by.length === 0 ? DEFAULT_BY : by,
     reason: reason.trim(),
-    attestedAt,
+    attestedAt: optional.attestedAt,
+    evidenceSource,
+    ...(toolName !== undefined && toolName.length > 0 && { toolName }),
+    ...(runUrl !== undefined && runUrl.length > 0 && { runUrl }),
+    ...(optional.observedAt !== undefined && { observedAt: optional.observedAt }),
     ...(ruleIds.value !== undefined && { ruleIds: ruleIds.value }),
-    ...(scope !== undefined && { scope }),
-    ...(location !== undefined && { location }),
-    ...(verdict !== undefined && { verdict }),
+    ...(optional.scope !== undefined && { scope: optional.scope }),
+    ...(optional.location !== undefined && { location: optional.location }),
+    ...(optional.verdict !== undefined && { verdict: optional.verdict }),
   };
-  return { record, cwd, satisfyingRules };
+  return { record };
+}
+
+/**
+ * Reads an optional ISO-8601 timestamp param. Returns `undefined` when
+ * the param is absent, the validated string when present, or an
+ * `Error` describing the shape failure when present-but-malformed. A
+ * present-but-empty string is treated as absent — the agent usually
+ * meant "omit" and silently-empty shouldn't forge a timestamp.
+ */
+function readIsoParam(
+  params: Record<string, unknown>,
+  key: "attestedAt" | "observedAt",
+): string | undefined | Error {
+  const raw = strParam(params, key);
+  if (raw === undefined || raw.length === 0) return undefined;
+  if (!isIsoTimestamp(raw)) {
+    return new Error(
+      `attest.${key} must be an ISO-8601 timestamp (e.g. "2026-04-18T00:00:00.000Z"). Got: ${JSON.stringify(raw)}.`,
+    );
+  }
+  return raw;
 }
 
 function readRuleIds(
@@ -256,11 +378,16 @@ function readRuleIds(
   return { value: deduped };
 }
 
-function readRequired(
-  params: Record<string, unknown>,
-): { readonly criterionId: string; readonly reason: string } | { readonly error: McpToolResult } {
+function readRequired(params: Record<string, unknown>):
+  | {
+      readonly criterionId: string;
+      readonly reason: string;
+      readonly evidenceSource: AttestationEvidenceSource;
+    }
+  | { readonly error: McpToolResult } {
   const criterionId = strParam(params, "criterionId");
   const reason = strParam(params, "reason");
+  const evidenceSourceRaw = strParam(params, "evidenceSource");
   if (criterionId === undefined || criterionId.length === 0) {
     return {
       error: errorResult({
@@ -278,6 +405,24 @@ function readRequired(
       }),
     };
   }
+  if (evidenceSourceRaw === undefined || evidenceSourceRaw.length === 0) {
+    return {
+      error: errorResult({
+        code: "missing-required-param",
+        message: `attest requires \`evidenceSource\` (one of ${ATTESTATION_EVIDENCE_SOURCES.join(" | ")}). A VPAT / conformance reader distinguishes a runtime-harness pass from an unverified declaration by this field; omitting it would make every attestation read as interchangeable evidence.`,
+        details: { validEvidenceSources: ATTESTATION_EVIDENCE_SOURCES },
+      }),
+    };
+  }
+  if (!(ATTESTATION_EVIDENCE_SOURCES as readonly string[]).includes(evidenceSourceRaw)) {
+    return {
+      error: errorResult({
+        code: "invalid-param",
+        message: `attest.evidenceSource must be one of ${ATTESTATION_EVIDENCE_SOURCES.join(" | ")}. Got: ${JSON.stringify(evidenceSourceRaw)}.`,
+        details: { validEvidenceSources: ATTESTATION_EVIDENCE_SOURCES },
+      }),
+    };
+  }
   if (findCriterion(criterionId, BUILTIN_STANDARDS) === null) {
     return {
       error: errorResult({
@@ -287,7 +432,11 @@ function readRequired(
       }),
     };
   }
-  return { criterionId, reason };
+  return {
+    criterionId,
+    reason,
+    evidenceSource: evidenceSourceRaw as AttestationEvidenceSource,
+  };
 }
 
 function findCriterion(criterionId: string, standards: readonly Standard[]): unknown {

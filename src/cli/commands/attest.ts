@@ -24,8 +24,9 @@
 import { appendAttestation } from "../../config/attestation-store.ts";
 import { BUILTIN_RULES } from "../../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../../standards/index.ts";
-import type { AttestationRecord } from "../../types/evidence.ts";
+import { ATTESTATION_EVIDENCE_SOURCES, type AttestationRecord } from "../../types/evidence.ts";
 import { headSha } from "../../utils/git.ts";
+import { isIsoTimestamp } from "../../utils/iso-timestamp.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
@@ -64,10 +65,54 @@ interface PreflightOk {
 type PreflightResult = PreflightOk | { readonly error: ScanExit };
 
 function preflight(options: CliOptions): PreflightResult {
+  const required = requireMinimumFlags(options);
+  if ("error" in required) return required;
+  const { criterionId, rawReason, evidenceSource } = required;
+
+  const scope = options.attestScope;
+  const ruleIds = validateRuleIds(options.attestRuleIds, criterionId);
+  if ("error" in ruleIds) return ruleIds;
+  const location = parseLocation(options.attestLocation, scope);
+  if ("error" in location) return location;
+  const observedAt = validateOptionalIso(options.attestObservedAt, "observed-at");
+  if ("error" in observedAt) return observedAt;
+
+  const by = options.attestBy ?? DEFAULT_BY;
+  const record: AttestationRecord = {
+    criterionId,
+    by: by.length === 0 ? DEFAULT_BY : by,
+    reason: rawReason.trim(),
+    attestedAt: new Date().toISOString(),
+    evidenceSource,
+    ...(options.attestToolName !== undefined && { toolName: options.attestToolName }),
+    ...(options.attestRunUrl !== undefined && { runUrl: options.attestRunUrl }),
+    ...(observedAt.value !== undefined && { observedAt: observedAt.value }),
+    ...(ruleIds.value !== undefined && { ruleIds: ruleIds.value }),
+    ...(scope !== undefined && { scope }),
+    ...(location.value !== undefined && { location: location.value }),
+    ...(options.attestVerdict !== undefined && { verdict: options.attestVerdict }),
+  };
+  return { record };
+}
+
+/**
+ * Validates the required flags (criterion ID, reason, evidence source)
+ * and returns them typed. Extracted from {@link preflight} so the outer
+ * function's cognitive complexity stays under the lint budget — three
+ * required-flag failure paths compounded with the optional-flag
+ * validation would push the single-function score over.
+ */
+function requireMinimumFlags(options: CliOptions):
+  | {
+      readonly criterionId: string;
+      readonly rawReason: string;
+      readonly evidenceSource: NonNullable<CliOptions["attestEvidenceSource"]>;
+    }
+  | { readonly error: ScanExit } {
   const criterionId = options.positionals[0];
   if (criterionId === undefined || criterionId.length === 0) {
     return usage(
-      "ra11y attest: missing <criterionId>. Usage: `ra11y attest <criterionId> --reason <text> [--verdict pass|fail|na|pending] [--rule-ids <id>,…] [--scope project|file|line] [--location <file>:<line>[:<col>]] [--by <who>]`.",
+      "ra11y attest: missing <criterionId>. Usage: `ra11y attest <criterionId> --reason <text> --evidence-source <runtime_tool|manual_review|human_study|declaration> [--verdict pass|fail|na|pending] [--rule-ids <id>,…] [--scope project|file|line] [--location <file>:<line>[:<col>]] [--by <who>] [--tool-name <name>] [--run-url <url>] [--observed-at <iso>]`.",
     );
   }
   if (!criterionExists(criterionId)) {
@@ -75,35 +120,37 @@ function preflight(options: CliOptions): PreflightResult {
       `ra11y attest: unknown criterion '${criterionId}'. Must resolve to a loaded standard (e.g. 'wcag22:2.4.7').`,
     );
   }
-
   const rawReason = options.attestReason;
   if (rawReason === undefined || rawReason.trim().length === 0) {
     return usage(
       "ra11y attest: --reason is required and must be non-empty. An un-justified attestation is the same failure mode a bare `ra11y-disable` represents — the whole point is provenance.",
     );
   }
+  const evidenceSource = options.attestEvidenceSource;
+  if (evidenceSource === undefined) {
+    return usage(
+      `ra11y attest: --evidence-source is required (one of ${ATTESTATION_EVIDENCE_SOURCES.join(", ")}). A VPAT / conformance reader distinguishes a runtime-harness pass from an unverified declaration by this field.`,
+    );
+  }
+  return { criterionId, rawReason, evidenceSource };
+}
 
-  const verdict = options.attestVerdict;
-  const scope = options.attestScope;
-  const ruleIds = validateRuleIds(options.attestRuleIds, criterionId);
-  if ("error" in ruleIds) return ruleIds;
-
-  const location = parseLocation(options.attestLocation, scope);
-  if ("error" in location) return location;
-
-  const by = options.attestBy ?? DEFAULT_BY;
-  const attestedAt = new Date().toISOString();
-  const record: AttestationRecord = {
-    criterionId,
-    by: by.length === 0 ? DEFAULT_BY : by,
-    reason: rawReason.trim(),
-    attestedAt,
-    ...(ruleIds.value !== undefined && { ruleIds: ruleIds.value }),
-    ...(scope !== undefined && { scope }),
-    ...(location.value !== undefined && { location: location.value }),
-    ...(verdict !== undefined && { verdict }),
-  };
-  return { record };
+/**
+ * Validates an optional ISO-8601 CLI flag value. Returns
+ * `{ value: undefined }` when the flag was absent; `{ value: <raw> }`
+ * when present and well-formed; `{ error }` when present but malformed.
+ */
+function validateOptionalIso(
+  raw: string | undefined,
+  flagName: string,
+): { readonly value: string | undefined } | { readonly error: ScanExit } {
+  if (raw === undefined) return { value: undefined };
+  if (!isIsoTimestamp(raw)) {
+    return usage(
+      `ra11y attest: --${flagName} must be an ISO-8601 timestamp (e.g. "2026-04-18T00:00:00Z"). Got: '${raw}'.`,
+    );
+  }
+  return { value: raw };
 }
 
 function validateRuleIds(
@@ -213,9 +260,13 @@ function renderReport(record: AttestationRecord, cwd: string): string {
   const lines = [
     `ra11y attest: appended attestation for ${record.criterionId} (verdict=${record.verdict ?? "pass"}) to .ra11y/attestations.jsonl`,
     `  reason: ${record.reason}`,
+    `  evidenceSource: ${record.evidenceSource}`,
     `  by: ${record.by}`,
     `  attestedAt: ${record.attestedAt}`,
   ];
+  if (record.toolName !== undefined) lines.push(`  toolName: ${record.toolName}`);
+  if (record.runUrl !== undefined) lines.push(`  runUrl: ${record.runUrl}`);
+  if (record.observedAt !== undefined) lines.push(`  observedAt: ${record.observedAt}`);
   if (record.ruleIds !== undefined) lines.push(`  ruleIds: ${record.ruleIds.join(", ")}`);
   if (record.scope !== undefined) lines.push(`  scope: ${record.scope}`);
   if (record.location !== undefined) {

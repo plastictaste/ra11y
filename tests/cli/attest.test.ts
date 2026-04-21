@@ -34,6 +34,10 @@ async function readStore(dir: string): Promise<readonly AttestationRecord[]> {
     .map((l) => JSON.parse(l) as AttestationRecord);
 }
 
+/** Standard `--evidence-source manual_review` preamble; shared by tests
+ * that aren't specifically exercising the evidence-source surface. */
+const ES_MANUAL = ["--evidence-source", "manual_review"] as const;
+
 describe("ra11y attest", () => {
   it("appends a valid record with --reason + --verdict", async () => {
     const dir = await makeScratch();
@@ -43,6 +47,10 @@ describe("ra11y attest", () => {
       "wcag22:1.1.1",
       "--reason",
       "runtime harness 2026-04-19 confirms no img elements",
+      "--evidence-source",
+      "runtime_tool",
+      "--tool-name",
+      "axe-core 4.8.2",
       "--verdict",
       "na",
       "--by",
@@ -53,12 +61,16 @@ describe("ra11y attest", () => {
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("appended attestation for wcag22:1.1.1");
     expect(r.stdout).toContain("verdict=n/a");
+    expect(r.stdout).toContain("evidenceSource: runtime_tool");
+    expect(r.stdout).toContain("toolName: axe-core 4.8.2");
     const records = await readStore(dir);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
       criterionId: "wcag22:1.1.1",
       by: "ci-bot",
       reason: "runtime harness 2026-04-19 confirms no img elements",
+      evidenceSource: "runtime_tool",
+      toolName: "axe-core 4.8.2",
       verdict: "n/a",
     });
   });
@@ -66,7 +78,7 @@ describe("ra11y attest", () => {
   it("rejects bare invocation without --reason with exit 2", async () => {
     const dir = await makeScratch();
     chdir(dir);
-    const r = await runCli(["attest", "wcag22:1.1.1"]);
+    const r = await runCli(["attest", "wcag22:1.1.1", ...ES_MANUAL]);
     chdir(originalCwd);
 
     expect(r.exitCode).toBe(2);
@@ -76,17 +88,32 @@ describe("ra11y attest", () => {
   it("rejects empty/whitespace --reason with exit 2", async () => {
     const dir = await makeScratch();
     chdir(dir);
-    const r = await runCli(["attest", "wcag22:1.1.1", "--reason", "   "]);
+    const r = await runCli(["attest", "wcag22:1.1.1", "--reason", "   ", ...ES_MANUAL]);
     chdir(originalCwd);
 
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("--reason is required");
   });
 
+  it("rejects missing --evidence-source with exit 2", async () => {
+    const dir = await makeScratch();
+    chdir(dir);
+    const r = await runCli([
+      "attest",
+      "wcag22:1.1.1",
+      "--reason",
+      "manual keyboard traversal confirmed",
+    ]);
+    chdir(originalCwd);
+
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--evidence-source is required");
+  });
+
   it("rejects missing <criterionId> positional with exit 2", async () => {
     const dir = await makeScratch();
     chdir(dir);
-    const r = await runCli(["attest", "--reason", "x"]);
+    const r = await runCli(["attest", "--reason", "x", ...ES_MANUAL]);
     chdir(originalCwd);
 
     expect(r.exitCode).toBe(2);
@@ -96,7 +123,7 @@ describe("ra11y attest", () => {
   it("rejects unknown criterion ID with exit 2", async () => {
     const dir = await makeScratch();
     chdir(dir);
-    const r = await runCli(["attest", "wcag22:99.99.99", "--reason", "nonsense"]);
+    const r = await runCli(["attest", "wcag22:99.99.99", "--reason", "nonsense", ...ES_MANUAL]);
     chdir(originalCwd);
 
     expect(r.exitCode).toBe(2);
@@ -111,6 +138,7 @@ describe("ra11y attest", () => {
       "wcag22:1.1.1",
       "--reason",
       "valid reason",
+      ...ES_MANUAL,
       "--rule-ids",
       "nonexistent/rule-id",
     ]);
@@ -123,7 +151,7 @@ describe("ra11y attest", () => {
   it("emits non_git_repo_commit_omitted warning when cwd is outside a repo", async () => {
     const dir = await makeScratch();
     chdir(dir);
-    const r = await runCli(["attest", "wcag22:1.1.1", "--reason", "outside git"]);
+    const r = await runCli(["attest", "wcag22:1.1.1", "--reason", "outside git", ...ES_MANUAL]);
     chdir(originalCwd);
 
     expect(r.exitCode).toBe(0);
@@ -139,6 +167,7 @@ describe("ra11y attest", () => {
       "wcag22:1.1.1",
       "--reason",
       "manual review complete",
+      ...ES_MANUAL,
       "--scope",
       "file",
       "--location",
@@ -155,18 +184,44 @@ describe("ra11y attest", () => {
   it("rejects scope=file without --location with exit 2", async () => {
     const dir = await makeScratch();
     chdir(dir);
-    const r = await runCli(["attest", "wcag22:1.1.1", "--reason", "x", "--scope", "file"]);
+    const r = await runCli([
+      "attest",
+      "wcag22:1.1.1",
+      "--reason",
+      "x",
+      ...ES_MANUAL,
+      "--scope",
+      "file",
+    ]);
     chdir(originalCwd);
 
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("--location");
   });
 
+  it("rejects --observed-at that is not an ISO-8601 timestamp", async () => {
+    const dir = await makeScratch();
+    chdir(dir);
+    const r = await runCli([
+      "attest",
+      "wcag22:1.1.1",
+      "--reason",
+      "x",
+      ...ES_MANUAL,
+      "--observed-at",
+      "yesterday",
+    ]);
+    chdir(originalCwd);
+
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain("--observed-at must be an ISO-8601");
+  });
+
   it("appends idempotently — multiple calls produce multiple lines", async () => {
     const dir = await makeScratch();
     chdir(dir);
-    await runCli(["attest", "wcag22:1.1.1", "--reason", "first"]);
-    await runCli(["attest", "wcag22:1.1.1", "--reason", "second"]);
+    await runCli(["attest", "wcag22:1.1.1", "--reason", "first", ...ES_MANUAL]);
+    await runCli(["attest", "wcag22:1.1.1", "--reason", "second", ...ES_MANUAL]);
     chdir(originalCwd);
 
     const records = await readStore(dir);

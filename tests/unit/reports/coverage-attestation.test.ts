@@ -100,6 +100,7 @@ function makeAttestation(
     by: "agent",
     reason: "verified in code review",
     attestedAt: "2026-04-10T00:00:00Z",
+    evidenceSource: "manual_review",
     ...(verdict === undefined ? {} : { verdict }),
   };
   return { ...base, ...overrides };

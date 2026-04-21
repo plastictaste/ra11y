@@ -346,6 +346,12 @@ function compareAttestations(a: AttestationRecord, b: AttestationRecord): number
 /**
  * Drops undefined optional fields and sorts `ruleIds` if present so
  * two attestations that differ only in ruleIds order hash the same.
+ * `evidenceSource` is always present on canonical records — the store's
+ * read-path coercer defaults legacy entries to `"declaration"` and the
+ * write-path gate rejects anything else, so the signature covers it
+ * unconditionally. A subsequent re-sign under a ra11y version that
+ * dropped the field would drift the digest, which is the intended
+ * tamper signal.
  */
 function canonicalizeAttestationRecord(record: AttestationRecord): AttestationRecord {
   return {
@@ -353,6 +359,10 @@ function canonicalizeAttestationRecord(record: AttestationRecord): AttestationRe
     by: record.by,
     reason: record.reason,
     attestedAt: record.attestedAt,
+    evidenceSource: record.evidenceSource,
+    ...(record.toolName === undefined ? {} : { toolName: record.toolName }),
+    ...(record.runUrl === undefined ? {} : { runUrl: record.runUrl }),
+    ...(record.observedAt === undefined ? {} : { observedAt: record.observedAt }),
     ...(record.ruleIds === undefined ? {} : { ruleIds: [...record.ruleIds].sort() }),
     ...(record.scope === undefined ? {} : { scope: record.scope }),
     ...(record.location === undefined ? {} : { location: record.location }),
@@ -420,6 +430,10 @@ function sameAttestationRecord(a: AttestationRecord, b: AttestationRecord): bool
   if (a.by !== b.by) return false;
   if (a.reason !== b.reason) return false;
   if (a.attestedAt !== b.attestedAt) return false;
+  if (a.evidenceSource !== b.evidenceSource) return false;
+  if (a.toolName !== b.toolName) return false;
+  if (a.runUrl !== b.runUrl) return false;
+  if (a.observedAt !== b.observedAt) return false;
   if (a.scope !== b.scope) return false;
   if (a.verdict !== b.verdict) return false;
   if (!sameOptionalStringList(a.ruleIds, b.ruleIds)) return false;

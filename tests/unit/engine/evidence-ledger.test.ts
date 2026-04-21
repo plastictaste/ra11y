@@ -112,6 +112,7 @@ function mkAttestation(
     by: "author@example.test",
     reason: "verified by manual keyboard test",
     attestedAt: "2026-04-18T00:00:00.000Z",
+    evidenceSource: "manual_review",
     ...overrides,
   };
 }
@@ -329,6 +330,7 @@ describe("buildEvidenceLedger", () => {
           by: "source-pragma",
           reason: "<pending: bare pragma awaits reason>",
           attestedAt: FIXED_TIMESTAMP,
+          evidenceSource: "manual_review",
           verdict: "pending",
         },
       ],
@@ -353,6 +355,7 @@ describe("buildEvidenceLedger", () => {
           by: "ci-bot",
           reason: "runtime harness reports pass for link-name rule",
           attestedAt: FIXED_TIMESTAMP,
+          evidenceSource: "runtime_tool",
         },
       ],
       generatedAt: FIXED_TIMESTAMP,

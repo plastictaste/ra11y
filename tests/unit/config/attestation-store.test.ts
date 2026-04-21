@@ -41,6 +41,7 @@ const BASE: AttestationRecord = {
   by: "author@example.test",
   reason: "verified by manual keyboard traversal",
   attestedAt: "2026-04-18T00:00:00.000Z",
+  evidenceSource: "manual_review",
 };
 
 describe("attestation-store: paths", () => {
@@ -142,5 +143,67 @@ describe("attestation-store: appendAttestation", () => {
     await expect(
       appendAttestation(root, { ...BASE, reason: "" } as AttestationRecord),
     ).rejects.toThrow(/invalid attestation record/);
+  });
+
+  it("rejects a record missing evidenceSource on the write path", async () => {
+    const { evidenceSource: _drop, ...withoutSource } = BASE;
+    await expect(appendAttestation(root, withoutSource as AttestationRecord)).rejects.toThrow(
+      /missing evidenceSource/,
+    );
+  });
+
+  it("rejects a record with an unknown evidenceSource enum value", async () => {
+    await expect(
+      appendAttestation(root, {
+        ...BASE,
+        evidenceSource: "unverified_claim" as AttestationRecord["evidenceSource"],
+      }),
+    ).rejects.toThrow(/evidenceSource must be one of/);
+  });
+
+  it("round-trips toolName / runUrl / observedAt on a runtime_tool attestation", async () => {
+    const record: AttestationRecord = {
+      ...BASE,
+      evidenceSource: "runtime_tool",
+      toolName: "axe-core 4.8.2",
+      runUrl: "https://ci.example.test/runs/123",
+      observedAt: "2026-04-17T09:30:00.000Z",
+      verdict: "pass",
+    };
+    await appendAttestation(root, record);
+    const read = await readAttestations(root);
+    expect(read).toHaveLength(1);
+    expect(read[0]).toEqual(record);
+  });
+});
+
+describe("attestation-store: evidenceSource back-compat", () => {
+  let root: string;
+  beforeEach(() => {
+    root = makeTmpDir();
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("coerces legacy records lacking evidenceSource to 'declaration' on read", () => {
+    const legacy = {
+      criterionId: "wcag22:2.4.5",
+      by: "author@example.test",
+      reason: "recorded before evidenceSource was a required field",
+      attestedAt: "2026-04-15T00:00:00.000Z",
+    };
+    const parsed = parseAttestationJsonl(`${JSON.stringify(legacy)}\n`);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.evidenceSource).toBe("declaration");
+  });
+
+  it("skips records whose evidenceSource is an unrecognized string on read", () => {
+    const bogus = {
+      ...BASE,
+      evidenceSource: "vendor_specific_thing",
+    };
+    const parsed = parseAttestationJsonl(`${JSON.stringify(bogus)}\n`);
+    expect(parsed).toHaveLength(0);
   });
 });

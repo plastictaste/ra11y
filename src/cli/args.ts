@@ -85,6 +85,15 @@ export interface CliOptions {
   readonly attestScope: "project" | "file" | "line" | undefined;
   readonly attestBy: string | undefined;
   readonly attestLocation: string | undefined;
+  readonly attestEvidenceSource:
+    | "runtime_tool"
+    | "manual_review"
+    | "human_study"
+    | "declaration"
+    | undefined;
+  readonly attestToolName: string | undefined;
+  readonly attestRunUrl: string | undefined;
+  readonly attestObservedAt: string | undefined;
   /**
    * `ra11y conformance` flags. `conformanceVerify` carries a path to a
    * signed bundle JSON; when set the command skips the scan and runs
@@ -146,6 +155,10 @@ interface RawCliOptions {
   readonly scope: string | undefined;
   readonly by: string | undefined;
   readonly location: string | undefined;
+  readonly evidenceSource: string | undefined;
+  readonly toolName: string | undefined;
+  readonly runUrl: string | undefined;
+  readonly observedAt: string | undefined;
   readonly verify: string | undefined;
   readonly output: string | undefined;
   readonly scanRoot: string | undefined;
@@ -284,6 +297,10 @@ function translate(
     scope: stringAt(raw, "scope"),
     by: stringAt(raw, "by"),
     location: stringAt(raw, "location"),
+    evidenceSource: stringAt(raw, "evidence-source"),
+    toolName: stringAt(raw, "tool-name"),
+    runUrl: stringAt(raw, "run-url"),
+    observedAt: stringAt(raw, "observed-at"),
     verify: stringAt(raw, "verify"),
     output: stringAt(raw, "output"),
     scanRoot: stringAt(raw, "scan-root"),
@@ -357,7 +374,16 @@ function baseOpts(
 
 type AttestOpts = Pick<
   CliOptions,
-  "attestVerdict" | "attestReason" | "attestRuleIds" | "attestScope" | "attestBy" | "attestLocation"
+  | "attestVerdict"
+  | "attestReason"
+  | "attestRuleIds"
+  | "attestScope"
+  | "attestBy"
+  | "attestLocation"
+  | "attestEvidenceSource"
+  | "attestToolName"
+  | "attestRunUrl"
+  | "attestObservedAt"
 >;
 
 function attestOpts(raw?: RawCliOptions): AttestOpts {
@@ -374,6 +400,12 @@ function attestOpts(raw?: RawCliOptions): AttestOpts {
     attestBy: typeof raw?.by === "string" && raw.by.length > 0 ? raw.by : undefined,
     attestLocation:
       typeof raw?.location === "string" && raw.location.length > 0 ? raw.location : undefined,
+    attestEvidenceSource: normalizeEvidenceSource(raw?.evidenceSource),
+    attestToolName:
+      typeof raw?.toolName === "string" && raw.toolName.length > 0 ? raw.toolName : undefined,
+    attestRunUrl: typeof raw?.runUrl === "string" && raw.runUrl.length > 0 ? raw.runUrl : undefined,
+    attestObservedAt:
+      typeof raw?.observedAt === "string" && raw.observedAt.length > 0 ? raw.observedAt : undefined,
   };
 }
 
@@ -459,6 +491,23 @@ function normalizeVerdict(value: string | undefined): CliOptions["attestVerdict"
 
 function normalizeAttestScope(value: string | undefined): CliOptions["attestScope"] {
   if (value === "project" || value === "file" || value === "line") return value;
+  return undefined;
+}
+
+/**
+ * CLI evidence-source values. Matches the `AttestationEvidenceSource`
+ * enum — the CLI surface uses the same underscored tokens as the MCP
+ * tool so scripts that call one are transliteration-safe for the other.
+ */
+function normalizeEvidenceSource(value: string | undefined): CliOptions["attestEvidenceSource"] {
+  if (
+    value === "runtime_tool" ||
+    value === "manual_review" ||
+    value === "human_study" ||
+    value === "declaration"
+  ) {
+    return value;
+  }
   return undefined;
 }
 

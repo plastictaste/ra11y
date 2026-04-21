@@ -95,6 +95,39 @@ export type EvidenceSource =
       /** ISO-8601 timestamp the attestation was recorded. */
       readonly attestedAt: string;
       /**
+       * Provenance classifier. Tells consumers of the ledger where the
+       * evidence this attestation encodes actually came from — a runtime
+       * tool's output read and interpreted in CI, a human (or agent)
+       * inspection pass, a formal accessibility study with users, or an
+       * author's declaration without external evidence. Required on
+       * every record {@link EvidenceSource | a producer emits}. Legacy
+       * entries missing the field coerce to `"declaration"` on read;
+       * the write path rejects attestations that omit it. See
+       * {@link AttestationRecord.evidenceSource}.
+       */
+      readonly evidenceSource: AttestationEvidenceSource;
+      /**
+       * Optional tool identifier when `evidenceSource === "runtime_tool"`
+       * — e.g. `"axe-core 4.8.2"`, `"lighthouse 11"`, `"pa11y"`. Surfaces
+       * verbatim in downstream reports so VPAT / conformance-markdown
+       * readers see which harness produced the verdict. Omitted when
+       * not supplied (present-when-meaningful).
+       */
+      readonly toolName?: string;
+      /**
+       * Optional URL pointing at the run record (CI log, tool dashboard)
+       * that backs the attestation. Omitted when not supplied.
+       */
+      readonly runUrl?: string;
+      /**
+       * Optional ISO-8601 timestamp for when the observation was
+       * originally made — distinct from `attestedAt` (when the record
+       * was written to the ledger). Lets the agent record "CI ran at
+       * 2026-04-17T00:00:00Z, the attestation is being written a day
+       * later."
+       */
+      readonly observedAt?: string;
+      /**
        * Rule IDs this attestation covers. Omitted means "every rule that
        * satisfies the criterion" (criterion-wide claim); present with one
        * or more IDs means the attestation only speaks to those specific
@@ -179,6 +212,52 @@ export interface AttestationRecord {
   readonly by: string;
   /** Human-readable rationale. */
   readonly reason: string;
+  /**
+   * Provenance classifier distinguishing *where the evidence came from*
+   * from *what the reason text claims*. Required on every record a
+   * producer emits. Four values:
+   *
+   *   - `"runtime_tool"` — output from a runtime scanner (axe-core,
+   *     Lighthouse, Pa11y, WAVE, …) read and interpreted by the agent
+   *     in CI. Pairs with optional `toolName` / `runUrl` / `observedAt`.
+   *   - `"manual_review"` — a human or agent's inspection pass over the
+   *     source or rendered product, including inline `ra11y-disable`
+   *     pragmas with a reason (pragmas are an author's manual judgment).
+   *   - `"human_study"` — a formal accessibility study with human
+   *     subjects (usability testing with assistive-tech users). Higher
+   *     confidence than `manual_review` because it involves real user
+   *     testimony, not just a reviewer's intuition.
+   *   - `"declaration"` — an author's self-declaration without external
+   *     evidence (project-level "no `<audio>` in this app", policy
+   *     claims). Also the back-compat default for ledger entries that
+   *     predate this field.
+   *
+   * The distinction matters because a VPAT / conformance statement reader
+   * asks "how was this verified?" not just "was it verified?" — a
+   * runtime-tool pass for focus-visible stands on different ground than
+   * an unverified declaration that focus is fine.
+   */
+  readonly evidenceSource: AttestationEvidenceSource;
+  /**
+   * Tool identifier when `evidenceSource === "runtime_tool"`. Typical
+   * values: `"axe-core 4.8.2"`, `"lighthouse 11.4.0"`, `"pa11y"`,
+   * `"wave"`. Surfaces verbatim in downstream reports so auditors see
+   * which harness produced the result. Omitted when not supplied or
+   * when `evidenceSource !== "runtime_tool"`.
+   */
+  readonly toolName?: string;
+  /**
+   * URL pointing at the run record the attestation cites — CI log, a
+   * tool dashboard, a published audit. Omitted when not supplied.
+   */
+  readonly runUrl?: string;
+  /**
+   * ISO-8601 timestamp of the original observation (distinct from
+   * {@link attestedAt}, which is when the attestation was written to
+   * the ledger). Omitted when the two are the same or when no separate
+   * observation time exists.
+   */
+  readonly observedAt?: string;
   /** ISO-8601 timestamp the attestation was recorded. */
   readonly attestedAt: string;
   /** Attestation scope; defaults to `"project"` when omitted. */
@@ -194,6 +273,34 @@ export interface AttestationRecord {
    */
   readonly verdict?: "pass" | "fail" | "n/a" | "pending";
 }
+
+/**
+ * Provenance classifier for an {@link AttestationRecord}. Each value
+ * answers "where did the evidence come from?" in a way the signer and
+ * the reader agree on.
+ */
+export type AttestationEvidenceSource =
+  | "runtime_tool"
+  | "manual_review"
+  | "human_study"
+  | "declaration";
+
+/** Runtime set of valid {@link AttestationEvidenceSource} values. */
+export const ATTESTATION_EVIDENCE_SOURCES: readonly AttestationEvidenceSource[] = [
+  "runtime_tool",
+  "manual_review",
+  "human_study",
+  "declaration",
+] as const;
+
+/**
+ * Default applied to stored records that predate the `evidenceSource`
+ * field. Reads (but not writes) coerce absent values to this default
+ * so old ledgers keep loading. Choosing `"declaration"` is the most
+ * honest fallback — a record whose provenance was never captured
+ * reads as "self-declared," matching the weakest-confidence tier.
+ */
+export const LEGACY_ATTESTATION_EVIDENCE_SOURCE: AttestationEvidenceSource = "declaration";
 
 /**
  * A per-scan aggregate of every criterion in every enabled standard.

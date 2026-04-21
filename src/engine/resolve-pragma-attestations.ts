@@ -158,6 +158,14 @@ function appendTokenResolution(
       ...(resolution.ruleId !== undefined && { ruleIds: [resolution.ruleId] }),
       by: ctx.by,
       reason,
+      // Pragma-derived attestations encode an author's manual judgment
+      // at a specific source line — that's a `manual_review` by the
+      // evidence-source taxonomy, regardless of whether the reason text
+      // cites a runtime tool. Authors citing axe/Lighthouse output
+      // alongside a pragma should call `attest` through the MCP tool /
+      // `ra11y attest` CLI with `evidenceSource: "runtime_tool"` so
+      // the provenance survives on the ledger.
+      evidenceSource: "manual_review",
       attestedAt: ctx.attestedAt,
       scope: "line",
       location: { filePath: ctx.filePath, line: ctx.decl.line, column: 1 },

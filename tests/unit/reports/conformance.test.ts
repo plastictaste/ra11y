@@ -93,6 +93,7 @@ function mkAttestation(
     by: "tester",
     reason: "confirmed",
     attestedAt: FIXED_TIMESTAMP,
+    evidenceSource: "manual_review",
     ...(verdict !== undefined && { verdict }),
     ...(ruleIds !== undefined && { ruleIds }),
   };

@@ -33,6 +33,7 @@ const BASE: AttestationRecord = {
   by: "author@example.test",
   reason: "verified by manual keyboard traversal",
   attestedAt: "2026-04-18T00:00:00.000Z",
+  evidenceSource: "manual_review",
 };
 
 function writeStoreFixture(dir: string, records: readonly AttestationRecord[]): string {

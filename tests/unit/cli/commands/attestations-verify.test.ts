@@ -44,6 +44,7 @@ const BASE: AttestationRecord = {
   by: "agent",
   reason: "manual keyboard traversal verifies focus order",
   attestedAt: "2026-04-18T00:00:00.000Z",
+  evidenceSource: "manual_review",
 };
 
 function ledgerBody(records: readonly AttestationRecord[]): string {
@@ -316,6 +317,10 @@ describe("runAttestationsCommand: verify CLI wrapper", () => {
       attestScope: undefined,
       attestBy: undefined,
       attestLocation: undefined,
+      attestEvidenceSource: undefined,
+      attestToolName: undefined,
+      attestRunUrl: undefined,
+      attestObservedAt: undefined,
       conformanceVerify: undefined,
       conformanceOutput: "markdown",
       conformanceScanRoot: undefined,

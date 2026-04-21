@@ -43,7 +43,7 @@ import {
   type AttestationStalenessProbe,
   createGitStalenessProbe,
 } from "../reports/attestation-surface.ts";
-import type { AttestationRecord } from "../types/evidence.ts";
+import type { AttestationEvidenceSource, AttestationRecord } from "../types/evidence.ts";
 import { gitRoot } from "../utils/git.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { type McpTool, strParam, textResult } from "./tools-helpers.ts";
@@ -65,6 +65,17 @@ export interface AttestationOut {
   readonly reason: string;
   readonly by: string;
   readonly attestedAt: string;
+  /**
+   * Provenance classifier. Always present so the agent can branch on
+   * how the evidence was produced without having to infer from prose.
+   * `"declaration"` is surfaced explicitly on legacy entries (back-compat
+   * default on read) rather than omitted — absent would read as "no
+   * provenance field," which is a different signal.
+   */
+  readonly evidenceSource: AttestationEvidenceSource;
+  readonly toolName?: string;
+  readonly runUrl?: string;
+  readonly observedAt?: string;
   readonly stale?: true;
 }
 
@@ -168,6 +179,10 @@ function buildOut(
     reason: record.reason,
     by: record.by,
     attestedAt: record.attestedAt,
+    evidenceSource: record.evidenceSource,
+    ...(record.toolName !== undefined && { toolName: record.toolName }),
+    ...(record.runUrl !== undefined && { runUrl: record.runUrl }),
+    ...(record.observedAt !== undefined && { observedAt: record.observedAt }),
     ...(staleResult === true && { stale: true as const }),
   };
 }

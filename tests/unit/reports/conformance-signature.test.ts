@@ -33,6 +33,7 @@ function mkAttestation(
     by,
     reason: "confirmed",
     attestedAt,
+    evidenceSource: "manual_review",
     ...extras,
   };
 }

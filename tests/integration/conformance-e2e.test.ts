@@ -143,6 +143,7 @@ function attestationsForProfile(
     by: "test",
     reason: "manual review for conformance e2e",
     attestedAt: stamp,
+    evidenceSource: "manual_review" as const,
     verdict: "pass" as const,
     scope: "project" as const,
   }));
@@ -356,6 +357,8 @@ describe("conformance e2e: runtime-evidence-required limitations", () => {
         by: "ci-runtime-harness",
         reason: "Playwright keyboard traversal over all routes — zero unreachable handlers.",
         attestedAt: T1,
+        evidenceSource: "runtime_tool",
+        toolName: "playwright",
         verdict: "pass",
         scope: "project",
       },
@@ -392,6 +395,7 @@ describe("conformance e2e: tampered attestation ledger", () => {
       by: "ci-bot",
       reason: "focus-visible verified by manual keyboard traversal",
       attestedAt: T1,
+      evidenceSource: "manual_review",
       verdict: "pass",
       scope: "project",
     });
@@ -408,6 +412,7 @@ describe("conformance e2e: tampered attestation ledger", () => {
       by: "attacker",
       reason: "rewrote history",
       attestedAt: T1,
+      evidenceSource: "manual_review",
       verdict: "pass",
       scope: "project",
     };
@@ -449,6 +454,7 @@ describe("conformance e2e: tampered attestation ledger", () => {
       by: "attacker",
       reason: "forged after signing",
       attestedAt: T2,
+      evidenceSource: "manual_review",
       verdict: "pass",
       scope: "project",
     };

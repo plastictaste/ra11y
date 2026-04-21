@@ -49,6 +49,10 @@ describe("attest: happy path", () => {
         reason: "runtime harness 2026-04-18 reported pass for focus-visible",
         by: "ci-bot",
         verdict: "pass",
+        evidenceSource: "runtime_tool",
+        toolName: "axe-core 4.8.2",
+        runUrl: "https://ci.example.test/runs/123",
+        observedAt: "2026-04-18T00:00:00.000Z",
         attestedAt: "2026-04-18T00:00:00.000Z",
         cwd,
       });
@@ -61,6 +65,10 @@ describe("attest: happy path", () => {
         by: "ci-bot",
         reason: "runtime harness 2026-04-18 reported pass for focus-visible",
         attestedAt: "2026-04-18T00:00:00.000Z",
+        evidenceSource: "runtime_tool",
+        toolName: "axe-core 4.8.2",
+        runUrl: "https://ci.example.test/runs/123",
+        observedAt: "2026-04-18T00:00:00.000Z",
         verdict: "pass",
       });
     });
@@ -73,6 +81,7 @@ describe("attest: happy path", () => {
       const { isError } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "manual keyboard traversal confirmed",
+        evidenceSource: "manual_review",
         cwd,
       });
       expect(isError).toBe(false);
@@ -88,6 +97,7 @@ describe("attest: happy path", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "component verified in storybook isolation",
+        evidenceSource: "manual_review",
         scope: "file",
         location: { filePath: "src/button.tsx", line: 42, column: 3 },
         cwd,
@@ -108,6 +118,7 @@ describe("attest: error envelopes", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "x",
+        evidenceSource: "manual_review",
         cwd,
       });
       expect(isError).toBe(true);
@@ -121,10 +132,54 @@ describe("attest: error envelopes", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "   ",
+        evidenceSource: "manual_review",
         cwd,
       });
       expect(isError).toBe(true);
       expect(body["code"]).toBe("missing-required-param");
+    });
+  });
+
+  it("rejects a request missing evidenceSource with missing-required-param", async () => {
+    await withScratch(async (cwd) => {
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        criterionId: "wcag22:2.4.7",
+        reason: "manual keyboard traversal confirmed",
+        cwd,
+      });
+      expect(isError).toBe(true);
+      expect(body["code"]).toBe("missing-required-param");
+      expect((body["error"] as string).toLowerCase()).toContain("evidencesource");
+    });
+  });
+
+  it("rejects an unrecognized evidenceSource value with invalid-param", async () => {
+    await withScratch(async (cwd) => {
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        criterionId: "wcag22:2.4.7",
+        reason: "manual keyboard traversal confirmed",
+        evidenceSource: "vendor_specific_thing",
+        cwd,
+      });
+      expect(isError).toBe(true);
+      expect(body["code"]).toBe("invalid-param");
+    });
+  });
+
+  it("rejects a malformed observedAt timestamp with invalid-param", async () => {
+    await withScratch(async (cwd) => {
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        criterionId: "wcag22:2.4.7",
+        reason: "manual keyboard traversal confirmed",
+        evidenceSource: "runtime_tool",
+        observedAt: "yesterday afternoon",
+        cwd,
+      });
+      expect(isError).toBe(true);
+      expect(body["code"]).toBe("invalid-param");
     });
   });
 
@@ -134,6 +189,7 @@ describe("attest: error envelopes", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:9.9.9",
         reason: "nonexistent",
+        evidenceSource: "manual_review",
         cwd,
       });
       expect(isError).toBe(true);
@@ -147,6 +203,7 @@ describe("attest: error envelopes", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "x",
+        evidenceSource: "manual_review",
         verdict: "maybe",
         cwd,
       });
@@ -161,6 +218,7 @@ describe("attest: error envelopes", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "x",
+        evidenceSource: "manual_review",
         scope: "file",
         cwd,
       });
@@ -175,6 +233,7 @@ describe("attest: error envelopes", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "scoping to a rule that actually covers 4.1.2",
+        evidenceSource: "manual_review",
         ruleIds: ["aria/required-attrs"],
         cwd,
       });
@@ -189,6 +248,7 @@ describe("attest: error envelopes", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:2.4.7",
         reason: "x",
+        evidenceSource: "manual_review",
         ruleIds: [],
         cwd,
       });
@@ -205,6 +265,7 @@ describe("attest: ruleIds (ADR 0013)", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:4.1.2",
         reason: "verified aria-required attrs for every input in checkout flow",
+        evidenceSource: "manual_review",
         ruleIds: ["aria/required-attrs"],
         cwd,
       });
@@ -223,6 +284,7 @@ describe("attest: ruleIds (ADR 0013)", () => {
       const { isError, body } = await call(session, {
         criterionId: "wcag22:4.1.2",
         reason: "full manual audit of every interactive surface",
+        evidenceSource: "manual_review",
         cwd,
       });
       expect(isError).toBe(false);
@@ -241,6 +303,7 @@ describe("attest: ruleIds (ADR 0013)", () => {
       const { isError } = await call(session, {
         criterionId: "wcag22:4.1.2",
         reason: "dedupe test",
+        evidenceSource: "manual_review",
         ruleIds: ["aria/required-attrs", "aria/required-attrs"],
         cwd,
       });
