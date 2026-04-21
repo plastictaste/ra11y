@@ -281,7 +281,17 @@ function assembleOpaqueComponentBlock(
 ): void {
   coverage.opaqueCustomComponents = opaque.size;
   const ranked = rankOpaqueByCallSites(opaque);
-  coverage.opaqueCustomComponentsTop = verbose ? ranked : ranked.slice(0, OPAQUE_COMPONENT_TOP_N);
+  // `rankOpaqueByCallSites` filters for interactive components only, so
+  // the ranked list can be empty even when `opaque.size > 0` (all
+  // components are non-interactive). An empty array on a response where
+  // `opaqueCustomComponents` is non-zero and `opaqueCustomComponentNames`
+  // lists 15 entries reads as a dishonest shape — callers cannot tell
+  // "no interactive opaques" from "list not populated." Omit the field
+  // in that case so it is present-when-meaningful (CLAUDE.md §1
+  // "Ambiguous field shapes are dishonest").
+  if (ranked.length > 0) {
+    coverage.opaqueCustomComponentsTop = verbose ? ranked : ranked.slice(0, OPAQUE_COMPONENT_TOP_N);
+  }
   // Names field: inlined on every response when the inventory is
   // small enough to fit (≤ OPAQUE_COMPONENT_INLINE_NAMES_MAX), so the
   // agent doesn't need a verboseMeta round-trip for small codebases
@@ -300,12 +310,21 @@ function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): rea
   const hints: string[] = [];
   const opaqueCount = acc.opaqueComponents.size;
   if (opaqueCount >= OPAQUE_COMPONENT_HINT_MIN) {
+    // `rankOpaqueByCallSites` filters for interactive components; when
+    // every opaque component is non-interactive the examples string is
+    // empty and the literal "(top: )" parenthetical would render with
+    // nothing after the colon. Omit the parenthetical entirely in that
+    // case rather than ship broken prose.
     const examples = rankOpaqueByCallSites(acc.opaqueComponents)
       .slice(0, 3)
       .map((e) => `${e.name} (${e.callSites} call sites)`)
       .join(", ");
+    const opaqueLead =
+      examples.length > 0
+        ? `${opaqueCount} PascalCase components are opaque to the scanner (top: ${examples}).`
+        : `${opaqueCount} PascalCase components are opaque to the scanner.`;
     hints.push(
-      `${opaqueCount} PascalCase components are opaque to the scanner (top: ${examples}). ` +
+      `${opaqueLead} ` +
         `Rules needing the underlying element (button-name, alt-text, link-purpose) skip these. ` +
         `Wire common wrappers via \`nativeWrappers\` in ra11y.config.ts — e.g. ` +
         `{ Button: "button", Link: "a", Image: "img" } — to unlock analysis. ` +

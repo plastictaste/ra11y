@@ -317,6 +317,38 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["opaqueCustomComponentsTop"]).toBeUndefined();
     });
 
+    it("omits the top list when opaque components exist but none are interactive — prevents the `[]`-while-names-is-15 dishonest shape", () => {
+      // 20 route-like components, all non-interactive. Inventory size is
+      // non-zero AND large enough to trigger the hint, but the ranked
+      // list after the interactive filter is empty. Historical bug:
+      // shipped `opaqueCustomComponentsTop: []` alongside a 15-entry
+      // `opaqueCustomComponentNames`, which read as dishonest (an empty
+      // list on a response that also claimed 15 components).
+      const nonInteractive = Array.from({ length: 20 }, (_, i) => `Route${i}`);
+      const files = [tsxFile("a.tsx", nonInteractive, { interactive: false })];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      expect(analysisCoverage?.["opaqueCustomComponentsTop"]).toBeUndefined();
+      // Inventory count still reports the truth — omission is
+      // about the ranked sub-list, not suppression of the signal.
+      expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(20);
+    });
+
+    it("renders the opaque-components hint without the `(top: )` parenthetical when no component is interactive", () => {
+      // Hint fires on `opaqueCount >= OPAQUE_COMPONENT_HINT_MIN` (total
+      // inventory), but the examples list is gated on interactivity.
+      // Previously: empty examples string produced literal "(top: )"
+      // prose with nothing after the colon. Now the parenthetical is
+      // omitted entirely rather than shipped as broken English.
+      const nonInteractive = Array.from({ length: 20 }, (_, i) => `Route${i}`);
+      const files = [tsxFile("a.tsx", nonInteractive, { interactive: false })];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const hints = analysisCoverage?.["hints"] as string[] | undefined;
+      const opaqueHint = hints?.find((h) => h.includes("PascalCase components are opaque"));
+      expect(opaqueHint).toBeDefined();
+      expect(opaqueHint).not.toContain("(top: )");
+      expect(opaqueHint).not.toContain("(top:");
+    });
+
     // P2-P: when the opaque inventory is small enough to inline (≤50
     // names), the full names list ships on every response — no
     // verboseMeta round-trip. Above the threshold, names stay behind
