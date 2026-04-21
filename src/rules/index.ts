@@ -7,6 +7,7 @@
 
 import type { Rule } from "../types/rule.ts";
 import { rule as conflictingRole } from "./aria/conflicting-role.ts";
+import { rule as disabledLinkSurrogate } from "./aria/disabled-link-surrogate.ts";
 import { rule as expandedOnDisclosure } from "./aria/expanded-on-disclosure.ts";
 import { rule as hiddenFocus } from "./aria/hidden-focus.ts";
 import { rule as iconFontHidden } from "./aria/icon-font-hidden.ts";
@@ -95,6 +96,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   contrastEnhanced,
   contrastMinimum,
   contrastNonText,
+  disabledLinkSurrogate,
   dragAlternative,
   duplicateId,
   duplicateLandmarkUnlabeled,
@@ -171,6 +173,7 @@ export {
   contrastEnhanced,
   contrastMinimum,
   contrastNonText,
+  disabledLinkSurrogate,
   dragAlternative,
   duplicateId,
   duplicateLandmarkUnlabeled,
