@@ -60,7 +60,7 @@ interface Args {
   readonly specUrl: string;
 }
 
-main();
+if (import.meta.main) main();
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
@@ -220,18 +220,27 @@ function updateRegistry(args: Args): void {
   writeFileSync(registryPath, updated);
 }
 
-function insertIntoRegistry(source: string, localName: string, importLine: string): string {
+export function insertIntoRegistry(source: string, localName: string, importLine: string): string {
   const lines = source.split("\n");
   const importRE = /^import \{ rule as (\w+) \} from/;
-  const exportEntryRE = /^\s+(\w+),?\s*$/;
+  const importPathRE = /from ["']([^"']+)["']/;
+  const firstWordRE = /\b(\w+)\b/;
 
-  const insertSorted = (range: { start: number; end: number }, newLine: string): void => {
-    const nameRE = /\b(\w+)\b/;
-    const getName = (line: string): string => nameRE.exec(line)?.[1] ?? "";
-    const needle = getName(newLine);
+  // Imports sort by module path (e.g. "./aria/hidden-focus.ts") so the
+  // alphabetical ordering is applied within each domain cluster.
+  // BUILTIN_RULES + named export block sort by local identifier.
+  const getImportKey = (line: string): string => importPathRE.exec(line)?.[1] ?? "";
+  const getIdentifierKey = (line: string): string => firstWordRE.exec(line.trim())?.[1] ?? "";
+
+  const insertSorted = (
+    range: { start: number; end: number },
+    newLine: string,
+    getKey: (line: string) => string,
+  ): void => {
+    const needle = getKey(newLine);
     let insertAt = range.end;
     for (let i = range.start; i < range.end; i++) {
-      const existing = getName(lines[i] ?? "");
+      const existing = getKey(lines[i] ?? "");
       if (existing && needle < existing) {
         insertAt = i;
         break;
@@ -242,27 +251,28 @@ function insertIntoRegistry(source: string, localName: string, importLine: strin
 
   const importRange = findContiguousRange(lines, (l) => importRE.test(l));
   if (!importRange) throw new Error("could not locate import block in src/rules/index.ts");
-  insertSorted(importRange, importLine);
+  insertSorted(importRange, importLine, getImportKey);
 
   const afterImports = lines.findIndex((l) => /export const BUILTIN_RULES/.test(l));
   if (afterImports === -1) throw new Error("could not locate BUILTIN_RULES array");
   const builtinRange = findBracedRange(lines, afterImports, "[", "]");
   if (!builtinRange) throw new Error("could not locate BUILTIN_RULES array body");
-  insertSorted({ start: builtinRange.start + 1, end: builtinRange.end }, `  ${localName},`);
+  insertSorted(
+    { start: builtinRange.start + 1, end: builtinRange.end },
+    `  ${localName},`,
+    getIdentifierKey,
+  );
 
   const exportIndex = lines.findIndex((l) => /^export \{\s*$/.test(l));
   if (exportIndex === -1) throw new Error("could not locate named export block");
   const exportRange = findBracedRange(lines, exportIndex, "{", "}");
   if (!exportRange) throw new Error("could not locate named export block body");
   insertSorted(
-    {
-      start: exportRange.start + 1,
-      end: exportRange.end,
-    },
+    { start: exportRange.start + 1, end: exportRange.end },
     `  ${localName},`,
+    getIdentifierKey,
   );
 
-  void exportEntryRE;
   return lines.join("\n");
 }
 
