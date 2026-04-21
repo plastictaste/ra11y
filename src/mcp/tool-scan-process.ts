@@ -34,6 +34,65 @@
  *     sees partial evidence rather than a refuse-to-run envelope.
  *   - `meta.resolvedProcess` round-trips the matched process verbatim
  *     so the agent can confirm which declaration drove the scan.
+ *
+ * ---
+ *
+ * ## Assembler-seam decision (V1-RESPONSE-SCAN-PROCESS, 2026-04-21)
+ *
+ * `scan_process` intentionally stays OUTSIDE `assembleScanFamilyResponse`
+ * (ADR 0024). `scan`, `scan_file`, `scan_project`, and `scan_diff` all
+ * emit a unified `{ plan, files, meta }` tree over one logical scan —
+ * the assembler is a pure shape-builder over exactly that tree, plus
+ * the shared scan-confidence warnings channel. `scan_process` does not
+ * fit that contract, for three converging reasons:
+ *
+ *   1. **Per-page `ScanResult[]` is the contract, not an internal
+ *      detail.** `perPageResults: readonly ScanResult[]` is part of the
+ *      public response shape (see `ScanProcessResponse` below) and the
+ *      ADR 0016 primitive — future process-level finders
+ *      (WCAG 3.2.3 / 3.2.4 / 2.4.5) cross-index violations across
+ *      pages, and the per-page raw result is the evidence they
+ *      consume. The assembler emits one grouped `files[]` over a
+ *      single scan's violations; collapsing N pages into one tree
+ *      would discard the per-page boundary the downstream finders
+ *      depend on.
+ *
+ *   2. **`meta` is process-level, not scan-level.** The response's
+ *      `meta` carries `processName`-scoped fields — `cwd`,
+ *      `totalFindings` (summed across pages), `standards`, `level`,
+ *      `resolvedProcess` (the matched declaration verbatim),
+ *      `missingPages`. Those are not the scan-confidence telemetry
+ *      `buildScanMeta` produces (`activeNativeWrappers`,
+ *      `rulesEvaluated`, `analysisCoverage`, `filesByExtension`, …).
+ *      Routing through the assembler would either force-merge two
+ *      distinct meta concepts into one block — an honesty regression
+ *      per CLAUDE.md §1 "Ambiguous field shapes are dishonest" — or
+ *      require a per-page assembler call whose per-page meta would
+ *      then be thrown away.
+ *
+ *   3. **Looping the assembler per-page buys nothing.** A per-page
+ *      invocation would produce N independent `{ plan, files, meta }`
+ *      trees, and we would then have to pick which plan/meta to
+ *      emit at the top level (or fabricate a composite) — fabricating
+ *      a composite reintroduces the "composite headline counts are
+ *      dishonest" failure mode the split counters were designed to
+ *      prevent. The honest shape for a multi-page scan is literally
+ *      what `perPageResults: ScanResult[]` already encodes: the raw
+ *      per-page facts the agent can traverse without the tool pre-
+ *      choosing an aggregation.
+ *
+ * The assembler-seam discipline (V1-RESPONSE-LINT, future) will need to
+ * allowlist `src/mcp/tool-scan-process.ts` when the lint script lands.
+ * The allowlist does not yet exist — `scripts/check-response-assembly.ts`
+ * is the next backlog item (V1-RESPONSE-LINT) to create it. This
+ * docblock is the durable source of the exception rationale; the
+ * allowlist entry will cite it by path.
+ *
+ * If future work unifies the process-level primitive with the single-
+ * scan assembler (e.g. by extending the assembler to emit a
+ * `pages: AssembledPage[]` shape), revisit this decision — the three
+ * reasons above dissolve if the assembler natively understands a
+ * per-page scope.
  */
 
 import { existsSync } from "node:fs";
