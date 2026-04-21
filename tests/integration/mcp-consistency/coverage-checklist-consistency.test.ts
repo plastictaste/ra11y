@@ -198,6 +198,41 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(checklist.nextStepStructured?.tool).toBe("coverage");
   });
 
+  it("checklist with actionable items and no truncation emits the pair pointing at scan_project + naming attest in prose", async () => {
+    // Q3-CHECKLIST-NEXTSTEP: the previously-empty "actionable items,
+    // no truncation" branch now answers "what next?" honestly per the
+    // AI-first consumer doctrine. Structured points at `scan_project`
+    // (closed-form re-run); prose names `attest` as the verdict-
+    // recording step the agent takes after investigating an item.
+    const dir = await makeFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
+    const checklist = body<ChecklistBody>(responses[1]);
+    if (checklist.summary.actionable === 0) {
+      throw new Error(
+        "fixture regression — expected actionable > 0 on media+img fixture for the no-truncation branch test",
+      );
+    }
+
+    expect(checklist.nextStep).toBeDefined();
+    expect(checklist.nextStepStructured).toBeDefined();
+    const hint = checklist.nextStepStructured;
+    if (hint === undefined) throw new Error("checklist missing structured next step");
+    expect(hint.tool).toBe("scan_project");
+    expect(hint.args["cwd"]).toBe(dir);
+
+    // Prose names the companion verdict-recording flow so agents
+    // discover `attest` without a separate tools/list round trip.
+    expect(checklist.nextStep).toContain("attest");
+    expect(checklist.nextStep).toContain("scan_project");
+
+    // Structured form must be directly callable — feed it straight
+    // into `scan_project` and assert it does not error. Mirrors the
+    // pattern the two cross-pointing tests above use.
+    const followup = await mcpSession([initMsg(1), toolCall(2, "scan_project", hint.args)]);
+    const result = followup[1].result;
+    expect(result).toBeDefined();
+  });
+
   it("both tools conditional-spread the nextStep pair as a unit", async () => {
     // Conditional-spread discipline: `nextStep` and
     // `nextStepStructured` are present together, or both absent —

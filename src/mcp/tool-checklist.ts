@@ -348,7 +348,9 @@ export const checklistTool: McpTool = {
     //     candidates to iterate);
     //   - truncated pages → `checklist` with `offset: nextOffset`
     //     (keep paging through the same workflow queue);
-    //   - otherwise omitted (the agent iterates items[] directly).
+    //   - otherwise (actionable items, no truncation) → `scan_project`
+    //     closed-form; prose also names `attest` as the verdict-
+    //     recording step after per-item investigation.
     // Conditional-spread discipline (CLAUDE.md §1): `nextStep` +
     // `nextStepStructured` ship together or not at all.
     const checklistNextStep = buildChecklistNextStep({
@@ -730,9 +732,14 @@ interface ChecklistNextStepInputs {
  *   - truncated page → point at `checklist` again with the paging
  *     offset so the caller walks the queue without looking up the
  *     right params.
- *   - otherwise → omit both fields (honest-shape per CLAUDE.md §1
- *     "Ambiguous field shapes are dishonest"; the agent already has
- *     the items[] list to iterate).
+ *   - otherwise (actionable items present, no truncation) → point at
+ *     `scan_project` as the closed-form re-run route, and name
+ *     `attest` in prose as the verdict-recording step the agent takes
+ *     after investigating an item. `attest` requires `reason` +
+ *     `evidenceSource` that must come from the agent's per-item
+ *     investigation (we cannot pre-seed them without fabricating
+ *     provenance), so structured targets `scan_project { cwd }` —
+ *     directly callable, matches the "what next?" doctrine.
  *
  * `nextStep` + `nextStepStructured` are emitted as a pair or not at
  * all — one-sided emission would re-create the drift ADR 0010 closes.
@@ -767,5 +774,16 @@ function buildChecklistNextStep({
       nextStepStructured: { tool: "checklist", args },
     };
   }
-  return {};
+  // Actionable items present, no truncation. Iterate items[] reading
+  // the cited files, then either (a) call `attest` with a `verdict` +
+  // `reason` + `evidenceSource` to record the verdict on the evidence
+  // ledger, or (b) fix and re-run `scan_project`. Structured points
+  // at `scan_project { cwd }` because it's closed-form directly
+  // callable; `attest`'s required `reason` + `evidenceSource` cannot
+  // be pre-seeded without fabricating provenance.
+  return {
+    nextStep:
+      "Iterate `items[]`, reading each cited file and line. After verifying an item, call `attest` with the item's `criterionId`, a `verdict` (`pass` / `fail` / `n/a`), a `reason`, and an `evidenceSource` to record the verdict durably; call `scan_project` to re-run after fixing violations.",
+    nextStepStructured: { tool: "scan_project", args: { cwd } },
+  };
 }
