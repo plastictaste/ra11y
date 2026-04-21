@@ -162,6 +162,8 @@ export const bootstrapTool: McpTool = {
         scanSubset,
         baseline,
         writeBaseline,
+        wrappers: wrappersPayload,
+        root,
       }),
       meta: {
         scanned: scannedProject(root),
@@ -570,18 +572,50 @@ function buildNextStepStructured(args: {
   readonly scanSubset: ScanSubset;
   readonly baseline: BaselineSummary | null;
   readonly writeBaseline: boolean;
+  readonly wrappers: WrappersSubset;
+  readonly root: string;
 }): NextStepStructured {
-  // Violations are the only lane that merits the grandfather-via-
-  // baseline follow-up — info-severity notes are observations the
-  // engine surfaces without asserting a failure, and the baseline
-  // `check` mode filters against the violation set. Reading only
-  // `violationsCount` (not the former summed `totalFindings`) keeps
-  // the hint honest.
-  if (!args.writeBaseline && args.scanSubset.violationsCount > 0) {
-    return { tool: "bootstrap", args: { writeBaseline: true } };
-  }
+  // Post-write: the grandfathered baseline is on disk, and the
+  // canonical verify-in-CI move is `baseline check`. Checked first so
+  // the write path wins over the violations branch below (writing a
+  // baseline implies violations > 0 at the time of the write).
   if (args.baseline?.written) {
     return { tool: "baseline", args: { mode: "check" } };
+  }
+  // Dry-run with violations is where the former self-loop lived
+  // (`{ tool: "bootstrap", args: { writeBaseline: true } }`). That
+  // pointed the agent at a re-invocation of this same tool with a
+  // different flag — a recursive loop, not a forward step. The
+  // grandfather-via-baseline option is still surfaced as a
+  // grandfather-alternative in the prose `nextStep`, which is where
+  // the two options belong per the "One tool call should answer
+  // 'what next?'" rule. The structured hint now picks the forward
+  // option: either `detect_native_wrappers` when the detect leg
+  // surfaced wrapper candidates that haven't been written into
+  // config yet (the agent's more actionable first move — confirming
+  // wrappers changes which findings are real), or `scan_project` to
+  // iterate on findings after the agent fixes them.
+  //
+  // The "unconfirmed wrappers" proxy here is the presence of any
+  // candidates on the detect leg's subset — non-empty means the
+  // scanner found PascalCase+onClick components the agent hasn't
+  // yet folded into `nativeWrappers` config. A stronger
+  // "still-assumed-not-confirmed" signal (per P1-F wrapper-source
+  // telemetry on `scan_project`) isn't cheaply reachable from the
+  // composed-legs result here without re-threading the scan meta,
+  // so we use the candidate-list proxy and accept it may over-route
+  // to `detect_native_wrappers` in cases where the user has
+  // already declared the wrappers and detect just re-reported
+  // them. That's an honest over-surface (one extra tool call), not
+  // the silent-miss direction. TODO(Q3-BOOTSTRAP-WRAPPER-STATE):
+  // thread `meta.activeNativeWrappers` from the scan leg so this
+  // branch can discriminate "detected but unconfirmed" from
+  // "detected and already in config."
+  if (!args.writeBaseline && args.scanSubset.violationsCount > 0) {
+    if (args.wrappers.candidates.length > 0) {
+      return { tool: "detect_native_wrappers", args: { cwd: args.root } };
+    }
+    return { tool: "scan_project", args: {} };
   }
   return { tool: "scan_project", args: {} };
 }

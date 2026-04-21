@@ -131,11 +131,16 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
     });
   });
 
-  // The nextStepStructured contract routes agents at the right follow-up
-  // call. On a dirty, dry-run response, the hint must point back at
-  // bootstrap with writeBaseline: true so the agent can land the
-  // grandfathered file without re-deriving the call shape.
-  it("suggests rerun with writeBaseline:true when findings exist in dry-run mode", async () => {
+  // The nextStepStructured contract routes agents at the right *forward*
+  // follow-up call. The former self-loop routed back at
+  // `bootstrap({ writeBaseline: true })` — same tool, different arg —
+  // which failed the "One tool call should answer 'what next?'" rule:
+  // the baseline-toggle is an input arg on the same tool, not a
+  // forward step. On a dirty dry-run with no wrapper candidates the
+  // forward move is `scan_project` (to iterate on findings after the
+  // agent fixes them). The grandfather-via-baseline option still
+  // appears in the prose `nextStep` as the grandfather-alternative.
+  it("routes forward to scan_project on dirty dry-run (not a self-loop into bootstrap)", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "a.html"),
@@ -144,9 +149,52 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       const { response } = await callBootstrap({ cwd: dir });
       expect(response.scan.violationsCount).toBeGreaterThan(0);
       expect(response.baseline).toBeNull();
-      expect(response.nextStepStructured.tool).toBe("bootstrap");
-      expect(response.nextStepStructured.args.writeBaseline).toBe(true);
+      // Self-loop is gone: structured hint never points at bootstrap.
+      expect(response.nextStepStructured.tool).not.toBe("bootstrap");
+      // No wrapper candidates in this fixture (raw HTML, no
+      // PascalCase+onClick), so the forward hop is `scan_project`.
+      expect(response.nextStepStructured.tool).toBe("scan_project");
+      // Grandfather-alternative stays in prose — legitimate English
+      // guidance, not a recursive structured hint.
       expect(response.nextStep).toContain("writeBaseline: true");
+    });
+  });
+
+  // Edge case — wrappers unconfirmed: when the detect leg surfaces
+  // PascalCase+onClick candidates AND the dry-run scan has
+  // violations, the more actionable forward move is
+  // `detect_native_wrappers` before another `scan_project`.
+  // Confirming wrappers changes which findings the engine treats as
+  // real, so iterating on `scan_project` first risks chasing false
+  // positives. Fixture: a TSX call site that uses a PascalCase
+  // component with `onClick` (the detector keys on *usage*, not
+  // declaration) plus an HTML page with the alt-text violation so
+  // `scan_project` still reports dirty.
+  it("routes to detect_native_wrappers on dirty dry-run when wrapper candidates exist", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "app.tsx"),
+        [
+          "export function App() {",
+          "  return (",
+          "    <>",
+          "      <ActionButton onClick={a} />",
+          "      <Card onClick={b} />",
+          "    </>",
+          "  );",
+          "}",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(dir, "a.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      expect(response.scan.violationsCount).toBeGreaterThan(0);
+      expect(response.wrappers.candidates.length).toBeGreaterThan(0);
+      expect(response.baseline).toBeNull();
+      expect(response.nextStepStructured.tool).toBe("detect_native_wrappers");
+      expect(response.nextStepStructured.args.cwd).toBe(dir);
     });
   });
 
