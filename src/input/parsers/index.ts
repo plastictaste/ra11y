@@ -8,6 +8,7 @@ export type { CssParseResult } from "./css.ts";
 export { parseCss } from "./css.ts";
 export type { HtmlParseResult } from "./html.ts";
 export { parseHtml } from "./html.ts";
+export { parseMarkdown } from "./markdown.ts";
 export { parseMdx } from "./mdx.ts";
 export { parseScss } from "./scss.ts";
 export type { TailwindToken } from "./tailwind.ts";
