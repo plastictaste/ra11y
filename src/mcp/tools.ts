@@ -33,6 +33,7 @@ import { scanProcessTool } from "./tool-scan-process.ts";
 import { scanProjectTool } from "./tool-scan-project.ts";
 import { suggestFixTool } from "./tool-suggest-fix.ts";
 import { suppressTool } from "./tool-suppress.ts";
+import { verdictCandidateTool } from "./tool-verdict-candidate.ts";
 import { vpatTool } from "./tool-vpat.ts";
 import { wrapperIntrospectTool } from "./tool-wrapper-introspect.ts";
 import {
@@ -257,6 +258,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   checklistTool,
   conformanceStatementTool,
   reviewCandidatesTool,
+  verdictCandidateTool,
   auditTool,
   baselineTool,
   bootstrapTool,
