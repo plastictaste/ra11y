@@ -26,12 +26,14 @@
 
 import type { ConformanceProfile as ConfigConformanceProfile } from "../config/profiles.ts";
 import type { Process } from "../types/config.ts";
-import type {
-  AttestationRecord,
-  CriterionEvidence,
-  EvidenceLedger,
-  EvidenceSource,
-  EvidenceStatus,
+import {
+  ATTESTATION_EVIDENCE_SOURCES,
+  type AttestationEvidenceSource,
+  type AttestationRecord,
+  type CriterionEvidence,
+  type EvidenceLedger,
+  type EvidenceSource,
+  type EvidenceStatus,
 } from "../types/evidence.ts";
 import type { Standard } from "../types/standard.ts";
 import type { AttestationStalenessProbe } from "./attestation-surface.ts";
@@ -278,6 +280,24 @@ export interface ConformanceStatement {
    * spec-derived enumeration backing this list.
    */
   readonly limitations?: readonly string[];
+  /**
+   * Per-evidence-source tally across the attestations the claim stood
+   * on. `bySource` keys the four classifier values; only present keys
+   * are populated. A reader scanning the claim sees at a glance what
+   * mix of evidence — runtime-tool runs, manual review, human study,
+   * self-declaration — the verdict rests on, which is the axis a
+   * procurement auditor or VPAT reader cares about.
+   *
+   * Present only when the caller supplied the `signing.attestations`
+   * input (the builder's only view of the full ledger); omitted
+   * otherwise per the absent-vs-empty rule. Ordering: `bySource` keys
+   * appear in the canonical order declared by
+   * {@link ATTESTATION_EVIDENCE_SOURCES}.
+   */
+  readonly attestationSummary?: {
+    readonly totalCount: number;
+    readonly bySource: Readonly<Partial<Record<AttestationEvidenceSource, number>>>;
+  };
 }
 
 /**
@@ -428,6 +448,7 @@ export function buildConformanceStatement(
   const effectiveProfile: ConformanceProfile = { ...inputs.profile, level: effectiveLevel };
   const scope = buildStatementScope(inputs);
   const limitations = buildLimitations(blockers);
+  const attestationSummary = buildAttestationSummary(inputs.signing?.attestations);
   return {
     profile: effectiveProfile,
     generatedAt: inputs.ledger.meta.generatedAt,
@@ -444,7 +465,36 @@ export function buildConformanceStatement(
     ...(signature !== undefined && { signature }),
     ...(warnings.size > 0 && { warnings: [...warnings].sort() }),
     ...(limitations.length > 0 && { limitations }),
+    ...(attestationSummary !== undefined && { attestationSummary }),
   };
+}
+
+/**
+ * Tallies attestations by `evidenceSource`. Returns `undefined` when
+ * the caller didn't supply the `signing.attestations` list (the
+ * builder's only view of the full ledger), or when the list is empty
+ * — present-when-meaningful per the AI-first consumer model.
+ *
+ * Records whose `criterionId` isn't in scope for the statement still
+ * tally: the summary reflects the ledger the claim was signed over,
+ * not a filtered view — that matches the signature's scope and keeps
+ * the numbers consistent when a reader cross-checks against
+ * `list_attestations`.
+ */
+function buildAttestationSummary(
+  attestations: readonly AttestationRecord[] | undefined,
+): ConformanceStatement["attestationSummary"] {
+  if (attestations === undefined || attestations.length === 0) return undefined;
+  const counts = new Map<AttestationEvidenceSource, number>();
+  for (const a of attestations) {
+    counts.set(a.evidenceSource, (counts.get(a.evidenceSource) ?? 0) + 1);
+  }
+  const bySource: Partial<Record<AttestationEvidenceSource, number>> = {};
+  for (const key of ATTESTATION_EVIDENCE_SOURCES) {
+    const count = counts.get(key);
+    if (count !== undefined && count > 0) bySource[key] = count;
+  }
+  return { totalCount: attestations.length, bySource };
 }
 
 /**

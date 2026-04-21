@@ -394,6 +394,34 @@ describe("buildVpatReport + renderVpatMarkdown", () => {
     expect(otherEntry?.conformance).toBe("Not Evaluated");
   });
 
+  it("cites evidenceSource + toolName in the VPAT remarks cell for attested criteria", () => {
+    // A VPAT reader distinguishing "axe-core verified this" from
+    // "author declared this" reads the remarks cell. The remark must
+    // name the evidenceSource (required) and toolName (present-when-
+    // meaningful) so the auditor doesn't have to cross-reference a
+    // separate attestation list.
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      attestations: [
+        {
+          criterionId: "wcag22:2.1.1",
+          by: "ci-bot",
+          reason: "Playwright keyboard traversal — all routes pass",
+          attestedAt: "2026-04-11T00:00:00Z",
+          evidenceSource: "runtime_tool",
+          toolName: "playwright 1.42",
+          verdict: "pass",
+        },
+      ],
+    });
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.1.1");
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect(entry.remarks).toContain("Evidence: runtime_tool");
+    expect(entry.remarks).toContain("playwright 1.42");
+  });
+
   it("preserves 'Does Not Support' on a runtime-only SC that has a proven static failure", () => {
     // Conservative default: a proven static failure is honest negative
     // evidence even when the criterion is runtime-dependent. Hiding a

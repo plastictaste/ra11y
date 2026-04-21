@@ -172,7 +172,7 @@ export function buildVpatReport(
   const candidates = options.candidates ?? [];
   const applicability = options.applicability;
   const product = resolveProductMetadata(options.product);
-  const attestedCriteria = indexAttestedCriteria(options.attestations ?? []);
+  const attestedByCriterion = indexAttestedByCriterion(options.attestations ?? []);
 
   const enabledSet = new Set(result.enabledStandards);
   const templateVersion = resolveTemplateVersion(enabledSet);
@@ -189,7 +189,7 @@ export function buildVpatReport(
         violationsByCriterion,
         candidatesByCriterion,
         applicability,
-        attestedCriteria,
+        attestedByCriterion,
       ),
     );
   }
@@ -249,7 +249,7 @@ function buildSection(
   violationsByCriterion: ReadonlyMap<string, readonly Violation[]>,
   candidatesByCriterion: ReadonlyMap<string, readonly ReviewCandidate[]>,
   applicability: Applicability | undefined,
-  attestedCriteria: ReadonlySet<string>,
+  attestedByCriterion: ReadonlyMap<string, AttestationRecord>,
 ): VpatStandardSection {
   const entries: VpatEntry[] = [];
   const summary = {
@@ -266,7 +266,7 @@ function buildSection(
       violationsByCriterion.get(criterion.id) ?? [],
       candidatesByCriterion.get(criterion.id) ?? [],
       applicability,
-      attestedCriteria,
+      attestedByCriterion,
     );
     entries.push(entry);
     switch (entry.conformance) {
@@ -302,7 +302,7 @@ function buildEntry(
   violations: readonly Violation[],
   candidates: readonly ReviewCandidate[],
   applicability: Applicability | undefined,
-  attestedCriteria: ReadonlySet<string>,
+  attestedByCriterion: ReadonlyMap<string, AttestationRecord>,
 ): VpatEntry {
   // Demonstrated failures always win — even for criteria classified
   // "manual" in metadata, because a rule can still satisfy a slice of a
@@ -346,6 +346,8 @@ function buildEntry(
     };
   }
 
+  const attestation = attestedByCriterion.get(criterion.id);
+
   // Runtime-evidence-required override. Criteria that fundamentally
   // need runtime observation — keyboard traversal, focus visibility,
   // rendered contrast, heading adequacy, pointer interaction,
@@ -357,7 +359,7 @@ function buildEntry(
   // framing is "the static layer cannot answer this question."
   // Spec-derived allowlist, not a heuristic — every entry cites its
   // normative basis in `runtime-evidence-criteria.ts`.
-  if (RUNTIME_EVIDENCE_REQUIRED_CRITERIA.has(criterion.id) && !attestedCriteria.has(criterion.id)) {
+  if (RUNTIME_EVIDENCE_REQUIRED_CRITERIA.has(criterion.id) && attestation === undefined) {
     return {
       criterionId: criterion.id,
       localId: criterion.localId,
@@ -385,7 +387,7 @@ function buildEntry(
     };
   }
 
-  const remarks = buildAutomatedPassRemarks(criterion);
+  const remarks = buildAutomatedPassRemarks(criterion, attestation);
   return {
     criterionId: criterion.id,
     localId: criterion.localId,
@@ -417,12 +419,38 @@ function buildViolationRemarks(
   return `${verdict}. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): ${violations.length} ${countWord} from rule(s): ${ruleList}.`;
 }
 
-/** Auditor-facing remark for an automatable criterion that passed the static scan. */
-function buildAutomatedPassRemarks(criterion: Criterion): string {
-  if (criterion.automatable === "partial") {
-    return `Partially Supports. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): automated source-code checks passed. Manual review still required for aspects outside static-analysis scope.`;
-  }
-  return `Supports. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): automated source-code checks passed with no findings.`;
+/**
+ * Auditor-facing remark for an automatable criterion that passed the
+ * static scan. When an attestation also backs the criterion, the
+ * remark names the provenance axis (`runtime_tool` / `manual_review`
+ * / `human_study` / `declaration`) plus `toolName` if supplied — an
+ * auditor reading the VPAT sees at a glance that an axe-core run or
+ * manual-review pass backed the verdict, not just the static scanner.
+ */
+function buildAutomatedPassRemarks(
+  criterion: Criterion,
+  attestation: AttestationRecord | undefined,
+): string {
+  const base =
+    criterion.automatable === "partial"
+      ? `Partially Supports. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): automated source-code checks passed. Manual review still required for aspects outside static-analysis scope.`
+      : `Supports. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): automated source-code checks passed with no findings.`;
+  if (attestation === undefined) return base;
+  return `${base} ${buildAttestationCitation(attestation)}`;
+}
+
+/**
+ * Appends a short evidence citation to a remark: `Evidence:
+ * runtime_tool (axe-core 4.8.2)`. Named fields surface verbatim so the
+ * auditor can cross-reference the attestation against their CI /
+ * review log. Omits the parenthetical when no `toolName` is present.
+ */
+function buildAttestationCitation(attestation: AttestationRecord): string {
+  const parts: string[] = [];
+  if (attestation.toolName !== undefined) parts.push(attestation.toolName);
+  if (attestation.runUrl !== undefined) parts.push(attestation.runUrl);
+  const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return `Evidence: ${attestation.evidenceSource}${suffix}.`;
 }
 
 /**
@@ -466,21 +494,29 @@ function buildManualRemarks(criterion: Criterion, candidates: readonly ReviewCan
 }
 
 /**
- * Collects the set of criterion IDs that carry a fresh attestation with
- * a meaningful verdict — `"pass"`, `"fail"`, or `"n/a"`. `"pending"`
+ * Indexes attestations by criterion ID, keeping the record with a
+ * meaningful verdict (`"pass"` / `"fail"` / `"n/a"`). `"pending"`
  * attestations (bare pragmas the author hasn't filled a reason on) do
  * NOT count as evidence; they surface in `list_attestations` as
  * actionable gaps, but they do not lift a runtime-dependent criterion
- * out of "Not Evaluated." Matches the `recordFromAttestedSource` verdict
- * filter in `src/reports/conformance.ts` so the two surfaces route on
- * the same signal.
+ * out of "Not Evaluated."
+ *
+ * When multiple attestations speak to one criterion, prefer the most
+ * recent by `attestedAt`. The evidence-source citation lands on the
+ * VPAT remarks cell, so a single "most recent" record is the useful
+ * one — older attestations show up in `list_attestations` if an
+ * auditor wants the full audit trail.
  */
-function indexAttestedCriteria(attestations: readonly AttestationRecord[]): ReadonlySet<string> {
-  const out = new Set<string>();
+function indexAttestedByCriterion(
+  attestations: readonly AttestationRecord[],
+): ReadonlyMap<string, AttestationRecord> {
+  const out = new Map<string, AttestationRecord>();
   for (const a of attestations) {
     const verdict = a.verdict ?? "pass";
-    if (verdict === "pass" || verdict === "fail" || verdict === "n/a") {
-      out.add(a.criterionId);
+    if (verdict !== "pass" && verdict !== "fail" && verdict !== "n/a") continue;
+    const existing = out.get(a.criterionId);
+    if (existing === undefined || a.attestedAt > existing.attestedAt) {
+      out.set(a.criterionId, a);
     }
   }
   return out;

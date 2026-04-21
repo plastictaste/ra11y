@@ -392,6 +392,71 @@ describe("renderConformanceMarkdown", () => {
     expect(md).toContain("## Technologies not relied upon");
     expect(md).toContain("- JavaScript");
   });
+
+  it("renders an '## Evidence sources' block with bySource counts when signing inputs carry attestations", () => {
+    // A claim that stood on axe-core + manual-review backing reads
+    // differently from one that stood on self-declaration alone. The
+    // markdown renderer must surface that distinction explicitly —
+    // otherwise an auditor reading the claim has to cross-reference
+    // `list_attestations` to know what evidence tier was behind the
+    // verdict.
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const attestations: AttestationRecord[] = [
+      {
+        criterionId: "wcag22:1.4.3",
+        by: "ci-bot",
+        reason: "axe-core 4.8.2 clean on /checkout page",
+        attestedAt: FIXED_TIMESTAMP,
+        evidenceSource: "runtime_tool",
+        toolName: "axe-core 4.8.2",
+        verdict: "pass",
+      },
+      {
+        criterionId: "wcag22:1.4.3",
+        by: "alice",
+        reason: "manual review of composited backgrounds against spec thresholds",
+        attestedAt: FIXED_TIMESTAMP,
+        evidenceSource: "manual_review",
+        verdict: "pass",
+      },
+    ];
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      signing: {
+        commitHash: "abc1234",
+        attestations,
+        configFingerprint: { standards: ["wcag22"], level: "AA" },
+      },
+    });
+    expect(statement.attestationSummary?.totalCount).toBe(2);
+    expect(statement.attestationSummary?.bySource).toEqual({
+      runtime_tool: 1,
+      manual_review: 1,
+    });
+    const md = renderConformanceMarkdown(statement);
+    expect(md).toContain("## Evidence sources");
+    expect(md).toContain("Attestations in ledger: 2");
+    expect(md).toContain("runtime_tool: 1");
+    expect(md).toContain("manual_review: 1");
+  });
+
+  it("omits the '## Evidence sources' block when the builder received no signing.attestations", () => {
+    // Present-when-meaningful: omitted when the builder has no
+    // visibility into the ledger (e.g. a non-signing flow). An empty
+    // list would read as "no attestations on record" when the reality
+    // is "we didn't receive the list."
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.attestationSummary).toBeUndefined();
+    const md = renderConformanceMarkdown(statement);
+    expect(md).not.toContain("## Evidence sources");
+  });
 });
 
 describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {

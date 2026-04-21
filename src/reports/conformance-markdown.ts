@@ -35,6 +35,15 @@ export function renderConformanceMarkdown(statement: ConformanceStatement): stri
     ),
   );
   lines.push("");
+  // `## Evidence sources` groups the attested sources by the four
+  // provenance classifier values (runtime_tool / manual_review /
+  // human_study / declaration). An auditor reading the claim sees at
+  // a glance what mix of evidence the verdict rests on — a section
+  // dominated by `declaration` stands on weaker ground than one
+  // dominated by `runtime_tool` + `human_study`, even when the verdict
+  // is the same. Present-when-meaningful: omitted when the builder
+  // received no `signing.attestations` input.
+  lines.push(...renderMarkdownAttestationSummary(statement.attestationSummary));
   // `## Limitations` is present-when-meaningful: omitted when no
   // runtime-evidence-required criterion surfaced. It sits before the
   // blocker table so a reader scanning the claim sees the honesty
@@ -104,6 +113,30 @@ function renderMarkdownTechnologies(
     lines.push("", "## Technologies not relied upon", "");
     for (const t of notReliedUpon) lines.push(`- ${t}`);
   }
+  return lines;
+}
+
+/**
+ * `## Evidence sources` — per-evidenceSource attestation tally.
+ * Present-when-the-builder-received-attestations; omitted otherwise so
+ * an empty or absent list doesn't read as "no attestations" when the
+ * reality is "builder wasn't given the list" (see the
+ * absent-vs-empty rule).
+ */
+function renderMarkdownAttestationSummary(
+  summary: ConformanceStatement["attestationSummary"],
+): readonly string[] {
+  if (summary === undefined) return [];
+  const lines: string[] = [
+    "## Evidence sources",
+    "",
+    `- Attestations in ledger: ${summary.totalCount}`,
+  ];
+  for (const [source, count] of Object.entries(summary.bySource)) {
+    if (count === undefined || count === 0) continue;
+    lines.push(`- ${source}: ${count}`);
+  }
+  lines.push("");
   return lines;
 }
 
