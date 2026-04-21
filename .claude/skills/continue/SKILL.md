@@ -31,53 +31,68 @@ The old `/continue` walked `## Phase N` sections in order, one item at a time. T
 - **Active** (dispatch eligible): tracks flagged in `.claude/backlog.md`'s `Dispatch model` line as active — currently **D, M, R, F**.
 - **Staged** (do not dispatch): **S** (MCP sampling) and **E** (ecosystem) are deferred until after v0.2.0 ships. `/continue` ignores their items unless the Dispatch model line is updated to promote them.
 
-## Turn workflow
+## Pre-dispatch planning (step 0 — once per invocation)
 
-For each turn (up to `$1` or 10, whichever is smaller):
+Before the turn loop, dispatch the `planner` subagent **once**:
 
-### 1. Select items (pick-one-per-track)
+- Pass `{ maxTurns: <$1 or 10>, picksPerTurn: 3 }`.
+- It reads `.claude/backlog.md` + `git log --oneline -30`, audits sequencing constraints, pre-classifies each pick to a specialist, and annotates cross-turn file collisions.
+- It returns a structured plan (≤80 lines) with `activeTracks`, `stagedTracks`, `turns[]` (each turn: up to 3 `picks` with `item`, `track`, `specialist`, `backlogLine`, `inferredFiles`, `collisionWith`), `deferred[]`, and `blocked[]`.
+- Cache the plan in main-session memory for the life of this invocation. **Do not re-read `.claude/backlog.md` during the turn loop** — the plan is authoritative. The only time the backlog file is touched during the loop is by the `integrator` subagent (backlog tickoff at end of each turn), and that happens in a separate context.
 
-Read `.claude/backlog.md`. For each active track in order (D, M, R, F):
+If the planner returns zero `turns`, stop and report — all active tracks are either empty, sequencing-blocked, or `[!]`-blocked.
 
-- Find the next unchecked `- [ ]` item in that track's section.
-- Skip the item if:
-  - A previous turn in this invocation already dispatched it (track its dispatch set in memory).
-  - The item has `[!]` — blocked with a note; leave for the user.
-  - The track has a **sequencing constraint** and the item's prerequisites aren't done. Sequenced tracks: **F** (ADR → harness prototype → 9 fixtures). For F, skip the fixture items until the ADR + prototype are checked off.
-- Stop selecting once you have 3 items, or once all active tracks have been checked.
+The planner's classification table (for reference when you need to validate a pick):
 
-If zero items are selectable (all active tracks are either empty or sequencing-blocked), stop the loop and report.
-
-### 2. Classify + prepare dispatch prompts
-
-For each selected item, choose the specialist:
-
-| Item pattern | Specialist agent |
+| Item pattern | Specialist |
 |---|---|
-| `src/rules/**` or "add rule for wcag22:…" | `rule-implementer` |
-| `src/standards/**` or "add standard …" | `standard-builder` |
+| `src/rules/**` | `rule-implementer` |
+| `src/standards/**` | `standard-builder` |
 | `src/input/parsers/**` | `parser-author` |
 | `src/output/formatters/**` | `formatter-author` |
-| `src/types/**` or `src/engine/ast-helpers.ts` | `type-smith` |
-| `src/mcp/**` | main session (no specialist) |
-| `src/review/finders/**` | main session |
+| `src/types/**`, `src/engine/ast-helpers.ts` | `type-smith` |
+| `src/mcp/**`, `src/review/finders/**`, `scripts/**`, `.github/workflows/**`, `docs/adr/**`, release/demo/tag | `main-session` |
 | `tests/fixtures/real-world/**` | `fixture-curator` |
-| `tests/**` (edge cases, fuzz, property) | `test-author` |
+| `tests/**` (edge/fuzz/property) | `test-author` |
 | `docs/**` (user-facing) | `doc-writer` |
-| `docs/kb/**` | `spec-researcher` (for specs) or `/fix-drift` |
-| `scripts/**` | main session |
-| `.github/workflows/**` | main session |
-| `docs/adr/**` or release / demo / tag | main session |
-| anything else | main session with a note in the summary |
+| `docs/kb/**` | `spec-researcher` or `/fix-drift` |
 
-Each dispatch prompt includes:
+## Turn workflow
 
-- The backlog item verbatim.
-- Pointers to `CLAUDE.md`, relevant `docs/kb/patterns/…`, and recent ADRs that govern the decision space.
-- An explicit "commit your own work before returning" instruction (per `CLAUDE.md` §11).
-- **Anti-stash rule (non-negotiable):** "Your worktree is isolated — the initial state is clean. Do not run `git stash` for any reason. If you encounter unexpected dirt in your worktree, treat it as a bug: stop and report, do not stash, do not `git clean`, do not `checkout --`. Commit only the changes you authored."
-- **Scope-lock rule:** "Edit only files listed in the backlog item and their direct test / snapshot / changelog counterparts. If an edit you think you need falls outside that set, stop and report."
-- **Structured return contract (mandatory):** "Return a single JSON block only — no prose before or after. Shape on success: `{ \"item\": \"<backlog label>\", \"branch\": \"<your branch>\", \"sha\": \"<HEAD sha>\", \"filesChanged\": [\"path/one\", ...], \"notes\": \"<≤2 sentences, optional>\" }`. Shape on failure: `{ \"item\": \"<backlog label>\", \"blocked\": \"<≤2 sentences why>\" }`. The orchestrator will not read prose; it will only extract the JSON. Long summaries waste context and get truncated."
+For each turn in `plan.turns` (up to `$1` or 10, whichever is smaller):
+
+### 1. Read the turn slice from the cached plan
+
+Pull `plan.turns[n]` — the picks are already selected, classified, sequencing-audited, and collision-annotated. Skip picks whose `item` appears in your in-memory "already dispatched this invocation" set (rare — only matters if a turn was reattempted).
+
+If a pick's `collisionWith` is populated, note it for step 2's dispatch prompt.
+
+### 2. Build dispatch prompts (template-referenced)
+
+Every worktree-isolated dispatch prompt has the same shape:
+
+```
+You are handling a /continue pick. Read .claude/skills/continue/dispatch-template.md
+in full and follow every rule it declares (scope-lock, worktree discipline,
+commit discipline, precommit-verify-before-return, structured JSON return).
+
+Backlog item: <pick.item> (line <pick.backlogLine> of .claude/backlog.md — re-read
+for full description).
+
+Inferred file scope: <pick.inferredFiles joined>.
+
+<if pick.collisionWith>
+Collision note: <pick.collisionWith>. Combine edits with the prior change; never
+discard the older side.
+</if>
+
+<if specialist-specific>
+Specialist guidance: <1-2 pointers to docs/kb/patterns/... or recent ADRs that
+govern this decision space>.
+</if>
+```
+
+That is the whole dispatch prompt. All the anti-stash / scope-lock / JSON-return boilerplate lives in `dispatch-template.md` — the orchestrator does not re-embed it per dispatch. Main-session picks (classified as `main-session`) are handled inline by the orchestrator and do not use this template.
 
 ### 3. Dispatch — parallel, worktree-isolated
 
