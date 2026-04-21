@@ -135,6 +135,20 @@ export async function startMcpServer(registry?: Registry): Promise<void> {
 
   const rl = createInterface({ input: process.stdin, terminal: false });
 
+  // Requests are dispatched serially (tests and stateful tool calls
+  // rely on one-at-a-time ordering), but the read loop itself must
+  // not block while a dispatch is pending — sampling-backed tools
+  // issue outbound `sampling/createMessage` requests and expect the
+  // host's reply to land on stdin *during* the tool call. A loop that
+  // `await`s the current dispatch can never reach the next line to
+  // route that reply, deadlocking the server.
+  //
+  // Solution: the read loop enqueues requests behind a serial chain
+  // (`dispatchTail`) but stays responsive for inbound *responses*.
+  // `tryRouteResponse` is synchronous and fires against the pending
+  // outbound map immediately, unblocking the in-flight dispatch.
+  let dispatchTail: Promise<unknown> = Promise.resolve();
+
   for await (const line of rl) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
@@ -173,9 +187,16 @@ export async function startMcpServer(registry?: Registry): Promise<void> {
       continue;
     }
 
-    const response = await dispatch(request, session, emitLog);
-    writeResponse(response);
+    // Enqueue this request behind any pending dispatch. The loop itself
+    // does not await — a sampling reply arriving later still reaches
+    // `tryRouteResponse` above.
+    dispatchTail = dispatchTail.then(() => dispatch(request, session, emitLog).then(writeResponse));
   }
+
+  // Stdin closed — drain the dispatch chain so every request gets a
+  // response before the server resolves. Errors are already converted
+  // into JSON-RPC error envelopes by `dispatch`, so this never rejects.
+  await dispatchTail;
 }
 
 /**
