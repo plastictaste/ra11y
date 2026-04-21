@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Good: aria-labelledby references a visible heading</title>
+  </head>
+  <body>
+    <!-- When the label copy is a visible heading the form reuses, the
+         shortest spec-compliant path is aria-labelledby pointing at
+         the heading's id. The input's accessible name comes from the
+         heading text; the placeholder supplies a format hint. -->
+    <form>
+      <h2 id="email-heading">Your email address</h2>
+      <input
+        type="email"
+        aria-labelledby="email-heading"
+        placeholder="name@example.com"
+      />
+      <button type="submit">Continue</button>
+    </form>
+  </body>
+</html>

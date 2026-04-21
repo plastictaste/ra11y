@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Good: explicit label with for-id association</title>
+  </head>
+  <body>
+    <!-- Canonical accessible form markup. The <label for="email">
+         associates with the input's id; the placeholder stays as a
+         format hint ("name@example.com") that is distinct from the
+         label copy ("Email address"). -->
+    <form>
+      <label for="email">Email address</label>
+      <input id="email" type="email" placeholder="name@example.com" />
+      <button type="submit">Subscribe</button>
+    </form>
+  </body>
+</html>

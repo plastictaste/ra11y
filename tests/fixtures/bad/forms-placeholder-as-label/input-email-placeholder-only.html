@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Placeholder-as-label: email input with placeholder, no label</title>
+  </head>
+  <body>
+    <!-- Canonical antipattern. `placeholder="Email"` is the only hint.
+         No <label for>, no aria-label, no aria-labelledby, no wrapping
+         <label>. Sighted users see greyed-out "Email" until they focus;
+         screen-reader users hear "edit" with no name. -->
+    <form>
+      <input type="email" placeholder="Email" />
+      <button type="submit">Sign up</button>
+    </form>
+  </body>
+</html>

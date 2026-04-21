@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Placeholder-as-label: textarea with placeholder, no label</title>
+  </head>
+  <body>
+    <!-- Same antipattern on <textarea>. The placeholder doubles as
+         both an instruction and a label; once the user starts typing
+         it vanishes and both disappear. A persistent <label> or
+         aria-label lets AT re-announce the field when the user tabs
+         back in. -->
+    <form>
+      <textarea placeholder="Write your feedback here"></textarea>
+      <button type="submit">Send</button>
+    </form>
+  </body>
+</html>

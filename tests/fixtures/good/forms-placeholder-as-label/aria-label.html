@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Good: aria-label provides accessible name alongside placeholder</title>
+  </head>
+  <body>
+    <!-- Search inputs commonly omit a visible label because the visual
+         context (search icon, header position) makes the purpose
+         obvious to sighted users. The accessible name still has to be
+         programmatic — aria-label is the canonical channel when no
+         visible label exists. The placeholder can offer a format hint
+         ("blue shoes") that is narrower than the label. -->
+    <form role="search">
+      <input
+        type="search"
+        aria-label="Search products"
+        placeholder="Try 'blue shoes'"
+      />
+      <button type="submit">Go</button>
+    </form>
+  </body>
+</html>
