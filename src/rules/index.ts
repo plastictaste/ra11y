@@ -9,6 +9,7 @@ import type { Rule } from "../types/rule.ts";
 import { rule as conflictingRole } from "./aria/conflicting-role.ts";
 import { rule as expandedOnDisclosure } from "./aria/expanded-on-disclosure.ts";
 import { rule as hiddenFocus } from "./aria/hidden-focus.ts";
+import { rule as iconFontHidden } from "./aria/icon-font-hidden.ts";
 import { rule as invalidRole } from "./aria/invalid-role.ts";
 import { rule as labelledbyTargetExists } from "./aria/labelledby-target-exists.ts";
 import { rule as liveRegionValid } from "./aria/live-region-valid.ts";
@@ -93,6 +94,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   headingHierarchy,
   hiddenFocus,
   htmlHasLang,
+  iconFontHidden,
   iframeTitle,
   invalidRole,
   labelForIdMismatch,
@@ -158,6 +160,7 @@ export {
   headingHierarchy,
   hiddenFocus,
   htmlHasLang,
+  iconFontHidden,
   iframeTitle,
   invalidRole,
   labelForIdMismatch,
