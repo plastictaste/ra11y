@@ -4,21 +4,22 @@
 
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
 import { parseHtml, parseTsx } from "../../input/parsers/index.ts";
 import { detectApplicability } from "../../mcp/manual-applicability.ts";
 import { buildVpatReport, renderVpatMarkdown } from "../../reports/index.ts";
 import type { VpatProductMetadata } from "../../reports/vpat.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../../review/index.ts";
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
 import type { Ast } from "../../types/ast.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
-export async function runVpat(options: CliOptions): Promise<ScanExit> {
+export async function runVpat(
+  options: CliOptions,
+  registry: Registry = createBuiltinRegistry(),
+): Promise<ScanExit> {
   const cwd = process.cwd();
   const roots = options.positionals.length > 0 ? options.positionals : [cwd];
   const discovered = await discoverFiles(roots, { excludes: options.exclude });
@@ -32,17 +33,17 @@ export async function runVpat(options: CliOptions): Promise<ScanExit> {
   }
 
   const { result, report: scanReport } = runScan({
-    standards: BUILTIN_STANDARDS,
-    rules: BUILTIN_RULES,
+    standards: registry.standards,
+    rules: registry.rules,
     enabled: options.standards,
     files: parsed,
-    finders: BUILTIN_CANDIDATE_FINDERS,
+    finders: registry.finders,
     level: options.level,
   });
 
   const applicability = detectApplicability(parsed);
 
-  const report = buildVpatReport(result, BUILTIN_STANDARDS, {
+  const report = buildVpatReport(result, registry.standards, {
     generatedAt: FIXED_TIMESTAMP,
     candidates: scanReport.candidates ?? [],
     applicability,

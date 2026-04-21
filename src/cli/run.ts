@@ -1,8 +1,14 @@
 /**
- * CLI entry point called from src/cli.ts. Parses argv, dispatches to
- * the matching command, writes stdout/stderr, and returns the exit code.
+ * CLI entry point called from src/cli.ts. Parses argv, constructs the
+ * registry once for this invocation, dispatches to the matching
+ * command, writes stdout/stderr, and returns the exit code.
+ *
+ * Stage 3 of ADR 0022's migration: the CLI bootstrap owns a single
+ * Registry for the command run and threads it into every handler as
+ * the context parameter, replacing the per-command `BUILTIN_*` imports.
  */
 
+import { createBuiltinRegistry } from "../engine/registry/registry.ts";
 import { startMcpServer } from "../mcp/server.ts";
 import { setColorEnabled } from "../utils/ansi.ts";
 import { setLogLevel } from "../utils/logger.ts";
@@ -30,6 +36,8 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
   if (options.noColor) setColorEnabled(false);
   if (options.debug) setLogLevel("debug");
 
+  const registry = createBuiltinRegistry();
+
   switch (options.command) {
     case "help":
       return { stdout: renderHelp(), stderr: "", exitCode: ExitCode.OK };
@@ -42,13 +50,13 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
     case "explain":
       return runExplain(options.ruleId ?? "");
     case "coverage":
-      return runCoverage(options);
+      return runCoverage(options, registry);
     case "checklist":
-      return runChecklist(options);
+      return runChecklist(options, registry);
     case "vpat":
-      return runVpat(options);
+      return runVpat(options, registry);
     case "certification":
-      return runCertification(options);
+      return runCertification(options, registry);
     case "mcp":
       await startMcpServer();
       return { stdout: "", stderr: "", exitCode: ExitCode.OK };
@@ -63,8 +71,8 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
     case "attest":
       return runAttestCommand(options);
     case "conformance":
-      return runConformance(options);
+      return runConformance(options, registry);
     case "scan":
-      return runScanCommand(options);
+      return runScanCommand(options, registry);
   }
 }

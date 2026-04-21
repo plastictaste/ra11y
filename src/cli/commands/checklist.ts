@@ -6,6 +6,7 @@
 
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
 import { parseHtml, parseTsx } from "../../input/parsers/index.ts";
@@ -14,15 +15,15 @@ import {
   buildCoverageReport,
   renderChecklistMarkdown,
 } from "../../reports/index.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../../review/index.ts";
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
 import type { Ast } from "../../types/ast.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
-export async function runChecklist(options: CliOptions): Promise<ScanExit> {
+export async function runChecklist(
+  options: CliOptions,
+  registry: Registry = createBuiltinRegistry(),
+): Promise<ScanExit> {
   const cwd = process.cwd();
   const roots = options.positionals.length > 0 ? options.positionals : [cwd];
   const discovered = await discoverFiles(roots, { excludes: options.exclude });
@@ -36,11 +37,11 @@ export async function runChecklist(options: CliOptions): Promise<ScanExit> {
   }
 
   const { result, report } = runScan({
-    standards: BUILTIN_STANDARDS,
-    rules: BUILTIN_RULES,
+    standards: registry.standards,
+    rules: registry.rules,
     enabled: options.standards,
     files: parsed,
-    finders: BUILTIN_CANDIDATE_FINDERS,
+    finders: registry.finders,
     level: options.level,
   });
 
@@ -50,8 +51,8 @@ export async function runChecklist(options: CliOptions): Promise<ScanExit> {
   const violationsOutput = formatter.format(result, report);
 
   // Build and render the manual review checklist with candidate locations.
-  const coverage = buildCoverageReport(result, BUILTIN_STANDARDS, options.level);
-  const checklist = buildChecklist(coverage, BUILTIN_STANDARDS, report.candidates ?? []);
+  const coverage = buildCoverageReport(result, registry.standards, options.level);
+  const checklist = buildChecklist(coverage, registry.standards, report.candidates ?? []);
   const markdown = renderChecklistMarkdown(checklist);
 
   // Combine: violations report first, then the manual checklist.

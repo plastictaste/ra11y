@@ -35,6 +35,7 @@ import {
   type ConformanceProfile as NamedConformanceProfile,
   resolveProfile,
 } from "../../config/profiles.ts";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
 import {
@@ -59,9 +60,6 @@ import {
   type SignatureInput,
   verifyConformanceBundle,
 } from "../../reports/conformance-signature.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../../review/index.ts";
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
 import type { Ast } from "../../types/ast.ts";
 import type { LoadedConfig } from "../../types/config.ts";
 import { headSha } from "../../utils/git.ts";
@@ -70,16 +68,19 @@ import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
-export function runConformance(options: CliOptions): Promise<ScanExit> {
+export function runConformance(
+  options: CliOptions,
+  registry: Registry = createBuiltinRegistry(),
+): Promise<ScanExit> {
   if (options.conformanceVerify !== undefined) {
     return runVerify(options, options.conformanceVerify);
   }
-  return runEmit(options);
+  return runEmit(options, registry);
 }
 
 // ─── Emit mode (default) ──────────────────────────────────────────────────
 
-async function runEmit(options: CliOptions): Promise<ScanExit> {
+async function runEmit(options: CliOptions, registry: Registry): Promise<ScanExit> {
   const cwd = resolveCwd(options);
   const fileConfig = await loadConfig({ cwd });
 
@@ -94,11 +95,11 @@ async function runEmit(options: CliOptions): Promise<ScanExit> {
   const commitHash = headSha(cwd);
   const profile: ConformanceProfile = { standardId, level };
   const { ledger } = runScan({
-    standards: BUILTIN_STANDARDS,
-    rules: BUILTIN_RULES,
+    standards: registry.standards,
+    rules: registry.rules,
     enabled: [standardId],
     files: parsed,
-    finders: BUILTIN_CANDIDATE_FINDERS,
+    finders: registry.finders,
     ...(level !== "base" && { level }),
     ...(attestations.length > 0 && { attestations }),
   });
@@ -122,7 +123,7 @@ async function runEmit(options: CliOptions): Promise<ScanExit> {
   const statement = buildConformanceStatement({
     ledger,
     profile,
-    standards: BUILTIN_STANDARDS,
+    standards: registry.standards,
     files: parsed.map((f) => f.filePath),
     ...(commitHash !== null && { commitHash }),
     configSnapshot: {

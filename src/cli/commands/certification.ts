@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
 import { parseHtml, parseTsx } from "../../input/parsers/index.ts";
@@ -18,14 +19,15 @@ import {
   buildCoverageReport,
   renderCertificationMarkdown,
 } from "../../reports/index.ts";
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
 import type { Ast } from "../../types/ast.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
-export async function runCertification(options: CliOptions): Promise<ScanExit> {
+export async function runCertification(
+  options: CliOptions,
+  registry: Registry = createBuiltinRegistry(),
+): Promise<ScanExit> {
   const cwd = process.cwd();
   const roots = options.positionals.length > 0 ? options.positionals : [cwd];
   const discovered = await discoverFiles(roots, { excludes: options.exclude });
@@ -39,16 +41,16 @@ export async function runCertification(options: CliOptions): Promise<ScanExit> {
   }
 
   const { result } = runScan({
-    standards: BUILTIN_STANDARDS,
-    rules: BUILTIN_RULES,
+    standards: registry.standards,
+    rules: registry.rules,
     enabled: options.standards,
     files: parsed,
     level: options.level,
   });
 
   const manual = await loadManualReview(cwd);
-  const coverage = buildCoverageReport(result, BUILTIN_STANDARDS);
-  const scores = buildCertificationScorecard(coverage, BUILTIN_STANDARDS, manual, options.level);
+  const coverage = buildCoverageReport(result, registry.standards);
+  const scores = buildCertificationScorecard(coverage, registry.standards, manual, options.level);
   return { stdout: renderCertificationMarkdown(scores), stderr: "", exitCode: ExitCode.OK };
 }
 

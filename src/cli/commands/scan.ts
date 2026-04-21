@@ -16,6 +16,7 @@ import {
   loadBaseline,
   writeBaseline,
 } from "../../engine/baseline.ts";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
 import {
@@ -32,23 +33,13 @@ import {
   buildCoverageReport,
   renderChecklistMarkdown,
 } from "../../reports/index.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../../review/index.ts";
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
 import type { Ast } from "../../types/ast.ts";
 import type { ConformanceProfile, LoadedConfig } from "../../types/config.ts";
 import type { Rule } from "../../types/rule.ts";
-import type { Standard } from "../../types/standard.ts";
 import type { ScanResult } from "../../types/violation.ts";
 import { filesChangedSince, stagedFiles } from "../../utils/git.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
-
-const LOADED_STANDARDS: readonly Standard[] = BUILTIN_STANDARDS;
-
-const STANDARD_BY_ID: Readonly<Record<string, Standard>> = Object.fromEntries(
-  LOADED_STANDARDS.map((s) => [s.id, s]),
-);
 
 export interface ScanExit {
   readonly stdout: string;
@@ -56,7 +47,14 @@ export interface ScanExit {
   readonly exitCode: number;
 }
 
-export async function runScanCommand(options: CliOptions): Promise<ScanExit> {
+export async function runScanCommand(
+  options: CliOptions,
+  registry: Registry = createBuiltinRegistry(),
+): Promise<ScanExit> {
+  const standardById: Readonly<Record<string, true>> = Object.fromEntries(
+    registry.standards.map((s) => [s.id, true as const]),
+  );
+
   const cwd = process.cwd();
 
   // Load the user's config file (or fall back to defaults). CLI flags
@@ -79,15 +77,15 @@ export async function runScanCommand(options: CliOptions): Promise<ScanExit> {
     profileResolution.standards ?? mergeStandards(options.standards, fileConfig);
   const effectiveLevel = profileResolution.level ?? options.level;
   const effectiveExcludes = mergeExcludes(options.exclude, fileConfig);
-  const activeRules = filterRulesByConfig(BUILTIN_RULES, fileConfig);
+  const activeRules = filterRulesByConfig(registry.rules, fileConfig);
   const profileWarningLine = profileResolution.warning;
 
   // Validate requested standards before doing any work.
-  const missing = effectiveStandards.filter((id) => !(id in STANDARD_BY_ID));
+  const missing = effectiveStandards.filter((id) => !(id in standardById));
   if (missing.length > 0) {
     return {
       stdout: "",
-      stderr: `ra11y: unknown standard(s): ${missing.join(", ")}. Loaded: ${Object.keys(STANDARD_BY_ID).join(", ")}.\n`,
+      stderr: `ra11y: unknown standard(s): ${missing.join(", ")}. Loaded: ${Object.keys(standardById).join(", ")}.\n`,
       exitCode: ExitCode.USER_ERROR,
     };
   }
@@ -129,11 +127,11 @@ export async function runScanCommand(options: CliOptions): Promise<ScanExit> {
   }
 
   const { result, report } = runScan({
-    standards: LOADED_STANDARDS,
+    standards: registry.standards,
     rules: activeRules,
     enabled: effectiveStandards,
     files: parsed,
-    finders: BUILTIN_CANDIDATE_FINDERS,
+    finders: registry.finders,
     isTTY: (process.stdout as { isTTY?: boolean }).isTTY === true,
     level: effectiveLevel,
     nativeWrapperElements: fileConfig.nativeWrapperElements,
@@ -160,8 +158,8 @@ export async function runScanCommand(options: CliOptions): Promise<ScanExit> {
   // When --checklist is passed, append the manual review checklist
   // after the violations report so the user gets one complete document.
   if (options.command === "checklist") {
-    const coverage = buildCoverageReport(result, LOADED_STANDARDS, effectiveLevel);
-    const checklist = buildChecklist(coverage, LOADED_STANDARDS, report.candidates ?? []);
+    const coverage = buildCoverageReport(result, registry.standards, effectiveLevel);
+    const checklist = buildChecklist(coverage, registry.standards, report.candidates ?? []);
     const markdown = renderChecklistMarkdown(checklist);
     return {
       stdout: `${output}\n\n---\n\n${markdown}`,

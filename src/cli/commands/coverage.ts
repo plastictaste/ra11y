@@ -8,19 +8,21 @@
 
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
+import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import type { ParsedFile } from "../../engine/scanner.ts";
 import { runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
 import { parseHtml, parseTsx } from "../../input/parsers/index.ts";
 import { buildCoverageReport } from "../../reports/coverage.ts";
-import { BUILTIN_RULES } from "../../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../../standards/index.ts";
 import type { Ast } from "../../types/ast.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
-export async function runCoverage(options: CliOptions): Promise<ScanExit> {
+export async function runCoverage(
+  options: CliOptions,
+  registry: Registry = createBuiltinRegistry(),
+): Promise<ScanExit> {
   // Validate standards — reuse scan command's validation shape by
   // calling runScanCommand when we need the full pipeline. But for
   // --coverage we want our own rendering, so inline the parsing +
@@ -39,14 +41,14 @@ export async function runCoverage(options: CliOptions): Promise<ScanExit> {
   }
 
   const { result } = runScan({
-    standards: BUILTIN_STANDARDS,
-    rules: BUILTIN_RULES,
+    standards: registry.standards,
+    rules: registry.rules,
     enabled: options.standards,
     files: parsed,
     level: options.level,
   });
 
-  const coverage = buildCoverageReport(result, BUILTIN_STANDARDS);
+  const coverage = buildCoverageReport(result, registry.standards);
   return { stdout: renderCoverageSummary(coverage), stderr: "", exitCode: ExitCode.OK };
 }
 
