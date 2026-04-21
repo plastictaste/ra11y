@@ -2,7 +2,7 @@
   "name": "@ra11y/core",
   "version": "0.1.0",
   "description": "Multi-standard accessibility scanner. Zero runtime dependencies. WCAG 2.2 / 2.1, Section 508, EN 301 549, and a plugin API for custom standards.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "ra11y contributors",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,6 +24,7 @@
     "dist",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "CHANGELOG.md"
   ],
   "engines": {

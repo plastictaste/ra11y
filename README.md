@@ -296,4 +296,4 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md). TL;DR: TypeScript only, Bun-first, z
 
 ## License
 
-MIT © ra11y contributors
+Apache-2.0 © ra11y contributors

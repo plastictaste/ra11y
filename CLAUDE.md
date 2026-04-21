@@ -8,7 +8,7 @@ Detailed subsystems live in `@docs/` and `@docs/kb/` — this file is the index,
 
 **ra11y** is an **AI-first multi-standard accessibility scanner** for web projects. It parses JSX/TSX, HTML, and CSS with in-house zero-dependency parsers and runs a hybrid static-analysis + AST check against pluggable accessibility standards — WCAG 2.2/2.1, Section 508, EN 301 549 out of the box, with a plugin API for adding more.
 
-Name: homophone of "rally" (a call to action for accessibility) with the `a11y` numeronym baked in. Binary: `ra11y`. npm package: `@ra11y/core` (the unscoped `ra11y` name is owned by a long-dormant package; scoped is our way in). License: MIT.
+Name: homophone of "rally" (a call to action for accessibility) with the `a11y` numeronym baked in. Binary: `ra11y`. npm package: `@ra11y/core` (the unscoped `ra11y` name is owned by a long-dormant package; scoped is our way in). License: Apache-2.0.
 
 Design priorities — the things the project optimizes for, in roughly decreasing importance:
 

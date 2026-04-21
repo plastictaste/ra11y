@@ -122,4 +122,4 @@ The tracking list for when this graduates from "scaffold" to "shipping":
   the zero-runtime-dependency invariant of `@ra11y/core`.
 - **Version is independent** of `@ra11y/core`. The extension can ship
   on a different cadence once it earns a publisher.
-- **License: MIT**, matching the rest of the repo.
+- **License: Apache-2.0**, matching the rest of the repo.
