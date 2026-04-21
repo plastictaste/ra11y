@@ -18,7 +18,7 @@ The practical consequence is not just missed coverage on prose content — it is
 - Inline images: `<img src="..." alt="...">`
 - Kramdown IAL annotations: `{: .note .warning}` on the preceding block
 
-Raw `![alt](url)` image syntax is equally invisible — the alt attribute, the primary WCAG 1.1.1 check for images, never reaches any rule.
+Raw markdown image syntax (`!` `[alt text]` `(image-path)`) is equally invisible — the alt attribute, the primary WCAG 1.1.1 check for images, never reaches any rule.
 
 The zero-output result is indistinguishable from "these files have no accessibility issues" (AI-first consumer doctrine: "zero-output success is ambiguous failure"). Every agent scanning a Jekyll, Hugo, MkDocs, Docusaurus, or Astro content-collection project today receives a structurally misleading response unless it explicitly adds `additionalPaths` pointing at a pre-built output tree.
 
@@ -45,7 +45,7 @@ Cons: CommonMark's spec has 652 normative examples across 20+ block and inline c
 
 Strip the markdown-specific syntax that is not HTML — ATX headings (`# … ##`), setext headings, fenced code blocks (` ``` … ``` ` and `~~~ … ~~~`), and indented code blocks — then feed the remaining content to the existing `parseHtml` function. Additionally:
 
-- Extract `![alt text](url)` image syntax to synthesize `<img src="url" alt="alt text">` nodes that the existing `media/alt-text-missing` and related rules can evaluate.
+- Extract markdown image syntax (`!` `[alt text]` `(url)`) to synthesize `<img src="url" alt="alt text">` nodes that the existing `media/alt-text-missing` and related rules can evaluate.
 - Translate kramdown IAL annotations (`{: .class1 .class2}`) to `class=` attributes on the immediately preceding HTML block, so `aria/role-from-class-only` and `semantics/landmark-main` can see admonition-class patterns.
 
 Estimated scope: approximately 300 LOC in `src/input/parsers/markdown.ts`. The parser produces a `ParseResult` identical in shape to what `parseHtml` produces, so no rule changes or engine changes are required — rules receive the same `RuleContext` they receive from HTML files.
@@ -74,7 +74,7 @@ Option A's maintenance burden is not justified for the incremental gain. Option 
 
 **New files:**
 
-- `src/input/parsers/markdown.ts` — the extractor (~300 LOC). Strips ATX headings, fenced/indented code blocks; extracts `![alt](url)` as `<img>` nodes; translates kramdown IAL to inline `class=`; passes HTML residue to `parseHtml`. Returns a `ParseResult` with `source: "markdown-residue"` in its diagnostics.
+- `src/input/parsers/markdown.ts` — the extractor (~300 LOC). Strips ATX headings, fenced/indented code blocks; extracts markdown image nodes as `<img>` elements; translates kramdown IAL to inline `class=`; passes HTML residue to `parseHtml`. Returns a `ParseResult` with `source: "markdown-residue"` in its diagnostics.
 - `tests/fixtures/real-world/jekyll-markdown-mix/` — a sanitized fixture exercising the full SSG shape: tables, iframes, admonition divs, image alt-text, kramdown IAL.
 
 **Modified files:**
