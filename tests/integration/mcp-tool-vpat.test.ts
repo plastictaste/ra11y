@@ -250,6 +250,33 @@ describe("MCP tool: vpat", () => {
     expect(body.warnings).toContain("product_metadata_placeholders_in_use");
   });
 
+  it("routes runtime-evidence-required SCs to 'Not Evaluated' on a bootstrap scan", async () => {
+    // Runtime-dependent SCs (keyboard traversal, focus visibility,
+    // rendered contrast, heading adequacy, pointer interaction, auth
+    // flow — see RUNTIME_EVIDENCE_REQUIRED_CRITERIA) must NOT surface
+    // as "Partially Supports" on a clean static scan; the honest
+    // verdict is "Not Evaluated" with a runtime-dependency remark the
+    // caller can read and route to `attest`.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "vpat", {
+        productName: "Acme App",
+        productVersion: "1.0.0",
+        cwd: BAD_ALT_DIR,
+      }),
+    ]);
+    const body = bodyOf(responses[1]);
+    const wcag22 = body.standards.find((s) => s.standardId === "wcag22");
+    expect(wcag22).toBeDefined();
+    if (!wcag22) return;
+    for (const sc of ["wcag22:2.1.1", "wcag22:2.4.3", "wcag22:2.4.7", "wcag22:1.4.3"]) {
+      const entry = wcag22.entries.find((e) => e.criterionId === sc);
+      expect(entry).toBeDefined();
+      expect(entry?.conformance).toBe("Not Evaluated");
+      expect(entry?.remarks).toContain("runtime-dependent criterion");
+    }
+  });
+
   it("round-trips additionalPaths without raising scanned_zero_files", async () => {
     // Pass a directory in additionalPaths that widens the scanned set.
     // The bad-alt fixture tree is the cwd root; additionalPaths points

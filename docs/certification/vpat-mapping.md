@@ -9,18 +9,23 @@ The Voluntary Product Accessibility Template (VPAT) is a federal-procurement art
 
 This page documents how ra11y maps its internal data (violations, coverage, rule metadata) to VPAT verdicts.
 
-## The four VPAT verdicts
+## The five VPAT verdicts
 
 Every criterion in the target standard is assigned exactly one of:
 
 | Verdict | When it's emitted |
 |---------|-------------------|
-| **Supports** | The criterion is fully automatable AND no rule satisfying it has produced a violation. |
-| **Partially Supports** | The criterion is partially automatable AND the automated half has no violations. Remarks cell notes which aspects need manual review. |
-| **Does Not Support** | The criterion is automatable (full or partial) AND at least one rule satisfying it has produced an active violation. |
+| **Supports** | The criterion is fully automatable, NOT in the runtime-evidence allowlist, AND no rule satisfying it has produced a violation. |
+| **Partially Supports** | The criterion is partially automatable, NOT in the runtime-evidence allowlist, AND the automated half has no violations. Remarks cell notes which aspects need manual review. |
+| **Does Not Support** | At least one rule satisfying the criterion has produced an active violation. Applies to runtime-evidence-required criteria too — a proven static failure is honest negative evidence even when full evaluation would need runtime. |
 | **Not Applicable** | Element-presence detection says the codebase doesn't use the feature (e.g. no `<video>` elements → media criteria not applicable). |
+| **Not Evaluated** | No rule satisfies this criterion (manual-only), OR the criterion is in the runtime-evidence allowlist (keyboard, focus, rendered contrast, heading adequacy, pointer interaction, authentication flow) AND no fresh attestation (verdict `pass` / `fail` / `n/a`) has been supplied. Absence of a static finding on a runtime-dependent SC is not evidence of conformance. |
 
-Criteria whose `automatable: "manual"` metadata says no static check is possible do not get a deterministic verdict. The `vpat` report emits "Needs manual review — see remarks" and leaves the remarks cell ready for human authoring (or Phase 20's `draft_vpat_narrative` sampling tool).
+### Runtime-evidence-required criteria
+
+Some WCAG criteria fundamentally require runtime observation — the normative requirement is about keyboard traversal, focus management, rendered color contrast, heading/label adequacy, or pointer interaction that a source-level AST cannot observe. The canonical list lives at `src/reports/runtime-evidence-criteria.ts` as `RUNTIME_EVIDENCE_REQUIRED_CRITERIA`. On a clean bootstrap scan (zero violations, no attestations), these route to `"Not Evaluated"` rather than `"Partially Supports"` — the honest framing is "the static layer cannot answer this question."
+
+To move a runtime-only criterion out of `"Not Evaluated"`, supply an attestation via the `attest` MCP tool (or `.ra11y/attestations.jsonl` directly) once a runtime harness or manual-review pass produces a verdict. The VPAT builder reads attestations with verdict `"pass"`, `"fail"`, or `"n/a"`; `"pending"` verdicts (bare pragmas without a reason) do not count as evidence.
 
 ## Mapping in detail
 
@@ -44,11 +49,17 @@ criterion automatable = "partial"
   - any violation → Does Not Support
 
 criterion automatable = "manual"
-  - always → "Needs manual review" (not one of the four verdicts; VPAT templates accommodate this)
+  - always → Not Evaluated (remarks: "requires manual review — this criterion cannot be fully determined by static source analysis")
+
+Runtime-evidence-required override:
+  - any criterion in RUNTIME_EVIDENCE_REQUIRED_CRITERIA, with zero violations AND no fresh attestation → Not Evaluated
+  - (a proven static failure still routes to Does Not Support; an attestation with verdict pass/fail/n/a releases the criterion back to its automatable default)
 
 Element-presence override:
   - any criterion that depends on element X, where X is absent from the codebase → Not Applicable
 ```
+
+Precedence: violations win over element-presence, which wins over runtime-evidence-required, which wins over automatable metadata. A proven failure is always surfaced; a runtime-only SC with a runtime-attested verdict is evaluated; a runtime-only SC with neither is honestly "Not Evaluated."
 
 ### Element-presence detection
 

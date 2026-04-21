@@ -28,12 +28,14 @@ import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
 import { BUILTIN_RULES } from "../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { detectApplicability } from "./manual-applicability.ts";
+import type { McpSession } from "./session.ts";
 import {
   applyRuleSettings,
   errorResult,
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
+  type McpToolResult,
   parseExplicitPaths,
   parseFiles,
   resolveLevel,
@@ -118,55 +120,10 @@ export const vpatTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
-    const productName = strParam(params, "productName");
-    const productVersion = strParam(params, "productVersion");
-    if (productName === undefined) {
-      return errorResult({
-        code: "missing-required-param",
-        message: "productName must be a string (empty strings are allowed but trigger a warning).",
-        details: { param: "productName" },
-        remediation:
-          "Pass `productName` with the product's name as it should appear on the VPAT header.",
-      });
-    }
-    if (productVersion === undefined) {
-      return errorResult({
-        code: "missing-required-param",
-        message: "productVersion must be a string.",
-        details: { param: "productVersion" },
-        remediation:
-          "Pass `productVersion` with the evaluated product's version (e.g. `1.2.3`, `2026.Q2`).",
-      });
-    }
-
-    const cwd = strParam(params, "cwd") ?? process.cwd();
-    const additionalPaths = strArrayParam(params, "additionalPaths") ?? [];
-
-    const standardsParam = strArrayParam(params, "standards");
-    const standards =
-      standardsParam !== undefined && standardsParam.length > 0
-        ? standardsParam
-        : resolveStandards(strParam(params, "standard"), session);
-    const unknown = firstUnknownStandard(standards);
-    if (unknown !== null) {
-      return errorResult({
-        code: "standard-not-found",
-        message: `Unknown standard '${unknown}'. Loaded: ${BUILTIN_STANDARDS.map((s) => s.id).join(", ")}.`,
-        details: { requested: unknown, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
-        remediation:
-          "Pass `standards` with loaded IDs, or omit to fall through to the session default.",
-      });
-    }
-
-    const level = resolveLevel(strParam(params, "level"), session);
-    const format = strParam(params, "format") ?? "json";
-    if (format !== "markdown" && format !== "json") {
-      return errorResult({
-        code: "invalid-param",
-        message: `format must be 'markdown' or 'json'; got ${JSON.stringify(format)}.`,
-        details: { param: "format", requested: format },
-      });
-    }
+    const validated = validateVpatParams(params, session);
+    if ("error" in validated) return validated.error;
+    const { productName, productVersion, cwd, additionalPaths, standards, level, format } =
+      validated;
 
     const baseFiles = await parseFiles([cwd], session, cwd);
     const extraFiles =
@@ -189,6 +146,12 @@ export const vpatTool: McpTool = {
       candidates: scanReport.candidates ?? [],
       applicability,
       product: { productName, productVersion, ...buildOptionalProductFields(params) },
+      // Forward attestations so runtime-evidence-required criteria
+      // (RUNTIME_EVIDENCE_REQUIRED_CRITERIA — keyboard, focus, contrast,
+      // heading adequacy, pointer interaction, auth flow) with a fresh
+      // `pass`/`fail`/`n/a` verdict route through the normal conformance
+      // logic instead of defaulting to "Not Evaluated."
+      ...(attestations.length > 0 && { attestations }),
     });
 
     const warnings = computeWarnings({
@@ -213,6 +176,96 @@ export const vpatTool: McpTool = {
     });
   },
 };
+
+/**
+ * Validated, resolved params for the `vpat` handler. Collapsing all the
+ * per-param guards into one helper keeps the handler body under the
+ * project's cognitive-complexity budget and keeps the error-emission
+ * policy in one place: each invalid input returns a structured
+ * `McpToolResult` via the `error` branch instead of throwing.
+ */
+interface ValidatedVpatParams {
+  readonly productName: string;
+  readonly productVersion: string;
+  readonly cwd: string;
+  readonly additionalPaths: readonly string[];
+  readonly standards: readonly string[];
+  readonly level: ReturnType<typeof resolveLevel>;
+  readonly format: "json" | "markdown";
+}
+
+function validateVpatParams(
+  params: Record<string, unknown>,
+  session: McpSession,
+): ValidatedVpatParams | { readonly error: McpToolResult } {
+  const productName = strParam(params, "productName");
+  if (productName === undefined) {
+    return {
+      error: errorResult({
+        code: "missing-required-param",
+        message: "productName must be a string (empty strings are allowed but trigger a warning).",
+        details: { param: "productName" },
+        remediation:
+          "Pass `productName` with the product's name as it should appear on the VPAT header.",
+      }),
+    };
+  }
+  const productVersion = strParam(params, "productVersion");
+  if (productVersion === undefined) {
+    return {
+      error: errorResult({
+        code: "missing-required-param",
+        message: "productVersion must be a string.",
+        details: { param: "productVersion" },
+        remediation:
+          "Pass `productVersion` with the evaluated product's version (e.g. `1.2.3`, `2026.Q2`).",
+      }),
+    };
+  }
+
+  const cwd = strParam(params, "cwd") ?? process.cwd();
+  const additionalPaths = strArrayParam(params, "additionalPaths") ?? [];
+
+  const standardsParam = strArrayParam(params, "standards");
+  const standards =
+    standardsParam !== undefined && standardsParam.length > 0
+      ? standardsParam
+      : resolveStandards(strParam(params, "standard"), session);
+  const unknown = firstUnknownStandard(standards);
+  if (unknown !== null) {
+    return {
+      error: errorResult({
+        code: "standard-not-found",
+        message: `Unknown standard '${unknown}'. Loaded: ${BUILTIN_STANDARDS.map((s) => s.id).join(", ")}.`,
+        details: { requested: unknown, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+        remediation:
+          "Pass `standards` with loaded IDs, or omit to fall through to the session default.",
+      }),
+    };
+  }
+
+  const level = resolveLevel(strParam(params, "level"), session);
+  const formatRaw = strParam(params, "format") ?? "json";
+  if (formatRaw !== "markdown" && formatRaw !== "json") {
+    return {
+      error: errorResult({
+        code: "invalid-param",
+        message: `format must be 'markdown' or 'json'; got ${JSON.stringify(formatRaw)}.`,
+        details: { param: "format", requested: formatRaw },
+      }),
+    };
+  }
+
+  return {
+    productName,
+    productVersion,
+    cwd,
+    additionalPaths,
+    standards,
+    level,
+    format: formatRaw,
+  };
+}
 
 /**
  * Collects the optional product-metadata fields, conditional-spread so

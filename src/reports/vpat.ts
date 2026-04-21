@@ -12,8 +12,12 @@
  *   - "Not Applicable" — element-presence detection proves the feature
  *     the criterion governs is absent from the scanned sources (e.g.
  *     wcag22:1.2.1 when no `<audio>` / `<video>` elements exist).
- *   - "Not Evaluated" — no rule satisfies this criterion (manual-only)
- *     and applicability cannot be proven either way from static scan.
+ *   - "Not Evaluated" — no rule satisfies this criterion (manual-only),
+ *     OR the criterion fundamentally requires runtime evidence
+ *     (keyboard traversal, focus visibility, rendered contrast — see
+ *     `RUNTIME_EVIDENCE_REQUIRED_CRITERIA`) AND no fresh attestation
+ *     covers it. Absence of a static finding on a runtime-dependent
+ *     SC is not evidence of conformance.
  *   - "Does Not Support" — at least one `error` violation.
  *   - "Partially Supports" — only `warning` violations, or the
  *     criterion is classified "partial" in the standard metadata.
@@ -22,10 +26,12 @@
 
 import type { Applicability } from "../mcp/manual-applicability.ts";
 import { irrelevanceReason, isLikelyIrrelevant } from "../mcp/manual-applicability.ts";
+import type { AttestationRecord } from "../types/evidence.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Criterion, Standard } from "../types/standard.ts";
 import type { ScanResult, Violation } from "../types/violation.ts";
 import { VERSION } from "../version.ts";
+import { RUNTIME_EVIDENCE_REQUIRED_CRITERIA } from "./runtime-evidence-criteria.ts";
 
 export type Conformance =
   | "Supports"
@@ -89,6 +95,18 @@ export interface VpatBuildOptions {
   readonly candidates?: readonly ReviewCandidate[];
   readonly applicability?: Applicability;
   readonly product?: Partial<VpatProductMetadata>;
+  /**
+   * Durable + pragma attestations supplied at scan time. When a
+   * criterion listed in `RUNTIME_EVIDENCE_REQUIRED_CRITERIA` is
+   * evaluated (zero violations), the builder checks this list for an
+   * attestation whose `verdict` is `"pass"`, `"fail"`, or `"n/a"` —
+   * i.e. a runtime harness or manual review has actually spoken to
+   * the criterion. Presence flows through to the normal automated
+   * verdict; absence routes to `"Not Evaluated"` with a runtime-
+   * dependency remark. Omitted → behaves as if no attestations were
+   * supplied (runtime-only SCs route to `"Not Evaluated"`).
+   */
+  readonly attestations?: readonly AttestationRecord[];
 }
 
 const EVALUATOR = `ra11y v${VERSION}`;
@@ -154,6 +172,7 @@ export function buildVpatReport(
   const candidates = options.candidates ?? [];
   const applicability = options.applicability;
   const product = resolveProductMetadata(options.product);
+  const attestedCriteria = indexAttestedCriteria(options.attestations ?? []);
 
   const enabledSet = new Set(result.enabledStandards);
   const templateVersion = resolveTemplateVersion(enabledSet);
@@ -165,7 +184,13 @@ export function buildVpatReport(
   for (const standard of loadedStandards) {
     if (!enabledSet.has(standard.id)) continue;
     standardSections.push(
-      buildSection(standard, violationsByCriterion, candidatesByCriterion, applicability),
+      buildSection(
+        standard,
+        violationsByCriterion,
+        candidatesByCriterion,
+        applicability,
+        attestedCriteria,
+      ),
     );
   }
 
@@ -224,6 +249,7 @@ function buildSection(
   violationsByCriterion: ReadonlyMap<string, readonly Violation[]>,
   candidatesByCriterion: ReadonlyMap<string, readonly ReviewCandidate[]>,
   applicability: Applicability | undefined,
+  attestedCriteria: ReadonlySet<string>,
 ): VpatStandardSection {
   const entries: VpatEntry[] = [];
   const summary = {
@@ -240,6 +266,7 @@ function buildSection(
       violationsByCriterion.get(criterion.id) ?? [],
       candidatesByCriterion.get(criterion.id) ?? [],
       applicability,
+      attestedCriteria,
     );
     entries.push(entry);
     switch (entry.conformance) {
@@ -275,12 +302,17 @@ function buildEntry(
   violations: readonly Violation[],
   candidates: readonly ReviewCandidate[],
   applicability: Applicability | undefined,
+  attestedCriteria: ReadonlySet<string>,
 ): VpatEntry {
   // Demonstrated failures always win — even for criteria classified
   // "manual" in metadata, because a rule can still satisfy a slice of a
   // manual criterion (e.g., document/meta-refresh satisfies wcag22:2.2.1).
   // A VPAT that hides known non-support behind "Not Evaluated" is worse
-  // than one that surfaces it.
+  // than one that surfaces it. This also applies to runtime-evidence-
+  // required criteria: a proven static failure (e.g. `contrast/minimum`
+  // finding a 3:1 pair) is honest negative evidence even though the
+  // rendered composite would need runtime to fully evaluate — the
+  // conservative default is "proven failure > absent evaluation."
   if (violations.length > 0) {
     const hasError = violations.some((v) => v.severity === "error");
     const conformance: Conformance = hasError ? "Does Not Support" : "Partially Supports";
@@ -309,6 +341,30 @@ function buildEntry(
       level: criterion.level,
       conformance: "Not Applicable",
       remarks: `Not applicable: ${reason}`,
+      violationCount: 0,
+      automated: criterion.automatable !== "manual",
+    };
+  }
+
+  // Runtime-evidence-required override. Criteria that fundamentally
+  // need runtime observation — keyboard traversal, focus visibility,
+  // rendered contrast, heading adequacy, pointer interaction,
+  // authentication flow (see `RUNTIME_EVIDENCE_REQUIRED_CRITERIA`) — route to
+  // "Not Evaluated" on a clean static scan when no attestation
+  // supplies the missing runtime evidence. A procurement reader seeing
+  // "Partially Supports" on 2.1.1 Keyboard from a bootstrap scan would
+  // take it as "some aspects evaluated, some pass" when the honest
+  // framing is "the static layer cannot answer this question."
+  // Spec-derived allowlist, not a heuristic — every entry cites its
+  // normative basis in `runtime-evidence-criteria.ts`.
+  if (RUNTIME_EVIDENCE_REQUIRED_CRITERIA.has(criterion.id) && !attestedCriteria.has(criterion.id)) {
+    return {
+      criterionId: criterion.id,
+      localId: criterion.localId,
+      title: criterion.title,
+      level: criterion.level,
+      conformance: "Not Evaluated",
+      remarks: buildRuntimeEvidenceRemarks(criterion),
       violationCount: 0,
       automated: criterion.automatable !== "manual",
     };
@@ -370,6 +426,20 @@ function buildAutomatedPassRemarks(criterion: Criterion): string {
 }
 
 /**
+ * Auditor-facing remark for a runtime-evidence-required criterion with
+ * no attestation supplied. Names the SC, states the runtime-dependency
+ * framing explicitly, and points the caller at the attestation flow so
+ * the gap is actionable rather than decorative. The VPAT reader sees
+ * "Not Evaluated" as "we did not evaluate this" (honest) rather than
+ * "Partially Supports" as "we partially evaluated this" (the previous
+ * dishonest collapse). See `docs/kb/architecture/ai-first-consumer.md`
+ * (surface-don't-suppress rule).
+ */
+function buildRuntimeEvidenceRemarks(criterion: Criterion): string {
+  return `Not Evaluated. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): runtime-dependent criterion. Static source analysis cannot prove conformance; no attestation supplied. Evaluate via a runtime harness (keyboard/focus/contrast testing, as applicable) and record the verdict with the \`attest\` tool.`;
+}
+
+/**
  * Auditor-facing remark for a manual criterion. If finders have
  * surfaced candidate locations, point the reviewer at them with a
  * count and top-level file/line so the VPAT carries real evidence
@@ -393,6 +463,27 @@ function buildManualRemarks(criterion: Criterion, candidates: readonly ReviewCan
   return `${header} ${total} candidate location(s) surfaced for reviewer attention: ${preview.join(
     ", ",
   )}${extra}.`;
+}
+
+/**
+ * Collects the set of criterion IDs that carry a fresh attestation with
+ * a meaningful verdict — `"pass"`, `"fail"`, or `"n/a"`. `"pending"`
+ * attestations (bare pragmas the author hasn't filled a reason on) do
+ * NOT count as evidence; they surface in `list_attestations` as
+ * actionable gaps, but they do not lift a runtime-dependent criterion
+ * out of "Not Evaluated." Matches the `recordFromAttestedSource` verdict
+ * filter in `src/reports/conformance.ts` so the two surfaces route on
+ * the same signal.
+ */
+function indexAttestedCriteria(attestations: readonly AttestationRecord[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const a of attestations) {
+    const verdict = a.verdict ?? "pass";
+    if (verdict === "pass" || verdict === "fail" || verdict === "n/a") {
+      out.add(a.criterionId);
+    }
+  }
+  return out;
 }
 
 function indexCandidatesByCriterion(

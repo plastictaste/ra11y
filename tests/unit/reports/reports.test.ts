@@ -346,6 +346,115 @@ describe("buildVpatReport + renderVpatMarkdown", () => {
       }
     }
   });
+
+  it("routes runtime-evidence-required SCs to 'Not Evaluated' on clean scan with no attestations", () => {
+    // Absence of a static finding on 2.1.1 Keyboard is not evidence of
+    // conformance; the honest verdict is "Not Evaluated" rather than
+    // "Partially Supports" (which the old automatable="partial" default
+    // emitted).
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, "2026-04-11T00:00:00Z");
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    for (const sc of ["wcag22:2.1.1", "wcag22:2.4.3", "wcag22:2.4.7", "wcag22:1.4.3"]) {
+      const entry = wcag22?.entries.find((e) => e.criterionId === sc);
+      expect(entry?.conformance).toBe("Not Evaluated");
+      expect(entry?.remarks).toContain("runtime-dependent criterion");
+      expect(entry?.remarks).toContain("attest");
+    }
+  });
+
+  it("routes runtime-evidence SC with fresh pass attestation back to 'Supports'/'Partially Supports'", () => {
+    // A runtime harness (or manual review) has attested via
+    // `attest({ criterionId: "wcag22:2.1.1", verdict: "pass" })`. The
+    // builder must honour that evidence rather than blanket-routing to
+    // "Not Evaluated."
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      attestations: [
+        {
+          criterionId: "wcag22:2.1.1",
+          by: "manual-review",
+          reason: "Keyboard traversal verified via NVDA + keyboard-only walkthrough.",
+          attestedAt: "2026-04-11T00:00:00Z",
+          verdict: "pass",
+        },
+      ],
+    });
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.1.1");
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    // 2.1.1 is automatable="partial" in wcag-shared metadata; with the
+    // attestation in hand the runtime-evidence override steps aside and
+    // the normal partial-automation verdict applies.
+    expect(["Supports", "Partially Supports"]).toContain(entry.conformance);
+    // Verify a non-attested runtime-only SC in the same scan still
+    // routes to Not Evaluated — the attestation's scope is per-criterion.
+    const otherEntry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.4.7");
+    expect(otherEntry?.conformance).toBe("Not Evaluated");
+  });
+
+  it("preserves 'Does Not Support' on a runtime-only SC that has a proven static failure", () => {
+    // Conservative default: a proven static failure is honest negative
+    // evidence even when the criterion is runtime-dependent. Hiding a
+    // demonstrated failure behind "Not Evaluated" would be worse than
+    // the previous silent-miss.
+    // Synthesize a scan result with a contrast/minimum finding on
+    // wcag22:1.4.3 so the runtime-only override must *not* fire.
+    const contrastHit: ScanResult = {
+      ...RESULT,
+      violations: withFindingIds([
+        {
+          ruleId: "contrast/minimum",
+          fixClass: "mechanical",
+          criteria: ["wcag22:1.4.3"],
+          severity: "error",
+          location: { filePath: "src/styles.css", line: 3, column: 1 },
+          message: "Contrast 3:1 against white.",
+          suggestion: "Darken foreground.",
+        },
+      ]),
+    };
+    const report = buildVpatReport(contrastHit, BUILTIN_STANDARDS, "2026-04-11T00:00:00Z");
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.3");
+    expect(entry?.conformance).toBe("Does Not Support");
+    expect(entry?.violationCount).toBe(1);
+    expect(entry?.remarks).toContain("contrast/minimum");
+  });
+
+  it("ignores 'pending' attestations on runtime-only SCs (unasserted claim is not evidence)", () => {
+    // Bare pragmas produce `verdict: "pending"` attestations — the
+    // ledger surfaces them via list_attestations so agents see the
+    // unasserted claim, but they contribute no pass/fail evidence. The
+    // VPAT builder must treat them the same way; a pending attestation
+    // does NOT lift a runtime-only SC out of "Not Evaluated."
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+      generatedAt: "2026-04-11T00:00:00Z",
+      attestations: [
+        {
+          criterionId: "wcag22:2.1.1",
+          by: "pragma",
+          reason: "ra11y:suppression-no-reason",
+          attestedAt: "2026-04-11T00:00:00Z",
+          verdict: "pending",
+        },
+      ],
+    });
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.1.1");
+    expect(entry?.conformance).toBe("Not Evaluated");
+  });
+
+  it("leaves non-runtime-only SCs on their automatable default when clean", () => {
+    // 2.4.2 Page Titled is automatable="full" in wcag-shared metadata
+    // and is NOT in RUNTIME_EVIDENCE_REQUIRED_CRITERIA. A clean scan
+    // must still route it to "Supports" — the runtime-only carve-out
+    // should not over-fire onto ordinary static-evaluable criteria.
+    const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, "2026-04-11T00:00:00Z");
+    const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+    const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.4.2");
+    expect(entry?.conformance).toBe("Supports");
+  });
 });
 
 describe("buildCertificationScorecard + renderCertificationMarkdown", () => {
