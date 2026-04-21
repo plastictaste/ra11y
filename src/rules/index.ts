@@ -11,6 +11,7 @@ import { rule as expandedOnDisclosure } from "./aria/expanded-on-disclosure.ts";
 import { rule as hiddenFocus } from "./aria/hidden-focus.ts";
 import { rule as invalidRole } from "./aria/invalid-role.ts";
 import { rule as liveRegionValid } from "./aria/live-region-valid.ts";
+import { rule as progressbarValueRange } from "./aria/progressbar-value-range.ts";
 import { rule as requiredAttrs } from "./aria/required-attrs.ts";
 import { rule as roleFromClassOnly } from "./aria/role-from-class-only.ts";
 import { rule as validAttr } from "./aria/valid-attr.ts";
@@ -104,6 +105,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   outlineVisible,
   pageTitled,
   pauseStopHide,
+  progressbarValueRange,
   reflowHardcodedWidth,
   requiredAttrs,
   requiredIndicatorMissing,
@@ -163,6 +165,7 @@ export {
   outlineVisible,
   pageTitled,
   pauseStopHide,
+  progressbarValueRange,
   reflowHardcodedWidth,
   requiredAttrs,
   requiredIndicatorMissing,
