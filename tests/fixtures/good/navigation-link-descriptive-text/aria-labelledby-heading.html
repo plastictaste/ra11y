@@ -1,0 +1,15 @@
+<!--
+  Good: anchor uses aria-labelledby to point at a visible heading. The
+  accessible name is computed from the referenced element; the icon-only
+  child is purely decorative.
+  Expect: rule navigation/link-descriptive-text does not fire.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <h2 id="twitter-card-title">Twitter</h2>
+    <a href="/twitter" aria-labelledby="twitter-card-title">
+      <i class="fa fa-twitter"></i>
+    </a>
+  </body>
+</html>

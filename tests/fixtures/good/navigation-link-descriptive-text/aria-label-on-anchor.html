@@ -1,0 +1,14 @@
+<!--
+  Good: anchor wraps a Font Awesome glyph but declares aria-label on the
+  anchor itself. The accessible name comes from the aria-label; the icon
+  is decoration.
+  Expect: rule navigation/link-descriptive-text does not fire.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/twitter" aria-label="Visit our Twitter profile">
+      <i class="fa fa-twitter" aria-hidden="true"></i>
+    </a>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+<!--
+  Bad: anchor whose only child is a Material Icons ligature glyph. The
+  "home" text inside the span is rendered as a glyph via font ligature
+  (not announced as a word by assistive tech), so the link has no real
+  accessible name.
+  Expect: rule navigation/link-descriptive-text fires once (SC 2.4.4 +
+  4.1.2).
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/home"><span class="material-icons">home</span></a>
+  </body>
+</html>

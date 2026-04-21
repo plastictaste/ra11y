@@ -1,0 +1,14 @@
+<!--
+  Good: anchor has an icon glyph alongside a visible text label. The
+  text sibling carries the accessible name; the icon is decorative.
+  Expect: rule navigation/link-descriptive-text does not fire.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/twitter">
+      <i class="fa fa-twitter" aria-hidden="true"></i>
+      Follow us on Twitter
+    </a>
+  </body>
+</html>

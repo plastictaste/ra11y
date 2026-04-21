@@ -1,0 +1,13 @@
+<!--
+  Bad: anchor whose only child is a Font Awesome glyph, with no text,
+  no aria-label, and no aria-labelledby. Screen readers announce "link"
+  with nothing behind it; keyboard users Tab into an unlabeled control.
+  Expect: rule navigation/link-descriptive-text fires once at severity
+  "warning", flagging the icon-only failure (SC 2.4.4 + 4.1.2).
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/twitter"><i class="fa fa-twitter"></i></a>
+  </body>
+</html>

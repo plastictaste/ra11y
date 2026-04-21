@@ -1,0 +1,15 @@
+<!--
+  Bad: anchor whose only child is an SVG marked aria-hidden="true". The
+  SVG is explicitly excluded from the a11y tree; nothing else contributes
+  a name. Mix of aria-hidden icon + no other content.
+  Expect: rule navigation/link-descriptive-text fires once (SC 2.4.4 +
+  4.1.2).
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/search">
+      <svg aria-hidden="true" width="16" height="16"><path d="M0 0L10 10"/></svg>
+    </a>
+  </body>
+</html>
