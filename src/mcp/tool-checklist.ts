@@ -199,7 +199,7 @@ export const checklistTool: McpTool = {
     const paths = strArrayParam(params, "paths") ?? [cwd];
 
     const standards = resolveStandards(strParam(params, "standard"), session);
-    const unknown = firstUnknownStandard(standards);
+    const unknown = firstUnknownStandard(standards, session);
     if (unknown !== null) {
       const known = BUILTIN_STANDARDS.map((s) => s.id).join(", ");
       return errorResult({
@@ -243,6 +243,7 @@ export const checklistTool: McpTool = {
       sources,
       attestationsByCriterion,
       stalenessProbe,
+      session,
     );
     // Actionable items (concrete candidates) stay in `items`; criteria
     // the finders couldn't ground in code move to `untargeted`. Keeping
@@ -535,11 +536,12 @@ function bucketChecklistItems(
   sources: ReadonlyMap<string, SourceEntry>,
   attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>,
   stalenessProbe: AttestationStalenessProbe | undefined,
+  session: import("./session.ts").McpSession,
 ): { needsReview: ChecklistItemOut[]; likelyIrrelevant: ChecklistItemOut[] } {
   const needsReview: ChecklistItemOut[] = [];
   const likelyIrrelevant: ChecklistItemOut[] = [];
   for (const entry of coverage) {
-    const standard = findStandard(entry.standardId);
+    const standard = findStandard(entry.standardId, session);
     if (!standard) continue;
     for (const criterionId of entry.manualCriteria) {
       const criterion = standard.criteria.find((c) => c.id === criterionId);

@@ -195,7 +195,7 @@ type PreflightResult = PreflightOk | { readonly error: McpToolResult };
 
 function preflight(
   params: Record<string, unknown>,
-  session: { readonly config: { readonly allowWrite: boolean } },
+  session: import("./session.ts").McpSession,
 ): PreflightResult {
   if (!session.config.allowWrite) {
     return {
@@ -211,7 +211,7 @@ function preflight(
   const required = readRequired(params);
   if ("error" in required) return required;
   const { criterionId, reason, evidenceSource } = required;
-  const satisfyingRules = satisfyingRulesForCriterion(criterionId);
+  const satisfyingRules = satisfyingRulesForCriterion(criterionId, session);
 
   const optional = readOptional(params);
   if ("error" in optional) return optional;

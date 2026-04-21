@@ -8,8 +8,6 @@
 
 import { isAbsolute, resolve } from "node:path";
 import { readAttestations } from "../config/attestation-store.ts";
-import { CriteriaRegistry } from "../engine/registry/criteria.ts";
-import { RulesRegistry } from "../engine/registry/rules.ts";
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
 import {
   type DiscoveryDiagnostics,
@@ -211,11 +209,12 @@ export function resolveStandards(
  * Returns the first unknown standard ID in `ids`, or null if every
  * entry resolves. Used by tools that want a structured error envelope
  * naming the bad ID rather than scanning with an empty enabled list
- * (which silently zeroes every criterion count).
+ * (which silently zeroes every criterion count). Resolution routes
+ * through `session.registry` per ADR 0022 so plugin-registered
+ * standards count as "known" too.
  */
-export function firstUnknownStandard(ids: readonly string[]): string | null {
-  const known = new Set(BUILTIN_STANDARDS.map((s) => s.id));
-  return ids.find((id) => !known.has(id)) ?? null;
+export function firstUnknownStandard(ids: readonly string[], session: McpSession): string | null {
+  return ids.find((id) => session.registry.findStandard(id) === undefined) ?? null;
 }
 
 export function resolveLevel(level: string | undefined, session: McpSession): "A" | "AA" | "AAA" {
@@ -742,32 +741,37 @@ export function applyRuleSettings(
 
 // ─── Registry lookups ───────────────────────────────────────────────────────
 
-export function findRule(ruleId: string): Rule | undefined {
-  return BUILTIN_RULES.find((r) => r.id === ruleId);
+export function findRule(ruleId: string, session: McpSession): Rule | undefined {
+  return session.registry.findRule(ruleId);
 }
 
-export function findStandard(standardId: string): Standard | undefined {
-  return BUILTIN_STANDARDS.find((s) => s.id === standardId);
+export function findStandard(standardId: string, session: McpSession): Standard | undefined {
+  return session.registry.findStandard(standardId);
 }
 
 /**
- * IDs of every built-in rule that satisfies the given criterion, including
- * equivalence closure across loaded standards. Used by MCP tools that need
- * to disclose or validate per-rule coverage claims (see ADR 0013) — the
- * `attest` tool fans a criterion-wide attestation across this set, and
- * validates that explicit `ruleIds` actually satisfy the criterion.
+ * IDs of every rule registered on the session that satisfies the given
+ * criterion, including equivalence closure across loaded standards. Used
+ * by MCP tools that need to disclose or validate per-rule coverage claims
+ * (see ADR 0013) — the `attest` tool fans a criterion-wide attestation
+ * across this set, and validates that explicit `ruleIds` actually satisfy
+ * the criterion.
  *
  * Does not apply session rule overrides; an `"off"` rule still satisfies
  * the criterion in principle, and the coverage fan-out reflects the rule
- * surface at check-time, not this call's config.
+ * surface at check-time, not this call's config. Routes through
+ * `session.registry.rulesForCriterion` (ADR 0022) so plugin-registered
+ * rules count too.
  */
-export function satisfyingRulesForCriterion(criterionId: string): readonly string[] {
-  const criteriaReg = new CriteriaRegistry();
-  criteriaReg.rebuild(BUILTIN_STANDARDS);
-  const rulesReg = new RulesRegistry();
-  for (const rule of BUILTIN_RULES) rulesReg.register(rule);
-  rulesReg.rebuild(criteriaReg);
-  return [...rulesReg.rulesFor(criterionId)].sort();
+export function satisfyingRulesForCriterion(
+  criterionId: string,
+  session: McpSession,
+): readonly string[] {
+  return session.registry
+    .rulesForCriterion(criterionId)
+    .map((r) => r.id)
+    .slice()
+    .sort();
 }
 
 /**

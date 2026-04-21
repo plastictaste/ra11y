@@ -74,7 +74,7 @@ export const reviewCandidatesTool: McpTool = {
     const paths = strArrayParam(params, "paths") ?? [cwd];
 
     const standards = resolveStandards(strParam(params, "standard"), session);
-    const unknown = firstUnknownStandard(standards);
+    const unknown = firstUnknownStandard(standards, session);
     if (unknown !== null) {
       const known = BUILTIN_STANDARDS.map((s) => s.id).join(", ");
       return errorResult({

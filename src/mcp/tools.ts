@@ -418,7 +418,7 @@ const explainRuleTool: McpTool = {
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
-  handler(params) {
+  handler(params, session) {
     const ruleId = strParam(params, "ruleId");
     if (!ruleId) {
       return errorResult({
@@ -427,7 +427,7 @@ const explainRuleTool: McpTool = {
         details: { param: "ruleId" },
       });
     }
-    const rule = findRule(ruleId);
+    const rule = findRule(ruleId, session);
     if (!rule) {
       return errorResult({
         code: "rule-not-found",

@@ -113,7 +113,7 @@ export const conformanceStatementTool: McpTool = {
     const namedProfile = profileResolution.profile;
 
     const standards = resolveStandards(strParam(params, "standard"), session);
-    const unknown = firstUnknownStandard(standards);
+    const unknown = firstUnknownStandard(standards, session);
     if (unknown !== null) {
       return errorResult({
         code: "standard-not-found",
@@ -272,7 +272,8 @@ function assembleBuilderInputs(ctx: {
     ledger: ctx.ledger,
     profile: ctx.profile,
     standards: BUILTIN_STANDARDS,
-    rulesForCriterion: satisfyingRulesForCriterion,
+    rulesForCriterion: (criterionId: string) =>
+      satisfyingRulesForCriterion(criterionId, ctx.session),
     files: ctx.files.map((f) => f.filePath),
     ...(ctx.signing !== undefined && { commitHash: ctx.signing.commitHash }),
     configSnapshot,

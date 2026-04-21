@@ -231,7 +231,7 @@ function validateVpatParams(
     standardsParam !== undefined && standardsParam.length > 0
       ? standardsParam
       : resolveStandards(strParam(params, "standard"), session);
-  const unknown = firstUnknownStandard(standards);
+  const unknown = firstUnknownStandard(standards, session);
   if (unknown !== null) {
     return {
       error: errorResult({

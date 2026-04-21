@@ -64,7 +64,7 @@ export const suggestFixTool: McpTool = {
       });
     }
 
-    if (!findRule(ruleId)) {
+    if (!findRule(ruleId, session)) {
       return errorResult({
         code: "rule-not-found",
         message: `Rule '${ruleId}' not found.`,
