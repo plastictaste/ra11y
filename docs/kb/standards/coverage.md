@@ -22,7 +22,7 @@ finders cover it and the resulting coverage verdict.
 **Finders column** strips the `review/` prefix for brevity.
 
 **Unique criteria across all standards:** 252
-**By verdict:** 124 rule · 97 finder · 25 attestation-only · 6 gap
+**By verdict:** 132 rule · 89 finder · 25 attestation-only · 6 gap
 
 ## Gaps
 
@@ -40,7 +40,7 @@ These are candidates for new rules or finders.
 
 **ID:** `wcag22` | **Version:** 2.2 | **Criteria:** 86
 
-Coverage: 37 rule · 33 finder · 13 attestation-only · 3 gap
+Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -119,9 +119,9 @@ Coverage: 37 rule · 33 finder · 13 attestation-only · 3 gap
 | `wcag22:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
 | `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh | — | **rule** |
 | `wcag22:3.2.6` | Consistent Help | A | manual | — | — | **attestation-only** |
-| `wcag22:3.3.1` | Error Identification | A | manual | — | error-identification, server-error-untied | **finder** |
+| `wcag22:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
 | `wcag22:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +2 | — | **rule** |
-| `wcag22:3.3.3` | Error Suggestion | AA | manual | — | error-suggestion, validation-timing | **finder** |
+| `wcag22:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag22:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag22:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag22:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
@@ -135,7 +135,7 @@ Coverage: 37 rule · 33 finder · 13 attestation-only · 3 gap
 
 **ID:** `wcag21` | **Version:** 2.1 | **Criteria:** 78
 
-Coverage: 35 rule · 30 finder · 10 attestation-only · 3 gap
+Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -208,9 +208,9 @@ Coverage: 35 rule · 30 finder · 10 attestation-only · 3 gap
 | `wcag21:3.2.3` | Consistent Navigation | AA | manual | — | consistent-navigation | **finder** |
 | `wcag21:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
 | `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh | — | **rule** |
-| `wcag21:3.3.1` | Error Identification | A | manual | — | error-identification, server-error-untied | **finder** |
+| `wcag21:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
 | `wcag21:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +2 | — | **rule** |
-| `wcag21:3.3.3` | Error Suggestion | AA | manual | — | error-suggestion, validation-timing | **finder** |
+| `wcag21:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag21:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
@@ -222,7 +222,7 @@ Coverage: 35 rule · 30 finder · 10 attestation-only · 3 gap
 
 **ID:** `section508` | **Version:** 2017 | **Criteria:** 38
 
-Coverage: 21 rule · 16 finder · 1 attestation-only · 0 gap
+Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -258,9 +258,9 @@ Coverage: 21 rule · 16 finder · 1 attestation-only · 0 gap
 | `section508:3.2.2` | On Input | base | manual | — | on-input-change | **finder** |
 | `section508:3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `section508:3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
-| `section508:3.3.1` | Error Identification | base | manual | — | error-identification, server-error-untied | **finder** |
+| `section508:3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
 | `section508:3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-for-id-mismatch +2 | — | **rule** |
-| `section508:3.3.3` | Error Suggestion | base | manual | — | error-suggestion, validation-timing | **finder** |
+| `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
 | `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
@@ -269,7 +269,7 @@ Coverage: 21 rule · 16 finder · 1 attestation-only · 0 gap
 
 **ID:** `en301549` | **Version:** v3.2.1 | **Criteria:** 50
 
-Coverage: 31 rule · 18 finder · 1 attestation-only · 0 gap
+Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -316,9 +316,9 @@ Coverage: 31 rule · 18 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.2.2` | On Input | base | manual | — | on-input-change | **finder** |
 | `en301549:9.3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `en301549:9.3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
-| `en301549:9.3.3.1` | Error Identification | base | manual | — | error-identification, server-error-untied | **finder** |
+| `en301549:9.3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
 | `en301549:9.3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-for-id-mismatch +2 | — | **rule** |
-| `en301549:9.3.3.3` | Error Suggestion | base | manual | — | error-suggestion, validation-timing | **finder** |
+| `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
 | `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
