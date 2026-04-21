@@ -8,7 +8,7 @@
  * the context parameter, replacing the per-command `BUILTIN_*` imports.
  */
 
-import { createBuiltinRegistry } from "../engine/registry/registry.ts";
+import { createBuiltinRegistry, type Registry } from "../engine/registry/registry.ts";
 import { startMcpServer } from "../mcp/server.ts";
 import { setColorEnabled } from "../utils/ansi.ts";
 import { setLogLevel } from "../utils/logger.ts";
@@ -30,13 +30,27 @@ import { runVpat } from "./commands/vpat.ts";
 import { ExitCode } from "./exit-codes.ts";
 import { renderHelp, VERSION } from "./help.ts";
 
-export async function runCli(argv: readonly string[]): Promise<ScanExit> {
+/**
+ * @param argv - Raw argv slice (without `node`/`bun` and the entry
+ *   script).
+ * @param registryOverride - Optional {@link Registry} override — the
+ *   plugin seam ADR 0022 reserved. Defaults to
+ *   {@link createBuiltinRegistry}; a caller wiring a
+ *   `ra11y.config.ts` plugin hook or a future `--plugin` flag
+ *   constructs a Registry via `createRegistry({ rules, … })` and
+ *   threads it in here so every command (including `--mcp`) reads
+ *   the composed surface.
+ */
+export async function runCli(
+  argv: readonly string[],
+  registryOverride?: Registry,
+): Promise<ScanExit> {
   const options = parseCliArgs(argv);
 
   if (options.noColor) setColorEnabled(false);
   if (options.debug) setLogLevel("debug");
 
-  const registry = createBuiltinRegistry();
+  const registry = registryOverride ?? createBuiltinRegistry();
 
   switch (options.command) {
     case "help":
@@ -58,7 +72,7 @@ export async function runCli(argv: readonly string[]): Promise<ScanExit> {
     case "certification":
       return runCertification(options, registry);
     case "mcp":
-      await startMcpServer();
+      await startMcpServer(registry);
       return { stdout: "", stderr: "", exitCode: ExitCode.OK };
     case "init":
       return runInit(options);

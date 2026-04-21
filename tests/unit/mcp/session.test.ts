@@ -21,7 +21,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
-import { Registry } from "../../../src/engine/registry/registry.ts";
+import { defineRule } from "../../../src/api/plugin.ts";
+import { createRegistry, Registry } from "../../../src/engine/registry/registry.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
 
@@ -46,6 +47,41 @@ describe("McpSession.registry", () => {
   it("returns undefined for an unknown rule ID", () => {
     const session = new McpSession();
     expect(session.registry.findRule("not-a-real-rule/nope")).toBeUndefined();
+  });
+
+  /**
+   * ADR 0022 plugin seam: when a caller constructs a Registry via
+   * `createRegistry({ rules, … })` and passes it to the session, every
+   * tool that reads `session.registry` must see the user-authored
+   * additions. This pins the constructor override contract so a
+   * future `ra11y.config.ts` hook or CLI `--plugin` flag thread path
+   * can't silently regress — the `list_rules` and scan pipelines
+   * read through exactly this seam.
+   */
+  it("accepts a registry override carrying a user-authored plugin rule", () => {
+    const userRule = defineRule({
+      id: "example/session-plugin-smoke",
+      satisfies: ["wcag22:1.1.1"],
+      severity: "warning",
+      scope: "node",
+      fixClass: "mechanical",
+      docs: {
+        description: "Session-override smoke.",
+        rationale: "",
+        goodExample: "",
+        badExample: "",
+        references: [],
+      },
+      check() {
+        return undefined;
+      },
+    });
+    const registry = createRegistry({ rules: [userRule] });
+    const session = new McpSession(registry);
+    expect(session.registry.findRule("example/session-plugin-smoke")?.id).toBe(
+      "example/session-plugin-smoke",
+    );
+    expect(session.registry.findRule("media/alt-text-missing")?.id).toBe("media/alt-text-missing");
   });
 });
 

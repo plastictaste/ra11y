@@ -144,7 +144,16 @@ export class McpSession {
    */
   sendRequest: SendRequest | null = null;
 
-  constructor() {
+  /**
+   * Constructs a session. The optional `registry` argument overrides
+   * the default {@link createBuiltinRegistry} — the seam ADR 0022
+   * reserved for the plugin path. Callers threading a plugin-composed
+   * Registry (via `createRegistry({ rules, standards, finders })`)
+   * pass it here so every tool that reads `session.registry` sees the
+   * user-authored additions. Omitting the argument preserves the
+   * existing built-ins-only behavior for every non-plugin consumer.
+   */
+  constructor(registry?: Registry) {
     this.config = {
       standard: "wcag22",
       level: "AA",
@@ -156,7 +165,7 @@ export class McpSession {
       allowWrite: false,
     };
     this.logging = new LoggingState();
-    this.registry = createBuiltinRegistry();
+    this.registry = registry ?? createBuiltinRegistry();
   }
 
   /**

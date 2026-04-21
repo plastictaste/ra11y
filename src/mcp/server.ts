@@ -15,6 +15,7 @@
  */
 
 import { createInterface } from "node:readline";
+import type { Registry } from "../engine/registry/registry.ts";
 import { logger } from "../utils/logger.ts";
 import { VERSION } from "../version.ts";
 import {
@@ -111,9 +112,15 @@ const PROMPT_BY_NAME = new Map(BUILTIN_PROMPTS.map((p) => [p.name, p]));
 
 /**
  * Starts the MCP server on stdio. Resolves when stdin closes.
+ *
+ * @param registry - Optional {@link Registry} override. Defaults to
+ *   {@link createBuiltinRegistry}; callers with a plugin-composed
+ *   registry (e.g. a future `ra11y.config.ts` hook or the CLI
+ *   `--plugin` flag) thread it here so `session.registry` carries
+ *   the user-authored rules/standards/finders into every tool handler.
  */
-export async function startMcpServer(): Promise<void> {
-  const session = new McpSession();
+export async function startMcpServer(registry?: Registry): Promise<void> {
+  const session = new McpSession(registry);
   const emitLog: LogEmitter = makeLogEmitter(
     session.logging,
     (n: LogNotification) => writeNotification(n),

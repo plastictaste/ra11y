@@ -149,3 +149,61 @@ export function createBuiltinRegistry(): Registry {
     finders: BUILTIN_CANDIDATE_FINDERS,
   });
 }
+
+/**
+ * Additions a caller (plugin loader, test harness, future
+ * `ra11y.config.ts` hook, CLI `--plugin` flag) can contribute to
+ * the built-in registry. Every field is optional and additive —
+ * omitted fields fall through to the shipped built-ins unchanged.
+ *
+ * See `examples/plugin-rule/` for a worked example.
+ */
+export interface RegistryOverrides {
+  readonly rules?: readonly Rule[];
+  readonly standards?: readonly Standard[];
+  readonly finders?: readonly CandidateFinder[];
+}
+
+/**
+ * Constructs a Registry composed of the shipped built-ins plus any
+ * user-authored additions. The seam ADR 0022 reserved for the
+ * plugin path: `defineRule` / `defineStandard` / `defineCandidateFinder`
+ * stay identity functions on the public API surface (ADR 0019
+ * freeze), and this factory is the internal wiring that makes those
+ * authored records visible to every consumer of `session.registry` —
+ * `list_rules`, `scan_project`, `checklist`, and every other
+ * registry-reading tool.
+ *
+ * Additions append to the built-in collection and keep source order
+ * stable. ID collisions between a user rule and a built-in rule are
+ * not silently resolved here: the Registry constructor's
+ * `RulesRegistry.register` path throws on duplicate IDs, which is
+ * the correct failure mode — plugin authors must choose a distinct
+ * ID (convention: `<scope>/<rule>`, e.g. `example/no-title-attribute`)
+ * rather than accidentally shadow a built-in.
+ *
+ * @param overrides - Optional user-authored rules, standards, and
+ *   finders to fold in alongside the built-ins. Omitting the argument
+ *   is equivalent to {@link createBuiltinRegistry}.
+ * @returns A Registry with the union of built-in + user records,
+ *   ordered built-ins first.
+ *
+ * @example
+ * ```ts
+ * import { createRegistry } from "ra11y/engine/registry/registry";
+ * import myRule from "./my-rule.ts";
+ *
+ * const registry = createRegistry({ rules: [myRule] });
+ * // registry.rules includes every shipped rule AND myRule.
+ * ```
+ */
+export function createRegistry(overrides: RegistryOverrides = {}): Registry {
+  const rules = overrides.rules?.length ? [...BUILTIN_RULES, ...overrides.rules] : BUILTIN_RULES;
+  const standards = overrides.standards?.length
+    ? [...BUILTIN_STANDARDS, ...overrides.standards]
+    : BUILTIN_STANDARDS;
+  const finders = overrides.finders?.length
+    ? [...BUILTIN_CANDIDATE_FINDERS, ...overrides.finders]
+    : BUILTIN_CANDIDATE_FINDERS;
+  return new Registry({ rules, standards, finders });
+}

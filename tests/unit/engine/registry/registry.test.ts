@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { defineCandidateFinder, defineRule, defineStandard } from "../../../../src/api/plugin.ts";
-import { createBuiltinRegistry, Registry } from "../../../../src/engine/registry/registry.ts";
+import {
+  createBuiltinRegistry,
+  createRegistry,
+  Registry,
+} from "../../../../src/engine/registry/registry.ts";
 
 // Synthetic fixtures: two standards whose same-numbered criteria declare
 // mutual equivalence, so we can exercise rulesForCriterion's closure
@@ -270,5 +274,63 @@ describe("Registry — determinism across constructions", () => {
     expect(a.rulesForCriterion("alpha:1.1").map((r) => r.id)).toEqual(
       b.rulesForCriterion("alpha:1.1").map((r) => r.id),
     );
+  });
+});
+
+// ─── createRegistry (plugin-seam factory) ──────────────────────────────────
+
+describe("createRegistry — plugin seam", () => {
+  it("returns a built-ins-only registry when no overrides are supplied", () => {
+    const baseline = createBuiltinRegistry();
+    const reg = createRegistry();
+    expect(reg.rules.length).toBe(baseline.rules.length);
+    expect(reg.standards.length).toBe(baseline.standards.length);
+    expect(reg.finders.length).toBe(baseline.finders.length);
+    // Anchor a stable built-in: media/alt-text-missing.
+    expect(reg.findRule("media/alt-text-missing")?.id).toBe("media/alt-text-missing");
+  });
+
+  it("appends a user rule alongside the built-ins so list_rules and scans see it", () => {
+    const baseline = createBuiltinRegistry();
+    const userRule = makeRule("example/user-plugin-smoke", ["wcag22:1.1.1"]);
+    const reg = createRegistry({ rules: [userRule] });
+
+    expect(reg.rules.length).toBe(baseline.rules.length + 1);
+    expect(reg.findRule("example/user-plugin-smoke")?.id).toBe("example/user-plugin-smoke");
+    // Built-ins remain resolvable — the plugin rule is additive, not a
+    // replacement. This is the invariant list_rules / scan_project read on.
+    expect(reg.findRule("media/alt-text-missing")?.id).toBe("media/alt-text-missing");
+  });
+
+  it("folds the user rule into the equivalence closure for an overlapping criterion", () => {
+    // The user rule declares it satisfies wcag22:1.1.1. When the Registry
+    // asks rulesForCriterion("wcag22:1.1.1"), both the built-in
+    // media/alt-text-missing AND the user rule must appear — otherwise
+    // scan_project would never evaluate the plugin against 1.1.1.
+    const userRule = makeRule("example/user-plugin-fan-out", ["wcag22:1.1.1"]);
+    const reg = createRegistry({ rules: [userRule] });
+    const ids = reg.rulesForCriterion("wcag22:1.1.1").map((r) => r.id);
+    expect(ids).toContain("media/alt-text-missing");
+    expect(ids).toContain("example/user-plugin-fan-out");
+  });
+
+  it("appends user finders alongside the built-ins", () => {
+    const baseline = createBuiltinRegistry();
+    const userFinder = defineCandidateFinder({
+      id: "example/user-finder",
+      criterionIds: ["wcag22:1.4.3"],
+      scope: "node",
+      docs: {
+        description: "Plugin-seam unit smoke.",
+        reviewPrompt: "Does this pass contrast?",
+        references: [],
+      },
+      find() {
+        return undefined;
+      },
+    });
+    const reg = createRegistry({ finders: [userFinder] });
+    expect(reg.finders.length).toBe(baseline.finders.length + 1);
+    expect(reg.finders.some((f) => f.id === "example/user-finder")).toBe(true);
   });
 });
