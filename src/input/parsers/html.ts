@@ -31,6 +31,12 @@ import type {
   SourcePosition,
   SourceRange,
 } from "../../types/ast.ts";
+import {
+  matchesTemplateEndTag,
+  OPAQUE_BLOCK_DIRECTIVES,
+  readTemplateTagName,
+  stripTemplateDirectives,
+} from "./html-template-directives.ts";
 
 /** HTML void elements that must not have closing tags. */
 const VOID_ELEMENTS: ReadonlySet<string> = new Set([
@@ -201,50 +207,49 @@ class HtmlParser {
   #consumeChildren(parentTag: string): HtmlNode[] {
     const children: HtmlNode[] = [];
     const isRawText = RAW_TEXT_ELEMENTS.has(parentTag.toLowerCase());
-
     while (!this.#eof()) {
-      // Look for a closing tag matching our parent (case-insensitive).
       if (this.#startsWithClosingTag(parentTag)) {
         this.#consumeClosingTag();
         return children;
       }
       if (isRawText) {
-        // Raw-text elements (script/style/title/textarea) — consume
-        // everything until a matching close tag as a single text node.
-        // `<title>` and `<textarea>` are visible to users and AT, so we
-        // strip template directives from their rendered value (same
-        // treatment as the inline `#consumeText` path). `<script>` and
-        // `<style>` aren't visible, so the strip is a no-op on any
-        // well-formed directive and harmless otherwise.
-        const start = this.#pos;
-        const startPos = this.#position();
-        while (!(this.#eof() || this.#startsWithClosingTag(parentTag))) {
-          this.#advance(1);
-        }
-        const raw = this.#source.slice(start, this.#pos);
-        const { value, stripped } = stripTemplateDirectives(raw);
-        children.push({
-          kind: "HtmlText",
-          range: { start, end: this.#pos },
-          loc: { start: startPos, end: this.#position() },
-          value,
-          ...(stripped ? { containsTemplateDirective: true } : {}),
-        });
-        if (!this.#eof()) {
-          this.#consumeClosingTag();
-        }
+        children.push(this.#consumeRawText(parentTag));
+        if (!this.#eof()) this.#consumeClosingTag();
         return children;
       }
       const node = this.#consumeNode();
       if (node) children.push(node);
     }
-    // Unclosed parent element. Recover gracefully.
     this.#errors.push({
       message: `Unclosed <${parentTag}> element`,
       position: this.#position(),
       recoverable: true,
     });
     return children;
+  }
+
+  /**
+   * Consumes raw-text element content (script/style/title/textarea).
+   * `<title>` and `<textarea>` are visible to users and AT, so
+   * template directives are stripped from the rendered value; for
+   * `<script>` and `<style>` the strip is a no-op on well-formed
+   * directives and harmless otherwise.
+   */
+  #consumeRawText(parentTag: string): HtmlText {
+    const start = this.#pos;
+    const startPos = this.#position();
+    while (!(this.#eof() || this.#startsWithClosingTag(parentTag))) {
+      this.#advance(1);
+    }
+    const raw = this.#source.slice(start, this.#pos);
+    const { value, stripped } = stripTemplateDirectives(raw);
+    return {
+      kind: "HtmlText",
+      range: { start, end: this.#pos },
+      loc: { start: startPos, end: this.#position() },
+      value,
+      ...(stripped ? { containsTemplateDirective: true } : {}),
+    };
   }
 
   #consumeClosingTag(): void {
@@ -379,61 +384,26 @@ class HtmlParser {
   }
 
   /**
-   * If positioned at the start of a non-rendering Liquid/Jinja block
-   * directive (`{% capture x %}…{% endcapture %}` or
-   * `{% comment %}…{% endcomment %}`), consume through the matching
-   * closer as opaque text and return true. Otherwise return false
-   * without advancing. Unclosed blocks run to EOF — same recovery
-   * shape as an unterminated string.
-   *
-   * The set is intentionally narrow: `if`, `for`, `unless`, `block`,
-   * etc. render their body content inline (conditionally or
-   * repeatedly) — treating those as opaque would hide real element
-   * structure. Only `capture` (assigns body to a variable) and
-   * `comment` (discards body) are definitionally non-rendering.
+   * If positioned at `{% capture %}` / `{% comment %}`, consume
+   * through the matching `{% endX %}` as opaque text and return
+   * true. Otherwise returns false without advancing. Unclosed blocks
+   * run to EOF — same recovery shape as an unterminated string.
+   * See {@link OPAQUE_BLOCK_DIRECTIVES} for the rationale on which
+   * tags qualify.
    */
   #consumeOpaqueBlockDirective(): boolean {
     if (this.#peek() !== "{" || this.#peek(1) !== "%") return false;
-    // Peek the tag name without advancing. Skip `{%` plus optional
-    // whitespace-control dash (`{%-`), then read a run of identifier
-    // chars.
-    let cursor = this.#pos + 2;
-    if (this.#source[cursor] === "-") cursor += 1;
-    while (cursor < this.#source.length && (this.#source[cursor] === " " || this.#source[cursor] === "\t")) {
-      cursor += 1;
-    }
-    const nameStart = cursor;
-    while (cursor < this.#source.length) {
-      const c = this.#source[cursor];
-      if (c === undefined || !/[a-zA-Z_]/.test(c)) break;
-      cursor += 1;
-    }
-    const tagName = this.#source.slice(nameStart, cursor);
-    if (tagName !== "capture" && tagName !== "comment") return false;
+    const tagName = readTemplateTagName(this.#source, this.#pos);
+    if (!OPAQUE_BLOCK_DIRECTIVES.has(tagName)) return false;
+    this.#consumeThroughPercentBrace();
     const endTag = `end${tagName}`;
-    // Consume `{% tagName … %}` opener.
-    this.#advance(2); // "{%"
     while (!this.#eof()) {
-      if (this.#peek() === "%" && this.#peek(1) === "}") {
-        this.#advance(2);
-        break;
-      }
-      this.#advance(1);
-    }
-    // Consume body until we find `{% endTag %}`. Liquid's
-    // whitespace-control variants (`{%- endcapture -%}`) work here
-    // because we resolve the tag name past an optional leading dash.
-    while (!this.#eof()) {
-      if (this.#peek() === "{" && this.#peek(1) === "%" && this.#matchesEndBlockTag(endTag)) {
-        // Consume `{% endTag %}`.
-        this.#advance(2); // "{%"
-        while (!this.#eof()) {
-          if (this.#peek() === "%" && this.#peek(1) === "}") {
-            this.#advance(2);
-            return true;
-          }
-          this.#advance(1);
-        }
+      if (
+        this.#peek() === "{" &&
+        this.#peek(1) === "%" &&
+        matchesTemplateEndTag(this.#source, this.#pos, endTag)
+      ) {
+        this.#consumeThroughPercentBrace();
         return true;
       }
       this.#advance(1);
@@ -441,27 +411,16 @@ class HtmlParser {
     return true;
   }
 
-  /**
-   * At `{%`, returns true iff the tag name (after optional `-` and
-   * whitespace) is exactly `endTag` followed by a delimiter character.
-   */
-  #matchesEndBlockTag(endTag: string): boolean {
-    let cursor = this.#pos + 2;
-    if (this.#source[cursor] === "-") cursor += 1;
-    while (cursor < this.#source.length && (this.#source[cursor] === " " || this.#source[cursor] === "\t")) {
-      cursor += 1;
+  /** Advances through a `{% … %}` opener/closer, leaving position after `%}`. */
+  #consumeThroughPercentBrace(): void {
+    this.#advance(2); // "{%"
+    while (!this.#eof()) {
+      if (this.#peek() === "%" && this.#peek(1) === "}") {
+        this.#advance(2);
+        return;
+      }
+      this.#advance(1);
     }
-    const name = this.#source.slice(cursor, cursor + endTag.length);
-    if (name !== endTag) return false;
-    const follow = this.#source[cursor + endTag.length];
-    return (
-      follow === " " ||
-      follow === "-" ||
-      follow === "%" ||
-      follow === "\t" ||
-      follow === "\n" ||
-      follow === "\r"
-    );
   }
 
   #consumeComment(): HtmlComment {
@@ -600,63 +559,6 @@ function isNameStart(ch: string): boolean {
 
 function isNameChar(ch: string): boolean {
   return /[a-zA-Z0-9\-_:]/.test(ch);
-}
-
-/**
- * Removes template-directive spans from a text-node string so rules
- * that consume visible text operate on the rendered-text shape. Handles:
- *   - Liquid / Jinja: `{{ … }}` interpolation, `{% … %}` tags
- *   - ERB: `<%= … %>`, `<% … %>`, `<%# … %>`
- *
- * Balanced only by the literal closer — we don't parse the template
- * language. Unclosed spans are left intact as literal text (same
- * recovery shape as an unterminated attribute quote).
- *
- * The `stripped` flag propagates to `HtmlText.containsTemplateDirective`
- * so rules can append the `template_directive_stripped` signal to
- * their reason text. Directives are NOT replaced with a placeholder
- * token: the rendered output Liquid produces is `expr.toString()`,
- * which can be any string (including empty). Inserting a sentinel
- * would be dishonest in a different direction — a downstream
- * substring check would match on the sentinel rather than the real
- * runtime value.
- */
-function stripTemplateDirectives(text: string): { value: string; stripped: boolean } {
-  let stripped = false;
-  let out = "";
-  let i = 0;
-  while (i < text.length) {
-    const two = text.charCodeAt(i) === 0x7b /* '{' */ ? text.slice(i, i + 2) : "";
-    const erbTwo = text.charCodeAt(i) === 0x3c /* '<' */ ? text.slice(i, i + 2) : "";
-    if (two === "{{" || two === "{%") {
-      const closer = two === "{{" ? "}}" : "%}";
-      const end = text.indexOf(closer, i + 2);
-      if (end === -1) {
-        // Unclosed span — leave as literal and stop scanning so the
-        // rest (which may include a close delimiter we'd otherwise
-        // miscount) is preserved verbatim.
-        out += text.slice(i);
-        return { value: out, stripped };
-      }
-      i = end + 2;
-      stripped = true;
-      continue;
-    }
-    if (erbTwo === "<%") {
-      // `<%= … %>`, `<% … %>`, `<%# … %>` all close on `%>`.
-      const end = text.indexOf("%>", i + 2);
-      if (end === -1) {
-        out += text.slice(i);
-        return { value: out, stripped };
-      }
-      i = end + 2;
-      stripped = true;
-      continue;
-    }
-    out += text[i];
-    i += 1;
-  }
-  return { value: out, stripped };
 }
 
 /** Decodes HTML entities in attribute values and text nodes. */

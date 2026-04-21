@@ -29,11 +29,11 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
-  htmlSubtreeHasStrippedDirective,
   htmlTextContent,
   jsxTextContent,
   truncateForEcho,
 } from "../../engine/ast-helpers.ts";
+import { htmlSubtreeHasStrippedDirective } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
 /**
