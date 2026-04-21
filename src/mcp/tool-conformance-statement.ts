@@ -32,9 +32,6 @@ import {
   renderConformanceMarkdown,
 } from "../reports/conformance.ts";
 import type { ConfigFingerprint, FileManifestEntry } from "../reports/conformance-signature.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import type { LoadedConfig } from "../types/config.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
 import { headSha } from "../utils/git.ts";
@@ -117,8 +114,8 @@ export const conformanceStatementTool: McpTool = {
     if (unknown !== null) {
       return errorResult({
         code: "standard-not-found",
-        message: `Unknown standard '${unknown}'. Loaded: ${BUILTIN_STANDARDS.map((s) => s.id).join(", ")}.`,
-        details: { requested: unknown, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+        message: `Unknown standard '${unknown}'. Loaded: ${session.registry.standards.map((s) => s.id).join(", ")}.`,
+        details: { requested: unknown, loaded: session.registry.standards.map((s) => s.id) },
         remediation: "Pass `standard` with a loaded ID, or omit to use the session default.",
       });
     }
@@ -148,11 +145,11 @@ export const conformanceStatementTool: McpTool = {
     const attestations = await loadDurableAttestations(cwd);
     const loadedConfig = await loadProjectConfigSafe(session, cwd);
     const { ledger } = runScan({
-      standards: BUILTIN_STANDARDS,
-      rules: applyRuleSettings(BUILTIN_RULES, session.config.rules),
+      standards: session.registry.standards,
+      rules: applyRuleSettings(session.registry.rules, session.config.rules),
       enabled: [standardId],
       files,
-      finders: BUILTIN_CANDIDATE_FINDERS,
+      finders: session.registry.finders,
       ...(profile.level !== "base" && { level: profile.level }),
       ...(attestations.length > 0 && { attestations }),
     });
@@ -271,7 +268,7 @@ function assembleBuilderInputs(ctx: {
   return {
     ledger: ctx.ledger,
     profile: ctx.profile,
-    standards: BUILTIN_STANDARDS,
+    standards: ctx.session.registry.standards,
     rulesForCriterion: (criterionId: string) =>
       satisfyingRulesForCriterion(criterionId, ctx.session),
     files: ctx.files.map((f) => f.filePath),

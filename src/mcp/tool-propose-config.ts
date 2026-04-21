@@ -54,8 +54,6 @@
 import { existsSync } from "node:fs";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { gitRoot } from "../utils/git.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
@@ -111,7 +109,7 @@ export const proposeConfigTool: McpTool = {
     const projectConfig = await session.loadProjectConfig(root);
     const files = await parseFiles([root], session, root);
     const effective = session.effectiveRules(projectConfig);
-    const activeRules = applyRuleSettings(BUILTIN_RULES, effective);
+    const activeRules = applyRuleSettings(session.registry.rules, effective);
 
     const confirmedWrappers = deriveConfirmedWrappers(files);
     const buildArtifacts = collectBuildArtifacts(files);
@@ -195,8 +193,8 @@ function deriveTopRules(
 ): readonly TopRuleEntry[] {
   if (files.length === 0) return [];
   const { result } = runScan({
-    standards: BUILTIN_STANDARDS,
-    rules: BUILTIN_RULES,
+    standards: session.registry.standards,
+    rules: session.registry.rules,
     enabled: resolveStandards(undefined, session),
     files,
     level: session.config.level,
@@ -211,7 +209,7 @@ function deriveTopRules(
   });
   const out: TopRuleEntry[] = [];
   for (const [ruleId, count] of ranked.slice(0, TOP_RULES_COUNT)) {
-    const rule = BUILTIN_RULES.find((r) => r.id === ruleId);
+    const rule = session.registry.findRule(ruleId);
     if (!rule) continue;
     out.push({ ruleId, severity: rule.severity, count });
   }

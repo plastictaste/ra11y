@@ -44,7 +44,6 @@
  */
 
 import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
 import { gitRoot } from "../utils/git.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import {
@@ -114,7 +113,7 @@ export const listSuppressionsTool: McpTool = {
     // cross-check that the enumeration ran under the same effective
     // ruleset without a second tool call.
     const effective = session.effectiveRules(projectConfig);
-    const rulesEvaluated = applyRuleSettings(BUILTIN_RULES, effective).length;
+    const rulesEvaluated = applyRuleSettings(session.registry.rules, effective).length;
 
     // Unified tagged list (Q2R2-WRAPPER-SOURCES). `list_suppressions`
     // doesn't run the auto-detect pass, so fromAutoDetect stays empty

@@ -14,9 +14,6 @@ import {
   indexAttestationsByCriterion,
 } from "../reports/attestation-surface.ts";
 import { buildCoverageReport, type PerStandardCoverage } from "../reports/coverage.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
 import type { ReviewCandidate, ReviewConfidence } from "../types/review.ts";
 import {
@@ -201,11 +198,11 @@ export const checklistTool: McpTool = {
     const standards = resolveStandards(strParam(params, "standard"), session);
     const unknown = firstUnknownStandard(standards, session);
     if (unknown !== null) {
-      const known = BUILTIN_STANDARDS.map((s) => s.id).join(", ");
+      const known = session.registry.standards.map((s) => s.id).join(", ");
       return errorResult({
         code: "standard-not-found",
         message: `Unknown standard '${unknown}'. Loaded: ${known}.`,
-        details: { requested: unknown, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+        details: { requested: unknown, loaded: session.registry.standards.map((s) => s.id) },
         remediation:
           "Pass `standard` with one of the loaded IDs, or omit to use the session default.",
       });
@@ -215,16 +212,16 @@ export const checklistTool: McpTool = {
     const attestations = await loadDurableAttestations(cwd);
 
     const { result, report } = runScan({
-      standards: BUILTIN_STANDARDS,
-      rules: applyRuleSettings(BUILTIN_RULES, session.config.rules),
+      standards: session.registry.standards,
+      rules: applyRuleSettings(session.registry.rules, session.config.rules),
       enabled: standards,
       files,
-      finders: BUILTIN_CANDIDATE_FINDERS,
+      finders: session.registry.finders,
       level,
       ...(attestations.length > 0 && { attestations }),
     });
 
-    const coverage = buildCoverageReport(result, BUILTIN_STANDARDS, level);
+    const coverage = buildCoverageReport(result, session.registry.standards, level);
     const applicability = detectApplicability(files);
 
     const sources = sourceIndex(files);
@@ -385,7 +382,7 @@ export const checklistTool: McpTool = {
       params,
       session,
       filesScanned: files.length,
-      rulesEvaluated: applyRuleSettings(BUILTIN_RULES, session.config.rules).length,
+      rulesEvaluated: applyRuleSettings(session.registry.rules, session.config.rules).length,
       enabledStandards: standards,
       level,
       cwd,

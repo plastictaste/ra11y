@@ -24,9 +24,6 @@
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
 import { buildVpatReport, renderVpatMarkdown } from "../reports/index.ts";
 import type { VpatProductMetadata, VpatReport } from "../reports/vpat.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { detectApplicability } from "./manual-applicability.ts";
 import type { McpSession } from "./session.ts";
 import {
@@ -132,17 +129,17 @@ export const vpatTool: McpTool = {
     const attestations = await loadDurableAttestations(cwd);
 
     const { result, report: scanReport } = runScan({
-      standards: BUILTIN_STANDARDS,
-      rules: applyRuleSettings(BUILTIN_RULES, session.config.rules),
+      standards: session.registry.standards,
+      rules: applyRuleSettings(session.registry.rules, session.config.rules),
       enabled: standards,
       files,
-      finders: BUILTIN_CANDIDATE_FINDERS,
+      finders: session.registry.finders,
       level,
       ...(attestations.length > 0 && { attestations }),
     });
 
     const applicability = detectApplicability(files);
-    const report = buildVpatReport(result, BUILTIN_STANDARDS, {
+    const report = buildVpatReport(result, session.registry.standards, {
       candidates: scanReport.candidates ?? [],
       applicability,
       product: { productName, productVersion, ...buildOptionalProductFields(params) },
@@ -236,8 +233,8 @@ function validateVpatParams(
     return {
       error: errorResult({
         code: "standard-not-found",
-        message: `Unknown standard '${unknown}'. Loaded: ${BUILTIN_STANDARDS.map((s) => s.id).join(", ")}.`,
-        details: { requested: unknown, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+        message: `Unknown standard '${unknown}'. Loaded: ${session.registry.standards.map((s) => s.id).join(", ")}.`,
+        details: { requested: unknown, loaded: session.registry.standards.map((s) => s.id) },
         remediation:
           "Pass `standards` with loaded IDs, or omit to fall through to the session default.",
       }),

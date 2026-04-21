@@ -8,9 +8,6 @@
 import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
@@ -68,11 +65,11 @@ export const coverageTool: McpTool = {
     const standards = resolveStandards(strParam(params, "standard"), session);
     const unknown = firstUnknownStandard(standards, session);
     if (unknown !== null) {
-      const known = BUILTIN_STANDARDS.map((s) => s.id).join(", ");
+      const known = session.registry.standards.map((s) => s.id).join(", ");
       return errorResult({
         code: "standard-not-found",
         message: `Unknown standard '${unknown}'. Loaded: ${known}.`,
-        details: { requested: unknown, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+        details: { requested: unknown, loaded: session.registry.standards.map((s) => s.id) },
         remediation:
           "Pass `standard` with one of the loaded IDs, or omit to use the session default.",
       });
@@ -85,20 +82,20 @@ export const coverageTool: McpTool = {
     );
     const attestations = await loadDurableAttestations(cwd);
 
-    const activeRules = applyRuleSettings(BUILTIN_RULES, session.config.rules);
+    const activeRules = applyRuleSettings(session.registry.rules, session.config.rules);
     const { result, report } = runScan({
-      standards: BUILTIN_STANDARDS,
+      standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
       files,
-      finders: BUILTIN_CANDIDATE_FINDERS,
+      finders: session.registry.finders,
       level,
       ...(attestations.length > 0 && { attestations }),
     });
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
     const applicability = detectApplicability(files);
-    const coverage = buildCoverageReport(result, BUILTIN_STANDARDS, level);
+    const coverage = buildCoverageReport(result, session.registry.standards, level);
     const showUntargeted = params["showUntargeted"] === true;
     const entries = coverage.map((c) => {
       // Split by applicability first so the counts align with scan_project
@@ -123,7 +120,7 @@ export const coverageTool: McpTool = {
         // level (without a second checklist call) how many manual
         // criteria have concrete candidates worth reviewing vs pure
         // WCAG prompts the finders couldn't ground in code.
-        manualWithCandidates: withTitles(withCandidates),
+        manualWithCandidates: withTitles(withCandidates, session),
         // Count is always informative ("how big is the untargeted tail");
         // the list is gated behind showUntargeted so the default response
         // doesn't ship 16 entries of bare WCAG titles that mirror the
@@ -135,12 +132,12 @@ export const coverageTool: McpTool = {
         // `untargetedCriteriaList` so the number and array fields don't
         // collide when both are present.
         untargetedCriteria: untargeted.length,
-        ...(showUntargeted ? { untargetedCriteriaList: withTitles(untargeted) } : {}),
-        likelyIrrelevantCriteria: withTitles(likelyIrrelevant),
+        ...(showUntargeted ? { untargetedCriteriaList: withTitles(untargeted, session) } : {}),
+        likelyIrrelevantCriteria: withTitles(likelyIrrelevant, session),
         // Renamed from "automatedGaps" — agents consistently misread
         // that as "criteria automation can't cover" when it actually
         // listed automated criteria that are currently failing.
-        failingAutomatedCriteria: withTitles(c.failingCriteria),
+        failingAutomatedCriteria: withTitles(c.failingCriteria, session),
         summary:
           `${c.passing}/${c.automatable} automatable criteria passing (${c.automatedPassRate}%). ` +
           `${applicable.length} of ${c.total} criteria in ${c.standardId} need manual review ` +
@@ -350,9 +347,10 @@ function buildCoverageNextStep({
  */
 function withTitles(
   criterionIds: readonly string[],
+  session: import("./session.ts").McpSession,
 ): readonly { readonly id: string; readonly title: string; readonly level: string }[] {
   return criterionIds.map((id) => {
-    for (const std of BUILTIN_STANDARDS) {
+    for (const std of session.registry.standards) {
       const c = std.criteria.find((cr) => cr.id === id);
       if (c) return { id, title: c.title, level: c.level };
     }

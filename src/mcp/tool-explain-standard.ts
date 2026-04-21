@@ -9,7 +9,7 @@
  * comparing coverage across standards.
  */
 
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
+import type { Criterion } from "../types/standard.ts";
 import { errorResult, type McpTool, strParam, textResult } from "./tools-helpers.ts";
 
 export const explainStandardTool: McpTool = {
@@ -34,7 +34,7 @@ export const explainStandardTool: McpTool = {
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
-  handler(params) {
+  handler(params, session) {
     const id = strParam(params, "standardId");
     if (!id) {
       return errorResult({
@@ -44,13 +44,13 @@ export const explainStandardTool: McpTool = {
       });
     }
 
-    const standard = BUILTIN_STANDARDS.find((s) => s.id === id);
+    const standard = session.registry.findStandard(id);
     if (!standard) {
-      const known = BUILTIN_STANDARDS.map((s) => s.id).join(", ");
+      const known = session.registry.standards.map((s) => s.id).join(", ");
       return errorResult({
         code: "standard-not-found",
         message: `Unknown standard '${id}'. Loaded: ${known}.`,
-        details: { requested: id, loaded: BUILTIN_STANDARDS.map((s) => s.id) },
+        details: { requested: id, loaded: session.registry.standards.map((s) => s.id) },
         remediation: "Pass `standardId` with one of the loaded IDs.",
       });
     }
@@ -86,10 +86,7 @@ export const explainStandardTool: McpTool = {
   },
 };
 
-function filterByLevel(
-  criteria: (typeof BUILTIN_STANDARDS)[number]["criteria"],
-  level: string,
-): typeof criteria {
+function filterByLevel(criteria: readonly Criterion[], level: string): readonly Criterion[] {
   const rank: Record<string, number> = { A: 1, AA: 2, AAA: 3 };
   const ceiling = rank[level] ?? 3;
   return criteria.filter((c) => (rank[c.level] ?? 0) <= ceiling);
