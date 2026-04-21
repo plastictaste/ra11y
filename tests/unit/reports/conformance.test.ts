@@ -129,8 +129,12 @@ function buildLedger(
 }
 
 describe("buildConformanceStatement", () => {
-  it("refuses a non-manual criterion with no sources — no-evidence blocker", () => {
-    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "full" }]);
+  it("refuses a non-manual, non-runtime-dependent criterion with no sources — no-evidence blocker", () => {
+    // 1.1.1 Non-text Content — a fully-automatable criterion that is
+    // NOT in the runtime-evidence-required set. The blocker keeps
+    // `status: "pass"` / `reason: "no-evidence"` because the static
+    // layer does have the axis to prove pass once evidence accumulates.
+    const standard = mkStandard([{ localId: "1.1.1", level: "A", automatable: "full" }]);
     const statement = buildConformanceStatement({
       ledger: buildLedger(standard),
       profile: AA_PROFILE,
@@ -139,10 +143,12 @@ describe("buildConformanceStatement", () => {
     expect(statement.conformant).toBe(false);
     expect(statement.blockers).toHaveLength(1);
     expect(statement.blockers[0]).toMatchObject({
-      criterionId: "wcag22:1.4.3",
+      criterionId: "wcag22:1.1.1",
       status: "pass",
       reason: "no-evidence",
     });
+    // Non-runtime SCs stay out of the limitations list.
+    expect(statement.limitations).toBeUndefined();
   });
 
   it("emits conformant when every criterion has an attestation", () => {
@@ -667,5 +673,142 @@ describe("buildConformanceStatement: missing-process-config blocker", () => {
     const md = renderConformanceMarkdown(statement);
     expect(md).toContain("**NOT CONFORMANT**");
     expect(md).toContain("missing-process-config");
+  });
+});
+
+describe("buildConformanceStatement: runtime-evidence-required blocker", () => {
+  // Runtime-evidence-required criteria (1.4.3 contrast, 2.1.1 keyboard,
+  // 2.4.3 focus order, 2.4.6 headings+labels, 2.4.7 focus visible,
+  // 1.4.11 non-text contrast, …) exist because the normative requirement
+  // is about runtime behavior the static scanner structurally cannot
+  // observe in the passing direction. Absence-of-findings is not
+  // evidence; the builder surfaces `status: "undetermined"` with
+  // `reason: "runtime-evidence-required"` and cites the criterion in
+  // `statement.limitations[]`.
+
+  it("flips a runtime-dependent SC with zero evidence to status: undetermined", () => {
+    // 2.1.1 Keyboard — the canonical runtime-only criterion.
+    const standard = mkStandard([{ localId: "2.1.1", level: "A", automatable: "partial" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.conformant).toBe(false);
+    expect(statement.blockers).toHaveLength(1);
+    expect(statement.blockers[0]).toMatchObject({
+      criterionId: "wcag22:2.1.1",
+      status: "undetermined",
+      reason: "runtime-evidence-required",
+      staticSources: 0,
+      attestedSources: 0,
+      candidateSources: 0,
+    });
+  });
+
+  it("surfaces the criterion in the top-level limitations[] list", () => {
+    const standard = mkStandard([{ localId: "2.4.7", level: "AA", automatable: "partial" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.limitations).toBeDefined();
+    expect(statement.limitations).toHaveLength(1);
+    expect(statement.limitations?.[0]).toContain("wcag22:2.4.7");
+    expect(statement.limitations?.[0]).toContain("runtime evidence required");
+  });
+
+  it("aggregates every in-scope runtime-dependent SC into limitations[]", () => {
+    const standard = mkStandard([
+      { localId: "1.4.3", level: "AA", automatable: "partial" },
+      { localId: "2.1.1", level: "A", automatable: "partial" },
+      { localId: "2.4.7", level: "AA", automatable: "partial" },
+    ]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    // All three block as undetermined and appear in limitations[].
+    expect(statement.blockers.every((b) => b.reason === "runtime-evidence-required")).toBe(true);
+    expect(statement.limitations).toHaveLength(3);
+    const joined = (statement.limitations ?? []).join("\n");
+    expect(joined).toContain("wcag22:1.4.3");
+    expect(joined).toContain("wcag22:2.1.1");
+    expect(joined).toContain("wcag22:2.4.7");
+  });
+
+  it("omits limitations[] entirely when no runtime-dependent SC is in scope (conditional-spread)", () => {
+    // 1.1.1 is fully automatable and NOT in the runtime-only set; a
+    // no-evidence blocker fires but `limitations` stays absent.
+    const standard = mkStandard([{ localId: "1.1.1", level: "A", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.conformant).toBe(false);
+    expect(statement.blockers[0]?.reason).toBe("no-evidence");
+    expect(statement.limitations).toBeUndefined();
+  });
+
+  it("attested-pass clears the runtime-evidence gap — status returns to pass", () => {
+    // A runtime-harness or manual-review attestation supplies the
+    // runtime evidence the static layer lacks. The criterion should
+    // clear the blocker entirely.
+    const standard = mkStandard([{ localId: "2.1.1", level: "A", automatable: "partial" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, {
+        attestations: [mkAttestation("wcag22:2.1.1", "pass")],
+      }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.conformant).toBe(true);
+    expect(statement.blockers).toEqual([]);
+    expect(statement.limitations).toBeUndefined();
+  });
+
+  it("static failure on a runtime-dependent SC routes to failing, not runtime-evidence-required", () => {
+    // A static failure is honest evidence of non-conformance — it does
+    // NOT get re-classified. The runtime carve-out only fires on the
+    // zero-evidence case.
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA", automatable: "partial" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { violations: [mkViolation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.blockers[0]?.reason).toBe("failing");
+    expect(statement.blockers[0]?.status).toBe("fail");
+    expect(statement.limitations).toBeUndefined();
+  });
+
+  it("renders a ## Limitations section in markdown when non-empty", () => {
+    const standard = mkStandard([{ localId: "2.1.1", level: "A", automatable: "partial" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    const md = renderConformanceMarkdown(statement);
+    expect(md).toContain("## Limitations");
+    expect(md).toContain("wcag22:2.1.1");
+    expect(md).toContain("runtime evidence required");
+    // The blocker row carries the undetermined status + reason.
+    expect(md).toContain("undetermined");
+    expect(md).toContain("runtime-evidence-required");
+  });
+
+  it("omits ## Limitations section when no runtime-dependent SC surfaces", () => {
+    const standard = mkStandard([{ localId: "1.1.1", level: "A", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.1.1")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    const md = renderConformanceMarkdown(statement);
+    expect(md).not.toContain("## Limitations");
   });
 });

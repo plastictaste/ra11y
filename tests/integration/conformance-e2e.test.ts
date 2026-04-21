@@ -162,10 +162,13 @@ interface StatementBody {
   readonly blockers: readonly {
     readonly criterionId: string;
     readonly reason: string;
+    readonly status?: string;
     readonly staleAttestedAt?: string;
   }[];
   readonly signature?: ConformanceSignature;
   readonly warnings?: readonly string[];
+  readonly limitations?: readonly string[];
+  readonly markdown?: string;
 }
 
 async function callConformanceStatement(dir: string): Promise<StatementBody> {
@@ -283,6 +286,90 @@ describe("conformance e2e: file-manifest drift after signing", () => {
     if (freshFingerprint === undefined) return;
     const result = verifyConformanceBundle(signature, freshFingerprint);
     expect(result).toEqual({ valid: false, reason: "file-manifest-mismatch" });
+  });
+});
+
+// ─── Scenario (e): runtime-evidence-required limitations ────────────────
+
+describe("conformance e2e: runtime-evidence-required limitations", () => {
+  it("surfaces runtime-only SCs as undetermined blockers + limitations[] on bootstrap", async () => {
+    // Bootstrap scenario from the backlog: a fresh repo, zero attestations,
+    // one file, scan runs clean. Previously 2.1.1 / 2.4.3 / 2.4.7 / 1.4.3 /
+    // 1.4.11 / 2.4.6 all collapsed to `status: "pass", reason:
+    // "no-evidence"` — "no evidence" dressed up as pass. The honest
+    // response is `status: "undetermined"` with `reason:
+    // "runtime-evidence-required"` and the criterion cited in
+    // `limitations[]`.
+    const dir = scratch?.dir as string;
+    initRepo(dir);
+    await seedApp(dir);
+    git(dir, ["add", "app.tsx"]);
+    commitAll(dir, "initial", T0);
+
+    // No attestations seeded — every SC stands on static evidence alone.
+
+    const body = await callConformanceStatement(dir);
+    expect(body.conformant).toBe(false);
+
+    // Every runtime-dependent SC in the A-level set should surface as
+    // an undetermined blocker with `runtime-evidence-required`. The
+    // backlog cites 2.1.1 and 2.4.3 as A-level members of the set.
+    const runtimeBlockers = body.blockers.filter((b) => b.reason === "runtime-evidence-required");
+    expect(runtimeBlockers.length).toBeGreaterThan(0);
+    expect(runtimeBlockers.every((b) => b.status === "undetermined")).toBe(true);
+    // 2.1.1 Keyboard is the canonical entry — must appear.
+    const keyboard = runtimeBlockers.find((b) => b.criterionId === "wcag22:2.1.1");
+    expect(keyboard).toBeDefined();
+
+    // Top-level limitations[] list carries a prose entry per runtime SC.
+    expect(body.limitations).toBeDefined();
+    expect((body.limitations ?? []).length).toBeGreaterThan(0);
+    const joined = (body.limitations ?? []).join("\n");
+    expect(joined).toContain("wcag22:2.1.1");
+    expect(joined).toContain("runtime evidence required");
+
+    // Markdown carries a ## Limitations section.
+    expect(body.markdown ?? "").toContain("## Limitations");
+
+    // None of the runtime SCs should be dishonestly stamped `status:
+    // "pass"` anywhere in the blocker list.
+    const stampedPass = body.blockers.filter(
+      (b) =>
+        b.reason === "runtime-evidence-required" && (b.status === "pass" || b.status === "n/a"),
+    );
+    expect(stampedPass).toEqual([]);
+  });
+
+  it("runtime attestation for 2.1.1 clears the blocker and drops the limitation entry", async () => {
+    // A runtime harness verdict (passed through `attest` with the
+    // harness as `by`) is the deterministic escape hatch the doctrine
+    // prescribes. Once attested, the criterion should clear entirely.
+    const dir = scratch?.dir as string;
+    initRepo(dir);
+    await seedApp(dir);
+    git(dir, ["add", "app.tsx"]);
+    commitAll(dir, "initial", T0);
+
+    await seedAttestationsFile(dir, [
+      {
+        criterionId: "wcag22:2.1.1",
+        by: "ci-runtime-harness",
+        reason: "Playwright keyboard traversal over all routes — zero unreachable handlers.",
+        attestedAt: T1,
+        verdict: "pass",
+        scope: "project",
+      },
+    ]);
+
+    const body = await callConformanceStatement(dir);
+    // Other criteria may still block, but 2.1.1 specifically must not
+    // surface as runtime-evidence-required anymore.
+    const stillUndetermined2_1_1 = body.blockers.some(
+      (b) => b.criterionId === "wcag22:2.1.1" && b.reason === "runtime-evidence-required",
+    );
+    expect(stillUndetermined2_1_1).toBe(false);
+    const limitations2_1_1 = (body.limitations ?? []).some((l) => l.includes("wcag22:2.1.1"));
+    expect(limitations2_1_1).toBe(false);
   });
 });
 
