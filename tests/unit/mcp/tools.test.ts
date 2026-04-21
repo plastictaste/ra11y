@@ -969,10 +969,66 @@ describe("MCP tool: detect_native_wrappers", () => {
 
     const data = JSON.parse(result.content[0].text) as {
       candidates: unknown[];
+      emptyReason?: string;
       nextStep: string;
     };
     expect(data.candidates).toEqual([]);
+    // Structured discriminator — agents branch on this instead of
+    // string-matching the prose nextStep. The parseable file here
+    // yields zero PascalCase-with-onClick components, so the
+    // combined "no-pascalcase-onclick-components" token applies.
+    expect(data.emptyReason).toBe("no-pascalcase-onclick-components");
     expect(data.nextStep).toContain("No PascalCase");
+  });
+
+  it("stamps emptyReason 'no-parseable-files' when parseFiles returns nothing", async () => {
+    // Separate discriminator token from the zero-candidate case: a
+    // directory with no parseable sources is a different failure
+    // from a parseable project that happened to lack PascalCase
+    // onClick components. Agents branching on emptyReason should see
+    // the former so they can prompt the user for a different cwd
+    // rather than concluding "no wrappers here."
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-no-files-"));
+    // Intentionally empty — no .tsx/.jsx/.html/.css to parse.
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      candidates: unknown[];
+      emptyReason?: string;
+      note?: string;
+    };
+    expect(data.candidates).toEqual([]);
+    expect(data.emptyReason).toBe("no-parseable-files");
+    expect(data.note).toBe("No parseable files found.");
+  });
+
+  it("omits emptyReason entirely when candidates are non-empty", async () => {
+    // Present-when-meaningful: the discriminator only applies to
+    // the empty-candidates branch. When the scan actually surfaces
+    // wrappers, agents should see the field absent (not `""` or
+    // `null`) so a `typeof` check is decisive.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-populated-"));
+    await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <Button onClick={x} />;");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const raw = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(Array.isArray(raw.candidates)).toBe(true);
+    expect((raw.candidates as unknown[]).length).toBeGreaterThan(0);
+    expect("emptyReason" in raw).toBe(false);
   });
 
   it("emits suggestedConfigSnippet as a structured field when candidates are found", async () => {

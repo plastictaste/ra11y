@@ -23,7 +23,7 @@ export const detectNativeWrappersTool: McpTool = {
   def: {
     name: "detect_native_wrappers",
     description:
-      "Scan the project and list unique PascalCase components with onClick — onboarding aid for `nativeWrappers` in ra11y.config.ts. Each candidate carries a `definitionFile` pointer (absolute path resolved by one-hop basename match, or `null` when the source lives outside the scanned set) so you can open the wrapper directly to verify it wraps a native <button>/<a>/<input>. The tool does not modify files.",
+      'Scan the project and list unique PascalCase components with onClick — onboarding aid for `nativeWrappers` in ra11y.config.ts. Each candidate carries a `definitionFile` pointer (absolute path resolved by one-hop basename match, or `null` when the source lives outside the scanned set) so you can open the wrapper directly to verify it wraps a native <button>/<a>/<input>. When `candidates` is empty the response carries a structured `emptyReason` discriminator (`"no-parseable-files"` or `"no-pascalcase-onclick-components"`) so agents can branch without string-matching the prose `nextStep`; the field is omitted when candidates are non-empty. The tool does not modify files.',
     inputSchema: {
       type: "object",
       properties: {
@@ -47,6 +47,7 @@ export const detectNativeWrappersTool: McpTool = {
       return textResult({
         scanned: scannedProject(root),
         candidates: [],
+        emptyReason: "no-parseable-files",
         note: "No parseable files found.",
       });
     }
@@ -68,9 +69,22 @@ export const detectNativeWrappersTool: McpTool = {
     );
     const snippetField = snippet.length > 0 ? { suggestedConfigSnippet: snippet } : {};
 
+    // Structured discriminator so agents can branch on the
+    // "empty result" case without string-matching the prose
+    // `nextStep`. We emit one combined value rather than splitting
+    // into "no PascalCase at all" vs. "PascalCase but no onClick"
+    // because `collectWrapperCandidates` checks both conditions
+    // together (PascalCase name AND onClick handler); distinguishing
+    // them would require reshaping the core collector and the prose
+    // already covers the combined case. Omitted when populated per
+    // the "present-when-meaningful" rule.
+    const emptyReasonField =
+      candidates.length === 0 ? { emptyReason: "no-pascalcase-onclick-components" } : {};
+
     return textResult({
       scanned: scannedProject(root),
       candidates,
+      ...emptyReasonField,
       ...(absent.length > 0 ? { absentDeclaredWrappers: absent } : {}),
       ...snippetField,
       nextStep: buildNextStep(candidates, absent),
