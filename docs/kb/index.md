@@ -96,6 +96,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/conflicting-role](./rules/aria__conflicting-role.md)
 - [aria/expanded-on-disclosure](./rules/aria__expanded-on-disclosure.md)
 - [aria/hidden-focus](./rules/aria__hidden-focus.md)
+- [aria/icon-font-hidden](./rules/aria__icon-font-hidden.md)
 - [aria/invalid-role](./rules/aria__invalid-role.md)
 - [aria/labelledby-target-exists](./rules/aria__labelledby-target-exists.md)
 - [aria/live-region-valid](./rules/aria__live-region-valid.md)
