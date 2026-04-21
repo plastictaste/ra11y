@@ -17,6 +17,9 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { complete, emptyCompletion } from "../../../src/mcp/completions.ts";
+import { McpSession } from "../../../src/mcp/session.ts";
+
+const session = new McpSession();
 
 async function makeKb(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-completions-"));
@@ -42,6 +45,7 @@ describe("complete — ref/prompt", () => {
       { type: "ref/prompt", name: "ra11y/vpat-narrative" },
       { name: "criterionId", value: "" },
       "/irrelevant",
+      session,
     );
     expect(res.completion.values.length).toBeGreaterThan(0);
     expect(res.completion.values.length).toBeLessThanOrEqual(100);
@@ -53,6 +57,7 @@ describe("complete — ref/prompt", () => {
       { type: "ref/prompt", name: "ra11y/vpat-narrative" },
       { name: "criterionId", value: "wcag22:1.4" },
       "/irrelevant",
+      session,
     );
     expect(res.completion.total).toBeGreaterThan(0);
     for (const id of res.completion.values) {
@@ -65,6 +70,7 @@ describe("complete — ref/prompt", () => {
       { type: "ref/prompt", name: "ra11y/vpat-narrative" },
       { name: "criterionId", value: "wcag22:1." },
       "/irrelevant",
+      session,
     );
     const sorted = [...res.completion.values].sort();
     expect([...res.completion.values]).toEqual(sorted);
@@ -75,6 +81,7 @@ describe("complete — ref/prompt", () => {
       { type: "ref/prompt", name: "ra11y/nope" },
       { name: "criterionId", value: "" },
       "/irrelevant",
+      session,
     );
     expect(res).toEqual(emptyCompletion());
   });
@@ -84,6 +91,7 @@ describe("complete — ref/prompt", () => {
       { type: "ref/prompt", name: "ra11y/vpat-narrative" },
       { name: "somethingElse", value: "" },
       "/irrelevant",
+      session,
     );
     expect(res).toEqual(emptyCompletion());
   });
@@ -93,6 +101,7 @@ describe("complete — ref/prompt", () => {
       { type: "ref/prompt", name: "ra11y/vpat-narrative" },
       { name: "criterionId", value: undefined as unknown as string },
       "/irrelevant",
+      session,
     );
     expect(res.completion.total).toBeGreaterThan(0);
   });
@@ -106,6 +115,7 @@ describe("complete — ref/resource", () => {
         { type: "ref/resource", uri: "ra11y-kb://" },
         { name: "uri", value: "" },
         dir,
+        session,
       );
       expect(res.completion.total).toBe(3);
       expect(res.completion.values).toEqual([
@@ -125,6 +135,7 @@ describe("complete — ref/resource", () => {
         { type: "ref/resource", uri: "ra11y-kb://" },
         { name: "uri", value: "1-4-3" },
         dir,
+        session,
       );
       expect(res.completion.values).toEqual(["ra11y-kb://wcag/1-4-3.md"]);
       expect(res.completion.total).toBe(1);
@@ -140,6 +151,7 @@ describe("complete — ref/resource", () => {
         { type: "ref/resource", uri: "file:///etc/passwd" },
         { name: "uri", value: "" },
         dir,
+        session,
       );
       expect(res).toEqual(emptyCompletion());
     } finally {
@@ -150,7 +162,12 @@ describe("complete — ref/resource", () => {
   it("works when ref.uri is omitted (host passes only the value)", async () => {
     const dir = await makeKb();
     try {
-      const res = await complete({ type: "ref/resource" }, { name: "uri", value: "wcag" }, dir);
+      const res = await complete(
+        { type: "ref/resource" },
+        { name: "uri", value: "wcag" },
+        dir,
+        session,
+      );
       expect(res.completion.total).toBe(3);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -160,7 +177,12 @@ describe("complete — ref/resource", () => {
 
 describe("complete — unknown ref types", () => {
   it("returns empty-completion rather than erroring on ref types the spec adds later", async () => {
-    const res = await complete({ type: "ref/future" }, { name: "x", value: "" }, "/irrelevant");
+    const res = await complete(
+      { type: "ref/future" },
+      { name: "x", value: "" },
+      "/irrelevant",
+      session,
+    );
     expect(res).toEqual(emptyCompletion());
   });
 });
