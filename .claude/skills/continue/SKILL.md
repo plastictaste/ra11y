@@ -77,6 +77,7 @@ Each dispatch prompt includes:
 - An explicit "commit your own work before returning" instruction (per `CLAUDE.md` §11).
 - **Anti-stash rule (non-negotiable):** "Your worktree is isolated — the initial state is clean. Do not run `git stash` for any reason. If you encounter unexpected dirt in your worktree, treat it as a bug: stop and report, do not stash, do not `git clean`, do not `checkout --`. Commit only the changes you authored."
 - **Scope-lock rule:** "Edit only files listed in the backlog item and their direct test / snapshot / changelog counterparts. If an edit you think you need falls outside that set, stop and report."
+- **Structured return contract (mandatory):** "Return a single JSON block only — no prose before or after. Shape on success: `{ \"item\": \"<backlog label>\", \"branch\": \"<your branch>\", \"sha\": \"<HEAD sha>\", \"filesChanged\": [\"path/one\", ...], \"notes\": \"<≤2 sentences, optional>\" }`. Shape on failure: `{ \"item\": \"<backlog label>\", \"blocked\": \"<≤2 sentences why>\" }`. The orchestrator will not read prose; it will only extract the JSON. Long summaries waste context and get truncated."
 
 ### 3. Dispatch — parallel, worktree-isolated
 
@@ -96,20 +97,45 @@ Fanout limits — non-negotiable:
 - Never **two agents on the same track** in the same turn. Within a track, items may touch overlapping files; serializing inside a track avoids merge conflicts.
 - Never **two agents touching the same file** in the same turn, regardless of track. Inspect the backlog item's file:line anchor and serialize across turns if file-sets overlap.
 
-### 4. Collect results — serialized integration
+### 4. Integrate via the `integrator` subagent
 
-Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`.
+Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`, but **the orchestrator does not do the integration inline**. Cherry-pick + `bun run verify` + worktree cleanup + backlog tickoff all go through the `integrator` subagent, which swallows 30–50k tokens of tsc/biome/test output per turn and returns a ~40-line structured summary.
 
-Integration loop (serialize, one agent at a time):
+**Dispatch rules for the integrator:**
 
-1. For each returned `{ branch }` that has commits not on `main`:
-   a. `git cherry-pick <branch>` (or `git merge --ff-only <branch>` if the agent branched from the current HEAD and no earlier cherry-pick moved HEAD forward — fast-forward is cleaner when possible).
-   b. `bun run verify`. If it fails:
-      - If attributable to the just-picked branch, `git reset --hard HEAD~<n>` and mark the item BLOCKED in the turn summary. Do not re-dispatch on this turn — the worktree is gone; re-dispatch on the next turn with the verify output as feedback.
-      - If attributable to an earlier pick interacting badly with this one, stop the loop and report. Don't guess-revert.
-2. For each worktree whose agent reported "no changes," nothing to integrate.
-3. After all branches are integrated and `bun run verify` is green, replace `- [ ]` with `- [x]` on each completed backlog item. Commit: `chore(backlog): check off <short item label>` — one commit per turn, batching all checked-off items.
-4. **Never leave worktrees behind.** After integration, if the Agent tool didn't auto-clean, remove worktrees that were merged: `git worktree remove <path>` and `git branch -D <branch>`. If the agent made no changes, the tool already cleaned up.
+- **Never run `git cherry-pick` or `bun run verify` in the orchestrator during a turn.** If you feel the urge, you are reintroducing the context-bloat failure mode this indirection exists to fix.
+- The integrator runs *after* all parallel specialists have returned — it is step 4, not parallel with step 3. You cannot dispatch it in the same message as the specialists; it needs their branches.
+- The integrator does not use `isolation: "worktree"` — it must operate on the real `main` to land the picks.
+- Only one integrator call per turn. If turn N has 3 picks, they all go in one call.
+- Main-session-classified items (scripts / `docs/adr/**` / release) are NOT passed to the integrator — those committed directly on `main` during step 3 and are already landed.
+
+**Input you pass to the integrator:**
+
+    picks = [
+      { "item": "D/demo-record",   "branch": "agent-abc123", "path": "...", "changed": true  },
+      { "item": "M/tool-baseline", "branch": "agent-def456", "path": "...", "changed": true  },
+      { "item": "R/nav",           "branch": "agent-ghi789", "path": "...", "changed": false }
+    ]
+
+`changed` reflects whether the specialist's JSON return contained `sha`/`filesChanged` (true) or `blocked` / no-changes (false). If a specialist returned `blocked`, include it in `picks` with `changed: false` — the integrator will record it under `skipped` and remove its worktree if present, but won't cherry-pick anything.
+
+**Cross-turn collision pointer.** If `git log --oneline -20` shows a commit in this `/continue` invocation that touched a file also touched by the current turn's picks, include a one-liner in the integrator prompt: `"Note: commit <sha> already touched <path> earlier in this run; if cherry-pick conflicts, combine enrichments, never discard."`
+
+**Orchestrator handling of the integrator's return:**
+
+| Return | Orchestrator action |
+|---|---|
+| `verifyOk: true`, items in `integrated` | Log items + SHAs to the turn summary. Loop to next turn. |
+| `blocked: [...]` | Record for the final `/continue` report. Items stay unchecked in the backlog; the next `/continue` can retry. |
+| `error: "dirty_main"` | Stop the loop. Surface the detail. Do not attempt recovery blindly — investigate manually. |
+| `error: "cross_pick_interaction"` | Stop the loop. Report the integrated and remaining lists. The next `/continue` will retry the remaining picks in isolation. |
+| `error: "unknown_state"` | Stop the loop. Surface the detail. Never guess-revert — detached HEAD or mid-rebase states need human eyes. |
+
+**What the orchestrator must still do itself** (tiny, cheap, does not leak verify output):
+
+- Track the "picks dispatched this invocation" set so step 1 of the next turn doesn't re-pick them.
+- Build the turn summary entry (one line: `turn N: ✓ D/demo-record (a1b2c3d), ✓ M/tool-baseline (b2c3d4e), — R/nav (no changes)`).
+- Decide whether to continue to the next turn or stop.
 
 ### 5. Loop
 
