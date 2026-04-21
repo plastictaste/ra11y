@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Fragment-id navigation</title>
+  </head>
+  <body>
+    <!-- href="#<id>" is legitimate in-page navigation: the browser
+         scrolls to and focuses the matching id. Not a placeholder,
+         not flagged. -->
+    <nav>
+      <a href="#main">Skip to main</a>
+      <a href="#contact" onclick="trackClick()">Jump to contact</a>
+    </nav>
+    <main id="main">
+      <section id="contact">Contact section</section>
+    </main>
+  </body>
+</html>

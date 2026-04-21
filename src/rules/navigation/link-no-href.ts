@@ -37,6 +37,19 @@ import {
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
+/**
+ * `href=""` and `href="#"` are non-navigating placeholders — from a
+ * screen-reader and keyboard perspective they are indistinguishable
+ * from a missing href. Fragment navigation (`href="#section-id"`) is
+ * legitimate and stays silent. Whitespace-only values collapse to the
+ * same placeholder shape once trimmed (`" # "` → `"#"`).
+ */
+function isNonNavigatingHref(value: string | null): boolean {
+  if (value === null) return false;
+  const trimmed = value.trim();
+  return trimmed === "" || trimmed === "#";
+}
+
 type Intent = "navigation" | "mutation" | "unknown";
 
 export const rule = defineRule({
@@ -50,7 +63,7 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "<a> elements with onClick but no href are not keyboard-operable and are announced as generic containers. Use <button> instead, or add a real href.",
+      "<a> elements with onClick but missing, empty, or placeholder (#) href are not keyboard-operable and are announced as generic containers. Use <button> instead, or add a real href.",
     rationale:
       "An anchor without an href is a dead link. It's not in the tab order, Enter doesn't activate it, and screen readers announce it as a generic container with no role. The common pattern <a onclick='…'>Click me</a> breaks keyboard and screen-reader users completely.",
     goodExample: `<button type="button" onClick={handleClick}>Toggle menu</button>`,
@@ -84,7 +97,15 @@ type Emit = (v: {
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const anchor of findHtmlElementsByTag(doc, "a")) {
-    if (hasHtmlAttribute(anchor, "href")) continue;
+    // href="" and href="#" (with optional surrounding whitespace) are
+    // non-navigating placeholders — indistinguishable from missing href
+    // to screen readers and the keyboard tab order. Treat them the same.
+    if (
+      hasHtmlAttribute(anchor, "href") &&
+      !isNonNavigatingHref(getHtmlAttribute(anchor, "href"))
+    ) {
+      continue;
+    }
     if (!hasClickHandlerHtml(anchor)) continue;
     const intent = describeJsxExpressionIntent(getHtmlAttribute(anchor, "onclick"));
     emit(buildViolation(anchor.loc.start, intent));
@@ -98,11 +119,24 @@ function hasClickHandlerHtml(element: HtmlElement): boolean {
 
 function checkJsx(module: TsxModule, emit: Emit): void {
   for (const anchor of findJsxElementsByTag(module, "a")) {
-    if (hasJsxAttribute(anchor, "href")) continue;
+    if (hasJsxAttribute(anchor, "href") && !hasNonNavigatingHrefJsx(anchor)) continue;
     if (!hasClickHandlerJsx(anchor)) continue;
     const intent = describeJsxExpressionIntent(jsxOnClickExpressionText(anchor));
     emit(buildViolation(anchor.loc.start, intent));
   }
+}
+
+/**
+ * True when the JSX element's `href` is a string-literal equal to `""`
+ * or `"#"` (trimmed). Expression-form `href={…}` is opaque — we assume
+ * it resolves to real navigation and leave the element alone (the
+ * consuming agent can investigate if the expression is suspicious).
+ */
+function hasNonNavigatingHrefJsx(element: JsxElement): boolean {
+  const attr = getJsxAttribute(element, "href");
+  if (!attr?.value) return false;
+  if (attr.value.kind !== "StringLiteral") return false;
+  return isNonNavigatingHref(attr.value.value);
 }
 
 function hasClickHandlerJsx(element: JsxElement): boolean {
