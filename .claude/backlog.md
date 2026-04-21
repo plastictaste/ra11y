@@ -31,7 +31,7 @@ Owner: `release-captain` + `doc-writer`. Blocks nothing; can ship independently.
 
 ### v0.1.0
 
-- [ ] asciinema demo recording embedded in README
+- [ ] asciinema demo recording embedded in README (needs user: `brew install asciinema`, then interactive `asciinema rec docs/demo.cast` of a real terminal session scanning a sample project; can't be automated inside /continue because it requires a TTY)
 - [x] Version bump confirmation (package.json already reads `0.1.0`; verify + commit a release-prep chore if anything else drifts) (a0a805b — README status note, terminal version example, config.md stale forward-ref, writing-a-rule.md afterProject note; no drift in CHANGELOG date, llms.txt absent)
 - [ ] Tag `v0.1.0` and push (triggers `release.yml` → npm publish with provenance)
 - [ ] GitHub release with changelog excerpt
