@@ -60,7 +60,7 @@ Coverage: 37 rule · 33 finder · 13 attestation-only · 3 gap
 | `wcag22:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
 | `wcag22:1.3.5` | Identify Input Purpose | AA | full | forms/autocomplete-missing | — | **rule** |
 | `wcag22:1.3.6` | Identify Purpose | AAA | manual | — | identify-purpose | **finder** |
-| `wcag22:1.4.1` | Use of Color | A | manual | aria/role-from-class-only | use-of-color | **rule** |
+| `wcag22:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, forms/aria-invalid-missing | use-of-color | **rule** |
 | `wcag22:1.4.2` | Audio Control | A | partial | media/autoplay-sound | — | **rule** |
 | `wcag22:1.4.3` | Contrast (Minimum) | AA | partial | contrast/minimum | — | **rule** |
 | `wcag22:1.4.4` | Resize Text | AA | partial | document/viewport-zoom | — | **rule** |
@@ -129,7 +129,7 @@ Coverage: 37 rule · 33 finder · 13 attestation-only · 3 gap
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
 | `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
-| `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid | — | **rule** |
+| `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
 
 ## WCAG 2.1
 
@@ -155,7 +155,7 @@ Coverage: 35 rule · 30 finder · 10 attestation-only · 3 gap
 | `wcag21:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
 | `wcag21:1.3.5` | Identify Input Purpose | AA | full | forms/autocomplete-missing | — | **rule** |
 | `wcag21:1.3.6` | Identify Purpose | AAA | manual | — | identify-purpose | **finder** |
-| `wcag21:1.4.1` | Use of Color | A | manual | aria/role-from-class-only | use-of-color | **rule** |
+| `wcag21:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, forms/aria-invalid-missing | use-of-color | **rule** |
 | `wcag21:1.4.2` | Audio Control | A | partial | media/autoplay-sound | — | **rule** |
 | `wcag21:1.4.3` | Contrast (Minimum) | AA | partial | contrast/minimum | — | **rule** |
 | `wcag21:1.4.4` | Resize Text | AA | partial | document/viewport-zoom | — | **rule** |
@@ -216,7 +216,7 @@ Coverage: 35 rule · 30 finder · 10 attestation-only · 3 gap
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | parsing/duplicate-id | — | **rule** |
 | `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
-| `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid | — | **rule** |
+| `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
 
 ## Section 508 (2017 refresh)
 
@@ -235,7 +235,7 @@ Coverage: 21 rule · 16 finder · 1 attestation-only · 0 gap
 | `section508:1.3.1` | Info and Relationships | base | partial | forms/fieldset-legend, forms/label-for-id-mismatch +10 | — | **rule** |
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
-| `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only | use-of-color | **rule** |
+| `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, forms/aria-invalid-missing | use-of-color | **rule** |
 | `section508:1.4.2` | Audio Control | base | partial | media/autoplay-sound | — | **rule** |
 | `section508:1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `section508:1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
@@ -284,7 +284,7 @@ Coverage: 31 rule · 18 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
 | `en301549:9.1.3.5` | Identify Input Purpose | base | full | forms/autocomplete-missing | — | **rule** |
-| `en301549:9.1.4.1` | Use of Color | base | manual | aria/role-from-class-only | use-of-color | **rule** |
+| `en301549:9.1.4.1` | Use of Color | base | manual | aria/role-from-class-only, forms/aria-invalid-missing | use-of-color | **rule** |
 | `en301549:9.1.4.2` | Audio Control | base | partial | media/autoplay-sound | — | **rule** |
 | `en301549:9.1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `en301549:9.1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
@@ -322,4 +322,4 @@ Coverage: 31 rule · 18 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
 | `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
-| `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid | — | **rule** |
+| `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
