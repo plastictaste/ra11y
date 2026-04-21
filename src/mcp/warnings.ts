@@ -42,6 +42,16 @@ export type ScanWarningCode =
   // at discovery. Paired meta: `analysisCoverage.skippedByExtension`
   // carries the ext↦count map the warning points at.
   | "extensions_skipped_no_parser"
+  // Parser produced errors on at least one file: the AST is partial,
+  // so rules may have missed violations below the parse-error point.
+  // Without this code a scan where one file fails to parse reads as
+  // a clean result on that file — a silent-miss failure mode that
+  // mirrors `extensions_skipped_no_parser` one layer deeper in the
+  // pipeline (discovery accepted the file, parsing choked). Paired
+  // meta: `analysisCoverage.parseErrorFileCount` carries the count,
+  // and `analysisCoverage.parseErrorFiles` (under `verboseMeta`)
+  // lists the paths.
+  | "parse_errors_present"
   // ADR 0021 amendment (2026-04-20): the token-density secondary
   // budget dropped trailing file entries from this response to fit
   // under the ~25k-token MCP host ceiling. Distinct from file-count
@@ -186,7 +196,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // `sessionConfigure({ cwd })` or ignore after confirming.
     out.push("session_wrappers_configured_for_different_cwd");
   }
+  if (hasParseErrors(inputs.analysisCoverage)) {
+    // Coverage block reports a non-zero parseErrorFileCount — the
+    // scanner ran on a partial AST for at least one file, so
+    // findings on those files are definitionally undercounted.
+    // Surface the top-level signal so an agent can branch without
+    // reading into meta; the count + path list still live there.
+    out.push("parse_errors_present");
+  }
   return out;
+}
+
+function hasParseErrors(coverage: Record<string, unknown> | undefined): boolean {
+  if (coverage === undefined) return false;
+  const count = coverage["parseErrorFileCount"];
+  return typeof count === "number" && count > 0;
 }
 
 function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {

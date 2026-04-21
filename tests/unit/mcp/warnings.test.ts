@@ -212,6 +212,36 @@ describe("computeScanWarnings", () => {
     expect(absent).not.toContain("extensions_skipped_no_parser");
   });
 
+  it("fires `parse_errors_present` when parseErrorFileCount is non-zero (partial AST, findings undercounted on those files)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".tsx": 40, ".ts": 2 },
+    });
+    expect(codes).toContain("parse_errors_present");
+  });
+
+  it("does NOT fire `parse_errors_present` when parseErrorFileCount is zero or absent", () => {
+    const zero = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 0 },
+      filesByExtension: { ".tsx": 42 },
+    });
+    const absent = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 42 },
+    });
+    expect(zero).not.toContain("parse_errors_present");
+    expect(absent).not.toContain("parse_errors_present");
+  });
+
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
     const codes = computeScanWarnings({
       filesScanned: 0,
@@ -273,6 +303,19 @@ describe("warningsFromScanMeta", () => {
       configSource: "/proj/ra11y.config.ts",
     });
     expect(codes).toContain("tailwind_detected_css_undercounted");
+  });
+
+  it("threads `parse_errors_present` through from a formatted.meta analysisCoverage block", () => {
+    const codes = warningsFromScanMeta({
+      meta: {
+        filesScanned: 42,
+        filesByExtension: { ".ts": 42 },
+        analysisCoverage: { parseErrorFileCount: 2 },
+      },
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+    });
+    expect(codes).toContain("parse_errors_present");
   });
 
   it("returns an empty array when the meta block is empty and no other warning conditions hold", () => {
