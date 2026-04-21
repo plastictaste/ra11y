@@ -128,7 +128,7 @@ Coverage: 37 rule · 33 finder · 13 attestation-only · 3 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +14 | — | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid | — | **rule** |
 
 ## WCAG 2.1
@@ -215,7 +215,7 @@ Coverage: 35 rule · 30 finder · 10 attestation-only · 3 gap
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | parsing/duplicate-id | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +14 | — | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid | — | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -263,7 +263,7 @@ Coverage: 21 rule · 16 finder · 1 attestation-only · 0 gap
 | `section508:3.3.3` | Error Suggestion | base | manual | — | error-suggestion, validation-timing | **finder** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +14 | — | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
 
 ## EN 301 549
 
@@ -321,5 +321,5 @@ Coverage: 31 rule · 18 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | — | error-suggestion, validation-timing | **finder** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +14 | — | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/expanded-on-disclosure +15 | — | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid | — | **rule** |
