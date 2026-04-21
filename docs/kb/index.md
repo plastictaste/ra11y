@@ -133,6 +133,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [layout/reflow-hardcoded-width](./rules/layout__reflow-hardcoded-width.md)
 - [layout/text-spacing](./rules/layout__text-spacing.md)
 - [media/alt-text-missing](./rules/media__alt-text-missing.md)
+- [media/alt-text-placeholder](./rules/media__alt-text-placeholder.md)
 - [media/autoplay-sound](./rules/media__autoplay-sound.md)
 - [media/video-captions-missing](./rules/media__video-captions-missing.md)
 - [motion/pause-stop-hide](./rules/motion__pause-stop-hide.md)
