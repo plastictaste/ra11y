@@ -123,6 +123,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [forms/autocomplete-missing](./rules/forms__autocomplete-missing.md)
 - [forms/error-message-not-associated](./rules/forms__error-message-not-associated.md)
 - [forms/fieldset-legend](./rules/forms__fieldset-legend.md)
+- [forms/label-adjacent-unassociated](./rules/forms__label-adjacent-unassociated.md)
 - [forms/label-for-id-mismatch](./rules/forms__label-for-id-mismatch.md)
 - [forms/labels-required](./rules/forms__labels-required.md)
 - [forms/non-empty-label](./rules/forms__non-empty-label.md)
