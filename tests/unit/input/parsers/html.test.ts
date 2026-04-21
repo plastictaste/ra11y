@@ -130,6 +130,36 @@ describe("parseHtml", () => {
     expect(a?.attributes[0]?.value).toBe("?a=1&b=2");
   });
 
+  it("keeps nested-quote Liquid expressions intact inside attribute values", () => {
+    // Jekyll's canonical scaffold — `jekyll new` emits this verbatim.
+    // Before the fix the inner `"` of `default: "en-US"` terminated the
+    // attribute value, truncating `lang` to `{{ site.lang | default: `.
+    const { root, errors } = parseHtml('<html lang="{{ site.lang | default: "en-US" }}"></html>');
+    expect(errors.length).toBe(0);
+    const html = findFirst(root, "html");
+    expect(html?.attributes[0]?.name).toBe("lang");
+    expect(html?.attributes[0]?.value).toBe('{{ site.lang | default: "en-US" }}');
+  });
+
+  it("skips `{% ... %}` spans inside attribute values", () => {
+    // Liquid control directives carry their own quoted string literals.
+    const { root } = parseHtml('<div class="{% if user.name == "admin" %}admin{% endif %}"></div>');
+    const div = findFirst(root, "div");
+    expect(div?.attributes[0]?.value).toBe('{% if user.name == "admin" %}admin{% endif %}');
+  });
+
+  it("recovers from an unclosed template span without throwing", () => {
+    // Unclosed `{{` runs to EOF — the parser must not spin.
+    expect(() => parseHtml('<p class="{{ unclosed ></p>')).not.toThrow();
+  });
+
+  it("keeps a `{{ ... }}` span intact in an unquoted attribute value", () => {
+    // A `>` inside a Liquid span would otherwise terminate the tag early.
+    const { root } = parseHtml("<div class={{ theme }}></div>");
+    const div = findFirst(root, "div");
+    expect(div?.attributes[0]?.value).toBe("{{ theme }}");
+  });
+
   it("records recoverable error for unterminated start tag without throwing", () => {
     const { root, errors } = parseHtml("<p");
     expect(root).toBeDefined();

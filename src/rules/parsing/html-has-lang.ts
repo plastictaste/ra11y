@@ -93,6 +93,15 @@ function classifyLang(element: HtmlElement): LangProblem | null {
   const raw = findLangAttribute(element);
   if (raw === null) return null;
   const trimmed = raw.trim();
+  // Template-directive-bearing values (`lang="{{ site.lang }}"`,
+  // `lang="{% if x %}en{% else %}fr{% endif %}"`) are opaque to
+  // static analysis — the scanner cannot know whether the rendered
+  // output is a valid BCP 47 tag. Surfacing a confident "invalid"
+  // violation against the literal source would be dishonest; the
+  // agent reading the rendered output is the correct arbiter. The
+  // canonical Jekyll scaffold (`<html lang="{{ site.lang | default:
+  // "en-US" }}">`) is the motivating case.
+  if (trimmed.includes("{{") || trimmed.includes("{%")) return null;
   const tag = `<${element.tagName}>`;
   if (trimmed.length === 0) {
     return {

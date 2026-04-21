@@ -280,7 +280,19 @@ class HtmlParser {
   } {
     this.#advance(1);
     const valueStart = this.#pos;
-    while (!this.#eof() && this.#peek() !== quote) this.#advance(1);
+    while (!this.#eof() && this.#peek() !== quote) {
+      // Skip balanced Liquid/Jinja spans so quotes inside
+      // `{{ site.lang | default: "en-US" }}` or
+      // `{% if x == "y" %}` do not terminate the attribute. We do
+      // not parse the template language — we only track the literal
+      // `}}` / `%}` closer. Jekyll's canonical scaffold template
+      // puts a double-quoted Liquid filter argument inside a double-
+      // quoted HTML attribute; before this, the inner `"` truncated
+      // the attribute value and every `jekyll new` site tripped the
+      // BCP 47 check in `parsing/html-has-lang`.
+      if (this.#skipTemplateSpan()) continue;
+      this.#advance(1);
+    }
     const value = decodeEntities(this.#source.slice(valueStart, this.#pos));
     if (this.#peek() === quote) this.#advance(1);
     return { value, quote };
@@ -289,6 +301,11 @@ class HtmlParser {
   #readUnquotedAttributeValue(): string {
     const valueStart = this.#pos;
     while (!this.#eof()) {
+      // Keep parity with the quoted case — an unquoted value may
+      // also carry a template span, e.g. `class={{ theme }}`. A `>`
+      // inside the span would otherwise prematurely terminate the
+      // attribute.
+      if (this.#skipTemplateSpan()) continue;
       const c = this.#peek();
       if (c === undefined || c === ">" || c === " " || c === "\t" || c === "\n" || c === "/") {
         break;
@@ -296,6 +313,31 @@ class HtmlParser {
       this.#advance(1);
     }
     return this.#source.slice(valueStart, this.#pos);
+  }
+
+  /**
+   * If positioned at the start of a Liquid/Jinja span (`{{` or `{%`),
+   * advance past the matching closer (`}}` or `%}`) and return true.
+   * Otherwise returns false without advancing.
+   *
+   * The span is treated as opaque text: we don't parse the template
+   * language, we just balance the delimiter pair. An unclosed span
+   * runs to EOF — the same recovery shape as an unterminated quote.
+   */
+  #skipTemplateSpan(): boolean {
+    if (this.#peek() !== "{") return false;
+    const next = this.#peek(1);
+    if (next !== "{" && next !== "%") return false;
+    const closer = next === "{" ? "}}" : "%}";
+    this.#advance(2);
+    while (!this.#eof()) {
+      if (this.#peek() === closer[0] && this.#peek(1) === closer[1]) {
+        this.#advance(2);
+        return true;
+      }
+      this.#advance(1);
+    }
+    return true;
   }
 
   #consumeText(): HtmlText {
