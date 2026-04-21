@@ -70,11 +70,12 @@ import { rule as tableHeaders } from "./semantics/table-headers.ts";
 import { rule as tableThScopeMissing } from "./semantics/table-th-scope-missing.ts";
 import { rule as tooltipDismissable } from "./tooltip/dismissable.ts";
 import { rule as wrapperDrift } from "./wrapper/drift.ts";
-import { rule as placeholderAsLabel } from "./forms/placeholder-as-label.ts";
+import { rule as altTextPlaceholder } from "./media/alt-text-placeholder.ts";
 
 export const BUILTIN_RULES: readonly Rule[] = [
   accesskeyDuplicate,
   altTextMissing,
+  altTextPlaceholder,
   ariaInvalidMissing,
   autocompleteMissing,
   autoplaySound,
@@ -142,6 +143,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
 export {
   accesskeyDuplicate,
   altTextMissing,
+  altTextPlaceholder,
   ariaInvalidMissing,
   autocompleteMissing,
   autoplaySound,
