@@ -1,0 +1,52 @@
+<!--
+  Sanitized repro from Bootstrap js/tests/visual/modal.html (lines 63,
+  78, 92) and js/tests/visual/collapse.html (lines 17, 32, 46, 60).
+
+  The canonical shape: a wrapper div carries role="tab" for ARIA
+  composite-widget semantics, but is NOT materially interactive — no
+  click/key handler attribute, no tabindex, not a native interactive
+  tag. The inner <button> is the sole focus and activation surface.
+
+  This is idiomatic tablist/tab markup: role="tab" on the container
+  tells AT where the element sits in the tablist, while the actual
+  interactive affordance is the nested <button>. The rule must NOT
+  fire on the outer role-only wrapper — there is no
+  two-focusables-one-control violation here.
+
+  Sanitization: brand identifiers removed, Bootstrap-specific
+  data attributes removed (they triggered an unrelated rule and
+  obscure the regression target). Structure preserved faithfully.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab role wrapper repro</title>
+  </head>
+  <body>
+    <!--
+      Three role="tab" wrappers each containing a <button>.
+      Mirrors the seven false-positive locations in Bootstrap's
+      visual-test HTML (modal.html:63,78,92 + collapse.html:17,32,46,60).
+    -->
+    <div role="tablist">
+      <div role="tab" class="nav-item">
+        <button type="button" class="nav-link active">Panel One</button>
+      </div>
+
+      <div role="tab" class="nav-item">
+        <button type="button" class="nav-link">Panel Two</button>
+      </div>
+
+      <div role="tab" class="nav-item">
+        <button type="button" class="nav-link">Panel Three</button>
+      </div>
+    </div>
+
+    <div class="tab-content">
+      <div role="tabpanel" id="panel-one" class="tab-pane active">Panel one content.</div>
+      <div role="tabpanel" id="panel-two" class="tab-pane">Panel two content.</div>
+      <div role="tabpanel" id="panel-three" class="tab-pane">Panel three content.</div>
+    </div>
+  </body>
+</html>
