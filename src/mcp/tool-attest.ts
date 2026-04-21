@@ -29,7 +29,6 @@
 
 import { isAbsolute, resolve } from "node:path";
 import { appendAttestation } from "../config/attestation-store.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import {
   ATTESTATION_EVIDENCE_SOURCES,
   type AttestationEvidenceSource,
@@ -208,7 +207,7 @@ function preflight(
     };
   }
 
-  const required = readRequired(params);
+  const required = readRequired(params, session);
   if ("error" in required) return required;
   const { criterionId, reason, evidenceSource } = required;
   const satisfyingRules = satisfyingRulesForCriterion(criterionId, session);
@@ -378,7 +377,10 @@ function readRuleIds(
   return { value: deduped };
 }
 
-function readRequired(params: Record<string, unknown>):
+function readRequired(
+  params: Record<string, unknown>,
+  session: import("./session.ts").McpSession,
+):
   | {
       readonly criterionId: string;
       readonly reason: string;
@@ -423,7 +425,7 @@ function readRequired(params: Record<string, unknown>):
       }),
     };
   }
-  if (findCriterion(criterionId, BUILTIN_STANDARDS) === null) {
+  if (findCriterion(criterionId, session.registry.standards) === null) {
     return {
       error: errorResult({
         code: "criterion-not-found",

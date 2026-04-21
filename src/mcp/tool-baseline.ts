@@ -34,9 +34,6 @@ import {
 } from "../engine/baseline.ts";
 import { runScan } from "../engine/scanner.ts";
 import { type AgentFinding, buildAgentFinding } from "../output/agent-response/index.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import type { ScanResult } from "../types/violation.ts";
 import type { McpSession } from "./session.ts";
 import {
@@ -112,13 +109,16 @@ export const baselineTool: McpTool = {
     const level = resolveLevelParam(strParam(params, "level"), session);
     const files = await parseFiles([cwd], session, cwd);
 
-    const activeRules = applyRuleSettings(BUILTIN_RULES, session.effectiveRules(projectConfig));
+    const activeRules = applyRuleSettings(
+      session.registry.rules,
+      session.effectiveRules(projectConfig),
+    );
     const { result } = runScan({
-      standards: BUILTIN_STANDARDS,
+      standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
       files,
-      finders: BUILTIN_CANDIDATE_FINDERS,
+      finders: session.registry.finders,
       level,
     });
 

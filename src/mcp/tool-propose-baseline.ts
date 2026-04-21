@@ -75,8 +75,6 @@
 
 import { existsSync } from "node:fs";
 import { runScan } from "../engine/scanner.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { gitRoot } from "../utils/git.ts";
 import { compileGlobs } from "../utils/glob.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
@@ -150,7 +148,7 @@ export const proposeBaselineTool: McpTool = {
     const projectConfig = await session.loadProjectConfig(root);
     const files = await parseFiles([root], session, root);
     const effective = session.effectiveRules(projectConfig);
-    const activeRules = applyRuleSettings(BUILTIN_RULES, effective);
+    const activeRules = applyRuleSettings(session.registry.rules, effective);
     const standards = resolveStandards(undefined, session);
 
     // Run the wrapper probe over the parsed file set to derive the
@@ -168,7 +166,7 @@ export const proposeBaselineTool: McpTool = {
     const assumedSet = new Set(assumed);
 
     const { result } = runScan({
-      standards: BUILTIN_STANDARDS,
+      standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
       files,
