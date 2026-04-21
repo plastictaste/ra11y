@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Site Navigation</title>
+  <link rel="stylesheet" href="assets/css/font-awesome.min.css">
+</head>
+<body>
+
+<!--
+  Bootstrap 3 / Font Awesome pattern: a <button> carries a visible
+  aria-label ("Open navigation menu") so its accessible name is already
+  declared. The <i class="fa fa-bars"> child is a Font Awesome icon glyph
+  without aria-hidden="true" or role="presentation" — many assistive-tech
+  stacks announce the private-use-area pseudo-content on top of the
+  button's real label (the "double-announce" anti-pattern).
+
+  aria/icon-font-hidden must fire on the <i> element.
+
+  Source pattern: website-templates field corpus. The coffee-shop template
+  uses <span class="icon-bar"> (not Font Awesome); the trigger pattern here
+  is from the broader Bootstrap + Font Awesome pairing seen across the
+  website-templates corpus. Sanitized to a minimal structural skeleton.
+-->
+<nav class="navbar navbar-inverse navbar-fixed-top">
+  <div class="container">
+    <div class="navbar-header">
+
+      <!-- Mobile toggle: labeled button + unannotated FA icon -->
+      <button type="button" class="navbar-toggle"
+              aria-label="Open navigation menu">
+        <i class="fa fa-bars"></i>
+      </button>
+
+      <a class="navbar-brand" href="#home">Site Name</a>
+    </div>
+
+    <div class="navbar-collapse collapse">
+      <ul class="nav navbar-nav pull-right">
+        <li><a href="#home">Home</a></li>
+        <li><a href="#about">About</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <h1>Welcome</h1>
+  <p>Page content.</p>
+</main>
+
+</body>
+</html>
