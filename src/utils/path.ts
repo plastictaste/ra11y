@@ -17,7 +17,16 @@ export function hasParseableExtension(filePath: string): boolean {
   return PARSEABLE_EXTENSIONS.has(extension(filePath));
 }
 
-const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
+/**
+ * Canonical list of file extensions the parser registry knows how to
+ * turn into an AST. Exported so error envelopes, documentation, and
+ * telemetry can derive their "supported files" messaging from the same
+ * source of truth instead of drifting copies. The set is the single
+ * authority; `parseableExtensions()` returns a stable sorted array for
+ * consumers that want a readonly list (e.g. to join into a remediation
+ * string).
+ */
+export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".ts",
   ".tsx",
   ".js",
@@ -29,6 +38,16 @@ const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".mdx",
   ".astro",
 ]);
+
+/**
+ * Sorted readonly array view over {@link PARSEABLE_EXTENSIONS}. Useful
+ * for building remediation strings or deterministic docs output — the
+ * sort keeps the list stable as the set grows so callers don't have to
+ * re-sort at every call site.
+ */
+export function parseableExtensions(): readonly string[] {
+  return [...PARSEABLE_EXTENSIONS].sort();
+}
 
 /**
  * True when the file's basename matches the Storybook story-file

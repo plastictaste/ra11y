@@ -876,6 +876,41 @@ describe("MCP tool: scan_file", () => {
     const result = await tool.handler({}, session);
     expect(result.isError).toBe(true);
   });
+
+  it("file-unsupported remediation lists every parseable extension from the parser registry", async () => {
+    // Invariant: the remediation string is derived from
+    // `PARSEABLE_EXTENSIONS` in src/utils/path.ts, so when the parser
+    // registry grows (e.g. a new `.vue` or `.svelte` adapter lands),
+    // the scan_file error message stays honest without a manual edit.
+    // Regression case: the pre-fix string listed only .tsx/.jsx/.ts/.js,
+    // .html/.htm, .css and silently omitted .scss, .mdx, .astro —
+    // agents reading it would conclude those extensions weren't
+    // supported when in fact the scanner parses them.
+    const tool = findTool("scan_file");
+    const session = new McpSession();
+    const result = await tool.handler({ path: "/definitely/does/not/exist.tsx" }, session);
+    expect(result.isError).toBe(true);
+    const structured = result.structuredContent as { code?: string; remediation?: string };
+    expect(structured.code).toBe("file-unsupported");
+    const remediation = structured.remediation ?? "";
+    // Every registry-listed extension shows up in the remediation, so
+    // the message can't drift against the list of parsers the scanner
+    // actually loads.
+    for (const ext of [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".html",
+      ".htm",
+      ".css",
+      ".scss",
+      ".mdx",
+      ".astro",
+    ]) {
+      expect(remediation).toContain(ext);
+    }
+  });
 });
 
 describe("MCP tool: detect_native_wrappers", () => {

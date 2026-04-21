@@ -13,6 +13,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { BUILTIN_RULES } from "../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
+import { parseableExtensions } from "../utils/path.ts";
 import { buildListRulesNextStep } from "./list-rules-next-step.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
@@ -235,6 +236,14 @@ const scanTool: McpTool = {
 
 // ─── Tool: scan_file ────────────────────────────────────────────────────────
 
+// Remediation string for the `file-unsupported` envelope emitted by
+// `scan_file`, built from `parseableExtensions()` so the message stays
+// honest as the parser registry grows — a new `.vue` or `.svelte`
+// parser lands in src/utils/path.ts's `PARSEABLE_EXTENSIONS` and the
+// remediation updates in lockstep, rather than drifting into a stale
+// hardcoded list at the two early-exit sites below.
+const SCAN_FILE_UNSUPPORTED_REMEDIATION = `Pass a file with one of these extensions that exists on disk: ${parseableExtensions().join(", ")}.`;
+
 const scanFileTool: McpTool = {
   def: {
     name: "scan_file",
@@ -287,7 +296,7 @@ const scanFileTool: McpTool = {
         code: "file-unsupported",
         message: `Unsupported or unreadable file: ${filePath}`,
         details: { filePath },
-        remediation: "Pass a .tsx/.jsx/.ts/.js, .html/.htm, or .css file that exists on disk.",
+        remediation: SCAN_FILE_UNSUPPORTED_REMEDIATION,
       });
     }
 
@@ -297,7 +306,7 @@ const scanFileTool: McpTool = {
         code: "file-unsupported",
         message: `Unsupported or unreadable file: ${filePath}`,
         details: { filePath },
-        remediation: "Pass a .tsx/.jsx/.ts/.js, .html/.htm, or .css file that exists on disk.",
+        remediation: SCAN_FILE_UNSUPPORTED_REMEDIATION,
       });
     }
 
