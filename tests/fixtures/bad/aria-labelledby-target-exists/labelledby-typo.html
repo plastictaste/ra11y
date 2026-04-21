@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>aria-labelledby — bad (typo in id reference)</title>
+  </head>
+  <body>
+    <!--
+      Classic silent-failure pattern: the heading has id="billing-title"
+      but the section references "billing-titl" — one character short.
+      The DOM lookup fails, assistive tech gets no name from the
+      aria-labelledby, and authors without a screen reader in the loop
+      never notice.
+    -->
+    <h2 id="billing-title">Billing</h2>
+    <section aria-labelledby="billing-titl">
+      <p>Credit card on file ending in 4242.</p>
+    </section>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>aria-controls — bad (panel id never defined)</title>
+  </head>
+  <body>
+    <!--
+      Disclosure trigger declares aria-controls="drawer-panel" but no
+      element in this document has id="drawer-panel". At runtime the
+      lookup fails silently — the button still toggles visually via
+      whatever script is bound, but the ARIA relationship that tells
+      assistive tech "this button controls that panel" is dead.
+    -->
+    <button type="button" aria-expanded="false" aria-controls="drawer-panel">
+      Menu
+    </button>
+    <!-- Panel missing: author deleted the drawer markup in a refactor
+         but forgot to remove aria-controls. -->
+  </body>
+</html>

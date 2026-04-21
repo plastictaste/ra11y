@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>aria-labelledby — bad (IDREF list, one valid + one broken token)</title>
+  </head>
+  <body>
+    <!--
+      Edge case: the space-separated list has one token that resolves
+      ("account-heading") and one that doesn't ("account-not"). A
+      broken token in an otherwise-valid IDREF list is still a silent
+      wire-up failure for that specific reference — assistive tech
+      concatenates the names of the tokens that DID resolve and skips
+      the broken one. Authors looking at the rendered page see nothing
+      wrong.
+    -->
+    <h1 id="account-heading">Account</h1>
+    <span id="account-note">(required)</span>
+    <fieldset aria-labelledby="account-heading account-not">
+      <legend class="sr-only">Account details</legend>
+      <label>Email <input type="email" /></label>
+    </fieldset>
+  </body>
+</html>

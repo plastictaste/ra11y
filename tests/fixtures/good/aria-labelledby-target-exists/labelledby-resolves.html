@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>aria-labelledby — good (single IDREF resolves)</title>
+  </head>
+  <body>
+    <!--
+      The section names the heading whose id matches, so assistive tech
+      announces the section with the heading text as its accessible
+      name. This is the canonical WAI-ARIA authoring pattern.
+    -->
+    <h2 id="billing">Billing</h2>
+    <section aria-labelledby="billing">
+      <p>Credit card on file ending in 4242.</p>
+    </section>
+  </body>
+</html>

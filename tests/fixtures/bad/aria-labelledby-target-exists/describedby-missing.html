@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>aria-describedby — bad (hint id removed)</title>
+  </head>
+  <body>
+    <!--
+      The input points at an id that doesn't exist in this document.
+      No nearby existing id is close enough (Levenshtein > 2) for a
+      did-you-mean suggestion — the rule falls back to the generic
+      "add an element with id=..." fix path.
+    -->
+    <label for="pw">Password</label>
+    <input id="pw" type="password" aria-describedby="validation-summary" />
+  </body>
+</html>

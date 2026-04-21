@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>aria-describedby and aria-errormessage — good</title>
+  </head>
+  <body>
+    <!--
+      aria-describedby points at the hint paragraph so the description
+      is exposed to assistive tech. aria-errormessage points at the
+      validation message; both targets exist in this file.
+    -->
+    <label for="pw">Password</label>
+    <input id="pw" type="password" aria-describedby="pw-hint" aria-errormessage="pw-err" aria-invalid="true" />
+    <p id="pw-hint">Minimum 8 characters, at least one number.</p>
+    <span id="pw-err" role="alert">Password is too short.</span>
+  </body>
+</html>
