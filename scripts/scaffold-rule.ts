@@ -28,6 +28,7 @@ const ROOT = join(import.meta.dir ?? process.cwd(), "..");
 const TEMPLATES = join(ROOT, ".claude", "skills", "add-rule", "templates");
 const VALID_DOMAINS = new Set([
   "aria",
+  "color",
   "contrast",
   "document",
   "focus",
@@ -37,11 +38,11 @@ const VALID_DOMAINS = new Set([
   "media",
   "motion",
   "navigation",
+  "orientation",
   "parsing",
   "pointer",
   "semantics",
   "tooltip",
-  "orientation",
   "wrapper",
 ]);
 const VALID_SEVERITIES = new Set(["error", "warning", "info"]);

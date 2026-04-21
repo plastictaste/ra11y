@@ -17,6 +17,7 @@ import { rule as progressbarValueRange } from "./aria/progressbar-value-range.ts
 import { rule as requiredAttrs } from "./aria/required-attrs.ts";
 import { rule as roleFromClassOnly } from "./aria/role-from-class-only.ts";
 import { rule as validAttr } from "./aria/valid-attr.ts";
+import { rule as meaningByColorOnly } from "./color/meaning-by-color-only.ts";
 import { rule as contrastEnhanced } from "./contrast/enhanced.ts";
 import { rule as contrastMinimum } from "./contrast/minimum.ts";
 import { rule as contrastNonText } from "./contrast/non-text.ts";
@@ -116,6 +117,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   linkTargetBlankAnnouncement,
   listStructure,
   liveRegionValid,
+  meaningByColorOnly,
   metaRefresh,
   nestedInteractive,
   nonEmptyLabel,
@@ -187,6 +189,7 @@ export {
   linkTargetBlankAnnouncement,
   listStructure,
   liveRegionValid,
+  meaningByColorOnly,
   metaRefresh,
   nestedInteractive,
   nonEmptyLabel,
