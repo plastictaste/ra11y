@@ -2,7 +2,7 @@
  * Unit tests for buildPerRuleCoverage — the confidence-annotation step
  * the scanner folds over its evaluation tracker.
  *
- * Three shapes matter:
+ * Four shapes matter:
  *   - eligible === 0 on a rule with an extension gate → low, with a
  *     specific reason + remediation (the Tailwind-pre-build case for
  *     `.css`-targeted rules is the acute one).
@@ -11,9 +11,14 @@
  *     reason (path the tracker can't reach today, but the branch
  *     exists so the shape stays honest if the scanner grows a
  *     skip-after-parse step).
- *   - Unconstrained rules (no fileExtensions) are omitted from the
- *     output — they can't produce a low-confidence row by definition,
- *     so including them would be noise.
+ *   - Project-scoped rules (no `appliesTo.fileExtensions`, lifecycle
+ *     is `afterProject` only) get a row synthesized from the scan's
+ *     `filesScanned` count — `high` when any files were scanned,
+ *     `low` with a "nothing to evaluate" reason when zero were. The
+ *     invariant `perRuleCoverage.length === rulesEvaluated` now holds
+ *     for every scan shape (V1-META-RULES-EVALUATED-COVERAGE-DRIFT);
+ *     agents reading both surfaces cannot hit silent absences for
+ *     project-scoped rules.
  *
  * `findingsEmitted` (V1-SHAPE-RULECOV-COUNT) is a schema-required
  * counter on every entry — zero means "rule ran and found nothing,"
@@ -97,6 +102,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       [],
+      5,
     );
     expect(entries.length).toBe(1);
     const [row] = entries;
@@ -115,6 +121,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       [],
+      5,
     );
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("high");
@@ -124,15 +131,48 @@ describe("buildPerRuleCoverage", () => {
     expect(row!.remediation).toBeUndefined();
   });
 
-  it("omits rules without an extension gate from the output", () => {
+  // V1-META-RULES-EVALUATED-COVERAGE-DRIFT: rules without an
+  // extension gate (project-scoped, `afterProject` only) used to be
+  // silently omitted from `perRuleCoverage`, leaving the invariant
+  // `perRuleCoverage.length === rulesEvaluated` broken. Now they get
+  // a synthesized row so an agent reading both surfaces sees every
+  // rule that was evaluated.
+  it("emits a project-scoped row for a rule without an extension gate (no silent absence)", () => {
     const rules = [mkRule("noop", undefined)];
     const entries = buildPerRuleCoverage(
-      tracker({ noop: { eligible: 5, evaluated: 5 } }),
+      // Project-scoped rules don't appear in the per-file tracker —
+      // the rule runner only sees them via `afterProject`, which runs
+      // outside the per-file loop. Passing an empty tracker matches
+      // the real scanner shape.
+      tracker({}),
       rules,
       passAllFilter,
       [],
+      5,
     );
-    expect(entries.length).toBe(0);
+    expect(entries.length).toBe(1);
+    const [row] = entries;
+    expect(row!.ruleId).toBe("noop");
+    // Treats all scanned files as eligible — the project rule's
+    // `afterProject` runs against the full file set in one shot.
+    expect(row!.filesEvaluated).toBe(5);
+    expect(row!.filesEligible).toBe(5);
+    expect(row!.coverageConfidence).toBe("high");
+    expect(row!.findingsEmitted).toBe(0);
+  });
+
+  // Zero-file scan: the project-scoped branch surfaces "no files
+  // scanned" honestly rather than going silently absent.
+  it("project-scoped rule with filesScanned:0 gets a low-confidence 'nothing to evaluate' row", () => {
+    const rules = [mkRule("noop", undefined)];
+    const entries = buildPerRuleCoverage(tracker({}), rules, passAllFilter, [], 0);
+    expect(entries.length).toBe(1);
+    const [row] = entries;
+    expect(row!.filesEvaluated).toBe(0);
+    expect(row!.filesEligible).toBe(0);
+    expect(row!.coverageConfidence).toBe("low");
+    expect(row!.reason).toContain("no files were scanned");
+    expect(row!.remediation).toBeDefined();
   });
 
   it("omits filter-inactive rules (rule disabled under current standards)", () => {
@@ -147,6 +187,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       filter,
       [],
+      5,
     );
     expect(entries.length).toBe(0);
   });
@@ -166,6 +207,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       [],
+      5,
     );
     expect(entries.map((e) => e.ruleId)).toEqual(["a/first", "m/middle", "z/last"]);
   });
@@ -185,6 +227,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       [],
+      5,
     );
     const byId = new Map(entries.map((e) => [e.ruleId, e]));
     expect(byId.get("contrast/minimum")!.remediation).toContain("CSS");
@@ -209,6 +252,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       [],
+      5,
     );
     expect(entries.length).toBe(2);
     for (const row of entries) {
@@ -239,6 +283,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       violations,
+      5,
     );
     const byId = new Map(entries.map((e) => [e.ruleId, e]));
     expect(byId.get("contrast/minimum")!.findingsEmitted).toBe(
@@ -261,6 +306,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       [mkViolation("media/alt-text-missing")], // unrelated rule fired
+      5,
     );
     const [row] = entries;
     expect(row!.findingsEmitted).toBe(0);
@@ -288,6 +334,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       violations,
+      5,
     );
     const [row] = entries;
     expect(row!.findingsEmitted).toBe(15);
@@ -312,6 +359,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       violations,
+      5,
     );
     const [row] = entries;
     expect(row!.findingsEmitted).toBe(20);
@@ -335,6 +383,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       violations,
+      5,
     );
     const [row] = entries;
     expect(row!.findingsEmitted).toBe(8);
@@ -351,6 +400,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       violations,
+      5,
     );
     const [row] = entries;
     expect(row!.findingsEmitted).toBe(10);
@@ -388,6 +438,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       violations,
+      5,
     );
     const [row] = entries;
     expect(row!.findingsEmitted).toBe(17);
@@ -414,6 +465,7 @@ describe("buildPerRuleCoverage", () => {
       rules,
       passAllFilter,
       violations,
+      5,
     );
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("high");

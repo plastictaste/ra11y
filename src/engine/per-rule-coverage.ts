@@ -60,14 +60,17 @@ const RULE_CONCENTRATION_MIN_SHARE = 0.5;
 /**
  * Derives {@link PerRuleCoverage} entries from the tracker the rule
  * runner filled during the scan loop. One entry per active rule that
- * carries an `appliesTo.fileExtensions` constraint (the shape the
- * coverage concept applies to — `contrast/minimum` targets `.css`, so
- * 0 eligible CSS files is a meaningful under-scan signal). Rules
- * without an extension gate match every file and don't benefit from
- * the surface; they're excluded so the array stays focused on the
- * cases agents actually branch on. Project-scoped rules (afterProject)
- * never get a per-file entry and are structurally absent from the
- * tracker, which matches — their confidence is always qualitative.
+ * passes the standard/level filter — no silent absences. Extension-
+ * gated rules get counts from the tracker; project-scoped rules (their
+ * only lifecycle is `afterProject`, so per-file tracking doesn't apply)
+ * get an entry synthesized from the scan-wide file count so every
+ * evaluated rule is visible to the consumer
+ * (V1-META-RULES-EVALUATED-COVERAGE-DRIFT). Invariant: every rule in
+ * the "was evaluated" set — the same set that drives `rulesEvaluated`
+ * — gets exactly one row. An agent reading `perRuleCoverage.length`
+ * must get the same count as `rulesEvaluated`, so "didn't run" vs.
+ * "ran with zero eligible files" is never collapsed into silent
+ * absence.
  *
  * Sort is alphabetical by rule ID so cross-run diff is stable; each
  * {@link PerRuleCoverage} is assembled with conditional spread on
@@ -95,33 +98,53 @@ export function buildPerRuleCoverage(
   rules: readonly Rule[],
   filter: StandardFilter,
   violations: readonly Violation[],
+  filesScanned: number,
 ): readonly PerRuleCoverage[] {
   const findingsByRule = countFindingsByRule(violations);
   const densestByRule = densestFileByRule(violations);
   const out: PerRuleCoverage[] = [];
-  const ruleById = new Map<string, Rule>();
-  for (const r of rules) ruleById.set(r.id, r);
-  const ids = [...tracker.counts.keys()].sort();
-  for (const id of ids) {
-    const rule = ruleById.get(id);
-    if (!rule) continue;
+  const sortedRules = [...rules].sort((a, b) => a.id.localeCompare(b.id));
+  for (const rule of sortedRules) {
     if (!filter.isRuleActive(rule)) continue;
+    const findingsEmitted = findingsByRule.get(rule.id) ?? 0;
+    const concentration = computeConcentration(findingsEmitted, densestByRule.get(rule.id));
+    const counts = tracker.counts.get(rule.id);
     const extensions = rule.appliesTo?.fileExtensions;
-    if (!extensions || extensions.length === 0) continue;
-    const counts = tracker.counts.get(id);
-    if (!counts) continue;
-    const findingsEmitted = findingsByRule.get(id) ?? 0;
-    const concentration = computeConcentration(findingsEmitted, densestByRule.get(id));
-    out.push(
-      buildCoverageEntry(
-        id,
-        counts.eligible,
-        counts.evaluated,
-        findingsEmitted,
-        extensions,
-        concentration,
-      ),
-    );
+    // Per-file rules with an extension gate: tracker.counts carries
+    // the real eligibility tally (bumped by `bumpTracker` for every
+    // file the rule was considered against). The builder uses that
+    // tally verbatim — including the honest zero-eligible case where
+    // the scan saw no files matching the gate (canonical Tailwind
+    // pre-build shape). A missing tracker entry on an extension-gated
+    // rule means zero files flowed through the per-file loop (the
+    // whole scan had 0 files) — treat that as zero eligible so the
+    // extension-gated reason text still fires instead of misrouting
+    // into the project-scoped branch.
+    if (extensions && extensions.length > 0) {
+      const eligible = counts?.eligible ?? 0;
+      const evaluated = counts?.evaluated ?? 0;
+      out.push(
+        buildExtensionGatedEntry(
+          rule.id,
+          eligible,
+          evaluated,
+          findingsEmitted,
+          extensions,
+          concentration,
+        ),
+      );
+      continue;
+    }
+    // Project-scoped rules (`afterProject` only) don't flow through
+    // the per-file tracker — the rule runner never sees them in the
+    // per-file loop. Emit an entry with `filesScanned` as both
+    // eligible and evaluated so the invariant
+    // `perRuleCoverage.length === rulesEvaluated` holds. When
+    // `filesScanned === 0`, the entry honestly surfaces "no files
+    // scanned" rather than going silently absent, because "scan never
+    // ran against the project" is the exact signal the consumer
+    // needs (V1-META-RULES-EVALUATED-COVERAGE-DRIFT).
+    out.push(buildProjectScopedEntry(rule.id, filesScanned, findingsEmitted, concentration));
   }
   return out;
 }
@@ -221,19 +244,20 @@ function computeConcentration(
 }
 
 /**
- * Assembles one {@link PerRuleCoverage} record. Low-confidence branches
- * name the condition (`"no files matching …"` vs `"all eligible files
- * were excluded or empty"`) and supply a one-line remediation the
- * agent can act on without docs — e.g. "add built CSS via
- * additionalPaths." High-confidence entries omit both reason and
- * remediation — the fields are present-when-meaningful (CLAUDE.md §1
- * "Ambiguous field shapes are dishonest"). `findingsEmitted` is
- * always populated (including zero) per V1-SHAPE-RULECOV-COUNT.
- * `concentration` is spread conditionally on every branch — omitted
- * (never `null`, never empty-object) when thresholds don't clear
+ * Assembles one {@link PerRuleCoverage} record for an extension-gated
+ * per-file rule. Low-confidence branches name the condition (`"no
+ * files matching …"` vs `"all eligible files were excluded or
+ * empty"`) and supply a one-line remediation the agent can act on
+ * without docs — e.g. "add built CSS via additionalPaths."
+ * High-confidence entries omit both reason and remediation — the
+ * fields are present-when-meaningful (CLAUDE.md §1 "Ambiguous field
+ * shapes are dishonest"). `findingsEmitted` is always populated
+ * (including zero) per V1-SHAPE-RULECOV-COUNT. `concentration` is
+ * spread conditionally on every branch — omitted (never `null`, never
+ * empty-object) when thresholds don't clear
  * (V1-NOISE-RULE-PER-FILE-ROLLUP).
  */
-function buildCoverageEntry(
+function buildExtensionGatedEntry(
   ruleId: string,
   eligible: number,
   evaluated: number,
@@ -270,6 +294,49 @@ function buildCoverageEntry(
     ruleId,
     filesEvaluated: evaluated,
     filesEligible: eligible,
+    findingsEmitted,
+    coverageConfidence: "high",
+    ...concentrationSpread,
+  };
+}
+
+/**
+ * Assembles one {@link PerRuleCoverage} record for a project-scoped
+ * rule — one whose only lifecycle hook is `afterProject`, so the
+ * per-file tracker never sees it. The rule evaluates against the full
+ * scanned-file set in one shot, so `filesEligible` and `filesEvaluated`
+ * are both the scan's `filesScanned` count. When `filesScanned === 0`
+ * the entry honestly reads as low-confidence ("no files scanned") —
+ * the same silent-miss failure mode {@link buildExtensionGatedEntry}
+ * guards against at the per-rule level, now also closed for
+ * project-scoped rules (V1-META-RULES-EVALUATED-COVERAGE-DRIFT). The
+ * concentration hint still applies when a project-scoped rule's
+ * findings cluster on one file, so it spreads in on both branches.
+ */
+function buildProjectScopedEntry(
+  ruleId: string,
+  filesScanned: number,
+  findingsEmitted: number,
+  concentration: { file: string; count: number } | undefined,
+): PerRuleCoverage {
+  const concentrationSpread = concentration ? { concentration } : {};
+  if (filesScanned === 0) {
+    return {
+      ruleId,
+      filesEvaluated: 0,
+      filesEligible: 0,
+      findingsEmitted,
+      coverageConfidence: "low",
+      reason: "no files were scanned; project-scoped rule had nothing to evaluate",
+      remediation:
+        "check the scan root and include patterns — the project matched zero parseable files",
+      ...concentrationSpread,
+    };
+  }
+  return {
+    ruleId,
+    filesEvaluated: filesScanned,
+    filesEligible: filesScanned,
     findingsEmitted,
     coverageConfidence: "high",
     ...concentrationSpread,

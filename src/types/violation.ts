@@ -217,16 +217,26 @@ export interface Violation {
 
 /**
  * Per-rule coverage confidence for a single scan. Answers "this rule
- * produced 0 findings — should I trust that?" for rules whose
- * `appliesTo.fileExtensions` could mean the scan never saw a matching
- * source file. The canonical acute case: `contrast/minimum` targets
+ * produced 0 findings — should I trust that?" for every rule the scan
+ * evaluated. The canonical acute case: `contrast/minimum` targets
  * `.css`, and a Tailwind project pre-build has 0 eligible CSS sources
  * — a clean tally means nothing.
  *
+ * Invariant (V1-META-RULES-EVALUATED-COVERAGE-DRIFT): every rule in
+ * the "was evaluated" set gets exactly one entry — that's the same set
+ * that drives `meta.rulesEvaluated`, so
+ * `perRuleCoverage.length === meta.rulesEvaluated` by construction.
+ * Zero-eligible rules surface as `filesEvaluated: 0` with
+ * `coverageConfidence: "low"` rather than going silently absent; the
+ * agent can tell "ran-with-zero-eligible-files" from "never-ran"
+ * without guessing.
+ *
  * Semantics:
  *   - `filesEligible` — parseable files whose extension matches the
- *     rule's `appliesTo.fileExtensions`. For rules without an extension
- *     gate, every scanned file is eligible.
+ *     rule's `appliesTo.fileExtensions`. Project-scoped rules
+ *     (`afterProject` only) evaluate against the full scanned-file set
+ *     in one shot, so their `filesEligible` equals the scan's
+ *     `filesScanned`.
  *   - `filesEvaluated` — subset of eligible files the rule actually
  *     ran over (non-eligible files are filtered out before invocation;
  *     evaluated <= eligible by construction).
@@ -238,7 +248,11 @@ export interface Violation {
  *     omit, never `null` (V1-SHAPE-RULECOV-COUNT).
  *   - `coverageConfidence` — `"low"` when `filesEligible === 0` or the
  *     rule ran on fewer than `MIN_FILES_FOR_HIGH_CONFIDENCE` files;
- *     `"high"` otherwise.
+ *     `"high"` otherwise. The `"low"` variant carries the zero-
+ *     eligible-files case (`filesEvaluated: 0` with a `reason` naming
+ *     the gap) — the union is deliberately narrow; finer-grained
+ *     labels like `"no-eligible-files"` would encode in the enum what
+ *     the `reason` field already names structurally.
  *   - `reason` / `remediation` — populated only on low-confidence
  *     entries, per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
  *     (conditional spread at the response-assembly site).
@@ -249,9 +263,6 @@ export interface Violation {
  *     file where the idiom likely lives so a single read can triage
  *     many candidates. Omitted entirely when the rule doesn't clear
  *     both thresholds (V1-NOISE-RULE-PER-FILE-ROLLUP).
- *
- * Rules with `scope: "project"` and no `appliesTo.fileExtensions` (e.g.
- * `focus/outline-visible`) are not tracked — the concept doesn't apply.
  *
  * Produced by the scanner as a sibling field on
  * {@link import("../engine/scanner.ts").ScanProducts} — not on

@@ -191,7 +191,13 @@ export function runScan(inputs: ScanInputs): ScanProducts {
   const allCandidates = collectCandidatesFromFiles(inputs, enabled, standardsRegistry);
 
   const durationMs = Math.max(0, now() - start);
-  const perRuleCoverage = buildPerRuleCoverage(tracker, inputs.rules, filter, allViolations);
+  const perRuleCoverage = buildPerRuleCoverage(
+    tracker,
+    inputs.rules,
+    filter,
+    allViolations,
+    inputs.files.length,
+  );
 
   const result: ScanResult = {
     violations: allViolations,

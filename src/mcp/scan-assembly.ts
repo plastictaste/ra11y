@@ -137,11 +137,19 @@ export function buildScanMeta(args: {
     // flag if the repo has CSS). Cheap to compute, sorted for
     // determinism.
     filesByExtension: countByExtension(files),
-    // Count of rules that actually ran after "off" filtering. Without
-    // this, a clean scan with no findings is indistinguishable from
-    // "no applicable rules matched" — agents need to know whether the
-    // scan had teeth.
-    rulesEvaluated: activeRules.length,
+    // Count of rules that actually evaluated this scan — the same set
+    // that drives `perRuleCoverage` so an agent can cross-reference
+    // the two without worrying about drift. Before
+    // V1-META-RULES-EVALUATED-COVERAGE-DRIFT this counted the
+    // post-"off" rule list directly, which silently included rules
+    // the standard filter dropped (never evaluated) and excluded
+    // project-scoped rules from `perRuleCoverage` — agents couldn't
+    // tell "ran-with-zero-eligible-files" from "never-ran." The
+    // invariant `rulesEvaluated === perRuleCoverage.length` now holds
+    // by construction: every evaluated rule gets a row; `filesEvaluated:
+    // 0` + `coverageConfidence: "low"` names the zero-eligible case
+    // honestly rather than going silently absent.
+    rulesEvaluated: perRuleCoverage.length,
     durationMs: Math.round(durationMs),
     standards: [...enabledStandards].sort(),
     ...wrappersMetaBlock({
