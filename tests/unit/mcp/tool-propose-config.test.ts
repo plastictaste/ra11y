@@ -32,6 +32,7 @@ interface ProposeConfigResponse {
     readonly topRulesIncluded: number;
   };
   readonly nextStep: string;
+  readonly warnings?: readonly string[];
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -255,6 +256,80 @@ describe("propose_config: zero wrappers, zero build artifacts, zero findings", (
       expect(body.meta.topRulesIncluded).toBe(0);
       expect(body.suggestedConfig).toContain("No overrides needed — scan was clean.");
       expect(body.suggestedConfig).toContain("export default defineConfig({});");
+    });
+  });
+});
+
+describe("propose_config: foreign-ecosystem detection", () => {
+  // Guards the end-to-end wire contract: a Ruby / Python / Go / Rust
+  // project root without package.json fires
+  // `warnings: ["foreign_ecosystem_detected: <language>"]` and the
+  // nextStep hint names the `npx @ra11y/core scan` alternative. The
+  // config string itself is unchanged — surface, don't suppress.
+  const cases: ReadonlyArray<{ readonly marker: string; readonly tag: string }> = [
+    { marker: "Gemfile", tag: "ruby" },
+    { marker: "pyproject.toml", tag: "python" },
+    { marker: "go.mod", tag: "go" },
+    { marker: "Cargo.toml", tag: "rust" },
+  ];
+
+  for (const { marker, tag } of cases) {
+    it(`emits \`foreign_ecosystem_detected: ${tag}\` when ${marker} is present and package.json is absent`, async () => {
+      await withScratch(async (dir) => {
+        await writeFile(join(dir, marker), "# minimal stub\n");
+        // A trivially-parseable source file so the scan has teeth —
+        // otherwise filesScanned: 0 would trip a separate silent-
+        // success concern, not the foreign-ecosystem axis under test.
+        await writeFile(
+          join(dir, "util.ts"),
+          "export function add(a: number, b: number): number { return a + b; }\n",
+        );
+        const body = await callTool(dir);
+        expect(body.warnings).toEqual([`foreign_ecosystem_detected: ${tag}`]);
+        // Config string is unchanged — the foreign ecosystem is a
+        // label, not a filter. The minimal defineConfig({}) still
+        // lands because the scan was clean.
+        expect(body.suggestedConfig).toContain('import { defineConfig } from "@ra11y/core";');
+        // nextStep hint names the alternative `npx @ra11y/core scan`
+        // invocation so the agent has a one-shot option that doesn't
+        // add a Node toolchain to the repo.
+        expect(body.nextStep).toContain("npx @ra11y/core scan");
+        expect(body.nextStep).toContain(tag);
+      });
+    });
+  }
+
+  // Guards the package.json short-circuit at the handler level: a
+  // mixed stack (say, Rails + JS bundler) is unambiguously Node-aware
+  // and must NOT earn the foreign-ecosystem warning. Without this
+  // test, a regression that dropped the package.json check would
+  // fire on every Rails-plus-webpacker monorepo.
+  it("does NOT fire the warning when package.json is present alongside Gemfile", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      await writeFile(join(dir, "package.json"), '{"name":"x"}\n');
+      await writeFile(
+        join(dir, "util.ts"),
+        "export function add(a: number, b: number): number { return a + b; }\n",
+      );
+      const body = await callTool(dir);
+      expect(body.warnings).toBeUndefined();
+      expect(body.nextStep).not.toContain("npx @ra11y/core scan");
+    });
+  });
+
+  // Guards the omit-on-none shape: a plain Node project (no foreign
+  // markers, no package.json either) must NOT emit a `warnings: []`
+  // sentinel. Per CLAUDE.md §1 "Ambiguous field shapes are
+  // dishonest" — the field is either populated or absent.
+  it("omits the warnings field entirely on a clean repo with no foreign markers", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "util.ts"),
+        "export function add(a: number, b: number): number { return a + b; }\n",
+      );
+      const body = await callTool(dir);
+      expect(body.warnings).toBeUndefined();
     });
   });
 });

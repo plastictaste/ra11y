@@ -49,6 +49,15 @@
  *     excludes come from the `collectBuildArtifacts` labeller; top-3
  *     rules are raw per-rule tallies with ties broken by rule ID
  *     ascending.
+ *   - Foreign-ecosystem detection: the project root is probed for
+ *     canonical package-manifest markers (`Gemfile`, `pyproject.toml`,
+ *     `go.mod`, `Cargo.toml`). When one resolves and `package.json`
+ *     does NOT, the response carries a top-level
+ *     `warnings: ["foreign_ecosystem_detected: <language>"]` code and
+ *     the `nextStep` hint names an alternative `npx @ra11y/core scan`
+ *     invocation the agent can offer in place of committing a Node
+ *     config. Never suppresses the config — same "surface, don't
+ *     suppress" reasoning as every other code-path in this tool.
  */
 
 import { existsSync } from "node:fs";
@@ -58,6 +67,7 @@ import { gitRoot } from "../utils/git.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import {
   applyRuleSettings,
@@ -114,6 +124,15 @@ export const proposeConfigTool: McpTool = {
     const confirmedWrappers = deriveConfirmedWrappers(files);
     const buildArtifacts = collectBuildArtifacts(files);
     const topRules = deriveTopRules(files, session);
+    // Surface, don't suppress: foreign-ecosystem detection NEVER
+    // withholds the config string — the agent may still want to add a
+    // Node toolchain alongside their Ruby / Python / Go / Rust
+    // project. The warning + nextStep hint carry the context so the
+    // paste decision is informed. See
+    // `docs/kb/architecture/ai-first-consumer.md` "Surface, don't
+    // suppress."
+    const foreignWarning = foreignEcosystemWarning(root);
+    const foreignEcosystem = detectForeignEcosystem(root);
 
     const suggestedConfig = buildConfigString({
       wrappers: confirmedWrappers,
@@ -141,7 +160,16 @@ export const proposeConfigTool: McpTool = {
         excludes: buildArtifacts,
         topRules,
         configSource: projectConfig.sourcePath,
+        foreignEcosystem,
       }),
+      // Top-level warnings channel — conditional-spread so clean scans
+      // in Node-toolchain repos omit the field entirely (CLAUDE.md §1
+      // "Ambiguous field shapes are dishonest" — never emit
+      // `warnings: []`). The code format
+      // `foreign_ecosystem_detected: <language>` carries the ecosystem
+      // tag inline so agents branching on bare `warnings[]` can
+      // discriminate without a paired `warningsDetails` lookup.
+      ...(foreignWarning === null ? {} : { warnings: [foreignWarning] }),
     });
   },
 };
@@ -311,14 +339,23 @@ function buildConfigString(args: {
  * Mentions `configSource` so agents that ALREADY have a config at the
  * project root don't blindly overwrite it — they should diff the
  * proposal against the existing file first.
+ *
+ * When `foreignEcosystem` is set, the hint appends an alternative
+ * invocation — `npx @ra11y/core scan` — that runs the scanner without
+ * committing a TypeScript config into a non-Node repo. Surfaced as
+ * additive context, not a redirect: the caller may still want to paste
+ * the config, but the alternative lets them opt out of adding a Node
+ * toolchain if their project doesn't already have one. See
+ * `docs/kb/architecture/ai-first-consumer.md` "Surface, don't suppress."
  */
 function buildNextStep(args: {
   readonly wrappers: readonly string[];
   readonly excludes: readonly string[];
   readonly topRules: readonly TopRuleEntry[];
   readonly configSource: string | null;
+  readonly foreignEcosystem: string | null;
 }): string {
-  const { wrappers, excludes, topRules, configSource } = args;
+  const { wrappers, excludes, topRules, configSource, foreignEcosystem } = args;
   const summary: string[] = [];
   if (wrappers.length > 0) {
     summary.push(`${wrappers.length} confirmed wrapper${wrappers.length === 1 ? "" : "s"}`);
@@ -335,8 +372,15 @@ function buildNextStep(args: {
     configSource === null
       ? ""
       : ` A ra11y.config already exists at ${configSource} — diff the proposal against it before replacing.`;
+  // Foreign-ecosystem alternative: non-committing invocation so agents
+  // onboarding a Rails / Django / Go / Cargo project have a one-shot
+  // scan command that doesn't add a Node toolchain to the repo.
+  const foreignNote =
+    foreignEcosystem === null
+      ? ""
+      : ` This project has a ${foreignEcosystem} toolchain and no package.json — if the consumer would rather not commit a Node config, run \`npx @ra11y/core scan\` ad-hoc instead of pasting \`suggestedConfig\` into ra11y.config.ts.`;
   if (summary.length === 0) {
-    return `Scan was clean — proposal is a minimal defineConfig({}) placeholder.${existingNote}`;
+    return `Scan was clean — proposal is a minimal defineConfig({}) placeholder.${existingNote}${foreignNote}`;
   }
-  return `Proposal includes ${summary.join(", ")}. Paste \`suggestedConfig\` into ra11y.config.ts at the project root.${existingNote}`;
+  return `Proposal includes ${summary.join(", ")}. Paste \`suggestedConfig\` into ra11y.config.ts at the project root.${existingNote}${foreignNote}`;
 }
