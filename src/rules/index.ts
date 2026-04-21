@@ -21,6 +21,7 @@ import { rule as meaningByColorOnly } from "./color/meaning-by-color-only.ts";
 import { rule as contrastEnhanced } from "./contrast/enhanced.ts";
 import { rule as contrastMinimum } from "./contrast/minimum.ts";
 import { rule as contrastNonText } from "./contrast/non-text.ts";
+import { rule as charsetFirst1024Bytes } from "./document/charset-first-1024-bytes.ts";
 import { rule as iframeTitle } from "./document/iframe-title.ts";
 import { rule as langAttribute } from "./document/lang-attribute.ts";
 import { rule as langOnParts } from "./document/lang-on-parts.ts";
@@ -86,6 +87,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   buttonName,
   cancellation,
   characterShortcuts,
+  charsetFirst1024Bytes,
   conflictingRole,
   contrastEnhanced,
   contrastMinimum,
@@ -158,6 +160,7 @@ export {
   buttonName,
   cancellation,
   characterShortcuts,
+  charsetFirst1024Bytes,
   conflictingRole,
   contrastEnhanced,
   contrastMinimum,

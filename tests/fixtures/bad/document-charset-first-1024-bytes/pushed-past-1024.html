@@ -1,0 +1,30 @@
+<!-- ============================================================== -->
+<!-- BANNER COMMENT intentionally padded to push the charset meta   -->
+<!-- past the first 1024 bytes of the document. The HTML Living     -->
+<!-- Standard requires the encoding declaration to be serialized    -->
+<!-- completely within the first 1024 bytes so the UA can decode    -->
+<!-- the remainder of the document correctly. Long prologs like     -->
+<!-- this one (license headers, build-tool fingerprints, legal      -->
+<!-- notices) can silently push the declaration out of range, at    -->
+<!-- which point the browser's byte-level sniff sees a prefix that  -->
+<!-- was decoded under an assumed encoding — and any multi-byte     -->
+<!-- characters earlier in the document may already be mis-rendered -->
+<!-- by the time the parser reaches the meta and restarts.          -->
+<!-- Because the full declaration must fit in 1024 bytes and this   -->
+<!-- comment is deliberately long enough to consume that budget     -->
+<!-- before <head> even opens, this fixture fails the rule even     -->
+<!-- though the charset meta is the first child of head.            -->
+<!-- Padding line ===============================================.  -->
+<!-- Padding line ===============================================.  -->
+<!-- Padding line ===============================================.  -->
+<!-- Padding line ===============================================.  -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Too late</title>
+  </head>
+  <body>
+    <p>Content after the late meta.</p>
+  </body>
+</html>
