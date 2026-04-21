@@ -1,0 +1,26 @@
+<!--
+  Sanitized repro drawn from the Bootstrap `js/tests/visual/modal/`
+  visual-test HTML. The dismiss button's wrapper carries role="button"
+  for AT semantics but is itself not a materially interactive element:
+  no click/key handler attribute, no tabindex, not a native interactive
+  tag. The inner `<a href>` is the true activation surface.
+
+  This is role-only-wrapper noise — the rule must NOT fire on it.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Modal visual-test repro</title>
+  </head>
+  <body>
+    <div class="modal-footer">
+      <div role="button" class="btn-wrapper">
+        <a href="/close" class="btn btn-secondary">Close</a>
+      </div>
+      <div role="tab" class="tab-label">
+        <a href="#pane-details">Details</a>
+      </div>
+    </div>
+  </body>
+</html>

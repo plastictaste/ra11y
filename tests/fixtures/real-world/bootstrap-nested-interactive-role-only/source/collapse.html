@@ -1,0 +1,49 @@
+<!--
+  Sanitized repro drawn from the Bootstrap `js/tests/visual/collapse/`
+  visual-test HTML. The canonical shape is a navigation wrapper with
+  role="tab" containing an `<a href>` whose `data-bs-toggle="collapse"`
+  opens a collapsed panel via the Bootstrap runtime.
+
+  The outer wrapper has role="tab" for assistive-tech semantics, but
+  the wrapper itself is NOT materially interactive — no click/key
+  handler attribute, no tabindex, not a native interactive tag. The
+  inner `<a href>` is the sole focus target and the sole activation
+  surface. This is idiomatic collapse/accordion markup, not a nested-
+  interactive violation: the rule must NOT fire.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Collapse visual-test repro</title>
+  </head>
+  <body>
+    <div role="tablist">
+      <div class="card">
+        <div class="card-header" role="tab" id="headingOne">
+          <h5 class="mb-0">
+            <a data-bs-toggle="collapse" href="#collapseOne" aria-expanded="true" aria-controls="collapseOne">
+              Collapsible Group Item #1
+            </a>
+          </h5>
+        </div>
+        <div id="collapseOne" class="collapse show" role="tabpanel" aria-labelledby="headingOne">
+          <div class="card-body">Panel one body.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header" role="tab" id="headingTwo">
+          <h5 class="mb-0">
+            <a class="collapsed" data-bs-toggle="collapse" href="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
+              Collapsible Group Item #2
+            </a>
+          </h5>
+        </div>
+        <div id="collapseTwo" class="collapse" role="tabpanel" aria-labelledby="headingTwo">
+          <div class="card-body">Panel two body.</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
