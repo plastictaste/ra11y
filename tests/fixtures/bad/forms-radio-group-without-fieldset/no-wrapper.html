@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Radio group without any wrapper</title>
+  </head>
+  <body>
+    <!-- Canonical antipattern. Two radios share name="speed" — they are
+         mutually exclusive, therefore one group — but nothing wraps
+         them in a <fieldset>/<legend> or role="radiogroup" with a name.
+         Screen readers announce each as an isolated option with no
+         group context. -->
+    <form>
+      <label><input type="radio" name="speed" value="std"> Standard</label>
+      <label><input type="radio" name="speed" value="exp"> Express</label>
+      <button type="submit">Ship it</button>
+    </form>
+  </body>
+</html>

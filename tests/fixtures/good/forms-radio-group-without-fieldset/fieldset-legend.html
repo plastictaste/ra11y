@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Radio group with fieldset + legend (canonical)</title>
+  </head>
+  <body>
+    <!-- Canonical correct shape. The <fieldset> provides the ARIA
+         "group" role; the <legend> becomes the group's accessible
+         name. Screen readers announce "Shipping speed, radio group,
+         3 items" before stepping through each option. -->
+    <form>
+      <fieldset>
+        <legend>Shipping speed</legend>
+        <label><input type="radio" name="speed" value="std"> Standard</label>
+        <label><input type="radio" name="speed" value="exp"> Express</label>
+        <label><input type="radio" name="speed" value="ovn"> Overnight</label>
+      </fieldset>
+    </form>
+  </body>
+</html>

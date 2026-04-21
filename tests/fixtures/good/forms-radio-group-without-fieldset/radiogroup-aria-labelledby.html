@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>role='radiogroup' with aria-labelledby pointing to a heading</title>
+  </head>
+  <body>
+    <!-- Use aria-labelledby when a visible heading already names the
+         group — keeps the on-screen text and the programmatic name
+         in sync, which is what WCAG 2.5.3 asks for. -->
+    <h3 id="priority-label">Priority</h3>
+    <div role="radiogroup" aria-labelledby="priority-label">
+      <label><input type="radio" name="priority" value="low"> Low</label>
+      <label><input type="radio" name="priority" value="med"> Medium</label>
+      <label><input type="radio" name="priority" value="hi"> High</label>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Radio group inside fieldset without legend</title>
+  </head>
+  <body>
+    <!-- The author reached for <fieldset> — good instinct — but forgot
+         the <legend>. The fieldset role alone announces "group" with
+         no name; the radios inside get a nameless group. -->
+    <fieldset>
+      <label><input type="radio" name="priority" value="low"> Low</label>
+      <label><input type="radio" name="priority" value="med"> Medium</label>
+      <label><input type="radio" name="priority" value="hi"> High</label>
+    </fieldset>
+  </body>
+</html>

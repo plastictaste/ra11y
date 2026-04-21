@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>role='radiogroup' without aria-label or aria-labelledby</title>
+  </head>
+  <body>
+    <!-- The ARIA pattern is applied (role="radiogroup") but the
+         container has no accessible name — no aria-label, no
+         aria-labelledby. Screen readers announce "radio group" with
+         nothing identifying the choice. -->
+    <div role="radiogroup">
+      <label><input type="radio" name="size" value="s"> Small</label>
+      <label><input type="radio" name="size" value="m"> Medium</label>
+      <label><input type="radio" name="size" value="l"> Large</label>
+    </div>
+  </body>
+</html>

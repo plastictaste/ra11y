@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>role='radiogroup' with aria-label</title>
+  </head>
+  <body>
+    <!-- Alternative correct shape via ARIA. The container explicitly
+         declares role="radiogroup" and supplies the accessible name
+         via aria-label. Use this when <fieldset> styling is fighting
+         a design system; semantics stay intact. -->
+    <div role="radiogroup" aria-label="Shipping speed">
+      <label><input type="radio" name="speed" value="std"> Standard</label>
+      <label><input type="radio" name="speed" value="exp"> Express</label>
+    </div>
+  </body>
+</html>
