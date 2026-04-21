@@ -43,7 +43,6 @@ import { relative } from "node:path";
 import { parseInlineDisables } from "../config/index.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { buildAgentFinding } from "../output/agent-response/index.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
 import {
   buildNextStep,
   computeDelta,
@@ -142,11 +141,11 @@ export const applyFixTool: McpTool = {
     const standards = resolveStandards(strParam(params, "standard"), session);
     const projectConfig = await session.loadProjectConfig(cwd);
     const effective = session.effectiveRules(projectConfig);
-    const activeRules = applyRuleSettings(BUILTIN_RULES, effective);
+    const activeRules = applyRuleSettings(session.registry.rules, effective);
     const level = resolveLevelParam(strParam(params, "level"), session.config.level);
 
-    const before = runSingleFileScan(original, activeRules, standards, level);
-    const after = runSingleFileScan(postFile, activeRules, standards, level);
+    const before = runSingleFileScan(original, activeRules, standards, level, session);
+    const after = runSingleFileScan(postFile, activeRules, standards, level, session);
 
     let applied = false;
     if (!dryRun) {

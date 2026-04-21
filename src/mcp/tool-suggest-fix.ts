@@ -5,8 +5,6 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
-import { BUILTIN_RULES } from "../rules/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
@@ -86,8 +84,8 @@ export const suggestFixTool: McpTool = {
 
     const standards = resolveStandards(undefined, session);
     const { result } = runScan({
-      standards: BUILTIN_STANDARDS,
-      rules: applyRuleSettings(BUILTIN_RULES, session.config.rules),
+      standards: session.registry.standards,
+      rules: applyRuleSettings(session.registry.rules, session.config.rules),
       enabled: standards,
       files: [parsed],
       level: session.config.level,
