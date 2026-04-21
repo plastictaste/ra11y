@@ -52,6 +52,19 @@ export interface SessionConfig {
    */
   nativeWrapperElements: Readonly<Record<string, string>>;
   /**
+   * Absolute project root the session wrappers are anchored to. Captured
+   * the first time `sessionConfigure` registers wrappers (either flat
+   * array or object form); pulled from the caller's `cwd` param when
+   * passed, otherwise from `process.cwd()`. Tools that consult session
+   * wrappers compare this against the current scan's resolved root and
+   * surface a `session_wrappers_configured_for_different_cwd` warning
+   * when they differ — session state is connection-wide today, so an
+   * agent that switches targets mid-session would otherwise see the
+   * stale wrappers silently apply. Remains `undefined` when no session
+   * wrappers have been set.
+   */
+  nativeWrappersConfiguredCwd: string | undefined;
+  /**
    * When true, tools that mutate user source (`apply_fix`) are permitted to
    * write to disk. Defaults to false: the host must opt-in via `configure`
    * (or the `--allow-write` CLI flag equivalent) before any on-disk edit
@@ -139,6 +152,7 @@ export class McpSession {
       rules: {},
       nativeWrappers: [],
       nativeWrapperElements: {},
+      nativeWrappersConfiguredCwd: undefined,
       allowWrite: false,
     };
     this.logging = new LoggingState();
@@ -234,6 +248,14 @@ export class McpSession {
      * mapping mid-session without re-sending the full object.
      */
     nativeWrapperElements?: Readonly<Record<string, string>>;
+    /**
+     * Absolute directory the caller is configuring session wrappers
+     * against. Captured into `nativeWrappersConfiguredCwd` the first
+     * time wrappers are registered so subsequent tool calls against a
+     * different resolved root can surface a cross-cwd mismatch
+     * warning. Ignored when no wrapper-shaped field is also passed.
+     */
+    cwd?: string;
     allowWrite?: boolean;
   }): SessionConfig {
     if (opts.standard !== undefined) this.config.standard = opts.standard;
@@ -243,6 +265,13 @@ export class McpSession {
       // Merge: new overrides replace per key, existing keep.
       this.config.rules = { ...this.config.rules, ...opts.rules };
     }
+    const hadWrappers =
+      this.config.nativeWrappers.length > 0 ||
+      Object.keys(this.config.nativeWrapperElements).length > 0;
+    const isSettingWrappers =
+      (opts.nativeWrappers !== undefined && opts.nativeWrappers.length > 0) ||
+      (opts.nativeWrapperElements !== undefined &&
+        Object.keys(opts.nativeWrapperElements).length > 0);
     if (opts.nativeWrappers !== undefined) {
       // Union with existing so repeated configure() calls accumulate.
       this.config.nativeWrappers = [
@@ -263,12 +292,44 @@ export class McpSession {
         ...new Set([...this.config.nativeWrappers, ...Object.keys(opts.nativeWrapperElements)]),
       ];
     }
+    if (isSettingWrappers && !hadWrappers) {
+      // First call that actually lands wrappers — capture the anchor
+      // cwd. Prefer the explicit param; fall back to process.cwd() so
+      // a caller that forgot the param still gets a concrete anchor
+      // (the mismatch warning then depends on the server's spawn
+      // directory, which is honest about the configuration's provenance).
+      this.config.nativeWrappersConfiguredCwd = resolveConfiguredCwd(opts.cwd);
+    }
     if (opts.allowWrite !== undefined) this.config.allowWrite = opts.allowWrite;
     return {
       ...this.config,
       rules: { ...this.config.rules },
       nativeWrapperElements: { ...this.config.nativeWrapperElements },
     };
+  }
+
+  /**
+   * True when session wrappers are registered AND the configured anchor
+   * cwd differs from the caller's current resolved root. The comparison
+   * uses `resolve(...)` on both sides so equivalent paths (e.g. trailing
+   * slashes, relative forms) don't false-positive. Returns false when
+   * no wrappers are set or no anchor was captured.
+   *
+   * Tools consult this from the scan-response assembly site and emit
+   * `session_wrappers_configured_for_different_cwd` alongside the
+   * regular warning codes — without it, an agent that configures
+   * wrappers against one project and then scans another sees
+   * `activeNativeWrappers` populated with stale names and no signal
+   * that state is leaking across cwds.
+   */
+  sessionWrappersMismatchCwd(currentRoot: string): boolean {
+    const anchor = this.config.nativeWrappersConfiguredCwd;
+    if (anchor === undefined) return false;
+    const hasWrappers =
+      this.config.nativeWrappers.length > 0 ||
+      Object.keys(this.config.nativeWrapperElements).length > 0;
+    if (!hasWrappers) return false;
+    return resolve(anchor) !== resolve(currentRoot);
   }
 
   /**
@@ -341,6 +402,19 @@ export class McpSession {
   get metaCacheSize(): number {
     return this.metaBySessionRef.size;
   }
+}
+
+/**
+ * Resolves a caller-supplied `cwd` (or `undefined`) to the absolute
+ * path recorded as the session-wrapper anchor. Relative paths resolve
+ * against `process.cwd()`; a missing value falls back to the server's
+ * spawn directory so the anchor is always concrete (and honestly
+ * surfaces a mismatch the first time a later tool call targets a
+ * different root).
+ */
+function resolveConfiguredCwd(cwd: string | undefined): string {
+  if (cwd === undefined || cwd.length === 0) return process.cwd();
+  return isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
 }
 
 /**

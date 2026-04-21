@@ -55,7 +55,15 @@ export type ScanWarningCode =
   // density truncation is indistinguishable from file-count
   // truncation and an agent cannot tell whether raising `limit` will
   // help.
-  | "response_token_budget_truncated";
+  | "response_token_budget_truncated"
+  // Session wrappers were registered against one cwd and the current
+  // scan's resolved root differs. Session state is connection-wide, so
+  // the wrappers still apply — the warning tells the agent the
+  // wrappers may not match the new codebase so stale names don't
+  // silently silence findings after a target switch. Re-run
+  // `sessionConfigure({ cwd, nativeWrappers: ... })` against the
+  // current project to re-anchor.
+  | "session_wrappers_configured_for_different_cwd";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -107,6 +115,14 @@ export interface WarningInputs {
    * Omitted or `false` when the preset did not apply.
    */
   readonly storybookPresetActive?: boolean;
+  /**
+   * True when the current scan's resolved root differs from the cwd
+   * the session's native wrappers were configured against. Drives
+   * the `session_wrappers_configured_for_different_cwd` warning.
+   * Read from `McpSession.sessionWrappersMismatchCwd(root)` at the
+   * call site so the warnings module stays pure over its inputs.
+   */
+  readonly sessionWrappersMismatchCwd?: boolean;
 }
 
 /** Threshold below which a Tailwind-detected codebase is considered CSS-undercounted. */
@@ -163,6 +179,13 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // agent can branch without reading into meta.
     out.push("extensions_skipped_no_parser");
   }
+  if (inputs.sessionWrappersMismatchCwd === true) {
+    // Connection-wide session state carried wrappers configured for a
+    // different project root into this scan. The wrappers still
+    // applied; the warning lets the agent re-anchor
+    // `sessionConfigure({ cwd })` or ignore after confirming.
+    out.push("session_wrappers_configured_for_different_cwd");
+  }
   return out;
 }
 
@@ -211,6 +234,7 @@ export function warningsFromScanMeta(args: {
   readonly configSource: string | null | undefined;
   readonly scannedBuildArtifactsPresent?: boolean;
   readonly storybookPresetActive?: boolean;
+  readonly sessionWrappersMismatchCwd?: boolean;
 }): readonly ScanWarningCode[] {
   return computeScanWarnings({
     filesScanned: readNumber(args.meta, "filesScanned"),
@@ -224,6 +248,9 @@ export function warningsFromScanMeta(args: {
     ...(args.storybookPresetActive === undefined
       ? {}
       : { storybookPresetActive: args.storybookPresetActive }),
+    ...(args.sessionWrappersMismatchCwd === undefined
+      ? {}
+      : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
   });
 }
 
@@ -250,6 +277,7 @@ export function warningsFieldFromScanMeta(args: {
   readonly configSource: string | null | undefined;
   readonly scannedBuildArtifactsPresent?: boolean;
   readonly storybookPresetActive?: boolean;
+  readonly sessionWrappersMismatchCwd?: boolean;
 }): { readonly warnings?: readonly ScanWarningCode[] } {
   const codes = warningsFromScanMeta(args);
   return codes.length > 0 ? { warnings: codes } : {};

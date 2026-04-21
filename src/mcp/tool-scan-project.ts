@@ -273,6 +273,7 @@ export const scanProjectTool: McpTool = {
           configSource: projectConfig.sourcePath,
           scannedBuildArtifactsPresent: buildArtifacts.present,
           storybookPresetActive,
+          sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
         }),
       }),
     );

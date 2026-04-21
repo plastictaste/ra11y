@@ -137,9 +137,11 @@ The pragma is inserted on its own line directly above the target, with indentati
 
 ### `sessionConfigure`
 
-Sets session-level config: `standard`, `level`, `exclude`, `rules` (per-rule severity overrides), `nativeWrappers`, `allowWrite`.
+Sets session-level config: `standard`, `level`, `exclude`, `rules` (per-rule severity overrides), `nativeWrappers`, `cwd`, `allowWrite`.
 
 **Use when:** the user adjusts scope mid-session ("also run Section 508", "downgrade `contrast/enhanced` to info").
+
+Pass `cwd` alongside `nativeWrappers` to anchor the session wrappers to a specific project root. Session state is connection-wide, so later `scan_project` / `list_suppressions` calls against a different `cwd` will still see the wrappers — but the response will carry a `session_wrappers_configured_for_different_cwd` warning so an agent that switches targets sees the cross-cwd drift. Re-call `sessionConfigure` with the new project's `cwd` to re-anchor.
 
 ## Reading the output
 

@@ -134,9 +134,18 @@ export const listSuppressionsTool: McpTool = {
       rulesEvaluated,
       ...(activeNativeWrappers.length > 0 ? { activeNativeWrappers } : {}),
     };
+    // Surface cross-cwd session-wrapper drift honestly so an agent that
+    // configured wrappers against one project and then called
+    // list_suppressions against another sees the anchor mismatch
+    // alongside the stale `source: "session"` entries.
+    const sessionWrappersMismatchCwd = session.sessionWrappersMismatchCwd(root);
+    const warnings = sessionWrappersMismatchCwd
+      ? (["session_wrappers_configured_for_different_cwd"] as const)
+      : [];
     return textResult({
       suppressions: entries,
       meta: applyMetaCacheMode({ toolName: "list_suppressions", params, fullMeta, session }),
+      ...(warnings.length > 0 ? { warnings } : {}),
       nextStep: buildNextStep(entries),
     });
   },

@@ -503,7 +503,7 @@ const sessionConfigureTool: McpTool = {
   def: {
     name: "sessionConfigure",
     description:
-      'Set EPHEMERAL session-scoped defaults — standard, level, excludes, per-rule severity, native-wrapper components — so subsequent tool calls on this MCP connection don\'t repeat these parameters. State lives in the session only; nothing is written to disk, and a fresh connection starts clean.\n\nFor durable, committed configuration, drop a `ra11y.config.ts` at the project root:\n\n  export default {\n    nativeWrappers: ["Button", "ActionButton"],\n    rules: { "media/alt-text-missing": "warning" },\n    exclude: ["packages/legacy/**"],\n  };\n\nThe scan response surfaces `meta.configSource` (path of the loaded file, or null) and `meta.configSearchedFrom` (directory the loader walked up from). If `configSource` is null, make sure you pass `cwd` so the loader walks up from your project root, not the MCP server\'s spawn directory.',
+      'Set EPHEMERAL session-scoped defaults — standard, level, excludes, per-rule severity, native-wrapper components — so subsequent tool calls on this MCP connection don\'t repeat these parameters. State lives in the session only; nothing is written to disk, and a fresh connection starts clean.\n\nFor durable, committed configuration, drop a `ra11y.config.ts` at the project root:\n\n  export default {\n    nativeWrappers: ["Button", "ActionButton"],\n    rules: { "media/alt-text-missing": "warning" },\n    exclude: ["packages/legacy/**"],\n  };\n\nThe scan response surfaces `meta.configSource` (path of the loaded file, or null) and `meta.configSearchedFrom` (directory the loader walked up from). If `configSource` is null, make sure you pass `cwd` so the loader walks up from your project root, not the MCP server\'s spawn directory.\n\nPass `cwd` alongside `nativeWrappers` to anchor the wrappers to a specific project root. Session state is connection-wide, so a later `scan_project` / `list_suppressions` call against a different `cwd` will still see the wrappers — but the response will carry a `session_wrappers_configured_for_different_cwd` warning so an agent that switches targets knows the configured wrappers may not match the new codebase.',
     inputSchema: {
       type: "object",
       properties: {
@@ -533,6 +533,11 @@ const sessionConfigureTool: McpTool = {
           ],
           description:
             'PascalCase components you\'ve verified wrap a native interactive element (<button>, <a>, etc.). Two accepted shapes:\n\n  • Flat names array — `["Button", "ActionButton", "IconButton"]`. Info-level keyboard/handler-missing notes on these components are suppressed; wrapper-opt-in rules (`media/alt-text-missing`, `navigation/link-descriptive-text`, `forms/labels-required`) do NOT pick them up because the native element target is unknown.\n  • Object map — `{ Button: "button", ActionButton: "button", RouterLink: "a", Avatar: "img" }`. In addition to suppression, wrapper-opt-in rules treat these components as the mapped native element and fire/pass accordingly. Surfaces on the response as `activeNativeWrapperElements`.\n\nAdditive across calls: per-key merge on the object form (later entries refine prior ones for the same wrapper); union on the array form.',
+        },
+        cwd: {
+          type: "string",
+          description:
+            "Absolute path of the project the wrappers apply to. Recorded as the session's wrapper anchor on the first call that registers wrappers. Later scans against a different resolved root emit `session_wrappers_configured_for_different_cwd` in `warnings` so cross-cwd state is visible to the agent. Defaults to the MCP server's spawn directory when omitted — pass this explicitly alongside `nativeWrappers` to scope honestly.",
         },
         allowWrite: {
           type: "boolean",

@@ -331,6 +331,13 @@ export interface ConfigureOpts {
    * object form of `Config.nativeWrappers` can round-trip through MCP.
    */
   nativeWrapperElements?: Readonly<Record<string, string>>;
+  /**
+   * Absolute path of the project the wrappers apply to. Forwarded
+   * verbatim to `McpSession.configure` so the session records it as
+   * the wrapper anchor; later scans against a different root surface
+   * the mismatch via `session_wrappers_configured_for_different_cwd`.
+   */
+  cwd?: string;
   allowWrite?: boolean;
 }
 
@@ -374,6 +381,7 @@ export function buildConfigureOpts(params: Record<string, unknown>): ConfigureOp
   const rules = readRuleSettings(params);
   const { names: nativeWrappers, elements: nativeWrapperElements } =
     readNativeWrappersParam(params);
+  const cwd = strParam(params, "cwd");
   const allowWrite = params["allowWrite"];
   if (standard !== undefined) opts.standard = standard;
   if (level !== undefined) opts.level = level;
@@ -381,6 +389,7 @@ export function buildConfigureOpts(params: Record<string, unknown>): ConfigureOp
   if (rules !== undefined) opts.rules = rules;
   if (nativeWrappers !== undefined) opts.nativeWrappers = nativeWrappers;
   if (nativeWrapperElements !== undefined) opts.nativeWrapperElements = nativeWrapperElements;
+  if (cwd !== undefined) opts.cwd = cwd;
   if (typeof allowWrite === "boolean") opts.allowWrite = allowWrite;
   return opts;
 }
