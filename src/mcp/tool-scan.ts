@@ -6,19 +6,22 @@
  *
  * Response shape is scan-family: `{ plan, files, meta, warnings?,
  * warningsDetails?, referenceGuide?, ruleCoverage?, truncated?,
- * totalFilesWithFindings? }`. When the ADR 0021 density cap fires we
- * emit `truncated: true` + `totalFilesWithFindings` + the
- * `response_token_budget_truncated` warning. No `nextOffset` — the
- * tool has no resumable paging primitive; the remediation is to narrow
- * `paths` or switch to `scan_project`.
+ * totalFilesWithFindings? }`. Assembly routes through
+ * {@link assembleScanFamilyResponse} per V1-RESPONSE-SCAN-CORE — the
+ * handler owns only the tool-specific outer fields (`scanned`,
+ * `configSource`, `configSearchedFrom`, `configNote`, `nextStep`) and
+ * the scan-specific token-density merge (no `nextOffset`, because
+ * `scan` has no resumable paging primitive; the remediation is to
+ * narrow `paths` or switch to `scan_project`).
  */
 
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
-import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
+import { assembleScanFamilyResponse } from "./response-assembler.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
 import { mergeScanTokenBudget } from "./scan-budget.ts";
+import { runScanAndCollect } from "./scan-collect.ts";
 import { scannedDir } from "./scanned-envelope.ts";
 import { applyTokenBudget } from "./token-budget.ts";
 import {
@@ -26,12 +29,11 @@ import {
   type McpTool,
   parseFiles,
   resolveStandards,
-  runScanAndFormat,
   strArrayParam,
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField, warningsFromScanMeta } from "./warnings.ts";
+import { warningsField } from "./warnings.ts";
 import { buildWrapperSourcesFromConfig } from "./wrappers-meta.ts";
 
 export const scanTool: McpTool = {
@@ -129,22 +131,49 @@ export const scanTool: McpTool = {
       });
     }
 
-    const { formatted } = await runScanAndFormat(
+    const collected = await runScanAndCollect({
       files,
       session,
-      standards,
-      strParam(params, "minSeverity"),
-      session.effectiveRules(projectConfig),
-      buildWrapperSourcesFromConfig(projectConfig, session),
+      enabled: standards,
+      minSeverity: strParam(params, "minSeverity"),
+      ruleSettings: session.effectiveRules(projectConfig),
+      wrapperSources: buildWrapperSourcesFromConfig(projectConfig, session),
       cwd,
-      params["verboseMeta"] === true,
+    });
+    // Disable the assembler's internal token-density cap so the cap
+    // measures the FINAL response shape — after we've overlaid the
+    // tool-specific outer fields (scanned, configSource, nextStep,
+    // …). Running both would double-count the density measurement on
+    // a smaller object. `scan` applies its own cap below via
+    // `mergeScanTokenBudget` so the `response_token_budget_truncated`
+    // warning code fires alongside `truncated: true`.
+    const assembled = assembleScanFamilyResponse(
+      {
+        ...collected,
+        verboseMeta: params["verboseMeta"] === true,
+        preset: projectConfig.preset,
+        configSource: projectConfig.sourcePath,
+        // `scan` takes paths directly and has no root-resolution step,
+        // so rootSource is null — `root_source_defaulted` cannot fire
+        // here by construction.
+        rootSource: null,
+      },
+      { tokenBudget: 0 },
     );
-    const nextStep = buildNextStep(formatted);
+    const nextStep = buildNextStep({
+      plan: assembled.plan,
+      files: assembled.files,
+      meta: assembled.meta,
+      ...(assembled.referenceGuide === undefined
+        ? {}
+        : { referenceGuide: assembled.referenceGuide }),
+      ...(assembled.ruleCoverage === undefined ? {} : { ruleCoverage: assembled.ruleCoverage }),
+    });
     const nextStepStructuredField =
       nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured };
 
     const fullMeta: Record<string, unknown> = {
-      ...formatted.meta,
+      ...assembled.meta,
       scanned: scannedDir(paths),
       configSource: projectConfig.sourcePath,
       configSearchedFrom: cwd,
@@ -156,37 +185,35 @@ export const scanTool: McpTool = {
       nextStep: nextStep.prose,
       ...nextStepStructuredField,
     };
-    // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist duplicated
-    // `fix.description` prose into `referenceGuide.fixDescriptions`
-    // for the final files array. `scan` emits every file with findings
-    // (no pagination), so the hoist source matches the response.
-    const hoisted = hoistAndBuildReferenceGuide(formatted.files, formatted.referenceGuide);
-    const baseWarnings = warningsFromScanMeta({
-      meta: formatted.meta,
-      rootSource: null,
-      configSource: projectConfig.sourcePath,
-    });
+    // Hold onto the pre-overlay warnings channel so the
+    // `mergeScanTokenBudget` merge can re-emit them alongside the
+    // density-cap code. The assembler's `warnings` / `warningsDetails`
+    // are the deterministic signal set; density truncation is a
+    // secondary concern the merge layers on top.
+    const baseWarnings = assembled.warnings ?? [];
+    const baseWarningsDetails = assembled.warningsDetails;
     // ADR 0021 amendment (2026-04-20): secondary token-density budget.
     // `scan` has no `limit`/`offset` contract, so when the density cap
     // fires we emit `truncated: true` + `totalFilesWithFindings` + the
     // `response_token_budget_truncated` warning — no `nextOffset`,
-    // because the tool has no resumable paging primitive. The
-    // remediation the agent takes is "narrow `paths` or switch to
-    // scan_project which does paginate," surfaced via the warning
-    // code. Progress guarantee: the helper always keeps at least one
-    // file.
+    // because the tool has no resumable paging primitive. Progress
+    // guarantee: the helper always keeps at least one file.
     const tentative: Record<string, unknown> = {
-      ...formatted,
-      files: hoisted.files,
-      ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
-      ...ruleCatalogField(params, session.registry.rules, formatted.files),
+      plan: assembled.plan,
+      files: assembled.files,
+      ...(assembled.referenceGuide === undefined
+        ? {}
+        : { referenceGuide: assembled.referenceGuide }),
+      ...(assembled.ruleCoverage === undefined ? {} : { ruleCoverage: assembled.ruleCoverage }),
+      ...ruleCatalogField(params, session.registry.rules, assembled.files),
       ...(baseWarnings.length > 0 ? { warnings: baseWarnings } : {}),
+      ...(baseWarningsDetails === undefined ? {} : { warningsDetails: baseWarningsDetails }),
       meta: applyMetaCacheMode({ toolName: "scan", params, fullMeta, session }),
     };
     const budgeted = applyTokenBudget({
       response: tentative,
       filesKey: "files",
-      files: hoisted.files,
+      files: assembled.files,
       offset: 0,
     });
     if (budgeted.droppedCount === 0) return textResult(tentative);
@@ -195,8 +222,8 @@ export const scanTool: McpTool = {
         tentative,
         budgeted,
         baseWarnings,
-        totalFilesWithFindings: hoisted.files.length,
-        requestedLimit: hoisted.files.length,
+        totalFilesWithFindings: assembled.files.length,
+        requestedLimit: assembled.files.length,
         effectiveLimit: budgeted.files.length,
       }),
     );

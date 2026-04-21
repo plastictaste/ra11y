@@ -11,14 +11,6 @@
  */
 
 import { buildListRulesNextStep } from "./list-rules-next-step.ts";
-import {
-  buildConfigureOpts,
-  errorResult,
-  findRule,
-  type McpTool,
-  strParam,
-  textResult,
-} from "./tools-helpers.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
 import { attestTool } from "./tool-attest.ts";
 import { auditTool } from "./tool-audit.ts";
@@ -34,15 +26,23 @@ import { listSuppressionsTool } from "./tool-list-suppressions.ts";
 import { proposeBaselineTool } from "./tool-propose-baseline.ts";
 import { proposeConfigTool } from "./tool-propose-config.ts";
 import { reviewCandidatesTool } from "./tool-review-candidates.ts";
+import { scanTool } from "./tool-scan.ts";
 import { scanDiffTool } from "./tool-scan-diff.ts";
 import { scanFileTool } from "./tool-scan-file.ts";
 import { scanProcessTool } from "./tool-scan-process.ts";
 import { scanProjectTool } from "./tool-scan-project.ts";
-import { scanTool } from "./tool-scan.ts";
 import { suggestFixTool } from "./tool-suggest-fix.ts";
 import { suppressTool } from "./tool-suppress.ts";
 import { vpatTool } from "./tool-vpat.ts";
 import { wrapperIntrospectTool } from "./tool-wrapper-introspect.ts";
+import {
+  buildConfigureOpts,
+  errorResult,
+  findRule,
+  type McpTool,
+  strParam,
+  textResult,
+} from "./tools-helpers.ts";
 
 export type { McpTool, McpToolDef, McpToolResult } from "./tools-helpers.ts";
 

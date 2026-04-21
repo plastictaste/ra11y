@@ -24,7 +24,7 @@ import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import type { McpSession } from "./session.ts";
-import { suppressionAudit, type SuppressionAuditEntry } from "./suppression-audit.ts";
+import { type SuppressionAuditEntry, suppressionAudit } from "./suppression-audit.ts";
 import {
   applyCriterionSkip,
   applyRuleSettings,
