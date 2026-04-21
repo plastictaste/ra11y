@@ -1,0 +1,7 @@
+<nav aria-label="Documentation sections (mobile)">
+  <select aria-label="Choose a section">
+    {% for section in site.docs_sections %}
+    <option value="{{ section.url }}">{{ section.title }}</option>
+    {% endfor %}
+  </select>
+</nav>
