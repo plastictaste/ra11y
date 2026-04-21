@@ -117,7 +117,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:3.2.2` | On Input | A | manual | — | on-input-change | **finder** |
 | `wcag22:3.2.3` | Consistent Navigation | AA | manual | — | consistent-navigation | **finder** |
 | `wcag22:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
-| `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh | — | **rule** |
+| `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag22:3.2.6` | Consistent Help | A | manual | — | — | **attestation-only** |
 | `wcag22:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
 | `wcag22:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +2 | — | **rule** |
@@ -207,7 +207,7 @@ Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 | `wcag21:3.2.2` | On Input | A | manual | — | on-input-change | **finder** |
 | `wcag21:3.2.3` | Consistent Navigation | AA | manual | — | consistent-navigation | **finder** |
 | `wcag21:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
-| `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh | — | **rule** |
+| `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag21:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, server-error-untied | **rule** |
 | `wcag21:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-for-id-mismatch +2 | — | **rule** |
 | `wcag21:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
