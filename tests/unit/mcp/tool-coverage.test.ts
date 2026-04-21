@@ -41,6 +41,14 @@ interface CoverageEnvelope {
   readonly standardId: string;
   readonly analysisCoverage?: Record<string, unknown>;
   readonly warnings?: readonly string[];
+  readonly warningsDetails?: {
+    readonly extensions_skipped_no_parser?: {
+      readonly extensions: readonly string[];
+      readonly topExtension: string;
+      readonly topCount: number;
+      readonly totalSkipped: number;
+    };
+  };
 }
 
 function parseEnvelope(text: string): CoverageEnvelope {
@@ -87,6 +95,37 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(skipped?.[".svelte"]).toBe(1);
     expect(skipped?.[".vue"]).toBe(1);
     expect(skipped?.[".py"]).toBe(1);
+
+    // ADR 0023: the structured `warningsDetails` sibling carries the
+    // dense summary so an agent branching on the bare-string warning
+    // channel can answer "how bad" without descending into `meta`.
+    // Set-membership invariant: the code appears in both surfaces.
+    expect(data.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
+    const summary = data.warningsDetails?.extensions_skipped_no_parser;
+    expect(summary?.totalSkipped).toBe(3);
+    // Three-way count tie breaks alphabetically — .py then .svelte then .vue.
+    expect(summary?.extensions).toEqual([".py", ".svelte", ".vue"]);
+  });
+
+  it("omits `warningsDetails` when no payload-bearing warning code fires (shape discipline, not just `warnings: undefined`)", async () => {
+    // Scan-side scenario: every file parseable, no template directives,
+    // no Tailwind / storybook / build-artifact signal. `warnings` and
+    // `warningsDetails` must both be absent per "present-when-meaningful."
+    // Guarded independently from the `warnings` omission test because
+    // the two channels can drift — a bug that emitted `warningsDetails: {}`
+    // alongside `warnings: undefined` would satisfy the existing test
+    // but still force agents to disambiguate empty vs absent.
+    write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+    write(join(dir, "styles.css"), "main { color: black; }\n");
+
+    const tool = findTool("coverage");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = parseEnvelope(result.content[0].text);
+    expect(data.warnings).toBeUndefined();
+    expect(data.warningsDetails).toBeUndefined();
   });
 
   it("omits `warnings` on a clean all-parseable scan (never `warnings: []`)", async () => {

@@ -40,7 +40,11 @@ export type ScanWarningCode =
   // Without this code a mixed-language repo reads as "scanned
   // everything" when the scanner dropped the majority of source files
   // at discovery. Paired meta: `analysisCoverage.skippedByExtension`
-  // carries the ext↦count map the warning points at.
+  // carries the ext↦count map the warning points at. Structured
+  // payload under `warningsDetails.extensions_skipped_no_parser`
+  // carries a dense summary (top extension + total) so an agent
+  // branching on the code can answer "how bad?" without descending
+  // into `meta` — see ADR 0023.
   | "extensions_skipped_no_parser"
   // Parser produced errors on at least one file: the AST is partial,
   // so rules may have missed violations below the parse-error point.
@@ -137,6 +141,46 @@ export interface WarningInputs {
 
 /** Threshold below which a Tailwind-detected codebase is considered CSS-undercounted. */
 const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
+
+/**
+ * Max number of extensions to inline under
+ * `warningsDetails.extensions_skipped_no_parser.extensions`. The field
+ * is a dense summary for branching ("how bad, and in what kind of
+ * code?"); the full per-extension distribution stays under
+ * `meta.analysisCoverage.skippedByExtension` for callers that want the
+ * long tail. Five is enough to cover every mixed-language repo profile
+ * we've seen (bootstrap: 3 distinct extensions; typical monorepo: ≤5).
+ */
+const WARNING_DETAILS_TOP_EXTENSIONS = 5;
+
+/**
+ * Structured sibling to the bare-string `warnings[]` channel — see
+ * ADR 0023. Keyed by `ScanWarningCode`; only codes whose signal is
+ * enriched by a payload appear here. Codes whose presence alone is
+ * the signal (`no_config_found`, `scanned_zero_files`, etc.) have no
+ * entry and the map may be empty as a whole — in which case
+ * `warningsDetailsField` omits the field entirely per
+ * "present-when-meaningful."
+ */
+export interface ScanWarningDetails {
+  /**
+   * Dense summary of the per-extension skip distribution behind the
+   * `extensions_skipped_no_parser` code. Mirrors
+   * `meta.analysisCoverage.skippedByExtension` in compressed form so
+   * an agent branching on the warning can answer "how bad, and in
+   * what kind of code" without cross-referencing `meta`.
+   *
+   * `extensions` is sorted by descending count (ties broken
+   * alphabetically) and truncated to {@link WARNING_DETAILS_TOP_EXTENSIONS};
+   * the full distribution stays in `meta`.
+   */
+  readonly extensions_skipped_no_parser?: {
+    readonly extensions: readonly string[];
+    readonly topExtension: string;
+    readonly topCount: number;
+    readonly totalSkipped: number;
+  };
+}
 
 /**
  * Returns the codes whose conditions hold, in declaration order. Callers
@@ -279,16 +323,85 @@ export function warningsFromScanMeta(args: {
 }
 
 /**
+ * Builds the structured `warningsDetails` payload — see ADR 0023.
+ * Returns entries only for codes that both fired and have a mirror
+ * under `meta` worth lifting onto the top-level channel. Codes whose
+ * presence alone is the signal (`no_config_found`, `scanned_zero_files`,
+ * etc.) get no entry and the caller conditional-spreads the empty
+ * object away.
+ */
+export function computeScanWarningDetails(
+  codes: readonly ScanWarningCode[],
+  inputs: WarningInputs,
+): ScanWarningDetails {
+  const details: {
+    extensions_skipped_no_parser?: NonNullable<ScanWarningDetails["extensions_skipped_no_parser"]>;
+  } = {};
+  if (codes.includes("extensions_skipped_no_parser")) {
+    const summary = summarizeSkippedExtensions(inputs.analysisCoverage);
+    if (summary !== undefined) details.extensions_skipped_no_parser = summary;
+  }
+  return details;
+}
+
+/**
+ * Collapses the `skippedByExtension` ext↦count map into the dense
+ * summary ADR 0023 defines for the top-level
+ * `warningsDetails.extensions_skipped_no_parser` payload. Returns
+ * `undefined` when the map is missing or empty so the caller can
+ * conditional-spread without emitting a degenerate entry.
+ */
+function summarizeSkippedExtensions(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly topExtension: string;
+      readonly topCount: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  if (coverage === undefined) return undefined;
+  const skipped = coverage["skippedByExtension"];
+  if (skipped === null || typeof skipped !== "object") return undefined;
+  const entries: Array<[string, number]> = [];
+  for (const [ext, count] of Object.entries(skipped as Record<string, unknown>)) {
+    if (typeof count === "number" && count > 0 && typeof ext === "string" && ext.length > 0) {
+      entries.push([ext, count]);
+    }
+  }
+  // Descending by count; alphabetical tie-break for determinism.
+  entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const top = entries[0];
+  if (top === undefined) return undefined;
+  const truncated = entries.slice(0, WARNING_DETAILS_TOP_EXTENSIONS);
+  let totalSkipped = 0;
+  for (const [, count] of entries) totalSkipped += count;
+  return {
+    extensions: truncated.map(([ext]) => ext),
+    topExtension: top[0],
+    topCount: top[1],
+    totalSkipped,
+  };
+}
+
+/**
  * Returns the spreadable response field — `{ warnings: [...] }` when at
- * least one code fired, `{}` otherwise. Lets call sites collapse the
- * compute + conditional-spread to a single `...warningsField(...)`,
- * keeping the handler's cognitive complexity flat.
+ * least one code fired, paired with `warningsDetails: { ... }` when at
+ * least one fired code has a structured payload, `{}` otherwise. Lets
+ * call sites collapse the compute + conditional-spread to a single
+ * `...warningsField(...)`, keeping the handler's cognitive complexity
+ * flat. See ADR 0023 for the two-channel rationale.
  */
 export function warningsField(inputs: WarningInputs): {
   readonly warnings?: readonly ScanWarningCode[];
+  readonly warningsDetails?: ScanWarningDetails;
 } {
   const codes = computeScanWarnings(inputs);
-  return codes.length > 0 ? { warnings: codes } : {};
+  if (codes.length === 0) return {};
+  const details = computeScanWarningDetails(codes, inputs);
+  return {
+    warnings: codes,
+    ...(Object.keys(details).length > 0 ? { warningsDetails: details } : {}),
+  };
 }
 
 /**
@@ -302,9 +415,27 @@ export function warningsFieldFromScanMeta(args: {
   readonly scannedBuildArtifactsPresent?: boolean;
   readonly storybookPresetActive?: boolean;
   readonly sessionWrappersMismatchCwd?: boolean;
-}): { readonly warnings?: readonly ScanWarningCode[] } {
-  const codes = warningsFromScanMeta(args);
-  return codes.length > 0 ? { warnings: codes } : {};
+}): {
+  readonly warnings?: readonly ScanWarningCode[];
+  readonly warningsDetails?: ScanWarningDetails;
+} {
+  const inputs: WarningInputs = {
+    filesScanned: readNumber(args.meta, "filesScanned"),
+    rootSource: args.rootSource,
+    configSource: args.configSource,
+    analysisCoverage: readRecord(args.meta, "analysisCoverage"),
+    filesByExtension: readNumberRecord(args.meta, "filesByExtension"),
+    ...(args.scannedBuildArtifactsPresent === undefined
+      ? {}
+      : { scannedBuildArtifactsPresent: args.scannedBuildArtifactsPresent }),
+    ...(args.storybookPresetActive === undefined
+      ? {}
+      : { storybookPresetActive: args.storybookPresetActive }),
+    ...(args.sessionWrappersMismatchCwd === undefined
+      ? {}
+      : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
+  };
+  return warningsField(inputs);
 }
 
 function readNumber(meta: Record<string, unknown>, key: string): number {

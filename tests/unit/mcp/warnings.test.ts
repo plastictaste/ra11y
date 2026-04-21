@@ -13,7 +13,13 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { computeScanWarnings, warningsFromScanMeta } from "../../../src/mcp/warnings.ts";
+import {
+  computeScanWarningDetails,
+  computeScanWarnings,
+  warningsField,
+  warningsFieldFromScanMeta,
+  warningsFromScanMeta,
+} from "../../../src/mcp/warnings.ts";
 
 describe("computeScanWarnings", () => {
   it("returns no codes on a healthy scan", () => {
@@ -358,5 +364,199 @@ describe("warningsFromScanMeta", () => {
       storybookPresetActive: false,
     });
     expect(codesFalse).not.toContain("storybook_preset_active");
+  });
+});
+
+describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)", () => {
+  it("emits an `extensions_skipped_no_parser` payload when the code fired and skippedByExtension is populated", () => {
+    const codes = ["extensions_skipped_no_parser"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".astro": 104, ".scss": 114, ".mdx": 110 },
+      },
+      filesByExtension: { ".tsx": 125 },
+    });
+    expect(details.extensions_skipped_no_parser).toBeDefined();
+    // Sorted by descending count, ties broken alphabetically.
+    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".scss", ".mdx", ".astro"]);
+    expect(details.extensions_skipped_no_parser?.topExtension).toBe(".scss");
+    expect(details.extensions_skipped_no_parser?.topCount).toBe(114);
+    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(328);
+  });
+
+  it("breaks count ties alphabetically (determinism the sort depends on)", () => {
+    const codes = ["extensions_skipped_no_parser"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // All tie at 5; expect alphabetical order in the sorted list.
+        skippedByExtension: { ".svelte": 5, ".astro": 5, ".vue": 5 },
+      },
+      filesByExtension: { ".tsx": 10 },
+    });
+    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".astro", ".svelte", ".vue"]);
+    expect(details.extensions_skipped_no_parser?.topExtension).toBe(".astro");
+  });
+
+  it("truncates the `extensions` array to the top 5 but still sums the full distribution into `totalSkipped`", () => {
+    const codes = ["extensions_skipped_no_parser"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".a": 100,
+          ".b": 90,
+          ".c": 80,
+          ".d": 70,
+          ".e": 60,
+          ".f": 50,
+          ".g": 40,
+        },
+      },
+      filesByExtension: { ".tsx": 1 },
+    });
+    expect(details.extensions_skipped_no_parser?.extensions).toHaveLength(5);
+    expect(details.extensions_skipped_no_parser?.extensions).toEqual([
+      ".a",
+      ".b",
+      ".c",
+      ".d",
+      ".e",
+    ]);
+    // Full distribution still sums — the dense summary doesn't hide the long tail from `totalSkipped`.
+    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(
+      100 + 90 + 80 + 70 + 60 + 50 + 40,
+    );
+  });
+
+  it("returns an empty object when the `extensions_skipped_no_parser` code did NOT fire (no entry for a missing code)", () => {
+    const details = computeScanWarningDetails([], {
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        // Even if the raw map is populated, the caller-decided `codes`
+        // list is what drives whether a payload lands — prevents
+        // details from leaking out in shapes where the code was
+        // deliberately suppressed.
+        skippedByExtension: { ".astro": 104 },
+      },
+      filesByExtension: { ".tsx": 125 },
+    });
+    expect(details.extensions_skipped_no_parser).toBeUndefined();
+    expect(Object.keys(details)).toHaveLength(0);
+  });
+
+  it("returns an empty object when the code fired but the map is empty (shouldn't happen in practice — guard against upstream drift)", () => {
+    const codes = ["extensions_skipped_no_parser"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { skippedByExtension: {} },
+      filesByExtension: { ".tsx": 125 },
+    });
+    expect(details.extensions_skipped_no_parser).toBeUndefined();
+  });
+
+  it("drops entries whose count is zero or non-numeric (hostile-input defense)", () => {
+    const codes = ["extensions_skipped_no_parser"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".astro": 10, ".scss": 0, ".vue": "lots" as unknown as number },
+      },
+      filesByExtension: { ".tsx": 1 },
+    });
+    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".astro"]);
+    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(10);
+  });
+});
+
+describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", () => {
+  it("emits both `warnings` and `warningsDetails` when a code with a structured payload fires", () => {
+    const out = warningsField({
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".astro": 104 },
+      },
+      filesByExtension: { ".tsx": 125 },
+    });
+    expect(out.warnings).toEqual(["extensions_skipped_no_parser"]);
+    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".astro");
+    expect(out.warningsDetails?.extensions_skipped_no_parser?.totalSkipped).toBe(104);
+  });
+
+  it("emits `warnings` alone when every fired code is presence-only (no payload mirror exists)", () => {
+    const out = warningsField({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+    });
+    // Only `no_config_found` fires; presence-only code with no payload.
+    expect(out.warnings).toEqual(["no_config_found"]);
+    // `warningsDetails` must be omitted (never `{}`) per "present-when-meaningful."
+    expect(out.warningsDetails).toBeUndefined();
+  });
+
+  it("omits both fields on a clean scan (no `warnings: []` and no `warningsDetails: {}`)", () => {
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 42 },
+    });
+    expect(out.warnings).toBeUndefined();
+    expect(out.warningsDetails).toBeUndefined();
+  });
+
+  it("threads warningsDetails through `warningsFieldFromScanMeta` identically to `warningsField`", () => {
+    const out = warningsFieldFromScanMeta({
+      meta: {
+        filesScanned: 125,
+        filesByExtension: { ".tsx": 125 },
+        analysisCoverage: {
+          skippedByExtension: { ".scss": 114, ".astro": 104 },
+        },
+      },
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+    });
+    expect(out.warnings).toContain("extensions_skipped_no_parser");
+    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".scss");
+    expect(out.warningsDetails?.extensions_skipped_no_parser?.extensions).toEqual([
+      ".scss",
+      ".astro",
+    ]);
+  });
+
+  it("`warnings[]` membership and `warningsDetails` keys never disagree — the code is both fired and mirrored (set-membership invariant)", () => {
+    const out = warningsField({
+      filesScanned: 0, // fires scanned_zero_files (no payload)
+      rootSource: "spawn-cwd", // fires root_source_defaulted (no payload)
+      configSource: null, // fires no_config_found (no payload)
+      analysisCoverage: {
+        skippedByExtension: { ".scss": 5 }, // fires extensions_skipped_no_parser (with payload)
+      },
+      filesByExtension: undefined,
+    });
+    expect(out.warnings).toContain("extensions_skipped_no_parser");
+    expect(out.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
+    // No stray keys — only payload-bearing codes show up under warningsDetails.
+    expect(Object.keys(out.warningsDetails ?? {})).toEqual(["extensions_skipped_no_parser"]);
   });
 });
