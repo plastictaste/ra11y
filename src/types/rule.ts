@@ -85,8 +85,6 @@ export interface Rule {
   readonly fixClass: FixClass;
   readonly appliesTo?: AppliesTo;
   readonly docs: RuleDocs;
-  /** Optional rename/alias path — see semver policy. */
-  readonly deprecatedBy?: string;
   /**
    * Opt-in: the native HTML tag this rule's JSX checks care about (`"a"`,
    * `"img"`, `"input"`, …). When set, the engine exposes

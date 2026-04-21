@@ -190,7 +190,7 @@ Enforced in CI by `scripts/bench.ts`; history in `docs/performance.md`.
 
 - **Patch** (0.1.x): bug fixes, refactors, docs, tightening detection on an existing rule.
 - **Minor** (0.x.0): new rules, standards, formatters, CLI flags, plugin API additions, widening or loosening a rule's detection.
-- **Major** (x.0.0): removing rules, renaming rule IDs without a deprecation alias, breaking `Rule`/`Standard`/`Config` shapes, CLI flag removal, exit code semantics change.
+- **Major** (x.0.0): removing or renaming rules, breaking `Rule`/`Standard`/`Config` shapes, CLI flag removal, exit code semantics change. (No rule-ID alias mechanism exists at runtime — any rename is major. If we later add one, rule renames behind the alias become minor.)
 
 v0.x is rapid iteration — treat the plugin API as semi-stable until v1.0.
 
