@@ -108,6 +108,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [contrast/enhanced](./rules/contrast__enhanced.md)
 - [contrast/minimum](./rules/contrast__minimum.md)
 - [contrast/non-text](./rules/contrast__non-text.md)
+- [document/charset-first-1024-bytes](./rules/document__charset-first-1024-bytes.md)
 - [document/iframe-title](./rules/document__iframe-title.md)
 - [document/lang-attribute](./rules/document__lang-attribute.md)
 - [document/lang-on-parts](./rules/document__lang-on-parts.md)
