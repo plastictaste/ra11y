@@ -42,6 +42,11 @@ import {
   readKbResource,
 } from "./resources/index.ts";
 import { McpSession, type SessionRoot } from "./session.ts";
+import {
+  annotateStaleSubprocess,
+  isSubprocessStale,
+  recordSubprocessStart,
+} from "./stale-subprocess.ts";
 import type { McpTool } from "./tools.ts";
 import { MCP_TOOLS } from "./tools.ts";
 
@@ -120,6 +125,7 @@ const PROMPT_BY_NAME = new Map(BUILTIN_PROMPTS.map((p) => [p.name, p]));
  *   the user-authored rules/standards/finders into every tool handler.
  */
 export async function startMcpServer(registry?: Registry): Promise<void> {
+  recordSubprocessStart();
   const session = new McpSession(registry);
   const emitLog: LogEmitter = makeLogEmitter(
     session.logging,
@@ -295,7 +301,8 @@ async function handleToolsCall(
       LOGGER_SCAN,
     );
   }
-  return { jsonrpc: "2.0", id, result: toolResult };
+  const finalResult = isSubprocessStale() ? annotateStaleSubprocess(toolResult) : toolResult;
+  return { jsonrpc: "2.0", id, result: finalResult };
 }
 
 /**
