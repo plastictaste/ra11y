@@ -17,6 +17,7 @@ export { buildChecklist, renderChecklistMarkdown } from "./checklist.ts";
 export type {
   ConformanceBlocker,
   ConformanceBlockerReason,
+  ConformanceCriterionStatus,
   ConformanceProfile,
   ConformanceStatement,
 } from "./conformance.ts";

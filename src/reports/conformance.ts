@@ -42,6 +42,7 @@ import {
   type SignatureInput,
   signConformanceBundleAt,
 } from "./conformance-signature.ts";
+import { RUNTIME_EVIDENCE_REQUIRED_CRITERIA } from "./runtime-evidence-criteria.ts";
 
 /**
  * Local WCAG criterion IDs that can only be evaluated across a declared
@@ -83,6 +84,13 @@ export interface ConformanceProfile {
  *     been attested but the union of attested `ruleIds` does not cover
  *     every satisfying rule. Call `attest` with the missing `ruleIds`
  *     (see ADR 0013).
+ *   - `"runtime-evidence-required"` → the criterion's normative
+ *     requirement is about runtime behavior (keyboard traversal, focus
+ *     visibility, rendered contrast, heading adequacy, …) that static
+ *     source analysis fundamentally cannot observe. The absence of a
+ *     static finding is not evidence of conformance; call `attest`
+ *     with the verdict of a runtime harness or manual review. These
+ *     criteria also appear in `statement.limitations[]`.
  */
 export type ConformanceBlockerReason =
   | "no-evidence"
@@ -90,13 +98,29 @@ export type ConformanceBlockerReason =
   | "candidate-only"
   | "partially-attested"
   | "stale-attestation"
-  | "missing-process-config";
+  | "missing-process-config"
+  | "runtime-evidence-required";
+
+/**
+ * Claim-level status for one criterion on a {@link ConformanceBlocker}.
+ *
+ * Widens the ledger's {@link EvidenceStatus} with `"undetermined"` — a
+ * blocker-only value for criteria whose static layer structurally cannot
+ * prove pass (keyboard, focus-visible, rendered contrast, …) and that
+ * have no runtime-sourced attestation closing the gap. The ledger itself
+ * still emits `"pass"` for these entries (absence-of-failure on an
+ * automatable criterion); the conformance statement re-classifies them
+ * because a claim reader asks a stricter question than the ledger
+ * answers: "can we honestly say this passes?" rather than "did anything
+ * fail?". See `RUNTIME_EVIDENCE_REQUIRED_CRITERIA`.
+ */
+export type ConformanceCriterionStatus = EvidenceStatus | "undetermined";
 
 export interface ConformanceBlocker {
   readonly criterionId: string;
   readonly title: string;
   readonly level: string;
-  readonly status: EvidenceStatus;
+  readonly status: ConformanceCriterionStatus;
   readonly reason: ConformanceBlockerReason;
   /**
    * Count of attested sources that backed this criterion. Zero when
@@ -234,6 +258,26 @@ export interface ConformanceStatement {
    * field is omitted when empty per the AI-first consumer model.
    */
   readonly warnings?: readonly string[];
+  /**
+   * Criterion-level limitations on the claim — one entry per in-scope
+   * criterion whose only signal was absence-of-findings against a
+   * runtime-dependent requirement (keyboard, focus-visible, rendered
+   * contrast, heading adequacy, …). Each entry is a structured string
+   * shaped `"<criterionId>: <title> — runtime evidence required; no
+   * static finding in scope, no attestation supplied"`. Consumers that
+   * read `status === "pass"` unconditionally must now also inspect
+   * `limitations[]` — the claim reader's test for honesty is whether
+   * the static scanner had the axis to answer the question, not just
+   * whether nothing tripped.
+   *
+   * Present only when non-empty, per the AI-first consumer model's
+   * absent-vs-empty rule; the corresponding blockers also appear in
+   * `blockers[]` with `reason: "runtime-evidence-required"` and
+   * `status: "undetermined"` so the typed routing signal lives alongside
+   * the prose. See `RUNTIME_EVIDENCE_REQUIRED_CRITERIA` for the
+   * spec-derived enumeration backing this list.
+   */
+  readonly limitations?: readonly string[];
 }
 
 /**
@@ -383,6 +427,7 @@ export function buildConformanceStatement(
       : undefined;
   const effectiveProfile: ConformanceProfile = { ...inputs.profile, level: effectiveLevel };
   const scope = buildStatementScope(inputs);
+  const limitations = buildLimitations(blockers);
   return {
     profile: effectiveProfile,
     generatedAt: inputs.ledger.meta.generatedAt,
@@ -398,7 +443,28 @@ export function buildConformanceStatement(
     summary,
     ...(signature !== undefined && { signature }),
     ...(warnings.size > 0 && { warnings: [...warnings].sort() }),
+    ...(limitations.length > 0 && { limitations }),
   };
+}
+
+/**
+ * Assembles the response-level `limitations[]` string list from the
+ * `runtime-evidence-required` blockers. Each entry is a one-line prose
+ * record citing criterion + title + the reason the claim is incomplete
+ * against that axis — shaped so a reader who never consumes `blockers[]`
+ * can still see "we can't honestly say X passes." Present-when-meaningful:
+ * the caller conditional-spreads this into the response so an empty list
+ * is omitted rather than emitted as `limitations: []`.
+ */
+function buildLimitations(blockers: readonly ConformanceBlocker[]): readonly string[] {
+  const entries: string[] = [];
+  for (const b of blockers) {
+    if (b.reason !== "runtime-evidence-required") continue;
+    entries.push(
+      `${b.criterionId}: ${b.title} — runtime evidence required; no static finding in scope, no attestation supplied.`,
+    );
+  }
+  return entries;
 }
 
 /**
@@ -512,6 +578,23 @@ function classifyOneCriterion(args: ClassifyCriterionArgs): ConformanceBlocker |
       entry,
       args.rulesForCriterion,
     );
+  }
+  // Runtime-evidence-required criteria — the normative requirement is
+  // about runtime behavior (keyboard reachability, focus visibility,
+  // rendered contrast, …) that static analysis fundamentally cannot
+  // observe in the passing direction. When the ledger has zero
+  // fail-yielding sources AND no attested/sampled source closes the
+  // gap, the former behavior collapsed "no evidence" into
+  // `status: "pass", reason: "no-evidence"` — which read to an agent
+  // as "checked clean" despite the static layer never having had the
+  // axis to answer. Re-classify as `status: "undetermined"` with
+  // `reason: "runtime-evidence-required"` so the honesty invariant
+  // holds and the criterion surfaces in `statement.limitations[]`.
+  if (
+    RUNTIME_EVIDENCE_REQUIRED_CRITERIA.has(criterion.id) &&
+    isUndeterminedRuntimeCriterion(status, counts)
+  ) {
+    return buildRuntimeEvidenceBlocker(criterion, counts);
   }
   const reason = classifyBlocker(status, counts, entry);
   if (reason !== null) {
@@ -722,7 +805,7 @@ function tallySummary(summary: SummaryTally, status: EvidenceStatus): void {
 
 function buildBlocker(
   criterion: Standard["criteria"][number],
-  status: EvidenceStatus,
+  status: ConformanceCriterionStatus,
   reason: ConformanceBlockerReason,
   counts: SourceCounts,
   entry: CriterionEvidence | undefined,
@@ -746,85 +829,49 @@ function buildBlocker(
 }
 
 /**
- * Markdown renderer for the conformance statement — the shape an
- * auditor or release process can drop into a release note or
- * compliance bundle. Emits the WCAG §5.3.1 required claim fields
- * (date, guidelines title/version/URI, conformance level, scope,
- * technologies relied upon) plus the ra11y-specific verdict and
- * blocker table. Sections whose array is empty are omitted (e.g.
- * `technologiesNotReliedUpon` is usually `[]`).
+ * True when a runtime-evidence-required criterion reached the builder
+ * with no honest-pass signal: no static failure (status would be
+ * "fail"), no attested/sampled pass, no partial-coverage (status would
+ * be "partial"). The ledger's `deriveStatus` promotes this case to
+ * `"pass"` (absence-of-failure on an automatable criterion), but a
+ * claim reader's threshold is stricter — the static layer never had the
+ * axis to prove pass, so the honest verdict is `"undetermined"`.
+ *
+ * The guard is conservative: if any attested/sampled source exists, the
+ * standard classifier (via `classifyBlocker`) takes over — a
+ * runtime-harness attestation flips the criterion to a clean pass, a
+ * fail-verdict attestation flips it to `"failing"`.
  */
-export function renderConformanceMarkdown(statement: ConformanceStatement): string {
-  const lines: string[] = [];
-  const {
-    profile,
-    generatedAt,
-    conformant,
-    guidelinesTitle,
-    guidelinesVersion,
-    guidelinesUri,
-    scope,
-    technologiesReliedUpon,
-    technologiesNotReliedUpon,
-    criteriaInScope,
-    summary,
-    blockers,
-  } = statement;
-  lines.push(`# Conformance Statement — ${profile.standardId} ${profile.level}`);
-  lines.push("");
-  lines.push(`- Date: ${generatedAt}`);
-  lines.push(`- Guidelines: ${guidelinesTitle} ${guidelinesVersion} (<${guidelinesUri}>)`);
-  lines.push(`- Conformance level: ${profile.level}`);
-  lines.push(`- Criteria in scope: ${criteriaInScope}`);
-  lines.push(
-    `- Status: **${conformant ? "CONFORMANT" : "NOT CONFORMANT"}** (pass=${summary.pass}, fail=${summary.fail}, partial=${summary.partial}, unknown=${summary.unknown}, n/a=${summary.na})`,
-  );
-  lines.push("");
-  lines.push(`## Scope`);
-  lines.push("");
-  lines.push(`- Files scanned: ${scope.files.length}`);
-  if (scope.commitHash !== undefined) {
-    lines.push(`- Commit: \`${scope.commitHash}\``);
-  }
-  if (scope.configSnapshot !== undefined) {
-    lines.push(`- Config snapshot:`);
-    lines.push("");
-    lines.push("```json");
-    lines.push(JSON.stringify(scope.configSnapshot, null, 2));
-    lines.push("```");
-  }
-  lines.push("");
-  lines.push(`## Technologies relied upon`);
-  lines.push("");
-  if (technologiesReliedUpon.length === 0) {
-    lines.push(`_None declared._`);
-  } else {
-    for (const t of technologiesReliedUpon) lines.push(`- ${t}`);
-  }
-  if (technologiesNotReliedUpon.length > 0) {
-    lines.push("");
-    lines.push(`## Technologies not relied upon`);
-    lines.push("");
-    for (const t of technologiesNotReliedUpon) lines.push(`- ${t}`);
-  }
-  lines.push("");
-  if (conformant) {
-    lines.push(
-      `Every criterion in scope is backed by at least one non-candidate evidence source with a final status of pass or n/a.`,
-    );
-    return lines.join("\n");
-  }
-  lines.push(`## Blockers`);
-  lines.push("");
-  lines.push(`| Criterion | Title | Level | Status | Reason | Static | Attested | Candidate |`);
-  lines.push(`|---|---|---|---|---|---:|---:|---:|`);
-  for (const b of blockers) {
-    lines.push(
-      `| ${b.criterionId} | ${escapePipe(b.title)} | ${b.level} | ${b.status} | ${b.reason} | ${b.staticSources} | ${b.attestedSources} | ${b.candidateSources} |`,
-    );
-  }
-  return lines.join("\n");
+function isUndeterminedRuntimeCriterion(status: EvidenceStatus, counts: SourceCounts): boolean {
+  if (status !== "pass") return false;
+  return counts.static === 0 && counts.attested === 0 && counts.sampled === 0;
 }
+
+/**
+ * Variant of {@link buildBlocker} that stamps `status: "undetermined"`
+ * on a runtime-evidence-required criterion. The blocker's counts are
+ * zero by construction (the classifier only reaches this branch on the
+ * absence-of-evidence case), but we still pass them through so the
+ * shape stays consistent with other blocker types for downstream
+ * consumers that tally per-kind source counts.
+ */
+function buildRuntimeEvidenceBlocker(
+  criterion: Standard["criteria"][number],
+  counts: SourceCounts,
+): ConformanceBlocker {
+  return {
+    criterionId: criterion.id,
+    title: criterion.title,
+    level: criterion.level,
+    status: "undetermined",
+    reason: "runtime-evidence-required",
+    attestedSources: counts.attested,
+    staticSources: counts.static,
+    candidateSources: counts.candidate,
+  };
+}
+
+export { renderConformanceMarkdown } from "./conformance-markdown.ts";
 
 function isInLevel(criterionLevel: string, target: "A" | "AA" | "AAA" | "base"): boolean {
   if (target === "base") return true;
@@ -894,8 +941,4 @@ function classifyBlocker(
   }
   if (entry && counts.candidate > 0) return "candidate-only";
   return "no-evidence";
-}
-
-function escapePipe(s: string): string {
-  return s.replace(/\|/g, "\\|");
 }

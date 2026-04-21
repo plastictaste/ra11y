@@ -58,7 +58,7 @@ export const conformanceStatementTool: McpTool = {
   def: {
     name: "conformance_statement",
     description:
-      'Produce a conformance claim for this project against a WCAG (or other standard) profile. Returns `conformant: true` only when every in-scope criterion is backed by a non-candidate evidence source (static pass, attested, or sampled) with a final status of pass or n/a. Otherwise returns `conformant: false` plus a `blockers` list — one entry per criterion still missing evidence, with a `reason` routing the agent to the next tool:\n\n  - `"failing"` → call `suggest_fix` on the cited findings.\n  - `"candidate-only"` → call `attest` after reviewing, or dismiss with a source pragma.\n  - `"no-evidence"` → call `attest` to record the evidence, or run `checklist` to work through manual review.\n  - `"partially-attested"` → some rules under the criterion have been attested but the union does not yet cover every satisfying rule. Call `attest` with the missing `ruleIds` to close the gap (see ADR 0013).\n\nThe response also carries a Markdown rendering (`markdown` field) suitable for dropping into a release note or audit bundle. Read-only.',
+      'Produce a conformance claim for this project against a WCAG (or other standard) profile. Returns `conformant: true` only when every in-scope criterion is backed by a non-candidate evidence source (static pass, attested, or sampled) with a final status of pass or n/a. Otherwise returns `conformant: false` plus a `blockers` list — one entry per criterion still missing evidence, with a `reason` routing the agent to the next tool:\n\n  - `"failing"` → call `suggest_fix` on the cited findings.\n  - `"candidate-only"` → call `attest` after reviewing, or dismiss with a source pragma.\n  - `"no-evidence"` → call `attest` to record the evidence, or run `checklist` to work through manual review.\n  - `"partially-attested"` → some rules under the criterion have been attested but the union does not yet cover every satisfying rule. Call `attest` with the missing `ruleIds` to close the gap (see ADR 0013).\n  - `"runtime-evidence-required"` → a runtime-dependent criterion (keyboard, focus-visible, rendered contrast, heading adequacy, …) has zero fail-evidence but also no attested/sampled source closing the gap. The blocker carries `status: "undetermined"` and the criterion appears in the top-level `limitations[]` prose list. Run a runtime harness or manual audit, then call `attest` with the verdict.\n\nThe response carries a top-level `limitations[]` array — present-when-non-empty — listing criteria whose only signal was absence-of-static-findings against a runtime-only requirement. A claim consumer reading `status === "pass"` unconditionally must also inspect `limitations[]` to stay honest. A Markdown rendering (`markdown` field) is suitable for dropping into a release note or audit bundle. Read-only.',
     inputSchema: {
       type: "object",
       properties: {
@@ -212,6 +212,9 @@ function buildNextStep(statement: ReturnType<typeof buildConformanceStatement>):
   }
   const hasStale = statement.blockers.some((b) => b.reason === "stale-attestation");
   const hasMissingProcess = statement.blockers.some((b) => b.reason === "missing-process-config");
+  const hasRuntimeEvidence = statement.blockers.some(
+    (b) => b.reason === "runtime-evidence-required",
+  );
   const extras: string[] = [];
   if (hasStale) {
     extras.push(
@@ -221,6 +224,11 @@ function buildNextStep(statement: ReturnType<typeof buildConformanceStatement>):
   if (hasMissingProcess) {
     extras.push(
       "`missing-process-config` → declare a `processes` entry in `ra11y.config.ts` covering the ordered page set (ADR 0016), then re-run.",
+    );
+  }
+  if (hasRuntimeEvidence) {
+    extras.push(
+      "`runtime-evidence-required` (also surfaced in `limitations[]`) → run a runtime harness or manual keyboard/focus/contrast audit, then call `attest` with the verdict; static analysis cannot prove pass on these criteria.",
     );
   }
   const base =
