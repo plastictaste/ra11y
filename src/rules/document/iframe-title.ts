@@ -41,7 +41,7 @@ import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../typ
 
 export const rule = defineRule({
   id: "document/iframe-title",
-  satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
+  satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.4.1", "wcag21:2.4.1"],
   severity: "error",
   scope: "node",
   fixClass: "mechanical",
@@ -86,51 +86,100 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const iframe of findHtmlElementsByTag(doc, "iframe")) {
     if (getHtmlAttribute(iframe, "aria-hidden") === "true") continue;
-    if (hasAccessibleNameHtml(iframe)) continue;
-    emit(buildViolation(getHtmlAttribute(iframe, "src"), iframe.loc.start));
+    const nameState = classifyHtmlName(iframe);
+    if (nameState.kind === "ok") continue;
+    emit(buildViolation(getHtmlAttribute(iframe, "src"), iframe.loc.start, nameState));
   }
 }
 
-function hasAccessibleNameHtml(element: HtmlElement): boolean {
+type NameState =
+  | { kind: "ok" }
+  | { kind: "missing" }
+  | { kind: "generic"; attribute: string; value: string };
+
+function classifyHtmlName(element: HtmlElement): NameState {
   const title = getHtmlAttribute(element, "title");
-  if (title !== null && title.trim().length > 0) return true;
+  if (title !== null && title.trim().length > 0) {
+    if (isGenericName(title)) {
+      return { kind: "generic", attribute: "title", value: title.trim() };
+    }
+    return { kind: "ok" };
+  }
   const ariaLabel = getHtmlAttribute(element, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) {
+    if (isGenericName(ariaLabel)) {
+      return { kind: "generic", attribute: "aria-label", value: ariaLabel.trim() };
+    }
+    return { kind: "ok" };
+  }
   if (hasHtmlAttribute(element, "aria-labelledby")) {
     const labelledBy = getHtmlAttribute(element, "aria-labelledby");
-    if (labelledBy !== null && labelledBy.trim().length > 0) return true;
+    if (labelledBy !== null && labelledBy.trim().length > 0) return { kind: "ok" };
   }
-  return false;
+  return { kind: "missing" };
 }
 
 function checkJsx(module: TsxModule, emit: Emit): void {
   for (const iframe of findJsxElementsByTag(module, "iframe")) {
     if (getJsxAttributeString(iframe, "aria-hidden") === "true") continue;
-    if (hasAccessibleNameJsx(iframe)) continue;
-    emit(buildViolation(getJsxAttributeString(iframe, "src"), iframe.loc.start));
+    const nameState = classifyJsxName(iframe);
+    if (nameState.kind === "ok") continue;
+    emit(buildViolation(getJsxAttributeString(iframe, "src"), iframe.loc.start, nameState));
   }
 }
 
-function hasAccessibleNameJsx(element: JsxElement): boolean {
+function classifyJsxName(element: JsxElement): NameState {
   const title = getJsxAttributeString(element, "title");
-  if (title !== null && title.trim().length > 0) return true;
+  if (title !== null && title.trim().length > 0) {
+    if (isGenericName(title)) {
+      return { kind: "generic", attribute: "title", value: title.trim() };
+    }
+    return { kind: "ok" };
+  }
   // Expression-valued title (e.g. title={t("frame")}) — trust the dev.
   const titleAttr = getJsxAttribute(element, "title");
-  if (titleAttr?.value?.kind === "Expression") return true;
+  if (titleAttr?.value?.kind === "Expression") return { kind: "ok" };
   const ariaLabel = getJsxAttributeString(element, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) {
+    if (isGenericName(ariaLabel)) {
+      return { kind: "generic", attribute: "aria-label", value: ariaLabel.trim() };
+    }
+    return { kind: "ok" };
+  }
   const ariaLabelAttr = getJsxAttribute(element, "aria-label");
-  if (ariaLabelAttr?.value?.kind === "Expression") return true;
+  if (ariaLabelAttr?.value?.kind === "Expression") return { kind: "ok" };
   if (hasJsxAttribute(element, "aria-labelledby")) {
     const labelledBy = getJsxAttributeString(element, "aria-labelledby");
-    if (labelledBy === null || labelledBy.trim().length > 0) return true;
+    if (labelledBy === null || labelledBy.trim().length > 0) return { kind: "ok" };
   }
-  return false;
+  return { kind: "missing" };
+}
+
+// Whole-string generic labels — case-insensitive, trimmed, collapsed
+// whitespace. Substring matches are intentionally NOT flagged: "YouTube
+// tutorial on ARIA live regions" is a fine accessible name even though it
+// contains the word "YouTube". Only exact matches like alt="YouTube video"
+// convey zero information beyond the embed type.
+const GENERIC_NAMES: ReadonlySet<string> = new Set([
+  "iframe",
+  "frame",
+  "embedded content",
+  "untitled",
+  "youtube video",
+  "vimeo video",
+  "video",
+  "embed",
+]);
+
+function isGenericName(raw: string): boolean {
+  const normalized = raw.trim().replace(/\s+/g, " ").toLowerCase();
+  return GENERIC_NAMES.has(normalized);
 }
 
 function buildViolation(
   src: string | null,
   loc: { line: number; column: number },
+  state: Exclude<NameState, { kind: "ok" }>,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
@@ -138,6 +187,15 @@ function buildViolation(
   suggestion: string;
 } {
   const subject = describeSource(src);
+  if (state.kind === "generic") {
+    const quoted = truncateForEcho(state.value);
+    return {
+      severity: "error",
+      location: { filePath: "", line: loc.line, column: loc.column },
+      message: `<iframe>${subject.inMessage} has a generic ${state.attribute} '${quoted}' — it names the embed type but not its contents, so screen-reader users hear no hint of what the frame actually shows.`,
+      suggestion: `Replace ${state.attribute}="${quoted}" with a content-specific name${subject.inSuggestion} (e.g., ${state.attribute}="${subject.example}"). A good accessible name describes what the embedded frame shows, not what technology renders it — "YouTube tutorial on ARIA live regions" is informative; "YouTube video" is not. If the frame is purely decorative, mark it aria-hidden="true" instead.`,
+    };
+  }
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },

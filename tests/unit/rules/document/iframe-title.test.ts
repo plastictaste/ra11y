@@ -12,7 +12,7 @@ describe("rule document/iframe-title", () => {
       expect(violations[0]?.ruleId).toBe("document/iframe-title");
       expect(violations[0]?.severity).toBe("error");
       expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
-      // 2.4.1 (Bypass Blocks) was removed — iframe title is a 4.1.2 issue
+      expect(violations[0]?.criteria).toContain("wcag22:2.4.1");
     });
 
     it("iframe has an empty title attribute", () => {
@@ -148,10 +148,87 @@ describe("rule document/iframe-title", () => {
     });
   });
 
+  describe("generic-title detection", () => {
+    it("flags title='YouTube video' (HTML)", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://youtube.com/embed/abc" title="YouTube video"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("generic");
+      expect(violations[0]?.message).toContain("YouTube video");
+      expect(violations[0]?.suggestion).toContain("content-specific");
+    });
+
+    it("flags title='iframe' (HTML)", () => {
+      const violations = runRule(rule, `<iframe src="/x" title="iframe"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("generic");
+    });
+
+    it("flags title='Embedded Content' case-insensitively (HTML)", () => {
+      const violations = runRule(rule, `<iframe src="/x" title="Embedded Content"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("flags title='  Vimeo video  ' after trim/collapse (HTML)", () => {
+      const violations = runRule(rule, `<iframe src="/x" title="  Vimeo   video  "></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("flags generic aria-label (HTML)", () => {
+      const violations = runRule(rule, `<iframe src="/x" aria-label="untitled"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("aria-label");
+    });
+
+    it("flags title='YouTube video' in JSX", () => {
+      const violations = runRule(rule, `const X = <iframe src="/x" title="YouTube video" />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("generic");
+    });
+
+    it("does NOT flag title with generic word as substring", () => {
+      // Whole-string match only — "YouTube tutorial..." is informative.
+      const violations = runRule(
+        rule,
+        `<iframe src="/x" title="YouTube tutorial on ARIA live regions"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT flag a descriptive title containing 'video'", () => {
+      const violations = runRule(rule, `<iframe src="/x" title="Product demo video"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("generic-title violation still satisfies 4.1.2", () => {
+      const violations = runRule(rule, `<iframe src="/x" title="YouTube video"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
+    });
+  });
+
   describe("rule metadata", () => {
-    it("declares wcag22 and wcag21 for 4.1.2", () => {
+    it("declares wcag22 and wcag21 for 4.1.2 and 2.4.1", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");
       expect(rule.satisfies).toContain("wcag21:4.1.2");
+      expect(rule.satisfies).toContain("wcag22:2.4.1");
+      expect(rule.satisfies).toContain("wcag21:2.4.1");
     });
 
     it("has a normativeQuote citing WCAG", () => {
