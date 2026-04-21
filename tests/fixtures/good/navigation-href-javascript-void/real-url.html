@@ -1,0 +1,13 @@
+<!--
+  Good: anchor with a real URL navigates to the named resource. Screen
+  reader announces "link," user activates it, page navigates. Role
+  matches behavior.
+  Expect: rule navigation/href-javascript-void stays silent.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/dashboard">Dashboard</a>
+    <a href="https://example.com/docs">Docs</a>
+  </body>
+</html>

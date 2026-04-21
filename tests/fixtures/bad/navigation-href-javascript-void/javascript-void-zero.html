@@ -1,0 +1,12 @@
+<!--
+  Bad: <a href="javascript:void(0)"> — the anchor announces as a link but
+  does not navigate. Assistive tech reports "link" when the element is
+  really a button-shaped no-op with a click handler attached.
+  Expect: rule navigation/href-javascript-void fires once at severity "error".
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="javascript:void(0)" onclick="toggleMenu()">Toggle menu</a>
+  </body>
+</html>

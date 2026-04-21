@@ -1,0 +1,14 @@
+<!--
+  Bad: <a href="#"> with no fragment target. Bootstrap-dropdown-style
+  placeholder: announces as a link but navigates nowhere. The element
+  is really a button in disguise.
+  Expect: rule navigation/href-javascript-void fires once at severity "error".
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <nav>
+      <a href="#" onclick="toggleMenu()">Menu</a>
+    </nav>
+  </body>
+</html>

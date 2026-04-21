@@ -1,0 +1,13 @@
+<!--
+  Good: mailto: and tel: URLs launch the user's mail client or dialer —
+  legitimate navigation for the link role. Not javascript: schemes; not
+  bare fragments; nothing to flag.
+  Expect: rule navigation/href-javascript-void stays silent.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="mailto:support@example.com">Email support</a>
+    <a href="tel:+15555550100">Call sales</a>
+  </body>
+</html>

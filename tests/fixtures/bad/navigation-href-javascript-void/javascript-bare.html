@@ -1,0 +1,11 @@
+<!--
+  Bad: <a href="javascript:"> — bare scheme with no body. Still a link
+  from a screen reader's perspective; still a no-op from the user's.
+  Expect: rule navigation/href-javascript-void fires once at severity "error".
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="javascript:" onclick="save()">Save</a>
+  </body>
+</html>
