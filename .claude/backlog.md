@@ -407,7 +407,7 @@ Deduped against Q3 where applicable. Items marked `[dup-Q3]` overlap and should 
 
 - [ ] **Q4-WARNING-DOWNGRADE-NOISE** `warnings: ["template_files_parsed_as_literal"]` fires on every Liquid-templated scan — it's a constant on any Jekyll/Hugo/Eleventy repo. Consider demoting to a `meta.templateDirectivesFound` hint when no findings hit lines containing directives (i.e. the literal-parse didn't actually pollute results). Keep the warning when it matters; drop it when it's constant noise.
 - [ ] **Q4-RULES-EVALUATED-COMPOSITE** `rulesEvaluated: 52` reports total loaded rules, not rules-with-eligible-inputs. On a pure-HTML/SSG project, many React-specific rules show `filesEligible: 0` in `perRuleCoverage` — they didn't fire because they couldn't. Replace the single count with a split: `rulesEvaluated: { loaded, withEligibleInputs, fired }` so an agent sees "52 loaded, 18 had eligible inputs on this file set, 9 fired." Doctrine: "Composite headline counts are dishonest."
-- [ ] **Q4-PARTIAL-PAGE-TITLED** `document/page-titled` fires on `top.html` (a `<head>` fragment) because the rule sees `{% seo %}` as literal text, not a rendered `<title>`. Pairs with Q4-FRAGMENT-DETECTION — the rule should skip fragment files, or at minimum emit `couldBeWrongBecause: ["title_may_be_template_injected"]` when the file lacks `<html>`/`<body>`.
+- [x] **Q4-PARTIAL-PAGE-TITLED** `document/page-titled` fires on `top.html` (a `<head>` fragment) because the rule sees `{% seo %}` as literal text, not a rendered `<title>`. Pairs with Q4-FRAGMENT-DETECTION — the rule should skip fragment files, or at minimum emit `couldBeWrongBecause: ["title_may_be_template_injected"]` when the file lacks `<html>`/`<body>`.
 
 ### Considered and rejected (per CLAUDE.md §1)
 
