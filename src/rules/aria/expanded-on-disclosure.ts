@@ -12,12 +12,23 @@
  * Source: https://www.w3.org/TR/WCAG22/#name-role-value
  *
  * Flags disclosure triggers — a `<button>`, `<a>`, or `role="button"`
- * element that toggles a collapsible region — that are missing the
- * `aria-expanded` state attribute. Without `aria-expanded`, assistive
- * technology cannot programmatically determine or announce whether the
- * disclosed region is currently open or closed, which WCAG 4.1.2
- * explicitly requires for components whose state can be set by the
- * user.
+ * element that toggles a collapsible region — whose state exposure is
+ * incomplete in one of two ways:
+ *
+ *   1. Missing `aria-expanded`. Without it, assistive technology
+ *      cannot programmatically determine or announce whether the
+ *      disclosed region is currently open or closed. WCAG 4.1.2
+ *      requires that state be programmatically determinable.
+ *   2. Present `aria-expanded` but missing `aria-controls` when the
+ *      disclosure shape comes from a non-aria-controls signal (e.g.
+ *      `data-bs-toggle="dropdown"`, inline classList toggler). The
+ *      WAI-ARIA Authoring Practices disclosure pattern specifies
+ *      that the trigger should identify the controlled region via
+ *      `aria-controls` so assistive tech can announce and navigate
+ *      to it; Bootstrap's canonical dropdown pattern ships
+ *      `aria-expanded="false"` without `aria-controls`, and the
+ *      scanner surfaces that gap honestly rather than silently
+ *      passing on `aria-expanded` presence alone.
  *
  * The rule is framework-agnostic: it matches on the *shape* of a
  * disclosure trigger (aria-controls, toggle-style data attributes with
@@ -108,6 +119,18 @@ type PredicateBranch =
   | { readonly kind: "data-toggle"; readonly attrName: string; readonly value: string }
   | { readonly kind: "onclick-classlist"; readonly matchedClass: string };
 
+/**
+ * Which gap the rule is flagging. `missing-expanded` is the original
+ * finding (the disclosure trigger never surfaces its open/closed
+ * state at all). `missing-controls` covers the Bootstrap-canonical
+ * case where the trigger has `aria-expanded` but never identifies
+ * the controlled region — a disclosure predicate fired from a
+ * non-`aria-controls` branch (data-*-toggle or onclick classList),
+ * so the element proves it toggles something but doesn't name the
+ * target.
+ */
+type FindingKind = "missing-expanded" | "missing-controls";
+
 export const rule = defineRule({
   id: "aria/expanded-on-disclosure",
   satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
@@ -163,14 +186,15 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     if (!isHtmlInteractive(el)) continue;
     if (isSummaryInsideDetails(el)) continue;
-    if (hasHtmlAttribute(el, "aria-expanded")) continue;
     const branch = matchHtmlPredicate(el, doc);
     if (!branch) continue;
+    const finding = classifyFinding(branch, hasHtmlAttribute(el, "aria-expanded"));
+    if (!finding) continue;
     emit({
       severity: "error",
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-      message: buildMessage(el.tagName, branch),
-      suggestion: buildSuggestion(el.tagName, branch),
+      message: buildMessage(el.tagName, branch, finding),
+      suggestion: buildSuggestion(el.tagName, branch, finding),
     });
   }
 }
@@ -292,14 +316,15 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const el of elements) {
     if (isJsxPascalCase(el.tagName)) continue;
     if (!isJsxInteractive(el)) continue;
-    if (hasJsxAttribute(el, "aria-expanded")) continue;
     const branch = matchJsxPredicate(el, idIndex);
     if (!branch) continue;
+    const finding = classifyFinding(branch, hasJsxAttribute(el, "aria-expanded"));
+    if (!finding) continue;
     emit({
       severity: "error",
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-      message: buildMessage(el.tagName, branch),
-      suggestion: buildSuggestion(el.tagName, branch),
+      message: buildMessage(el.tagName, branch, finding),
+      suggestion: buildSuggestion(el.tagName, branch, finding),
     });
   }
 }
@@ -369,14 +394,52 @@ function findJsxOnclickClasslist(el: JsxElement): PredicateBranch | null {
 // Shared message / suggestion builders
 // ---------------------------------------------------------------------------
 
-function buildMessage(tagName: string, branch: PredicateBranch): string {
-  const base = `<${tagName}> looks like a disclosure trigger but has no aria-expanded — AT cannot announce whether the region is open or closed.`;
-  const evidence = describeBranch(branch);
-  return `${base} (${evidence})`;
+/**
+ * Map (branch, aria-expanded-present?) → which finding (if any) to
+ * emit. The logic is deliberately narrow:
+ *
+ *   - No aria-expanded and any disclosure branch → missing-expanded.
+ *   - aria-expanded present and branch is `aria-controls` → nothing
+ *     (both attributes are there; the pattern is complete).
+ *   - aria-expanded present and branch is a non-`aria-controls`
+ *     signal (data-*-toggle, onclick classList) → missing-controls.
+ *     The element proves it toggles something but doesn't name the
+ *     target — the WAI-ARIA Authoring Practices disclosure pattern
+ *     asks the trigger to identify the controlled region.
+ */
+function classifyFinding(branch: PredicateBranch, hasAriaExpanded: boolean): FindingKind | null {
+  if (!hasAriaExpanded) return "missing-expanded";
+  if (branch.kind === "aria-controls") return null;
+  return "missing-controls";
 }
 
-function buildSuggestion(tagName: string, branch: PredicateBranch): string {
+function buildMessage(tagName: string, branch: PredicateBranch, finding: FindingKind): string {
   const evidence = describeBranch(branch);
+  if (finding === "missing-controls") {
+    return (
+      `<${tagName}> has aria-expanded but is missing aria-controls — AT cannot ` +
+      `identify which region the trigger controls. (${evidence})`
+    );
+  }
+  return (
+    `<${tagName}> looks like a disclosure trigger but has no aria-expanded — AT ` +
+    `cannot announce whether the region is open or closed. (${evidence})`
+  );
+}
+
+function buildSuggestion(tagName: string, branch: PredicateBranch, finding: FindingKind): string {
+  const evidence = describeBranch(branch);
+  if (finding === "missing-controls") {
+    return (
+      `Add aria-controls="<id>" to the <${tagName}>, where <id> is the id of the ` +
+      `region the trigger shows/hides. The region element will need that id as ` +
+      `well. Predicate match: ${evidence}. If the controlled region cannot be ` +
+      `reached by id (e.g. it is rendered as a sibling selected by runtime ` +
+      `convention) and the trigger is otherwise WCAG 4.1.2 compliant, suppress ` +
+      `with a source-level pragma (e.g. <!-- ra11y-disable aria/expanded-on-disclosure -->) ` +
+      `so the next scan dismisses it deterministically.`
+    );
+  }
   return (
     `Add aria-expanded="false" to the <${tagName}> as the initial collapsed state, ` +
     `then toggle it to "true"/"false" in the same runtime that shows/hides the ` +

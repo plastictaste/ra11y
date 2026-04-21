@@ -71,11 +71,11 @@ describe("rule aria/expanded-on-disclosure", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it('a disclosure trigger already has aria-expanded="true"', () => {
+    it('a disclosure trigger has aria-expanded="true" AND aria-controls pointing to an existing id', () => {
       const violations = runRule(
         rule,
         `<!doctype html><html><body>
-          <a href="#c1" data-bs-toggle="collapse" aria-expanded="true">Toggle</a>
+          <a href="#c1" aria-controls="c1" data-bs-toggle="collapse" aria-expanded="true">Toggle</a>
           <div id="c1">x</div>
         </body></html>`,
         { filePath: "ok2.html" },
@@ -224,6 +224,43 @@ describe("rule aria/expanded-on-disclosure", () => {
       // The <button> inside has no disclosure hints; the outer div is not
       // interactive. The `data-toggle="buttons"` value is not in the
       // disclosure set, so the predicate should not fire.
+      expect(violations).toHaveLength(0);
+    });
+
+    it("fires on Bootstrap-canonical dropdown: aria-expanded present, data-bs-toggle=dropdown, no aria-controls", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="dropdown" aria-expanded="false">Menu</button>
+        </body></html>`,
+        { filePath: "bs-dropdown.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/missing aria-controls/);
+      expect(violations[0]?.suggestion).toMatch(/aria-controls="<id>"/);
+    });
+
+    it("fires on JSX Bootstrap dropdown: aria-expanded present, data-bs-toggle=dropdown, no aria-controls", () => {
+      const violations = runRule(
+        rule,
+        `function Dropdown() {
+           return <button data-bs-toggle="dropdown" aria-expanded="false">Menu</button>;
+         }`,
+        { filePath: "Dropdown.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/missing aria-controls/);
+    });
+
+    it("does not fire when aria-expanded is present and aria-controls points to an existing id (pattern complete)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-expanded="false" aria-controls="m1" data-bs-toggle="dropdown">Menu</button>
+          <ul id="m1"><li>item</li></ul>
+        </body></html>`,
+        { filePath: "complete.html" },
+      );
       expect(violations).toHaveLength(0);
     });
 
