@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Form control with no error state</title>
+  </head>
+  <body>
+    <!-- No .is-invalid, no error state, nothing to surface. This
+         fixture exists to confirm the rule doesn't fire on plain
+         form-control inputs that happen to live near a feedback div. -->
+    <form>
+      <label for="name">Name</label>
+      <input
+        id="name"
+        type="text"
+        class="form-control"
+        value="Alex"
+      />
+    </form>
+  </body>
+</html>

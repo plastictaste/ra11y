@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Bootstrap server-side validation done right</title>
+  </head>
+  <body>
+    <!-- Same Bootstrap .is-invalid paint, but now aria-invalid="true"
+         exposes the error state to assistive tech, and aria-describedby
+         points at the feedback div so the message is announced with
+         the control. -->
+    <form>
+      <label for="email">Email</label>
+      <input
+        id="email"
+        type="email"
+        class="form-control is-invalid"
+        aria-invalid="true"
+        aria-describedby="email-error"
+        value="not-an-email"
+      />
+      <div id="email-error" class="invalid-feedback">
+        Please enter a valid email address.
+      </div>
+    </form>
+  </body>
+</html>

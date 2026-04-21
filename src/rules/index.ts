@@ -28,6 +28,7 @@ import { rule as viewportZoom } from "./document/viewport-zoom.ts";
 import { rule as notObscured } from "./focus/not-obscured.ts";
 import { rule as outlineVisible } from "./focus/outline-visible.ts";
 import { rule as tabindexPositive } from "./focus/tabindex-positive.ts";
+import { rule as ariaInvalidMissing } from "./forms/aria-invalid-missing.ts";
 import { rule as autocompleteMissing } from "./forms/autocomplete-missing.ts";
 import { rule as fieldsetLegend } from "./forms/fieldset-legend.ts";
 import { rule as labelForIdMismatch } from "./forms/label-for-id-mismatch.ts";
@@ -69,6 +70,7 @@ import { rule as wrapperDrift } from "./wrapper/drift.ts";
 export const BUILTIN_RULES: readonly Rule[] = [
   accesskeyDuplicate,
   altTextMissing,
+  ariaInvalidMissing,
   autocompleteMissing,
   autoplaySound,
   buttonName,
@@ -131,6 +133,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
 export {
   accesskeyDuplicate,
   altTextMissing,
+  ariaInvalidMissing,
   autocompleteMissing,
   autoplaySound,
   buttonName,

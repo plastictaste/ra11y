@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Bootstrap is-invalid with contradicting aria-invalid="false"</title>
+  </head>
+  <body>
+    <!-- aria-invalid="false" actively lies to assistive tech: the
+         .is-invalid class paints the field as wrong, the ARIA attribute
+         tells the screen reader it's fine. This is worse than "missing"
+         because it's a false negative the author has written down. -->
+    <form>
+      <label for="country">Country</label>
+      <select
+        id="country"
+        class="form-control is-invalid"
+        aria-invalid="false"
+      >
+        <option value="">Select a country</option>
+        <option value="us">United States</option>
+      </select>
+      <div class="invalid-feedback">Country is required.</div>
+    </form>
+  </body>
+</html>

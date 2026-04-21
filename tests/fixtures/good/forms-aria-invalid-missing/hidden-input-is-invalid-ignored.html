@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Hidden inputs are out of scope</title>
+  </head>
+  <body>
+    <!-- type="hidden" carries no user-entered value a screen reader
+         would narrate; matching forms/labels-required, this rule also
+         excludes it. The rule should not fire even with .is-invalid. -->
+    <form>
+      <input type="hidden" class="is-invalid" name="csrfToken" value="abc" />
+      <label for="email">Email</label>
+      <input
+        id="email"
+        type="email"
+        class="form-control"
+      />
+    </form>
+  </body>
+</html>

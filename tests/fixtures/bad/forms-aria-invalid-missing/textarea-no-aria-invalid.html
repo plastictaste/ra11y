@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Textarea with is-invalid but no aria-invalid</title>
+  </head>
+  <body>
+    <form>
+      <label for="notes">Notes</label>
+      <!-- Textarea flagged red by Bootstrap's is-invalid; screen
+           readers get no signal about the error state. -->
+      <textarea
+        id="notes"
+        class="form-control is-invalid"
+        rows="4"
+      ></textarea>
+      <div class="invalid-feedback">Notes must not be empty.</div>
+    </form>
+  </body>
+</html>

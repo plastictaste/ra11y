@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Bootstrap server-side validation: is-invalid without aria-invalid</title>
+  </head>
+  <body>
+    <!-- Canonical Bootstrap 5 server-side validation pattern. Sighted
+         users see the red border and red icon; screen-reader users hear
+         "edit, blank" because aria-invalid was never set. -->
+    <form>
+      <label for="email">Email</label>
+      <input
+        id="email"
+        type="email"
+        class="form-control is-invalid"
+        value="not-an-email"
+      />
+      <div class="invalid-feedback">Please enter a valid email address.</div>
+    </form>
+  </body>
+</html>

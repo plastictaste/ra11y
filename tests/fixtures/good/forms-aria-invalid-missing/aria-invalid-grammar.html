@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>aria-invalid="grammar" is a valid true-ish subtype</title>
+  </head>
+  <body>
+    <!-- ARIA defines four values for aria-invalid: true, false,
+         grammar, spelling. "grammar" and "spelling" are true-ish —
+         they narrow the kind of invalidity, not deny it — so the
+         rule accepts them as satisfying the error-state contract. -->
+    <form>
+      <label for="draft">Draft</label>
+      <textarea
+        id="draft"
+        class="form-control is-invalid"
+        aria-invalid="grammar"
+      >This has a grammer mistake.</textarea>
+    </form>
+  </body>
+</html>
