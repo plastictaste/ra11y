@@ -39,8 +39,12 @@
  * the rule is not Bootstrap-specific (see CLAUDE.md §14 "no
  * vendor-specific runtime ingest adapters"). Any value from the
  * disclosure-ish set (`collapse`, `dropdown`, `accordion`, `offcanvas`,
- * `modal`, `tab`, `pill`, `popover`, `tooltip`) on a `data-*-toggle`
- * attribute triggers the predicate regardless of prefix.
+ * `modal`, `tab`, `pill`, `tooltip`) on a `data-*-toggle` attribute
+ * triggers the predicate regardless of prefix. `popover` is
+ * deliberately excluded: popovers are tooltip-shaped widgets whose
+ * state is exposed via `role="tooltip"` + `aria-describedby`, not via
+ * `aria-expanded`. Flagging `data-bs-toggle="popover"` here produced
+ * false positives against Bootstrap's canonical popover markup.
  *
  * Exemptions:
  *   - `<summary>` inside `<details>`: native disclosure, state is
@@ -69,10 +73,14 @@ import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../typ
  * a value like `collapse,show` (multi-token, rare but observed) is
  * split on whitespace/comma.
  *
- * `modal`, `popover`, and `tooltip` are included: per the ARIA
- * authoring practices they all have open/closed state that a trigger
- * button should announce via `aria-expanded`. `tab` / `pill` cover
- * tab-panel disclosure triggers.
+ * `modal` and `tooltip` are included: per the ARIA authoring practices
+ * they have open/closed state that a trigger button should announce
+ * via `aria-expanded`. `tab` / `pill` cover tab-panel disclosure
+ * triggers. `popover` is intentionally *not* included — popovers
+ * expose state via `role="tooltip"` + `aria-describedby`, not
+ * `aria-expanded`, and flagging them here produced false positives on
+ * Bootstrap's canonical popover markup. Popover-specific checks live
+ * in `src/rules/tooltip/dismissable.ts`.
  */
 const DISCLOSURE_TOGGLE_VALUES: ReadonlySet<string> = new Set([
   "collapse",
@@ -82,7 +90,6 @@ const DISCLOSURE_TOGGLE_VALUES: ReadonlySet<string> = new Set([
   "modal",
   "tab",
   "pill",
-  "popover",
   "tooltip",
 ]);
 

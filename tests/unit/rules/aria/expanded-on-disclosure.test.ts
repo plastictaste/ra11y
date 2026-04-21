@@ -117,6 +117,31 @@ describe("rule aria/expanded-on-disclosure", () => {
       );
       expect(violations).toHaveLength(0);
     });
+
+    it('a <button data-bs-toggle="popover"> has no aria-expanded (popovers are tooltip-shaped, not disclosure)', () => {
+      // Popovers expose state via role="tooltip" + aria-describedby, not
+      // aria-expanded. The disclosure rule must not fire here; popover
+      // shape is checked by src/rules/tooltip/dismissable.ts.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button type="button" data-bs-toggle="popover" data-bs-content="Hello">Open popover</button>
+        </body></html>`,
+        { filePath: "popover.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('an <a data-bs-toggle="popover"> has no aria-expanded (popover anchor, not disclosure)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#" data-bs-toggle="popover" title="Popover title">Link-triggered popover</a>
+        </body></html>`,
+        { filePath: "popover-anchor.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -194,6 +219,17 @@ describe("rule aria/expanded-on-disclosure", () => {
            return <button type="submit">Save</button>;
          }`,
         { filePath: "Form.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('a <button data-bs-toggle="popover"> does not fire (popover is tooltip-shaped)', () => {
+      const violations = runRule(
+        rule,
+        `function Popover() {
+           return <button type="button" data-bs-toggle="popover" data-bs-content="Hi">Open</button>;
+         }`,
+        { filePath: "Popover.tsx" },
       );
       expect(violations).toHaveLength(0);
     });
