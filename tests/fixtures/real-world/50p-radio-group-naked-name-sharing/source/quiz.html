@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quiz App</title>
+</head>
+<body>
+
+<!--
+  Four <input type="radio" name="answer"> inputs share a name attribute
+  (making them a mutually-exclusive choice group) but have no ancestor
+  <fieldset>+<legend> and no role="radiogroup" wrapper.
+
+  Without a programmatic group wrapper, screen readers announce each
+  option individually ("Question, radio button, 1 of unknown") with no
+  indication of the group's purpose — the visually-implied relationship
+  ("answer to this question") is invisible to assistive technology.
+
+  forms/radio-group-without-fieldset must fire on the first radio in
+  the group.
+
+  Source: 50projects50days/17-quiz-app/index.html (sanitized).
+  No fieldset, no role="radiogroup", no aria-labelledby on any wrapper.
+-->
+
+<main>
+  <div class="quiz-container" id="quiz">
+    <div class="quiz-header">
+      <h1 id="question">Question text</h1>
+      <ul>
+        <li>
+          <input type="radio" name="answer" id="a" class="answer">
+          <label for="a" id="a_text">Option A</label>
+        </li>
+        <li>
+          <input type="radio" name="answer" id="b" class="answer">
+          <label for="b" id="b_text">Option B</label>
+        </li>
+        <li>
+          <input type="radio" name="answer" id="c" class="answer">
+          <label for="c" id="c_text">Option C</label>
+        </li>
+        <li>
+          <input type="radio" name="answer" id="d" class="answer">
+          <label for="d" id="d_text">Option D</label>
+        </li>
+      </ul>
+    </div>
+    <button id="submit" type="button">Submit</button>
+  </div>
+</main>
+
+</body>
+</html>
