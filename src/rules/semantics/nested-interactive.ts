@@ -40,6 +40,7 @@ import type {
   HtmlDocument,
   HtmlElement,
   HtmlNode,
+  JsxAttribute,
   JsxElement,
   JsxNode,
   TsxModule,
@@ -105,6 +106,30 @@ const COMPOSITE_WIDGET_DELEGATING_ROLES: ReadonlySet<string> = new Set([
   "gridcell",
   "row",
 ]);
+
+/**
+ * Event-handler attribute names whose presence on an outer element
+ * marks it as materially interactive (a real click/key activator,
+ * not just a semantic role wrapper). Attribute names are compared
+ * case-insensitively for HTML; JSX preserves camelCase, so both
+ * spellings are probed on JSX elements.
+ */
+const HANDLER_ATTRIBUTES_HTML: readonly string[] = [
+  "onclick",
+  "onkeydown",
+  "onkeyup",
+  "onkeypress",
+  "onmousedown",
+  "onmouseup",
+];
+const HANDLER_ATTRIBUTES_JSX: readonly string[] = [
+  "onClick",
+  "onKeyDown",
+  "onKeyUp",
+  "onKeyPress",
+  "onMouseDown",
+  "onMouseUp",
+];
 
 export const rule = defineRule({
   id: "semantics/nested-interactive",
@@ -184,7 +209,7 @@ function findInteractiveHtmlAncestor(
   let parent = parentOf.get(element);
   while (parent) {
     const parentTag = parent.tagName.toLowerCase();
-    if (isInteractiveHtml(parent)) {
+    if (isMateriallyInteractiveHtml(parent)) {
       // <details>'s interactive surface is its <summary>. A descendant
       // that reached <details> without passing through its summary is in
       // the panel body — just flow content, not a nested control.
@@ -195,6 +220,52 @@ function findInteractiveHtmlAncestor(
     parent = parentOf.get(parent);
   }
   return null;
+}
+
+/**
+ * "Materially interactive" is the outer-ancestor predicate for the
+ * nested-interactive check. It is deliberately stricter than
+ * {@link isInteractiveHtml} (which also accepts ARIA interactive
+ * roles and drives the inner-element detection). For the ancestor
+ * side we require one of:
+ *
+ *   - a native interactive tag (the usual set: button, a[href],
+ *     input[type!=hidden], select, textarea, details, summary,
+ *     audio/video with controls)
+ *   - a numeric `tabindex >= 0` (making the element a focus stop)
+ *   - an inline event-handler attribute
+ *     (onclick / onkeydown / onkeyup / onkeypress / onmousedown /
+ *      onmouseup)
+ *
+ * An ARIA role alone does NOT qualify. A `<div role="tab">` or
+ * `<div role="button">` with no handler, no tabindex, and no native
+ * interactive tag is a semantic wrapper, not a focus stop or
+ * activator — nesting an `<a href>` or `<button>` inside it is not
+ * a two-focusables-one-control violation. This matches the
+ * idiomatic Bootstrap-style accordion/collapse markup where the
+ * role conveys AT semantics but the inner `<a href>` is the sole
+ * activation surface.
+ */
+function isMateriallyInteractiveHtml(element: HtmlElement): boolean {
+  const tag = element.tagName.toLowerCase();
+  if (isInteractiveHtmlTag(element, tag)) return true;
+  if (hasFocusableTabindexHtml(element)) return true;
+  if (hasInlineHandlerHtml(element)) return true;
+  return false;
+}
+
+function hasFocusableTabindexHtml(element: HtmlElement): boolean {
+  const raw = getHtmlAttribute(element, "tabindex");
+  if (raw === null) return false;
+  const n = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(n) && n >= 0;
+}
+
+function hasInlineHandlerHtml(element: HtmlElement): boolean {
+  for (const name of HANDLER_ATTRIBUTES_HTML) {
+    if (hasHtmlAttribute(element, name)) return true;
+  }
+  return false;
 }
 
 /**
@@ -301,7 +372,7 @@ function findInteractiveJsxAncestor(
     // PascalCase components are opaque — don't traverse through them.
     if (isJsxPascalCase(parent.tagName)) return null;
     const parentTag = parent.tagName.toLowerCase();
-    if (isInteractiveJsx(parent)) {
+    if (isMateriallyInteractiveJsx(parent)) {
       const detailsOk = parentTag === "details" && !walkedThroughSummary;
       if (!(detailsOk || isAllowedNativeNesting(elementTag, parentTag))) return parent;
     }
@@ -309,6 +380,57 @@ function findInteractiveJsxAncestor(
     parent = parentOf.get(parent);
   }
   return null;
+}
+
+/**
+ * JSX counterpart to {@link isMateriallyInteractiveHtml}. See that
+ * function's doc comment for the predicate rationale — an ARIA role
+ * alone does not qualify as the outer element of a nested-interactive
+ * pattern; a native interactive tag, `tabindex >= 0`, or an inline
+ * event-handler prop is required.
+ */
+function isMateriallyInteractiveJsx(element: JsxElement): boolean {
+  const tag = element.tagName;
+  if (isJsxPascalCase(tag)) return false;
+  if (isInteractiveJsxTag(element, tag)) return true;
+  if (hasFocusableTabindexJsx(element)) return true;
+  if (hasInlineHandlerJsx(element)) return true;
+  return false;
+}
+
+function hasFocusableTabindexJsx(element: JsxElement): boolean {
+  // Accept both JSX's camelCase (`tabIndex`) and the lowercase HTML-style
+  // (`tabindex`) authors occasionally copy-paste. Either a string
+  // literal (`tabIndex="0"`) or an expression resolvable to a non-
+  // negative integer (`tabIndex={0}`) qualifies as a focus stop.
+  for (const attr of element.attributes) {
+    if (attr.name !== "tabIndex" && attr.name !== "tabindex") continue;
+    if (parseJsxTabindexValue(attr.value) >= 0) return true;
+  }
+  return false;
+}
+
+function parseJsxTabindexValue(value: JsxAttribute["value"]): number {
+  if (!value) return Number.NaN;
+  // Expression `raw` includes the JSX braces (e.g. `{0}`); strip
+  // them before parsing as a number.
+  const rawSource = value.kind === "StringLiteral" ? value.value : value.raw;
+  const stripped = rawSource.trim().replace(/^\{/, "").replace(/\}$/, "").trim();
+  const n = Number.parseInt(stripped, 10);
+  return Number.isFinite(n) ? n : Number.NaN;
+}
+
+function hasInlineHandlerJsx(element: JsxElement): boolean {
+  for (const name of HANDLER_ATTRIBUTES_JSX) {
+    if (hasJsxAttribute(element, name)) return true;
+  }
+  // Lowercase HTML-style handler attrs may appear on intrinsic elements
+  // when authors copy-paste HTML into JSX; accept those too rather than
+  // silently under-counting.
+  for (const name of HANDLER_ATTRIBUTES_HTML) {
+    if (hasJsxAttribute(element, name)) return true;
+  }
+  return false;
 }
 
 function isInteractiveJsx(element: JsxElement): boolean {
