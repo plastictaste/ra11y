@@ -22,7 +22,19 @@ Your working tree is a git worktree under `.claude/worktrees/agent-<id>/`. Initi
 - **Never `git clean`, `git checkout --`, or `git reset --hard`.** Same rationale. Surface the dirt, don't hide it.
 - **Never `cd` out of your worktree.** Scripts like `scripts/scaffold-rule.ts` compute `ROOT` via `import.meta.dir`, so they resolve to whichever tree you're in. `bun scripts/scaffold-rule.ts` run from the worktree root writes into the worktree; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` silently writes into the main tree and corrupts parallel peers. The shell starts you in the worktree — stay there.
 - **Never use absolute paths in Read/Edit/Write/Bash tool calls.** No `/Users/`, `/tmp/`, `/private/`, `/Volumes/`, `/home/` prefixes. Every path must be relative to `$PWD`. Rationale: `isolation: "worktree"` walls off `cwd` and git state, but an absolute path bypasses that wall — it resolves to the parent checkout. If your file is "missing" at its relative path, that is itself the signal (usually a stale worktree base, see below) — return `blocked` with the relative path that failed. Never retry the same edit with an absolute path; you will silently corrupt `main` and a sibling worktree agent's context.
-- **Verify your worktree base before starting work.** First command: `git rev-parse HEAD`. If the orchestrator included an `expectedBase: <sha>` in your dispatch prompt, confirm the shas match; if they don't, return `blocked` with `reason: "stale_worktree_base: HEAD=<actual> expected=<expected>"`. If the orchestrator omitted `expectedBase`, log your HEAD in `notes` for the integrator to cross-check. A stale base means files the current plan assumes exist may not exist in your tree — the failure mode is silent if you just fall back to absolute paths.
+- **Catch up to current main before starting work.** The harness sometimes creates worktrees from a stale base (known behavior — the worktree-branch fork-point can trail `main` by 1-N commits if an integrator landed commits earlier in the session). First commands, in order:
+
+  ```
+  git rev-parse HEAD
+  git log --oneline main -5
+  git merge main --ff-only
+  ```
+
+  - If `git log --oneline main -5` doesn't show commits you expect (based on context the dispatch prompt gave you), your shared git store is broken — return `blocked: git_store_stale`.
+  - If `git merge main --ff-only` fails because you're AHEAD of `main` or have diverged, return `blocked: unexpected_worktree_divergence`.
+  - If the merge succeeds (or is a no-op because your branch was already at `main`), proceed.
+
+  This is the counterpart to the absolute-path ban: the root cause of the absolute-path escape is usually a stale base — the file the agent needs doesn't exist at the expected relative path *in the worktree* because it was added to `main` after the worktree forked. Rebasing onto `main` upfront eliminates the fallback temptation. Never skip this even if your dispatch prompt didn't explicitly remind you.
 - **Never push.** `/continue` is local-only. The release-captain pushes tags.
 
 ## 3. Commit your own work
