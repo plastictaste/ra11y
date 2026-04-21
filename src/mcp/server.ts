@@ -342,7 +342,7 @@ function route(
     return handleLoggingSetLevel(id, request.params ?? {}, session);
   }
   if (request.method === "completion/complete") {
-    return handleCompletion(id, request.params ?? {});
+    return handleCompletion(id, request.params ?? {}, session);
   }
   return {
     jsonrpc: "2.0",
@@ -360,6 +360,7 @@ function route(
 async function handleCompletion(
   id: string | number | null,
   rawParams: Record<string, unknown>,
+  session: McpSession,
 ): Promise<JsonRpcResponse> {
   const ref = rawParams["ref"];
   const argument = rawParams["argument"];
@@ -398,7 +399,7 @@ async function handleCompletion(
     // unknown-ref contract, so honor that instead of erroring.
     return { jsonrpc: "2.0", id, result: emptyCompletion() };
   }
-  const result = await complete(refShape, typed, process.cwd());
+  const result = await complete(refShape, typed, process.cwd(), session);
   return { jsonrpc: "2.0", id, result };
 }
 

@@ -39,7 +39,7 @@ export interface ListRulesNextStep {
  * docstring for branch semantics.
  *
  * @param standardFilter - The resolved `standard` parameter (already
- *   validated against `BUILTIN_STANDARDS` by the caller) or
+ *   validated against `session.registry.standards` by the caller) or
  *   `undefined` when the caller passed no filter.
  * @param matched - The count of rules in the response after the
  *   filter was applied; equals `rules.length` of the envelope.

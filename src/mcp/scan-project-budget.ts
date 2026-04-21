@@ -8,7 +8,6 @@
  * their own in-file helpers.
  */
 
-import { BUILTIN_RULES } from "../rules/index.ts";
 import { applyMetaCacheMode } from "./meta-cache.ts";
 import type { ReferenceGuide } from "./reference-guide.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
@@ -59,7 +58,7 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     files: hoisted.files,
     ...page.paginationFields,
     ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
-    ...ruleCatalogField(params, BUILTIN_RULES, formatted.files),
+    ...ruleCatalogField(params, session.registry.rules, formatted.files),
     ...(baseWarnings.length > 0 ? { warnings: baseWarnings } : {}),
     meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta, session }),
   };

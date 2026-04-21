@@ -590,6 +590,7 @@ export async function runScanAndFormat(
       attestations,
       processes,
       wrapperElements,
+      session,
     }),
   );
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);

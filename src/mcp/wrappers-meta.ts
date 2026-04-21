@@ -12,8 +12,6 @@ import { readFile } from "node:fs/promises";
 import { walkJsxElements } from "../engine/ast-helpers.ts";
 import type { ParsedFile, runScan } from "../engine/scanner.ts";
 import { discoverFiles } from "../input/discover.ts";
-import { BUILTIN_CANDIDATE_FINDERS } from "../review/index.ts";
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import type { LoadedConfig } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import type { McpSession } from "./session.ts";
@@ -136,14 +134,16 @@ export function buildRunScanOptions(args: {
   readonly attestations: readonly import("../types/evidence.ts").AttestationRecord[];
   readonly processes: readonly import("../types/config.ts").Process[] | undefined;
   readonly wrapperElements: Readonly<Record<string, string>>;
+  readonly session: McpSession;
 }): Parameters<typeof runScan>[0] {
-  const { activeRules, enabled, files, level, attestations, processes, wrapperElements } = args;
+  const { activeRules, enabled, files, level, attestations, processes, wrapperElements, session } =
+    args;
   return {
-    standards: BUILTIN_STANDARDS,
+    standards: session.registry.standards,
     rules: activeRules,
     enabled,
     files,
-    finders: BUILTIN_CANDIDATE_FINDERS,
+    finders: session.registry.finders,
     level,
     ...(attestations.length > 0 && { attestations }),
     ...(processes !== undefined && processes.length > 0 && { processes }),

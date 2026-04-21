@@ -19,8 +19,8 @@
  * stay honest when the KB grows large.
  */
 
-import { BUILTIN_STANDARDS } from "../standards/index.ts";
 import { loadKbResources } from "./resources/index.ts";
+import type { McpSession } from "./session.ts";
 
 /** Max values we return in one reply. Matches the spec's ceiling. */
 const COMPLETION_LIMIT = 100;
@@ -67,9 +67,10 @@ export function complete(
   ref: CompletionRef,
   argument: CompletionArgument,
   cwd: string,
+  session: McpSession,
 ): Promise<CompletionResult> {
   if (ref.type === "ref/prompt") {
-    return Promise.resolve(completePromptArgument(ref, argument));
+    return Promise.resolve(completePromptArgument(ref, argument, session));
   }
   if (ref.type === "ref/resource") {
     return completeResourceUri(ref, argument, cwd);
@@ -86,11 +87,12 @@ export function complete(
 function completePromptArgument(
   ref: CompletionRef,
   argument: CompletionArgument,
+  session: McpSession,
 ): CompletionResult {
   if (ref.name !== "ra11y/vpat-narrative") return emptyCompletion();
   if (argument.name !== "criterionId") return emptyCompletion();
   const prefix = argument.value ?? "";
-  const all = collectCriterionIds();
+  const all = collectCriterionIds(session);
   return filterAndCap(all, prefix);
 }
 
@@ -129,9 +131,9 @@ async function completeResourceUri(
  * sorted so completion ordering is deterministic across runs (agents
  * sometimes cache the first page).
  */
-function collectCriterionIds(): readonly string[] {
+function collectCriterionIds(session: McpSession): readonly string[] {
   const ids: string[] = [];
-  for (const standard of BUILTIN_STANDARDS) {
+  for (const standard of session.registry.standards) {
     for (const criterion of standard.criteria) {
       ids.push(criterion.id);
     }
