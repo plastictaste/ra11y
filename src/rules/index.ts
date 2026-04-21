@@ -45,6 +45,7 @@ import { rule as orientationLock } from "./layout/orientation-lock.ts";
 import { rule as reflowHardcodedWidth } from "./layout/reflow-hardcoded-width.ts";
 import { rule as textSpacing } from "./layout/text-spacing.ts";
 import { rule as altTextMissing } from "./media/alt-text-missing.ts";
+import { rule as altTextPlaceholder } from "./media/alt-text-placeholder.ts";
 import { rule as autoplaySound } from "./media/autoplay-sound.ts";
 import { rule as videoCaptionsMissing } from "./media/video-captions-missing.ts";
 import { rule as pauseStopHide } from "./motion/pause-stop-hide.ts";
@@ -70,7 +71,6 @@ import { rule as tableHeaders } from "./semantics/table-headers.ts";
 import { rule as tableThScopeMissing } from "./semantics/table-th-scope-missing.ts";
 import { rule as tooltipDismissable } from "./tooltip/dismissable.ts";
 import { rule as wrapperDrift } from "./wrapper/drift.ts";
-import { rule as altTextPlaceholder } from "./media/alt-text-placeholder.ts";
 
 export const BUILTIN_RULES: readonly Rule[] = [
   accesskeyDuplicate,
