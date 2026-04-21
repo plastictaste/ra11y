@@ -108,6 +108,94 @@ describe("MCP tool: list_rules", () => {
     expect(data.matchedOf.matched).toBeGreaterThan(0);
     expect(data.rules.length).toBe(data.matchedOf.matched);
   });
+
+  it("carries meta with scan-confidence telemetry (rules + standards counts)", async () => {
+    // Envelope parity with the other onboarding tools: every
+    // response ships `meta` so the agent can cross-check that the
+    // enumeration resolved against the expected registry without a
+    // second round-trip.
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      rules: unknown[];
+      matchedOf: { total: number; matched: number };
+      meta: {
+        rulesTotal: number;
+        rulesMatched: number;
+        standardsLoaded: number;
+        standards: string[];
+      };
+    };
+
+    expect(data.meta).toBeDefined();
+    expect(data.meta.rulesTotal).toBe(data.matchedOf.total);
+    expect(data.meta.rulesMatched).toBe(data.matchedOf.matched);
+    expect(data.meta.rulesMatched).toBe(data.rules.length);
+    expect(data.meta.standardsLoaded).toBeGreaterThan(0);
+    expect(Array.isArray(data.meta.standards)).toBe(true);
+    expect(data.meta.standards.length).toBe(data.meta.standardsLoaded);
+    // Built-in standards always include wcag22 + wcag21 — parity with
+    // the fixture assumptions elsewhere in this file.
+    expect(data.meta.standards).toContain("wcag22");
+    expect(data.meta.standards).toContain("wcag21");
+  });
+
+  it("meta reflects matched count when a filter narrows the list", async () => {
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      meta: { rulesTotal: number; rulesMatched: number };
+      matchedOf: { total: number; matched: number };
+    };
+
+    expect(data.meta.rulesTotal).toBe(data.matchedOf.total);
+    expect(data.meta.rulesMatched).toBe(data.matchedOf.matched);
+    expect(data.meta.rulesMatched).toBeLessThan(data.meta.rulesTotal);
+  });
+
+  it("emits nextStep + nextStepStructured routing to scan_project (no filter)", async () => {
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      nextStep: string;
+      nextStepStructured: { tool: string; args: Record<string, unknown> };
+    };
+
+    expect(typeof data.nextStep).toBe("string");
+    expect(data.nextStep).toContain("scan_project");
+    expect(data.nextStep).toContain("explain_rule");
+    // Structured hint is the machine twin of the prose — parity with
+    // the other onboarding tools.
+    expect(data.nextStepStructured.tool).toBe("scan_project");
+    expect(data.nextStepStructured.args).toEqual({});
+  });
+
+  it("nextStep prose reflects the filter when one is applied", async () => {
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      nextStep: string;
+      nextStepStructured: { tool: string; args: Record<string, unknown> };
+    };
+
+    // Filter name appears in the prose so the agent can confirm which
+    // standard the count refers to without re-reading the echoed
+    // `filter` field.
+    expect(data.nextStep).toContain("wcag21");
+    expect(data.nextStep).toContain("scan_project");
+    // Structured twin pre-fills the standard arg so the agent's next
+    // scan narrows to the same framework without re-specifying it.
+    expect(data.nextStepStructured.tool).toBe("scan_project");
+    expect(data.nextStepStructured.args).toEqual({ standard: "wcag21" });
+  });
 });
 
 describe("MCP tool: explain_rule", () => {

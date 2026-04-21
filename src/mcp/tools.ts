@@ -13,6 +13,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { BUILTIN_RULES } from "../rules/index.ts";
 import { BUILTIN_STANDARDS } from "../standards/index.ts";
+import { buildListRulesNextStep } from "./list-rules-next-step.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
@@ -481,6 +482,23 @@ const listRulesTool: McpTool = {
       rules = rules.filter((r) => r.satisfies.some((s) => s.startsWith(prefix)));
     }
 
+    // Envelope parity with the other onboarding tools (propose_config,
+    // propose_baseline, list_suppressions, detect_native_wrappers):
+    // `meta` carries deterministic scan-confidence telemetry, `nextStep`
+    // prose + `nextStepStructured` route the agent to the canonical
+    // follow-up call. No metaMode / meta-cache here: list_rules is a
+    // pure enumeration of the built-in registry — no scan, no cwd, no
+    // config load — so there's no delta to collapse across repeat
+    // calls. The counts + standards list are the honest signal the
+    // agent uses to cross-check that the filter resolved as expected
+    // (CLAUDE.md §1 "Verbose meta is signal, not clutter").
+    const meta: Record<string, unknown> = {
+      rulesTotal: total,
+      rulesMatched: rules.length,
+      standardsLoaded: BUILTIN_STANDARDS.length,
+      standards: BUILTIN_STANDARDS.map((s) => s.id),
+    };
+    const nextStep = buildListRulesNextStep(standardFilter, rules.length);
     return textResult({
       // Echo the applied filter only when non-empty (present-when-meaningful);
       // always emit matchedOf so callers can tell a no-op filter (matched === total)
@@ -493,6 +511,9 @@ const listRulesTool: McpTool = {
         severity: r.severity,
         satisfies: [...r.satisfies],
       })),
+      meta,
+      nextStep: nextStep.prose,
+      nextStepStructured: nextStep.structured,
     });
   },
 };
