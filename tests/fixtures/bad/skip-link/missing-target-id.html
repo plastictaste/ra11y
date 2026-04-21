@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>skip-link — bad (target id does not exist)</title>
+  </head>
+  <body>
+    <!--
+      Real-world antipattern (Bootstrap docs' accessibility.mdx): the
+      page documents `<a href="#content">Skip to main content</a>` as
+      the canonical pattern, but the layout renders <main> without
+      id="content". Activating the skip link jumps to the document
+      root instead of past the nav, silently breaking the bypass.
+    -->
+    <a class="skip-link" href="#content">Skip to main content</a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/docs">Docs</a>
+      <a href="/about">About</a>
+    </nav>
+    <main>
+      <h1>Welcome</h1>
+      <p>No id=content anywhere on the page.</p>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>skip-link — good (target id resolves)</title>
+  </head>
+  <body>
+    <!--
+      Canonical skip-link: first focusable element is an in-page anchor
+      whose href fragment matches an id on the landing element (the
+      <main> landmark). Keyboard users Tab once, Enter, focus lands on
+      <main id="content">.
+    -->
+    <a class="skip-link" href="#content">Skip to main content</a>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/docs">Docs</a>
+      <a href="/about">About</a>
+    </nav>
+    <main id="content">
+      <h1>Welcome</h1>
+      <p>Page content.</p>
+    </main>
+  </body>
+</html>
