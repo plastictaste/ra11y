@@ -71,10 +71,11 @@ describe("MCP tool: list_rules", () => {
     expect(data.matchedOf.matched).toBe(data.matchedOf.total);
   });
 
-  it("echoes filter and reports matched === total for a no-op filter (wcag22)", async () => {
-    // Every current rule satisfies at least one wcag22 criterion, so filtering
-    // by wcag22 is silently a no-op today. The matchedOf signal makes that
-    // honest: matched === total tells the agent the filter didn't narrow.
+  it("echoes filter and narrows out wcag21-only rules (wcag22)", async () => {
+    // WCAG 2.2 removed SC 4.1.1 Parsing, so rules that satisfy only
+    // wcag21:4.1.1 (parsing/invalid-id-shape) are correctly dropped when
+    // the caller filters by wcag22. The matchedOf signal makes that
+    // honest: matched < total tells the agent the filter did narrow.
     const tool = findTool("list_rules");
     const session = new McpSession();
     const result = await tool.handler({ standard: "wcag22" }, session);
@@ -86,7 +87,8 @@ describe("MCP tool: list_rules", () => {
     };
 
     expect(data.filter).toEqual({ standard: "wcag22" });
-    expect(data.matchedOf.matched).toBe(data.matchedOf.total);
+    expect(data.matchedOf.matched).toBeLessThan(data.matchedOf.total);
+    expect(data.matchedOf.matched).toBeGreaterThan(0);
     expect(data.rules.length).toBe(data.matchedOf.matched);
   });
 
