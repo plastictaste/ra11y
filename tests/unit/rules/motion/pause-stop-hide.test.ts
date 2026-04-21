@@ -156,4 +156,206 @@ describe("rule motion/pause-stop-hide", () => {
     expect(rule.satisfies).toContain("wcag22:2.2.2");
     expect(rule.satisfies).toContain("wcag21:2.2.2");
   });
+
+  describe("inline <style> blocks in HTML: fires when", () => {
+    it("animation property inside <style> without reduced-motion guard", () => {
+      const src = [
+        `<!doctype html><html><head>`,
+        `<style>`,
+        `  .spinner { animation: spin 1s infinite; }`,
+        `</style>`,
+        `</head><body></body></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("prefers-reduced-motion");
+      expect(v[0]?.message).toContain(".spinner");
+    });
+
+    it("transition-duration inside <style> without guard", () => {
+      const src = [
+        `<!doctype html><html><head>`,
+        `<style>`,
+        `  .carousel-item { transition-duration: 600ms; }`,
+        `</style>`,
+        `</head><body></body></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "carousel.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("transition-duration");
+    });
+
+    it("multiple <style> blocks each contribute findings", () => {
+      const src = [
+        `<!doctype html><html><head>`,
+        `<style>.a { animation: a 1s; }</style>`,
+        `<style>.b { transition: opacity 0.3s; }</style>`,
+        `</head></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "multi.html" });
+      expect(v).toHaveLength(2);
+    });
+  });
+
+  describe("inline <style> blocks in HTML: does NOT fire when", () => {
+    it("<style> wraps the rule in prefers-reduced-motion", () => {
+      const src = [
+        `<!doctype html><html><head>`,
+        `<style>`,
+        `  @media (prefers-reduced-motion: reduce) {`,
+        `    .spinner { animation: none; }`,
+        `  }`,
+        `</style>`,
+        `</head></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "guarded.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("<style> is empty", () => {
+      const src = `<!doctype html><html><head><style></style></head></html>`;
+      const v = runRule(rule, src, { filePath: "empty-style.html" });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("inline style= attribute: fires when", () => {
+    it("transition-duration literal is non-zero", () => {
+      const v = runRule(rule, `<div style="transition-duration: 2s"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("transition-duration");
+      expect(v[0]?.suggestion).toContain("prefers-reduced-motion");
+    });
+
+    it("animation shorthand on inline style", () => {
+      const v = runRule(rule, `<span style="animation: pulse 2s infinite">!</span>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("animation");
+    });
+
+    it("multiple offending properties on one element emit one finding", () => {
+      const v = runRule(rule, `<div style="animation: a 1s; transition: opacity 0.3s"></div>`, {
+        filePath: "index.html",
+      });
+      // One-per-element — the element, not the declaration, is the unit.
+      expect(v).toHaveLength(1);
+    });
+  });
+
+  describe("inline style= attribute: does NOT fire when", () => {
+    it("style sets transition-duration: 0s", () => {
+      const v = runRule(rule, `<div style="transition-duration: 0s"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("style sets animation: none", () => {
+      const v = runRule(rule, `<div style="animation: none"></div>`, { filePath: "index.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("style has no animation/transition properties", () => {
+      const v = runRule(rule, `<div style="color: red; padding: 10px"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("animation-duration uses a near-zero value like 0.01ms", () => {
+      const v = runRule(rule, `<div style="animation-duration: 0.01ms"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("Bootstrap data-bs-ride='carousel': fires when", () => {
+    it("attribute is present with the carousel value", () => {
+      const src = [
+        `<!doctype html><html><body>`,
+        `<div id="myCarousel" class="carousel slide" data-bs-ride="carousel">`,
+        `  <div class="carousel-inner"><div class="carousel-item active">…</div></div>`,
+        `</div>`,
+        `</body></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "carousel.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("data-bs-ride");
+      expect(v[0]?.message).toContain("auto-advance");
+      expect(v[0]?.suggestion).toContain("pause");
+    });
+
+    it("attribute is present with the 'true' value (manual cycle + autoplay)", () => {
+      const v = runRule(rule, `<div data-bs-ride="true"></div>`, { filePath: "c.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("reason mentions missing data-bs-pause attribute", () => {
+      const v = runRule(rule, `<div data-bs-ride="carousel"></div>`, { filePath: "c.html" });
+      expect(v[0]?.message).toContain("no data-bs-pause");
+    });
+
+    it("reason echoes data-bs-pause value when explicitly set", () => {
+      const v = runRule(rule, `<div data-bs-ride="carousel" data-bs-pause="hover"></div>`, {
+        filePath: "c.html",
+      });
+      expect(v[0]?.message).toContain(`data-bs-pause="hover"`);
+    });
+  });
+
+  describe("Bootstrap data-bs-ride='carousel': does NOT fire when", () => {
+    it("data-bs-ride is absent", () => {
+      const v = runRule(rule, `<div class="carousel slide">no autoplay</div>`, {
+        filePath: "c.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("data-bs-ride is some unrelated value", () => {
+      const v = runRule(rule, `<div data-bs-ride="manual-only"></div>`, { filePath: "c.html" });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("inline-style edge cases", () => {
+    it("inline <style> with universal reduced-motion override suppresses per-selector findings", () => {
+      const src = [
+        `<!doctype html><html><head>`,
+        `<style>`,
+        `  .spinner { animation: spin 1s infinite; }`,
+        `  @media (prefers-reduced-motion: reduce) {`,
+        `    *, *::before, *::after {`,
+        `      animation-duration: 0.01ms !important;`,
+        `      transition-duration: 0.01ms !important;`,
+        `    }`,
+        `  }`,
+        `</style>`,
+        `</head></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "styled.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("inline <style> finding's line number points into the HTML file, not the extracted CSS", () => {
+      // Line 3 of the HTML holds the animation declaration.
+      const src = [
+        `<!doctype html><html><head>`, // line 1
+        `<style>`, // line 2
+        `  .spinner { animation: spin 1s infinite; }`, // line 3
+        `</style>`, // line 4
+        `</head></html>`, // line 5
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "styled.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.location.line).toBe(3);
+    });
+  });
 });

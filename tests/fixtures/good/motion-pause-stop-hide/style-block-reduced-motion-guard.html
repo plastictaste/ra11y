@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — good (prefers-reduced-motion guard in <style>)</title>
+    <style>
+      /*
+        The animation is wrapped in a prefers-reduced-motion query so
+        users who have opted into reduced motion at the OS level see no
+        spinning wheel. The rule walks the inline <style> content as CSS
+        and recognizes the guard.
+      */
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: no-preference) {
+        .spinner {
+          animation: spin 1s linear infinite;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="spinner" aria-label="Loading"></div>
+  </body>
+</html>

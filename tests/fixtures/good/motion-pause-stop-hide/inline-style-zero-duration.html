@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — good (inline style= with zero/none values)</title>
+  </head>
+  <body>
+    <!--
+      Inline declarations that explicitly disable motion are honest and
+      don't violate WCAG 2.2.2 — there is nothing to pause.
+    -->
+    <div class="fade" style="transition: none"></div>
+    <button type="button" style="animation-duration: 0s">Silent button</button>
+    <span style="color: red; padding: 4px">No motion set at all.</span>
+  </body>
+</html>

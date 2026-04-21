@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — bad (inline style= transition-duration)</title>
+  </head>
+  <body>
+    <!--
+      Inline style= declarations cannot be scoped to a
+      prefers-reduced-motion media query — there is no selector to wrap.
+      The 2s transition runs for every user regardless of their OS-level
+      reduced-motion preference.
+    -->
+    <button type="button" class="reveal" style="transition-duration: 2s; transition-property: transform">
+      Reveal
+    </button>
+    <div class="panel" style="animation: pulse 4s ease-in-out infinite">
+      Notice
+    </div>
+  </body>
+</html>

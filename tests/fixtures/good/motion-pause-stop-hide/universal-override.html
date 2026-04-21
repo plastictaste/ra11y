@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — good (universal reduced-motion override)</title>
+    <style>
+      /*
+        The MDN-canonical universal override: a single reduced-motion
+        query that zeroes animation/transition duration for every element
+        (including pseudo-elements). When this pattern is present anywhere
+        in the stylesheet, per-selector animations elsewhere are already
+        covered — the rule detects the override and stays quiet.
+      */
+      .spinner {
+        animation: spin 1s linear infinite;
+      }
+      .fade {
+        transition: opacity 0.3s ease;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="spinner" aria-label="Loading"></div>
+    <div class="fade">Content</div>
+  </body>
+</html>

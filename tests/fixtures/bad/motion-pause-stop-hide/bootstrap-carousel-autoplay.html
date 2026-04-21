@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — bad (Bootstrap carousel auto-advance)</title>
+  </head>
+  <body>
+    <!--
+      Canonical Bootstrap 5 carousel autoplay pattern. `data-bs-ride="carousel"`
+      starts auto-advancing slides on page load (5-second default cycle).
+      Pause-on-hover is Bootstrap's incidental default, not a user-operable
+      mechanism under WCAG 2.2.2. No visible prev/next or pause/play buttons
+      are present — the user cannot stop the motion.
+    -->
+    <div id="hero" class="carousel slide" data-bs-ride="carousel">
+      <div class="carousel-inner">
+        <div class="carousel-item active">
+          <img src="/hero-1.jpg" class="d-block w-100" alt="Product family one" />
+        </div>
+        <div class="carousel-item">
+          <img src="/hero-2.jpg" class="d-block w-100" alt="Product family two" />
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

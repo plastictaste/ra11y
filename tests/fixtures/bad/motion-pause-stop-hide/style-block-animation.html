@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — bad (animation in a <style> block)</title>
+    <style>
+      /*
+        The animation lives in an inline <style> block rather than an
+        external .css file. The rule parses the <style> content as CSS
+        and applies the same prefers-reduced-motion guard check — this
+        declaration is outside any reduced-motion media query.
+      */
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .spinner {
+        animation: spin 1s linear infinite;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="spinner" aria-label="Loading"></div>
+  </body>
+</html>
