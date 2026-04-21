@@ -46,15 +46,24 @@ export type ScanWarningCode =
   // branching on the code can answer "how bad?" without descending
   // into `meta` — see ADR 0023.
   | "extensions_skipped_no_parser"
-  // Parser produced errors on at least one file: the AST is partial,
-  // so rules may have missed violations below the parse-error point.
-  // Without this code a scan where one file fails to parse reads as
-  // a clean result on that file — a silent-miss failure mode that
-  // mirrors `extensions_skipped_no_parser` one layer deeper in the
-  // pipeline (discovery accepted the file, parsing choked). Paired
-  // meta: `analysisCoverage.parseErrorFileCount` carries the count,
-  // and `analysisCoverage.parseErrorFiles` (under `verboseMeta`)
-  // lists the paths.
+  // Parser produced errors on at least one file: either the AST was
+  // unusable (file effectively invisible to rules, tallied under
+  // `parseErrorFileCount`) OR the recovered partial AST still let at
+  // least one rule fire (findings surfaced, but violations below the
+  // parse-error point may be missing — tallied under
+  // `partialParseFileCount`). Without this code a scan where a file
+  // fails to parse reads as a clean result on that file — a silent-miss
+  // failure mode that mirrors `extensions_skipped_no_parser` one layer
+  // deeper in the pipeline (discovery accepted the file, parsing
+  // choked). The two counts are split because collapsing them hides
+  // whether the listed paths are invisible or partially reported; the
+  // warning fires on either because both are "findings undercounted on
+  // at least one file." Paired meta:
+  // `analysisCoverage.parseErrorFileCount` +
+  // `analysisCoverage.partialParseFileCount` carry the counts;
+  // `analysisCoverage.parseErrorFiles` (under `verboseMeta`) lists the
+  // invisible paths; `analysisCoverage.partialParseFiles` always lists
+  // the partially-reported paths with a per-entry `reason`.
   | "parse_errors_present"
   // ADR 0021 amendment (2026-04-20): the token-density secondary
   // budget dropped trailing file entries from this response to fit
@@ -385,11 +394,15 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     out.push("session_wrappers_configured_for_different_cwd");
   }
   if (hasParseErrors(inputs.analysisCoverage)) {
-    // Coverage block reports a non-zero parseErrorFileCount — the
-    // scanner ran on a partial AST for at least one file, so
-    // findings on those files are definitionally undercounted.
-    // Surface the top-level signal so an agent can branch without
-    // reading into meta; the count + path list still live there.
+    // Coverage block reports a non-zero `parseErrorFileCount` OR
+    // `partialParseFileCount` — the scanner either couldn't see at
+    // least one file (invisible bucket) or ran on a partial AST with
+    // degraded recall (partial bucket). Either way, findings on the
+    // affected paths are undercounted and the agent needs to know.
+    // The warning is union-keyed so splitting the coverage fields
+    // didn't silently demote the signal when the bug is a partial
+    // parse (the original motivating case: modal.mdx emitting 14
+    // findings while also landing in `parseErrorFiles`).
     out.push("parse_errors_present");
   }
   if (computeContentFileCount(inputs.analysisCoverage) >= CONTENT_FILES_SKIPPED_THRESHOLD) {
@@ -417,8 +430,11 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
 
 function hasParseErrors(coverage: Record<string, unknown> | undefined): boolean {
   if (coverage === undefined) return false;
-  const count = coverage["parseErrorFileCount"];
-  return typeof count === "number" && count > 0;
+  const full = coverage["parseErrorFileCount"];
+  const partial = coverage["partialParseFileCount"];
+  return (
+    (typeof full === "number" && full > 0) || (typeof partial === "number" && partial > 0)
+  );
 }
 
 function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {

@@ -13,19 +13,33 @@
  *   - `templateDirectiveHandling`: plain-English summary of *what* the
  *     scanner does with those directives, so agents don't have to guess
  *     whether a Jinja-laced file was partially analyzed or skipped.
- *   - `parseErrorFileCount`: files where the parser couldn't produce a
- *     clean AST. Rules still ran on the partial tree, but may have
- *     missed violations below the parse-error point.
+ *   - `parseErrorFileCount`: files where the parser emitted errors AND
+ *     the downstream rules produced zero findings on that file — the
+ *     scanner effectively couldn't see the file. Agents should treat
+ *     paths in this bucket as invisible: any a11y violation in them
+ *     went unreported.
+ *   - `partialParseFileCount`: files where the parser emitted errors
+ *     but the recovered partial AST was enough for at least one rule
+ *     to fire. Findings on these files are present in the response and
+ *     carry live line numbers — they are NOT invisible — but below the
+ *     parse-error point the AST is degraded and additional violations
+ *     may have been missed. The split exists because a combined bucket
+ *     (the historical `parseErrorFiles`) conflated "file invisible" with
+ *     "file partially reported," and agents reading the combined shape
+ *     would miss findings that did emerge on the listed paths.
  *   - `hints`: actionable suggestions derived from the above counts —
  *     e.g., "add these 8 design-system wrappers to nativeWrappers" when
  *     `opaqueCustomComponents` is high, or "post-compile CSS likely not
  *     in scan path" when CSS coverage is thin vs HTML/JSX. Each hint
  *     is a single sentence an agent can act on in one tool call.
  *
- * Under `verboseMeta`, the counts are joined by their underlying arrays
- * (`parseErrorFiles`, `opaqueCustomComponentNames`) plus `rulesByExtension`
- * so the agent can verify which rules ran on which file types. Fields
- * omitted when they'd be empty, so clean projects stay terse.
+ * Under `verboseMeta`, `parseErrorFileCount` is joined by `parseErrorFiles`
+ * (the path list) and `opaqueCustomComponentNames`, plus `rulesByExtension`
+ * so the agent can verify which rules ran on which file types.
+ * `partialParseFiles` ships with a `reason` per entry regardless of
+ * `verboseMeta` — the reason is the actionable signal, not a dumpable
+ * list. Fields are omitted when they'd be empty, so clean projects stay
+ * terse.
  */
 
 import { walkJsxElements } from "../engine/ast-helpers.ts";
@@ -64,6 +78,20 @@ interface OpaqueComponentUsage {
   interactive: boolean;
 }
 
+/**
+ * A file whose parser emitted errors. The `reason` is the first parse
+ * error's message — surfaced as-is so an agent can branch on the root
+ * cause ("Unexpected token `<`" vs "Unterminated string literal") rather
+ * than guessing from the file extension. Classification into either
+ * `parseErrorFiles` (total-parse-failure, file invisible to rules) or
+ * `partialParseFiles` (rules fired on the recovered slice) is decided
+ * at emission time by checking whether the file produced any findings.
+ */
+interface ParseErrorEntry {
+  readonly path: string;
+  readonly reason: string;
+}
+
 interface CoverageAccumulator {
   /**
    * Map of PascalCase tag name → call-site count + interactive flag.
@@ -77,7 +105,7 @@ interface CoverageAccumulator {
    */
   readonly opaqueComponents: Map<string, OpaqueComponentUsage>;
   readonly templateEngines: Set<string>;
-  readonly parseErrorFiles: string[];
+  readonly parseErrorEntries: ParseErrorEntry[];
 }
 
 /**
@@ -166,11 +194,12 @@ export function buildAnalysisCoverage(
   autoDetectConfirmedCount = 0,
   preset?: ConfigPreset,
   discoveryDiagnostics?: import("../input/discover.ts").DiscoveryDiagnostics,
+  findingFilePaths?: ReadonlySet<string>,
 ): { analysisCoverage?: Record<string, unknown> } {
   const acc: CoverageAccumulator = {
     opaqueComponents: new Map(),
     templateEngines: new Set(),
-    parseErrorFiles: [],
+    parseErrorEntries: [],
   };
   const wrapperSet = new Set(wrappers);
   for (const file of files) accumulateCoverageForFile(file, wrapperSet, acc, preset);
@@ -184,6 +213,8 @@ export function buildAnalysisCoverage(
     templateDirectiveHandling?: string;
     parseErrorFileCount?: number;
     parseErrorFiles?: readonly string[];
+    partialParseFileCount?: number;
+    partialParseFiles?: readonly { readonly path: string; readonly reason: string }[];
     rulesByExtension?: Readonly<Record<string, readonly string[]>>;
     hints?: readonly string[];
     skippedByExtension?: Readonly<Record<string, number>>;
@@ -206,9 +237,8 @@ export function buildAnalysisCoverage(
     coverage.templateDirectivesFound = [...acc.templateEngines].sort();
     coverage.templateDirectiveHandling = describeTemplateDirectiveHandling(acc.templateEngines);
   }
-  if (acc.parseErrorFiles.length > 0) {
-    coverage.parseErrorFileCount = acc.parseErrorFiles.length;
-    if (verbose) coverage.parseErrorFiles = [...acc.parseErrorFiles].sort();
+  if (acc.parseErrorEntries.length > 0) {
+    assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, verbose, coverage);
   }
   if (verbose) {
     const byExt = rulesByExtension(files, activeRules);
@@ -262,6 +292,81 @@ function rankOpaqueByCallSites(
     .filter(([, usage]) => usage.interactive)
     .sort(([aName, a], [bName, b]) => b.callSites - a.callSites || aName.localeCompare(bName))
     .map(([name, usage]) => ({ name, callSites: usage.callSites }));
+}
+
+/**
+ * Maximum character length for a `partialParseFiles[].reason` string.
+ * Real parser messages land well under 120 chars; the cap bites only on
+ * pathological recovered input where the parser echoes back a long
+ * source snippet. Bounded to keep the wire size predictable on
+ * hostile-input fixtures without losing the head of the message, which
+ * is where the actionable signal (error kind) always lives.
+ */
+const PARSE_ERROR_REASON_MAX = 200;
+
+function truncateParseErrorReason(message: string): string {
+  if (message.length <= PARSE_ERROR_REASON_MAX) return message;
+  return `${message.slice(0, PARSE_ERROR_REASON_MAX - 1)}…`;
+}
+
+/**
+ * Splits the accumulated parse-error entries into the two honest
+ * buckets and assigns them to the coverage block.
+ *
+ * - `parseErrorFiles` (count + — under verbose — the path list): files
+ *   whose parser emitted errors AND produced zero findings. These are
+ *   invisible to rules; an agent reading the count treats them as
+ *   "could contain a11y violations the scanner never saw."
+ * - `partialParseFiles` (always an array of `{ path, reason }` when
+ *   non-empty): files whose parser emitted errors but for which at
+ *   least one rule fired on the recovered slice. Findings on these
+ *   paths are present in the response with live line numbers; the
+ *   entry is a calibration warning, not a blanket "invisible" signal.
+ *
+ * Classification depends on `findingFilePaths`. When the caller passes
+ * `undefined` (rare — e.g. a coverage surface that hasn't consumed
+ * violations yet), every errored file routes into the historical
+ * `parseErrorFiles` bucket so the absence of the signal never silently
+ * demotes a file from "fully invisible" to "partially reported."
+ *
+ * Each bucket is emitted only when non-empty (present-when-meaningful).
+ * The `reason` string on `partialParseFiles[]` is always populated;
+ * conditional spreads at the field level are for whole-field absence,
+ * not per-entry "did you mean empty or unknown" (see CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest").
+ */
+function assembleParseErrorBlocks(
+  entries: readonly ParseErrorEntry[],
+  findingFilePaths: ReadonlySet<string> | undefined,
+  verbose: boolean,
+  coverage: {
+    parseErrorFileCount?: number;
+    parseErrorFiles?: readonly string[];
+    partialParseFileCount?: number;
+    partialParseFiles?: readonly { readonly path: string; readonly reason: string }[];
+  },
+): void {
+  const totalFailure: string[] = [];
+  const partial: { path: string; reason: string }[] = [];
+  for (const entry of entries) {
+    if (findingFilePaths !== undefined && findingFilePaths.has(entry.path)) {
+      partial.push({ path: entry.path, reason: entry.reason });
+    } else {
+      totalFailure.push(entry.path);
+    }
+  }
+  if (totalFailure.length > 0) {
+    coverage.parseErrorFileCount = totalFailure.length;
+    if (verbose) coverage.parseErrorFiles = [...totalFailure].sort();
+  }
+  if (partial.length > 0) {
+    coverage.partialParseFileCount = partial.length;
+    // `partialParseFiles` always ships when non-empty (no verbose gate):
+    // the per-entry `reason` is the actionable signal an agent needs to
+    // decide what to investigate, not a dumpable path list. Sorted for
+    // deterministic wire output.
+    coverage.partialParseFiles = [...partial].sort((a, b) => a.path.localeCompare(b.path));
+  }
 }
 
 /**
@@ -517,7 +622,20 @@ function accumulateCoverageForFile(
   acc: CoverageAccumulator,
   preset: ConfigPreset | undefined,
 ): void {
-  if (file.ast.errors.length > 0) acc.parseErrorFiles.push(file.filePath);
+  if (file.ast.errors.length > 0) {
+    // The first parse error drives the `reason` an agent sees when
+    // classifying the entry. Subsequent errors often cascade from it
+    // (one unclosed tag spawns a dozen "unexpected token" complaints),
+    // so the head message is both the most actionable and the least
+    // noisy signal. Message truncation keeps the wire size bounded on
+    // pathological cases (e.g. a recovered HTML parser echoing back a
+    // 10 KB line). The cap is generous — real parser messages are
+    // ≤120 chars; this only bites on hostile input.
+    acc.parseErrorEntries.push({
+      path: file.filePath,
+      reason: truncateParseErrorReason(file.ast.errors[0]?.message ?? ""),
+    });
+  }
   if (file.ast.language === "html") {
     detectTemplateEngines(file.source, acc.templateEngines);
     return;

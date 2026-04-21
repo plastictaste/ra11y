@@ -217,7 +217,13 @@ export function assembleScanFamilyResponse(
     fixesByClass,
   });
 
-  // (4) Meta.
+  // (4) Meta. `findingFilePaths` is derived from the ALL violations
+  // input (pre-note-split) so a file that produced only info-severity
+  // notes still counts as "rules fired on it" — the point of the
+  // partial-parse bucket is to distinguish "rules ran" from "rules
+  // couldn't see anything," not to filter by severity.
+  const findingFilePaths = new Set<string>();
+  for (const v of violations) findingFilePaths.add(v.location.filePath);
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     files: parsedFiles,
@@ -233,6 +239,7 @@ export function assembleScanFamilyResponse(
     preset,
     suppressions,
     perRuleCoverage,
+    findingFilePaths,
     ...(discoveryDiagnostics !== undefined &&
     Object.keys(discoveryDiagnostics.skippedByExtension).length > 0
       ? { discoveryDiagnostics }

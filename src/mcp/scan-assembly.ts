@@ -138,6 +138,17 @@ export function buildScanMeta(args: {
    * by the extension check.
    */
   readonly discoveryDiagnostics?: DiscoveryDiagnostics;
+  /**
+   * Set of file paths that produced at least one finding in this scan
+   * (violation OR info-severity note). Threaded to
+   * {@link buildAnalysisCoverage} so parse-error files can be split
+   * into total-failure (`parseErrorFiles` — zero findings emitted) and
+   * partial-parse (`partialParseFiles` — rules fired on the recovered
+   * slice) buckets. Omitted = caller hasn't wired findings yet, in
+   * which case every errored file routes into `parseErrorFiles`
+   * (historical behavior — safe default, never silently demotes).
+   */
+  readonly findingFilePaths?: ReadonlySet<string>;
 }): Record<string, unknown> {
   const {
     filesScanned,
@@ -155,6 +166,7 @@ export function buildScanMeta(args: {
     suppressions,
     perRuleCoverage,
     discoveryDiagnostics,
+    findingFilePaths,
   } = args;
   return {
     filesScanned,
@@ -198,6 +210,7 @@ export function buildScanMeta(args: {
       wrapperProvenance.fromAutoDetect.confirmed.length,
       preset,
       discoveryDiagnostics,
+      findingFilePaths,
     ),
     // Audit trail for every in-source `ra11y-disable` pragma — keeps
     // suppressions visible and accountable. Omitted when no pragmas

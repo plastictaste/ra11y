@@ -249,6 +249,37 @@ describe("computeScanWarnings", () => {
     expect(absent).not.toContain("parse_errors_present");
   });
 
+  it("fires `parse_errors_present` when partialParseFileCount is non-zero (errored + findings present, recall degraded)", () => {
+    // Motivating case: an .mdx file emitted 14 findings with live
+    // line numbers AND had parser errors. The split routed it into
+    // `partialParseFileCount`, not `parseErrorFileCount`. The warning
+    // must still fire — both buckets mean "findings undercounted on
+    // at least one file," which is the signal the warning encodes.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { partialParseFileCount: 1 },
+      filesByExtension: { ".mdx": 1, ".tsx": 41 },
+    });
+    expect(codes).toContain("parse_errors_present");
+  });
+
+  it("fires `parse_errors_present` when both parseErrorFileCount AND partialParseFileCount are non-zero", () => {
+    // Union logic: the warning fires once even when both buckets
+    // populate (the declaration-order test verifies it only appears
+    // once in the `out` array, but this test confirms the union
+    // doesn't drop the signal when both conditions hold).
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 1, partialParseFileCount: 1 },
+      filesByExtension: { ".tsx": 42 },
+    });
+    expect(codes.filter((c) => c === "parse_errors_present").length).toBe(1);
+  });
+
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
     const codes = computeScanWarnings({
       filesScanned: 0,

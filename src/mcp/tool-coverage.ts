@@ -172,6 +172,12 @@ export const coverageTool: McpTool = {
       0,
       undefined,
       discoveryDiagnostics,
+      // Parse-error split by same rule as the scan surfaces: files
+      // that produced at least one violation land in
+      // `partialParseFiles` (findings present, recall degraded);
+      // files whose parser errored without emitting anything stay
+      // in `parseErrorFiles` (invisible to rules).
+      new Set(result.violations.map((v) => v.location.filePath)),
     );
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
     // a coverage response with `criteriaAutomatable: 0` etc. is

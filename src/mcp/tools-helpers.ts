@@ -705,6 +705,15 @@ export async function runScanAndFormat(
       preset,
       suppressions,
       perRuleCoverage,
+      // Derived from the post-filter violation set (same view the
+      // consumer sees on `files`/`plan`). Threads into the parse-error
+      // split so a file that emitted findings lands in
+      // `partialParseFiles` rather than the invisible `parseErrorFiles`
+      // bucket — otherwise a file like `modal.mdx` that produced 14
+      // findings with live line numbers would also appear in
+      // `parseErrorFiles`, reading to the agent as "invisible" and
+      // the findings are silently ignored.
+      findingFilePaths: new Set(filtered.map((v) => v.location.filePath)),
       ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
     }),
     ...(referenceGuide === undefined ? {} : { referenceGuide }),

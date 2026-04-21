@@ -79,7 +79,7 @@ export const scanProjectTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, analysisCoverage expands its counts into the actual lists — `parseErrorFiles` (paths that failed to parse), `opaqueCustomComponentNames` (PascalCase tags not in nativeWrappers), and `rulesByExtension` (which rules ran against which file types). Off by default to keep responses terse; enable when triaging coverage gaps.",
+            "When true, analysisCoverage expands its counts into the actual lists — `parseErrorFiles` (paths that errored AND produced zero findings; invisible to rules), `opaqueCustomComponentNames` (PascalCase tags not in nativeWrappers), and `rulesByExtension` (which rules ran against which file types). `partialParseFiles` (paths that errored but still produced findings on the recovered slice) ships with `{ path, reason }` entries regardless of this flag. Off by default to keep responses terse; enable when triaging coverage gaps.",
         },
         metaMode: metaModeSchema,
         autoDetectWrappers: {
