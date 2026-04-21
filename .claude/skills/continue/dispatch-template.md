@@ -4,6 +4,26 @@ This file is the shared contract every parallel worker receives when `/continue`
 
 Every dispatched specialist MUST read this file on boot and follow every rule below. The backlog item attached to your dispatch prompt is the *scope*; this file is the *shape*.
 
+## 0. STOP — worktree-isolation non-negotiables (read FIRST, before any tool call)
+
+Three rules that break isolation silently, corrupt `main`, and have caused real integration rollbacks in this codebase. Every dispatched agent MUST read these before making ANY tool call:
+
+1. **Never use absolute paths in Read / Edit / Write / Bash tool calls.** NO `/Users/`, `/tmp/`, `/private/`, `/Volumes/`, `/home/` prefixes in ANY `file_path`, Bash command, or shell redirection. Every path must be relative to `$PWD`. `isolation: "worktree"` walls off `cwd` and git state, but absolute paths bypass the wall — the edit silently lands on the parent checkout, not your worktree. If a file is missing at its expected relative path, that is itself the signal — return `blocked` with the relative path. Never retry with an absolute path. This rule is the #1 cause of integration failures; violations have been observed even when documented in §2 (buried). It is here in §0 because position matters — if you skip this rule, you lose your work and corrupt a sibling agent's context.
+
+2. **Never `cd` out of your worktree.** Scripts compute `ROOT` via `import.meta.dir` and resolve to whichever tree the shell is in. `bun scripts/scaffold-rule.ts` from the worktree is safe; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` writes to main. The shell starts you in the worktree — stay there.
+
+3. **Catch up to current main BEFORE editing anything.** First three commands, in order:
+
+   ```
+   git rev-parse HEAD
+   git log --oneline main -5
+   git merge main --ff-only
+   ```
+
+   The harness may create worktrees from a stale fork-point. If `merge main --ff-only` fails (you've diverged or are ahead of main), return `blocked: unexpected_worktree_divergence`. If it succeeds, proceed. This is the counterpart to rule 1: the absolute-path fallback tempts you ONLY when a file seems missing; rebase first and the temptation disappears.
+
+Only after these three rules are fully internalized should you read §1 (scope) and §2 (worktree discipline — deeper elaboration of the above).
+
 ## 1. Scope-lock
 
 Edit only files listed (or directly implied) by the backlog item:
