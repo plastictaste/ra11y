@@ -209,6 +209,18 @@ interface ScanSubset {
   readonly totalFindings: number;
   readonly scanMode?: string;
   readonly actionableManualItems?: number;
+  /**
+   * Static-analysis caveat prose forwarded verbatim from
+   * `scan_project`'s `plan.limitations`. Tells the agent (and, via
+   * `ciSnippet`, any CI reader) which runtime-only checks the scanner
+   * cannot verify — e.g. live-region announcements, ARIA state
+   * transitions, focus traps — so a clean scan is not mistaken for
+   * WCAG conformance. Present-when-meaningful: omitted only when the
+   * upstream scan emits no limitations prose (not currently
+   * reachable on a real scan, but the shape is conditional so the
+   * subset stays honest if upstream ever drops the field).
+   */
+  readonly limitations?: readonly string[];
 }
 
 function extractScanSubset(scan: unknown): ScanSubset {
@@ -222,6 +234,7 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const totalFindings = readNumberFromRecord(plan, "totalFindings") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionable = readNumberFromRecord(plan, "actionableManualItems");
+  const limitations = readStringArray(plan, "limitations");
   return {
     filesScanned,
     totalFindings,
@@ -229,6 +242,7 @@ function extractScanSubset(scan: unknown): ScanSubset {
     ...(actionable === null || actionable === undefined
       ? {}
       : { actionableManualItems: actionable }),
+    ...(limitations.length > 0 ? { limitations } : {}),
   };
 }
 

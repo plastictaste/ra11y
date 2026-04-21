@@ -32,6 +32,7 @@ interface BootstrapResponse {
     readonly filesScanned: number;
     readonly totalFindings: number;
     readonly scanMode?: string;
+    readonly limitations?: readonly string[];
   };
   readonly baseline: { readonly written: boolean; readonly path: string } | null;
   readonly ciSnippet: string;
@@ -88,6 +89,31 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(response.meta.scanned).toEqual({ mode: "project", root: dir });
       expect(response.meta.writeBaseline).toBe(false);
       expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
+    });
+  });
+
+  // Envelope honesty: the upstream scan emits `plan.limitations`
+  // prose telling readers static analysis can prove failure but not
+  // conformance and that runtime-only checks are out of scope. The
+  // bootstrap composer must forward that prose onto `scan.limitations`
+  // so CI readers pasting the `ciSnippet` don't treat the scan as
+  // authoritative. V1-ENV-BOOTSTRAP-STRIPS-LIMITATIONS.
+  it("forwards plan.limitations prose from scan_project onto scan.limitations", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>x</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      expect(response.scan.limitations).toBeDefined();
+      expect(Array.isArray(response.scan.limitations)).toBe(true);
+      expect((response.scan.limitations ?? []).length).toBeGreaterThan(0);
+      const joined = (response.scan.limitations ?? []).join(" ");
+      // Prose cites the static-analysis / runtime-check caveat —
+      // agents and CI readers need the substantive warning, not just
+      // the field's presence.
+      expect(joined.toLowerCase()).toContain("static analysis");
+      expect(joined.toLowerCase()).toContain("runtime");
     });
   });
 
