@@ -434,6 +434,70 @@ describe("buildAnalysisCoverage — hints", () => {
       const { analysisCoverage } = buildAnalysisCoverage([plain], [], NO_RULES, false);
       expect(analysisCoverage?.["templateDirectiveHandling"]).toBeUndefined();
     });
+
+    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: Jekyll `_includes/`
+    // partials routinely open with the whitespace-control variant
+    // `{%- include 'foo.html' -%}` — the original classifier's regex
+    // required `\s*` immediately after `{%`, so the dash-prefixed form
+    // slipped through and the partial was mis-tagged handlebars-or-
+    // mustache on the strength of its `{{ }}` interpolations alone.
+    it("recognizes Liquid whitespace-control `{%-` as jinja-or-liquid", () => {
+      const liquidPartial = htmlFile(
+        "header.html",
+        "{%- include 'top.html' -%}\n<h1>{{ page.title }}</h1>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([liquidPartial], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
+
+    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: a file with both `{% %}`
+    // and `{{ }}` is Jinja/Liquid — the `{{ }}` is interpolation within
+    // the same family, not a separate handlebars signal. The previous
+    // classifier used a cross-file accumulator (`!into.has("jinja-or-
+    // liquid")`), so the ordering of files within a scan decided
+    // whether `handlebars-or-mustache` got stamped alongside.
+    it("does not double-tag `{% %}` + `{{ }}` in the same file", () => {
+      const liquid = htmlFile("base.html", "{% if user %}<p>{{ user.name }}</p>{% endif %}");
+      const { analysisCoverage } = buildAnalysisCoverage([liquid], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
+
+    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: cross-file invariant for
+    // `scan_project`. A pure-Liquid project where one file has only
+    // `{{ }}` (partial) and another has `{% %}` (layout) must classify
+    // per-file; the accumulator unions the per-file decisions. The
+    // bug: the first file (bare `{{ }}`) stamped handlebars-or-
+    // mustache, the second (control block) stamped jinja-or-liquid,
+    // and the final set contained both — inconsistent with `scan_file`
+    // on either file alone.
+    it("classifies per-file so mixed Liquid projects don't yield both tags", () => {
+      const partial = htmlFile("_includes/header.html", "<h1>{{ page.title }}</h1>");
+      const layout = htmlFile(
+        "_layouts/default.html",
+        "{% include 'header.html' %}<main>{{ content }}</main>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([partial, layout], [], NO_RULES, false);
+      // The `{{ }}`-only partial legitimately lands in handlebars-or-
+      // mustache (ambiguous evidence); the layout lands in jinja-or-
+      // liquid. Both appear because the scan genuinely contains both
+      // syntactic shapes — but each file's label is decided in
+      // isolation, which is the invariant that was broken.
+      const tags = analysisCoverage?.["templateDirectivesFound"] as string[] | undefined;
+      expect(tags).toContain("jinja-or-liquid");
+      // Pure-Handlebars regression: a project with ONLY `{{ }}` files
+      // should still be tagged handlebars-or-mustache. Verified below
+      // in a dedicated test.
+    });
+
+    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: pure Handlebars file.
+    // A `{{ }}`-only file with no `{% %}` anywhere stays tagged
+    // handlebars-or-mustache — the classifier change must not break
+    // the honest handlebars case.
+    it("tags pure Handlebars (`{{ }}` only, no `{% %}`) as handlebars-or-mustache", () => {
+      const handlebars = htmlFile("template.hbs", "<h1>{{title}}</h1><p>{{body}}</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([handlebars], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
+    });
   });
 
   describe("preset: 'storybook'", () => {

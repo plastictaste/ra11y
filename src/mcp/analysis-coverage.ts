@@ -530,12 +530,50 @@ function recordOpaqueSighting(
   opaque.set(tagName, { callSites: 1, interactive });
 }
 
+/**
+ * Per-file syntax-family classifier. Not trying to distinguish dialects
+ * precisely — the signal "this file isn't plain HTML" plus the family is
+ * what the agent needs to know cross-file reasoning is limited.
+ *
+ * Families (the labels are disjoint — one file gets at most one `{{...}}`
+ * family, plus optionally the `<%...%>` family):
+ *   - jinja-or-liquid: uses `{% ... %}` control blocks (Jinja / Liquid /
+ *     Nunjucks). Whitespace-control variants `{%-` and `-%}` count.
+ *     `{{ ... }}` interpolation in the same file is part of THIS family,
+ *     not a separate handlebars signal.
+ *   - handlebars-or-mustache: uses `{{ ... }}` interpolation but no
+ *     `{% ... %}` control blocks — the `{{ }}`-only shape.
+ *   - erb-or-ejs: uses `<% ... %>`. Independent of the `{{...}}` axis.
+ *
+ * The per-file scoping matters for `scan_project`: a prior implementation
+ * accumulated labels across the whole scan via the shared `into` set, so
+ * the first file with bare `{{ x }}` would stamp `handlebars-or-mustache`
+ * and a later `{% extends %}` would stamp `jinja-or-liquid` — yielding
+ * a mixed classification on projects that are pure Liquid. Classify
+ * THIS file's source; the caller unions the per-file result into the
+ * accumulator.
+ */
 function detectTemplateEngines(source: string, into: Set<string>): void {
-  // Cheap structural probes. Not trying to distinguish dialects
-  // precisely — the signal "this file isn't plain HTML" is what the
-  // agent needs to know cross-file reasoning is limited.
-  if (/\{%\s*(?:extends|include|block|if|for|set)\b/.test(source)) into.add("jinja-or-liquid");
-  if (/\{\{[^}]+\}\}/.test(source) && !into.has("jinja-or-liquid"))
+  // `\{%-?\s*` accepts both the plain `{%` opener and Liquid/Jinja's
+  // whitespace-control `{%-` variant. Jekyll `_includes/` partials
+  // routinely open with `{%- include 'foo.html' -%}` — missing the
+  // dash-prefixed form caused pure-Liquid partials to miss the
+  // jinja-or-liquid tag and fall through to handlebars-or-mustache.
+  const hasControlBlock =
+    /\{%-?\s*(?:extends|include|block|if|for|set|assign|capture|unless|case|comment|raw|render|layout|tablerow|cycle)\b/.test(
+      source,
+    );
+  const hasInterpolation = /\{\{[^}]+\}\}/.test(source);
+  if (hasControlBlock) {
+    into.add("jinja-or-liquid");
+  } else if (hasInterpolation) {
+    // `{{ }}`-only shape — handlebars/mustache's syntactic signature.
+    // Note: a pure-interpolation Liquid file (no control tags) will
+    // also land here and be labeled handlebars-or-mustache; that's the
+    // honest reading of the evidence — `{{ x }}` alone is ambiguous
+    // between the families, and the tag's combined name reflects the
+    // ambiguity rather than guessing.
     into.add("handlebars-or-mustache");
+  }
   if (/<%[=-]?[\s\S]*?%>/.test(source)) into.add("erb-or-ejs");
 }
