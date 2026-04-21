@@ -42,7 +42,11 @@ interface SuccessBody {
     readonly cwd: string;
     readonly relativeFilePath: string;
     readonly standards: readonly string[];
-    readonly rulesEvaluated: number;
+    readonly rulesEvaluated: {
+      readonly loaded: number;
+      readonly withEligibleInputs?: number;
+      readonly fired?: number;
+    };
     readonly parseErrorsBefore: number;
     readonly parseErrorsAfter: number;
   };
@@ -258,7 +262,10 @@ describe("apply_fix: meta + no-delta nextStep", () => {
       const success = body as SuccessBody;
       expect(success.meta.relativeFilePath).toBe("page.html");
       expect(success.meta.standards.length).toBeGreaterThan(0);
-      expect(success.meta.rulesEvaluated).toBeGreaterThan(0);
+      expect(success.meta.rulesEvaluated.loaded).toBeGreaterThan(0);
+      // apply_fix runs a real scan so the sub-counters are populated.
+      expect(typeof success.meta.rulesEvaluated.withEligibleInputs).toBe("number");
+      expect(typeof success.meta.rulesEvaluated.fired).toBe("number");
       expect(success.meta.parseErrorsBefore).toBe(0);
       expect(success.meta.parseErrorsAfter).toBe(0);
     });

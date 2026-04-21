@@ -239,14 +239,16 @@ describe("per-rule coverage end-to-end", () => {
     }
   });
 
-  // V1-META-RULES-EVALUATED-COVERAGE-DRIFT: the MCP meta block builds
-  // `rulesEvaluated` from `perRuleCoverage.length` so the two surfaces
-  // cannot drift. Before this fix, `rulesEvaluated` counted every
-  // post-"off" rule while `perRuleCoverage` silently omitted
-  // project-scoped ones — an agent reading both values got a pair it
-  // couldn't reconcile, and couldn't tell "ran-with-zero-eligible-files"
-  // from "never-ran." Construction-level invariant now.
-  it("buildScanMeta's rulesEvaluated equals perRuleCoverage.length by construction", () => {
+  // Q4-RULES-EVALUATED-COMPOSITE: the MCP meta block now emits
+  // `rulesEvaluated` as a three-field object ({ loaded,
+  // withEligibleInputs, fired }) derived from `activeRules` +
+  // `perRuleCoverage`. Previously it was a single number equal to
+  // `perRuleCoverage.length`, which inflated the agent's sense of "work
+  // in this scan" because it counted every rule that got a coverage
+  // row regardless of whether that rule had eligible inputs or fired.
+  // The split is monotone (`fired <= withEligibleInputs <= loaded`) so
+  // an agent reading the summary can budget honestly.
+  it("buildScanMeta's rulesEvaluated splits into loaded / withEligibleInputs / fired", () => {
     const files = [
       tsxFile("src/App.tsx", `export function App() { return <main><h1>Hi</h1></main>; }`),
       cssFile("src/styles.css", `body { color: #000; background: #fff; }`),
@@ -279,6 +281,21 @@ describe("per-rule coverage end-to-end", () => {
       perRuleCoverage,
     });
 
-    expect(meta["rulesEvaluated"]).toBe(perRuleCoverage.length);
+    const rulesEvaluated = meta["rulesEvaluated"] as {
+      readonly loaded: number;
+      readonly withEligibleInputs: number;
+      readonly fired: number;
+    };
+    expect(rulesEvaluated.loaded).toBe(BUILTIN_RULES.length);
+    // Monotone invariant: fired <= withEligibleInputs <= loaded.
+    expect(rulesEvaluated.fired).toBeLessThanOrEqual(rulesEvaluated.withEligibleInputs);
+    expect(rulesEvaluated.withEligibleInputs).toBeLessThanOrEqual(rulesEvaluated.loaded);
+    // Cross-check with the underlying per-rule coverage rows — the
+    // sub-counters are derived from them, so agents that want to drill
+    // down can reconstruct the numbers from `meta.perRuleCoverage`.
+    const eligibleFromRows = perRuleCoverage.filter((r) => r.filesEligible > 0).length;
+    const firedFromRows = perRuleCoverage.filter((r) => r.findingsEmitted > 0).length;
+    expect(rulesEvaluated.withEligibleInputs).toBe(eligibleFromRows);
+    expect(rulesEvaluated.fired).toBe(firedFromRows);
   });
 });

@@ -26,7 +26,11 @@ interface ProposeConfigResponse {
     readonly scanned: { readonly mode: "project"; readonly root: string };
     readonly configSource: string | null;
     readonly filesScanned: number;
-    readonly rulesEvaluated: number;
+    readonly rulesEvaluated: {
+      readonly loaded: number;
+      readonly withEligibleInputs?: number;
+      readonly fired?: number;
+    };
     readonly wrappersIncluded: number;
     readonly buildArtifactsIncluded: number;
     readonly topRulesIncluded: number;
@@ -349,7 +353,12 @@ describe("propose_config: meta telemetry", () => {
       expect(body.meta.scanned).toEqual({ mode: "project", root: dir });
       expect(body.meta.configSource).toBeNull();
       expect(body.meta.filesScanned).toBe(1);
-      expect(body.meta.rulesEvaluated).toBeGreaterThan(0);
+      expect(body.meta.rulesEvaluated.loaded).toBeGreaterThan(0);
+      // propose_config scans only to derive top-rule frequencies and
+      // doesn't retain the per-rule coverage array, so the derived
+      // sub-counters are omitted (conditional-spread).
+      expect("withEligibleInputs" in body.meta.rulesEvaluated).toBe(false);
+      expect("fired" in body.meta.rulesEvaluated).toBe(false);
     });
   });
 

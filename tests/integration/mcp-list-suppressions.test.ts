@@ -124,7 +124,11 @@ describe("MCP list_suppressions tool: end-to-end JSON-RPC round-trip", () => {
           cwd: string;
           configSource: string | null;
           filesScanned: number;
-          rulesEvaluated: number;
+          rulesEvaluated: {
+            loaded: number;
+            withEligibleInputs?: number;
+            fired?: number;
+          };
         };
         nextStep: string;
       };
@@ -157,7 +161,7 @@ describe("MCP list_suppressions tool: end-to-end JSON-RPC round-trip", () => {
       // Meta carries scan-confidence telemetry.
       expect(body.meta.cwd).toBe(dir);
       expect(body.meta.filesScanned).toBe(2);
-      expect(body.meta.rulesEvaluated).toBeGreaterThan(0);
+      expect(body.meta.rulesEvaluated.loaded).toBeGreaterThan(0);
 
       // Two bare pragmas → nextStep routes to review_candidates.
       expect(body.nextStep).toContain("missing a reason");

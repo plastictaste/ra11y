@@ -43,6 +43,7 @@ import { relative } from "node:path";
 import { parseInlineDisables } from "../config/index.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { buildAgentFinding } from "../output/agent-response/index.ts";
+import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import {
   buildNextStep,
   computeDelta,
@@ -184,7 +185,15 @@ export const applyFixTool: McpTool = {
         cwd,
         relativeFilePath: relative(cwd, resolved),
         standards: [...standards].sort(),
-        rulesEvaluated: activeRules.length,
+        // Post-edit scan state drives `rulesEvaluated` — the agent
+        // reading the response wants to know what the tree looks like
+        // AFTER applying the fix. The `before` perRuleCoverage is
+        // interesting for delta purposes but would drift from the
+        // post-edit world the user now lives in.
+        rulesEvaluated: buildRulesEvaluated({
+          loadedCount: activeRules.length,
+          perRuleCoverage: after.perRuleCoverage,
+        }),
         parseErrorsBefore: originalErrorCount,
         parseErrorsAfter: newErrorCount,
       },

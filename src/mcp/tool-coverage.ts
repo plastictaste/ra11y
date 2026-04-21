@@ -12,6 +12,7 @@ import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
+import { buildRulesEvaluated, type RulesEvaluated } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
 import {
   applyRuleSettings,
@@ -83,7 +84,7 @@ export const coverageTool: McpTool = {
     const attestations = await loadDurableAttestations(cwd);
 
     const activeRules = applyRuleSettings(session.registry.rules, session.config.rules);
-    const { result, report } = runScan({
+    const { result, report, perRuleCoverage } = runScan({
       standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
@@ -203,7 +204,10 @@ export const coverageTool: McpTool = {
       params,
       session,
       filesScanned: files.length,
-      rulesEvaluated: activeRules.length,
+      rulesEvaluated: buildRulesEvaluated({
+        loadedCount: activeRules.length,
+        perRuleCoverage,
+      }),
       enabledStandards: standards,
       level,
       cwd,
@@ -266,7 +270,7 @@ function buildCoverageMetaField(args: {
   readonly params: Record<string, unknown>;
   readonly session: McpSession;
   readonly filesScanned: number;
-  readonly rulesEvaluated: number;
+  readonly rulesEvaluated: RulesEvaluated;
   readonly enabledStandards: readonly string[];
   readonly level: "A" | "AA" | "AAA";
   readonly cwd: string;

@@ -34,7 +34,11 @@ interface SuppressionResponse {
     readonly cwd: string;
     readonly configSource: string | null;
     readonly filesScanned: number;
-    readonly rulesEvaluated: number;
+    readonly rulesEvaluated: {
+      readonly loaded: number;
+      readonly withEligibleInputs?: number;
+      readonly fired?: number;
+    };
     readonly activeNativeWrappers?: ReadonlyArray<{
       readonly name: string;
       readonly source: "config" | "autoDetect" | "session";
@@ -76,7 +80,12 @@ describe("list_suppressions: empty tree", () => {
       expect(body.nextStep).toContain("No ra11y-disable pragmas");
       expect(body.meta.cwd).toBe(dir);
       expect(body.meta.filesScanned).toBe(1);
-      expect(body.meta.rulesEvaluated).toBeGreaterThan(0);
+      expect(body.meta.rulesEvaluated.loaded).toBeGreaterThan(0);
+      // `list_suppressions` doesn't scan, so the derived sub-counters
+      // are omitted (conditional-spread). Agents read this as "we
+      // loaded N rules but this tool doesn't track per-rule coverage."
+      expect("withEligibleInputs" in body.meta.rulesEvaluated).toBe(false);
+      expect("fired" in body.meta.rulesEvaluated).toBe(false);
     });
   });
 });

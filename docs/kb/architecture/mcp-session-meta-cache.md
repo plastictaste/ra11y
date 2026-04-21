@@ -22,7 +22,7 @@ The primitive is controlled by the `metaMode` input field on every scan-family t
   "meta": {
     "configSource": "ra11y.config.ts",
     "configSearchedFrom": "/repo",
-    "rulesEvaluated": 47,
+    "rulesEvaluated": { "loaded": 47, "withEligibleInputs": 18, "fired": 9 },
     "filesByExtension": { ".tsx": 12, ".html": 3 },
     "activeNativeWrappers": ["Button", "Link"],
     "sessionRef": "scan_project-3a1b2c4d",

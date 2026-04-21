@@ -15,6 +15,7 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { buildPlanSummary, type FixClassCounts } from "./plan-summary.ts";
+import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 import { wrappersMetaBlock } from "./wrappers-meta.ts";
@@ -158,19 +159,21 @@ export function buildScanMeta(args: {
     // flag if the repo has CSS). Cheap to compute, sorted for
     // determinism.
     filesByExtension: countByExtension(files),
-    // Count of rules that actually evaluated this scan — the same set
-    // that drives `perRuleCoverage` so an agent can cross-reference
-    // the two without worrying about drift. Before
-    // V1-META-RULES-EVALUATED-COVERAGE-DRIFT this counted the
-    // post-"off" rule list directly, which silently included rules
-    // the standard filter dropped (never evaluated) and excluded
-    // project-scoped rules from `perRuleCoverage` — agents couldn't
-    // tell "ran-with-zero-eligible-files" from "never-ran." The
-    // invariant `rulesEvaluated === perRuleCoverage.length` now holds
-    // by construction: every evaluated rule gets a row; `filesEvaluated:
-    // 0` + `coverageConfidence: "low"` names the zero-eligible case
-    // honestly rather than going silently absent.
-    rulesEvaluated: perRuleCoverage.length,
+    // Honest-shape rules-evaluated telemetry. Before
+    // Q4-RULES-EVALUATED-COMPOSITE this was a single number that read
+    // as "rules that ran" but actually counted every loaded /
+    // post-standard-filter rule regardless of whether it had any
+    // eligible inputs in the scan. Per CLAUDE.md §1 "Composite headline
+    // counts are dishonest," the field now splits into three
+    // monotone-ordered sub-counters (`loaded >= withEligibleInputs >=
+    // fired`) derived from `activeRules` + `perRuleCoverage`. Agents
+    // reading "52 loaded, 18 had eligible inputs, 9 fired" can budget
+    // honestly against the work the scan actually surfaced instead of
+    // the composite ceiling.
+    rulesEvaluated: buildRulesEvaluated({
+      loadedCount: activeRules.length,
+      perRuleCoverage,
+    }),
     durationMs: Math.round(durationMs),
     standards: [...enabledStandards].sort(),
     ...wrappersMetaBlock({

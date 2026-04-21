@@ -43,7 +43,11 @@ interface ProposeBaselineResponse {
     readonly scanned: { readonly mode: "project"; readonly root: string };
     readonly configSource: string | null;
     readonly filesScanned: number;
-    readonly rulesEvaluated: number;
+    readonly rulesEvaluated: {
+      readonly loaded: number;
+      readonly withEligibleInputs?: number;
+      readonly fired?: number;
+    };
     readonly standards: readonly string[];
   };
   readonly nextStep: string;

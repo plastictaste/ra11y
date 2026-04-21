@@ -46,6 +46,7 @@
 import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
 import { gitRoot } from "../utils/git.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import {
   applyRuleSettings,
   type McpTool,
@@ -111,9 +112,15 @@ export const listSuppressionsTool: McpTool = {
     // Rule count parity with scan_project.meta.rulesEvaluated: applies
     // the same on/off filtering the scanner would. Lets an agent
     // cross-check that the enumeration ran under the same effective
-    // ruleset without a second tool call.
+    // ruleset without a second tool call. `list_suppressions` does not
+    // run the scanner, so the `withEligibleInputs` / `fired` sub-
+    // counters are omitted via conditional spread — emitting `0`
+    // would read as "zero rules had inputs" instead of "this tool
+    // doesn't know" (CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest").
     const effective = session.effectiveRules(projectConfig);
-    const rulesEvaluated = applyRuleSettings(session.registry.rules, effective).length;
+    const loadedCount = applyRuleSettings(session.registry.rules, effective).length;
+    const rulesEvaluated = buildRulesEvaluated({ loadedCount });
 
     // Unified tagged list (Q2R2-WRAPPER-SOURCES). `list_suppressions`
     // doesn't run the auto-detect pass, so fromAutoDetect stays empty

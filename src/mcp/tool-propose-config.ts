@@ -68,6 +68,7 @@ import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
+import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import {
   applyRuleSettings,
@@ -146,7 +147,14 @@ export const proposeConfigTool: McpTool = {
         scanned: scannedProject(root),
         configSource: projectConfig.sourcePath,
         filesScanned: files.length,
-        rulesEvaluated: activeRules.length,
+        // Conditional-spread subfields (`withEligibleInputs`, `fired`)
+        // omitted — propose_config runs its scan only to derive top-rule
+        // frequencies in `deriveTopRules` and doesn't retain the
+        // per-rule coverage array. Emitting the loaded count alone is
+        // honest per CLAUDE.md §1 "Ambiguous field shapes are
+        // dishonest"; the agent sees "rules the config on/off filter
+        // kept" without the tool pretending to know eligibility.
+        rulesEvaluated: buildRulesEvaluated({ loadedCount: activeRules.length }),
         // Three distinct counts instead of one composite — each names
         // one kind of thing folded into the proposal (CLAUDE.md §1
         // "Composite headline counts are dishonest"). An agent sizing

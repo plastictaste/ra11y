@@ -33,7 +33,11 @@ interface ProposeBaselineResponse {
     readonly scanned: { readonly mode: "project"; readonly root: string };
     readonly configSource: string | null;
     readonly filesScanned: number;
-    readonly rulesEvaluated: number;
+    readonly rulesEvaluated: {
+      readonly loaded: number;
+      readonly withEligibleInputs?: number;
+      readonly fired?: number;
+    };
     readonly standards: readonly string[];
   };
   readonly nextStep: string;
@@ -149,7 +153,10 @@ describe("propose_baseline: precedence + invariants", () => {
       expect(body.meta.scanned).toEqual({ mode: "project", root: dir });
       expect(body.meta.configSource).toBeNull();
       expect(body.meta.filesScanned).toBe(1);
-      expect(body.meta.rulesEvaluated).toBeGreaterThan(0);
+      expect(body.meta.rulesEvaluated.loaded).toBeGreaterThan(0);
+      // propose_baseline runs a real scan so the sub-counters are populated.
+      expect(typeof body.meta.rulesEvaluated.withEligibleInputs).toBe("number");
+      expect(typeof body.meta.rulesEvaluated.fired).toBe("number");
     });
   });
 

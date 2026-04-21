@@ -83,6 +83,7 @@ import {
   buildProposedNextStep,
   tallyReasons,
 } from "./propose-baseline-classify.ts";
+import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import {
   applyRuleSettings,
@@ -165,7 +166,7 @@ export const proposeBaselineTool: McpTool = {
     );
     const assumedSet = new Set(assumed);
 
-    const { result } = runScan({
+    const { result, perRuleCoverage } = runScan({
       standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
@@ -204,7 +205,10 @@ export const proposeBaselineTool: McpTool = {
         scanned: scannedProject(root),
         configSource: projectConfig.sourcePath,
         filesScanned: files.length,
-        rulesEvaluated: activeRules.length,
+        rulesEvaluated: buildRulesEvaluated({
+          loadedCount: activeRules.length,
+          perRuleCoverage,
+        }),
         standards: [...result.enabledStandards].sort(),
       },
       nextStep: buildProposedNextStep(proposed.length, counts),

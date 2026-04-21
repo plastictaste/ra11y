@@ -46,6 +46,13 @@ export type Ext = "tsx" | "html" | "css" | "scss" | "mdx" | "astro";
 export interface SingleFileScan {
   readonly violations: readonly Violation[];
   readonly candidates: readonly ReviewCandidate[];
+  /**
+   * Per-rule coverage for the scan. Surfaced so `apply_fix` can
+   * assemble an honest `rulesEvaluated: { loaded, withEligibleInputs,
+   * fired }` meta field on the response from the post-edit scan state
+   * (Q4-RULES-EVALUATED-COMPOSITE).
+   */
+  readonly perRuleCoverage: readonly import("../types/violation.ts").PerRuleCoverage[];
 }
 
 export interface FixDelta {
@@ -193,7 +200,7 @@ export function runSingleFileScan(
   level: "A" | "AA" | "AAA",
   session: McpSession,
 ): SingleFileScan {
-  const { result, report } = runScan({
+  const { result, report, perRuleCoverage } = runScan({
     standards: session.registry.standards,
     rules,
     enabled,
@@ -204,6 +211,7 @@ export function runSingleFileScan(
   return {
     violations: result.violations,
     candidates: report.candidates ?? [],
+    perRuleCoverage,
   };
 }
 

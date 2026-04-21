@@ -38,7 +38,12 @@ Run `scan_project` to collect static findings. The response shape is:
       ]
     }
   ],
-  "meta": { "filesScanned": number, "configSource": string, "rulesEvaluated": string[], ... }
+  "meta": {
+    "filesScanned": number,
+    "configSource": string,
+    "rulesEvaluated": { "loaded": number, "withEligibleInputs": number, "fired": number },
+    ...
+  }
 }
 ```
 
@@ -370,7 +375,10 @@ A fictitious but realistic agent session targeting WCAG 2.2 AA.
         ]
       }
     ],
-    "meta": { "filesScanned": 47, "rulesEvaluated": ["contrast/minimum", ...] }
+    "meta": {
+      "filesScanned": 47,
+      "rulesEvaluated": { "loaded": 52, "withEligibleInputs": 18, "fired": 9 }
+    }
   }
 ```
 
