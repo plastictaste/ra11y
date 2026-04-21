@@ -4,7 +4,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@ra11y/core)](https://www.npmjs.com/package/@ra11y/core)
 [![CI](https://img.shields.io/github/actions/workflow/status/vanctran/ra11y/ci.yml?branch=main)](https://github.com/vanctran/ra11y/actions)
-[![license](https://img.shields.io/npm/l/@ra11y/core)](./LICENSE)
+[![license](https://img.shields.io/github/license/vanctran/ra11y)](./LICENSE)
 [![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)](./package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue)](https://www.typescriptlang.org/)
 
