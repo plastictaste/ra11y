@@ -140,4 +140,59 @@ describe("rule document/lang-attribute", () => {
     expect(rule.satisfies).toContain("wcag22:3.1.1");
     expect(rule.satisfies).toContain("wcag21:3.1.1");
   });
+
+  // ── xml:lang vs lang mismatch ───────────────────────────────────────
+  // A conforming AT may consult either attribute; when the two
+  // disagree the announced language is nondeterministic. WCAG 3.1.1
+  // hinges on the page's language being *programmatically
+  // determinable*, so two contradicting sources of truth are a
+  // 3.1.1 failure even when each individually looks valid.
+
+  it("fires when xml:lang and lang disagree (primary vs primary+region)", () => {
+    const v = runRule(rule, `<html xml:lang="en" lang="en-us"><body></body></html>`, {
+      filePath: "index.html",
+    });
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.message).toContain("en-us");
+    expect(v[0]?.message).toContain("disagree");
+  });
+
+  it("fires when xml:lang and lang differ in primary subtag", () => {
+    const v = runRule(rule, `<html xml:lang="fr" lang="en"><body></body></html>`, {
+      filePath: "index.html",
+    });
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("en");
+    expect(v[0]?.message).toContain("fr");
+  });
+
+  it("does NOT fire when xml:lang and lang match exactly", () => {
+    const v = runRule(rule, `<html xml:lang="en-US" lang="en-US"><body></body></html>`, {
+      filePath: "index.html",
+    });
+    expect(v).toHaveLength(0);
+  });
+
+  it("does NOT fire when xml:lang and lang differ only in case", () => {
+    // Per BCP 47 §2.1.1, case in language tags carries no meaning —
+    // `en-US` and `EN-us` refer to the same tag. Flagging purely
+    // cosmetic differences would be noise.
+    const v = runRule(rule, `<html xml:lang="en-US" lang="EN-us"><body></body></html>`, {
+      filePath: "index.html",
+    });
+    expect(v).toHaveLength(0);
+  });
+
+  it("suggestion proposes both replacement options without picking a winner", () => {
+    const v = runRule(rule, `<html xml:lang="en" lang="en-us"><body></body></html>`, {
+      filePath: "index.html",
+    });
+    const suggestion = v[0]?.suggestion ?? "";
+    // Both candidate tags surfaced as the "unify on this value"
+    // proposals, so the agent can pick by reading the content —
+    // cf. ai-first-consumer.md "Review candidates, not assertions".
+    expect(suggestion).toContain('xml:lang="en-us"');
+    expect(suggestion).toContain('lang="en"');
+  });
 });

@@ -54,8 +54,35 @@ export const rule = defineRule({
 
     const lang = getHtmlAttribute(htmlEl, "lang");
     const xmlLang = getHtmlAttribute(htmlEl, "xml:lang");
-    if (lang !== null && lang.trim().length > 0) return;
-    if (xmlLang !== null && xmlLang.trim().length > 0) return;
+    const langTrimmed = lang?.trim() ?? "";
+    const xmlLangTrimmed = xmlLang?.trim() ?? "";
+    const langPresent = lang !== null && langTrimmed.length > 0;
+    const xmlLangPresent = xmlLang !== null && xmlLangTrimmed.length > 0;
+
+    // Mismatch branch: both attributes are present and non-empty, but
+    // their normalized values disagree. WCAG 3.1.1 requires the page's
+    // language to be *programmatically determinable*; when two sources
+    // of truth contradict (e.g. `xml:lang="en"` vs `lang="en-us"`), a
+    // conforming AT is free to consult either, and the announced
+    // language is nondeterministic. We don't pick a winner — the agent
+    // reading the surrounding content is the only correct arbiter.
+    if (langPresent && xmlLangPresent) {
+      if (!bcp47TagsMatch(langTrimmed, xmlLangTrimmed)) {
+        ctx.emit({
+          severity: "error",
+          location: {
+            filePath: "",
+            line: htmlEl.loc.start.line,
+            column: htmlEl.loc.start.column,
+          },
+          message: `<html> declares lang="${langTrimmed}" but xml:lang="${xmlLangTrimmed}" — the two disagree, so assistive technologies that consult either attribute will announce different languages for the same page.`,
+          suggestion: `Pick one BCP 47 tag and use it for both attributes, or drop one of them. If the page is ${langTrimmed}, set xml:lang="${langTrimmed}"; if it's ${xmlLangTrimmed}, set lang="${xmlLangTrimmed}". Serving XHTML as HTML only needs lang; a legacy XHTML document served as application/xhtml+xml only needs xml:lang.`,
+        });
+      }
+      return;
+    }
+
+    if (langPresent || xmlLangPresent) return;
 
     ctx.emit({
       severity: "error",
@@ -72,6 +99,26 @@ export const rule = defineRule({
     });
   },
 });
+
+/**
+ * Case-insensitive BCP 47 equality. Two tags match iff their
+ * subtag sequences (split on `-`, lowercased) are equal. This treats
+ * `en-US` === `EN-us` (a formatting difference) but `en` !== `en-US`
+ * (a genuine specificity difference). We deliberately do not try to
+ * canonicalize (e.g. RFC 4647 extended filtering or IANA-registered
+ * suppress-script tags like `zh-Hans` ≡ `zh`) — those are semantic
+ * policy calls the agent should make on the rendered content, not
+ * static heuristics. A strict token-equality check is the honest
+ * minimum; see ai-first-consumer.md "No heuristic suppression".
+ */
+function bcp47TagsMatch(a: string, b: string): boolean {
+  const normalize = (s: string): string =>
+    s
+      .split("-")
+      .map((p) => p.toLowerCase())
+      .join("-");
+  return normalize(a) === normalize(b);
+}
 
 /**
  * Context-aware fix text. Walks the current document for in-file language
