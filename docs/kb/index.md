@@ -99,6 +99,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/invalid-role](./rules/aria__invalid-role.md)
 - [aria/live-region-valid](./rules/aria__live-region-valid.md)
 - [aria/required-attrs](./rules/aria__required-attrs.md)
+- [aria/role-from-class-only](./rules/aria__role-from-class-only.md)
 - [aria/valid-attr](./rules/aria__valid-attr.md)
 - [contrast/enhanced](./rules/contrast__enhanced.md)
 - [contrast/minimum](./rules/contrast__minimum.md)

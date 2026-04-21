@@ -2,12 +2,12 @@
 title: "document/iframe-title"
 severity: "error"
 scope: "node"
-satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"]
+satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.4.1", "wcag21:2.4.1"]
 ---
 # `document/iframe-title`
 - **Severity:** error
 - **Scope:** node
-- **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`
+- **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.4.1`, `wcag21:2.4.1`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
 <iframe> elements must have a non-empty title, aria-label, or aria-labelledby so assistive technology can announce what the embedded frame contains.
