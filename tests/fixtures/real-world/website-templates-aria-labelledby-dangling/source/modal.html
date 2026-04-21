@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Portfolio Gallery</title>
+</head>
+<body>
+
+<section class="portfolio-section">
+  <div class="grid-overlay">
+    <figure class="portfolio-item">
+      <img class="img-responsive" src="assets/img/portfolio/item01.jpg" alt="Rose cake with fondant petals">
+      <figcaption>Rose Cake</figcaption>
+    </figure>
+  </div>
+
+  <!--
+    Bootstrap 3 modal: aria-labelledby="myModalLabel" points at an id that
+    does not exist anywhere in this document. The <h4> inside the modal has
+    class="modal-title" but no id="myModalLabel". The wire-up is silently
+    dead — screen readers fall back to the modal's own role announcement
+    with no accessible name.
+
+    aria/labelledby-target-exists must fire on the outer <div role="dialog">
+    with reasonIncludes "myModalLabel".
+  -->
+  <div class="modal fade" id="myModal" tabindex="-1" role="dialog"
+       aria-labelledby="myModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <button type="button" class="close" data-dismiss="modal"
+                  aria-hidden="true">&times;</button>
+          <h4 class="modal-title">Rose Cake</h4>
+        </div>
+        <div class="modal-body">
+          <p>
+            <img class="img-responsive" src="assets/img/portfolio/item01-preview.jpg" alt="">
+          </p>
+          <p>Lorem ipsum dolor sit amet, quo meis audire placerat eu.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+</body>
+</html>
