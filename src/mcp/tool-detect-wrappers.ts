@@ -15,7 +15,10 @@
 
 import { gitRoot } from "../utils/git.ts";
 import { buildSuggestedConfigSnippet } from "./config-snippet.ts";
-import { collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import {
+  collectWrapperCandidates,
+  hasOpaquePascalCaseComponents,
+} from "./detect-wrappers-core.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { type McpTool, parseFiles, strParam, textResult } from "./tools-helpers.ts";
 
@@ -23,7 +26,7 @@ export const detectNativeWrappersTool: McpTool = {
   def: {
     name: "detect_native_wrappers",
     description:
-      'Scan the project and list unique PascalCase components with onClick — onboarding aid for `nativeWrappers` in ra11y.config.ts. Each candidate carries a `definitionFile` pointer (absolute path resolved by one-hop basename match, or `null` when the source lives outside the scanned set) so you can open the wrapper directly to verify it wraps a native <button>/<a>/<input>. When `candidates` is empty the response carries a structured `emptyReason` discriminator (`"no-parseable-files"` or `"no-pascalcase-onclick-components"`) so agents can branch without string-matching the prose `nextStep`; the field is omitted when candidates are non-empty. The tool does not modify files.',
+      'Scan the project and list unique PascalCase components with onClick — onboarding aid for `nativeWrappers` in ra11y.config.ts. Each candidate carries a `definitionFile` pointer (absolute path resolved by one-hop basename match, or `null` when the source lives outside the scanned set) so you can open the wrapper directly to verify it wraps a native <button>/<a>/<input>. When `candidates` is empty the response carries a structured `emptyReason` discriminator (`"no-parseable-files"`, `"no-pascalcase-onclick-components"`, or `"no-jsx-onclick-candidates-found-but-opaque-components-present"` when PascalCase components exist but none carry the detector\'s required `onClick` / controlled-input props — common in Astro/MDX where wrappers rarely ship inline handlers) so agents can branch without string-matching the prose `nextStep`; the field is omitted when candidates are non-empty. The tool does not modify files.',
     inputSchema: {
       type: "object",
       properties: {
@@ -71,15 +74,37 @@ export const detectNativeWrappersTool: McpTool = {
 
     // Structured discriminator so agents can branch on the
     // "empty result" case without string-matching the prose
-    // `nextStep`. We emit one combined value rather than splitting
-    // into "no PascalCase at all" vs. "PascalCase but no onClick"
-    // because `collectWrapperCandidates` checks both conditions
-    // together (PascalCase name AND onClick handler); distinguishing
-    // them would require reshaping the core collector and the prose
-    // already covers the combined case. Omitted when populated per
-    // the "present-when-meaningful" rule.
+    // `nextStep`. Two sub-cases distinguish how the empty set arose:
+    //
+    //   - `"no-jsx-onclick-candidates-found-but-opaque-components-present"`:
+    //     the scanned JSX/TSX contains PascalCase elements, but none
+    //     carry an `onClick` prop (nor the controlled-input prop
+    //     shape). This is the Astro/MDX case — wrappers typically
+    //     render as children with no inline handlers, so the detector's
+    //     lower-bound premise (an `onClick` signal) fails even when
+    //     wrapper candidates genuinely exist in the codebase. Per the
+    //     AI-first doctrine ("Zero-output success is ambiguous
+    //     failure"), the bare `candidates: []` would read as "nothing
+    //     to wrap here" — the structured reason closes the ambiguity
+    //     and lets the agent branch into opening the opaque components
+    //     (surfaced in `opaqueCustomComponentNames` on the scan
+    //     surfaces) directly to classify them itself.
+    //
+    //   - `"no-pascalcase-onclick-components"`: the parseable JSX/TSX
+    //     set genuinely has no PascalCase elements at all. Nothing
+    //     for the detector to investigate, and nothing for the agent
+    //     to follow up on — an honest empty result.
+    //
+    // Omitted when `candidates` is populated (present-when-meaningful).
+    const opaquePresent = candidates.length === 0 && hasOpaquePascalCaseComponents(files);
     const emptyReasonField =
-      candidates.length === 0 ? { emptyReason: "no-pascalcase-onclick-components" } : {};
+      candidates.length === 0
+        ? {
+            emptyReason: opaquePresent
+              ? "no-jsx-onclick-candidates-found-but-opaque-components-present"
+              : "no-pascalcase-onclick-components",
+          }
+        : {};
 
     return textResult({
       scanned: scannedProject(root),
@@ -87,7 +112,7 @@ export const detectNativeWrappersTool: McpTool = {
       ...emptyReasonField,
       ...(absent.length > 0 ? { absentDeclaredWrappers: absent } : {}),
       ...snippetField,
-      nextStep: buildNextStep(candidates, absent),
+      nextStep: buildNextStep(candidates, absent, opaquePresent),
     });
   },
 };
@@ -95,10 +120,23 @@ export const detectNativeWrappersTool: McpTool = {
 function buildNextStep(
   candidates: readonly { component: string }[],
   absent: readonly string[],
+  opaquePresent: boolean,
 ): string {
   const parts: string[] = [];
   if (candidates.length === 0) {
-    parts.push("No PascalCase onClick components detected — nothing to register.");
+    if (opaquePresent) {
+      // The Astro/MDX branch: PascalCase wrappers are present in the
+      // scanned JSX/TSX but none carry an inline `onClick` — the
+      // detector's lower-bound premise. Point the agent at the opaque-
+      // components inventory on the scan surfaces so they can open
+      // those files directly and decide whether each component wraps
+      // a native interactive element.
+      parts.push(
+        "No PascalCase onClick components detected, but PascalCase components are present in the scanned JSX/TSX. The detector requires an `onClick` (or `onChange` + `value`/`defaultValue`/`checked`) prop to propose a wrapper candidate; components that render as children without inline handlers — common in Astro/MDX — are invisible to it. Open the opaque components listed under `analysisCoverage.opaqueCustomComponentNames` on a `scan_project` response and inspect each one: if it wraps a native `<button>` / `<a>` / `<input>`, add it manually to `nativeWrappers` in ra11y.config.ts.",
+      );
+    } else {
+      parts.push("No PascalCase onClick components detected — nothing to register.");
+    }
   } else {
     const names = candidates.map((c) => `"${c.component}"`).join(", ");
     parts.push(

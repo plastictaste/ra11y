@@ -1207,6 +1207,57 @@ describe("MCP tool: detect_native_wrappers", () => {
     expect(data.note).toBe("No parseable files found.");
   });
 
+  it("stamps emptyReason 'no-jsx-onclick-candidates-found-but-opaque-components-present' when PascalCase components exist but none carry onClick", async () => {
+    // Q3-BOOTSTRAP-WRAPPER-DETECT-EMPTY-REASON: the Astro/MDX case.
+    // The scanned JSX/TSX carries PascalCase wrappers (15 of them on
+    // the Bootstrap Astro repo that motivated this item) but none
+    // have inline `onClick` handlers — wrappers in MDX/Astro render as
+    // children and receive events at the leaf level, not the tag.
+    // The bare `candidates: []` reads as "nothing to wrap here" per
+    // "Zero-output success is ambiguous failure"; the structured
+    // reason closes the ambiguity so the agent can branch into the
+    // opaque-components inventory on the scan surfaces instead.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-opaque-"));
+    // Two PascalCase components, neither with onClick or the
+    // controlled-input prop shape — mirrors the Astro/MDX authoring
+    // pattern where a `<Button>` wrapper is rendered with children
+    // and the click binding lives on an inner native element.
+    await writeFile(
+      joinPath(dir, "app.tsx"),
+      [
+        "export function App() {",
+        "  return (",
+        "    <>",
+        '      <Button variant="primary">Save</Button>',
+        '      <Card title="Hello">content</Card>',
+        "    </>",
+        "  );",
+        "}",
+      ].join("\n"),
+    );
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      candidates: unknown[];
+      emptyReason?: string;
+      nextStep: string;
+    };
+    expect(data.candidates).toEqual([]);
+    expect(data.emptyReason).toBe(
+      "no-jsx-onclick-candidates-found-but-opaque-components-present",
+    );
+    // Prose nudge to the canonical follow-up surface so agents that
+    // read the string don't have to re-derive the next call.
+    expect(data.nextStep).toContain("opaqueCustomComponentNames");
+  });
+
   it("omits emptyReason entirely when candidates are non-empty", async () => {
     // Present-when-meaningful: the discriminator only applies to
     // the empty-candidates branch. When the scan actually surfaces

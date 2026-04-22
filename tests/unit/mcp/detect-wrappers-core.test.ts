@@ -27,6 +27,7 @@ import { buildSuggestedConfigSnippet } from "../../../src/mcp/config-snippet.ts"
 import {
   classifyWrapperCandidates,
   collectWrapperCandidates,
+  hasOpaquePascalCaseComponents,
 } from "../../../src/mcp/detect-wrappers-core.ts";
 
 function fileOf(filePath: string, source: string): ParsedFile {
@@ -351,6 +352,63 @@ describe("collectWrapperCandidates: definitionFile (Q2-WRAPPATH)", () => {
       const v = c.definitionFile;
       expect(v === null || (typeof v === "string" && v.length > 0)).toBe(true);
     }
+  });
+});
+
+describe("hasOpaquePascalCaseComponents", () => {
+  // Q3-BOOTSTRAP-WRAPPER-DETECT-EMPTY-REASON: the boolean branch signal
+  // the detect_native_wrappers tool uses to distinguish "no PascalCase
+  // components at all" from "PascalCase components present but none
+  // carry the detector's required onClick/controlled-input props."
+  // The latter case is the Astro/MDX pattern and produces the
+  // `no-jsx-onclick-candidates-found-but-opaque-components-present`
+  // emptyReason code. The helper intentionally ignores prop shape —
+  // opaqueness is a tag-name signal only.
+  it("returns true when a JSX file contains a PascalCase element without onClick", () => {
+    const files: ParsedFile[] = [
+      fileOf("app.tsx", "export const App = () => <Button>text</Button>;"),
+    ];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(true);
+  });
+
+  it("returns true even when the PascalCase element carries unrelated attributes", () => {
+    // `variant`, `className`, and children are the common Astro/MDX
+    // shape — the scanner sees the tag name but no onClick.
+    const files: ParsedFile[] = [
+      fileOf(
+        "app.tsx",
+        'export const App = () => <Card variant="primary" className="x">hi</Card>;',
+      ),
+    ];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(true);
+  });
+
+  it("returns false when no JSX is present at all", () => {
+    const files: ParsedFile[] = [fileOf("app.tsx", "export const x = 1;")];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(false);
+  });
+
+  it("returns false when every JSX element is a lowercase native tag", () => {
+    // A pure HTML-in-JSX file — no PascalCase wrappers to flag.
+    const files: ParsedFile[] = [
+      fileOf("app.tsx", "export const App = () => <div><span>hi</span></div>;"),
+    ];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(false);
+  });
+
+  it("stops at the first PascalCase hit — multi-file inputs short-circuit", () => {
+    // Not a test of externally-observable timing, but verifies the
+    // helper correctly aggregates across files: the first file has no
+    // JSX, the second carries the signal. `true` regardless of order.
+    const files: ParsedFile[] = [
+      fileOf("helper.tsx", "export const x = 1;"),
+      fileOf("app.tsx", "export const App = () => <Modal>content</Modal>;"),
+    ];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(true);
+  });
+
+  it("returns false on an empty file list", () => {
+    expect(hasOpaquePascalCaseComponents([])).toBe(false);
   });
 });
 

@@ -114,6 +114,32 @@ function toProbeFile(file: ParsedFile): ProbeFile {
 }
 
 /**
+ * True if any scanned JSX/TSX file contains at least one PascalCase JSX
+ * tag — regardless of whether it carries an `onClick` / controlled-input
+ * prop. Used by `detect_native_wrappers` to disambiguate the empty-
+ * candidates branch: a project that has zero PascalCase components is
+ * an honest "nothing to wrap here" result; a project with PascalCase
+ * components but none carrying the detector's required interactive
+ * props is a "detector premise not met" result, which a consuming agent
+ * needs to distinguish (Astro/MDX components rarely carry inline
+ * `onClick` — the wrappers are there, but the detector can't see them).
+ *
+ * Intentionally cheap — stops at the first hit. Does not count, does
+ * not collect names (those live in `analysisCoverage.opaqueCustomComponentNames`
+ * on the scan surfaces); this is a boolean branch signal only.
+ */
+export function hasOpaquePascalCaseComponents(files: readonly ParsedFile[]): boolean {
+  for (const file of files) {
+    if (file.ast.language !== "tsx") continue;
+    const tsx = file.ast.root as TsxModule;
+    for (const el of walkJsxElements(tsx)) {
+      if (isPascalCase(el.tagName)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * True if the element carries prop shapes that indicate it wraps a
  * native interactive element. Button-shaped and input-shaped both
  * qualify; a single element need only match one.
