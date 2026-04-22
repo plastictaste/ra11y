@@ -172,16 +172,30 @@ export interface JsxElement extends BaseNode {
 }
 
 /** Where a synthesized JSX element came from. */
-export type SyntheticElementOrigin = {
-  readonly source: "storybook-args";
-  /**
-   * The variable-declarator name (e.g. `Primary` for
-   * `export const Primary: StoryObj<typeof Button> = { args: {…} }`).
-   * Lets a reporter say "synthesized from the Primary story" without
-   * re-parsing.
-   */
-  readonly storyName: string;
-};
+export type SyntheticElementOrigin =
+  | {
+      readonly source: "storybook-args";
+      /**
+       * The variable-declarator name (e.g. `Primary` for
+       * `export const Primary: StoryObj<typeof Button> = { args: {…} }`).
+       * Lets a reporter say "synthesized from the Primary story" without
+       * re-parsing.
+       */
+      readonly storyName: string;
+    }
+  | {
+      readonly source: "mdx-example-code";
+      /**
+       * The MDX parent component name whose `code={`…`}` template-literal
+       * prop was extracted and re-parsed as HTML — one of the configured
+       * allow-list entries (default `Example` / `Demo` / `Playground`).
+       * Starlight/MDX docs-component conventions ship the rendered HTML
+       * inside this prop; the in-house MDX parser extracts it so HTML-
+       * bearing rules (`forms/labels-required`, alt-text, heading
+       * hierarchy, etc.) see the substrate they'd otherwise skip.
+       */
+      readonly componentName: string;
+    };
 
 export type JsxNode = JsxElement | JsxText | JsxExpression;
 

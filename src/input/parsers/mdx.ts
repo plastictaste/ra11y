@@ -58,10 +58,30 @@
  *     for any `<` that slips through.
  */
 
-import type { ParseError } from "../../types/ast.ts";
+import type { ParseError, TsxModule } from "../../types/ast.ts";
+import { DEFAULT_EXAMPLE_COMPONENT_NAMES, extractMdxExampleCode } from "./mdx-example-extractor.ts";
 import { parseTsx, type TsxParseResult } from "./tsx.ts";
 
-export function parseMdx(source: string): TsxParseResult {
+/**
+ * Optional knobs for {@link parseMdx}. Omitted callers get the v0.1.x
+ * default behaviour: the docs-component code-prop extractor runs
+ * against the built-in allow-list (`Example` / `Demo` / `Playground`).
+ */
+export interface MdxParseOptions {
+  /**
+   * Allow-list of MDX JSX component names whose `code` prop carries a
+   * template-literal HTML body to extract and re-parse through the
+   * HTML pipeline. Default: `Example`, `Demo`, `Playground` (the
+   * Starlight / Bootstrap-docs / Next-docs convention).
+   *
+   * Pass an empty array to disable the extractor entirely — useful for
+   * pipelines that want the v0.0.x behaviour while the docs-component
+   * substrate is honest-to-track via a separate pass.
+   */
+  readonly exampleComponentNames?: readonly string[];
+}
+
+export function parseMdx(source: string, options: MdxParseOptions = {}): TsxParseResult {
   const errors: ParseError[] = [];
   // Each pass operates on the character buffer and replaces stripped
   // regions with space/newline so downstream line numbers match the
@@ -72,9 +92,31 @@ export function parseMdx(source: string): TsxParseResult {
   stripImportExportLines(source, buf);
   const transformed = buf.join("");
   const tsx = parseTsx(transformed);
+  // Starlight / Docusaurus / Next MDX docs pipelines routinely embed
+  // rendered HTML previews inside `<Example code={`…`}/>` props. The
+  // TSX parser sees only the component with an opaque expression
+  // attribute; the HTML body inside the template literal never enters
+  // the JSX element stream, so HTML-bearing rules silently skip ~110
+  // real-world docs files (bootstrap docs site alone). The extractor
+  // parses the template body as HTML and appends synthesized JSX
+  // elements anchored to the original MDX source positions, so rules
+  // like `forms/labels-required` fire on the substrate they'd
+  // otherwise miss. See `mdx-example-extractor.ts` header for the
+  // substitution-free / template-literal-only gates.
+  const allowList = options.exampleComponentNames ?? DEFAULT_EXAMPLE_COMPONENT_NAMES;
+  const extracted = extractMdxExampleCode(source, tsx.root, allowList);
+  const root: TsxModule =
+    extracted.elements.length === 0
+      ? tsx.root
+      : {
+          kind: tsx.root.kind,
+          range: tsx.root.range,
+          loc: tsx.root.loc,
+          jsxElements: [...tsx.root.jsxElements, ...extracted.elements],
+        };
   return {
-    root: tsx.root,
-    errors: [...errors, ...tsx.errors],
+    root,
+    errors: [...errors, ...tsx.errors, ...extracted.errors],
   };
 }
 
