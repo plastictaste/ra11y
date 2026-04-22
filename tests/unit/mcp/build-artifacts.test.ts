@@ -163,9 +163,7 @@ describe("classifyBuildArtifact — `dist-path` reason (bundler-output path ance
   });
 
   it("classifies a path under `/.svelte-kit/`", () => {
-    expect(classifyBuildArtifact("/proj/.svelte-kit/output/client.css", ".a {}")).toBe(
-      "dist-path",
-    );
+    expect(classifyBuildArtifact("/proj/.svelte-kit/output/client.css", ".a {}")).toBe("dist-path");
   });
 
   it("classifies a path under `/.output/`", () => {
