@@ -567,6 +567,14 @@ function mapCandidates(
         reason: c.reason,
         confidence: c.confidence,
         ...(snippet === undefined ? {} : { snippet }),
+        // Pass aggregated siblingOccurrences through to the checklist
+        // surface so an agent paginating the checklist sees the full
+        // per-sibling trail on a consolidated candidate. Present-when-
+        // meaningful per CLAUDE.md §1.
+        ...(c.siblingOccurrences !== undefined &&
+          c.siblingOccurrences.length > 0 && {
+            siblingOccurrences: c.siblingOccurrences,
+          }),
       };
     });
 }

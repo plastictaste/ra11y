@@ -27,7 +27,7 @@
  * erase it.
  */
 
-import type { ReviewCandidate } from "../types/review.ts";
+import type { ReviewCandidate, ReviewCandidateSibling } from "../types/review.ts";
 
 /**
  * Shape of a candidate in the `scan_file` response after dedup.
@@ -40,6 +40,15 @@ export interface DedupedReviewCandidate {
   readonly column: number;
   readonly reason: string;
   readonly snippet?: string;
+  /**
+   * Present when the finder aggregated ≥2 adjacent same-shape siblings
+   * into this candidate (e.g. ten sponsor-logo `<img>` siblings
+   * collapsed into one). Each entry names a group member by `line`
+   * plus optional `alt` / `href` for agent-facing enumeration. Omitted
+   * for singleton candidates per CLAUDE.md §1 "Ambiguous field shapes
+   * are dishonest."
+   */
+  readonly siblingOccurrences?: readonly ReviewCandidateSibling[];
 }
 
 /**
@@ -59,6 +68,7 @@ export function dedupeReviewCandidatesForSingleFile(
       column: number;
       reason: string;
       snippet: string | undefined;
+      siblingOccurrences: readonly ReviewCandidateSibling[] | undefined;
       order: number;
     }
   >();
@@ -76,6 +86,12 @@ export function dedupeReviewCandidatesForSingleFile(
       column: c.location.column,
       reason: c.reason,
       snippet: c.snippet,
+      // siblingOccurrences is set by the finder when it aggregated
+      // same-shape siblings; dedup preserves the first-seen list (all
+      // copies carry the same list because they share the same
+      // location+reason key) and conditional-spreads it away when
+      // undefined or empty.
+      siblingOccurrences: c.siblingOccurrences,
       order: nextOrder++,
     });
   }
@@ -89,5 +105,8 @@ export function dedupeReviewCandidatesForSingleFile(
       // Omit snippet when undefined — empty-string is a dishonest
       // shape (CLAUDE.md §1 "Ambiguous field shapes are dishonest").
       ...(g.snippet === undefined ? {} : { snippet: g.snippet }),
+      ...(g.siblingOccurrences === undefined || g.siblingOccurrences.length === 0
+        ? {}
+        : { siblingOccurrences: g.siblingOccurrences }),
     }));
 }

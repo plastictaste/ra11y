@@ -108,6 +108,11 @@ function buildReviewCandidates(
         ...(prompt?.failExample !== undefined && { failExample: prompt.failExample }),
         ...(prompt?.passExample !== undefined && { passExample: prompt.passExample }),
         ...(prompt !== undefined && { suggestedFix: prompt.suggestedFix }),
+        // Surface siblingOccurrences when a finder aggregated ≥2
+        // same-shape siblings — present-when-meaningful per AI-first
+        // doctrine; never `[]` for singleton candidates.
+        ...(c.siblingOccurrences !== undefined &&
+          c.siblingOccurrences.length > 0 && { siblingOccurrences: c.siblingOccurrences }),
       };
     });
 }

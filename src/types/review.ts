@@ -43,6 +43,34 @@ import type { Location } from "./violation.ts";
  */
 export type ReviewConfidence = "high" | "medium" | "low";
 
+/**
+ * One sibling in an aggregated review candidate. Present when a finder
+ * collapses a run of adjacent same-shape elements (e.g. ten
+ * `<a><img/></a>` sponsor-logo siblings whose alt text differs only by
+ * an enumerated token) into a single consolidated candidate. The
+ * primary {@link ReviewCandidate#location} names the group's anchor
+ * (usually the first sibling); `siblingOccurrences` enumerates every
+ * member so an agent can iterate the group without re-parsing. Per the
+ * AI-first consumer model, aggregation is only emitted when the group
+ * label is provable from the AST — same parent, same wrapping, and
+ * enumerated-only alt-text divergence — never on heuristic evidence.
+ */
+export interface ReviewCandidateSibling {
+  /** 1-based line of this sibling in the source file. */
+  readonly line: number;
+  /**
+   * Short alt text (or accessible name) on this sibling, for agent-
+   * facing enumeration. Populated when the finder had the value; omit
+   * rather than emit `""` when absent (present-when-meaningful).
+   */
+  readonly alt?: string;
+  /**
+   * Link target when the sibling is wrapped in (or is) an anchor.
+   * Omitted when the wrapping shape has no href.
+   */
+  readonly href?: string;
+}
+
 /** A location where a human reviewer should verify a manual criterion. */
 export interface ReviewCandidate {
   /** The criterion this candidate is relevant to (e.g., "wcag22:1.2.1"). */
@@ -60,6 +88,15 @@ export interface ReviewCandidate {
   readonly confidence: ReviewConfidence;
   /** Optional source snippet for context in reports. */
   readonly snippet?: string;
+  /**
+   * Present when the finder aggregated ≥2 adjacent same-shape siblings
+   * into this single consolidated candidate. The list enumerates every
+   * group member (including the one at {@link ReviewCandidate#location})
+   * so agents can trail-dismiss by reading one candidate instead of N.
+   * Omitted when the candidate is not aggregated — never sentinel-empty,
+   * per the "present-when-meaningful" rule.
+   */
+  readonly siblingOccurrences?: readonly ReviewCandidateSibling[];
 }
 
 /** Scope for a candidate finder — same semantics as RuleScope minus "project". */

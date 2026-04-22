@@ -199,6 +199,19 @@ export interface AgentReviewCandidate {
   readonly failExample?: string;
   readonly passExample?: string;
   readonly suggestedFix?: string;
+  /**
+   * Present-when-meaningful enumeration of sibling occurrences when a
+   * finder aggregated ≥2 adjacent same-shape siblings (same parent,
+   * same wrapping, alt-text differing only by enumerated token) into
+   * this consolidated candidate. Each entry carries `{ line, alt?,
+   * href? }` so an agent can iterate the group without re-parsing the
+   * file. Omitted (not `[]`) for singleton candidates.
+   */
+  readonly siblingOccurrences?: readonly {
+    readonly line: number;
+    readonly alt?: string;
+    readonly href?: string;
+  }[];
 }
 
 /**

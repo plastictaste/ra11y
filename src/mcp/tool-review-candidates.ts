@@ -190,6 +190,13 @@ export const reviewCandidatesTool: McpTool = {
           reason: c.reason,
           confidence: c.confidence,
           ...(snippet === undefined ? {} : { snippet }),
+          // Pass through aggregated siblingOccurrences when the finder
+          // collapsed ≥2 same-shape siblings — present-when-meaningful
+          // per CLAUDE.md §1 ("Ambiguous field shapes are dishonest").
+          ...(c.siblingOccurrences !== undefined &&
+            c.siblingOccurrences.length > 0 && {
+              siblingOccurrences: c.siblingOccurrences,
+            }),
         };
       }),
       ...warningsField({
