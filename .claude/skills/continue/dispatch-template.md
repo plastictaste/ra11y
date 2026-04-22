@@ -6,13 +6,15 @@ Every dispatched specialist MUST read this file on boot and follow every rule be
 
 ## 0. STOP — worktree-isolation non-negotiables (read FIRST, before any tool call)
 
-Three rules that break isolation silently, corrupt `main`, and have caused real integration rollbacks in this codebase. Every dispatched agent MUST read these before making ANY tool call:
+Four rules that break isolation silently, corrupt `main`, and have caused real integration rollbacks in this codebase. Every dispatched agent MUST read these before making ANY tool call:
 
 1. **Never use absolute paths in Read / Edit / Write / Bash tool calls.** NO `/Users/`, `/tmp/`, `/private/`, `/Volumes/`, `/home/` prefixes in ANY `file_path`, Bash command, or shell redirection. Every path must be relative to `$PWD`. `isolation: "worktree"` walls off `cwd` and git state, but absolute paths bypass the wall — the edit silently lands on the parent checkout, not your worktree. If a file is missing at its expected relative path, that is itself the signal — return `blocked` with the relative path. Never retry with an absolute path. This rule is the #1 cause of integration failures; violations have been observed even when documented in §2 (buried). It is here in §0 because position matters — if you skip this rule, you lose your work and corrupt a sibling agent's context.
 
-2. **Never `cd` out of your worktree.** Scripts compute `ROOT` via `import.meta.dir` and resolve to whichever tree the shell is in. `bun scripts/scaffold-rule.ts` from the worktree is safe; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` writes to main. The shell starts you in the worktree — stay there.
+2. **Never `git stash`, `git stash pop`, `git clean`, `git checkout --`, or `git reset --hard` — ever, for any reason.** `git stash` state is SHARED across all worktrees in a repo because it lives in the single `.git/` store. A stash-pop you run in your worktree can silently replay WIP from a sibling worktree agent, leaving your tree in conflicted state from foreign commits. A stash-push hides YOUR work and may leave the next agent to accidentally pop it. If your tree is unexpectedly dirty at boot, that IS the signal — return `blocked: dirty_worktree_on_boot`. If you need to "compare against a clean baseline" for a lint probe, make a test commit on a throwaway branch instead. There is no legitimate reason for a dispatched agent to touch stash. Violating this rule in turn 5 of this run corrupted an unrelated sibling worktree and required --force recovery.
 
-3. **Catch up to current main BEFORE editing anything.** First three commands, in order:
+3. **Never `cd` out of your worktree.** Scripts compute `ROOT` via `import.meta.dir` and resolve to whichever tree the shell is in. `bun scripts/scaffold-rule.ts` from the worktree is safe; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` writes to main. The shell starts you in the worktree — stay there.
+
+4. **Catch up to current main BEFORE editing anything.** First three commands, in order:
 
    ```
    git rev-parse HEAD
@@ -22,7 +24,7 @@ Three rules that break isolation silently, corrupt `main`, and have caused real 
 
    The harness may create worktrees from a stale fork-point. If `merge main --ff-only` fails (you've diverged or are ahead of main), return `blocked: unexpected_worktree_divergence`. If it succeeds, proceed. This is the counterpart to rule 1: the absolute-path fallback tempts you ONLY when a file seems missing; rebase first and the temptation disappears.
 
-Only after these three rules are fully internalized should you read §1 (scope) and §2 (worktree discipline — deeper elaboration of the above).
+Only after these four rules are fully internalized should you read §1 (scope) and §2 (worktree discipline — deeper elaboration of the above).
 
 ## 1. Scope-lock
 
@@ -38,8 +40,7 @@ If an edit you think you need falls outside that set, stop and return `blocked` 
 
 Your working tree is a git worktree under `.claude/worktrees/agent-<id>/`. Initial state is clean.
 
-- **Never `git stash`.** If your tree is unexpectedly dirty at start, that is a bug — return `blocked` with `reason: "dirty_worktree_on_boot"`. Do not stash it away.
-- **Never `git clean`, `git checkout --`, or `git reset --hard`.** Same rationale. Surface the dirt, don't hide it.
+- **Never touch stash or destructive git state.** Re-read §0 rule 2 — `git stash`, `git stash pop`, `git clean`, `git checkout --`, `git reset --hard` are all forbidden for any reason. If your tree is unexpectedly dirty at start, return `blocked: dirty_worktree_on_boot` — surface the dirt, don't hide it. Stash state is SHARED across worktrees (single `.git/` store); a stash-pop can replay a sibling's WIP into your tree.
 - **Never `cd` out of your worktree.** Scripts like `scripts/scaffold-rule.ts` compute `ROOT` via `import.meta.dir`, so they resolve to whichever tree you're in. `bun scripts/scaffold-rule.ts` run from the worktree root writes into the worktree; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` silently writes into the main tree and corrupts parallel peers. The shell starts you in the worktree — stay there.
 - **Never use absolute paths in Read/Edit/Write/Bash tool calls.** No `/Users/`, `/tmp/`, `/private/`, `/Volumes/`, `/home/` prefixes. Every path must be relative to `$PWD`. Rationale: `isolation: "worktree"` walls off `cwd` and git state, but an absolute path bypasses that wall — it resolves to the parent checkout. If your file is "missing" at its relative path, that is itself the signal (usually a stale worktree base, see below) — return `blocked` with the relative path that failed. Never retry the same edit with an absolute path; you will silently corrupt `main` and a sibling worktree agent's context.
 - **Catch up to current main before starting work.** The harness sometimes creates worktrees from a stale base (known behavior — the worktree-branch fork-point can trail `main` by 1-N commits if an integrator landed commits earlier in the session). First commands, in order:
