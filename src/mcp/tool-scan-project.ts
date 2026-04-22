@@ -17,6 +17,11 @@ import {
   groupBuildArtifactsByBasename,
   type ScannedBuildArtifact,
 } from "./build-artifacts.ts";
+import {
+  catalogEmptyResultMetaFields,
+  detectCatalogShape,
+  withCatalogHint,
+} from "./catalog-detect.ts";
 import { buildConfigHint } from "./config-hint.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
@@ -279,9 +284,22 @@ export const scanProjectTool: McpTool = {
     // downgraded by the detection (CLAUDE.md §1 "Surface, don't
     // suppress").
     const detectedFramework = detectSsgFramework(root);
+    // Q6-CATALOG-REPO-SIBLING-HINT: probe the scan root for the
+    // "catalog of stand-alone sibling site dirs" shape (e.g. a 174-
+    // template website-templates dump). When detected, the per-subdir
+    // scan workflow recovers per-site signal that the flat scan
+    // conflates — surface a `catalogHint` meta field plus a hint
+    // appended to `analysisCoverage.hints` naming the second call
+    // shape. Additive surface only — findings stay in `files[]`,
+    // nothing is filtered or downgraded (CLAUDE.md §1 "Surface, don't
+    // suppress"). Pairs with the SSG-hint shape above: same routing
+    // pattern (meta field + analysisCoverage.hints prose), different
+    // trigger (sibling-site shape vs. SSG config marker).
+    const catalogHint = detectCatalogShape(root);
     const metaWithSsgHint = withSsgHint(formatted.meta, detectedFramework);
+    const metaWithCatalogHint = withCatalogHint(metaWithSsgHint, catalogHint);
     const fullMeta = {
-      ...metaWithSsgHint,
+      ...metaWithCatalogHint,
       ...skippedByCallerField(skipCriterion),
       scanned: scannedProject(root),
       scanMode: actualMode,
@@ -302,6 +320,7 @@ export const scanProjectTool: McpTool = {
       ...(configHint === null ? {} : { configHint }),
       ...buildWrapperMeta({ autoDetect, configMissing, detectedNames }),
       ...(detectedFramework === null ? {} : { detectedFramework }),
+      ...(catalogHint === null ? {} : { catalogHint }),
       ...additionalPathsScannedField({
         additionalPaths,
         filesAdded: files.length - baseFiles.length,
@@ -857,7 +876,7 @@ function buildEmptyFilesResult(args: {
       // canonically "all the markup lives in fragments the scanner
       // doesn't parse." Surface the framework + hint so the agent has
       // the build command and emit dir inline.
-      ...ssgEmptyResultMetaFields(root),
+      ...mergeEmptyResultHints(ssgEmptyResultMetaFields(root), catalogEmptyResultMetaFields(root)),
     },
     // Zero parsed files → the `no_config_found` warning drops by
     // construction via the `filesScanned < 10` gate; the probe flag is
@@ -872,6 +891,52 @@ function buildEmptyFilesResult(args: {
       configSearchSawProjectMarker: args.configSearchSawProjectMarker,
     }),
   });
+}
+
+/**
+ * Merges two empty-result hint fragments so the
+ * `analysisCoverage.hints` arrays from each detector concatenate
+ * cleanly. Non-`analysisCoverage` keys (e.g. `detectedFramework`,
+ * `catalogHint`) are merged with later entries winning per spread
+ * semantics. Returns an empty object when both inputs are empty so
+ * the caller can spread unconditionally per CLAUDE.md §1 "Ambiguous
+ * field shapes are dishonest."
+ *
+ * Lives next to `buildEmptyFilesResult` because that's the only call
+ * site — the populated branch goes through the `withSsgHint` /
+ * `withCatalogHint` combinators which already handle the same merge.
+ */
+function mergeEmptyResultHints(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): Record<string, unknown> {
+  if (Object.keys(a).length === 0) return b;
+  if (Object.keys(b).length === 0) return a;
+  const merged: Record<string, unknown> = { ...a, ...b };
+  const aHints = readHintsArray(a);
+  const bHints = readHintsArray(b);
+  if (aHints.length > 0 || bHints.length > 0) {
+    const baseCoverage =
+      typeof merged["analysisCoverage"] === "object" && merged["analysisCoverage"] !== null
+        ? (merged["analysisCoverage"] as Record<string, unknown>)
+        : {};
+    merged["analysisCoverage"] = { ...baseCoverage, hints: [...aHints, ...bHints] };
+  }
+  return merged;
+}
+
+/**
+ * Reads `analysisCoverage.hints` out of a hint-fragment object.
+ * Returns an empty array when the fragment doesn't have the shape —
+ * lets {@link mergeEmptyResultHints} concatenate without per-call
+ * type guards.
+ */
+function readHintsArray(fragment: Record<string, unknown>): readonly string[] {
+  const coverage = fragment["analysisCoverage"];
+  if (typeof coverage !== "object" || coverage === null) return [];
+  const hintsRaw = (coverage as Record<string, unknown>)["hints"];
+  if (!Array.isArray(hintsRaw)) return [];
+  return hintsRaw.filter((h): h is string => typeof h === "string");
 }
 
 /**
