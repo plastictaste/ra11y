@@ -78,7 +78,10 @@ import {
   hasJsxAttribute,
   truncateForEcho,
 } from "../../engine/ast-helpers.ts";
-import { htmlSubtreeHasStrippedDirective } from "../../input/parsers/html-template-directives.ts";
+import {
+  htmlSubtreeHasStrippedDirective,
+  stripTemplateDirectives,
+} from "../../input/parsers/html-template-directives.ts";
 import type {
   HtmlDocument,
   HtmlElement,
@@ -377,10 +380,15 @@ function buildSuggestion(href: string | null, phrase: string): string {
 }
 
 function destinationHint(href: string): string {
+  // Strip template directives first so href="{{ item.url }}" reduces
+  // to an empty hint rather than echoing the raw Liquid token back.
+  // The rule's suggestion-builder already falls through cleanly when
+  // the hint is empty.
+  const stripped = stripTemplateDirectives(href).value;
   // Turn "/docs/api-reference" into "api reference" so the suggestion
   // reads like a real user-facing link title.
   const cleaned =
-    href
+    stripped
       .replace(/^https?:\/\/[^/]+/, "")
       .replace(/[?#].*$/, "")
       .replace(/^\//, "")

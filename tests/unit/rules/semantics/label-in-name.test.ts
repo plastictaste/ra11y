@@ -177,6 +177,46 @@ describe("rule semantics/label-in-name", () => {
     expect(rule.satisfies).toContain("wcag21:2.5.3");
   });
 
+  describe("template directives are stripped before compare and echo", () => {
+    // Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING: attribute values are never
+    // stripped at parse time, and the parser's text-node path breaks on
+    // `<` — a Liquid tag like `{% if foo < 5 %}` leaks raw tokens into
+    // the HtmlText. Neither failure mode should produce a finding whose
+    // message or suggestion quotes raw `{%` / `{{` at the agent.
+    it("aria-label containing only Liquid variable resolves to empty and skips", () => {
+      const v = runRule(rule, `<a aria-label="{{ page.title }}" href="#">Home</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("Liquid tag containing '<' does not leak raw {% into echoed message", () => {
+      const v = runRule(
+        rule,
+        `<button aria-label="Test">{% if foo < 5 %}small{% endif %}</button>`,
+        { filePath: "jekyll.html" },
+      );
+      expect(v).toHaveLength(1);
+      const msg = v[0]?.message ?? "";
+      const sugg = v[0]?.suggestion ?? "";
+      expect(msg).not.toContain("{%");
+      expect(msg).not.toContain("{{");
+      expect(sugg).not.toContain("{%");
+      expect(sugg).not.toContain("{{");
+      expect(msg).toContain("small");
+    });
+
+    it("aria-label with Liquid variable plus literal context is stripped for compare", () => {
+      // aria-label="Search {{ query }}" renders to "Search <value>" —
+      // after strip it's "Search". Visible text "Search" matches, so no
+      // violation.
+      const v = runRule(rule, `<button aria-label="Search {{ query }}">Search</button>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+  });
+
   describe("ranked fix paths (deterministic fix-verify)", () => {
     it("leads with widen-aria-label by default", () => {
       const v = runRule(rule, `<button aria-label="Close dialog">Cancel</button>`, {

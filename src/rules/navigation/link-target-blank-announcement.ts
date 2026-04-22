@@ -42,6 +42,7 @@ import {
   truncateForEcho,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
+import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, JsxNode, TsxModule } from "../../types/ast.ts";
 
 /**
@@ -221,7 +222,11 @@ function containsPhrase(text: string): boolean {
 }
 
 function buildSuggestion(href: string | null, visibleText: string): string {
-  const text = truncateForEcho(visibleText.trim());
+  // Strip template directives before echo: the parser's text-node path
+  // breaks on `<` (so `{% if a < b %}foo{% endif %}` leaks a raw `{%
+  // if a <` token into HtmlText.value), and attribute-valued hrefs may
+  // contain raw Liquid. Neither belongs in the suggestion body.
+  const text = truncateForEcho(stripTemplateDirectives(visibleText).value.trim());
   const destination = href ? truncateForEcho(destinationHint(href)) : "";
   const labelSample = destination
     ? `aria-label="${text || destination} (opens in new window)"`

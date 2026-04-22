@@ -28,6 +28,7 @@ import {
   hasJsxAttribute,
   truncateForEcho,
 } from "../../engine/ast-helpers.ts";
+import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
 /** Local copy of the emit signature — matches the shape the rule uses
@@ -43,6 +44,19 @@ type DupEmit = (v: {
 /** Trim + collapse internal whitespace + lowercase. */
 export function normalizeAccessibleName(text: string): string {
   return text.trim().replace(/\s+/gu, " ").toLowerCase();
+}
+
+/**
+ * Strip template directives (`{{ … }}`, `{% … %}`, `<% … %>`) before
+ * the name/href reaches the grouping or echo. Attribute values are
+ * never stripped at parse time, so raw Liquid in `aria-label`,
+ * `title`, or `href` would otherwise (a) group everything-expanding-
+ * to-Liquid under one key and (b) echo raw directive text back at the
+ * agent as "the duplicate name". Both are false positives the
+ * Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING audit calls out.
+ */
+function stripDirectives(text: string): string {
+  return stripTemplateDirectives(text).value;
 }
 
 interface AnchorRecord {
@@ -100,17 +114,26 @@ function emitBucket(bucket: readonly AnchorRecord[], emit: DupEmit): void {
 }
 
 /** Effective accessible name for an HTML anchor, or null when grouping
- * should defer (empty name / aria-labelledby present). */
+ * should defer (empty name / aria-labelledby present / name was purely
+ * template-directive with nothing left after strip). */
 export function accessibleNameForHtmlAnchor(
   el: HtmlElement,
   visibleText: (root: HtmlElement) => string,
 ): string | null {
   const ariaLabel = getHtmlAttribute(el, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return ariaLabel;
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) {
+    const stripped = stripDirectives(ariaLabel);
+    if (stripped.trim().length === 0) return null;
+    return stripped;
+  }
   if (hasHtmlAttribute(el, "aria-labelledby")) return null;
   const title = getHtmlAttribute(el, "title");
-  if (title !== null && title.trim().length > 0) return title;
-  const visible = visibleText(el);
+  if (title !== null && title.trim().length > 0) {
+    const stripped = stripDirectives(title);
+    if (stripped.trim().length === 0) return null;
+    return stripped;
+  }
+  const visible = stripDirectives(visibleText(el));
   if (visible.trim().length === 0) return null;
   return visible;
 }
@@ -122,13 +145,21 @@ export function accessibleNameForJsxAnchor(
   visibleText: (root: JsxElement) => string,
 ): string | null {
   const ariaLabel = getJsxAttributeString(el, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return ariaLabel;
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) {
+    const stripped = stripDirectives(ariaLabel);
+    if (stripped.trim().length === 0) return null;
+    return stripped;
+  }
   if (hasJsxAttribute(el, "aria-labelledby")) return null;
   const title = getJsxAttributeString(el, "title");
-  if (title !== null && title.trim().length > 0) return title;
+  if (title !== null && title.trim().length > 0) {
+    const stripped = stripDirectives(title);
+    if (stripped.trim().length === 0) return null;
+    return stripped;
+  }
   const hasExpressionChild = el.children.some((c) => c.kind === "JsxExpression");
   if (hasExpressionChild) return null;
-  const visible = visibleText(el);
+  const visible = stripDirectives(visibleText(el));
   if (visible.trim().length === 0) return null;
   return visible;
 }
@@ -141,8 +172,15 @@ export function checkDuplicateHrefHtml(
   const records: AnchorRecord[] = [];
   for (const a of findHtmlElementsByTag(doc, "a")) {
     if (!hasHtmlAttribute(a, "href")) continue;
-    const href = getHtmlAttribute(a, "href");
-    if (href === null) continue;
+    const hrefRaw = getHtmlAttribute(a, "href");
+    if (hrefRaw === null) continue;
+    // href="{{ item.url }}" renders to N distinct URLs at runtime but
+    // groups as one at static time. Skip the anchor — we cannot tell
+    // whether the N outputs are duplicates or distinct. Fully-static
+    // hrefs stay unaffected.
+    const hrefStripped = stripDirectives(hrefRaw).trim();
+    if (hrefStripped.length === 0) continue;
+    if (hrefStripped !== hrefRaw.trim()) continue;
     const name = accessibleNameForHtmlAnchor(a, visibleText);
     if (name === null) continue;
     const normalizedName = normalizeAccessibleName(name);
@@ -150,7 +188,7 @@ export function checkDuplicateHrefHtml(
     records.push({
       line: a.loc.start.line,
       column: a.loc.start.column,
-      href: href.trim(),
+      href: hrefStripped,
       normalizedName,
       rawName: name,
     });
@@ -172,8 +210,13 @@ export function checkDuplicateHrefJsx(
   for (const el of findJsxElementsForTag(module, "a", wrappers)) {
     if (seen.has(el)) continue;
     seen.add(el);
-    const href = getJsxAttributeString(el, "href") ?? getJsxAttributeString(el, "to");
-    if (href === null) continue;
+    const hrefRaw = getJsxAttributeString(el, "href") ?? getJsxAttributeString(el, "to");
+    if (hrefRaw === null) continue;
+    const hrefStripped = stripDirectives(hrefRaw).trim();
+    if (hrefStripped.length === 0) continue;
+    // Same guard as HTML — skip template-valued hrefs so the
+    // grouping never compares runtime-distinct URLs as equal.
+    if (hrefStripped !== hrefRaw.trim()) continue;
     const name = accessibleNameForJsxAnchor(el, visibleText);
     if (name === null) continue;
     const normalizedName = normalizeAccessibleName(name);
@@ -181,7 +224,7 @@ export function checkDuplicateHrefJsx(
     records.push({
       line: el.loc.start.line,
       column: el.loc.start.column,
-      href: href.trim(),
+      href: hrefStripped,
       normalizedName,
       rawName: name,
     });

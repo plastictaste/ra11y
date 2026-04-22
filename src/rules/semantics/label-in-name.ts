@@ -27,6 +27,7 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
+import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { FixPath, FixPaths } from "../../types/violation.ts";
 
@@ -88,14 +89,29 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
     if (!isInteractiveHtml(element)) continue;
-    const ariaLabel = getHtmlAttribute(element, "aria-label");
-    if (ariaLabel === null || ariaLabel.trim().length === 0) continue;
-    const visibleText = collapseWhitespace(visibleTextHtml(element));
-    const normalizedAria = collapseWhitespace(ariaLabel);
+    const ariaLabelRaw = getHtmlAttribute(element, "aria-label");
+    if (ariaLabelRaw === null || ariaLabelRaw.trim().length === 0) continue;
+    // Strip template directives defensively on both sides before compare
+    // and echo. The parser strips `{{ … }}` / `{% … %}` from HtmlText
+    // nodes, but (a) attribute values are never stripped at parse time,
+    // so `aria-label="{{ page.title }}"` would otherwise reach the
+    // compare with raw Liquid, and (b) the parser's text-node path
+    // breaks on `<` — a Liquid tag like `{% if foo < 5 %}` leaks raw
+    // tokens into the HtmlText value. Both failure modes produce
+    // false-positive violations that quote raw directives as "visible
+    // text" (Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING).
+    const visibleText = collapseWhitespace(stripDirectives(visibleTextHtml(element)));
+    const normalizedAria = collapseWhitespace(stripDirectives(ariaLabelRaw));
     if (visibleText.length === 0) continue;
+    if (normalizedAria.length === 0) continue;
     if (containsSubstring(normalizedAria, visibleText)) continue;
     emitViolation(element.tagName, visibleText, normalizedAria, element.loc.start, emit);
   }
+}
+
+/** Runs `stripTemplateDirectives` and returns the stripped string. */
+function stripDirectives(text: string): string {
+  return stripTemplateDirectives(text).value;
 }
 
 /** Text content excluding aria-hidden subtrees — the text a sighted user sees. */
@@ -136,9 +152,13 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     // Only check string-literal aria-label — skip expressions
     const ariaAttr = getJsxAttribute(element, "aria-label");
     if (!ariaAttr?.value || ariaAttr.value.kind !== "StringLiteral") continue;
-    const ariaLabel = collapseWhitespace(ariaAttr.value.value);
+    // JSX authors rarely mix Liquid/ERB with JSX, but the strip is cheap
+    // and forward-compatible with template-in-TSX shapes (Astro `<script>
+    // is:inline>`, Remix `<Scripts>`-adjacent prose); it also matches the
+    // HTML path so the rule's compare semantics stay uniform.
+    const ariaLabel = collapseWhitespace(stripDirectives(ariaAttr.value.value));
     if (ariaLabel.length === 0) continue;
-    const visibleText = collapseWhitespace(visibleTextJsx(element));
+    const visibleText = collapseWhitespace(stripDirectives(visibleTextJsx(element)));
     if (visibleText.length === 0) continue;
     if (containsSubstring(ariaLabel, visibleText)) continue;
     emitViolation(element.tagName, visibleText, ariaLabel, element.loc.start, emit);

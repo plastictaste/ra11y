@@ -40,6 +40,7 @@ import {
   truncateForEcho,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
+import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
 
@@ -89,6 +90,11 @@ export const rule = defineRule({
       if (href === null) continue;
       if (!href.startsWith("#") || href === "#") continue;
       if (!looksLikeSkipLink(el)) continue;
+      // Skip template-valued hrefs (`#{{ section.slug }}`): the target
+      // id renders at runtime, so we cannot determine statically
+      // whether the landing element exists. Defer to the agent; echoing
+      // the raw directive as the "missing target" would be dishonest.
+      if (stripTemplateDirectives(href).stripped) continue;
 
       const targetId = href.slice(1);
       if (ids.has(targetId)) continue;
@@ -157,6 +163,11 @@ function checkPrimaryNavPath(
   }
 
   const targetId = href.slice(1);
+  // Template-valued target ids (`#{{ section.slug }}`) render at
+  // runtime — we can't know whether the landing element exists.
+  // Silencing here is consistent with path 2 and avoids echoing a
+  // raw Liquid directive as the "missing target."
+  if (stripTemplateDirectives(targetId).stripped) return;
   if (!ids.has(targetId)) {
     // `targetId` is a user-authored fragment — ids are conventionally
     // short but pathological inputs can blow the echo. Cap before
