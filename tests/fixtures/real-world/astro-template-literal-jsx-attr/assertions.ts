@@ -29,11 +29,12 @@ import type { FixtureAssertions } from "../runner.ts";
 
 export const assertions: FixtureAssertions = {
   description:
-    "A TSX file with <Example code={`<iframe>…</iframe>`} /> must parse without " +
-    "errors — the template literal contents are opaque string data, not a nested JSX tree. " +
-    "Currently fails because the TSX parser promotes `<iframe` inside the template literal " +
-    "to a JSX open-tag; the assertion is commented out pending the fix tracked in " +
-    "Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS.",
+    "A TSX file with <Example code={`<span>a}b</span>`} /> — a template literal holding " +
+    "an HTML snippet with an unbalanced `}` in its text content — must parse without " +
+    "errors. The template literal contents are opaque string data, not a nested JSX tree. " +
+    "Before Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS the attribute-expression brace scanner " +
+    "closed early on the literal `}`, re-entered JSX-child mode mid-template, and emitted " +
+    "`Unclosed JSX element <Example>` (or <iframe>/<body>/<span> on upstream MDX).",
   origin: {
     feedbackRound: "Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS",
     notes:
@@ -43,11 +44,5 @@ export const assertions: FixtureAssertions = {
       "live Astro pipeline eventually reaches. The parser bug is in JSX-attribute " +
       "template-literal handling, not in the file-extension dispatch.",
   },
-  expectations: [
-    // Pending fix for Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS. When the TSX
-    // parser stops entering JSX mode inside template-literal contents of
-    // JSX attribute values, uncomment this assertion. The fixture stays
-    // committed as a live reproducer in the meantime.
-    // { kind: "zero-parse-errors" },
-  ],
+  expectations: [{ kind: "zero-parse-errors" }],
 };

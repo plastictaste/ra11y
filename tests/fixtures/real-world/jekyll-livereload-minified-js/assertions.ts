@@ -38,9 +38,5 @@ export const assertions: FixtureAssertions = {
       "not in the minification — the same false-JSX leak would occur on any authored .js " +
       "file that happened to contain `a<b` comparisons.",
   },
-  expectations: [
-    // Pending fix for Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS. When bare .js
-    // no longer enters JSX mode on `<identifier`, uncomment this assertion.
-    // { kind: "zero-parse-errors" },
-  ],
+  expectations: [{ kind: "zero-parse-errors" }],
 };
