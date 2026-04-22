@@ -71,6 +71,30 @@ export function hasHtmlAttribute(element: HtmlElement, name: string): boolean {
   return false;
 }
 
+/**
+ * True when the parsed document does not look like a full HTML page —
+ * it has neither an `<html>` root nor a `<body>` descendant. These are
+ * partial / fragment files: Jekyll `_includes/header.html`, Hugo
+ * `partials/`, Eleventy / Astro / Handlebars include targets, or raw
+ * component templates. They're chunks of markup composed into a parent
+ * layout at render time, so page-level rules (skip-link primary-nav
+ * gating, landmark-main) are out of scope — their premise is "this
+ * document IS the page," which the file alone is not.
+ *
+ * Heuristic intentionally simple (no path-based guessing): `<html>` or
+ * `<body>` presence, nothing more. Rule callers use this to scope-gate
+ * their checks; the MCP analysis-coverage surface uses it to populate
+ * `fragmentFiles` telemetry so agents see which files were parsed but
+ * skipped for page-level rules.
+ */
+export function isHtmlFragment(doc: HtmlDocument): boolean {
+  const htmlRoots = findHtmlElementsByTag(doc, "html");
+  if (htmlRoots.length > 0) return false;
+  const bodies = findHtmlElementsByTag(doc, "body");
+  if (bodies.length > 0) return false;
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // JSX walkers (v0.0.x minimal surface)
 // ---------------------------------------------------------------------------

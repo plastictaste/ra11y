@@ -54,7 +54,11 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { findHtmlElementsByTag, getHtmlAttribute } from "../../engine/ast-helpers.ts";
+import {
+  findHtmlElementsByTag,
+  getHtmlAttribute,
+  isHtmlFragment,
+} from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, HtmlNode } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
 
@@ -118,26 +122,14 @@ export const rule = defineRule({
     // Fragment files: no <body>, no <html> wrapper. We can't decide
     // whether a top-level <section> composes into a landmark row, so
     // we don't fire. Over-triggering on fragments was the primary
-    // concern on the backlog item.
-    if (isFragment(doc)) return;
+    // concern on the backlog item. Shared predicate with landmark-main
+    // / duplicate-landmark-unlabeled / skip-link via `isHtmlFragment`
+    // in `src/engine/ast-helpers.ts`.
+    if (isHtmlFragment(doc)) return;
 
     checkSections(ctx, doc);
   },
 });
-
-/**
- * True when the parsed document does not look like a full HTML page.
- * Matches the shape used by duplicate-landmark-unlabeled: no `<html>`
- * root and no `<body>` descendant means the file is a partial that
- * will compose into a parent layout at render time.
- */
-function isFragment(doc: HtmlDocument): boolean {
-  const htmlRoots = findHtmlElementsByTag(doc, "html");
-  if (htmlRoots.length > 0) return false;
-  const bodies = findHtmlElementsByTag(doc, "body");
-  if (bodies.length > 0) return false;
-  return true;
-}
 
 /**
  * Walk every `<section>` in the document, classify whether it

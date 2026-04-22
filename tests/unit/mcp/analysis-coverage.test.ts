@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ParsedFile } from "../../../src/engine/scanner.ts";
+import { parseHtml } from "../../../src/input/parsers/html.ts";
 import { buildAnalysisCoverage } from "../../../src/mcp/analysis-coverage.ts";
 import type { Rule } from "../../../src/types/rule.ts";
 
@@ -973,6 +974,99 @@ describe("buildAnalysisCoverage — hints", () => {
       // signal is at the start, so truncation from the tail preserves
       // the triage signal.
       expect(partial?.[0]?.reason.startsWith("SyntaxError:")).toBe(true);
+    });
+  });
+
+  describe("fragmentFiles telemetry", () => {
+    // Real-AST helper: drives the live parser so the HtmlDocument
+    // passed to buildAnalysisCoverage carries the same tree shape the
+    // rule-side `isHtmlFragment` predicate reads. Keeps the
+    // telemetry-vs-rule-scope invariant honest (same fragment set on
+    // both sides).
+    function parsedHtml(path: string, source: string): ParsedFile {
+      const parsed = parseHtml(source);
+      return {
+        filePath: path,
+        source,
+        ast: { language: "html", root: parsed.root, errors: parsed.errors },
+      };
+    }
+
+    it("lists HTML files with no <html> root and no <body>", () => {
+      // Jekyll `_includes/header.html` shape: a plain chunk of markup
+      // meant to be composed into a parent layout at render time.
+      const fragment = parsedHtml(
+        "_includes/header.html",
+        '<nav><a href="/">Home</a><a href="/about">About</a></nav>',
+      );
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [fragment],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual(["_includes/header.html"]);
+    });
+
+    it("omits fragmentFiles entirely when every HTML file has <html> or <body>", () => {
+      const fullPage = parsedHtml(
+        "index.html",
+        "<html><body><h1>Hello</h1><p>World</p></body></html>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([fullPage], [], NO_RULES, false);
+      // Present-when-meaningful: a zero-count list would be ambiguous
+      // (the scan didn't run vs no fragments), so the field is absent.
+      expect(analysisCoverage?.["fragmentFileCount"]).toBeUndefined();
+      expect(analysisCoverage?.["fragmentFiles"]).toBeUndefined();
+    });
+
+    it("sorts fragmentFiles alphabetically for deterministic wire output", () => {
+      const files = [
+        parsedHtml("_includes/z-last.html", "<div>z</div>"),
+        parsedHtml("_includes/a-first.html", "<div>a</div>"),
+        parsedHtml("_includes/m-middle.html", "<div>m</div>"),
+      ];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        "_includes/a-first.html",
+        "_includes/m-middle.html",
+        "_includes/z-last.html",
+      ]);
+    });
+
+    it("counts a full page as NOT a fragment even without <html> (has <body>)", () => {
+      // A <body>-only document (no <html> wrapper) is a full page for
+      // the scanner — `document/lang-attribute` skips it because there's
+      // no <html> to attach lang to, but `landmark-main` evaluates it.
+      // The fragment predicate matches: either signal turns the file
+      // into a page.
+      const bodyOnly = parsedHtml("page.html", "<body><h1>Hi</h1></body>");
+      const fragment = parsedHtml(
+        "_includes/nav.html",
+        '<nav><a href="/">Home</a></nav>',
+      );
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [bodyOnly, fragment],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual(["_includes/nav.html"]);
+    });
+
+    it("is independent of verboseMeta — telemetry ships at every verbosity", () => {
+      // `fragmentFiles` is the actionable per-entry signal (path is the
+      // only field), not a bounded-but-large inventory. Gating it on
+      // `verboseMeta` would reduce the top-level `fragmentFileCount` to
+      // a silent-failure shape (count without paths → "which files?").
+      // Same reasoning as `parseErrorFiles` / `partialParseFiles`.
+      const fragment = parsedHtml("_includes/footer.html", "<footer>©</footer>");
+      const terse = buildAnalysisCoverage([fragment], [], NO_RULES, false).analysisCoverage;
+      const verbose = buildAnalysisCoverage([fragment], [], NO_RULES, true).analysisCoverage;
+      expect(terse?.["fragmentFiles"]).toEqual(["_includes/footer.html"]);
+      expect(verbose?.["fragmentFiles"]).toEqual(["_includes/footer.html"]);
     });
   });
 });

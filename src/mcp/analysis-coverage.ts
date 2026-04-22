@@ -50,8 +50,9 @@
  * stay terse.
  */
 
-import { walkJsxElements } from "../engine/ast-helpers.ts";
+import { isHtmlFragment, walkJsxElements } from "../engine/ast-helpers.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
+import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { isStorybookStoryFile } from "../utils/path.ts";
@@ -119,6 +120,17 @@ interface CoverageAccumulator {
   readonly opaqueComponents: Map<string, OpaqueComponentUsage>;
   readonly templateEngines: Set<string>;
   readonly parseErrorEntries: ParseErrorEntry[];
+  /**
+   * Paths of HTML files that parsed as fragments — no `<html>` root
+   * and no `<body>` descendant. Populated via
+   * {@link isHtmlFragment} for every `.html` / `.htm` file that
+   * successfully parsed. Surfaced on the response as
+   * `analysisCoverage.fragmentFiles` so agents see which files were
+   * skipped for page-level rules (skip-link primary-nav gating,
+   * landmark-main) — scan-confidence telemetry paralleling
+   * `parseErrorFiles` / `partialParseFiles`.
+   */
+  readonly fragmentFiles: string[];
 }
 
 /**
@@ -213,6 +225,7 @@ export function buildAnalysisCoverage(
     opaqueComponents: new Map(),
     templateEngines: new Set(),
     parseErrorEntries: [],
+    fragmentFiles: [],
   };
   const wrapperSet = new Set(wrappers);
   for (const file of files) accumulateCoverageForFile(file, wrapperSet, acc, preset);
@@ -239,6 +252,8 @@ export function buildAnalysisCoverage(
     rulesByExtension?: Readonly<Record<string, readonly string[]>>;
     hints?: readonly string[];
     skippedByExtension?: Readonly<Record<string, number>>;
+    fragmentFileCount?: number;
+    fragmentFiles?: readonly string[];
   } = {};
   if (acc.opaqueComponents.size > 0) {
     assembleOpaqueComponentBlock(acc.opaqueComponents, verbose, coverage);
@@ -260,6 +275,28 @@ export function buildAnalysisCoverage(
   }
   if (acc.parseErrorEntries.length > 0) {
     assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage);
+  }
+  if (acc.fragmentFiles.length > 0) {
+    // Scan-confidence telemetry naming the
+    // HTML files that parsed as fragments (no `<html>` root, no
+    // `<body>`). Page-level rules — `navigation/skip-link`'s primary-
+    // nav path, `semantics/landmark-main`, `semantics/section-
+    // accessible-name-missing` — skip these files because the premise
+    // of those checks is "this document IS the page," which a partial
+    // / include target is not. Surfacing the list lets an agent
+    // verify the composed layout (parent `_layouts/*.html`,
+    // `partials/base.html`, Astro slot host) elsewhere rather than
+    // concluding "clean scan" when the scan merely didn't evaluate
+    // page-level invariants. Shipped at every verbosity (no
+    // `verboseMeta` gate): the count alone is ambiguous ("which
+    // files?") and the path list is the actionable signal — same
+    // reasoning as `parseErrorFiles` / `partialParseFiles`. Count +
+    // list are always populated together; sorted for deterministic
+    // wire output. Doctrine: verbose meta is scan-confidence signal
+    // (CLAUDE.md §1 "Surface, don't suppress" +
+    // docs/kb/architecture/ai-first-consumer.md).
+    coverage.fragmentFileCount = acc.fragmentFiles.length;
+    coverage.fragmentFiles = [...acc.fragmentFiles].sort((a, b) => a.localeCompare(b));
   }
   if (verbose) {
     const byExt = rulesByExtension(files, activeRules);
@@ -678,6 +715,16 @@ function accumulateCoverageForFile(
   }
   if (file.ast.language === "html") {
     detectTemplateEngines(file.source, acc.templateEngines);
+    // Record HTML files that parsed as fragments so the coverage
+    // block can surface which files were
+    // skipped for page-level rules (skip-link primary-nav gating,
+    // landmark-main, section-accessible-name-missing). Telemetry only
+    // — the per-rule scope guards remain the source of truth for
+    // whether a given rule evaluates a given file. Matches the
+    // predicate the rules themselves use (`isHtmlFragment`), so the
+    // list is consistent with what those rules actually skipped.
+    const root = file.ast.root as HtmlDocument;
+    if (isHtmlFragment(root)) acc.fragmentFiles.push(file.filePath);
     return;
   }
   if (file.ast.language === "css") return;

@@ -37,6 +37,7 @@ import {
   findHtmlElementsByTag,
   getHtmlAttribute,
   htmlTextContent,
+  isHtmlFragment,
   truncateForEcho,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
@@ -136,6 +137,29 @@ function checkPrimaryNavPath(
   ids: Set<string>,
   reportedAnchors: Set<HtmlElement>,
 ): void {
+  // Fragment files — Jekyll `_includes/header.html`, Hugo partials,
+  // Astro slots, Handlebars include targets — have no `<html>` root
+  // and no `<body>`. The primary-nav skip-link check assumes the
+  // document IS the page: "first focusable element in the document
+  // precedes the primary nav." A fragment has no document-level first-
+  // focusable notion — the composed layout it gets included into does,
+  // but that's a cross-file concern we can't evaluate in isolation.
+  // Firing the primary-nav path on a fragment is a false positive
+  // indistinguishable from a real page missing its skip link.
+  //
+  // The second path (skip-link-shaped anchor with missing in-page
+  // target) stays live on fragments: a broken `#target` anchor is
+  // honestly wrong regardless of whether the file is a fragment or a
+  // full page, and the target it claims is supposed to exist in the
+  // same document.
+  //
+  // Doctrine (docs/kb/architecture/ai-first-consumer.md): rule-level
+  // scope selection, not finding-level suppression — this is the same
+  // shape as landmark-main gating on `<body>` presence. The MCP
+  // `analysisCoverage.fragmentFiles` signal surfaces the list of files
+  // treated as fragments so an agent can verify the composed layout
+  // elsewhere.
+  if (isHtmlFragment(doc)) return;
   const navs = findHtmlElementsByTag(doc, "nav");
   if (navs.length === 0) return;
   const firstNav = navs[0];

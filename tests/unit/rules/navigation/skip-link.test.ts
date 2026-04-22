@@ -69,6 +69,36 @@ describe("rule navigation/skip-link", () => {
       const v = runRule(rule, "<nav><a>x</a></nav>", { filePath: "a.tsx" });
       expect(v).toHaveLength(0);
     });
+
+    // A Jekyll `_includes/header.html` (or
+    // Hugo / Astro / Handlebars equivalent) has a multi-link `<nav>`
+    // but no `<html>` root and no `<body>`. The primary-nav path's
+    // premise — "first focusable element in the document precedes the
+    // primary nav" — doesn't hold on a partial: the composed layout
+    // it gets included into is the document, not this file. Gating
+    // on fragment-shape matches landmark-main's `<body>`-presence
+    // guard; the second skip-link path (broken in-page anchor) still
+    // fires on fragments because a broken `#target` is wrong in any
+    // file shape.
+    it("the file is a fragment (no <html>, no <body>) with a multi-link <nav>", () => {
+      const html = `<nav>
+          <a href="/">Home</a>
+          <a href="/about">About</a>
+          <a href="/contact">Contact</a>
+        </nav>`;
+      const v = runRule(rule, html, { filePath: "_includes/header.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("the file is a fragment even when the <nav> has no preceding anchor", () => {
+      // Mirrors the Jekyll `_includes/header.html` shape: the file
+      // starts directly with `<nav>`; in a full page this would emit
+      // "No skip link precedes the primary <nav>." On a fragment it's
+      // silent — the composed layout's skip link lives in the parent.
+      const html = '<nav><a href="/">Home</a><a href="/about">About</a></nav>';
+      const v = runRule(rule, html, { filePath: "partials/header.html" });
+      expect(v).toHaveLength(0);
+    });
   });
 
   describe("skip-link-shaped anchor with missing target (path 2)", () => {
@@ -143,6 +173,19 @@ describe("rule navigation/skip-link", () => {
         </body></html>`;
       const v = runRule(rule, html, { filePath: "a.html" });
       expect(v).toHaveLength(0);
+    });
+
+    it("fires on fragments too when the skip-link-shaped anchor points at a missing id", () => {
+      // Path 2 still runs on fragment files — a broken `#target` is
+      // honestly wrong regardless of whether the file is a partial or
+      // a full page. Only the primary-nav path (path 1) is fragment-
+      // gated; this candidate has the skip-link class AND a missing
+      // id, which is a 2.4.1 failure in any file shape.
+      const html = `<a class="skip-link" href="#nowhere">Skip to main content</a>
+        <nav><a href="/">Home</a><a href="/about">About</a></nav>`;
+      const v = runRule(rule, html, { filePath: "_includes/header.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("#nowhere");
     });
 
     it("fires on a bare 'Skip navigation' link with no class but canonical visible text", () => {

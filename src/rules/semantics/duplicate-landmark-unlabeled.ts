@@ -40,7 +40,11 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { findHtmlElementsByTag, getHtmlAttribute } from "../../engine/ast-helpers.ts";
+import {
+  findHtmlElementsByTag,
+  getHtmlAttribute,
+  isHtmlFragment,
+} from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
 
@@ -96,7 +100,14 @@ export const rule = defineRule({
     if (ctx.language !== "html") return;
     const doc = ctx.ast as HtmlDocument;
 
-    if (isFragment(doc)) {
+    // Shared fragment predicate with landmark-main / section-
+    // accessible-name-missing / skip-link via `isHtmlFragment` in
+    // `src/engine/ast-helpers.ts`. A full page has `<html>` as a root
+    // element, a `<body>` somewhere inside, or both. A partial /
+    // fragment — Jekyll `_includes/header.html`, Astro slot, Handlebars
+    // partial — has neither; it's a chunk of markup composed into a
+    // parent layout at render time.
+    if (isHtmlFragment(doc)) {
       checkFragmentSingleLandmark(ctx, doc);
       return;
     }
@@ -104,29 +115,6 @@ export const rule = defineRule({
     checkDuplicateLandmarks(ctx, doc);
   },
 });
-
-/**
- * True when the parsed document does not look like a full HTML page.
- *
- * A full page has `<html>` as a root element, a `<body>` somewhere
- * inside, or both. A partial / fragment — Jekyll `_includes/header.html`,
- * Astro slot, Handlebars partial — has neither; it's a chunk of
- * markup meant to be composed into a parent layout at render time.
- *
- * Heuristic intentionally simple (no path-based guessing): if there's
- * no `<html>` root and no `<body>` descendant, the document is a
- * fragment. Matches the approach already documented in
- * `src/rules/semantics/landmark-main.ts`'s `looksLikeFullPage` while
- * inverting the sense (that helper gates on "has landmarks already",
- * this one gates on "has page-wrapper tags").
- */
-function isFragment(doc: HtmlDocument): boolean {
-  const htmlRoots = findHtmlElementsByTag(doc, "html");
-  if (htmlRoots.length > 0) return false;
-  const bodies = findHtmlElementsByTag(doc, "body");
-  if (bodies.length > 0) return false;
-  return true;
-}
 
 /**
  * Fragment-file landmark path.
