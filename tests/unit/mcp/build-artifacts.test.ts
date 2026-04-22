@@ -31,8 +31,10 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  BASENAME_GROUP_THRESHOLD,
   classifyBuildArtifact,
   collectBuildArtifacts,
+  groupBuildArtifactsByBasename,
   isBuildArtifact,
 } from "../../../src/mcp/build-artifacts.ts";
 
@@ -376,5 +378,178 @@ describe("collectBuildArtifacts", () => {
 
   it("returns an empty array for an empty input batch (honest shape on zero-file scans)", () => {
     expect(collectBuildArtifacts([])).toEqual([]);
+  });
+});
+
+describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTIFACTS-GROUP-BY-BASENAME)", () => {
+  it("collapses a ≥3-path same-basename cluster under one group with a paste-ready suggestedGlob", () => {
+    // The field-report case: a bootstrap repo emits the same
+    // `bootstrap.css` under three themed subtrees. Under the flat
+    // shape the agent saw three individual paths; under the grouped
+    // shape the three collapse to one inspect-once row with a
+    // `suggestedGlob` that covers every member.
+    const entries = [
+      { path: "/root/dist/5.0/bootstrap.css", reason: "dist-path" as const },
+      { path: "/root/dist/5.1/bootstrap.css", reason: "dist-path" as const },
+      { path: "/root/dist/5.2/bootstrap.css", reason: "dist-path" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped).toEqual([
+      {
+        basename: "bootstrap.css",
+        count: 3,
+        pathHint: "dist/",
+        reasons: ["dist-path"],
+        suggestedGlob: "dist/**/bootstrap.css",
+      },
+    ]);
+    expect(out.ungrouped).toEqual([]);
+  });
+
+  it("keeps sub-threshold same-basename entries in `ungrouped` with reasons preserved", () => {
+    // Two paths share a basename but fall below the grouping
+    // threshold. Zero information loss: the full `{ path, reason }`
+    // record survives under `ungrouped` so an agent can still read
+    // the per-path classification.
+    const entries = [
+      { path: "/root/dist/a.min.css", reason: "minified" as const },
+      { path: "/root/dist/other/a.min.css", reason: "minified" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped).toEqual([]);
+    expect(out.ungrouped).toEqual([
+      { path: "dist/a.min.css", reason: "minified" },
+      { path: "dist/other/a.min.css", reason: "minified" },
+    ]);
+  });
+
+  it("sorts grouped entries by count descending with ties broken by basename alphabetical", () => {
+    // Three groups: one of size 5 (font-awesome.css), one of size 3
+    // (app.css), one of size 3 (bootstrap.css). The size-5 leads;
+    // the two size-3 groups appear in basename order.
+    const mk = (name: string, n: number): ReadonlyArray<{ path: string; reason: "dist-path" }> =>
+      Array.from({ length: n }, (_, i) => ({
+        path: `/root/dist/v${i}/${name}`,
+        reason: "dist-path" as const,
+      }));
+    const entries = [...mk("bootstrap.css", 3), ...mk("font-awesome.css", 5), ...mk("app.css", 3)];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped.map((g) => g.basename)).toEqual([
+      "font-awesome.css",
+      "app.css",
+      "bootstrap.css",
+    ]);
+  });
+
+  it("sorts ungrouped entries by path alphabetical", () => {
+    // Three distinct singletons below threshold — each enters
+    // `ungrouped` and the output sorts deterministically regardless
+    // of input order.
+    const entries = [
+      { path: "/root/z/one.css", reason: "dist-path" as const },
+      { path: "/root/a/two.css", reason: "dist-path" as const },
+      { path: "/root/m/three.css", reason: "dist-path" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.ungrouped.map((e) => e.path)).toEqual(["a/two.css", "m/three.css", "z/one.css"]);
+  });
+
+  it("dedupes and sorts `reasons` when members of one group carry multiple classifier reasons", () => {
+    // Mixed-reason group: `dist-path` and `minified` both fire
+    // across the three members. The `reasons` field surfaces both
+    // so the agent reading `reasons: ["dist-path", "minified"]`
+    // knows the group isn't monolithic.
+    const entries = [
+      { path: "/root/dist/a/lib.css", reason: "dist-path" as const },
+      { path: "/root/dist/b/lib.css", reason: "minified" as const },
+      { path: "/root/dist/c/lib.css", reason: "dist-path" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped[0].reasons).toEqual(["dist-path", "minified"]);
+  });
+
+  it("computes a directory-boundary pathHint, never a partial-basename prefix", () => {
+    // Two directories share a non-directory prefix (`vendor/bo`).
+    // The pathHint must stop at the last `/` so the suggestedGlob
+    // stays a legal glob and never over-captures unrelated files.
+    const entries = [
+      { path: "/root/vendor/bootstrap/x.css", reason: "dist-path" as const },
+      { path: "/root/vendor/bose-theme/x.css", reason: "dist-path" as const },
+      { path: "/root/vendor/boxy/x.css", reason: "dist-path" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped[0].pathHint).toBe("vendor/");
+    expect(out.grouped[0].suggestedGlob).toBe("vendor/**/x.css");
+  });
+
+  it("emits empty `pathHint` + repo-wide suggestedGlob when group members share no directory", () => {
+    // The three members sit under different top-level dirs, so the
+    // longest shared prefix is the empty string. The suggestedGlob
+    // degrades to `**/<basename>` — still a legal exclude entry,
+    // just repo-wide. The agent sees this and can tighten the glob
+    // manually if needed.
+    const entries = [
+      { path: "/root/dist/a.css", reason: "dist-path" as const },
+      { path: "/root/build/a.css", reason: "dist-path" as const },
+      { path: "/root/public/a.css", reason: "dist-path" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped[0].pathHint).toBe("");
+    expect(out.grouped[0].suggestedGlob).toBe("**/a.css");
+  });
+
+  it("returns an empty envelope on zero input (honest shape on clean scans)", () => {
+    // The caller conditional-spreads the whole meta field on
+    // presence (`buildArtifacts.present`), so this function itself
+    // returns `{ grouped: [], ungrouped: [] }` when called with no
+    // entries — no sentinel `null`, no thrown error.
+    expect(groupBuildArtifactsByBasename([], "/root")).toEqual({ grouped: [], ungrouped: [] });
+  });
+
+  it("drops paths that escape the scan root (meaningless as exclude entries)", () => {
+    // Symlinked sources or paths outside the scanned project would
+    // produce `../`-prefixed relative paths — these don't match
+    // ra11y's gitignore-style excludes and their suggestedGlob
+    // would leak `..` segments. The helper drops them rather than
+    // surface a broken pattern.
+    const entries = [
+      { path: "/outside/a.css", reason: "dist-path" as const },
+      { path: "/root/dist/a/b.css", reason: "dist-path" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    const allPaths = [...out.grouped.map((g) => g.basename), ...out.ungrouped.map((e) => e.path)];
+    expect(allPaths).not.toContain("a.css");
+    expect(out.ungrouped.map((e) => e.path)).toEqual(["dist/a/b.css"]);
+  });
+
+  it("normalizes Windows-style backslashes in paths to POSIX separators", () => {
+    // The scanner emits whatever separators the host gave us. The
+    // grouper normalizes so `pathHint` / `suggestedGlob` read the
+    // same on macOS and Windows CI, matching the POSIX convention
+    // `propose_config` uses downstream.
+    const entries = [
+      { path: "C:\\root\\dist\\v1\\lib.css", reason: "dist-path" as const },
+      { path: "C:\\root\\dist\\v2\\lib.css", reason: "dist-path" as const },
+      { path: "C:\\root\\dist\\v3\\lib.css", reason: "dist-path" as const },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "C:\\root");
+    expect(out.grouped[0].pathHint).toBe("dist/");
+    expect(out.grouped[0].suggestedGlob).toBe("dist/**/lib.css");
+  });
+
+  it("uses the shared 3-entry threshold — a 2-entry cluster stays ungrouped, a 3-entry cluster groups", () => {
+    // Regression guard on the threshold constant: match the
+    // precedent set by `tool-propose-config.ts`'s
+    // EXCLUDE_GLOB_COLLAPSE_THRESHOLD. A test asserting the
+    // constant ensures future edits stay aligned with the paired
+    // exclude-collapse logic.
+    expect(BASENAME_GROUP_THRESHOLD).toBe(3);
+    const two = [
+      { path: "/root/a/x.css", reason: "dist-path" as const },
+      { path: "/root/b/x.css", reason: "dist-path" as const },
+    ];
+    expect(groupBuildArtifactsByBasename(two, "/root").grouped).toEqual([]);
+    const three = [...two, { path: "/root/c/x.css", reason: "dist-path" as const }];
+    expect(groupBuildArtifactsByBasename(three, "/root").grouped.length).toBe(1);
   });
 });
