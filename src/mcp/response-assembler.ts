@@ -72,7 +72,7 @@ import { buildScanMeta, buildScanPlan } from "./scan-assembly.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
 import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
-import { warningsField } from "./warnings.ts";
+import { computeTemplateDirectiveOverlap, warningsField } from "./warnings.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 
 /**
@@ -283,6 +283,18 @@ export function assembleScanFamilyResponse(
   // consumption site. Safe because the producer is our own helper.
   const analysisCoverage = meta["analysisCoverage"] as Record<string, unknown> | undefined;
   const filesByExtension = meta["filesByExtension"] as Record<string, number> | undefined;
+  // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
+  // code on actual overlap between emitted findings and detected
+  // template-directive lines. The directive telemetry still surfaces
+  // on `meta.analysisCoverage.templateDirectivesFound` +
+  // `templateDirectiveHandling`, so a Liquid / Jekyll / Hugo /
+  // Eleventy scan still tells the agent what the parser did with
+  // directives — the top-level warning just drops when the
+  // literal-parse didn't actually pollute a finding.
+  const templateDirectivesOverlap = computeTemplateDirectiveOverlap({
+    findings: violations.map((v) => ({ filePath: v.location.filePath, line: v.location.line })),
+    sourcesByPath: new Map(parsedFiles.map((f) => [f.filePath, f.source])),
+  });
   const warnFields = warningsField({
     filesScanned: parsedFiles.length,
     rootSource,
@@ -292,6 +304,7 @@ export function assembleScanFamilyResponse(
     ...(scannedBuildArtifactsPresent === undefined ? {} : { scannedBuildArtifactsPresent }),
     ...(storybookPresetActive === undefined ? {} : { storybookPresetActive }),
     ...(sessionWrappersMismatchCwd === undefined ? {} : { sessionWrappersMismatchCwd }),
+    templateDirectivesOverlap,
   });
 
   // Base response — every optional field conditional-spread per

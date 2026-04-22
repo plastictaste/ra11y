@@ -25,6 +25,7 @@ import {
 } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
+import { computeTemplateDirectiveOverlap } from "./warnings.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
@@ -451,6 +452,20 @@ export const checklistTool: McpTool = {
         configSource: undefined,
         analysisCoverage: analysisCoverageField.analysisCoverage,
         filesByExtension,
+        // Q4-WARNING-DOWNGRADE-NOISE: gate
+        // `template_files_parsed_as_literal` on actual overlap between
+        // emitted findings and detected template-directive lines.
+        // `checklist` runs `runScan` over the same parsed-file set it
+        // discovered; cross-reference `result.violations` with the
+        // per-file source already in `files` so the code fires only
+        // when the literal-parse actually polluted a finding.
+        templateDirectivesOverlap: computeTemplateDirectiveOverlap({
+          findings: result.violations.map((v) => ({
+            filePath: v.location.filePath,
+            line: v.location.line,
+          })),
+          sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
+        }),
       }),
     });
   },

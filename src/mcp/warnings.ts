@@ -1,3 +1,4 @@
+// MARKER_Q4_PROBE_001
 /**
  * Top-level `warnings: string[]` codes for MCP scan responses.
  *
@@ -223,8 +224,25 @@ export interface WarningInputs {
       readonly findingsCount: number;
     };
   };
+  /**
+   * Q4-WARNING-DOWNGRADE-NOISE: true when at least one emitted finding's
+   * line sits inside a detected template-directive range in the same
+   * file — i.e. the literal-template-parse actually polluted a finding
+   * an agent will read. When false (or undefined), the scanner detected
+   * directives but no finding intersected a directive line — the
+   * warning would be noise on every Liquid/Jekyll/Hugo/Eleventy scan,
+   * so it drops and the directive info still surfaces via
+   * `meta.analysisCoverage.templateDirectivesFound` +
+   * `templateDirectiveHandling`. See the doctrine rule "Surface, don't
+   * suppress" in `docs/kb/architecture/ai-first-consumer.md`: the
+   * directive telemetry stays visible on meta; only the top-level
+   * warning is gated by actual load-bearing evidence.
+   */
+  readonly templateDirectivesOverlap?: boolean;
 }
 
+// MARKER_PROBE_002
+// MARKER_003
 /** Threshold below which a Tailwind-detected codebase is considered CSS-undercounted. */
 const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
 
@@ -457,12 +475,20 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   ) {
     out.push("tailwind_detected_css_undercounted");
   }
-  if (hasTemplateDirectives(inputs.analysisCoverage)) {
-    // Templates are only detected while walking HTML files in the parsed
-    // set, so `templateDirectivesFound` populating implies the scanner
-    // saw at least one template file. The warning restates that the
-    // parser treated the directives as literal text — a fact already in
-    // `templateDirectiveHandling` but easy to miss in the meta block.
+  if (hasTemplateDirectives(inputs.analysisCoverage) && inputs.templateDirectivesOverlap === true) {
+    // Q4-WARNING-DOWNGRADE-NOISE: fire the warning only when the
+    // literal-template-parse actually polluted a finding — i.e. at
+    // least one emitted finding's line sits inside a detected
+    // directive range. Without the overlap gate, every Liquid /
+    // Jekyll / Hugo / Eleventy scan emitted the warning as a
+    // constant-on-template-repo — a silent "noise, not signal"
+    // shape that violates the "warnings are for genuinely out-of-
+    // band signals" doctrine. The directive telemetry itself still
+    // surfaces on `meta.analysisCoverage.templateDirectivesFound`
+    // + `templateDirectiveHandling`, so an agent that needs the
+    // handling summary still sees it; the top-level warning is
+    // now gated by the evidence that the parse-as-literal actually
+    // reached a finding the agent must triage.
     out.push("template_files_parsed_as_literal");
   }
   if (inputs.scannedBuildArtifactsPresent === true) {
@@ -670,6 +696,91 @@ function hasTemplateDirectives(coverage: Record<string, unknown> | undefined): b
 }
 
 /**
+ * Matches any template-directive token on a line. Intentionally looser
+ * than the per-file family classifier in
+ * `src/mcp/analysis-coverage.ts::detectTemplateEngines` — here we only
+ * need to know "does this line contain a directive the parser treated as
+ * literal text?", not which family it belongs to.
+ *
+ * Three shapes count:
+ *   - `{% ... %}` Jinja / Liquid / Nunjucks control blocks (plus the
+ *     whitespace-control `{%-`, `-%}` variants).
+ *   - `{{ ... }}` Handlebars / Mustache / Liquid interpolation (plus
+ *     the Liquid whitespace-control `{{-`, `-}}` variant). We accept
+ *     the interpolation unconditionally (no JSX-attribute-spread
+ *     filter) because the `hasTemplateDirectives` gate upstream
+ *     already confirmed directives were detected — at the overlap
+ *     step we're asking "does this specific line carry one?" and a
+ *     false positive would at worst keep the warning firing on a
+ *     benign JSX spread, not hide a real one.
+ *   - `<% ... %>` ERB / EJS.
+ *
+ * Pattern alternation is anchored by the distinctive opener so a line
+ * containing a bare `{` inside JSX or literal text doesn't match.
+ */
+const TEMPLATE_DIRECTIVE_LINE_RE = /\{%-?|-?%\}|\{\{-?|-?\}\}|<%[=-]?|%>/;
+
+/**
+ * Set of 1-based line numbers in `source` that contain at least one
+ * template-directive opener or closer. Pure over its input; used by
+ * {@link computeTemplateDirectiveOverlap} to decide whether an emitted
+ * finding's line sits inside the literal-parsed region.
+ */
+function templateDirectiveLines(source: string): ReadonlySet<number> {
+  const out = new Set<number>();
+  if (source.length === 0) return out;
+  const lines = source.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i];
+    if (lineText !== undefined && TEMPLATE_DIRECTIVE_LINE_RE.test(lineText)) {
+      // Line numbers in `Violation.location.line` are 1-based.
+      out.add(i + 1);
+    }
+  }
+  return out;
+}
+
+/**
+ * Q4-WARNING-DOWNGRADE-NOISE predicate: returns `true` when at least
+ * one emitted finding's line sits inside a template-directive line in
+ * the same file. Callers (scan-family handlers, derivative tools)
+ * supply per-file source text plus `(filePath, line)` pairs for every
+ * emitted finding — the function scans each file's source on demand
+ * and short-circuits on the first overlap. Returns `false` when no
+ * overlap exists; callers treat that identically to
+ * `templateDirectivesOverlap: false` on {@link WarningInputs}, which
+ * drops the `template_files_parsed_as_literal` code.
+ *
+ * The cost is O(total source bytes across files with at least one
+ * finding), bounded by the parsed-file set the scanner already
+ * materialized. Files without findings are never read.
+ */
+export function computeTemplateDirectiveOverlap(args: {
+  readonly findings: Iterable<{ readonly filePath: string; readonly line: number }>;
+  readonly sourcesByPath: ReadonlyMap<string, string>;
+}): boolean {
+  const linesByPath = new Map<string, ReadonlySet<number>>();
+  for (const finding of args.findings) {
+    let directiveLines = linesByPath.get(finding.filePath);
+    if (directiveLines === undefined) {
+      const source = args.sourcesByPath.get(finding.filePath);
+      if (source === undefined) {
+        // The file doesn't live in our parsed-file index (e.g. a
+        // synthetic finding targeting a generated path). Record an
+        // empty set so we don't repeat the lookup, and move on —
+        // without source we cannot prove overlap.
+        directiveLines = new Set<number>();
+      } else {
+        directiveLines = templateDirectiveLines(source);
+      }
+      linesByPath.set(finding.filePath, directiveLines);
+    }
+    if (directiveLines.has(finding.line)) return true;
+  }
+  return false;
+}
+
+/**
  * Builds `WarningInputs` from a `formatted.meta` block. Both `scan` and
  * `scan_project` assemble the same five fields from the same shape, so
  * the narrowing lives here rather than being duplicated at each call
@@ -685,6 +796,7 @@ export function warningsFromScanMeta(args: {
   readonly storybookPresetActive?: boolean;
   readonly sessionWrappersMismatchCwd?: boolean;
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
+  readonly templateDirectivesOverlap?: boolean;
 }): readonly ScanWarningCode[] {
   return computeScanWarnings({
     filesScanned: readNumber(args.meta, "filesScanned"),
@@ -702,6 +814,9 @@ export function warningsFromScanMeta(args: {
       ? {}
       : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
     ...(args.vendorCssNoise === undefined ? {} : { vendorCssNoise: args.vendorCssNoise }),
+    ...(args.templateDirectivesOverlap === undefined
+      ? {}
+      : { templateDirectivesOverlap: args.templateDirectivesOverlap }),
   });
 }
 
@@ -924,6 +1039,7 @@ export function warningsFieldFromScanMeta(args: {
   readonly storybookPresetActive?: boolean;
   readonly sessionWrappersMismatchCwd?: boolean;
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
+  readonly templateDirectivesOverlap?: boolean;
 }): {
   readonly warnings?: readonly ScanWarningCode[];
   readonly warningsDetails?: ScanWarningDetails;
@@ -944,6 +1060,9 @@ export function warningsFieldFromScanMeta(args: {
       ? {}
       : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
     ...(args.vendorCssNoise === undefined ? {} : { vendorCssNoise: args.vendorCssNoise }),
+    ...(args.templateDirectivesOverlap === undefined
+      ? {}
+      : { templateDirectivesOverlap: args.templateDirectivesOverlap }),
   };
   return warningsField(inputs);
 }

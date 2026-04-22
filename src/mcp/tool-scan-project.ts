@@ -36,7 +36,12 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { type WarningInputs, warningsField, warningsFieldFromScanMeta } from "./warnings.ts";
+import {
+  computeTemplateDirectiveOverlap,
+  type WarningInputs,
+  warningsField,
+  warningsFieldFromScanMeta,
+} from "./warnings.ts";
 import type { NativeWrapperSources } from "./wrappers-meta.ts";
 
 export const scanProjectTool: McpTool = {
@@ -281,6 +286,7 @@ export const scanProjectTool: McpTool = {
         fullMeta,
         ...buildBaseWarningsForScanProject({
           formatted,
+          parsedFiles: files,
           rootSource,
           configSource: projectConfig.sourcePath,
           buildArtifacts,
@@ -305,6 +311,7 @@ export const scanProjectTool: McpTool = {
  */
 function buildBaseWarningsForScanProject(args: {
   readonly formatted: ScanFormatted;
+  readonly parsedFiles: readonly ParsedFile[];
   readonly rootSource: "explicit" | "host-root" | "git" | "spawn-cwd";
   readonly configSource: string | null;
   readonly buildArtifacts: {
@@ -319,6 +326,7 @@ function buildBaseWarningsForScanProject(args: {
 } {
   const {
     formatted,
+    parsedFiles,
     rootSource,
     configSource,
     buildArtifacts,
@@ -326,6 +334,18 @@ function buildBaseWarningsForScanProject(args: {
     sessionWrappersMismatchCwd,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
+  // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
+  // code on actual overlap between findings and directive lines —
+  // see the code's doctrine comment in `src/mcp/warnings.ts`. Pull
+  // `(filePath, line)` tuples out of every finding `formatted.files`
+  // already grouped; cross-reference against per-file source text
+  // indexed by `ParsedFile.filePath`.
+  const templateDirectivesOverlap = computeTemplateDirectiveOverlap({
+    findings: formatted.files.flatMap((f) =>
+      f.findings.map((fn) => ({ filePath: f.path, line: fn.line })),
+    ),
+    sourcesByPath: new Map(parsedFiles.map((f) => [f.filePath, f.source])),
+  });
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -333,6 +353,7 @@ function buildBaseWarningsForScanProject(args: {
     scannedBuildArtifactsPresent: buildArtifacts.present,
     storybookPresetActive,
     sessionWrappersMismatchCwd,
+    templateDirectivesOverlap,
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
   });
   return warningsFieldsForAssembler(warningsFromMeta);

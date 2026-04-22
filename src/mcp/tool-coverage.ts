@@ -12,6 +12,7 @@ import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
+import { computeTemplateDirectiveOverlap } from "./warnings.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
 import {
@@ -201,6 +202,21 @@ export const coverageTool: McpTool = {
       configSource: undefined,
       analysisCoverage: analysisCoverageField.analysisCoverage,
       filesByExtension,
+      // Q4-WARNING-DOWNGRADE-NOISE: gate
+      // `template_files_parsed_as_literal` on actual overlap between
+      // emitted findings and detected template-directive lines — the
+      // code only fires when the literal-parse actually reached a
+      // finding the agent must triage. `coverage` runs `runScan` over
+      // the same parsed-file set it discovered; cross-reference
+      // `result.violations` with the per-file source already in
+      // `files`.
+      templateDirectivesOverlap: computeTemplateDirectiveOverlap({
+        findings: result.violations.map((v) => ({
+          filePath: v.location.filePath,
+          line: v.location.line,
+        })),
+        sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
+      }),
     });
     // `meta` is opt-in per `metaMode` — legacy callers (no metaMode)
     // never saw a `meta` block on this tool, and additive surface

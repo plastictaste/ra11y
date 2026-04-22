@@ -163,7 +163,7 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("tailwind_detected_css_undercounted");
   });
 
-  it("fires `template_files_parsed_as_literal` when templateDirectivesFound is populated", () => {
+  it("fires `template_files_parsed_as_literal` when templateDirectivesFound is populated AND a finding overlaps a directive", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
@@ -172,8 +172,23 @@ describe("computeScanWarnings", () => {
         templateDirectivesFound: ["jinja-or-liquid"],
       },
       filesByExtension: { ".html": 5 },
+      templateDirectivesOverlap: true,
     });
     expect(codes).toContain("template_files_parsed_as_literal");
+  });
+
+  it("does NOT fire `template_files_parsed_as_literal` when directives present but no finding overlaps", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        templateDirectivesFound: ["jinja-or-liquid"],
+      },
+      filesByExtension: { ".html": 5 },
+      templateDirectivesOverlap: false,
+    });
+    expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
   it("does NOT fire `template_files_parsed_as_literal` when templateDirectivesFound is empty/absent", () => {
