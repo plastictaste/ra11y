@@ -55,12 +55,7 @@ import { extension } from "../utils/path.ts";
  * set — they're valid input (imported utility modules, minified bundles
  * in `public/`) but cannot legally embed JSX.
  */
-const JSX_BEARING_EXTENSIONS: ReadonlySet<string> = new Set([
-  ".tsx",
-  ".jsx",
-  ".mdx",
-  ".astro",
-]);
+const JSX_BEARING_EXTENSIONS: ReadonlySet<string> = new Set([".tsx", ".jsx", ".mdx", ".astro"]);
 
 /**
  * True when `filePath`'s extension can legally carry JSX syntax, so

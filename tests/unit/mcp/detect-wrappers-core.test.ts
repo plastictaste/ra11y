@@ -452,20 +452,14 @@ describe("collectWrapperCandidates: Q6 phantom-tag filter", () => {
   // vendor `.js` bundles).
   it("skips wrapper candidates that would come from .js files", () => {
     const files: ParsedFile[] = [
-      fileOf(
-        "bundle.min.js",
-        "const X = () => <Button onClick={() => {}}>x</Button>;",
-      ),
+      fileOf("bundle.min.js", "const X = () => <Button onClick={() => {}}>x</Button>;"),
     ];
     expect(collectWrapperCandidates(files)).toEqual([]);
   });
 
   it("skips wrapper candidates that would come from .ts files", () => {
     const files: ParsedFile[] = [
-      fileOf(
-        "utils.ts",
-        "const X = () => <Button onClick={() => {}}>x</Button>;",
-      ),
+      fileOf("utils.ts", "const X = () => <Button onClick={() => {}}>x</Button>;"),
     ];
     expect(collectWrapperCandidates(files)).toEqual([]);
   });
@@ -474,10 +468,7 @@ describe("collectWrapperCandidates: Q6 phantom-tag filter", () => {
     // The extension filter must not regress legitimate candidates.
     // A single onClick-carrying Button in a .tsx file still surfaces.
     const files: ParsedFile[] = [
-      fileOf(
-        "Button.tsx",
-        "const X = () => <Button onClick={() => {}}>x</Button>;",
-      ),
+      fileOf("Button.tsx", "const X = () => <Button onClick={() => {}}>x</Button>;"),
     ];
     const result = collectWrapperCandidates(files);
     expect(result.map((c) => c.component)).toEqual(["Button"]);
@@ -488,10 +479,7 @@ describe("collectWrapperCandidates: Q6 phantom-tag filter", () => {
     // (a `.min.tsx` happens in some build pipelines). `<J onClick>`
     // must not become a Button-wrapper candidate.
     const files: ParsedFile[] = [
-      fileOf(
-        "bundle.tsx",
-        "const X = () => <J onClick={() => {}}>x</J>;",
-      ),
+      fileOf("bundle.tsx", "const X = () => <J onClick={() => {}}>x</J>;"),
     ];
     expect(collectWrapperCandidates(files)).toEqual([]);
   });
