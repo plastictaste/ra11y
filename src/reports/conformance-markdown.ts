@@ -80,7 +80,7 @@ function renderMarkdownHeader(statement: ConformanceStatement): readonly string[
     `- Guidelines: ${guidelinesTitle} ${guidelinesVersion} (<${guidelinesUri}>)`,
     `- Conformance level: ${profile.level}`,
     `- Criteria in scope: ${criteriaInScope}`,
-    `- Status: **${conformant ? "CONFORMANT" : "NOT CONFORMANT"}** (pass=${summary.pass}, fail=${summary.fail}, partial=${summary.partial}, unknown=${summary.unknown}, n/a=${summary.na})`,
+    `- Status: **${conformant ? "CONFORMANT" : "NOT CONFORMANT"}** (pass=${summary.pass}, untested=${summary.untested}, fail=${summary.fail}, partial=${summary.partial}, unknown=${summary.unknown}, n/a=${summary.na})`,
     "",
   ];
 }

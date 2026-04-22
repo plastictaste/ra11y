@@ -236,9 +236,26 @@ export interface ConformanceStatement {
    */
   readonly criteriaInScope: number;
   readonly blockers: readonly ConformanceBlocker[];
-  /** Per-status tallies across in-scope criteria. */
+  /**
+   * Per-status tallies across in-scope criteria.
+   *
+   * `pass` counts only criteria whose ledger-derived status is
+   * `"pass"` AND stand on at least one non-candidate evidence source
+   * (static / attested / sampled) — i.e. a rule actually ran and
+   * emitted zero findings, or an attestation covers the criterion.
+   * `untested` counts criteria whose ledger status defaulted to
+   * `"pass"` with zero sources of any kind — the "automatable with
+   * no rule on eligible inputs" case the ledger cannot distinguish
+   * from a real pass on its own. These appear in `blockers[]` with
+   * `reason: "no-evidence"`; the split in `summary` matches the
+   * procurement-grade doctrine "Composite headline counts are
+   * dishonest" — `pass` is a load-bearing claim and must never sum
+   * in criteria whose only signal was the ledger's zero-violations
+   * default.
+   */
   readonly summary: {
     readonly pass: number;
+    readonly untested: number;
     readonly fail: number;
     readonly partial: number;
     readonly unknown: number;
@@ -565,13 +582,13 @@ function evaluateCriteria(
   const ledgerByCriterion = new Map(inputs.ledger.entries.map((e) => [e.criterionId, e] as const));
   const blockers: ConformanceBlocker[] = [];
   const warnings = new Set<string>();
-  const summary: SummaryTally = { pass: 0, fail: 0, partial: 0, unknown: 0, na: 0 };
+  const summary: SummaryTally = { pass: 0, untested: 0, fail: 0, partial: 0, unknown: 0, na: 0 };
   const hasProcessConfig = (inputs.processes?.length ?? 0) > 0;
   for (const criterion of inScope) {
     const entry = ledgerByCriterion.get(criterion.id);
     const counts = countSources(entry?.sources ?? []);
     const status: EvidenceStatus = entry?.status ?? "unknown";
-    tallySummary(summary, status);
+    tallySummary(summary, status, counts);
     const blocker = classifyOneCriterion({
       criterion,
       entry,
@@ -843,15 +860,30 @@ function buildSignatureInput(
 
 interface SummaryTally {
   pass: number;
+  untested: number;
   fail: number;
   partial: number;
   unknown: number;
   na: number;
 }
 
-function tallySummary(summary: SummaryTally, status: EvidenceStatus): void {
-  if (status === "pass") summary.pass += 1;
-  else if (status === "fail") summary.fail += 1;
+/**
+ * Tallies one criterion into the statement summary. Splits the ledger's
+ * `"pass"` status into two buckets so procurement readers don't conflate
+ * evidence-supported passes with the ledger's automatable-zero-violations
+ * default. A "pass" criterion with zero non-candidate sources (static /
+ * attested / sampled) counts as `untested`, not `pass` — these are the
+ * `no-evidence` blockers, and the field report's canonical case was
+ * "15 of 18 pass criteria had zero emitted findings," i.e. absence
+ * interpreted as proof. Keeping them under `summary.pass` would reinstate
+ * that silent-miss failure mode.
+ */
+function tallySummary(summary: SummaryTally, status: EvidenceStatus, counts: SourceCounts): void {
+  if (status === "pass") {
+    const hasEvidence = counts.static > 0 || counts.attested > 0 || counts.sampled > 0;
+    if (hasEvidence) summary.pass += 1;
+    else summary.untested += 1;
+  } else if (status === "fail") summary.fail += 1;
   else if (status === "partial") summary.partial += 1;
   else if (status === "n/a") summary.na += 1;
   else summary.unknown += 1;

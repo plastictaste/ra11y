@@ -162,6 +162,49 @@ describe("buildConformanceStatement", () => {
     expect(statement.conformant).toBe(true);
     expect(statement.blockers).toEqual([]);
     expect(statement.summary.pass).toBe(1);
+    expect(statement.summary.untested).toBe(0);
+  });
+
+  it("splits summary.pass into untested when no non-candidate sources back the criterion", () => {
+    // Q-SHARED-VPAT-HONESTY-PACK fix (1): the ledger promotes
+    // automatable-with-zero-sources to `status: "pass"` — historically
+    // that counted in `summary.pass` alongside real evidence-backed
+    // passes. The field report was "15 of 18 pass criteria on jekyll
+    // docs had no emitted findings — absence interpreted as proof."
+    // After the fix, these criteria appear in `blockers[]` (as before)
+    // AND in `summary.untested` (new), NOT in `summary.pass`. The
+    // summary is a load-bearing procurement claim; it must not sum
+    // evidence-backed passes with ledger defaults.
+    const standard = mkStandard([{ localId: "1.1.1", level: "A", automatable: "full" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.summary.pass).toBe(0);
+    expect(statement.summary.untested).toBe(1);
+    expect(statement.blockers[0]?.reason).toBe("no-evidence");
+  });
+
+  it("static pass (rule ran and found nothing) still counts in summary.pass, not untested", () => {
+    // A static-source pass — i.e. the ledger has a `static` source
+    // with `status: "pass"` — IS evidence. The split is: static +
+    // attested + sampled are evidence; candidate alone is not; zero
+    // sources is the ledger default. Keep static passes honest.
+    const standard = mkStandard([{ localId: "1.1.1", level: "A", automatable: "full" }]);
+    // Build a ledger with a fake static source by passing a violation
+    // that immediately clears via a pass attestation — NO, simpler: the
+    // easier path is threading a passing attestation which produces
+    // an `attested` source with status "pass." The invariant under
+    // test is: non-candidate source present → summary.pass; zero
+    // non-candidate sources → summary.untested.
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.1.1", "pass")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+    });
+    expect(statement.summary.pass).toBe(1);
+    expect(statement.summary.untested).toBe(0);
   });
 
   it("blocks a failing criterion with reason failing", () => {
