@@ -18,6 +18,7 @@ import { createInterface } from "node:readline";
 import type { Registry } from "../engine/registry/registry.ts";
 import { logger } from "../utils/logger.ts";
 import { VERSION } from "../version.ts";
+import { annotateBuildProvenance } from "./build-provenance.ts";
 import {
   type CompletionArgument,
   type CompletionRef,
@@ -301,7 +302,16 @@ async function handleToolsCall(
       LOGGER_SCAN,
     );
   }
-  const finalResult = isSubprocessStale() ? annotateStaleSubprocess(toolResult) : toolResult;
+  // Build-provenance is the positive-signal companion to the
+  // stale-subprocess negative signal (ADR 0025 / Q3-META-BUILD-PROVENANCE).
+  // Runs unconditionally on every tool response so an agent can cross-
+  // check the exact build currently answering — even error envelopes
+  // carry the triple so "tool not found" failures still show which
+  // ra11y version rejected the request. Applied AFTER stale-subprocess
+  // annotation so the merge order is "stale warning first" (the more
+  // urgent signal), provenance fields second.
+  const staleAnnotated = isSubprocessStale() ? annotateStaleSubprocess(toolResult) : toolResult;
+  const finalResult = annotateBuildProvenance(staleAnnotated);
   return { jsonrpc: "2.0", id, result: finalResult };
 }
 
