@@ -8,6 +8,7 @@ import { finder as captcha } from "./finders/captcha.ts";
 import { finder as carouselPattern } from "./finders/carousel-pattern.ts";
 import { finder as consistentIdentification } from "./finders/consistent-identification.ts";
 import { finder as consistentNavigation } from "./finders/consistent-navigation.ts";
+import { finder as decorativeImgWithAdjacentMeaning } from "./finders/decorative-img-with-adjacent-meaning.ts";
 import { finder as errorIdentification } from "./finders/error-identification.ts";
 import { finder as errorPrevention } from "./finders/error-prevention.ts";
 import { finder as errorSuggestion } from "./finders/error-suggestion.ts";
@@ -40,6 +41,7 @@ export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   carouselPattern,
   consistentIdentification,
   consistentNavigation,
+  decorativeImgWithAdjacentMeaning,
   errorIdentification,
   errorPrevention,
   errorSuggestion,
