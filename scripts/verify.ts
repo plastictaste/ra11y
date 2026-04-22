@@ -148,6 +148,13 @@ const CHECKS: readonly Check[] = [
     affectedBy: hasSrcTsChange,
   },
   {
+    name: "response-assembly",
+    cmd: ["bun", "scripts/check-response-assembly.ts"],
+    precommit: true,
+    full: true,
+    affectedBy: hasSrcTsChange,
+  },
+  {
     name: "tsdoc",
     cmd: ["bun", "scripts/check-tsdoc.ts"],
     precommit: true,
