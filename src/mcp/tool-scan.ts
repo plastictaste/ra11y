@@ -15,6 +15,7 @@
  * narrow `paths` or switch to `scan_project`).
  */
 
+import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
@@ -111,6 +112,14 @@ export const scanTool: McpTool = {
       });
     }
     const projectConfig = await session.loadProjectConfig(cwd);
+    // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: probe the same walk-up
+    // range the config loader searched for a `package.json` /
+    // ra11y.config.* marker. Gates the `no_config_found` warning so
+    // tiny-repo / demo-size scans don't rebroadcast the
+    // `meta.configSource: null` signal. Only relevant when the loader
+    // returned no config.
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(cwd) : false;
     const standards = resolveStandards(strParam(params, "standard"), session);
     const files = await parseFiles(paths, session, cwd);
     if (files.length === 0) {
@@ -127,6 +136,7 @@ export const scanTool: McpTool = {
           configSource: projectConfig.sourcePath,
           analysisCoverage: undefined,
           filesByExtension: undefined,
+          configSearchSawProjectMarker,
         }),
       });
     }
@@ -157,6 +167,7 @@ export const scanTool: McpTool = {
         // so rootSource is null — `root_source_defaulted` cannot fire
         // here by construction.
         rootSource: null,
+        configSearchSawProjectMarker,
       },
       { tokenBudget: 0 },
     );

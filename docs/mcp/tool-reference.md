@@ -102,7 +102,7 @@ Response carries structured entries per criterion (`standards[].entries[]`) with
 
 `format: "markdown"` additionally attaches `markdownRendering` — a ready-to-paste VPAT table. `format: "json"` (default) omits it; the structured entries are already the machine shape.
 
-Empty-string product metadata carries through `<Product Name>` / `<Product Version>` placeholders AND raises `warnings: ["product_metadata_placeholders_in_use"]` so the agent knows to prompt the user before distributing the VPAT. Additional warnings: `scanned_zero_files` (tool ran against an empty tree) and `no_config_found` (no `ra11y.config.*` resolved from `cwd`).
+Empty-string product metadata carries through `<Product Name>` / `<Product Version>` placeholders AND raises `warnings: ["product_metadata_placeholders_in_use"]` so the agent knows to prompt the user before distributing the VPAT. Additional warnings: `scanned_zero_files` (tool ran against an empty tree) and `no_config_found` (no `ra11y.config.*` resolved at a real Node project root — the warning is gated on the scan seeing ≥ 10 files AND a `package.json` reachable in the config walk-up, so demo-size scans don't rebroadcast the `meta.configSource: null` signal).
 
 ```jsonc
 // Minimal VPAT generation against the current project:

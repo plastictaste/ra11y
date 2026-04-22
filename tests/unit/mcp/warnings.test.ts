@@ -100,13 +100,21 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("root_source_defaulted");
   });
 
-  it("fires `no_config_found` when configSource is null (walk-up completed empty)", () => {
+  // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: `no_config_found` fires only
+  // when (a) the loader walk came back empty, (b) the scan saw ≥ 10
+  // files (demo-size scans are the normal case for a missing config),
+  // AND (c) the walk saw a `package.json` / ra11y.config.* somewhere —
+  // evidence that the walk reached a real Node project root. Otherwise
+  // `meta.configSource: null` already carries the only honest signal
+  // and the top-level warning is duplicative noise.
+  it("fires `no_config_found` when configSource is null, filesScanned ≥ 10, and the walk saw a project marker", () => {
     const codes = computeScanWarnings({
       filesScanned: 10,
       rootSource: "explicit",
       configSource: null,
       analysisCoverage: undefined,
       filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
     });
     expect(codes).toContain("no_config_found");
   });
@@ -118,8 +126,70 @@ describe("computeScanWarnings", () => {
       configSource: undefined,
       analysisCoverage: undefined,
       filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
     });
     expect(codes).not.toContain("no_config_found");
+  });
+
+  it("does NOT fire `no_config_found` on tiny-repo scans (filesScanned < 10) even when configSource is null and the walk saw a marker", () => {
+    // Canonical repro: 50projects50days-style standalone dirs (≤ 3
+    // files each), bootstrap/jekyll sub-tree demos, website-templates
+    // individual dirs — `meta.configSource: null` already tells the
+    // agent the loader found nothing; the top-level warning would
+    // fire on every such scan as duplicative noise.
+    const codes = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(codes).not.toContain("no_config_found");
+  });
+
+  it("does NOT fire `no_config_found` when the walk saw no project marker (scratch dir, not a Node project)", () => {
+    // When the walk completes without finding `package.json` /
+    // ra11y.config.*, the absence of a config is the normal shape —
+    // the user is scanning a scratch directory, not a project root
+    // that's missing a ra11y.config.*. `meta.configSource: null`
+    // stays populated for agents that need the bit.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: false,
+    });
+    expect(codes).not.toContain("no_config_found");
+  });
+
+  it("does NOT fire `no_config_found` when the probe flag is omitted (caller did not probe — fail-safe to no-warning)", () => {
+    // Callers that don't probe (undefined flag) get the conservative
+    // outcome: no warning. The code surfaces only on positive proof
+    // that the walk reached a Node project root.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+    });
+    expect(codes).not.toContain("no_config_found");
+  });
+
+  it("fires `no_config_found` at the filesScanned boundary (== 10) with the marker present", () => {
+    // Boundary test — the predicate is `>= 10`, not `> 10`.
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(codes).toContain("no_config_found");
   });
 
   it("fires `tailwind_detected_css_undercounted` when the Tailwind hint is present and .css files < 3", () => {
@@ -296,14 +366,20 @@ describe("computeScanWarnings", () => {
   });
 
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
+    // `no_config_found` now requires filesScanned >= 10 AND the probe
+    // to have seen a project marker (Q-SHARED-NO-CONFIG-WARNING-TINY-REPO).
+    // This test constructs a scan that trips all three codes: a healthy
+    // file count AND a defaulted root AND an empty config walk that
+    // reached a real Node project root.
     const codes = computeScanWarnings({
-      filesScanned: 0,
+      filesScanned: 42,
       rootSource: "spawn-cwd",
       configSource: null,
       analysisCoverage: undefined,
       filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
     });
-    expect([...codes]).toEqual(["scanned_zero_files", "root_source_defaulted", "no_config_found"]);
+    expect([...codes]).toEqual(["root_source_defaulted", "no_config_found"]);
   });
 
   it("fires `scanned_build_artifacts_present` when the caller signals that the detector labeled ≥1 file", () => {
@@ -814,6 +890,7 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       configSource: null,
       analysisCoverage: undefined,
       filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
     });
     // Only `no_config_found` fires; presence-only code with no payload.
     expect(out.warnings).toEqual(["no_config_found"]);
@@ -876,9 +953,10 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
 
   it("`warnings[]` membership and `warningsDetails` keys never disagree — the code is both fired and mirrored (set-membership invariant)", () => {
     const out = warningsField({
-      filesScanned: 0, // fires scanned_zero_files (no payload)
+      filesScanned: 42, // above the no_config_found threshold
       rootSource: "spawn-cwd", // fires root_source_defaulted (no payload)
-      configSource: null, // fires no_config_found (no payload)
+      configSource: null, // fires no_config_found (no payload) w/ marker
+      configSearchSawProjectMarker: true,
       analysisCoverage: {
         skippedByExtension: { ".scss": 5 }, // fires extensions_skipped_no_parser (with payload)
       },

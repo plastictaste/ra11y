@@ -13,6 +13,7 @@ import { additionalPathsScannedField } from "./additional-paths-classifier.ts";
 import { baselineStatusField, probeBaselineStatus } from "./baseline-status.ts";
 import { collectBuildArtifacts, type ScannedBuildArtifact } from "./build-artifacts.ts";
 import { buildConfigHint } from "./config-hint.ts";
+import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
@@ -131,6 +132,13 @@ export const scanProjectTool: McpTool = {
     const autoPromoted = explicitCwd === undefined && root !== spawnCwd;
     const rootSource = resolveRootSource({ explicitCwd, hostRoot, root, spawnCwd });
     const projectConfig = await session.loadProjectConfig(root);
+    // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: probe the same walk-up range
+    // the config loader searched for a `package.json` / ra11y.config.*
+    // marker. Only relevant when `configSource === null` — when the
+    // loader found a config, the probe result isn't consulted. Cheap
+    // read-only walk; runs once per handler invocation.
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(root) : false;
     const configHint = buildConfigHint(projectConfig.sourcePath, explicitCwd, root, autoPromoted);
     const standards = resolveStandards(strParam(params, "standard"), session);
     const scanScope = resolveScanScope(params, root);
@@ -157,6 +165,7 @@ export const scanProjectTool: McpTool = {
         fallbackReason,
         rootSource,
         configSource: projectConfig.sourcePath,
+        configSearchSawProjectMarker,
       });
     }
     const autoDetect = params["autoDetectWrappers"] === true;
@@ -299,6 +308,7 @@ export const scanProjectTool: McpTool = {
             additionalFilesCount: additionalFiles.length,
             filesAdded: files.length - baseFiles.length,
           }),
+          configSearchSawProjectMarker,
         }),
       }),
     );
@@ -328,6 +338,7 @@ function buildBaseWarningsForScanProject(args: {
   readonly storybookPresetActive: boolean;
   readonly sessionWrappersMismatchCwd: boolean;
   readonly additionalPathsRedundant: boolean;
+  readonly configSearchSawProjectMarker: boolean;
 }): {
   readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
@@ -341,6 +352,7 @@ function buildBaseWarningsForScanProject(args: {
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     additionalPathsRedundant,
+    configSearchSawProjectMarker,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
   // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
@@ -364,6 +376,7 @@ function buildBaseWarningsForScanProject(args: {
     sessionWrappersMismatchCwd,
     templateDirectivesOverlap,
     additionalPathsRedundant,
+    configSearchSawProjectMarker,
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
   });
   return warningsFieldsForAssembler(warningsFromMeta);
@@ -738,6 +751,7 @@ function buildEmptyFilesResult(args: {
   readonly fallbackReason: string | undefined;
   readonly rootSource: "explicit" | "host-root" | "git" | "spawn-cwd";
   readonly configSource: string | null;
+  readonly configSearchSawProjectMarker: boolean;
 }) {
   const { root, actualMode, fallbackReason, rootSource, configSource } = args;
   return textResult({
@@ -754,12 +768,17 @@ function buildEmptyFilesResult(args: {
       // the build command and emit dir inline.
       ...ssgEmptyResultMetaFields(root),
     },
+    // Zero parsed files → the `no_config_found` warning drops by
+    // construction via the `filesScanned < 10` gate; the probe flag is
+    // threaded through for shape consistency but the warnings helper
+    // will see filesScanned: 0 and never emit the code here.
     ...warningsField({
       filesScanned: 0,
       rootSource,
       configSource,
       analysisCoverage: undefined,
       filesByExtension: undefined,
+      configSearchSawProjectMarker: args.configSearchSawProjectMarker,
     }),
   });
 }

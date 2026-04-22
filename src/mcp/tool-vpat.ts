@@ -24,6 +24,7 @@
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
 import { buildVpatReport, renderVpatMarkdown } from "../reports/index.ts";
 import type { VpatProductMetadata, VpatReport } from "../reports/vpat.ts";
+import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { detectApplicability } from "./manual-applicability.ts";
 import type { McpSession } from "./session.ts";
 import {
@@ -151,10 +152,17 @@ export const vpatTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
+    const configSource = await loadConfigSourceSafe(session, cwd);
+    // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: mirror the gate in the
+    // scan-family warnings module so VPAT's `no_config_found` fires
+    // only on real Node project roots with the threshold scan size.
+    const configSearchSawProjectMarker =
+      configSource === null ? sawProjectMarkerInWalk(cwd) : false;
     const warnings = computeWarnings({
       filesScanned: result.filesScanned,
       product: report.product,
-      configSource: await loadConfigSourceSafe(session, cwd),
+      configSource,
+      configSearchSawProjectMarker,
     });
 
     const nextStep = buildNextStep(report);
@@ -293,7 +301,12 @@ function buildOptionalProductFields(params: Record<string, unknown>): Partial<Vp
  *     saw any source.
  *   - `no_config_found` — no `ra11y.config.ts` resolved from `cwd`.
  *     Doesn't invalidate the scan, but tells the agent its nativeWrappers
- *     / per-rule overrides / excludes weren't applied.
+ *     / per-rule overrides / excludes weren't applied. Gated per
+ *     Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: fires only when the walk
+ *     reached a real Node project root (`package.json` present) AND the
+ *     scan saw ≥ {@link NO_CONFIG_FOUND_FILE_COUNT_THRESHOLD} files.
+ *     Otherwise the absence of a config is the normal demo-size shape
+ *     and `meta.configSource: null` already carries the same bit.
  *   - `product_metadata_placeholders_in_use` — the builder inserted the
  *     `<Product Name>` / `<Product Version>` template placeholders because
  *     the caller passed empty strings. A VPAT header with these
@@ -304,10 +317,11 @@ function computeWarnings(inputs: {
   readonly filesScanned: number;
   readonly product: VpatProductMetadata;
   readonly configSource: string | null;
+  readonly configSearchSawProjectMarker: boolean;
 }): readonly string[] {
   const out: string[] = [];
   if (inputs.filesScanned === 0) out.push("scanned_zero_files");
-  if (inputs.configSource === null) out.push("no_config_found");
+  if (shouldEmitNoConfigFound(inputs)) out.push("no_config_found");
   if (
     inputs.product.productName === PLACEHOLDER_NAME ||
     inputs.product.productVersion === PLACEHOLDER_VERSION

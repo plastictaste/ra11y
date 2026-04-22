@@ -104,6 +104,17 @@ export interface ScanFamilyResponseInput {
   readonly scannedBuildArtifactsPresent?: boolean;
   readonly storybookPresetActive?: boolean;
   readonly sessionWrappersMismatchCwd?: boolean;
+  /**
+   * Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: caller-supplied result of
+   * `sawProjectMarkerInWalk(root)`. Gates the `no_config_found`
+   * warning so tiny-repo / demo-size scans (50projects50days
+   * standalone files, bootstrap/jekyll sub-tree demos,
+   * website-templates individual dirs) don't rebroadcast the
+   * `meta.configSource: null` signal as a top-level warning that
+   * fires on every such scan. Omit when the caller didn't probe; the
+   * warning drops conservatively in that case.
+   */
+  readonly configSearchSawProjectMarker?: boolean;
 }
 
 export interface ScanFamilyResponseOptions {
@@ -173,6 +184,65 @@ function groupByFile(violations: readonly Violation[]): AssembledFile[] {
 }
 
 /**
+ * Assemble the warnings channel for {@link assembleScanFamilyResponse}.
+ * Extracted to keep the orchestrator under the cognitive-complexity cap
+ * as new optional signal fields accrete (Q-SHARED-NO-CONFIG-WARNING-TINY-REPO
+ * added `configSearchSawProjectMarker` on top of the earlier
+ * `storybookPresetActive` / `sessionWrappersMismatchCwd` conditionals).
+ *
+ * Pure over its inputs. The Q4-WARNING-DOWNGRADE-NOISE overlap check
+ * reads `findings` out of `violations` + source out of `parsedFiles`
+ * because both are already on the orchestrator's stack.
+ */
+function buildAssemblerWarningsField(args: {
+  readonly meta: Record<string, unknown>;
+  readonly violations: readonly Violation[];
+  readonly parsedFiles: readonly ParsedFile[];
+  readonly rootSource: ScanFamilyResponseInput["rootSource"];
+  readonly configSource: ScanFamilyResponseInput["configSource"];
+  readonly scannedBuildArtifactsPresent: boolean | undefined;
+  readonly storybookPresetActive: boolean | undefined;
+  readonly sessionWrappersMismatchCwd: boolean | undefined;
+  readonly configSearchSawProjectMarker: boolean | undefined;
+}): {
+  readonly warnings?: readonly ScanWarningCode[];
+  readonly warningsDetails?: ScanWarningDetails;
+} {
+  // `buildScanMeta` guarantees these are objects with the expected
+  // shape — the Record<string, unknown> return forces a cast at the
+  // consumption site. Safe because the producer is our own helper.
+  const analysisCoverage = args.meta["analysisCoverage"] as Record<string, unknown> | undefined;
+  const filesByExtension = args.meta["filesByExtension"] as Record<string, number> | undefined;
+  const templateDirectivesOverlap = computeTemplateDirectiveOverlap({
+    findings: args.violations.map((v) => ({
+      filePath: v.location.filePath,
+      line: v.location.line,
+    })),
+    sourcesByPath: new Map(args.parsedFiles.map((f) => [f.filePath, f.source])),
+  });
+  return warningsField({
+    filesScanned: args.parsedFiles.length,
+    rootSource: args.rootSource,
+    configSource: args.configSource,
+    analysisCoverage,
+    filesByExtension,
+    ...(args.scannedBuildArtifactsPresent === undefined
+      ? {}
+      : { scannedBuildArtifactsPresent: args.scannedBuildArtifactsPresent }),
+    ...(args.storybookPresetActive === undefined
+      ? {}
+      : { storybookPresetActive: args.storybookPresetActive }),
+    ...(args.sessionWrappersMismatchCwd === undefined
+      ? {}
+      : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
+    templateDirectivesOverlap,
+    ...(args.configSearchSawProjectMarker === undefined
+      ? {}
+      : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
+  });
+}
+
+/**
  * Assemble the final scan-family response. Pure function over its
  * inputs — see the module docblock for the orchestration contract.
  */
@@ -201,6 +271,7 @@ export function assembleScanFamilyResponse(
     scannedBuildArtifactsPresent,
     storybookPresetActive,
     sessionWrappersMismatchCwd,
+    configSearchSawProjectMarker,
   } = input;
 
   // (1) Group + build per-file findings.
@@ -277,34 +348,18 @@ export function assembleScanFamilyResponse(
     ? dedupeReviewCandidatesForSingleFile(reviewCandidates)
     : undefined;
 
-  // (8) Warnings channel.
-  // `buildScanMeta` guarantees these are objects with the expected
-  // shape — the Record<string, unknown> return forces a cast at the
-  // consumption site. Safe because the producer is our own helper.
-  const analysisCoverage = meta["analysisCoverage"] as Record<string, unknown> | undefined;
-  const filesByExtension = meta["filesByExtension"] as Record<string, number> | undefined;
-  // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
-  // code on actual overlap between emitted findings and detected
-  // template-directive lines. The directive telemetry still surfaces
-  // on `meta.analysisCoverage.templateDirectivesFound` +
-  // `templateDirectiveHandling`, so a Liquid / Jekyll / Hugo /
-  // Eleventy scan still tells the agent what the parser did with
-  // directives — the top-level warning just drops when the
-  // literal-parse didn't actually pollute a finding.
-  const templateDirectivesOverlap = computeTemplateDirectiveOverlap({
-    findings: violations.map((v) => ({ filePath: v.location.filePath, line: v.location.line })),
-    sourcesByPath: new Map(parsedFiles.map((f) => [f.filePath, f.source])),
-  });
-  const warnFields = warningsField({
-    filesScanned: parsedFiles.length,
+  // (8) Warnings channel — extracted to keep this orchestrator's
+  // cognitive complexity inside the lint cap as new signals accrete.
+  const warnFields = buildAssemblerWarningsField({
+    meta,
+    violations,
+    parsedFiles,
     rootSource,
     configSource,
-    analysisCoverage,
-    filesByExtension,
-    ...(scannedBuildArtifactsPresent === undefined ? {} : { scannedBuildArtifactsPresent }),
-    ...(storybookPresetActive === undefined ? {} : { storybookPresetActive }),
-    ...(sessionWrappersMismatchCwd === undefined ? {} : { sessionWrappersMismatchCwd }),
-    templateDirectivesOverlap,
+    scannedBuildArtifactsPresent,
+    storybookPresetActive,
+    sessionWrappersMismatchCwd,
+    configSearchSawProjectMarker,
   });
 
   // Base response — every optional field conditional-spread per

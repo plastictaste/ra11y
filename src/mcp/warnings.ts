@@ -16,6 +16,8 @@
  * which the warning implicitly points at.
  */
 
+import { shouldEmitNoConfigFound } from "./config-search-marker.ts";
+
 export type ScanWarningCode =
   | "scanned_zero_files"
   | "root_source_defaulted"
@@ -174,7 +176,11 @@ export interface WarningInputs {
    * Resolved `configSource` from `loadProjectConfig`. `null` means the
    * walk-up completed and found nothing; pass `undefined` when the tool
    * did not attempt config resolution at all (rare — currently neither
-   * `scan` nor `scan_project` skip it).
+   * `scan` nor `scan_project` skip it). `null` alone is NOT sufficient
+   * for the `no_config_found` warning code to fire — see
+   * {@link configSearchSawProjectMarker} and
+   * `shouldEmitNoConfigFound` in `./config-search-marker.ts` for the
+   * full emission predicate.
    */
   readonly configSource: string | null | undefined;
   /**
@@ -268,6 +274,22 @@ export interface WarningInputs {
    * warning is gated by actual load-bearing evidence.
    */
   readonly templateDirectivesOverlap?: boolean;
+  /**
+   * Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: true when the walk-up from the
+   * scan root saw a `package.json` (or a `ra11y.config.*` that for some
+   * reason didn't load) anywhere along the same directory range the
+   * loader searched. Drives the gate on `no_config_found` so the
+   * warning only fires in the case where it's signal — a real Node
+   * project root where `ra11y.config.*` is plausibly-missing — rather
+   * than on every tiny-repo / demo-size scan where the absence of a
+   * config is the normal shape and `meta.configSource: null` already
+   * carries the same bit. Pass `false` when the caller did not probe
+   * (in which case the warning drops conservatively); pass `true` only
+   * when the probe ran and found a marker. The predicate is paired
+   * with the `filesScanned < 10` threshold so demo-size scans with a
+   * parent repo's `package.json` reachable still drop the warning.
+   */
+  readonly configSearchSawProjectMarker?: boolean;
 }
 
 // MARKER_PROBE_002
@@ -524,7 +546,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   if (rootSourceIsDefaulted(inputs.rootSource)) {
     out.push("root_source_defaulted");
   }
-  if (inputs.configSource === null) out.push("no_config_found");
+  if (shouldEmitNoConfigFound(inputs)) out.push("no_config_found");
   if (
     hasTailwindHint(inputs.analysisCoverage) &&
     cssCount(inputs.filesByExtension) < TAILWIND_CSS_UNDERCOUNT_THRESHOLD
@@ -840,7 +862,15 @@ export function computeTemplateDirectiveOverlap(args: {
  * outside the scan pipeline — and this function pulls the rest out of
  * the meta block that `runScanAndFormat` already produced.
  */
-export function warningsFromScanMeta(args: {
+/**
+ * Shape of the scan-meta-derived arg sets shared between
+ * `warningsFromScanMeta` and `warningsFieldFromScanMeta`. Extracted so
+ * both wrappers can route through the same `buildWarningInputsFromScanMeta`
+ * helper rather than duplicating the 30-line conditional-spread block
+ * twice (each new optional field had to be added in both places — the
+ * file-budget cost of that duplication was real).
+ */
+type ScanMetaWarningArgs = {
   readonly meta: Record<string, unknown>;
   readonly rootSource: WarningInputs["rootSource"];
   readonly configSource: string | null | undefined;
@@ -850,8 +880,11 @@ export function warningsFromScanMeta(args: {
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
   readonly templateDirectivesOverlap?: boolean;
   readonly additionalPathsRedundant?: boolean;
-}): readonly ScanWarningCode[] {
-  return computeScanWarnings({
+  readonly configSearchSawProjectMarker?: boolean;
+};
+
+function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
+  return {
     filesScanned: readNumber(args.meta, "filesScanned"),
     rootSource: args.rootSource,
     configSource: args.configSource,
@@ -873,7 +906,14 @@ export function warningsFromScanMeta(args: {
     ...(args.additionalPathsRedundant === undefined
       ? {}
       : { additionalPathsRedundant: args.additionalPathsRedundant }),
-  });
+    ...(args.configSearchSawProjectMarker === undefined
+      ? {}
+      : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
+  };
+}
+
+export function warningsFromScanMeta(args: ScanMetaWarningArgs): readonly ScanWarningCode[] {
+  return computeScanWarnings(buildWarningInputsFromScanMeta(args));
 }
 
 /**
@@ -1087,44 +1127,11 @@ export function tokenBudgetTruncatedDetailsField(args: {
  * Same as `warningsField` but reads inputs out of a scan meta block.
  * Used by the post-scan main branch where the meta is already built.
  */
-export function warningsFieldFromScanMeta(args: {
-  readonly meta: Record<string, unknown>;
-  readonly rootSource: WarningInputs["rootSource"];
-  readonly configSource: string | null | undefined;
-  readonly scannedBuildArtifactsPresent?: boolean;
-  readonly storybookPresetActive?: boolean;
-  readonly sessionWrappersMismatchCwd?: boolean;
-  readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
-  readonly templateDirectivesOverlap?: boolean;
-  readonly additionalPathsRedundant?: boolean;
-}): {
+export function warningsFieldFromScanMeta(args: ScanMetaWarningArgs): {
   readonly warnings?: readonly ScanWarningCode[];
   readonly warningsDetails?: ScanWarningDetails;
 } {
-  const inputs: WarningInputs = {
-    filesScanned: readNumber(args.meta, "filesScanned"),
-    rootSource: args.rootSource,
-    configSource: args.configSource,
-    analysisCoverage: readRecord(args.meta, "analysisCoverage"),
-    filesByExtension: readNumberRecord(args.meta, "filesByExtension"),
-    ...(args.scannedBuildArtifactsPresent === undefined
-      ? {}
-      : { scannedBuildArtifactsPresent: args.scannedBuildArtifactsPresent }),
-    ...(args.storybookPresetActive === undefined
-      ? {}
-      : { storybookPresetActive: args.storybookPresetActive }),
-    ...(args.sessionWrappersMismatchCwd === undefined
-      ? {}
-      : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
-    ...(args.vendorCssNoise === undefined ? {} : { vendorCssNoise: args.vendorCssNoise }),
-    ...(args.templateDirectivesOverlap === undefined
-      ? {}
-      : { templateDirectivesOverlap: args.templateDirectivesOverlap }),
-    ...(args.additionalPathsRedundant === undefined
-      ? {}
-      : { additionalPathsRedundant: args.additionalPathsRedundant }),
-  };
-  return warningsField(inputs);
+  return warningsField(buildWarningInputsFromScanMeta(args));
 }
 
 function readNumber(meta: Record<string, unknown>, key: string): number {

@@ -18,6 +18,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { LoadedConfig } from "../types/config.ts";
 import { parseableExtensions } from "../utils/path.ts";
+import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
@@ -128,6 +129,13 @@ export const scanFileTool: McpTool = {
     const configSearchBase =
       scanFileCwd ?? (absFilePath.slice(0, absFilePath.lastIndexOf("/")) || process.cwd());
     const projectConfig = await session.loadProjectConfig(configSearchBase);
+    // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: probe the walk-up range the
+    // config loader searched so the warning gate distinguishes
+    // "file-only scratch scan" from "real Node project where the
+    // config is plausibly missing." Only relevant when no config
+    // loaded; the flag is ignored otherwise.
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(configSearchBase) : false;
     const standards = resolveStandards(strParam(params, "standard"), session);
 
     const collected = await runScanAndCollect({
@@ -162,6 +170,7 @@ export const scanFileTool: McpTool = {
         preset: projectConfig.preset,
         configSource: projectConfig.sourcePath,
         rootSource: null,
+        configSearchSawProjectMarker,
       },
       { tokenBudget: 0, includeReviewCandidates: true },
     );

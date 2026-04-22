@@ -8,8 +8,9 @@
  *     and `fixesByClass` are absent, not zero.
  *   - `warnings` is entirely absent on a healthy scan, never `[]`.
  *   - Zero parsed files fires `scanned_zero_files`.
- *   - `configSource: null` fires `no_config_found`; a populated path
- *     does not.
+ *   - `configSource: null` + filesScanned ≥ 10 + walk saw a project
+ *     marker fires `no_config_found`; a populated path / tiny repo /
+ *     missing marker does not (Q-SHARED-NO-CONFIG-WARNING-TINY-REPO).
  *   - `rootSource: "git"` / `"spawn-cwd"` fires `root_source_defaulted`;
  *     `"explicit"` does not.
  *   - Violations group per-file and sort deterministically by path.
@@ -115,13 +116,53 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.warnings).toContain("scanned_zero_files");
   });
 
-  it("fires `no_config_found` when configSource is null", () => {
-    const r = assembleScanFamilyResponse(baseInput({ configSource: null }));
+  it("fires `no_config_found` when configSource is null, filesScanned ≥ 10, and the walk saw a project marker", () => {
+    // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: the warning now requires
+    // (a) the loader returned null, (b) the scan saw at least ten
+    // files (not a demo-size scratch run), and (c) the probe found a
+    // package.json / ra11y.config.* along the walk — evidence that
+    // the walk reached a real Node project root. `baseInput` defaults
+    // to one parsed file, so we widen the parsedFiles list here.
+    const manyFiles = Array.from({ length: 12 }, (_, i) => parsedFile(`/src/f${i}.tsx`));
+    const r = assembleScanFamilyResponse(
+      baseInput({
+        configSource: null,
+        parsedFiles: manyFiles,
+        configSearchSawProjectMarker: true,
+      }),
+    );
     expect(r.warnings).toContain("no_config_found");
   });
 
   it("does NOT fire `no_config_found` when configSource is populated", () => {
     const r = assembleScanFamilyResponse(baseInput({ configSource: "/proj/ra11y.config.ts" }));
+    expect(r.warnings ?? []).not.toContain("no_config_found");
+  });
+
+  it("does NOT fire `no_config_found` on a tiny-repo scan (filesScanned < 10) even with configSource null and the marker present", () => {
+    // Canonical repro: 50projects50days standalone dirs, sub-tree
+    // demos. `meta.configSource: null` still tells the agent the
+    // loader found nothing; the top-level warning is duplicative
+    // noise on demo-size scans.
+    const r = assembleScanFamilyResponse(
+      baseInput({
+        configSource: null,
+        parsedFiles: [parsedFile("/demo/a.tsx"), parsedFile("/demo/b.tsx")],
+        configSearchSawProjectMarker: true,
+      }),
+    );
+    expect(r.warnings ?? []).not.toContain("no_config_found");
+  });
+
+  it("does NOT fire `no_config_found` when the walk saw no project marker (scratch dir, not a Node project)", () => {
+    const manyFiles = Array.from({ length: 12 }, (_, i) => parsedFile(`/scratch/f${i}.tsx`));
+    const r = assembleScanFamilyResponse(
+      baseInput({
+        configSource: null,
+        parsedFiles: manyFiles,
+        configSearchSawProjectMarker: false,
+      }),
+    );
     expect(r.warnings ?? []).not.toContain("no_config_found");
   });
 
@@ -287,13 +328,21 @@ describe("buildDerivativeScanWarnings (ADR 0024 stage 4 — derivative-tool seam
     expect(out.warnings).toContain("scanned_zero_files");
   });
 
-  it("emits `no_config_found` when configSource is null", () => {
+  it("emits `no_config_found` when configSource is null, filesScanned ≥ 10, and the walk saw a project marker", () => {
+    // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: same gate as the primary
+    // scan tools. Derivative tools currently pass
+    // `configSource: undefined` at their call sites (config isn't
+    // part of their handler contract), so the code rarely fires here
+    // in production — but the predicate stays uniform across surfaces
+    // so future derivative-tool integrations that DO thread
+    // configSource through get the same gating behavior.
     const out = buildDerivativeScanWarnings({
-      filesScanned: 1,
+      filesScanned: 12,
       rootSource: null,
       configSource: null,
       analysisCoverage: undefined,
       filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
     });
     expect(out.warnings).toContain("no_config_found");
   });

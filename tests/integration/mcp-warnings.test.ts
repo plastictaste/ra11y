@@ -122,11 +122,13 @@ describe("scan_project emits top-level `warnings` for silent-failure modes (P0-E
     ]);
     // BAD_ALT_DIR is an explicit cwd with a config-less fixture
     // directory — `scanned_zero_files` and `root_source_defaulted`
-    // must NOT fire. `no_config_found` WILL fire (the fixture
-    // directory has no ra11y.config walking up), which is correct
-    // behavior on a real project that lacks one. What we're
-    // guarding here is the shape contract: the field is absent when
-    // empty, never present as `[]`.
+    // must NOT fire. `no_config_found` is gated per
+    // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: it fires only when the
+    // scan saw ≥ 10 files AND the walk reached a real Node project
+    // root. The fixture has < 10 parseable files, so the warning is
+    // typically absent here. What we're guarding is the shape
+    // contract: when `warnings` is present it is non-empty
+    // (never `[]`) and does not include the two scanning codes.
     const body = bodyOf(responses[1]) as { warnings?: readonly string[] };
     if (body.warnings !== undefined) {
       // If present, it must NOT be empty — empty is the silent-bug
