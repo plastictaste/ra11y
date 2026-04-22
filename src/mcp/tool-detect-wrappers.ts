@@ -13,11 +13,12 @@
  * exist?" — same input, opposite intent.
  */
 
+import { existsSync } from "node:fs";
 import { gitRoot } from "../utils/git.ts";
 import { buildSuggestedConfigSnippet } from "./config-snippet.ts";
 import { collectWrapperCandidates, hasOpaquePascalCaseComponents } from "./detect-wrappers-core.ts";
 import { scannedProject } from "./scanned-envelope.ts";
-import { type McpTool, parseFiles, strParam, textResult } from "./tools-helpers.ts";
+import { errorResult, type McpTool, parseFiles, strParam, textResult } from "./tools-helpers.ts";
 
 export const detectNativeWrappersTool: McpTool = {
   def: {
@@ -38,6 +39,21 @@ export const detectNativeWrappersTool: McpTool = {
   },
   async handler(params, session) {
     const explicitCwd = strParam(params, "cwd");
+    // Hard-error envelope when the caller passed a `cwd` that doesn't
+    // exist on disk. Without this, `parseFiles` silently returns 0 and
+    // the response shape reads as "no parseable files here" — the
+    // canonical silent-success failure mode AI-first doctrine warns
+    // against. Mirrors `scan_project` and `wrapper_introspect`, so
+    // agents can rely on the same code across onboarding tools.
+    if (explicitCwd !== undefined && !existsSync(explicitCwd)) {
+      return errorResult({
+        code: "cwd-not-found",
+        message: `Requested cwd does not exist on disk: ${explicitCwd}`,
+        details: { cwd: explicitCwd },
+        remediation:
+          "Pass `cwd` as a path to an existing directory. Relative paths resolve against the MCP server's spawn directory.",
+      });
+    }
     const spawnCwd = process.cwd();
     const root = explicitCwd ?? gitRoot(spawnCwd) ?? spawnCwd;
 

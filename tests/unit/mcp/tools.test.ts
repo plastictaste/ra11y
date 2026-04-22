@@ -1346,6 +1346,31 @@ describe("MCP tool: detect_native_wrappers", () => {
     expect("suggestedConfigSnippet" in raw).toBe(false);
   });
 
+  // Guards the cwd-not-found error envelope — distinct from a
+  // successful zero-candidates / no-parseable-files response (which
+  // would be the silent-failure shape AI-first doctrine warns
+  // against). Mirrors the wrapper_introspect cwd-not-found test so
+  // onboarding tools share the same contract.
+  it("hard-errors with code cwd-not-found when cwd does not exist", async () => {
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler(
+      { cwd: "/nonexistent/ra11y-detect-native-wrappers/does-not-exist-xyz" },
+      session,
+    );
+
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0]?.text ?? "{}") as {
+      readonly code?: string;
+      readonly candidates?: unknown;
+    };
+    expect(payload.code).toBe("cwd-not-found");
+    // Error envelope must not carry a `candidates` array — otherwise
+    // an agent branching on "has candidates" might treat the error as
+    // a clean empty scan.
+    expect(payload.candidates).toBeUndefined();
+  });
+
   it("is idempotent on re-call — same cwd returns byte-identical snippet", async () => {
     // Re-calling the tool on an unchanged project must yield the same
     // snippet. Load-bearing for agents that diff scans across calls;
