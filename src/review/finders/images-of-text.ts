@@ -1,3 +1,4 @@
+// ra11y-limits-exempt: per-sibling emit path + same-parent aggregation walk cohere in one file; splitting fragments signal detection
 /**
  * Candidate finder: review/images-of-text
  * Criteria: wcag22:1.4.5, wcag21:1.4.5, section508:1.4.5, en301549:9.1.4.5,
@@ -8,6 +9,10 @@
  * Surfaces `<img>` elements that look like baked-in text:
  *   - short alt text (1-5 words) repeated in surrounding visible text
  *   - class/src names suggesting logo, banner, heading, title, or header art
+ *
+ * Also aggregates adjacent sibling runs (>= 4 same-shape, enumerated-
+ * token alt) into a single consolidated candidate per the AI-first
+ * honest-aggregation doctrine — see `images-of-text-aggregate.ts`.
  *
  * WCAG 1.4.5 permits images of text only when the presentation is
  * essential or customizable. A static finder cannot decide whether an
@@ -30,7 +35,13 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
-import type { ReviewCandidate } from "../../types/review.ts";
+import type { ReviewCandidate, ReviewCandidateSibling } from "../../types/review.ts";
+import {
+  type AggregationGroup,
+  type AggregationShapeKind,
+  computeAggregationGroups,
+  type SiblingSummary,
+} from "./images-of-text-aggregate.ts";
 import { htmlSrOnlySiblingHint, jsxSrOnlySiblingHint } from "./images-of-text-sr-only.ts";
 
 const CRITERION_IDS = [
@@ -80,7 +91,8 @@ function findHtmlCandidates(
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
-  scanHtmlChildren(root.children, null, null, filePath, candidates);
+  const handled = new WeakSet<HtmlElement>();
+  scanHtmlChildren(root.children, null, null, filePath, candidates, handled);
 }
 
 function scanHtmlChildren(
@@ -89,12 +101,36 @@ function scanHtmlChildren(
   parentElement: HtmlElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
+  handled: WeakSet<HtmlElement>,
 ): void {
+  // Aggregation-aware pre-pass: look at the parent's direct children,
+  // bundle any >= 4-consecutive run of same-shape enumerated-token
+  // sibling images into ONE aggregated candidate, and mark each
+  // covered <img> element as "handled" so the normal walk below
+  // skips its per-sibling emission. Non-aggregated children follow
+  // the existing path unchanged.
+  emitHtmlAggregations(children, parentText, filePath, candidates, handled);
   for (let index = 0; index < children.length; index++) {
     const child = children[index];
     if (child?.kind !== "HtmlElement") continue;
-    emitHtmlImageCandidate(child, children, index, parentText, parentElement, filePath, candidates);
-    scanHtmlChildren(child.children, splitHtmlTextContent(child), child, filePath, candidates);
+    emitHtmlImageCandidate(
+      child,
+      children,
+      index,
+      parentText,
+      parentElement,
+      filePath,
+      candidates,
+      handled,
+    );
+    scanHtmlChildren(
+      child.children,
+      splitHtmlTextContent(child),
+      child,
+      filePath,
+      candidates,
+      handled,
+    );
   }
 }
 
@@ -106,8 +142,16 @@ function emitHtmlImageCandidate(
   parentElement: HtmlElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
+  handled: WeakSet<HtmlElement>,
 ): void {
   if (element.tagName.toLowerCase() !== "img") return;
+  // When this <img> is part of an aggregated group the finder already
+  // emitted, skip per-sibling emission — the aggregated candidate
+  // carries the full trail via `siblingOccurrences`. Per AI-first
+  // doctrine, this is honest aggregation (not suppression) because
+  // the group label is provable from the AST — same parent, same
+  // wrapping, enumerated-token alt — see images-of-text-aggregate.ts.
+  if (handled.has(element)) return;
   const alt = shortImageText(getHtmlAttribute(element, "alt"));
   const classVal = getHtmlAttribute(element, "class");
   const srcVal = getHtmlAttribute(element, "src");
@@ -127,7 +171,194 @@ function emitHtmlImageCandidate(
     logoLike(classVal, srcVal),
     svgDataUriTextFreeHint(srcVal),
     htmlSrOnlySiblingHint(siblings, index, parentElement),
+    undefined,
   );
+}
+
+/**
+ * Walks the parent's direct children building a qualifying-sibling
+ * list (bare `<img>` or `<a>` wrapping exactly one `<img>`, both
+ * would-fire-finder), passes it to the aggregator, and for each
+ * emitted group pushes ONE consolidated candidate. Marks every
+ * covered `<img>` element as handled so the per-sibling pass skips
+ * them. Non-qualifying children are unaffected.
+ */
+function emitHtmlAggregations(
+  children: readonly HtmlNode[],
+  parentText: ParentText | null,
+  filePath: string,
+  candidates: ReviewCandidate[],
+  handled: WeakSet<HtmlElement>,
+): void {
+  const probes: { summary: SiblingSummary; imgElement: HtmlElement }[] = [];
+  for (let index = 0; index < children.length; index++) {
+    const probe = probeHtmlChildForAggregation(children, index, parentText);
+    if (probe) probes.push(probe);
+  }
+  if (probes.length < 4) return;
+  const groups = computeAggregationGroups(probes.map((p) => p.summary));
+  for (const group of groups) {
+    emitHtmlAggregationGroup(group, probes, filePath, candidates, handled);
+  }
+}
+
+function emitHtmlAggregationGroup(
+  group: AggregationGroup,
+  probes: readonly { summary: SiblingSummary; imgElement: HtmlElement }[],
+  filePath: string,
+  candidates: ReviewCandidate[],
+  handled: WeakSet<HtmlElement>,
+): void {
+  // Map summary.parentIndex -> owning img via the probe list (unique
+  // per direct-child position in the parent).
+  const imgByParentIndex = new Map<number, HtmlElement>();
+  for (const p of probes) imgByParentIndex.set(p.summary.parentIndex, p.imgElement);
+  const imgsForGroup: HtmlElement[] = [];
+  for (const member of group.members) {
+    const img = imgByParentIndex.get(member.parentIndex);
+    if (img) imgsForGroup.push(img);
+  }
+  if (imgsForGroup.length === 0) return;
+  for (const img of imgsForGroup) handled.add(img);
+  const anchorImg = imgsForGroup[0]!;
+  const classVal = getHtmlAttribute(anchorImg, "class");
+  const srcVal = getHtmlAttribute(anchorImg, "src");
+  const keywordSignal = keywordHint(classVal, srcVal);
+  const reason = renderAggregatedReason(keywordSignal, group);
+  pushForAllCriteria(
+    candidates,
+    filePath,
+    anchorImg.loc.start.line,
+    anchorImg.loc.start.column,
+    reason,
+    logoLike(classVal, srcVal),
+    svgDataUriTextFreeHint(srcVal),
+    null,
+    group.occurrences,
+  );
+}
+
+/**
+ * Builds the reason text for an aggregated candidate. The keyword
+ * signal (if any) comes from the anchor `<img>` since every member
+ * shares the same parent/class by group precondition. The closing
+ * "enumerated-token" + "see siblingOccurrences" phrasing is load-
+ * bearing for the agent-facing contract: the fixture asserts both
+ * markers so a regression that silently drops them fails.
+ */
+function renderAggregatedReason(keywordSignal: string | null, group: AggregationGroup): string {
+  const signalClause = keywordSignal ? `${keywordSignal}; ` : "";
+  return (
+    `<img> ${signalClause}${group.reasonFragment} — ` +
+    `verify text is not baked into these images when equivalent styled HTML ` +
+    `text could be used`
+  );
+}
+
+/**
+ * Probes one HTML child to decide whether it qualifies as an
+ * aggregation candidate — either a bare `<img>` the finder would fire
+ * on, or an `<a>` whose sole (element) child is such an `<img>`.
+ * Returns both the summary the aggregator consumes AND the `<img>`
+ * element so the caller can mark it handled if the group emits.
+ * Returns `null` for children that don't qualify.
+ */
+function probeHtmlChildForAggregation(
+  children: readonly HtmlNode[],
+  index: number,
+  parentText: ParentText | null,
+): { summary: SiblingSummary; imgElement: HtmlElement } | null {
+  const child = children[index];
+  if (child?.kind !== "HtmlElement") return null;
+  const tag = child.tagName.toLowerCase();
+  if (tag === "img") {
+    if (!htmlImgWouldFire(child, children, index, parentText)) return null;
+    return {
+      imgElement: child,
+      summary: buildHtmlSummary(child, "bare-img", null, index),
+    };
+  }
+  if (tag === "a") {
+    const innerImg = soleHtmlElementChild(child, "img");
+    if (!innerImg) return null;
+    // Build the parent-text context for the <img> from its actual
+    // parent (<a>) — the finder's signal-collection needs it.
+    const wrapperText = splitHtmlTextContent(child);
+    if (
+      !htmlImgWouldFire(
+        innerImg,
+        child.children,
+        indexOfHtmlNode(child.children, innerImg),
+        wrapperText,
+      )
+    ) {
+      return null;
+    }
+    const href = getHtmlAttribute(child, "href");
+    return {
+      imgElement: innerImg,
+      summary: buildHtmlSummary(innerImg, "linked-img", href, index),
+    };
+  }
+  return null;
+}
+
+function buildHtmlSummary(
+  img: HtmlElement,
+  shape: AggregationShapeKind,
+  href: string | null,
+  parentIndex: number,
+): SiblingSummary {
+  const alt = shortImageText(getHtmlAttribute(img, "alt"));
+  return {
+    parentIndex,
+    line: img.loc.start.line,
+    shape,
+    altRaw: alt?.raw ?? null,
+    altNormalized: alt?.normalized ?? null,
+    href,
+  };
+}
+
+function indexOfHtmlNode(children: readonly HtmlNode[], target: HtmlNode): number {
+  for (let i = 0; i < children.length; i += 1) if (children[i] === target) return i;
+  return -1;
+}
+
+function soleHtmlElementChild(element: HtmlElement, tagName: string): HtmlElement | null {
+  let sole: HtmlElement | null = null;
+  for (const c of element.children) {
+    if (c.kind === "HtmlText") continue; // whitespace/text between wrappers doesn't disqualify
+    if (c.kind !== "HtmlElement") return null;
+    if (sole !== null) return null; // more than one element child
+    if (c.tagName.toLowerCase() !== tagName) return null;
+    sole = c;
+  }
+  return sole;
+}
+
+/**
+ * True when the `<img>` would have emitted at least one finder signal
+ * (same predicate the per-sibling path uses). Keeps aggregation
+ * decisions consistent with emission decisions: a sibling that
+ * wouldn't fire individually never counts toward group size.
+ */
+function htmlImgWouldFire(
+  img: HtmlElement,
+  siblings: readonly HtmlNode[],
+  index: number,
+  parentText: ParentText | null,
+): boolean {
+  const alt = shortImageText(getHtmlAttribute(img, "alt"));
+  const classVal = getHtmlAttribute(img, "class");
+  const srcVal = getHtmlAttribute(img, "src");
+  const signals = collectSignals(
+    alt,
+    parentText,
+    adjacentHtmlText(siblings, index),
+    keywordHint(classVal, srcVal),
+  );
+  return signals.length > 0;
 }
 
 function findJsxCandidates(root: TsxModule, filePath: string, candidates: ReviewCandidate[]): void {
@@ -184,6 +415,7 @@ function emitJsxImageCandidate(
     logoLike(classVal, srcVal),
     svgDataUriTextFreeHint(srcVal),
     jsxSrOnlySiblingHint(siblings, index, parentElement),
+    undefined,
   );
 }
 
@@ -373,6 +605,7 @@ function pushForAllCriteria(
   logoLikelyExempt: boolean,
   svgDataUriHint: string | null,
   srOnlySiblingHint: string | null,
+  siblingOccurrences: readonly ReviewCandidateSibling[] | undefined,
 ): void {
   for (const criterionId of CRITERION_IDS) {
     const withLogoHint =
@@ -397,6 +630,11 @@ function pushForAllCriteria(
       location: { filePath, line, column },
       reason: augmented,
       confidence: "low",
+      // Aggregated candidates carry the per-sibling trail; singletons
+      // omit the field entirely (present-when-meaningful).
+      ...(siblingOccurrences !== undefined && siblingOccurrences.length > 0
+        ? { siblingOccurrences }
+        : {}),
     });
   }
 }
