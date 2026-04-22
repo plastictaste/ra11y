@@ -1,7 +1,7 @@
 ---
 title: "Coverage Matrix"
 description: "Per-criterion rule and finder coverage across all built-in standards."
-generated: "2026-04-21"
+generated: "2026-04-22"
 ---
 
 # Coverage Matrix
@@ -22,7 +22,7 @@ finders cover it and the resulting coverage verdict.
 **Finders column** strips the `review/` prefix for brevity.
 
 **Unique criteria across all standards:** 252
-**By verdict:** 132 rule · 89 finder · 25 attestation-only · 6 gap
+**By verdict:** 134 rule · 89 finder · 25 attestation-only · 4 gap
 
 ## Gaps
 
@@ -30,17 +30,15 @@ The following criterion IDs have `gap` verdict — they are auto/partial automat
 These are candidates for new rules or finders.
 
 - `wcag21:2.3.3`
-- `wcag21:2.4.9`
 - `wcag21:2.5.5`
 - `wcag22:2.3.3`
-- `wcag22:2.4.9`
 - `wcag22:2.5.5`
 
 ## WCAG 2.2
 
 **ID:** `wcag22` | **Version:** 2.2 | **Criteria:** 86
 
-Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
+Coverage: 40 rule · 31 finder · 13 attestation-only · 2 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -94,7 +92,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 | `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
 | `wcag22:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
 | `wcag22:2.4.8` | Location | AAA | manual | — | — | **attestation-only** |
-| `wcag22:2.4.9` | Link Purpose (Link Only) | AAA | partial | — | — | **gap** |
+| `wcag22:2.4.9` | Link Purpose (Link Only) | AAA | partial | navigation/link-descriptive-text | — | **rule** |
 | `wcag22:2.4.10` | Section Headings | AAA | manual | — | section-headings | **finder** |
 | `wcag22:2.4.11` | Focus Not Obscured (Minimum) | AA | partial | focus/not-obscured | — | **rule** |
 | `wcag22:2.4.12` | Focus Not Obscured (Enhanced) | AAA | manual | — | — | **attestation-only** |
@@ -135,7 +133,7 @@ Coverage: 39 rule · 31 finder · 13 attestation-only · 3 gap
 
 **ID:** `wcag21` | **Version:** 2.1 | **Criteria:** 78
 
-Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
+Coverage: 38 rule · 28 finder · 10 attestation-only · 2 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -189,7 +187,7 @@ Coverage: 37 rule · 28 finder · 10 attestation-only · 3 gap
 | `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
 | `wcag21:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
 | `wcag21:2.4.8` | Location | AAA | manual | — | — | **attestation-only** |
-| `wcag21:2.4.9` | Link Purpose (Link Only) | AAA | partial | — | — | **gap** |
+| `wcag21:2.4.9` | Link Purpose (Link Only) | AAA | partial | navigation/link-descriptive-text | — | **rule** |
 | `wcag21:2.4.10` | Section Headings | AAA | manual | — | section-headings | **finder** |
 | `wcag21:2.5.1` | Pointer Gestures | A | manual | — | pointer-input | **finder** |
 | `wcag21:2.5.2` | Pointer Cancellation | A | partial | pointer/cancellation | — | **rule** |

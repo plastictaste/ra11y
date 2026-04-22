@@ -2,12 +2,12 @@
 title: "navigation/link-descriptive-text"
 severity: "warning"
 scope: "node"
-satisfies: ["wcag22:2.4.4", "wcag21:2.4.4", "wcag22:4.1.2", "wcag21:4.1.2"]
+satisfies: ["wcag22:2.4.4", "wcag21:2.4.4", "wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.4.9", "wcag21:2.4.9"]
 ---
 # `navigation/link-descriptive-text`
 - **Severity:** warning
 - **Scope:** node
-- **Satisfies:** `wcag22:2.4.4`, `wcag21:2.4.4`, `wcag22:4.1.2`, `wcag21:4.1.2`
+- **Satisfies:** `wcag22:2.4.4`, `wcag21:2.4.4`, `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.4.9`, `wcag21:2.4.9`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
 Link text must identify the link's destination — never a generic phrase like 'click here' or 'read more', and never an icon-only anchor without an accessible name.
