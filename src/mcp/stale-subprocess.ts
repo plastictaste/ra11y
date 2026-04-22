@@ -36,59 +36,28 @@ interface RecordedStart {
   readonly mtimeMs: number;
 }
 
-let recorded: readonly RecordedStart[] | null = null;
+let recorded: RecordedStart | null = null;
 
 /**
- * Resolves the filesystem path of the module that hosts this code. When
- * ra11y is installed from npm and run via `dist/cli.js`, `bun build`
- * inlines this module into the single entry bundle — `import.meta.url`
- * resolves to `dist/cli.js`, and its mtime is the thing that changes on
- * rebuild. When running from source (`bun src/cli.ts` in dev), the URL
- * resolves to `src/mcp/stale-subprocess.ts` — edits to THIS file still
- * surface, but edits to sibling source files do not.
+ * Resolves the filesystem path of the module that called into this
+ * function's own bundle. When ra11y is installed from npm and run via
+ * `dist/cli.js`, `bun build` inlines this module into the single entry
+ * bundle — `import.meta.url` resolves to `dist/cli.js`, and its mtime
+ * is the thing that changes on rebuild. When running from source
+ * (`bun src/cli.ts` in dev), `import.meta.url` resolves to
+ * `src/mcp/stale-subprocess.ts`, so edits to the server source track
+ * through the same way.
  *
  * Returns `null` when the URL scheme is not `file:` (extremely rare —
- * e.g. a custom loader serving modules from a data URL).
+ * e.g. a custom loader serving modules from a data URL). The caller
+ * treats that as "detection unavailable" and the warning simply never
+ * fires; the scanner stays fully functional.
  */
-function resolveModulePath(): string | null {
+function resolveBundlePath(): string | null {
   try {
     const u = new URL(import.meta.url);
     if (u.protocol !== "file:") return null;
     return fileURLToPath(u);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolves the entry script the subprocess was launched with, i.e.
- * `process.argv[1]`. In dist mode this is `dist/cli.js` (same as
- * {@link resolveModulePath}); in source mode this is `src/cli.ts`
- * (different from the module path). Tracking this path closes the
- * source-mode silent-miss: a dev running `bun src/cli.ts --mcp` edits
- * `src/cli.ts` (or the rebuild script rewrites it) and the stale
- * signal fires even though `import.meta.url` still resolves to the
- * unchanged `src/mcp/stale-subprocess.ts`.
- *
- * Returns `null` when `process.argv[1]` is undefined (repl-embedded
- * usage) or an empty string.
- */
-function resolveEntryPath(): string | null {
-  const entry = process.argv[1];
-  if (typeof entry !== "string" || entry.length === 0) return null;
-  return entry;
-}
-
-/**
- * Stat a path and return `{ path, mtimeMs }` or `null` on failure.
- * Failure is silent — the warning is additive telemetry, not a
- * correctness gate, so a subset of the candidate paths being
- * inaccessible does not disable detection for the rest.
- */
-function statOrNull(path: string): RecordedStart | null {
-  try {
-    const stat = statSync(path);
-    return { path, mtimeMs: stat.mtimeMs };
   } catch {
     return null;
   }
@@ -101,45 +70,18 @@ function statOrNull(path: string): RecordedStart | null {
  * re-records mid-session. Safe to call from module init or from
  * {@link startMcpServer}; the latter is preferred so it only runs when
  * the MCP binary is actually serving.
- *
- * Records ALL distinct paths that plausibly contain "the code the
- * subprocess is running": `import.meta.url`'s path and
- * `process.argv[1]`. In a bundled dist launch these are the same file
- * and we record one entry; in a source-mode launch they differ and we
- * record both so edits to the CLI entry (or bundle rewrites on disk)
- * still surface as stale. An inaccessible path is silently skipped,
- * not treated as "detection unavailable" — as long as at least one
- * path records successfully, detection stays live.
  */
 export function recordSubprocessStart(): void {
   if (recorded !== null) return;
-  const candidates = new Set<string>();
-  const modulePath = resolveModulePath();
-  if (modulePath !== null) candidates.add(modulePath);
-  const entryPath = resolveEntryPath();
-  if (entryPath !== null) candidates.add(entryPath);
-  const entries: RecordedStart[] = [];
-  for (const path of candidates) {
-    const entry = statOrNull(path);
-    if (entry !== null) entries.push(entry);
+  const path = resolveBundlePath();
+  if (path === null) return;
+  try {
+    const stat = statSync(path);
+    recorded = { path, mtimeMs: stat.mtimeMs };
+  } catch {
+    // Bundle path inaccessible (chmod, deletion, etc.) — detection is
+    // unavailable; no warning will fire.
   }
-  recorded = entries.length > 0 ? entries : null;
-}
-
-/**
- * Test-only: record an explicit set of paths as the baseline. Lets
- * unit tests feed in temp files they control the mtime of without
- * having to stub `process.argv[1]` or `import.meta.url`. Intentionally
- * not exported from the package barrel.
- */
-export function __recordSubprocessStartForTest(paths: readonly string[]): void {
-  if (recorded !== null) return;
-  const entries: RecordedStart[] = [];
-  for (const path of paths) {
-    const entry = statOrNull(path);
-    if (entry !== null) entries.push(entry);
-  }
-  recorded = entries.length > 0 ? entries : null;
 }
 
 /**
@@ -151,29 +93,21 @@ export function __resetSubprocessRecord(): void {
 }
 
 /**
- * Returns true when any of the recorded bundle files' current mtimes
- * are strictly greater than the mtime captured at startup. Same-mtime
- * is not stale — an fs snapshot at the exact moment of write should
- * not self-trigger. Read failure at probe time on a specific path is
- * treated as "no change on this path": the scanner keeps working and
- * the warning simply doesn't fire on that path. Stale-detection is
- * additive signal, not a correctness gate.
- *
- * Any single path advancing is enough — the agent only needs to know
- * the subprocess is serving stale bytes, not which file changed.
+ * Returns true when the bundle file's current mtime is strictly greater
+ * than the mtime captured at startup. Same-mtime is not stale — an fs
+ * snapshot at the exact moment of write should not self-trigger. Read
+ * failure at probe time returns `false`: the scanner keeps working and
+ * the warning simply doesn't fire. Stale-detection is additive signal,
+ * not a correctness gate.
  */
 export function isSubprocessStale(): boolean {
-  if (recorded === null || recorded.length === 0) return false;
-  for (const entry of recorded) {
-    try {
-      const stat = statSync(entry.path);
-      if (stat.mtimeMs > entry.mtimeMs) return true;
-    } catch {
-      // This path is inaccessible now; a sibling entry may still
-      // carry the signal.
-    }
+  if (recorded === null) return false;
+  try {
+    const stat = statSync(recorded.path);
+    return stat.mtimeMs > recorded.mtimeMs;
+  } catch {
+    return false;
   }
-  return false;
 }
 
 /**
