@@ -161,6 +161,30 @@ const STATUS_PREFIX_WORDS: readonly string[] = [
  */
 const STATUS_PREFIX_RE = new RegExp(`^\\s*(${STATUS_PREFIX_WORDS.join("|")})\\b[:\\s]`, "iu");
 
+/**
+ * Regex: whole-word match of any status word anywhere in the text. Used
+ * AFTER the rule has decided to fire (the prefix gate passed) to detect
+ * the "text already carries the status word" case — e.g., the real-world
+ * `<button class="btn btn-danger">Danger</button>`, where the visible
+ * text IS the status word but without the trailing `:` / whitespace the
+ * prefix regex requires. When this matches, the reason text flips to an
+ * enrichment ("verify color is not the *sole* meaning signal") and the
+ * fix ranker demotes "prefix with status word" (which would produce
+ * `"Danger: Danger"` — the regression this branch exists to avoid).
+ */
+const STATUS_ANYWHERE_RE = new RegExp(`\\b(${STATUS_PREFIX_WORDS.join("|")})\\b`, "iu");
+
+/**
+ * True when the element's visible text contains a status word anywhere
+ * as a whole-word match (case-insensitive). Precondition: the caller
+ * already confirmed no second channel is present, so the prefix regex
+ * did NOT match — this catches the bare-word case (`"Danger"`, `"Upload
+ * failed"`) the prefix regex misses.
+ */
+function textContainsStatusWord(text: string): boolean {
+  return STATUS_ANYWHERE_RE.test(text);
+}
+
 export const rule = defineRule({
   id: "color/meaning-by-color-only",
   satisfies: ["wcag22:1.4.1", "wcag21:1.4.1"],
@@ -442,8 +466,9 @@ function buildViolation(
 } {
   const descriptor = buildDescriptor(lang, tagName, classValue);
   const statusWord = statusWordForToken(token);
-  const message = buildMessage(descriptor, token, statusWord, text);
-  const suggestion = buildSuggestion(descriptor, token, statusWord);
+  const textHasStatusWord = textContainsStatusWord(text);
+  const message = buildMessage(descriptor, token, statusWord, text, textHasStatusWord);
+  const suggestion = buildSuggestion(descriptor, token, statusWord, text, textHasStatusWord);
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
@@ -474,12 +499,35 @@ function statusWordForToken(token: string): string {
   return withoutPrefix.replace(/-emphasis$/, "").replace(/-subtle$/, "");
 }
 
-function buildMessage(descriptor: string, token: string, statusWord: string, text: string): string {
+function buildMessage(
+  descriptor: string,
+  token: string,
+  statusWord: string,
+  text: string,
+  textHasStatusWord: boolean,
+): string {
   const textSample = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  if (textHasStatusWord) {
+    return `${descriptor} conveys "${statusWord}" status via the ${token} class; text content "${textSample}" already carries a status word — verify color is not the *sole* meaning signal for users who cannot distinguish the color (screen-reader users reading prose get the word, but colorblind users reading a monochrome rendering may lose the association between the word and the visual emphasis).`;
+  }
   return `${descriptor} conveys "${statusWord}" status via the ${token} class alone — text content "${textSample}" carries no status word, no icon sibling, no sr-only label, and no ARIA live role. Screen-reader users, colorblind users, and anyone under a color-inverted theme receive the ${statusWord} text as plain prose with no indication that it is a status.`;
 }
 
-function buildSuggestion(descriptor: string, token: string, statusWord: string): string {
+function buildSuggestion(
+  descriptor: string,
+  token: string,
+  statusWord: string,
+  text: string,
+  textHasStatusWord: boolean,
+): string {
   const titleWord = statusWord.charAt(0).toUpperCase() + statusWord.slice(1);
+  if (textHasStatusWord) {
+    // Demote the "prefix with status word" alternative: on text that
+    // already carries the word, that fix produces a tautology like
+    // "Danger: Danger" on `<button class="btn-danger">Danger</button>`.
+    // Lead with the channels that don't duplicate the visible word.
+    const textSample = text.length > 40 ? `${text.slice(0, 40)}…` : text;
+    return `The visible text "${textSample}" already names the "${statusWord}" status, so the risk is narrower: a colorblind user still may not see that the word is being emphasized as a status (vs. appearing as ordinary prose). Any of: (1) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\` — so the status is announced both in prose and as a glyph; (2) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (3) set \`aria-label="${titleWord}: ${textSample}"\` on the element so the accessible name is unambiguous. DO NOT prefix the visible text with "${titleWord}:" — the text already carries "${statusWord}" and the prefix would produce a tautology. Pick the channel that matches how the message reaches the page.`;
+  }
   return `Add a second channel for the "${statusWord}" status conveyed by ${token} on ${descriptor}. Any of: (1) prefix the visible text with the status word — e.g., "${titleWord}: <your text>" — so assistive tech reads the status as prose; (2) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\`; (3) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (4) set \`aria-label="${titleWord}: <your text>"\` on the element. Pick the one that matches how the message reaches the page.`;
 }

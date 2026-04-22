@@ -212,6 +212,108 @@ describe("rule color/meaning-by-color-only", () => {
     });
   });
 
+  describe("text already carries status word (reason/suggestion refinement)", () => {
+    // Real-world trigger: Bootstrap's own visual-test alert.html has
+    // `<button class="btn btn-danger">Danger</button>`. The rule still
+    // fires (color may be the *sole* meaning signal for colorblind
+    // users), but the reason text and fix ranker adapt so the agent
+    // doesn't act on advice that would produce "Danger: Danger".
+    it("HTML: bare-word 'Danger' text still fires the rule", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
+        { filePath: "alert.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("HTML: reason switches to the 'text already carries status word' enrichment", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
+        { filePath: "alert.html" },
+      );
+      expect(violations[0]?.message).toMatch(/already carries a status word/);
+      expect(violations[0]?.message).toMatch(/sole.*meaning signal/);
+      // Must NOT claim "carries no status word" — that was the bug.
+      expect(violations[0]?.message).not.toMatch(/carries no status word/);
+    });
+
+    it("HTML: fix suggestion demotes 'prefix with status word' and warns against the tautology", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
+        { filePath: "alert.html" },
+      );
+      const s = violations[0]?.suggestion ?? "";
+      // The demoted option is explicitly called out as a tautology.
+      expect(s).toMatch(/DO NOT prefix/);
+      expect(s).toMatch(/tautology/);
+      // The good paths (icon + sr-only, role=alert, aria-label) still appear.
+      expect(s).toMatch(/visually-hidden/);
+      expect(s).toMatch(/role="alert"/);
+    });
+
+    it("HTML: 'Upload failed' (status word mid-text) also triggers the enrichment", () => {
+      // "failed" is in STATUS_PREFIX_WORDS; the prefix regex misses it
+      // because the first word is "Upload", but the anywhere regex
+      // catches it.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><div class="alert alert-danger">Upload failed</div></body></html>`,
+        { filePath: "upload.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/already carries a status word/);
+    });
+
+    it("HTML: 'Access denied' (no status word) keeps the original reason and 4-option suggestion", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-danger">Access denied</span></body></html>`,
+        { filePath: "access.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/carries no status word/);
+      // Original suggestion leads with "prefix the visible text".
+      expect(violations[0]?.suggestion).toMatch(/prefix the visible text/);
+      expect(violations[0]?.suggestion).not.toMatch(/tautology/);
+    });
+
+    it("JSX: <button className='btn btn-danger'>Danger</button> fires with the enriched reason", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <button className="btn btn-danger">Danger</button>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/already carries a status word/);
+      expect(violations[0]?.suggestion).toMatch(/DO NOT prefix/);
+    });
+
+    it("JSX: mid-text status word ('Operation failed') triggers the enrichment", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <span className="text-danger">Operation failed</span>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/already carries a status word/);
+    });
+
+    it("substring 'warningly' does NOT count as a status word (whole-word match)", () => {
+      // If we mis-coded the anywhere regex without \b, "warningly" would
+      // match "warning". Whole-word matching prevents that.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-warning">Tread warningly</span></body></html>`,
+        { filePath: "substring.html" },
+      );
+      expect(violations).toHaveLength(1);
+      // "warningly" contains "warning" but not as a whole word, so the
+      // original reason applies.
+      expect(violations[0]?.message).toMatch(/carries no status word/);
+    });
+  });
+
   describe("rule metadata", () => {
     it("satisfies wcag22:1.4.1 and wcag21:1.4.1", () => {
       expect(rule.satisfies).toContain("wcag22:1.4.1");
