@@ -26,6 +26,7 @@ import type { Violation } from "../types/violation.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
+import { applyRuleSettings } from "./rules-evaluated.ts";
 import { buildScanMeta, buildScanPlan } from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
@@ -729,24 +730,13 @@ export async function runScanAndFormat(
 }
 
 /**
- * Applies per-session rule settings: drops rules set to "off" and
- * overrides severity for rules set to "error", "warning", or "info".
- * Mirrors the config-file behavior in runScanCommand.
+ * Re-exported for back-compat with existing imports that source
+ * `applyRuleSettings` from `tools-helpers.ts`. New callers should import
+ * from `./rules-evaluated.ts` directly — preferring {@link resolveActiveRules}
+ * (the session + projectConfig SSOT) over hand-rolled
+ * `applyRuleSettings(session.registry.rules, ...)` chains.
  */
-export function applyRuleSettings(
-  rules: readonly Rule[],
-  settings: Readonly<Record<string, string>>,
-): readonly Rule[] {
-  return rules
-    .filter((r) => settings[r.id] !== "off")
-    .map((r) => {
-      const override = settings[r.id];
-      if (override === "error" || override === "warning" || override === "info") {
-        return { ...r, severity: override };
-      }
-      return r;
-    });
-}
+export { applyRuleSettings };
 
 // ─── Registry lookups ───────────────────────────────────────────────────────
 

@@ -12,10 +12,9 @@ import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
-import { buildRulesEvaluated, type RulesEvaluated } from "./rules-evaluated.ts";
+import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
 import {
-  applyRuleSettings,
   errorResult,
   firstUnknownStandard,
   loadDurableAttestations,
@@ -76,6 +75,7 @@ export const coverageTool: McpTool = {
       });
     }
     const level = resolveLevel(strParam(params, "level"), session);
+    const projectConfig = await session.loadProjectConfig(cwd);
     const { files, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
       paths,
       session,
@@ -83,7 +83,11 @@ export const coverageTool: McpTool = {
     );
     const attestations = await loadDurableAttestations(cwd);
 
-    const activeRules = applyRuleSettings(session.registry.rules, session.config.rules);
+    // Q-SHARED-RULES-EVALUATED-SSOT: load project config and route
+    // through resolveActiveRules so the `meta.rulesEvaluated.loaded`
+    // count agrees with scan_project / propose_config / list_suppressions
+    // on the same cwd.
+    const activeRules = resolveActiveRules(session, projectConfig);
     const { result, report, perRuleCoverage } = runScan({
       standards: session.registry.standards,
       rules: activeRules,

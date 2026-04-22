@@ -24,9 +24,9 @@
 
 import { runScan } from "../engine/scanner.ts";
 import type { CandidateFinder } from "../types/review.ts";
+import { resolveActiveRules } from "./rules-evaluated.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import {
-  applyRuleSettings,
   errorResult,
   firstUnknownStandard,
   type McpTool,
@@ -94,11 +94,17 @@ export const reviewCandidatesTool: McpTool = {
       });
     }
     const level = resolveLevel(strParam(params, "level"), session);
+    const projectConfig = await session.loadProjectConfig(cwd);
     const files = await parseFiles(paths, session, cwd);
 
+    // Q-SHARED-RULES-EVALUATED-SSOT: load project config and route
+    // through resolveActiveRules so the rule set matches scan_project /
+    // checklist / coverage on the same cwd — otherwise a `ra11y.config.ts`
+    // that silences a rule would be honored by scan_project but ignored
+    // here, and the candidate streams would drift.
     const { report } = runScan({
       standards: session.registry.standards,
-      rules: applyRuleSettings(session.registry.rules, session.config.rules),
+      rules: resolveActiveRules(session, projectConfig),
       enabled: standards,
       files,
       finders: session.registry.finders,

@@ -39,7 +39,10 @@
  * real data.
  */
 
+import type { LoadedConfig } from "../types/config.ts";
+import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
+import type { McpSession } from "./session.ts";
 
 /**
  * Structured `rulesEvaluated` meta field. `loaded` is always populated;
@@ -92,4 +95,76 @@ export function buildRulesEvaluated(args: {
     withEligibleInputs,
     fired,
   };
+}
+
+/**
+ * Single-source-of-truth resolver for the rule set a scan-family or
+ * scan-derivative MCP tool should evaluate against the current session.
+ *
+ * Before this helper landed, every tool independently derived its
+ * `activeRules` list by open-coding one of two variants:
+ *
+ *   1. `applyRuleSettings(session.registry.rules, session.config.rules)`
+ *      — session-only, ignoring any `ra11y.config.ts` the user dropped at
+ *      the project root.
+ *   2. `applyRuleSettings(session.registry.rules,
+ *      session.effectiveRules(projectConfig))` — session merged with
+ *      project config, the correct shape.
+ *
+ * Tools divided across the two variants, silently producing different
+ * `meta.rulesEvaluated.loaded` counts for the same `cwd`
+ * (Q-SHARED-RULES-EVALUATED-SSOT: `scan_project: 53`, `propose_config:
+ * 54`, `list_rules: 54` on the same input). Routing every caller through
+ * this helper collapses the two variants into one deterministic recipe:
+ *
+ *   registry rules → merge session + project rule settings →
+ *   drop rules set to `"off"` → apply severity overrides → return.
+ *
+ * Callers pass `projectConfig` when they have one loaded; the `undefined`
+ * case falls back to the session-only rule settings (the old variant 1
+ * behavior) so tools like `scan` (which never takes a `cwd`) stay honest
+ * rather than silently loading a config they have no anchor for. Once
+ * every caller loads `projectConfig` upstream, the `undefined` branch
+ * becomes dead and can be tightened in a later refactor — keeping it
+ * here for now so the refactor stays additive and landable in one pass.
+ *
+ * Doctrine: "Verbose meta is signal, not clutter" + cross-surface
+ * consistency — two MCP surfaces reporting different `rulesEvaluated`
+ * counts for the same scan root forces wasted round trips as the agent
+ * tries to reconcile them. See `docs/kb/architecture/ai-first-consumer.md`.
+ */
+export function resolveActiveRules(
+  session: McpSession,
+  projectConfig?: LoadedConfig,
+): readonly Rule[] {
+  const effective =
+    projectConfig === undefined ? session.config.rules : session.effectiveRules(projectConfig);
+  return applyRuleSettings(session.registry.rules, effective);
+}
+
+/**
+ * Applies per-session rule settings: drops rules set to "off" and
+ * overrides severity for rules set to "error", "warning", or "info".
+ * Mirrors the config-file behavior in runScanCommand.
+ *
+ * Lives here (alongside {@link resolveActiveRules}) rather than in
+ * `tools-helpers.ts` so the canonical rule-resolution pipeline
+ * (registry → settings merge → on/off filter → severity override) stays
+ * in one file. `tools-helpers.ts` re-exports this symbol so existing
+ * call sites keep working without an import churn pass —
+ * {@link resolveActiveRules} is the preferred SSOT for new callers.
+ */
+export function applyRuleSettings(
+  rules: readonly Rule[],
+  settings: Readonly<Record<string, string>>,
+): readonly Rule[] {
+  return rules
+    .filter((r) => settings[r.id] !== "off")
+    .map((r) => {
+      const override = settings[r.id];
+      if (override === "error" || override === "warning" || override === "info") {
+        return { ...r, severity: override };
+      }
+      return r;
+    });
 }
