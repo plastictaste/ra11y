@@ -370,4 +370,107 @@ describe("review/timing", () => {
       }
     });
   });
+
+  describe("minified-file locator enrichment", () => {
+    // When the cited file is a minified bundle (`.min.` infix OR a
+    // single line > 1000 chars), the bare `line:column` pointer is
+    // unhelpful — on a 6-line file where line 6 is 50 KB, eight
+    // setTimeout calls on that line all point at "col 1" visually even
+    // though their underlying column values differ. The enrichment
+    // restates the offset as a byte-column within the enclosing line
+    // and echoes a ~80-char context window so the agent can locate
+    // the specific call without guessing. Reason-text enrichment per
+    // ai-first-consumer.md — no severity change, candidate stays in
+    // the primary list. Q6-MINIFIED-FILE-SNIPPET-COLUMN-ENRICHMENT.
+
+    it("enriches reason when the basename carries a `.min.` infix", () => {
+      // Short source (single-line but under the 1000-char threshold) —
+      // the filename infix alone triggers the enrichment.
+      const src = `var x=1;setTimeout(function(){},2000);var y=2;`;
+      const out = runFinder(finder, src, { filePath: "vendor/bootstrap.min.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("minified file — match at byte col");
+      expect(hit?.reason).toContain("setTimeout(function");
+    });
+
+    it("enriches reason when a single line exceeds 1000 chars (no .min. in name)", () => {
+      // Simulate a minified bundle whose basename happens NOT to carry
+      // `.min.` (e.g. a concatenated vendor dump under `dist/`). The
+      // single-long-line heuristic still earns the enrichment.
+      const filler = `var pad=[${"0,".repeat(600)}0];`;
+      const src = `${filler}setTimeout(function(){},5000);var end=1;`;
+      expect(src.length).toBeGreaterThan(1000);
+      const out = runFinder(finder, src, { filePath: "dist/bundle.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("minified file — match at byte col");
+    });
+
+    it("does NOT enrich on ordinary authored multi-line files", () => {
+      const src = `function boot() {\n  setTimeout(() => tick(), 300);\n}\n`;
+      const out = runFinder(finder, src, { filePath: "src/boot.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit).toBeDefined();
+      expect(hit?.reason).not.toContain("minified file — match at byte col");
+    });
+
+    it("does NOT enrich on short single-line authored files", () => {
+      // A one-line authored source under the 1000-char threshold (and
+      // with no `.min.` in the path) stays un-enriched — the enrichment
+      // only earns its place when the pointer is definitionally
+      // unhelpful. The column field on the candidate is already the
+      // byte-offset-from-start; restating it as "minified file" prose
+      // would be misleading on an ordinary one-liner.
+      const src = `setTimeout(() => tick(), 100);`;
+      const out = runFinder(finder, src, { filePath: "src/util.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit).toBeDefined();
+      expect(hit?.reason).not.toContain("minified file");
+    });
+
+    it("two same-line matches get distinct byte-col offsets in the reason", () => {
+      // Regression: the bug in the field report was eight `setTimeout`
+      // calls on line 6 all displaying as "col 1" — the agent could
+      // not disambiguate among them. After enrichment, the reason
+      // text carries per-match byte columns that vary with each call
+      // site, so the candidates are distinguishable on reason alone.
+      // Use an interior semicolon to ensure `\b` re-engages between the
+      // two call sites (the `setTimeout` regex requires a word boundary
+      // before the identifier).
+      const src =
+        `var a=1;setTimeout(function(){a++;},100);` +
+        "var b=2;".repeat(40) +
+        `;setTimeout(function(){a++;},200);`;
+      const out = runFinder(finder, src, { filePath: "lib.min.js" });
+      const hits = out
+        .filter((c) => c.criterionId === "wcag22:2.2.1")
+        .filter((c) => c.reason.includes("setTimeout"));
+      expect(hits.length).toBeGreaterThanOrEqual(2);
+      const byteCols = new Set(
+        hits.map((c) => /byte col (\d+)/.exec(c.reason)?.[1]).filter(Boolean),
+      );
+      expect(byteCols.size).toBeGreaterThanOrEqual(2);
+    });
+
+    it("keeps the normative review prompt alongside the minified clause", () => {
+      const src = `var x=1;setTimeout(function(){},2000);`;
+      const out = runFinder(finder, src, { filePath: "vendor/jquery.min.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("verify the user can pause, extend, or disable");
+      expect(hit?.reason).toContain("minified file");
+    });
+
+    it("preserves duration + enclosing clauses before the minified clause", () => {
+      const src = `var x=1;function run(){setTimeout(function(){tick();},4000);}`;
+      const out = runFinder(finder, src, { filePath: "vendor/app.min.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("duration `4000`");
+      expect(hit?.reason).toContain("in `run()`");
+      // The minified clause suffix comes after existing enrichment.
+      const reason = hit?.reason ?? "";
+      const durationIdx = reason.indexOf("duration `4000`");
+      const minIdx = reason.indexOf("minified file");
+      expect(durationIdx).toBeGreaterThan(-1);
+      expect(minIdx).toBeGreaterThan(durationIdx);
+    });
+  });
 });

@@ -48,6 +48,7 @@ import {
   type FlashEvidence,
   flashClause,
 } from "./timing-dom-mutation.ts";
+import { minifiedLocatorClause } from "./timing-minified.ts";
 
 const CRITERION_IDS = [
   "wcag22:2.2.1",
@@ -223,7 +224,8 @@ function emitJsCandidates(
   const coreReason = `${label}${durationClause}${enclosingClause}${JS_REASON_PREFIX}`;
   const pauseStopHide = isInterval && callbackMutatesDom(ctx.source, openParen);
   const flash = isInterval ? evaluateFlashThreshold(ctx.source, openParen, duration) : null;
-  const reason = buildReason(coreReason, pauseStopHide, flash);
+  const minifiedClause = minifiedLocatorClause(ctx.filePath, ctx.source, offset);
+  const reason = buildReason(coreReason, pauseStopHide, flash, minifiedClause);
   const criteriaForSite = buildCriteriaForSite(pauseStopHide, flash !== null);
   for (const criterionId of criteriaForSite) {
     // Confidence "medium": setTimeout/setInterval is concrete evidence
@@ -244,8 +246,8 @@ function emitJsCandidates(
 }
 
 /**
- * Assemble the final reason text from the three enrichment layers.
- * Order matters:
+ * Assemble the final reason text from the enrichment layers. Order
+ * matters:
  *
  *   1. Pause-Stop-Hide prefix (2.2.2) when it applies — this is the
  *      most general framing and sets context.
@@ -254,15 +256,22 @@ function emitJsCandidates(
  *      "note: callback runs at ~N Hz…". Suffixed (not prefixed) so
  *      existing assertions on `coreReason`/`PAUSE_STOP_HIDE_PREFIX`
  *      keep passing.
+ *   4. Minified-file locator clause suffixed when the file is
+ *      minified (Q6-MINIFIED-FILE-SNIPPET-COLUMN-ENRICHMENT) — the
+ *      cited `line:column` pointer alone is unhelpful on a single-
+ *      line file, so this clause adds the byte-column offset and a
+ *      ~80-char context window so the agent can locate the specific
+ *      call-site among N same-line matches.
  */
 function buildReason(
   coreReason: string,
   pauseStopHide: boolean,
   flash: FlashEvidence | null,
+  minifiedClause: string,
 ): string {
   const prefix = pauseStopHide ? PAUSE_STOP_HIDE_PREFIX : "";
   const flashSuffix = flash ? ` ${flashClause(flash)}` : "";
-  return `${prefix}${coreReason}${flashSuffix}`;
+  return `${prefix}${coreReason}${flashSuffix}${minifiedClause}`;
 }
 
 /**
