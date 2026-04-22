@@ -94,6 +94,20 @@ function mkViolationAt(ruleId: string, filePath: string): Violation {
   };
 }
 
+function mkViolationWithClass(ruleId: string, filePath: string, classEvidence: string): Violation {
+  return {
+    ruleId,
+    fixClass: "verify-in-source",
+    criteria: ["wcag22:4.1.2"],
+    severity: "info",
+    location: { filePath, line: 1, column: 1 },
+    message: "test",
+    findingId: `${ruleId}-${filePath}-${classEvidence}-fid`,
+    groupKey: `${ruleId}-gk`,
+    classEvidence,
+  };
+}
+
 describe("buildPerRuleCoverage", () => {
   it("marks a rule with 0 eligible files as low confidence with reason + remediation", () => {
     const rules = [mkRule("contrast/minimum", [".css"])];
@@ -470,5 +484,203 @@ describe("buildPerRuleCoverage", () => {
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("high");
     expect(row!.concentration).toEqual({ file: "site/dense.html", count: 12 });
+  });
+
+  // Class-pattern concentration rollup: the canonical acute case is
+  // `aria/icon-font-hidden` firing many times across sibling buttons
+  // in one file, all sharing the same `fa fa-*` idiom. The rollup
+  // names that (file, pattern) cluster so one file read triages many
+  // candidates instead of N. Zero information loss — every finding
+  // still ships in `files[].findings`.
+  it("emits classPatternConcentration when a Font Awesome idiom dominates one file", () => {
+    const rules = [mkRule("aria/icon-font-hidden", [".html"])];
+    const violations: Violation[] = [
+      ...Array.from({ length: 12 }, (_, i) =>
+        mkViolationWithClass("aria/icon-font-hidden", "site/admin.html", `fa fa-glyph-${i % 3}`),
+      ),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({ "aria/icon-font-hidden": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      violations,
+      5,
+    );
+    const [row] = entries;
+    expect(row!.classPatternConcentration).toBeDefined();
+    expect(row!.classPatternConcentration).toHaveLength(1);
+    const [cluster] = row!.classPatternConcentration!;
+    expect(cluster!.file).toBe("site/admin.html");
+    expect(cluster!.count).toBe(12);
+    expect(cluster!.classPattern).toBe("fa fa-*");
+    // Samples: up to 3 distinct class values, sorted deterministically.
+    expect(cluster!.samples).toEqual(["fa fa-glyph-0", "fa fa-glyph-1", "fa fa-glyph-2"]);
+  });
+
+  it("omits classPatternConcentration for rules not in the opt-in registry", () => {
+    // `forms/autocomplete-missing` doesn't participate in the rollup —
+    // even 50 findings on one file with the same classEvidence must
+    // not produce a classPatternConcentration row (the rollup is
+    // explicit opt-in to avoid leaking rule-family coupling into every
+    // rule's coverage entry).
+    const rules = [mkRule("forms/autocomplete-missing", [".html"])];
+    const violations: Violation[] = Array.from({ length: 50 }, () =>
+      mkViolationWithClass("forms/autocomplete-missing", "site/a.html", "fa fa-times"),
+    );
+    const entries = buildPerRuleCoverage(
+      tracker({ "forms/autocomplete-missing": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      violations,
+      5,
+    );
+    const [row] = entries;
+    expect(Object.hasOwn(row!, "classPatternConcentration")).toBe(false);
+    expect(row!.classPatternConcentration).toBeUndefined();
+  });
+
+  it("omits classPatternConcentration when cluster size is below the floor (9 findings)", () => {
+    const rules = [mkRule("aria/icon-font-hidden", [".html"])];
+    const violations: Violation[] = Array.from({ length: 9 }, () =>
+      mkViolationWithClass("aria/icon-font-hidden", "site/a.html", "fa fa-times"),
+    );
+    const entries = buildPerRuleCoverage(
+      tracker({ "aria/icon-font-hidden": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      violations,
+      5,
+    );
+    const [row] = entries;
+    expect(Object.hasOwn(row!, "classPatternConcentration")).toBe(false);
+  });
+
+  it("emits classPatternConcentration at the inclusive count boundary (exactly 10)", () => {
+    const rules = [mkRule("aria/icon-font-hidden", [".html"])];
+    const violations: Violation[] = Array.from({ length: 10 }, () =>
+      mkViolationWithClass("aria/icon-font-hidden", "site/a.html", "fa fa-times"),
+    );
+    const entries = buildPerRuleCoverage(
+      tracker({ "aria/icon-font-hidden": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      violations,
+      5,
+    );
+    const [row] = entries;
+    const [cluster] = row!.classPatternConcentration!;
+    expect(cluster!.count).toBe(10);
+    expect(cluster!.classPattern).toBe("fa fa-*");
+  });
+
+  it("omits classPatternConcentration when the dominant pattern's share is below 80%", () => {
+    // 10 findings on `site/a.html` split 7 `fa`/3 `material-icons` —
+    // neither pattern individually clears the 80% share gate even
+    // though the total clears the count floor.
+    const rules = [mkRule("aria/icon-font-hidden", [".html"])];
+    const violations: Violation[] = [
+      ...Array.from({ length: 7 }, () =>
+        mkViolationWithClass("aria/icon-font-hidden", "site/a.html", "fa fa-home"),
+      ),
+      ...Array.from({ length: 3 }, () =>
+        mkViolationWithClass("aria/icon-font-hidden", "site/a.html", "material-icons"),
+      ),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({ "aria/icon-font-hidden": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      violations,
+      5,
+    );
+    const [row] = entries;
+    expect(Object.hasOwn(row!, "classPatternConcentration")).toBe(false);
+  });
+
+  it("rolls up clusters per file independently (two files, each with its own dominant pattern)", () => {
+    const rules = [mkRule("aria/icon-font-hidden", [".html"])];
+    const violations: Violation[] = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        mkViolationWithClass("aria/icon-font-hidden", "site/a.html", `fa fa-a-${i}`),
+      ),
+      ...Array.from({ length: 15 }, (_, i) =>
+        mkViolationWithClass("aria/icon-font-hidden", "site/b.html", `bi bi-b-${i}`),
+      ),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({ "aria/icon-font-hidden": { eligible: 2, evaluated: 2 } }),
+      rules,
+      passAllFilter,
+      violations,
+      5,
+    );
+    const [row] = entries;
+    expect(row!.classPatternConcentration).toHaveLength(2);
+    // Sorted by count descending.
+    const [first, second] = row!.classPatternConcentration!;
+    expect(first!.file).toBe("site/b.html");
+    expect(first!.classPattern).toBe("bi bi-*");
+    expect(first!.count).toBe(15);
+    expect(second!.file).toBe("site/a.html");
+    expect(second!.classPattern).toBe("fa fa-*");
+    expect(second!.count).toBe(10);
+  });
+
+  it("skips violations without classEvidence (honest — no evidence, no cluster membership)", () => {
+    const rules = [mkRule("aria/icon-font-hidden", [".html"])];
+    // 10 findings with classEvidence → cluster qualifies.
+    // 5 findings WITHOUT classEvidence on the same file → not included
+    // in the cluster tally OR the share denominator (e.g. `<ion-icon>`
+    // custom elements that key off tag name, not class).
+    const withEvidence = Array.from({ length: 10 }, () =>
+      mkViolationWithClass("aria/icon-font-hidden", "site/a.html", "fa fa-times"),
+    );
+    const withoutEvidence = Array.from({ length: 5 }, () =>
+      mkViolationAt("aria/icon-font-hidden", "site/a.html"),
+    );
+    const entries = buildPerRuleCoverage(
+      tracker({ "aria/icon-font-hidden": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      [...withEvidence, ...withoutEvidence],
+      5,
+    );
+    const [row] = entries;
+    expect(row!.findingsEmitted).toBe(15);
+    const [cluster] = row!.classPatternConcentration!;
+    expect(cluster!.count).toBe(10);
+    expect(cluster!.classPattern).toBe("fa fa-*");
+  });
+
+  it("caps samples at 3 distinct class values per cluster", () => {
+    const rules = [mkRule("aria/icon-font-hidden", [".html"])];
+    // 10 findings, 5 distinct classEvidence values — samples should
+    // surface the first 3 distinct values seen, not all 5.
+    const distinctEvidence = [
+      "fa fa-home",
+      "fa fa-user",
+      "fa fa-cog",
+      "fa fa-times",
+      "fa fa-search",
+    ];
+    const violations: Violation[] = Array.from({ length: 10 }, (_, i) =>
+      mkViolationWithClass(
+        "aria/icon-font-hidden",
+        "site/a.html",
+        distinctEvidence[i % distinctEvidence.length] ?? "fa",
+      ),
+    );
+    const entries = buildPerRuleCoverage(
+      tracker({ "aria/icon-font-hidden": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      violations,
+      5,
+    );
+    const [row] = entries;
+    const [cluster] = row!.classPatternConcentration!;
+    expect(cluster!.samples).toHaveLength(3);
+    // Samples sorted — deterministic regardless of insertion order.
+    expect(cluster!.samples).toEqual(["fa fa-cog", "fa fa-home", "fa fa-user"]);
   });
 });
