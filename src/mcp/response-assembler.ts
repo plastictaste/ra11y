@@ -166,8 +166,22 @@ function findingFilePathSet(violations: readonly Violation[]): Set<string> {
   return out;
 }
 
-/** Groups violations into AgentFile buckets keyed by path; sorted deterministically. */
-function groupByFile(violations: readonly Violation[]): AssembledFile[] {
+/**
+ * Groups violations into AgentFile buckets keyed by path; sorted
+ * deterministically by codepoint order.
+ *
+ * Exported so scan-adjacent handlers that emit bespoke outer shapes —
+ * `baseline.check` returns `{ mode, isPassing, newViolationCount, files,
+ * resolvedEntries, … }`, not the scan-family `{ plan, files, meta }`
+ * envelope — can still share the per-file grouping seam. The full
+ * {@link assembleScanFamilyResponse} entrypoint is wrong for those
+ * handlers (ADR 0024 / V1-RESPONSE-FIX-FAMILY: forcing them through
+ * the assembler would sum categorically different meta shapes), but
+ * the `files` sub-tree is identical in kind: a sorted list of
+ * `{ path, findings }` buckets where each finding is
+ * `buildAgentFinding(v, { suppressPlacement: "omit" })`.
+ */
+export function groupByFile(violations: readonly Violation[]): AssembledFile[] {
   const byPath = new Map<string, Violation[]>();
   for (const v of violations) {
     const bucket = byPath.get(v.location.filePath);

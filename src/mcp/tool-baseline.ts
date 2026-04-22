@@ -33,13 +33,12 @@ import {
   writeBaseline,
 } from "../engine/baseline.ts";
 import { runScan } from "../engine/scanner.ts";
-import { type AgentFinding, buildAgentFinding } from "../output/agent-response/index.ts";
 import type { ScanResult } from "../types/violation.ts";
+import { type AssembledFile, groupByFile } from "./response-assembler.ts";
 import type { McpSession } from "./session.ts";
 import {
   applyRuleSettings,
   errorResult,
-  groupViolationsByFile,
   type McpTool,
   type McpToolResult,
   parseFiles,
@@ -254,15 +253,12 @@ async function handleCheck(
   }
 
   const diff = diffAgainstBaseline(result, baseline);
-  const grouped = groupViolationsByFile(diff.newViolations);
-  const files: readonly { readonly path: string; readonly findings: readonly AgentFinding[] }[] = [
-    ...grouped.entries(),
-  ]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([path, violations]) => ({
-      path,
-      findings: violations.map((v) => buildAgentFinding(v, { suppressPlacement: "omit" })),
-    }));
+  // Share the scan-family per-file grouping seam (V1-RESPONSE-FIX-FAMILY):
+  // `baseline.check` emits a bespoke outer envelope so it cannot flow
+  // through `assembleScanFamilyResponse`, but the `files` sub-tree is
+  // identical in kind — sorted `{ path, findings }` buckets where each
+  // finding is `buildAgentFinding(v, { suppressPlacement: "omit" })`.
+  const files: readonly AssembledFile[] = groupByFile(diff.newViolations);
 
   return textResult({
     mode: "check",
@@ -324,10 +320,7 @@ function buildUpdateNextStep(
   return `Baseline rewritten — ${delta}. ${entries} ${entries === 1 ? "entry" : "entries"} total. Commit the updated file.`;
 }
 
-function buildCheckNextStep(
-  diff: BaselineDiff,
-  files: readonly { readonly path: string; readonly findings: readonly AgentFinding[] }[],
-): string {
+function buildCheckNextStep(diff: BaselineDiff, files: readonly AssembledFile[]): string {
   if (diff.newViolations.length > 0) {
     const noun = diff.newViolations.length === 1 ? "violation" : "violations";
     const first = firstFinding(files);
@@ -350,9 +343,7 @@ interface FirstFinding {
   readonly ruleId: string;
 }
 
-function firstFinding(
-  files: readonly { readonly path: string; readonly findings: readonly AgentFinding[] }[],
-): FirstFinding | null {
+function firstFinding(files: readonly AssembledFile[]): FirstFinding | null {
   for (const file of files) {
     for (const finding of file.findings) {
       return { path: file.path, line: finding.line, ruleId: finding.ruleId };
