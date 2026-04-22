@@ -458,6 +458,10 @@ export interface ScanWarningDetails {
   };
 }
 
+function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
+  return rootSource === "git" || rootSource === "spawn-cwd";
+}
+
 /**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
@@ -465,7 +469,7 @@ export interface ScanWarningDetails {
 export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
   if (inputs.filesScanned === 0) out.push("scanned_zero_files");
-  if (inputs.rootSource === "git" || inputs.rootSource === "spawn-cwd") {
+  if (rootSourceIsDefaulted(inputs.rootSource)) {
     out.push("root_source_defaulted");
   }
   if (inputs.configSource === null) out.push("no_config_found");

@@ -12,7 +12,6 @@ import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
-import { computeTemplateDirectiveOverlap } from "./warnings.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
 import {
@@ -27,6 +26,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+import { computeTemplateDirectiveOverlap } from "./warnings.ts";
 
 export const coverageTool: McpTool = {
   def: {
