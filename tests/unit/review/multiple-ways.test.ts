@@ -267,4 +267,130 @@ describe("review/multiple-ways", () => {
       expect(out.length).toBe(4);
     });
   });
+
+  describe("single-page-scope annotation", () => {
+    // Per AI-first doctrine the candidate always surfaces — this
+    // annotation is additive context the agent uses to dismiss a
+    // genuinely standalone single-page file in one read. SC 2.4.5
+    // scopes to "sets of Web pages", so an HTML file with no anchors
+    // pointing at sibling HTML pages is a valid dismissal signal.
+    it("annotates a standalone HTML file with zero sibling-HTML links", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out[0]?.reason).toContain("sets of Web pages");
+      expect(out[0]?.reason).toContain("standalone single-page");
+    });
+
+    it("annotates when only fragment / mailto / javascript hrefs are present", () => {
+      // None of these count as sibling-HTML-page links — fragment
+      // anchors stay on-page, mailto opens a mail client, and
+      // javascript: is an inline action.
+      const source = `
+        <html>
+          <body>
+            <a href="#top">Top</a>
+            <a href="mailto:me@example.com">Email</a>
+            <a href="javascript:void(0)">Action</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out[0]?.reason).toContain("sets of Web pages");
+    });
+
+    it("does NOT add the single-page hint when a sibling .html link is present", () => {
+      // `<a href="about.html">` means this file is part of a
+      // multi-page set — the single-page dismissal is not available.
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+            <a href="about.html">About</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out[0]?.reason).not.toContain("sets of Web pages");
+      expect(out[0]?.reason).not.toContain("standalone single-page");
+    });
+
+    it("does NOT add the single-page hint for a relative sibling .htm link", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+            <a href="./pages/contact.htm">Contact</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out[0]?.reason).not.toContain("sets of Web pages");
+    });
+
+    it("treats external http(s) links as NOT sibling-HTML-page evidence", () => {
+      // https://other-site/page.html is someone else's page set, not
+      // ours — a single-page file that links out to external docs is
+      // still a single-page file.
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+            <a href="https://example.com/docs.html">External</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out[0]?.reason).toContain("sets of Web pages");
+    });
+
+    it("SPA-shell annotation takes precedence over the single-page hint", () => {
+      // The SPA-shell evidence is stronger and redirects the agent to
+      // the router config rather than the generic single-page question.
+      const source = `
+        <html>
+          <body>
+            <div id="root"></div>
+            <script type="module" src="/src/main.tsx"></script>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out[0]?.reason).toContain("SPA index shell");
+      expect(out[0]?.reason).not.toContain("sets of Web pages");
+    });
+
+    it("still emits all four cross-standard candidates (never suppresses)", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out.length).toBe(4);
+    });
+
+    it("does NOT add the single-page hint to JSX root layouts", () => {
+      // JSX layout components belong to a multi-page routing context
+      // by construction — the href-chain signal doesn't translate.
+      const source = `
+        export function Shell() {
+          return (
+            <Layout>
+              <main>Dashboard</main>
+            </Layout>
+          );
+        }
+      `;
+      const out = runFinder(finder, source, { filePath: "shell.tsx" });
+      expect(out[0]?.reason).not.toContain("sets of Web pages");
+    });
+  });
 });

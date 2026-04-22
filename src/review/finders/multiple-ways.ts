@@ -73,9 +73,33 @@ function findHtmlCandidates(ctx: FileContext, root: HtmlDocument): readonly Revi
   // signal because the nav lives in JS. Annotate the candidate so the
   // agent redirects its review to the router config instead of trying
   // to fix "missing nav" in the index HTML.
-  const spaHint = looksLikeSpaShell(root) ? SPA_SHELL_HINT : null;
+  //
+  // Standalone single-page HTML files (hobby sites, form-only pages,
+  // a single prototype) also carry no multi-page signal by definition
+  // — SC 2.4.5 scopes to "sets of Web pages", so the criterion may
+  // not apply at all. The deterministic in-file signal is the absence
+  // of any anchor whose href targets a sibling HTML page. Per
+  // AI-first doctrine we never suppress on a heuristic — the
+  // candidate stays in the primary list; the reason string picks up
+  // additive context so the agent can dismiss a genuinely standalone
+  // file in one read. SPA shells get their own annotation (emptier
+  // evidence: no outbound links AND a mount-div + module-script pair)
+  // and take precedence over the generic single-page hint.
+  const annotation = pickHtmlAnnotation(root);
   const signals = summarizeHtmlSignals(root);
-  return candidatesForAllCriteria(ctx.filePath, location.line, location.column, signals, spaHint);
+  return candidatesForAllCriteria(
+    ctx.filePath,
+    location.line,
+    location.column,
+    signals,
+    annotation,
+  );
+}
+
+function pickHtmlAnnotation(root: HtmlDocument): string | null {
+  if (looksLikeSpaShell(root)) return SPA_SHELL_HINT;
+  if (!hasSiblingHtmlPageLink(root)) return SINGLE_PAGE_SCOPE_HINT;
+  return null;
 }
 
 function findJsxCandidates(ctx: FileContext, root: TsxModule): readonly ReviewCandidate[] {
@@ -386,6 +410,49 @@ function formatSignalSummary(s: SignalSummary): string {
 
 const SPA_SHELL_HINT =
   "this HTML looks like an SPA index shell (root mount div + module bundle script); navigation likely lives in the client-side router config, not this file";
+
+const SINGLE_PAGE_SCOPE_HINT =
+  "no anchors target a sibling HTML page from this file — SC 2.4.5 applies to sets of Web pages, so if this is a standalone single-page file or SPA, the criterion may not apply; verify whether the scanned file is part of a multi-page set";
+
+const HTML_PAGE_HREF_RE = /\.html?(?:$|[?#])/i;
+const NON_NAVIGABLE_SCHEME_RE = /^(?:mailto:|tel:|sms:|javascript:|data:|blob:|about:)/i;
+
+/**
+ * Does any anchor in the file link to what looks like a sibling HTML
+ * page? A positive signal means the file participates in a multi-page
+ * set (the classic `<a href="about.html">` chain) and the generic
+ * single-page-scope hint does not apply. Fragment-only (`#id`),
+ * mailto/tel/javascript, and external URLs (http(s)://) do not count
+ * — only same-origin paths ending in `.html`/`.htm`. The check is
+ * intentionally narrow: we want a *deterministic* yes/no, not a
+ * heuristic about "probably another page on this site." If the author
+ * links to routes without an extension (`/about`, `/pricing`), the
+ * finder falls back to the single-page hint — which is honest, since
+ * from the HTML alone we can't tell whether `/about` is a sibling
+ * static file or a client-side route.
+ */
+function hasSiblingHtmlPageLink(root: HtmlDocument): boolean {
+  for (const el of walkHtmlElements(root)) {
+    if (el.tagName.toLowerCase() !== "a") continue;
+    const href = getHtmlAttribute(el, "href");
+    if (!isSiblingHtmlPageHref(href)) continue;
+    return true;
+  }
+  return false;
+}
+
+function isSiblingHtmlPageHref(href: string | null): boolean {
+  if (href === null) return false;
+  const trimmed = href.trim();
+  if (trimmed === "") return false;
+  if (trimmed.startsWith("#")) return false;
+  if (NON_NAVIGABLE_SCHEME_RE.test(trimmed)) return false;
+  // External URLs (http(s)://, //cdn...) point to some other domain's
+  // page set, not ours. A single-page file might legitimately link
+  // out to external docs without becoming "multi-page."
+  if (/^(?:https?:)?\/\//i.test(trimmed)) return false;
+  return HTML_PAGE_HREF_RE.test(trimmed);
+}
 
 const SPA_MOUNT_ID_RE = /^(?:root|app|__next|___gatsby|main|mount)$/;
 
