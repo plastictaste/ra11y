@@ -34,15 +34,15 @@ import type { FixtureAssertions } from "../runner.ts";
 
 export const assertions: FixtureAssertions = {
   description:
-    "forms/autocomplete-missing does not fire on site-search inputs — type=\"search\", " +
-    "role=\"searchbox\", or name/id/aria-label matching search tokens — because WCAG " +
-    "1.3.5 Input Purposes does not enumerate \"search\" as a purpose.",
+    'forms/autocomplete-missing does not fire on site-search inputs — type="search", ' +
+    'role="searchbox", or name/id/aria-label matching search tokens — because WCAG ' +
+    '1.3.5 Input Purposes does not enumerate "search" as a purpose.',
   origin: {
     notes:
-      "Jekyll docs/_includes/header.html ships `<input type=\"search\" aria-label=\"Search\">` " +
+      'Jekyll docs/_includes/header.html ships `<input type="search" aria-label="Search">` ' +
       "for docsearch. The rule was firing on similar patterns where a name/id heuristic " +
-      "matched (e.g. `id=\"search-user-email\"` triggering the email needle) because the " +
-      "matchPurpose carve-out `type !== \"search\"` let search-typed inputs fall through " +
+      'matched (e.g. `id="search-user-email"` triggering the email needle) because the ' +
+      'matchPurpose carve-out `type !== "search"` let search-typed inputs fall through ' +
       "to the name/id branch. The autocomplete-token set has no entry for search; flagging " +
       "is spec-incorrect, not a noise-reduction tradeoff.",
   },

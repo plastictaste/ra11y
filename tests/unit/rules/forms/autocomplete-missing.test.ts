@@ -128,11 +128,9 @@ describe("rule forms/autocomplete-missing", () => {
       // that let search-typed inputs fall through to name/id matching.
       // An id like "search-user-email" would match the email needle and
       // fire with suggestion="autocomplete=email" on a search box.
-      const violations = runRule(
-        rule,
-        `<input type="search" id="search-user-email" name="q">`,
-        { filePath: "index.html" },
-      );
+      const violations = runRule(rule, `<input type="search" id="search-user-email" name="q">`, {
+        filePath: "index.html",
+      });
       expect(violations).toHaveLength(0);
     });
 
