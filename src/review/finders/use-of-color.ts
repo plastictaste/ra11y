@@ -17,6 +17,7 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
+  htmlTextContent,
   jsxTextContent,
   walkHtmlElements,
   walkJsxElements,
@@ -92,7 +93,8 @@ function findHtmlCandidates(
     const matched = className ? STATUS_COLOR_CLASS.exec(className)?.[0] : undefined;
     if (!matched) continue;
     if (htmlElementHasNonColorSignal(el)) continue;
-    emit(filePath, el.loc.start, matched, candidates);
+    const hasVisibleText = htmlTextContent(el).length > 0;
+    emit(filePath, el.loc.start, matched, hasVisibleText, candidates);
   }
 }
 
@@ -102,7 +104,8 @@ function findJsxCandidates(root: TsxModule, filePath: string, candidates: Review
     const matched = className ? STATUS_COLOR_CLASS.exec(className)?.[0] : undefined;
     if (!matched) continue;
     if (jsxElementHasNonColorSignal(el)) continue;
-    emit(filePath, el.loc.start, matched, candidates);
+    const hasVisibleText = jsxTextContent(el).length > 0;
+    emit(filePath, el.loc.start, matched, hasVisibleText, candidates);
   }
 }
 
@@ -152,9 +155,24 @@ function emit(
   filePath: string,
   loc: { line: number; column: number },
   matched: string,
+  hasVisibleText: boolean,
   candidates: ReviewCandidate[],
 ): void {
-  const reason = `className uses status color "${matched}" with no visible text, icon, or aria-label -- verify color is not the sole signal`;
+  // Two reason variants. The element has already been filtered for
+  // aria-label, title, status-word text, shape-signal glyph, and
+  // icon-sibling at the call site — so at emit time the only remaining
+  // distinction is whether the element has any visible text at all.
+  //
+  // Variant A (text present): the class might just style the text
+  // color; the question is whether the state would still be
+  // recoverable if the text were gray. Frame the check that way.
+  //
+  // Variant B (no text): the element is icon-only / empty; keep the
+  // original "no visible text, icon, or aria-label" framing because
+  // there is literally nothing else for a colorblind user to read.
+  const reason = hasVisibleText
+    ? `className uses status color "${matched}" on an element with visible text -- color-only indicator check: verify the state is not conveyed by "${matched}" alone; ensure a non-color affordance (icon, label, underline) is present`
+    : `className uses status color "${matched}" with no visible text, icon, or aria-label -- verify color is not the sole signal`;
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": className-regex on status-color utility
     // tokens (red/green/danger/success…) combined with an absence-

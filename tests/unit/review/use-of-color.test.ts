@@ -89,4 +89,48 @@ describe("review/use-of-color", () => {
     expect(ids.has("wcag22:1.4.1")).toBe(true);
     expect(ids.has("wcag21:1.4.1")).toBe(true);
   });
+
+  it("emits the 'visible text' variant when the element has non-status-word text (JSX)", () => {
+    // Real-world repro: Bootstrap docs html-colors fixture renders
+    // <strong class="... text-success-emphasis">Design</strong>. The
+    // textContent is "Design" — not a status word, not a shape glyph —
+    // so the element isn't filtered, but the reason must not claim
+    // "no visible text."
+    const source = `const x = <strong className="text-success-emphasis">Design</strong>;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).not.toContain("no visible text");
+      expect(c.reason).toContain("color-only indicator check");
+      expect(c.reason).toContain("text-success");
+    }
+  });
+
+  it("emits the 'visible text' variant when HTML element has non-status-word text", () => {
+    const source = `<strong class="text-success-emphasis">Design</strong>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).not.toContain("no visible text");
+      expect(c.reason).toContain("color-only indicator check");
+    }
+  });
+
+  it("emits the 'no visible text' variant when JSX element is empty", () => {
+    const source = `const x = <span className="text-red-600" />;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).toContain("no visible text");
+    }
+  });
+
+  it("emits the 'no visible text' variant when HTML element is empty", () => {
+    const source = `<span class="text-red-600"></span>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).toContain("no visible text");
+    }
+  });
 });
