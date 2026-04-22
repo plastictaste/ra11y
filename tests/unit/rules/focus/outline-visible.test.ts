@@ -300,10 +300,7 @@ describe("rule focus/outline-visible", () => {
     it("stays at info when the class is applied to <a> without href", () => {
       const v = scanFiles([
         cssFile("styles.css", `.bare:focus { outline: none; }`),
-        htmlFile(
-          "index.html",
-          `<!doctype html><html><body><a class="bare">X</a></body></html>`,
-        ),
+        htmlFile("index.html", `<!doctype html><html><body><a class="bare">X</a></body></html>`),
       ]);
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("info");
@@ -326,17 +323,14 @@ describe("rule focus/outline-visible", () => {
     it("upgrades to error when the class is applied to <input> with no type", () => {
       const v = scanFiles([
         cssFile("styles.css", `.field:focus { outline: none; }`),
-        htmlFile(
-          "index.html",
-          `<!doctype html><html><body><input class="field"></body></html>`,
-        ),
+        htmlFile("index.html", `<!doctype html><html><body><input class="field"></body></html>`),
       ]);
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("error");
     });
 
     // Gate (a): role="button" on a div counts as interactive.
-    it("upgrades to error when the class is applied to a <div role=\"button\">", () => {
+    it('upgrades to error when the class is applied to a <div role="button">', () => {
       const v = scanFiles([
         cssFile("styles.css", `.rolebtn:focus { outline: none; }`),
         htmlFile(
@@ -352,10 +346,7 @@ describe("rule focus/outline-visible", () => {
     it("upgrades to error when the class is applied to a JSX <button>", () => {
       const v = scanFiles([
         cssFile("styles.css", css),
-        tsxFile(
-          "App.tsx",
-          `export const App = () => <button className="magic">Go</button>;`,
-        ),
+        tsxFile("App.tsx", `export const App = () => <button className="magic">Go</button>;`),
       ]);
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("error");
@@ -367,10 +358,7 @@ describe("rule focus/outline-visible", () => {
     it("stays at info when the class appears only on a capitalized React component", () => {
       const v = scanFiles([
         cssFile("styles.css", css),
-        tsxFile(
-          "App.tsx",
-          `export const App = () => <Button className="magic">Go</Button>;`,
-        ),
+        tsxFile("App.tsx", `export const App = () => <Button className="magic">Go</Button>;`),
       ]);
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("info");
