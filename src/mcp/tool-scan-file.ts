@@ -40,8 +40,16 @@ import { buildWrapperSourcesFromConfig } from "./wrappers-meta.ts";
 // honest as the parser registry grows — a new `.vue` or `.svelte`
 // parser lands in src/utils/path.ts's `PARSEABLE_EXTENSIONS` and the
 // remediation updates in lockstep, rather than drifting into a stale
-// hardcoded list at the two early-exit sites below.
-const SCAN_FILE_UNSUPPORTED_REMEDIATION = `Pass a file with one of these extensions that exists on disk: ${parseableExtensions().join(", ")}.`;
+// hardcoded list at the `file-unsupported` early-exit site below.
+// `file-not-found` carries a separate remediation that frames the
+// path-on-disk check (distinct from the extension-not-supported case
+// per Q-SHARED-SCAN-FILE-ERROR-DISCRIMINATION) so the agent branches
+// on the right recovery without re-reading prose.
+const SCAN_FILE_UNSUPPORTED_REMEDIATION = `Pass a file with one of these extensions: ${parseableExtensions().join(", ")}.`;
+const SCAN_FILE_NOT_FOUND_REMEDIATION =
+  "Verify the path exists on disk. Relative paths resolve against `cwd` (defaults to the MCP server's spawn directory).";
+const SCAN_FILE_READ_FAILED_REMEDIATION =
+  "The file exists and has a supported extension, but the scanner could not read or parse it. Inspect `details.cause`; fix permissions or encoding issues, then retry.";
 
 export const scanFileTool: McpTool = {
   def: {
@@ -85,17 +93,30 @@ export const scanFileTool: McpTool = {
       });
     }
 
-    // Pre-check existence so a missing file produces the same tool-level
-    // error envelope as an unsupported extension, instead of ENOENT
-    // escaping `parseFile` and degrading to a JSON-RPC protocol error
-    // that the caller can't `isError`-branch on like the other tools.
+    // Q-SHARED-SCAN-FILE-ERROR-DISCRIMINATION: split the umbrella
+    // `file-unsupported` code into three distinct codes matching the
+    // `suppress` tool's three-code convention so an agent can branch
+    // on the actual failure mode:
+    //   - `file-not-found`     — path does not exist on disk
+    //   - `file-unsupported`   — extension not in PARSEABLE_EXTENSIONS
+    //   - `file-read-failed`   — exists + supported, but IO/permission
+    //                            blocked the read or parse
+    // Doctrine: "Ambiguous field shapes are dishonest." One code per
+    // failure mode so the agent's recovery action (retry on permission
+    // fix, pick a different file on extension mismatch, re-check the
+    // path on not-found) stays deterministic.
     const scanFileCwd = strParam(params, "cwd");
     if (!(await pathExists(filePath, scanFileCwd))) {
-      return unsupportedResult(filePath);
+      return fileNotFoundResult(filePath);
     }
 
-    const parsed = await session.parseFile(filePath, scanFileCwd);
-    if (!parsed) return unsupportedResult(filePath);
+    let parsed: ParsedFile | null;
+    try {
+      parsed = await session.parseFile(filePath, scanFileCwd);
+    } catch (err) {
+      return fileReadFailedResult(filePath, err);
+    }
+    if (!parsed) return unsupportedExtensionResult(filePath);
 
     // Resolve the directory to search for ra11y.config.* and to feed the
     // scanner. Mirrors scan_project's precedence: explicit cwd wins;
@@ -158,13 +179,51 @@ export const scanFileTool: McpTool = {
   },
 };
 
-/** Structured error for the file-not-found / unsupported-extension branches. */
-function unsupportedResult(filePath: string): McpToolResult {
+/**
+ * Structured error for a file path that does not exist on disk. Split
+ * from the umbrella `file-unsupported` per Q-SHARED-SCAN-FILE-ERROR-
+ * DISCRIMINATION so an agent can tell "the path you passed isn't
+ * there" from "the extension isn't supported" from "the file exists
+ * but couldn't be read" — three distinct recovery actions.
+ */
+function fileNotFoundResult(filePath: string): McpToolResult {
+  return errorResult({
+    code: "file-not-found",
+    message: `File not found: ${filePath}`,
+    details: { filePath },
+    remediation: SCAN_FILE_NOT_FOUND_REMEDIATION,
+  });
+}
+
+/**
+ * Structured error for a file whose extension is not in
+ * `PARSEABLE_EXTENSIONS`. Reached only after the path-exists pre-check
+ * passes, so this is unambiguously the extension-filter branch — never
+ * a missing file. Remediation enumerates the live parser registry so
+ * it stays honest as the set grows.
+ */
+function unsupportedExtensionResult(filePath: string): McpToolResult {
   return errorResult({
     code: "file-unsupported",
-    message: `Unsupported or unreadable file: ${filePath}`,
+    message: `Unsupported file extension: ${filePath}`,
     details: { filePath },
     remediation: SCAN_FILE_UNSUPPORTED_REMEDIATION,
+  });
+}
+
+/**
+ * Structured error for the exists-and-supported-but-unreadable case
+ * (EACCES, encoding failures escaping `readFile`, symlink loops, etc.).
+ * `details.cause` carries the underlying error message so the agent can
+ * pick a recovery action without re-running the call under a debugger.
+ */
+function fileReadFailedResult(filePath: string, err: unknown): McpToolResult {
+  const cause = err instanceof Error ? err.message : String(err);
+  return errorResult({
+    code: "file-read-failed",
+    message: `Failed to read ${filePath}: ${cause}`,
+    details: { filePath, cause },
+    remediation: SCAN_FILE_READ_FAILED_REMEDIATION,
   });
 }
 
