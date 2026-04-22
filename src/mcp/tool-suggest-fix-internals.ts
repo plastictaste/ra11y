@@ -34,39 +34,18 @@
  * directly.
  */
 
-import type { FixPath, Violation } from "../types/violation.ts";
-import { POISONED_NEWTEXT_CAVEAT, sanitizeFixPathAgainstPoison } from "./suggest-fix-sanitize.ts";
-import { widenToUniqueAnchor } from "./unique-anchor.ts";
+import type { Violation } from "../types/violation.ts";
+import {
+  deriveApproachFromProse,
+  type VerifyCommandStructured,
+} from "./suggest-fix-guidance-shape.ts";
+import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
 
-/**
- * Machine-parseable verify hint. `tool` is always `"scan_file"` — the
- * narrowest, most deterministic verify surface (one file, one pass).
- * `scan_project` is deliberately NOT used here: broader scans dilute
- * the honest signal ("did this specific fix land?") with unrelated
- * findings and cost the agent a slower round-trip.
- *
- * `args.file` mirrors the `file` that was passed into `suggest_fix`
- * (canonical `file` parameter per P2-R, never re-derived). `args.ruleId`
- * is optional — included when the rule is known so the agent can
- * post-filter the verify scan's findings to the rule it just fixed.
- * `scan_file` itself doesn't filter by `ruleId`, so the field is
- * advisory: it documents "what you were trying to fix" for the
- * consumer, not a server-side filter.
- */
-export interface VerifyCommandStructured {
-  readonly tool: "scan_file";
-  readonly args: {
-    readonly path: string;
-  };
-  /**
-   * Advisory metadata: the rule ID the caller just fixed. Sits as a
-   * sibling of `args` (not inside it) because `scan_file` has no
-   * `ruleId` parameter — encoding it in `args` would emit an
-   * undeclared key against the tool's inputSchema. Agents that want
-   * to post-filter the verify scan to only this rule can read it here.
-   */
-  readonly verifyRuleId: string;
-}
+// Re-export the shared shape so external consumers (tests, the tool
+// handler) continue to import it from this file verbatim — the type
+// was extracted to `suggest-fix-guidance-shape.ts` to break a circular
+// import between internals and the fixPaths branch.
+export type { VerifyCommandStructured };
 
 export interface BuildSuggestFixPayloadArgs {
   readonly ruleId: string;
@@ -130,43 +109,6 @@ function warningsSpreadField(warnings: readonly string[] | undefined): {
   return warnings !== undefined && warnings.length > 0 ? { warnings } : {};
 }
 
-/**
- * Derive a terse `approach` label from prose when the rule did not
- * supply a structured `FixPath.label` — used by the no-fixPaths
- * guidance branch where all we have is `match.suggestion` or
- * `match.message`. The label caps at the first sentence or ~80 chars
- * so the agent can glance at it; the full prose lives in `explanation`
- * alongside.
- */
-function deriveApproachFromProse(prose: string): string {
-  const trimmed = prose.trim();
-  // Prefer the first sentence (through terminal punctuation).
-  const sentenceMatch = trimmed.match(/^[^.!?\n]{1,120}[.!?]/);
-  const candidate = sentenceMatch ? sentenceMatch[0] : trimmed;
-  if (candidate.length <= 80) return candidate.replace(/[.!?]$/, "");
-  return `${candidate.slice(0, 77).trimEnd()}…`;
-}
-
-/**
- * Build the `alternatives` array for `kind: "guidance"` from the
- * rule's structured `FixPath[]`. Each entry carries an `approach`
- * (from the FixPath label) and an `explanation`. We reuse the
- * structured label as the explanation when no richer prose is
- * available — the label is the explanation at that grain — but keep
- * the two fields split because the advertised contract promises both.
- * Returns `undefined` when no alternatives exist; the caller conditional-
- * spreads the field to honor "present-when-meaningful."
- */
-function buildGuidanceAlternatives(
-  paths: readonly FixPath[],
-): ReadonlyArray<{ readonly approach: string; readonly explanation: string }> | undefined {
-  if (paths.length === 0) return undefined;
-  return paths.map((p) => ({
-    approach: p.label,
-    explanation: p.label,
-  }));
-}
-
 export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record<string, unknown> {
   const { ruleId, line, match, sourceContext, source, filePath, warnings } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
@@ -219,113 +161,6 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
       confidence: primaryConfidence,
     },
     ...snippetField,
-    ...verify,
-    ...warningsField,
-  };
-}
-
-/**
- * Builds the `kind: "edit"` or `kind: "guidance"` outcome when the
- * violation carries `fixPaths`. Extracted from `buildSuggestFixPayload`
- * to keep that function's cognitive complexity under the lint cap —
- * the widen-to-unique-anchor plumbing adds branching this function
- * absorbs.
- */
-function buildFixPathsOutcome(inputs: {
-  readonly match: Violation;
-  readonly source: string;
-  readonly line: number;
-  readonly sourceContext: string;
-  readonly confidence: "high" | "medium";
-  readonly snippetField: { readonly snippet?: string };
-  readonly verify: ReturnType<typeof buildVerifyCommand>;
-  readonly warningsField: { readonly warnings?: readonly string[] };
-}): Record<string, unknown> {
-  const { match, source, line, sourceContext, confidence, snippetField, verify, warningsField } =
-    inputs;
-  const fixPaths = match.fixPaths;
-  if (fixPaths === undefined) {
-    throw new Error(
-      "ra11y internal invariant: buildFixPathsOutcome called without match.fixPaths. This helper is only invoked from the `if (match.fixPaths)` branch of buildSuggestFixPayload; reaching it indicates a refactor missed a caller. Please file an issue with the ruleId of the offending match.",
-    );
-  }
-  // Sanitize both primary and alternatives against template-directive
-  // poisoning of `newText` BEFORE any widen step. A poisoned primary
-  // drops out of the mechanical-edit lane entirely — we don't want to
-  // widen or emit it — and alternatives are rebuilt with their
-  // poisoned structured edits stripped. See CLAUDE.md §1 "Ambiguous
-  // field shapes are dishonest" and docs/kb/architecture/ai-first-
-  // consumer.md "Surface, don't suppress": an honest drop + caveat
-  // beats a confident-wrong newText an agent might paste verbatim.
-  const sanitizedPrimary = sanitizeFixPathAgainstPoison(fixPaths.primary);
-  const sanitizedAlternatives = fixPaths.alternatives.map((alt) =>
-    sanitizeFixPathAgainstPoison(alt),
-  );
-  const anyPoisonDropped =
-    sanitizedPrimary.editDropped ||
-    sanitizedPrimary.candidateDropped ||
-    sanitizedAlternatives.some((a) => a.editDropped || a.candidateDropped);
-  const mechanical = sanitizedPrimary.path.edit;
-  const widened = mechanical
-    ? widenToUniqueAnchor({
-        source,
-        oldText: mechanical.oldText,
-        newText: mechanical.newText,
-        line,
-      })
-    : null;
-  const primary: FixPath = widened
-    ? {
-        ...sanitizedPrimary.path,
-        edit: { oldText: widened.oldText, newText: widened.newText },
-      }
-    : sanitizedPrimary.path;
-  const alternatives = sanitizedAlternatives.map((a) => a.path);
-  // Caveat precedence: the template-directive drop and the widen's
-  // "non-unique anchor" caveat are independent signals — concat when
-  // both fire so the agent sees both reasons. Unchanged otherwise.
-  const caveatParts: string[] = [];
-  if (anyPoisonDropped) caveatParts.push(POISONED_NEWTEXT_CAVEAT);
-  if (widened?.caveat) caveatParts.push(widened.caveat);
-  const caveatField = caveatParts.length > 0 ? { caveat: caveatParts.join(" ") } : {};
-  const explanation = match.suggestion ?? match.message;
-  if (mechanical) {
-    // Mechanical-edit lane: `primary` stays the structured `FixPath`
-    // (carrying `edit` / optional `editCandidate`) so agents can apply
-    // the find-and-replace directly. `alternatives` is always present
-    // — it is the rule's ranked list of other paths and remains a
-    // schema-required field on the edit shape.
-    return {
-      kind: "edit",
-      primary,
-      alternatives,
-      explanation,
-      ...snippetField,
-      ...caveatField,
-      sourceContext,
-      confidence,
-      ...verify,
-      ...warningsField,
-    };
-  }
-  // Guidance lane (Q-SHARED-SUGGEST-FIX-GUIDANCE-PRIMARY): nest
-  // `approach` + `explanation` + `sourceContext` + `confidence` under
-  // a ranked `primary` block, matching the tool description's
-  // advertised shape. `alternatives` is conditional-spread — omitted
-  // when there are no sibling paths (present-when-meaningful per
-  // CLAUDE.md §1 "Ambiguous field shapes are dishonest").
-  const guidanceAlternatives = buildGuidanceAlternatives(alternatives);
-  return {
-    kind: "guidance",
-    primary: {
-      approach: primary.label,
-      explanation,
-      sourceContext,
-      confidence,
-    },
-    ...(guidanceAlternatives ? { alternatives: guidanceAlternatives } : {}),
-    ...snippetField,
-    ...caveatField,
     ...verify,
     ...warningsField,
   };
