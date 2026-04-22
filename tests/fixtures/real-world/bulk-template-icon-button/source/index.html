@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Site</title>
+  <link rel="stylesheet" href="assets/css/font-awesome.min.css">
+</head>
+<body>
+
+<!--
+  Bootstrap 3 / Font Awesome pattern drawn from the website-templates
+  corpus (coffee-shop shape, sanitized). A navbar carries three icon-only
+  interactive controls:
+
+    1. A <button class="navbar-toggler"> with aria-label="Toggle navigation"
+       whose only child is <i class="fa fa-bars"> — no aria-hidden on the
+       icon (double-announce risk, labeled parent).
+
+    2. An <a href="#menu"> with aria-label="Shopping cart" whose only child
+       is <i class="fa fa-shopping-cart"> — same pattern, anchor variant.
+
+    3. An <a href="#search"> with aria-label="Search" whose only child is
+       <i class="fa fa-search"> — third instance, confirms bulk detection.
+
+  All three <i> elements lack aria-hidden="true" or role="presentation".
+  aria/icon-font-hidden must fire on all three.
+
+  Field observation: real-world scans of the website-templates corpus
+  emitted zero findings on these patterns (see Q6-ICON-FONT-LABELED-PARENT-
+  REGRESSION in the backlog). The labeled-parent predicate covers aria-label
+  on the parent; the fixture guards that bulk occurrences (multiple icons
+  per template, mixed button/anchor parents) are all detected.
+
+  Sanitization: brand names, marketing copy, and URL paths replaced with
+  neutral equivalents. Structure preserved verbatim from the original template.
+-->
+<nav class="navbar navbar-default">
+  <div class="container">
+    <div class="navbar-header">
+
+      <!-- Mobile toggle: labeled button wrapping a Font Awesome icon -->
+      <button type="button" class="navbar-toggler"
+              aria-label="Toggle navigation">
+        <i class="fa fa-bars"></i>
+      </button>
+
+    </div>
+
+    <div class="navbar-collapse collapse">
+      <ul class="nav navbar-nav navbar-right">
+        <li><a href="#home">Home</a></li>
+        <li><a href="#about">About</a></li>
+        <li><a href="#services">Services</a></li>
+        <li><a href="#contact">Contact</a></li>
+      </ul>
+
+      <!-- Utility icons: labeled anchors wrapping Font Awesome icons -->
+      <ul class="nav navbar-nav navbar-right navbar-icons">
+        <li>
+          <a href="#menu" class="cart-icon" aria-label="Shopping cart">
+            <i class="fa fa-shopping-cart"></i>
+          </a>
+        </li>
+        <li>
+          <a href="#search" class="search-icon" aria-label="Search">
+            <i class="fa fa-search"></i>
+          </a>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <h1>Welcome</h1>
+  <p>Page content.</p>
+</main>
+
+</body>
+</html>
