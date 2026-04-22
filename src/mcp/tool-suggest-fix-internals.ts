@@ -11,8 +11,14 @@
  *     payload carries a `caveat` string so the agent can disambiguate
  *     before applying.
  *   - `kind: "guidance"` — fixPaths without mechanical edits, or
- *     prose-only suggestion. The labels + snippet + sourceContext are
- *     enough for the agent to compose the edit.
+ *     prose-only suggestion. The response shape mirrors the tool's
+ *     advertised contract: a ranked `primary` approach carrying the
+ *     `approach` label + `explanation` prose + `sourceContext` +
+ *     `confidence`, plus an optional `alternatives` array (omitted when
+ *     only one approach is reasonable — CLAUDE.md §1 "Ambiguous field
+ *     shapes are dishonest"). `verifyCommand` +
+ *     `verifyCommandStructured` stay at top level. See Q-SHARED-SUGGEST-
+ *     FIX-GUIDANCE-PRIMARY.
  *
  * Every outcome also carries a `verifyCommand` (prose) +
  * `verifyCommandStructured` (`{ tool: "scan_file", args: { file,
@@ -124,6 +130,43 @@ function warningsSpreadField(warnings: readonly string[] | undefined): {
   return warnings !== undefined && warnings.length > 0 ? { warnings } : {};
 }
 
+/**
+ * Derive a terse `approach` label from prose when the rule did not
+ * supply a structured `FixPath.label` — used by the no-fixPaths
+ * guidance branch where all we have is `match.suggestion` or
+ * `match.message`. The label caps at the first sentence or ~80 chars
+ * so the agent can glance at it; the full prose lives in `explanation`
+ * alongside.
+ */
+function deriveApproachFromProse(prose: string): string {
+  const trimmed = prose.trim();
+  // Prefer the first sentence (through terminal punctuation).
+  const sentenceMatch = trimmed.match(/^[^.!?\n]{1,120}[.!?]/);
+  const candidate = sentenceMatch ? sentenceMatch[0] : trimmed;
+  if (candidate.length <= 80) return candidate.replace(/[.!?]$/, "");
+  return `${candidate.slice(0, 77).trimEnd()}…`;
+}
+
+/**
+ * Build the `alternatives` array for `kind: "guidance"` from the
+ * rule's structured `FixPath[]`. Each entry carries an `approach`
+ * (from the FixPath label) and an `explanation`. We reuse the
+ * structured label as the explanation when no richer prose is
+ * available — the label is the explanation at that grain — but keep
+ * the two fields split because the advertised contract promises both.
+ * Returns `undefined` when no alternatives exist; the caller conditional-
+ * spreads the field to honor "present-when-meaningful."
+ */
+function buildGuidanceAlternatives(
+  paths: readonly FixPath[],
+): ReadonlyArray<{ readonly approach: string; readonly explanation: string }> | undefined {
+  if (paths.length === 0) return undefined;
+  return paths.map((p) => ({
+    approach: p.label,
+    explanation: p.label,
+  }));
+}
+
 export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record<string, unknown> {
   const { ruleId, line, match, sourceContext, source, filePath, warnings } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
@@ -162,12 +205,20 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   const explanation = match.suggestion
     ? match.suggestion
     : `Violation found but no fix guidance available for ${ruleId}. ${match.message}`;
+  const primaryConfidence = match.suggestion ? confidence : "low";
+  // Q-SHARED-SUGGEST-FIX-GUIDANCE-PRIMARY: guidance responses nest the
+  // explanation + sourceContext + confidence under a ranked `primary`
+  // block so the shape matches the tool description's promise. No
+  // `alternatives` here — the rule never supplied structured paths.
   return {
     kind: "guidance",
-    explanation,
+    primary: {
+      approach: deriveApproachFromProse(explanation),
+      explanation,
+      sourceContext,
+      confidence: primaryConfidence,
+    },
     ...snippetField,
-    sourceContext,
-    confidence: match.suggestion ? confidence : "low",
     ...verify,
     ...warningsField,
   };
@@ -237,15 +288,44 @@ function buildFixPathsOutcome(inputs: {
   if (anyPoisonDropped) caveatParts.push(POISONED_NEWTEXT_CAVEAT);
   if (widened?.caveat) caveatParts.push(widened.caveat);
   const caveatField = caveatParts.length > 0 ? { caveat: caveatParts.join(" ") } : {};
+  const explanation = match.suggestion ?? match.message;
+  if (mechanical) {
+    // Mechanical-edit lane: `primary` stays the structured `FixPath`
+    // (carrying `edit` / optional `editCandidate`) so agents can apply
+    // the find-and-replace directly. `alternatives` is always present
+    // — it is the rule's ranked list of other paths and remains a
+    // schema-required field on the edit shape.
+    return {
+      kind: "edit",
+      primary,
+      alternatives,
+      explanation,
+      ...snippetField,
+      ...caveatField,
+      sourceContext,
+      confidence,
+      ...verify,
+      ...warningsField,
+    };
+  }
+  // Guidance lane (Q-SHARED-SUGGEST-FIX-GUIDANCE-PRIMARY): nest
+  // `approach` + `explanation` + `sourceContext` + `confidence` under
+  // a ranked `primary` block, matching the tool description's
+  // advertised shape. `alternatives` is conditional-spread — omitted
+  // when there are no sibling paths (present-when-meaningful per
+  // CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+  const guidanceAlternatives = buildGuidanceAlternatives(alternatives);
   return {
-    kind: mechanical ? "edit" : "guidance",
-    primary,
-    alternatives,
-    explanation: match.suggestion ?? match.message,
+    kind: "guidance",
+    primary: {
+      approach: primary.label,
+      explanation,
+      sourceContext,
+      confidence,
+    },
+    ...(guidanceAlternatives ? { alternatives: guidanceAlternatives } : {}),
     ...snippetField,
     ...caveatField,
-    sourceContext,
-    confidence,
     ...verify,
     ...warningsField,
   };

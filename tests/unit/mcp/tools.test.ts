@@ -1926,12 +1926,18 @@ describe("MCP tool: suggest_fix", () => {
     );
 
     expect(result.isError).toBeUndefined();
+    // `kind: "edit"` retains a top-level `explanation`; `kind: "guidance"`
+    // nests it under `primary.explanation` per Q-SHARED-SUGGEST-FIX-
+    // GUIDANCE-PRIMARY. Read from whichever branch fires so the assertion
+    // survives either rule outcome.
     const data = JSON.parse(result.content[0].text) as {
-      explanation: string;
-      confidence: string;
+      kind: string;
+      explanation?: string;
+      primary?: { explanation?: string };
     };
-    expect(typeof data.explanation).toBe("string");
-    expect(data.explanation.length).toBeGreaterThan(0);
+    const explanation = data.kind === "guidance" ? data.primary?.explanation : data.explanation;
+    expect(typeof explanation).toBe("string");
+    expect((explanation ?? "").length).toBeGreaterThan(0);
   });
 
   it("returns error for missing params", async () => {
@@ -1942,8 +1948,10 @@ describe("MCP tool: suggest_fix", () => {
   });
 
   it("surfaces structured primary + alternatives for rules that emit fixPaths", async () => {
-    // label-in-name emits ranked fix paths; the agent should see
-    // labeled primary + alternatives, not concatenated prose.
+    // label-in-name emits ranked fix paths; for `kind: "guidance"` the
+    // primary approach + alternatives are nested per Q-SHARED-SUGGEST-
+    // FIX-GUIDANCE-PRIMARY: `primary: { approach, explanation, ... }`
+    // plus `alternatives: [{ approach, explanation }]`.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join: joinPath } = await import("node:path");
@@ -1960,14 +1968,15 @@ describe("MCP tool: suggest_fix", () => {
     );
     const data = JSON.parse(result.content[0].text) as {
       kind: string;
-      primary?: { label: string };
-      alternatives?: Array<{ label: string }>;
-      explanation: string;
+      primary?: { approach?: string; explanation?: string };
+      alternatives?: Array<{ approach: string; explanation: string }>;
     };
     expect(data.kind).toBe("guidance");
-    expect(data.primary?.label).toBeTruthy();
+    expect(data.primary?.approach).toBeTruthy();
+    expect(data.primary?.explanation).toBeTruthy();
     expect(data.alternatives).toHaveLength(2);
-    expect(data.alternatives?.every((a) => a.label.length > 0)).toBe(true);
+    expect(data.alternatives?.every((a) => a.approach.length > 0)).toBe(true);
+    expect(data.alternatives?.every((a) => a.explanation.length > 0)).toBe(true);
   });
 
   it("returns kind: 'none' when no violation matches at the given line", async () => {

@@ -239,6 +239,133 @@ describe("buildSuggestFixPayload — response-level `warnings` plumbing", () => 
   });
 });
 
+describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape (Q-SHARED-SUGGEST-FIX-GUIDANCE-PRIMARY)", () => {
+  // Doctrine (CLAUDE.md §1 "Ambiguous field shapes are dishonest" +
+  // tool description promise): `kind: "guidance"` responses nest the
+  // ranked fix under `primary: { approach, explanation, sourceContext,
+  // confidence }` to match the advertised shape. `alternatives` is
+  // present-when-meaningful — omitted when only one approach is
+  // reasonable. `verifyCommand` + `verifyCommandStructured` stay at
+  // top level.
+
+  it("no-fixPaths guidance: nests explanation + sourceContext + confidence under primary", () => {
+    const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as {
+      approach: string;
+      explanation: string;
+      sourceContext: string;
+      confidence: string;
+    };
+    expect(typeof primary.approach).toBe("string");
+    expect(primary.approach.length).toBeGreaterThan(0);
+    expect(primary.explanation).toBe("Review the surrounding context and add keyboard support.");
+    expect(typeof primary.sourceContext).toBe("string");
+    expect(primary.confidence).toBe("medium");
+  });
+
+  it("no-fixPaths guidance: top-level does NOT carry a duplicate explanation or sourceContext", () => {
+    const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    expect(payload).not.toHaveProperty("explanation");
+    expect(payload).not.toHaveProperty("sourceContext");
+  });
+
+  it("no-fixPaths guidance: omits alternatives entirely (single-approach case is the common one)", () => {
+    const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    expect(payload).not.toHaveProperty("alternatives");
+  });
+
+  it("no-fixPaths guidance: approach is a terse label derived from the prose", () => {
+    const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    const primary = payload["primary"] as { approach: string };
+    // First-sentence derivation strips the trailing period.
+    expect(primary.approach).toBe("Review the surrounding context and add keyboard support");
+  });
+
+  it("fixPaths-guidance (no mechanical edit): primary carries the path label as approach", () => {
+    const match = violationWithFixPaths({
+      fixPaths: {
+        primary: { label: "Review cross-file handler binding" },
+        alternatives: [{ label: "Use a semantic element" }],
+      },
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as {
+      approach: string;
+      explanation: string;
+      confidence: string;
+    };
+    expect(primary.approach).toBe("Review cross-file handler binding");
+    expect(typeof primary.explanation).toBe("string");
+    expect(primary.confidence).toBe("high");
+  });
+
+  it("fixPaths-guidance with alternatives: emits alternatives[] with approach + explanation per entry", () => {
+    const match = violationWithFixPaths({
+      fixPaths: {
+        primary: { label: "Review cross-file handler binding" },
+        alternatives: [
+          { label: "Use a semantic element" },
+          { label: "Attach handler to an outer control" },
+        ],
+      },
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    expect(payload["kind"]).toBe("guidance");
+    const alternatives = payload["alternatives"] as ReadonlyArray<{
+      approach: string;
+      explanation: string;
+    }>;
+    expect(Array.isArray(alternatives)).toBe(true);
+    expect(alternatives).toHaveLength(2);
+    expect(alternatives[0]?.approach).toBe("Use a semantic element");
+    expect(typeof alternatives[0]?.explanation).toBe("string");
+    expect(alternatives[1]?.approach).toBe("Attach handler to an outer control");
+  });
+
+  it("fixPaths-guidance with empty alternatives: omits the alternatives field entirely", () => {
+    const match = violationWithFixPaths({
+      fixPaths: {
+        primary: { label: "Review cross-file handler binding" },
+        alternatives: [],
+      },
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    expect(payload["kind"]).toBe("guidance");
+    expect(payload).not.toHaveProperty("alternatives");
+  });
+
+  it("guidance: verifyCommand + verifyCommandStructured stay at top level (not under primary)", () => {
+    const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    expect(typeof payload["verifyCommand"]).toBe("string");
+    expect(payload["verifyCommandStructured"]).toBeDefined();
+    const primary = payload["primary"] as Record<string, unknown>;
+    expect(primary).not.toHaveProperty("verifyCommand");
+    expect(primary).not.toHaveProperty("verifyCommandStructured");
+  });
+
+  it("kind: 'edit' retains the flat primary/alternatives FixPath shape (regression guard)", () => {
+    // The primary/alternatives nesting change is scoped to the guidance
+    // lane. `kind: "edit"` keeps primary as a structured FixPath carrying
+    // `label` + `edit` so apply_fix's literal find-and-replace still
+    // resolves as before.
+    const payload = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
+    expect(payload["kind"]).toBe("edit");
+    const primary = payload["primary"] as {
+      label: string;
+      edit?: { oldText: string; newText: string };
+    };
+    expect(primary.label).toBe("Add onKeyDown sibling");
+    expect(primary.edit).toBeDefined();
+    expect(payload).toHaveProperty("alternatives");
+    // The flat shape preserves top-level `explanation` + `sourceContext`
+    // so existing apply_fix consumers keep reading them there.
+    expect(typeof payload["explanation"]).toBe("string");
+    expect(typeof payload["sourceContext"]).toBe("string");
+  });
+});
+
 describe("buildSuggestFixPayload — template-directive poisoning of newText", () => {
   // Doctrine (docs/kb/architecture/ai-first-consumer.md
   // "Ambiguous field shapes are dishonest"): a `newText` that
