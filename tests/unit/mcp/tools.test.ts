@@ -1249,9 +1249,7 @@ describe("MCP tool: detect_native_wrappers", () => {
       nextStep: string;
     };
     expect(data.candidates).toEqual([]);
-    expect(data.emptyReason).toBe(
-      "no-jsx-onclick-candidates-found-but-opaque-components-present",
-    );
+    expect(data.emptyReason).toBe("no-jsx-onclick-candidates-found-but-opaque-components-present");
     // Prose nudge to the canonical follow-up surface so agents that
     // read the string don't have to re-derive the next call.
     expect(data.nextStep).toContain("opaqueCustomComponentNames");

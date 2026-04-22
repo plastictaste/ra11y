@@ -15,10 +15,7 @@
 
 import { gitRoot } from "../utils/git.ts";
 import { buildSuggestedConfigSnippet } from "./config-snippet.ts";
-import {
-  collectWrapperCandidates,
-  hasOpaquePascalCaseComponents,
-} from "./detect-wrappers-core.ts";
+import { collectWrapperCandidates, hasOpaquePascalCaseComponents } from "./detect-wrappers-core.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { type McpTool, parseFiles, strParam, textResult } from "./tools-helpers.ts";
 
