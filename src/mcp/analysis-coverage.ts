@@ -791,7 +791,7 @@ function detectTemplateEngines(source: string, into: Set<string>): void {
   // parenthesized together by convention, but one side is sufficient
   // evidence for the classifier.
   const hasLiquidWhitespaceInterp = /\{\{-|-\}\}/.test(source);
-  const hasInterpolation = /\{\{[^}]+\}\}/.test(source);
+  const hasInterpolation = hasNonJsxInterpolation(source);
   if (hasControlBlock || hasLiquidWhitespaceInterp) {
     into.add("jinja-or-liquid");
   } else if (hasInterpolation) {
@@ -805,4 +805,53 @@ function detectTemplateEngines(source: string, into: Set<string>): void {
     into.add("handlebars-or-mustache");
   }
   if (/<%[=-]?[\s\S]*?%>/.test(source)) into.add("erb-or-ejs");
+}
+
+/**
+ * True when `source` contains at least one `{{ ... }}` interpolation
+ * whose prefix is NOT a known false-positive shape. Two shapes are
+ * filtered out because they collapse to the same `{{ ... }}` shape
+ * without being template evidence:
+ *
+ *   - `={{ ... }}` — JSX / Astro attribute-value object-literal spread
+ *     (`overrides={{ body: bodyProps }}`). The outer `{` is the JSX
+ *     expression boundary; the inner `{...}` is the object literal.
+ *     A real Handlebars/Mustache interpolation is never prefixed by
+ *     `=` — the attribute would be quoted (`title="{{ title }}"`).
+ *     `.astro` files flow through `parseAstro` → HTML AST, so this
+ *     source shape routinely reaches the classifier for Starlight /
+ *     Astro docs projects.
+ *   - `${{ ... }}` — GitHub Actions workflow expression syntax
+ *     (`${{ github.event.pull_request.number }}`). The `$` prefix is
+ *     decisive: Handlebars does not recognize `${{ ... }}`. While
+ *     `.yml` files are not in PARSEABLE_EXTENSIONS, the shape can
+ *     reach the classifier through embedded `.md` / `.html` fragments
+ *     documenting workflow usage.
+ *
+ * Both filters are pre-match exclusions on the evidence corpus — they
+ * do not drop real `{{ x }}` interpolations that coexist in the same
+ * file. The classifier already unions per-file decisions into the
+ * scan-level accumulator, so a mixed file with both Astro spreads
+ * AND a real Handlebars interpolation still tags honestly.
+ *
+ * Doctrine (AI-first consumer model): this tightens a misclassified
+ * label (wrong evidence → wrong family tag), not suppression of real
+ * findings. `templateDirectivesFound` is scan-confidence telemetry an
+ * agent uses to decide whether template directives are parsed as
+ * literal — tagging a Starlight docs repo as "handlebars-or-mustache"
+ * when no Handlebars is present misleads that decision. The shape-
+ * honest fix is to exclude shapes that aren't template evidence.
+ */
+function hasNonJsxInterpolation(source: string): boolean {
+  const pattern = /\{\{[^}]+\}\}/g;
+  for (const match of source.matchAll(pattern)) {
+    const start = match.index;
+    if (start === undefined) continue;
+    const prevChar = start > 0 ? source[start - 1] : "";
+    // `={{...}}` → JSX attribute-spread (Astro / React / Solid).
+    // `${{...}}` → GitHub Actions / template-literal expression.
+    if (prevChar === "=" || prevChar === "$") continue;
+    return true;
+  }
+  return false;
 }
