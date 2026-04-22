@@ -11,7 +11,7 @@ import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
 import { additionalPathsScannedField } from "./additional-paths-classifier.ts";
 import { baselineStatusField, probeBaselineStatus } from "./baseline-status.ts";
-import { collectBuildArtifacts } from "./build-artifacts.ts";
+import { collectBuildArtifacts, type ScannedBuildArtifact } from "./build-artifacts.ts";
 import { buildConfigHint } from "./config-hint.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { metaModeSchema } from "./meta-cache.ts";
@@ -673,12 +673,12 @@ function structuredField(nextStep: { readonly structured?: unknown }): {
  */
 function buildArtifactsFields(files: readonly ParsedFile[]): {
   readonly present: boolean;
-  readonly metaField: { readonly scannedBuildArtifacts?: readonly string[] };
+  readonly metaField: { readonly scannedBuildArtifacts?: readonly ScannedBuildArtifact[] };
 } {
-  const paths = collectBuildArtifacts(files);
+  const entries = collectBuildArtifacts(files);
   return {
-    present: paths.length > 0,
-    metaField: paths.length > 0 ? { scannedBuildArtifacts: paths } : {},
+    present: entries.length > 0,
+    metaField: entries.length > 0 ? { scannedBuildArtifacts: entries } : {},
   };
 }
 

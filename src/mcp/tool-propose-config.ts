@@ -137,7 +137,14 @@ export const proposeConfigTool: McpTool = {
     const activeRules = applyRuleSettings(session.registry.rules, effective);
 
     const confirmedWrappers = deriveConfirmedWrappers(files);
-    const buildArtifacts = normalizeExcludes(collectBuildArtifacts(files), root);
+    // `collectBuildArtifacts` returns `{ path, reason }[]` so the
+    // scan_project meta surface can carry per-path classification
+    // signal; `propose_config` only needs the path strings to feed
+    // the exclude-list normalizer.
+    const buildArtifacts = normalizeExcludes(
+      collectBuildArtifacts(files).map((entry) => entry.path),
+      root,
+    );
     const topRules = deriveTopRules(files, session);
     // Surface, don't suppress: foreign-ecosystem detection NEVER
     // withholds the config string — the agent may still want to add a

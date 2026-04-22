@@ -362,11 +362,13 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   }
   if (inputs.scannedBuildArtifactsPresent === true) {
     // The detector uses deterministic signals (escape-bracket Tailwind
-    // selectors, compiled-CSS size threshold, bundler-output path
-    // markers) so the label is safe to surface alongside the findings.
-    // The paths themselves live in `meta.scannedBuildArtifacts`; this
-    // warning code is the top-level presence signal an agent can branch
-    // on without reading into meta.
+    // selectors, `.min.` infix, bundler-output path markers, sibling
+    // sourcemaps, inline `data:image/` URLs) so the label is safe to
+    // surface alongside the findings. The paths themselves live in
+    // `meta.scannedBuildArtifacts: { path, reason }[]` — each entry
+    // carries the specific signal that fired so an agent can triage
+    // without re-reading the file. This warning code is the top-level
+    // presence signal an agent can branch on without reading into meta.
     out.push("scanned_build_artifacts_present");
   }
   if (inputs.storybookPresetActive === true) {
