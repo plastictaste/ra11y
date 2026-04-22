@@ -569,6 +569,66 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(left?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
       expect(right?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
     });
+
+    // Q3-TEMPLATE-DIRECTIVE-STARLIKE-MISDETECT: Astro/JSX attribute
+    // spreads of object literals look like `overrides={{ body: bodyProps }}`
+    // — the outer `{` is the JSX expression boundary, the inner `{...}`
+    // is the object literal, and the pair collapses to the `{{ ... }}`
+    // shape the classifier was keying off. Bootstrap's Starlight docs
+    // surfaced `templateDirectivesFound: ["handlebars-or-mustache"]`
+    // because `.astro` files flow through `parseAstro` → HTML AST
+    // (language "html"), and `detectTemplateEngines` then scanned the
+    // stripped-frontmatter source. The `={{ ... }}` shape is decisive
+    // JSX-attribute evidence, not Handlebars — a real Handlebars
+    // interpolation is never preceded by `=` (the attribute would be
+    // quoted). Filter `={{ ... }}` out of the evidence corpus.
+    it("does not tag JSX/Astro attribute spreads (`={{ body: x }}`) as handlebars-or-mustache", () => {
+      const astroLike = htmlFile(
+        "index.astro.html",
+        "<Component overrides={{ body: bodyProps }} />",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([astroLike], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
+
+    // Q3-TEMPLATE-DIRECTIVE-STARLIKE-MISDETECT: GitHub Actions workflow
+    // expressions (the dollar-double-brace form, e.g. `github.event.pr.number`
+    // wrapped in `${{ ... }}`) share the `{{ ... }}` shape but are
+    // prefixed with `$` — a decisive non-Handlebars signal. While
+    // `.yml` files aren't parseable, the pattern can surface inside
+    // markdown fence stripping edge cases or template strings that
+    // flow through the HTML path. Treat `$`+`{{ ... }}` as non-evidence
+    // for the same reason as `={{ ... }}`. (The string below is
+    // concatenated so the `$` does not literally sit next to `{{` in
+    // this source file — Biome's noTemplateCurlyInString lints the
+    // co-located shape even in plain double-quoted strings.)
+    it("does not tag workflow-expression `$`+`{{ ... }}` as handlebars-or-mustache", () => {
+      // Build `${{ github.event.pull_request.number }}` at runtime so the
+      // literal `${` never sits in this source file (Biome's
+      // noTemplateCurlyInString lints the co-located shape even in plain
+      // double-quoted strings).
+      const dollar = "$";
+      const workflowExpr = `${dollar}{{ github.event.pull_request.number }}`;
+      const workflowEmbed = htmlFile("embed.html", `<pre>run: echo ${workflowExpr}</pre>`);
+      const { analysisCoverage } = buildAnalysisCoverage([workflowEmbed], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
+
+    // Q3-TEMPLATE-DIRECTIVE-STARLIKE-MISDETECT: mixed-evidence guard.
+    // A file that carries an Astro attribute spread AND a real
+    // Handlebars interpolation should still tag handlebars-or-mustache
+    // — the spread is filtered, but the honest `{{ title }}` survives.
+    // This is the regression we care about in the other direction:
+    // tightening the evidence corpus must not silently drop real
+    // template evidence that happens to coexist with JSX props.
+    it("still tags handlebars-or-mustache when a real `{{ x }}` coexists with a JSX spread", () => {
+      const mixed = htmlFile(
+        "mixed.html",
+        "<Component overrides={{ body: bodyProps }} />\n<h1>{{ title }}</h1>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mixed], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
+    });
   });
 
   describe("preset: 'storybook'", () => {
