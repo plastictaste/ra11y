@@ -252,8 +252,12 @@ function isBold(value: string): boolean {
  * value — shorthand `background: #fff url('bg.png') no-repeat` and
  * `background-image: linear-gradient(...)` both resolve to "image-
  * backed." Matching is case-insensitive per CSS syntax rules.
+ *
+ * Exported so the inline-style helper module (`_shared-inline.ts`)
+ * shares the exact same regex — inline `style="background-image: …"`
+ * and stylesheet `background-image: …` must be classified identically.
  */
-const IMAGE_BACKED_VALUE_PATTERN =
+export const IMAGE_BACKED_VALUE_PATTERN =
   /\burl\s*\(|\b(?:linear|radial|conic|repeating-linear|repeating-radial|repeating-conic)-gradient\s*\(/i;
 
 /**
