@@ -141,9 +141,9 @@ describe("computeMetaDelta", () => {
   it("lists new fields under delta (baseline did not have them)", () => {
     const { delta, removedFields } = computeMetaDelta(
       { filesScanned: 5 },
-      { filesScanned: 5, configNote: "hi" },
+      { filesScanned: 5, configHint: "hi" },
     );
-    expect(delta).toEqual({ configNote: "hi" });
+    expect(delta).toEqual({ configHint: "hi" });
     expect(removedFields).toEqual([]);
   });
 });

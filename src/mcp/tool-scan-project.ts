@@ -255,14 +255,16 @@ export const scanProjectTool: McpTool = {
       rootSource,
       ...buildRootsOverlapMeta({ explicitCwd, hostRoot, root, session }),
       configSource: projectConfig.sourcePath,
-      configSearchedFrom: root,
+      // Q6-CONFIG-CONTEXT-TRIPLE-READOUT: `configSearchedFrom` was
+      // always equal to `root`, which already ships in `scanned.root`
+      // above; `configNote` was a 200-char boilerplate duplicating
+      // the `no_config_found` warning's signal (warnings fire on
+      // `configSource === null` via `warningsFieldFromScanMeta`
+      // below). Three fields re-emitted the same bit — collapsed to
+      // `configSource` alone per `.claude/rules/mcp-response-shapes.md`
+      // "present-when-meaningful; never sentinel-empty."
       ...baselineStatusField(baselineStatus),
       ...buildArtifacts.metaField,
-      ...(projectConfig.sourcePath === null
-        ? {
-            configNote: `No ra11y.config found at ${root} — using built-in defaults (no nativeWrappers, no per-rule overrides). Drop a ra11y.config.ts at the project root to register design-system wrappers and customize severities.`,
-          }
-        : {}),
       ...(configHint === null ? {} : { configHint }),
       ...buildWrapperMeta({ autoDetect, configMissing, detectedNames }),
       ...(detectedFramework === null ? {} : { detectedFramework }),

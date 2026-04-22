@@ -7,7 +7,7 @@ summary: "Opt-in metaMode:delta primitive that collapses repeated scan-family me
 
 # MCP session meta cache
 
-In a tight scan → fix → rescan loop, every tool response carries the same `meta` block: `configSource`, `configSearchedFrom`, `rulesEvaluated`, `filesByExtension`, wrapper telemetry. The values rarely change between calls. On large codebases this bloat accounts for roughly 30% of the response payload and is pure noise to the agent after the first call.
+In a tight scan → fix → rescan loop, every tool response carries the same `meta` block: `configSource`, `rulesEvaluated`, `filesByExtension`, wrapper telemetry. The values rarely change between calls. On large codebases this bloat accounts for roughly 30% of the response payload and is pure noise to the agent after the first call.
 
 The meta cache solves this without trimming `meta` (which would violate the "verbose meta is signal, not clutter" doctrine) — instead it keeps `meta` intact by default and offers an explicit opt-in to collapse repeat calls to a diff.
 
@@ -21,7 +21,6 @@ The primitive is controlled by the `metaMode` input field on every scan-family t
 {
   "meta": {
     "configSource": "ra11y.config.ts",
-    "configSearchedFrom": "/repo",
     "rulesEvaluated": { "loaded": 47, "withEligibleInputs": 18, "fired": 9 },
     "filesByExtension": { ".tsx": 12, ".html": 3 },
     "activeNativeWrappers": ["Button", "Link"],

@@ -9,7 +9,7 @@
  * totalFilesWithFindings? }`. Assembly routes through
  * {@link assembleScanFamilyResponse} per V1-RESPONSE-SCAN-CORE — the
  * handler owns only the tool-specific outer fields (`scanned`,
- * `configSource`, `configSearchedFrom`, `configNote`, `nextStep`) and
+ * `configSource`, `nextStep`) and
  * the scan-specific token-density merge (no `nextOffset`, because
  * `scan` has no resumable paging primitive; the remediation is to
  * narrow `paths` or switch to `scan_project`).
@@ -176,12 +176,15 @@ export const scanTool: McpTool = {
       ...assembled.meta,
       scanned: scannedDir(paths),
       configSource: projectConfig.sourcePath,
-      configSearchedFrom: cwd,
-      ...(projectConfig.sourcePath === null
-        ? {
-            configNote: `No ra11y.config found at ${cwd} — using built-in defaults (no nativeWrappers, no per-rule overrides). Drop a ra11y.config.ts at the project root to register design-system wrappers and customize severities.`,
-          }
-        : {}),
+      // Q6-CONFIG-CONTEXT-TRIPLE-READOUT collapsed the emitted
+      // config-resolution context to `configSource` alone here:
+      // `configSearchedFrom` was always the caller-supplied `cwd`
+      // (pure echo), and `configNote` was a 200-char boilerplate that
+      // re-said what the `no_config_found` warning already signals
+      // when `configSource === null`. Three fields repeating one bit
+      // of information violated the "present-when-meaningful" rule
+      // in `.claude/rules/mcp-response-shapes.md`; the warning channel
+      // is the canonical "no config was loaded" signal.
       nextStep: nextStep.prose,
       ...nextStepStructuredField,
     };

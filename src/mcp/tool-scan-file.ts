@@ -11,7 +11,7 @@
  * {@link assembleScanFamilyResponse} per V1-RESPONSE-SCAN-CORE — the
  * handler owns only the tool-specific shape adaptation (flatten
  * `files[0].findings`) and the outer fields (`scanned`,
- * `configSource`, `configSearchedFrom`, `configNote`, `nextStep`).
+ * `configSource`, `configSearchedFrom`, `nextStep`).
  */
 
 import { isAbsolute, resolve } from "node:path";
@@ -172,6 +172,7 @@ export const scanFileTool: McpTool = {
         parsed,
         projectConfig,
         configSearchBase,
+        scanFileCwd,
         params,
         session,
       }),
@@ -239,10 +240,11 @@ function buildScanFileResponse(args: {
   readonly parsed: ParsedFile;
   readonly projectConfig: LoadedConfig;
   readonly configSearchBase: string;
+  readonly scanFileCwd: string | undefined;
   readonly params: Record<string, unknown>;
   readonly session: McpSession;
 }): Record<string, unknown> {
-  const { assembled, parsed, projectConfig, configSearchBase, params, session } = args;
+  const { assembled, parsed, projectConfig, configSearchBase, scanFileCwd, params, session } = args;
   // scan_file's historical top-level shape is `{ findings,
   // reviewCandidates? }` rather than the grouped `files[]` the rest
   // of the scan family emits. Agents iterating the fix-verify loop
@@ -265,12 +267,18 @@ function buildScanFileResponse(args: {
     filesScanned: 1,
     scanned: scannedFile(parsed.filePath),
     configSource: projectConfig.sourcePath,
-    configSearchedFrom: configSearchBase,
-    ...(projectConfig.sourcePath === null
-      ? {
-          configNote: `No ra11y.config found walking up from ${configSearchBase} — using built-in defaults (no nativeWrappers, no per-rule overrides). Drop a ra11y.config.ts at the project root to register design-system wrappers and customize severities.`,
-        }
-      : {}),
+    // Q6-CONFIG-CONTEXT-TRIPLE-READOUT: emit `configSearchedFrom`
+    // only when the loader's walk-up base was DERIVED rather than
+    // caller-supplied. When the caller passed `cwd`, the search base
+    // equals that cwd (pure echo of an input the agent set), so the
+    // field adds no signal and is omitted. When the caller omitted
+    // `cwd`, the base is `dirname(absFilePath)` — meaningful context
+    // the agent can't otherwise read off the response. `configNote`
+    // (a 200-char boilerplate echoing the `no_config_found` warning
+    // fired by the assembler when `configSource === null`) dropped
+    // entirely per `.claude/rules/mcp-response-shapes.md`
+    // "present-when-meaningful; never sentinel-empty."
+    ...(scanFileCwd === configSearchBase ? {} : { configSearchedFrom: configSearchBase }),
     nextStep: nextStep.prose,
     // P1-K: structured twin of the prose nextStep. Conditional-spread
     // per CLAUDE.md §1 "Ambiguous field shapes are dishonest": omit

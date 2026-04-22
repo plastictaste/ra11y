@@ -5,9 +5,8 @@
  * Default behavior is unchanged: every scan response carries its full
  * `meta` block. Callers that want to shrink repeat-call bloat (the
  * scan → fix → rescan loop canonically emits 90% identical
- * `configSource` / `configSearchedFrom` / `rulesEvaluated` /
- * `filesByExtension` / wrapper telemetry) opt in by passing
- * `metaMode: "delta"`.
+ * `configSource` / `rulesEvaluated` / `filesByExtension` / wrapper
+ * telemetry) opt in by passing `metaMode: "delta"`.
  *
  * When delta mode is engaged:
  *
