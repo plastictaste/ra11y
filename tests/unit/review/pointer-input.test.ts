@@ -133,8 +133,18 @@ describe("review/pointer-input", () => {
   });
 
   describe("name-pattern detection (extension b)", () => {
-    it("flags basename `swipe.js`", () => {
-      const out = runFinder(finder, `export const noop = () => {};`, {
+    /**
+     * Name-pattern branch is gated on a same-file companion signal
+     * (addEventListener with a path-tracking event name, or an import
+     * of a pointer-event library). Tests use a minimal touchmove
+     * listener to satisfy the gate so the branch under test actually
+     * runs; the standalone-listener behavior itself is covered in the
+     * co-occurrence and source-handler suites above.
+     */
+    const COMPANION_LISTENER = `el.addEventListener('touchmove', noop);`;
+
+    it("flags basename `swipe.js` when a companion touch listener is present", () => {
+      const out = runFinder(finder, `export const noop = () => {};\n${COMPANION_LISTENER}`, {
         filePath: "src/util/swipe.js",
       });
       const basenameHits = out.filter((c) => c.reason.includes("file basename"));
@@ -142,9 +152,9 @@ describe("review/pointer-input", () => {
       expect(basenameHits[0]?.reason).toContain("swipe");
     });
 
-    it("flags basename for each of swipe/pan/pinch/rotate", () => {
+    it("flags basename for each of swipe/pan/pinch/rotate when companion signal is present", () => {
       for (const token of ["swipe", "pan", "pinch", "rotate"]) {
-        const out = runFinder(finder, `export const noop = () => {};`, {
+        const out = runFinder(finder, `export const noop = () => {};\n${COMPANION_LISTENER}`, {
           filePath: `src/util/${token}.ts`,
         });
         const basenameHits = out.filter((c) => c.reason.includes("file basename"));
@@ -153,24 +163,32 @@ describe("review/pointer-input", () => {
       }
     });
 
-    it("flags `class Swipe`", () => {
-      const out = runFinder(finder, `class Swipe {}`, { filePath: "util.ts" });
+    it("flags `class Swipe` when a companion touch listener is present", () => {
+      const out = runFinder(finder, `class Swipe {}\n${COMPANION_LISTENER}`, {
+        filePath: "util.ts",
+      });
       const classHits = out.filter((c) => c.reason.includes("class") && c.reason.includes("Swipe"));
       expect(classHits.length).toBeGreaterThan(0);
     });
 
-    it("flags `class PinchZoom`", () => {
-      const out = runFinder(finder, `class PinchZoom {}`, { filePath: "util.ts" });
+    it("flags `class PinchZoom` when a pointer-event library is imported", () => {
+      const src = `
+        import Hammer from "hammerjs";
+        class PinchZoom {}
+        void Hammer;
+      `;
+      const out = runFinder(finder, src, { filePath: "util.ts" });
       const classHits = out.filter(
         (c) => c.reason.includes("class") && c.reason.includes("PinchZoom"),
       );
       expect(classHits.length).toBeGreaterThan(0);
     });
 
-    it("flags `function rotate(` and `const panHandler =`", () => {
+    it("flags `function rotate(` and `const panHandler =` when a companion signal is present", () => {
       const src = `
         function rotate(deg) { return deg; }
         const panHandler = () => {};
+        ${COMPANION_LISTENER}
       `;
       const out = runFinder(finder, src, { filePath: "util.ts" });
       const fnHits = out.filter(
@@ -183,27 +201,34 @@ describe("review/pointer-input", () => {
       expect(constHits.length).toBeGreaterThan(0);
     });
 
-    it("word-boundary: does NOT flag `span`, `planet`, `expanded`", () => {
+    it("word-boundary: does NOT flag `span`, `planet`, `expanded` (with or without companion)", () => {
       // No basename or identifier containing a gesture token at a
-      // word boundary; nothing should fire.
+      // word boundary; nothing should fire even when a companion
+      // listener is present.
       const out = runFinder(
         finder,
         `
           const span = 1;
           const planet = 'earth';
           const expanded = true;
+          ${COMPANION_LISTENER}
         `,
         { filePath: "util.ts" },
       );
       expect(out.filter((c) => c.reason.includes("suggests")).length).toBe(0);
     });
 
-    it("word-boundary: DOES flag `pan` and `panelSlide`", () => {
+    it("word-boundary: flags `pan` but NOT `panelSlide` (substring-match bug)", () => {
+      // `pan` is a bare-token match; `panelSlide` is the classic
+      // substring false-positive — the inner `pan` has no right word
+      // boundary inside `panelSlide` (lowercase `e` continues the
+      // word), so the tightened regex rejects it.
       const out = runFinder(
         finder,
         `
           const pan = () => {};
           const panelSlide = () => {};
+          ${COMPANION_LISTENER}
         `,
         { filePath: "util.ts" },
       );
@@ -211,7 +236,34 @@ describe("review/pointer-input", () => {
       const panHit = suggestHits.find((c) => c.reason.includes("`pan`"));
       const panelSlideHit = suggestHits.find((c) => c.reason.includes("`panelSlide`"));
       expect(panHit).toBeDefined();
-      expect(panelSlideHit).toBeDefined();
+      expect(panelSlideHit).toBeUndefined();
+    });
+
+    it("drops name-pattern candidates when no companion signal is present", () => {
+      // `const panels = …` contains the substring `pan`, but with no
+      // right word boundary (lowercase `e` continues the word) the
+      // tightened regex already rejects `panels`. `const panHandler`
+      // matches via camelCase split, but without a companion listener
+      // / library import the branch is gated off entirely.
+      const src = `
+        const panels = [];
+        const panHandler = () => {};
+        function rotate(x) { return x; }
+      `;
+      const out = runFinder(finder, src, { filePath: "click-only.ts" });
+      expect(out.filter((c) => c.reason.includes("suggests")).length).toBe(0);
+    });
+
+    it("companion signal: `@use-gesture` import enables name-pattern branch", () => {
+      const src = `
+        import { useDrag } from "@use-gesture/react";
+        const panHandler = () => useDrag(() => {});
+      `;
+      const out = runFinder(finder, src, { filePath: "util.ts" });
+      const constHits = out.filter(
+        (c) => c.reason.includes("const") && c.reason.includes("panHandler"),
+      );
+      expect(constHits.length).toBeGreaterThan(0);
     });
 
     it("ignores `class` keyword inside JSDoc-style block comments", () => {

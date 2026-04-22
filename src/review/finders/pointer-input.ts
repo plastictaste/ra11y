@@ -87,23 +87,56 @@ const PATH_MOVE_PATTERN = /addEventListener\s*\(\s*['"`](touchmove|pointermove)[
 /**
  * Identifier-name tokens that signal gesture-driven interaction when
  * they appear as a file basename, class name, function name, or
- * top-level binding name. Word-boundary anchored on the left so
- * `span`, `planet`, `expanded` don't match; `pan`, `panelSlide`,
- * `SwipeHandler`, `pinch-zoom.ts` do.
+ * top-level binding name. Word-boundary anchored on both sides — the
+ * match ends at a word boundary or at a camelCase uppercase split so
+ * the token can't bleed into unrelated identifiers like `panels`,
+ * `panelSlide`, `span`, `planet`, or `expanded` (the prior left-only
+ * boundary was the substring-match bug, see backlog
+ * Q5-POINTER-GESTURES-SUBSTRING-FALSE-POSITIVE).
  */
 const NAME_TOKENS = ["swipe", "pan", "pinch", "rotate"] as const;
 type NameToken = (typeof NAME_TOKENS)[number];
 
 /**
- * Matches any of the gesture tokens at a word-boundary on the left —
- * the start of an identifier, after a non-word char (hyphen, dot,
- * underscore), or at the start of the string. The right side is
- * intentionally unconstrained: `panelSlide` (lowercase continuation),
- * `SwipeHandler` (uppercase continuation), `rotate-view` (hyphen) all
- * qualify. `span`, `expanded`, `plan` do NOT (no word boundary before
- * `pan`).
+ * Matches any of the gesture tokens at a word boundary on the left
+ * AND a word boundary on the right — where the right boundary is
+ * either the end of a word (`\b`), a non-letter character, or the
+ * start of a camelCase split (uppercase letter after a lowercase
+ * continuation). The inner alternation enumerates the verb variants
+ * we recognize per token:
+ *
+ *   - swipe / swiped / swipes / swiper / swipers / swiping
+ *   - pan / panned / panning / panner / panners / panGesture
+ *   - pinch / pinched / pinches / pincher / pinchers / pinching
+ *   - rotate / rotated / rotates / rotation / rotating / rotator / rotators
+ *
+ * Allowing the lookahead `[A-Z]` handles camelCase identifiers:
+ * `SwipeHandler`, `PinchZoom`, `panHandler`, `rotateView` all match
+ * because `swipe`/`pinch`/`pan`/`rotate` end at the uppercase split.
+ *
+ * What does NOT match (the regression the fix restores):
+ *   `panels`, `panelSlide`, `span`, `planet`, `expanded`, `plan`,
+ *   `spandex`, `canopy`.
  */
-const NAME_TOKEN_PATTERN = /\b(swipe|pan|pinch|rotate)/i;
+const NAME_TOKEN_PATTERN =
+  /\b(?:([Ss]wipe)(?:d|rs|r|s|ing)?|([Pp]an)(?:ned|ning|ners|ner|Gesture)?|([Pp]inch)(?:ed|es|ers|er|ing)?|([Rr]otat)(?:ed|es|ors|or|ion|ing|e))(?=[A-Z]|[^A-Za-z]|$)/;
+
+/**
+ * Map a successful `NAME_TOKEN_PATTERN` match back to the bare-token
+ * name (`swipe` / `pan` / `pinch` / `rotate`). Each alternative in
+ * `NAME_TOKEN_PATTERN` has its own capture group at indices 1..4; only
+ * one is populated per match. Returns `null` if none is populated
+ * (should never happen for a successful match).
+ */
+function tokenFromMatch(match: RegExpMatchArray): NameToken | null {
+  if (match[1]) return "swipe";
+  if (match[2]) return "pan";
+  if (match[3]) return "pinch";
+  // `rotate` captures just the `[Rr]otat` stem — map it back to the
+  // canonical token name.
+  if (match[4]) return "rotate";
+  return null;
+}
 
 /**
  * Pattern to locate identifier declarations in source. Captures the
@@ -258,31 +291,51 @@ function findPathBasedPairs(ctx: RuleContext, out: ReviewCandidate[]): void {
  * innocuous (the project may wire its own event abstractions). We
  * emit one candidate per named identifier, plus one for a matching
  * file basename anchored at line 1.
+ *
+ * Gated on a same-file companion signal (see `hasCompanionSignal`):
+ * identifier / basename evidence alone is too weak — `rotate` can
+ * mean "rotate a 3D model with the keyboard," `pan` can mean "pan a
+ * camera with arrow keys," `pinch` can be a CSS-animation utility.
+ * When a touch/pointer path-tracking listener or a pointer-event
+ * library import is present in the same file, the combined evidence
+ * is strong enough to surface a candidate; otherwise we drop it
+ * (the handler-level and path-pair branches above still fire on the
+ * listeners themselves, so real gesture code is never silent).
+ *
+ * This is a *detection* refinement, not suppression: the signal of
+ * an identifier-substring match with no companion evidence was never
+ * strong enough to act on — it was firing on things like
+ * `const panels = document.querySelectorAll(".panel")` where `pan`
+ * is a coincidental substring. See backlog entry
+ * `Q5-POINTER-GESTURES-SUBSTRING-FALSE-POSITIVE`.
  */
 function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
+  if (!hasCompanionSignal(ctx.source)) return;
   const seen = new Set<string>();
 
   const basename = extractBasename(ctx.filePath);
   const basenameMatch = basename.match(NAME_TOKEN_PATTERN);
   if (basenameMatch) {
-    const token = basenameMatch[1]?.toLowerCase() as NameToken;
-    const key = `basename:${basename}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      for (const criterionId of CRITERION_IDS) {
-        // Confidence "medium": a filename containing a gesture token
-        // is conventional evidence but not dispositive — `pan.ts`
-        // could be a camera-pan utility, or text-panning, or an
-        // animation helper that takes any pointer input. The reviewer
-        // opens the file and decides.
-        out.push({
-          criterionId,
-          location: { filePath: ctx.filePath, line: 1, column: 1 },
-          reason:
-            `file basename \`${basename}\` suggests a ${token} gesture interaction` +
-            GESTURE_REASON,
-          confidence: "medium",
-        });
+    const token = tokenFromMatch(basenameMatch);
+    if (token) {
+      const key = `basename:${basename}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        for (const criterionId of CRITERION_IDS) {
+          // Confidence "medium": a filename containing a gesture token
+          // is conventional evidence but not dispositive — `pan.ts`
+          // could be a camera-pan utility, or text-panning, or an
+          // animation helper that takes any pointer input. The reviewer
+          // opens the file and decides.
+          out.push({
+            criterionId,
+            location: { filePath: ctx.filePath, line: 1, column: 1 },
+            reason:
+              `file basename \`${basename}\` suggests a ${token} gesture interaction` +
+              GESTURE_REASON,
+            confidence: "medium",
+          });
+        }
       }
     }
   }
@@ -290,7 +343,8 @@ function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
   for (const hit of collectIdentifierHits(ctx.source)) {
     const tokenMatch = hit.identifier.match(NAME_TOKEN_PATTERN);
     if (!tokenMatch) continue;
-    const token = tokenMatch[1]?.toLowerCase() as NameToken;
+    const token = tokenFromMatch(tokenMatch);
+    if (!token) continue;
     const { line, column } = offsetToLineColumn(ctx.source, hit.offset);
     const key = `ident:${line}:${column}:${hit.identifier}`;
     if (seen.has(key)) continue;
@@ -309,6 +363,33 @@ function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
       });
     }
   }
+}
+
+/**
+ * Source-text patterns that indicate the file contains direct
+ * evidence of path-tracking / multipoint pointer input, beyond mere
+ * identifier naming:
+ *
+ *   - An `addEventListener` call for `touchstart` / `touchmove` /
+ *     `pointermove` (or `touchend` / `pointerdown` paired with them,
+ *     which the path-pair branch already surfaces directly).
+ *   - An import of a well-known pointer-event library:
+ *     `hammerjs` / `hammer.js`, `use-gesture`, `@use-gesture/*`.
+ *
+ * These signals make the identifier-name branch informative: a file
+ * that imports `@use-gesture/react` AND declares a `panHandler` is
+ * almost certainly doing pan-gesture work; a file that merely has a
+ * `const panels` variable and click handlers is not.
+ */
+const COMPANION_LISTENER_PATTERN =
+  /addEventListener\s*\(\s*['"`](touchstart|touchmove|pointermove)['"`]/;
+const COMPANION_LIBRARY_PATTERN =
+  /(?:require\s*\(\s*|from\s+|import\s*\(\s*)['"`](hammer(?:js|\.js)?|use-gesture|@use-gesture\/[\w-]+)['"`]/;
+
+function hasCompanionSignal(source: string): boolean {
+  if (COMPANION_LISTENER_PATTERN.test(source)) return true;
+  if (COMPANION_LIBRARY_PATTERN.test(source)) return true;
+  return false;
 }
 
 interface IdentifierHit {
