@@ -309,6 +309,84 @@ describe("assembleScanFamilyResponse", () => {
     const r = assembleScanFamilyResponse(baseInput({ sessionWrappersMismatchCwd: true }));
     expect(r.warnings).toContain("session_wrappers_configured_for_different_cwd");
   });
+
+  // Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS: three totals a field report
+  // saw disagree on the same response — `plan.violations+notes`,
+  // `sum(perRuleCoverage.findingsEmitted)`, and
+  // `sum(files[*].findings)`. When the three agree (the common case),
+  // `meta.countsBySurface` is absent; when any pair differs, it lands
+  // as an honest tripwire so the drift never reads as silent miss.
+  describe("meta.countsBySurface cross-surface tripwire", () => {
+    it("cross-surface invariant — sum(files[*].findings) equals plan.violations + plan.notes on a non-truncated scan", () => {
+      const note: Violation = {
+        ...violation("/src/a.tsx", 1),
+        severity: "info",
+      } as unknown as Violation;
+      const errA = violation("/src/a.tsx", 2);
+      const errB = violation("/src/b.tsx", 3);
+      const r = assembleScanFamilyResponse(
+        baseInput({
+          violations: [note, errA, errB],
+          parsedFiles: [parsedFile("/src/a.tsx"), parsedFile("/src/b.tsx")],
+        }),
+      );
+      expect(r.truncated).toBeUndefined();
+      let filesSurface = 0;
+      for (const f of r.files) filesSurface += f.findings.length;
+      const planTotal = (r.plan["violations"] as number) + (r.plan["notes"] as number);
+      expect(filesSurface).toBe(planTotal);
+    });
+
+    it("omits meta.countsBySurface when the three surface totals agree", () => {
+      const v = violation("/src/a.tsx", 1);
+      const r = assembleScanFamilyResponse(
+        baseInput({
+          violations: [v],
+          perRuleCoverage: [
+            {
+              ruleId: "alt-text/missing",
+              filesEvaluated: 1,
+              filesEligible: 1,
+              findingsEmitted: 1,
+              coverageConfidence: "high",
+            },
+          ],
+        }),
+      );
+      expect(r.meta["countsBySurface"]).toBeUndefined();
+    });
+
+    it("surfaces meta.countsBySurface when perRuleCoverage disagrees with plan — records both totals", () => {
+      const v = violation("/src/a.tsx", 1);
+      // perRuleCoverage simulates the scanner-raw stream tallying more
+      // findings than the filtered plan view (wrapper-noise drop /
+      // severity filter / criterion-skip consumed 4 findings between
+      // the per-rule rows and the `violations` the caller surfaced).
+      const r = assembleScanFamilyResponse(
+        baseInput({
+          violations: [v],
+          perRuleCoverage: [
+            {
+              ruleId: "alt-text/missing",
+              filesEvaluated: 1,
+              filesEligible: 1,
+              findingsEmitted: 5,
+              coverageConfidence: "high",
+            },
+          ],
+        }),
+      );
+      const counts = r.meta["countsBySurface"] as
+        | { plan: number; perRuleCoverage: number; filesSurface?: number }
+        | undefined;
+      expect(counts).toBeDefined();
+      expect(counts?.plan).toBe(1);
+      expect(counts?.perRuleCoverage).toBe(5);
+      // filesSurface must be present on the emitted tripwire and
+      // reconcile with the plan surface on a non-truncated scan.
+      expect(counts?.filesSurface).toBe(1);
+    });
+  });
 });
 
 describe("buildDerivativeScanWarnings (ADR 0024 stage 4 — derivative-tool seam)", () => {

@@ -247,3 +247,84 @@ function countByExtension(files: readonly ParsedFile[]): Record<string, number> 
   }
   return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
+
+/**
+ * Three totals `scan_project` consumers have reported reading from the
+ * same response and found disagreeing on the same wire:
+ *
+ *   - `plan` — `plan.violations + plan.notes`, the post-filter total
+ *     computed from the `filtered` violation stream (post wrapper-noise
+ *     drop, post severity filter, post criterion-skip). This is what
+ *     `buildScanPlan`'s two counters sum to.
+ *   - `perRuleCoverage` — `sum(perRuleCoverage[*].findingsEmitted)`, the
+ *     scanner-raw total computed by {@link buildPerRuleCoverage} over
+ *     every violation the engine emitted. Runs BEFORE wrapper-noise
+ *     drop / severity / criterion-skip, so a non-trivial delta vs the
+ *     `plan` surface means one of those filters consumed findings.
+ *   - `filesSurface` — `sum(response.files[*].findings.length)` of the
+ *     per-file buckets that actually landed on the wire. Starts at the
+ *     same `filtered`-derived grouping the plan counts, but the token-
+ *     density budget / file-count pagination can trim trailing file
+ *     entries before the response ships. Paginated tools accumulate
+ *     files over multiple calls; the scan-assembler path trims
+ *     in-place.
+ *
+ * {@link PerRuleCoverage.findingsEmitted} aside, there is no place on
+ * the current shape where all three numbers are written for the agent
+ * to cross-check. When they disagree, the agent either treats one as
+ * the headline and silently misses the drift (CLAUDE.md §1 "Composite
+ * headline counts are dishonest") or makes a third round-trip to
+ * reconcile. Surfacing the triple under a single `meta.countsBySurface`
+ * object whenever they disagree is the additive tripwire this helper
+ * produces.
+ *
+ * Honest shape (CLAUDE.md §1 "Ambiguous field shapes are dishonest"):
+ *
+ *   - Returns an empty spread when all three counts agree — no field on
+ *     the wire for the common case.
+ *   - Returns `{ countsBySurface: { plan, perRuleCoverage, filesSurface } }`
+ *     when any pair differs. All three numbers are included so the
+ *     agent doesn't have to guess which one is the outlier.
+ *   - `filesSurface` is omitted when the caller doesn't know it yet
+ *     (e.g. meta is being built before pagination). Inside the present
+ *     field, `filesSurface` is therefore a required-when-present number
+ *     — never a sentinel zero.
+ */
+export function buildCountsBySurface(args: {
+  readonly plan: number;
+  readonly perRuleCoverage: number;
+  readonly filesSurface?: number;
+}): { countsBySurface?: CountsBySurface } {
+  const { plan, perRuleCoverage, filesSurface } = args;
+  const disagree =
+    plan !== perRuleCoverage || (filesSurface !== undefined && filesSurface !== plan);
+  if (!disagree) return {};
+  const payload: CountsBySurface = {
+    plan,
+    perRuleCoverage,
+    ...(filesSurface === undefined ? {} : { filesSurface }),
+  };
+  return { countsBySurface: payload };
+}
+
+/**
+ * Shape of the {@link buildCountsBySurface} payload when present. Named
+ * so tests and cross-tool callers can import the type instead of
+ * re-stating the record shape.
+ */
+export interface CountsBySurface {
+  readonly plan: number;
+  readonly perRuleCoverage: number;
+  readonly filesSurface?: number;
+}
+
+/**
+ * Sum of `findingsEmitted` across a per-rule-coverage array. Pulled out
+ * so consumers avoid re-implementing the reduction every time they
+ * reconcile a surface total against the scanner-raw stream.
+ */
+export function sumFindingsEmitted(rows: readonly PerRuleCoverage[]): number {
+  let total = 0;
+  for (const r of rows) total += r.findingsEmitted;
+  return total;
+}

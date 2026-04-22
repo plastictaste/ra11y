@@ -33,6 +33,12 @@
  *   9. Apply the token-density budget via {@link applyTokenBudget}
  *      when enabled — secondary guard that fires only when per-file
  *      density pushes past the MCP host ceiling.
+ *  10. Stamp the cross-surface tripwire via {@link buildCountsBySurface}
+ *      so `meta.countsBySurface` lands on the wire whenever the three
+ *      scan-family totals (`plan.violations+notes`,
+ *      `sum(perRuleCoverage.findingsEmitted)`,
+ *      `sum(files[*].findings)`) disagree
+ *      (Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS).
  *
  * This module is pure — no I/O, no global state. The caller owns
  * loading the config, running the scanner, and threading the resulting
@@ -69,7 +75,12 @@ import {
   buildRuleCoverageDerivative,
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
-import { buildScanMeta, buildScanPlan } from "./scan-assembly.ts";
+import {
+  buildCountsBySurface,
+  buildScanMeta,
+  buildScanPlan,
+  sumFindingsEmitted,
+} from "./scan-assembly.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
 import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
@@ -387,12 +398,33 @@ export function assembleScanFamilyResponse(
     configSearchSawProjectMarker,
   });
 
+  // Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS: three totals a scan-family
+  // consumer can read off one response have diverged in field reports
+  // (plan.violations+notes vs sum(perRuleCoverage.findingsEmitted) vs
+  // sum(files[*].findings)). The filters between the scanner-raw stream
+  // (`perRuleCoverage`) and the filtered stream (`plan` + `files`) —
+  // wrapper-noise drop, severity, criterion-skip — eat findings the
+  // per-rule rows still count, and trim steps (token-density below,
+  // plus scan_project's caller-driven pagination) can further reduce
+  // what actually ships in `files[]`. Emit `meta.countsBySurface` whenever
+  // the three disagree so the drift is a visible tripwire instead of a
+  // silent miss the agent has to discover by summation. Pre-trim
+  // computation here ensures the `plan` and `perRuleCoverage` numbers
+  // are always paired; the `filesSurface` figure is stamped below on the
+  // final path so it reflects what actually rides on the wire.
+  const planTotal = nonNote.length + notes.length;
+  const perRuleCoverageTotal = sumFindingsEmitted(perRuleCoverage);
+
   // Base response — every optional field conditional-spread per
   // CLAUDE.md §1 "Ambiguous field shapes are dishonest."
   const baseResponse: ScanFamilyResponse = {
     plan,
     files: fileEntries,
-    meta,
+    meta: withCountsBySurface(meta, {
+      plan: planTotal,
+      perRuleCoverage: perRuleCoverageTotal,
+      filesSurface: sumFindingsAcrossFiles(fileEntries),
+    }),
     ...warnFields,
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
     ...(dedupedCandidates !== undefined && dedupedCandidates.length > 0
@@ -414,12 +446,47 @@ export function assembleScanFamilyResponse(
   });
   if (!budgetResult.truncated) return baseResponse;
 
+  // Truncation dropped trailing files — `filesSurface` now lags the
+  // `plan` total by the dropped findings, so re-stamp the tripwire with
+  // the post-trim count.
+  const trimmedFiles = budgetResult.files as readonly AssembledFile[];
   return {
     ...baseResponse,
-    files: budgetResult.files as readonly AssembledFile[],
+    files: trimmedFiles,
+    meta: withCountsBySurface(meta, {
+      plan: planTotal,
+      perRuleCoverage: perRuleCoverageTotal,
+      filesSurface: sumFindingsAcrossFiles(trimmedFiles),
+    }),
     truncated: true,
     ...(budgetResult.nextOffset === undefined ? {} : { nextOffset: budgetResult.nextOffset }),
   };
+}
+
+/**
+ * Stamp {@link buildCountsBySurface}'s honest-shape output onto the meta
+ * block. Spreads an empty record when all three counts agree so the
+ * common case puts nothing on the wire; spreads
+ * `{ countsBySurface: { … } }` when any pair differs. Caller passes a
+ * fresh `countsInput` each time because `filesSurface` can drift between
+ * the pre-trim and post-trim emit paths.
+ */
+function withCountsBySurface(
+  meta: Record<string, unknown>,
+  countsInput: Parameters<typeof buildCountsBySurface>[0],
+): Record<string, unknown> {
+  return { ...meta, ...buildCountsBySurface(countsInput) };
+}
+
+/**
+ * Sum of per-file finding counts across the assembled file buckets.
+ * Fed to {@link buildCountsBySurface} as the `filesSurface` reconciling
+ * figure for the three-totals tripwire.
+ */
+function sumFindingsAcrossFiles(files: readonly AssembledFile[]): number {
+  let total = 0;
+  for (const f of files) total += f.findings.length;
+  return total;
 }
 
 /**
