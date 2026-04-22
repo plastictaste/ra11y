@@ -21,9 +21,12 @@
  * (cwd, files, attestations, product metadata, standards, level) tuple.
  */
 
+import type { CriteriaRegistry } from "../engine/registry/criteria.ts";
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
 import { buildVpatReport, renderVpatMarkdown } from "../reports/index.ts";
 import type { VpatProductMetadata, VpatReport } from "../reports/vpat.ts";
+import type { Rule } from "../types/rule.ts";
+import type { PerRuleCoverage } from "../types/violation.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { detectApplicability } from "./manual-applicability.ts";
 import type { McpSession } from "./session.ts";
@@ -133,9 +136,14 @@ export const vpatTool: McpTool = {
     const files: readonly ParsedFile[] = [...baseFiles, ...extraFiles];
     const attestations = await loadDurableAttestations(cwd);
 
-    const { result, report: scanReport } = runScan({
+    const activeRules = applyRuleSettings(session.registry.rules, session.config.rules);
+    const {
+      result,
+      report: scanReport,
+      perRuleCoverage,
+    } = runScan({
       standards: session.registry.standards,
-      rules: applyRuleSettings(session.registry.rules, session.config.rules),
+      rules: activeRules,
       enabled: standards,
       files,
       finders: session.registry.finders,
@@ -151,10 +159,30 @@ export const vpatTool: McpTool = {
     // claims "no <video>/<audio>" even when the scan never parsed the
     // markdown files that might embed them.
     const applicability = detectApplicability(files, discoveryDiagnostics);
+    // Q-SHARED-VPAT-HONESTY-PACK fix (1): derive the set of criteria
+    // for which at least one satisfying rule actually ran on eligible
+    // inputs in this scan. Zero-violation automatable criteria outside
+    // this set route to `Not Evaluated` + `evidenceStatus: "untested"`
+    // instead of the silent `Supports` default — the canonical field
+    // report case (jekyll docs with 15 of 18 "pass" criteria having no
+    // emitted findings). Closure over `equivalentTo` ensures a rule
+    // satisfying `wcag22:1.4.3` also marks `section508:1194.22.c` /
+    // `en301549:9.1.4.3` as evidence-backed.
+    const firedCriteria = deriveFiredCriteria(
+      activeRules,
+      perRuleCoverage,
+      session.registry.criteria,
+    );
     const report = buildVpatReport(result, session.registry.standards, {
       candidates: scanReport.candidates ?? [],
       applicability,
       product: { productName, productVersion, ...buildOptionalProductFields(params) },
+      // Q-SHARED-VPAT-HONESTY-PACK fix (2): thread the resolved scan
+      // level so AAA criteria on an AA scan render as "Not Applicable —
+      // out of scope" rather than the silent "Not Evaluated" collapse
+      // that conflated scope gaps with un-evaluated manual criteria.
+      scanLevel: level,
+      firedCriteria,
       // Forward attestations so runtime-evidence-required criteria
       // (RUNTIME_EVIDENCE_REQUIRED_CRITERIA — keyboard, focus, contrast,
       // heading adequacy, pointer interaction, auth flow) with a fresh
@@ -401,4 +429,50 @@ async function loadConfigSourceSafe(
   } catch {
     return null;
   }
+}
+
+/**
+ * Builds the set of criterion IDs for which at least one satisfying
+ * rule actually ran on eligible inputs in this scan. Walks every rule's
+ * `satisfies` through the criteria registry's equivalence closure so a
+ * rule satisfying `wcag22:1.4.3` marks the Section 508 / EN 301 549
+ * equivalents as evidence-backed too (CLAUDE.md §6: standards overlap
+ * via `equivalentTo`, and the reciprocal index makes one rule cover
+ * multiple criterion IDs).
+ *
+ * A rule is considered "fired" when its `perRuleCoverage` entry reports
+ * `filesEvaluated > 0` — the rule actually ran over at least one file.
+ * Rules with no extension gate (`appliesTo.fileExtensions` absent)
+ * don't appear in `perRuleCoverage`; per the engine's invariant those
+ * ran on every file, so we treat them as fired whenever the scan had
+ * any files at all. `filesScanned === 0` falls through with an empty
+ * set, which lets VPAT honestly route every automatable criterion to
+ * "untested" when the scanner never saw any source — dovetails with
+ * the `scanned_zero_files` warning.
+ *
+ * Pure function; no side effects.
+ */
+function deriveFiredCriteria(
+  rules: readonly Rule[],
+  perRuleCoverage: readonly PerRuleCoverage[],
+  criteria: CriteriaRegistry,
+): ReadonlySet<string> {
+  const coverageByRuleId = new Map<string, PerRuleCoverage>();
+  for (const entry of perRuleCoverage) {
+    coverageByRuleId.set(entry.ruleId, entry);
+  }
+  const fired = new Set<string>();
+  for (const rule of rules) {
+    const coverage = coverageByRuleId.get(rule.id);
+    // Rules tracked in perRuleCoverage must have filesEvaluated > 0 to
+    // count as evidence. Rules absent from perRuleCoverage have no
+    // extension gate and run unconditionally — treat them as fired
+    // (they could only be absent from the index if the engine skipped
+    // instrumentation, not because they were inactive).
+    if (coverage !== undefined && coverage.filesEvaluated === 0) continue;
+    for (const declared of rule.satisfies) {
+      for (const c of criteria.equivalenceClosure(declared)) fired.add(c);
+    }
+  }
+  return fired;
 }

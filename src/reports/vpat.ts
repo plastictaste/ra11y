@@ -40,6 +40,32 @@ export type Conformance =
   | "Not Applicable"
   | "Not Evaluated";
 
+/**
+ * Diagnostic "why is this entry in its current bucket" signal, emitted
+ * only when the procurement-facing `conformance` enum alone would be
+ * ambiguous between categorically different situations. Split at the
+ * entry level so the VPAT reader can tell honest evidence-backed passes
+ * from ledger-default passes, and in-scope "Not Applicable" (feature
+ * absent) from out-of-scope "Not Applicable" (level > scanLevel).
+ *
+ * Present-when-meaningful per the AI-first consumer model — a clean
+ * `Supports` entry on an automatable criterion with an evaluated rule
+ * omits the field entirely; only the ambiguous shapes surface it.
+ *
+ * - `"out-of-scope"` — criterion level exceeds the scan's conformance
+ *   level. Pairs with `conformance: "Not Applicable"` and a remark
+ *   citing the scan level. Distinct from the media-absent "Not
+ *   Applicable" case, which omits `evidenceStatus` because the
+ *   applicability remark is already unambiguous.
+ * - `"untested"` — criterion is automatable (metadata) but no rule
+ *   satisfying it ran on eligible inputs in this scan. Pairs with
+ *   `conformance: "Not Evaluated"` — "the tool never looked," not "the
+ *   tool looked and found nothing." The canonical field-report case:
+ *   jekyll docs with 15 of 18 `Supports` criteria being no-evidence
+ *   defaults.
+ */
+export type VpatEntryEvidenceStatus = "out-of-scope" | "untested";
+
 export interface VpatEntry {
   readonly criterionId: string;
   readonly localId: string;
@@ -49,6 +75,14 @@ export interface VpatEntry {
   readonly remarks: string;
   readonly violationCount: number;
   readonly automated: boolean;
+  /**
+   * Diagnostic signal disambiguating categorically different situations
+   * that map to the same {@link Conformance} bucket. Present only when
+   * the conformance alone would be misleading — see
+   * {@link VpatEntryEvidenceStatus}. Omitted per the AI-first consumer
+   * model's present-when-meaningful rule.
+   */
+  readonly evidenceStatus?: VpatEntryEvidenceStatus;
 }
 
 export interface VpatStandardSection {
@@ -62,6 +96,23 @@ export interface VpatStandardSection {
     readonly doesNotSupport: number;
     readonly notApplicable: number;
     readonly notEvaluated: number;
+    /**
+     * Subset of `notApplicable`: criteria above the scan's conformance
+     * level that render as "Not Applicable — out of scope." Split out so
+     * procurement readers don't conflate "feature absent from sources"
+     * with "evaluation scope didn't cover this level." Omitted from
+     * summary when `scanLevel` isn't supplied (backward compat).
+     */
+    readonly outOfScope: number;
+    /**
+     * Subset of `notEvaluated`: automatable criteria whose rules never
+     * ran on eligible inputs in this scan. Paired with the entry-level
+     * `evidenceStatus: "untested"` flag. Omitted from summary when
+     * `firedCriteria` isn't supplied (backward compat) — the existing
+     * behavior of folding these into `supports` is preserved unless the
+     * caller opts into the honest split.
+     */
+    readonly untested: number;
   };
 }
 
@@ -82,10 +133,33 @@ export interface VpatProductMetadata {
   readonly notesOnEvaluation?: string;
 }
 
+/**
+ * Evaluator metadata. Historically a plain identifier string; now a
+ * small record so procurement readers see the scan's conformance level
+ * at a glance instead of having to cross-reference summary counts to
+ * infer whether AAA criteria were ever in scope. `name` is always
+ * populated; `scanLevel` is present-when-supplied (omitted from the
+ * legacy code path that still calls through the three-arg overload).
+ */
+export interface VpatEvaluator {
+  readonly name: string;
+  /**
+   * WCAG conformance level the scan ran at. Threaded through from the
+   * MCP tool's resolved `level` / session config, and surfaced here so
+   * a VPAT reader doesn't have to infer the scope boundary from the
+   * summary. Pairs with the per-entry out-of-scope rendering: criteria
+   * whose level exceeds this value emit
+   * `conformance: "Not Applicable"` + `evidenceStatus: "out-of-scope"`
+   * with a remark citing `scanLevel`. Omitted on the legacy builder
+   * path — no regression for callers that haven't opted in.
+   */
+  readonly scanLevel?: "A" | "AA" | "AAA";
+}
+
 export interface VpatReport {
   readonly templateVersion: string;
   readonly generatedAt: string;
-  readonly evaluator: string;
+  readonly evaluator: VpatEvaluator;
   readonly product: VpatProductMetadata;
   readonly standards: readonly VpatStandardSection[];
 }
@@ -107,6 +181,40 @@ export interface VpatBuildOptions {
    * supplied (runtime-only SCs route to `"Not Evaluated"`).
    */
   readonly attestations?: readonly AttestationRecord[];
+  /**
+   * WCAG conformance level the scan executed at. When supplied, every
+   * criterion whose own level is strictly above this value renders as
+   * `conformance: "Not Applicable"` with
+   * `evidenceStatus: "out-of-scope"` and a remark citing `scanLevel` —
+   * instead of the previous silent "Not Evaluated" that mixed
+   * out-of-scope criteria into the same bucket as un-evaluated manual
+   * ones. Forwarded to `VpatReport.evaluator.scanLevel` so procurement
+   * readers see the scope in the header too.
+   *
+   * Omitted → criteria are rendered without a level-based scope filter
+   * (backward compat with callers that don't yet thread the scan's
+   * level through).
+   */
+  readonly scanLevel?: "A" | "AA" | "AAA";
+  /**
+   * Criterion IDs for which at least one satisfying rule actually ran
+   * on eligible files in this scan — the scan's evidence set. An
+   * automatable criterion with zero emitted violations is only honestly
+   * "Supports" when it appears in this set; otherwise the scanner
+   * never exercised the axis and the entry routes to
+   * `conformance: "Not Evaluated"` + `evidenceStatus: "untested"` with
+   * a remark naming the gap.
+   *
+   * The builder does NOT infer this set from the scan result — derivation
+   * requires rule→criterion mapping (including equivalence closure) that
+   * lives on the engine's registries. The MCP `vpat` tool assembles the
+   * set from `perRuleCoverage` + rule `satisfies` before calling in.
+   *
+   * Omitted → every automatable zero-violation criterion renders as
+   * `Supports` (legacy behavior). Opt-in so existing tests and CLI
+   * callers that haven't wired the derivation keep working.
+   */
+  readonly firedCriteria?: ReadonlySet<string>;
 }
 
 const EVALUATOR = `ra11y v${VERSION}`;
@@ -114,34 +222,6 @@ const EVALUATOR = `ra11y v${VERSION}`;
 /** Template placeholder surfaced when the caller leaves a required field blank. */
 const PLACEHOLDER_PRODUCT_NAME = "<Product Name>";
 const PLACEHOLDER_PRODUCT_VERSION = "<Product Version>";
-
-/**
- * Chapters documented on the rendered VPAT 2.5 Rev header. ra11y's
- * source-code scan is a Chapter 5 (software) evidence source; the
- * remaining chapters are listed with "See product documentation"
- * placeholders so the VPAT reader understands the scope boundary.
- * Kept as a module constant so both the builder and any future
- * renderer share a single source of truth.
- */
-const CHAPTER_NOTES: ReadonlyArray<{ readonly heading: string; readonly note: string }> = [
-  {
-    heading: "Chapter 3: Functional Performance Criteria (FPC)",
-    note: "Not evaluated by static source analysis. See product documentation for FPC statements.",
-  },
-  { heading: "Chapter 4: Hardware", note: "Not applicable — ra11y scans software sources only." },
-  {
-    heading: "Chapter 5: Software",
-    note: "Evaluated by static source analysis. Per-criterion verdicts follow.",
-  },
-  {
-    heading: "Chapter 6: Support Documentation and Services",
-    note: "Not evaluated by static source analysis. See product documentation for conformance statements.",
-  },
-  {
-    heading: "Chapter 7: Cognitive, Language, and Learning Disabilities",
-    note: "Partially evaluated via Chapter 5 criteria; dedicated Chapter 7 claims require manual review.",
-  },
-];
 
 /**
  * Build a VPAT report from a ScanResult.
@@ -190,14 +270,21 @@ export function buildVpatReport(
         candidatesByCriterion,
         applicability,
         attestedByCriterion,
+        options.scanLevel,
+        options.firedCriteria,
       ),
     );
   }
 
+  const evaluator: VpatEvaluator = {
+    name: EVALUATOR,
+    ...(options.scanLevel !== undefined && { scanLevel: options.scanLevel }),
+  };
+
   return {
     templateVersion,
     generatedAt,
-    evaluator: EVALUATOR,
+    evaluator,
     product,
     standards: standardSections,
   };
@@ -250,6 +337,8 @@ function buildSection(
   candidatesByCriterion: ReadonlyMap<string, readonly ReviewCandidate[]>,
   applicability: Applicability | undefined,
   attestedByCriterion: ReadonlyMap<string, AttestationRecord>,
+  scanLevel: "A" | "AA" | "AAA" | undefined,
+  firedCriteria: ReadonlySet<string> | undefined,
 ): VpatStandardSection {
   const entries: VpatEntry[] = [];
   const summary = {
@@ -258,6 +347,8 @@ function buildSection(
     doesNotSupport: 0,
     notApplicable: 0,
     notEvaluated: 0,
+    outOfScope: 0,
+    untested: 0,
   };
 
   for (const criterion of standard.criteria) {
@@ -267,6 +358,8 @@ function buildSection(
       candidatesByCriterion.get(criterion.id) ?? [],
       applicability,
       attestedByCriterion,
+      scanLevel,
+      firedCriteria,
     );
     entries.push(entry);
     switch (entry.conformance) {
@@ -286,6 +379,16 @@ function buildSection(
         summary.notEvaluated += 1;
         break;
     }
+    // Honest split of the composite buckets above. A "Not Applicable"
+    // row marked out-of-scope by scanLevel is categorically different
+    // from one marked absent-feature by `detectApplicability`; a "Not
+    // Evaluated" row marked untested (automatable, no rule ran) is
+    // categorically different from one marked runtime-evidence-required
+    // or manual. Consumers reading the headline counts as "work to do"
+    // vs "can't evaluate with this tool" need the split — doctrine:
+    // "Composite headline counts are dishonest."
+    if (entry.evidenceStatus === "out-of-scope") summary.outOfScope += 1;
+    if (entry.evidenceStatus === "untested") summary.untested += 1;
   }
 
   return {
@@ -303,6 +406,8 @@ function buildEntry(
   candidates: readonly ReviewCandidate[],
   applicability: Applicability | undefined,
   attestedByCriterion: ReadonlyMap<string, AttestationRecord>,
+  scanLevel: "A" | "AA" | "AAA" | undefined,
+  firedCriteria: ReadonlySet<string> | undefined,
 ): VpatEntry {
   // Demonstrated failures always win — even for criteria classified
   // "manual" in metadata, because a rule can still satisfy a slice of a
@@ -325,6 +430,33 @@ function buildEntry(
       remarks: buildViolationRemarks(criterion, violations, conformance),
       violationCount: violations.length,
       automated: criterion.automatable !== "manual",
+    };
+  }
+
+  // Out-of-scope override. When the scan declared a conformance level
+  // (e.g. `scan_project` at default AA) but the criterion's own level
+  // is strictly above it (e.g. a AAA SC on an AA scan), render the row
+  // as "Not Applicable" with an explicit scope citation. The previous
+  // shape collapsed this into "Not Evaluated" alongside un-evaluated
+  // manual criteria and runtime-evidence-required SCs — three
+  // categorically different kinds of "we didn't check" under one
+  // headline count. A procurement reader can tell from the remark +
+  // `evidenceStatus: "out-of-scope"` that AAA criteria weren't in
+  // scope, distinct from "we couldn't evaluate keyboard traversal
+  // statically." Fires before applicability / runtime / manual checks
+  // because out-of-scope is the strongest "don't ask this question"
+  // signal — none of the other overrides should even run.
+  if (scanLevel !== undefined && isAboveScanLevel(criterion.level, scanLevel)) {
+    return {
+      criterionId: criterion.id,
+      localId: criterion.localId,
+      title: criterion.title,
+      level: criterion.level,
+      conformance: "Not Applicable",
+      remarks: buildOutOfScopeRemarks(criterion, scanLevel),
+      violationCount: 0,
+      automated: criterion.automatable !== "manual",
+      evidenceStatus: "out-of-scope",
     };
   }
 
@@ -384,6 +516,43 @@ function buildEntry(
       remarks: buildManualRemarks(criterion, candidates),
       violationCount: 0,
       automated: false,
+    };
+  }
+
+  // Untested override. The criterion is automatable in metadata, but
+  // `firedCriteria` tells us no satisfying rule actually ran on
+  // eligible inputs in this scan — e.g. `contrast/minimum` on a
+  // Tailwind project with zero authored `.css` files. The ledger's
+  // default for "automatable with no violations" is to call it a pass;
+  // VPAT used to stamp `Supports` on it, which is the canonical field
+  // report ("15 of 18 pass criteria had no emitted findings — absence
+  // interpreted as proof"). When the caller opts in by supplying
+  // `firedCriteria`, route these to "Not Evaluated" with
+  // `evidenceStatus: "untested"` and a remark naming the gap so the
+  // split between "rule ran and found nothing" and "rule never ran"
+  // is visible in the procurement artifact. Opt-in for backward compat
+  // with callers that don't yet thread the evidence set through.
+  //
+  // A fresh attestation on the criterion counts as independent evidence
+  // — a runtime harness / manual review / human study has spoken to the
+  // criterion even though no static rule fired. Skip the untested
+  // override in that case so the attested-pass routes through the
+  // normal `buildAutomatedPassRemarks` path with its evidence citation.
+  if (
+    firedCriteria !== undefined &&
+    !firedCriteria.has(criterion.id) &&
+    attestation === undefined
+  ) {
+    return {
+      criterionId: criterion.id,
+      localId: criterion.localId,
+      title: criterion.title,
+      level: criterion.level,
+      conformance: "Not Evaluated",
+      remarks: buildUntestedRemarks(criterion),
+      violationCount: 0,
+      automated: true,
+      evidenceStatus: "untested",
     };
   }
 
@@ -465,6 +634,51 @@ function buildAttestationCitation(attestation: AttestationRecord): string {
  */
 function buildRuntimeEvidenceRemarks(criterion: Criterion): string {
   return `Not Evaluated. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): runtime-dependent criterion. Static source analysis cannot prove conformance; no attestation supplied. Evaluate via a runtime harness (keyboard/focus/contrast testing, as applicable) and record the verdict with the \`attest\` tool.`;
+}
+
+/**
+ * Auditor-facing remark for a criterion whose level exceeds the scan's
+ * declared `scanLevel`. Names the gap explicitly ("AAA criterion on an
+ * AA scan") so a procurement reader doesn't conflate "out of scope"
+ * with "evaluated and found clean" or with the media-absent "Not
+ * Applicable" case. Paired with the entry-level
+ * `evidenceStatus: "out-of-scope"` structured signal — an agent can
+ * route on either surface.
+ */
+function buildOutOfScopeRemarks(criterion: Criterion, scanLevel: "A" | "AA" | "AAA"): string {
+  return `Not Applicable — out of scope. ${criterion.localId} ${criterion.title} is a Level ${criterion.level} criterion; this VPAT was produced at scanLevel ${scanLevel}. Re-run the scan with a higher level to evaluate.`;
+}
+
+/**
+ * Auditor-facing remark for an automatable criterion whose satisfying
+ * rules never ran on eligible inputs in this scan — e.g.
+ * `contrast/minimum` on a Tailwind project with zero authored `.css`
+ * files. The previous shape (`Supports`) summed these under the honest
+ * pass bucket, which is the canonical "absence interpreted as proof"
+ * failure mode the field report flagged. Routes to "Not Evaluated"
+ * with an explicit "no rule satisfying this criterion ran" reason so
+ * the procurement reader sees the scope gap rather than a silent pass.
+ */
+function buildUntestedRemarks(criterion: Criterion): string {
+  return `Not Evaluated. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): no rule satisfying this criterion ran on eligible inputs in this scan. Absence of findings is not evidence of conformance; extend the scan to files the rules target (CSS for contrast, HTML/TSX for structural rules) and re-run.`;
+}
+
+const LEVEL_RANK: Readonly<Record<"A" | "AA" | "AAA", number>> = { A: 1, AA: 2, AAA: 3 };
+
+/**
+ * True when a criterion's level is strictly above the scan's declared
+ * conformance level — meaning the scanner's rule-filter would never
+ * have fired any AAA-only rule for this criterion, so claiming any
+ * verdict other than "out of scope" would be dishonest. `base` is
+ * always in scope (Section 508 has no A/AA/AAA axis). Unknown levels
+ * fall through as in-scope so a future standard with a novel taxonomy
+ * isn't silently dropped.
+ */
+function isAboveScanLevel(criterionLevel: string, scanLevel: "A" | "AA" | "AAA"): boolean {
+  if (criterionLevel === "base") return false;
+  const critRank = LEVEL_RANK[criterionLevel as "A" | "AA" | "AAA"];
+  if (critRank === undefined) return false;
+  return critRank > LEVEL_RANK[scanLevel];
 }
 
 /**
@@ -552,55 +766,4 @@ function indexViolationsByCriterion(violations: readonly Violation[]): Map<strin
   return map;
 }
 
-/** Renders a VPAT report as a Markdown table ready to paste into a VPAT template. */
-export function renderVpatMarkdown(report: VpatReport): string {
-  const lines: string[] = [];
-  lines.push(`# ${report.templateVersion} Conformance Report`);
-  lines.push("");
-  lines.push("## Product");
-  lines.push(`- **Name**: ${report.product.productName}`);
-  lines.push(`- **Version**: ${report.product.productVersion}`);
-  if (report.product.contactOrganization) {
-    lines.push(`- **Organization**: ${report.product.contactOrganization}`);
-  }
-  if (report.product.contactEmail) {
-    lines.push(`- **Contact**: ${report.product.contactEmail}`);
-  }
-  lines.push("");
-  lines.push("## Evaluation");
-  lines.push(`- **Evaluator**: ${report.evaluator}`);
-  lines.push(`- **Generated**: ${report.generatedAt}`);
-  if (report.product.evaluationMethods) {
-    lines.push(`- **Methods**: ${report.product.evaluationMethods}`);
-  }
-  if (report.product.notesOnEvaluation) {
-    lines.push(`- **Notes**: ${report.product.notesOnEvaluation}`);
-  }
-  lines.push("");
-  lines.push("## Applicable Chapters");
-  for (const chapter of CHAPTER_NOTES) {
-    lines.push(`- **${chapter.heading}** — ${chapter.note}`);
-  }
-  lines.push("");
-
-  for (const section of report.standards) {
-    lines.push(`## ${section.standardName} ${section.version}`);
-    lines.push("");
-    lines.push(
-      `Summary: **${section.summary.supports}** Supports · **${section.summary.partiallySupports}** Partially · **${section.summary.doesNotSupport}** Does Not Support · **${section.summary.notApplicable}** Not Applicable · **${section.summary.notEvaluated}** Not Evaluated`,
-    );
-    lines.push("");
-    lines.push("| Criterion | Level | Conformance | Remarks |");
-    lines.push("|-----------|-------|-------------|---------|");
-    for (const entry of section.entries) {
-      const title = entry.title.replace(/\|/g, "\\|");
-      const remarks = entry.remarks.replace(/\|/g, "\\|").replace(/\n/g, " ");
-      lines.push(
-        `| ${entry.localId} ${title} | ${entry.level} | ${entry.conformance} | ${remarks} |`,
-      );
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
+export { renderVpatMarkdown } from "./vpat-markdown.ts";
