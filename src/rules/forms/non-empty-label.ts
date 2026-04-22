@@ -1,26 +1,39 @@
 /**
  * Rule: forms/non-empty-label
- * Satisfies: wcag22:2.4.6, wcag21:2.4.6, wcag22:1.3.1, wcag21:1.3.1
+ * Satisfies: wcag22:2.4.6, wcag21:2.4.6, wcag22:1.3.1, wcag21:1.3.1, wcag22:3.3.2, wcag21:3.3.2
  * Spec: https://www.w3.org/TR/WCAG22/#headings-and-labels
+ *       https://www.w3.org/TR/WCAG22/#labels-or-instructions
  *
  * > Headings and labels describe topic or purpose.
+ * > Labels or instructions are provided when content requires user input.
  *
- * Flags `<label>` elements that exist in the markup but whose text
- * content is empty or whitespace-only. Empty labels defeat the
- * purpose — screen readers announce the control with no name, and
- * `forms/labels-required` thinks the control is labeled because a
- * `<label for="…">` points at it.
+ * Flags `<label>` elements in two shapes:
+ *
+ *   1. **Empty label.** The `<label>`'s text content is whitespace-only
+ *      (or comments-only, or a single `<br>` child). Screen readers
+ *      announce the control with no name, and `forms/labels-required`
+ *      thinks the control is labeled because a `<label for="…">`
+ *      points at it.
+ *
+ *   2. **Value-shape label.** The `<label>`'s text content is non-empty
+ *      but matches a value-display pattern (`50`, `$9.99`, `75%`,
+ *      `2024-03-14`, `12:30`). This is a common authoring mistake for
+ *      custom range sliders and similar stateful UI — the element
+ *      *reads* like a label because it's a `<label for="…">`, but
+ *      the text is displaying the control's current value rather
+ *      than naming what the control controls. The agent reads the
+ *      surrounding code to verify whether this element labels the
+ *      control or reports its value.
  *
  * Covers: HTML `<label>` and JSX `<label>` elements (including
  * lowercase JSX — PascalCase components like `<FormLabel>` render
  * opaque content we can't resolve at static-analysis time and stay
  * out of scope here).
  *
- * Whitespace-only content, comments-only, and a single `<br>` child
- * all count as empty. An `aria-label` attribute on the label element
- * itself does NOT rescue it — the attribute names the label, not
- * the control it labels, and browsers still announce the referenced
- * control by the (empty) label's text content.
+ * An `aria-label` attribute on the label element itself does NOT
+ * rescue it — the attribute names the label, not the control it
+ * labels, and browsers still announce the referenced control by the
+ * (empty) label's text content.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -38,7 +51,14 @@ import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../typ
 
 export const rule = defineRule({
   id: "forms/non-empty-label",
-  satisfies: ["wcag22:2.4.6", "wcag21:2.4.6", "wcag22:1.3.1", "wcag21:1.3.1"],
+  satisfies: [
+    "wcag22:2.4.6",
+    "wcag21:2.4.6",
+    "wcag22:1.3.1",
+    "wcag21:1.3.1",
+    "wcag22:3.3.2",
+    "wcag21:3.3.2",
+  ],
   severity: "error",
   scope: "document",
   fixClass: "guidance",
@@ -79,28 +99,49 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   const controls = collectHtmlControlsById(doc);
   for (const label of findHtmlElementsByTag(doc, "label")) {
-    if (isEmptyHtml(label)) emit(emitHtml(label, controls));
+    const text = htmlTextContent(label).trim();
+    if (text.length === 0) {
+      emit(emitHtml(label, controls));
+      continue;
+    }
+    if (looksLikeValue(text)) emit(emitValueShapeHtml(label, text, controls));
   }
 }
 
 function checkJsx(module: TsxModule, emit: Emit): void {
   const controls = collectJsxControlsById(module);
   for (const label of findJsxElementsByTag(module, "label")) {
-    if (!isEmptyJsx(label)) continue;
-    emit(label.hasSpreadProps ? emitJsxPrimitive(label) : emitJsx(label, controls));
+    const text = jsxTextContent(label).trim();
+    if (text.length === 0) {
+      emit(label.hasSpreadProps ? emitJsxPrimitive(label) : emitJsx(label, controls));
+      continue;
+    }
+    if (looksLikeValue(text)) emit(emitValueShapeJsx(label, text, controls));
   }
 }
 
 // ---------------------------------------------------------------------------
-// Emptiness checks
+// Value-shape detection
 // ---------------------------------------------------------------------------
 
-function isEmptyHtml(label: HtmlElement): boolean {
-  return htmlTextContent(label).trim().length === 0;
-}
+/**
+ * Tight regex list — plain number, currency prefix, percentage suffix,
+ * ISO date, US-style slash date, time. False positives here are
+ * expected; the reason text tells the agent to verify the context.
+ * The escape hatch when the element really is a label is the source-
+ * level disable pragma (<!-- ra11y-disable forms/non-empty-label -->).
+ */
+const VALUE_SHAPE_PATTERNS: readonly RegExp[] = [
+  /^\d+(\.\d+)?$/, // plain number: 50, 1.5
+  /^[$€£¥₩₹]\s?\d+(\.\d+)?$/, // currency: $9.99, €10
+  /^\d+(\.\d+)?\s?%$/, // percentage: 75%, 12.5 %
+  /^\d{4}-\d{2}-\d{2}$/, // ISO date: 2024-03-14
+  /^\d{1,2}\/\d{1,2}\/\d{2,4}$/, // US-style date: 3/14/2024
+  /^\d{1,2}:\d{2}(:\d{2})?$/, // time: 12:30, 12:30:45
+];
 
-function isEmptyJsx(label: JsxElement): boolean {
-  return jsxTextContent(label).trim().length === 0;
+function looksLikeValue(text: string): boolean {
+  return VALUE_SHAPE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +253,42 @@ function emitJsxPrimitive(label: JsxElement) {
   };
 }
 
+function emitValueShapeHtml(
+  label: HtmlElement,
+  text: string,
+  controls: ReadonlyMap<string, ControlSummary>,
+) {
+  const target = getHtmlAttribute(label, "for");
+  return {
+    severity: "error" as const,
+    location: {
+      filePath: "",
+      line: label.loc.start.line,
+      column: label.loc.start.column,
+    },
+    message: `label text "${text}" looks like a value, not a name — verify whether this element labels the control or displays its current value; a labelling element should name what the control controls.`,
+    suggestion: buildValueShapeSuggestion(target, controls, "html"),
+  };
+}
+
+function emitValueShapeJsx(
+  label: JsxElement,
+  text: string,
+  controls: ReadonlyMap<string, ControlSummary>,
+) {
+  const target = getJsxAttributeString(label, "htmlFor") ?? getJsxAttributeString(label, "for");
+  return {
+    severity: "error" as const,
+    location: {
+      filePath: "",
+      line: label.loc.start.line,
+      column: label.loc.start.column,
+    },
+    message: `label text "${text}" looks like a value, not a name — verify whether this element labels the control or displays its current value; a labelling element should name what the control controls.`,
+    suggestion: buildValueShapeSuggestion(target, controls, "jsx"),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Suggestion builder (three-branch ladder)
 // ---------------------------------------------------------------------------
@@ -249,6 +326,41 @@ function buildSuggestion(
 
   // Branch B2: matching control found but no hint; suggest short-noun fallback.
   return `Label references ${forAttr}="${target}" (${controlDescriptor} at line ${control.line}), but the control has no type, name, or placeholder to derive a candidate. Put a short noun describing what the user types inside the <label> (e.g. "Username" or "Full name").`;
+}
+
+/**
+ * Suggestion for the value-shape branch. Cross-references the control
+ * (when the `for`/`htmlFor` resolves) so the agent can see the shape
+ * of the control whose value the label text might be displaying —
+ * sliders, number inputs, and date inputs are the common case. The
+ * advice lands the agent on the two most common real fixes:
+ *
+ *   1. Keep the `<label>` as a label, add a SEPARATE value-display
+ *      element (a `<span>` / `<output>`) for the current value.
+ *   2. Keep the value-display element, use a different mechanism
+ *      (`aria-label` on the control, or a different `<label>`) to
+ *      name the control.
+ */
+function buildValueShapeSuggestion(
+  target: string | null,
+  controls: ReadonlyMap<string, ControlSummary>,
+  dialect: Dialect,
+): string {
+  const forAttr = dialect === "jsx" ? "htmlFor" : "for";
+  const baseAdvice =
+    'If this element is meant to show the control\'s current value, use `<output>` or a `<span>` (not `<label>`) and give the control a separate name via a different `<label>` or `aria-label="…"`. If this element really is labelling the control, replace the numeric/value text with a human-readable name describing what the user is setting.';
+
+  if (target === null || target.length === 0) {
+    return baseAdvice;
+  }
+
+  const control = controls.get(target);
+  if (!control) {
+    return `Label references ${forAttr}="${target}" but no <input>, <select>, or <textarea> with id="${target}" exists in this file. ${baseAdvice}`;
+  }
+
+  const controlDescriptor = describeControl(control);
+  return `Label references ${forAttr}="${target}" (${controlDescriptor} at line ${control.line}). ${baseAdvice}`;
 }
 
 interface LabelCandidate {

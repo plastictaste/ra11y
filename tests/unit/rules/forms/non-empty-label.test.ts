@@ -147,9 +147,148 @@ describe("rule forms/non-empty-label", () => {
     });
   });
 
-  it("cites WCAG 2.4.6 and 1.3.1 across both 2.1 and 2.2", () => {
+  describe("value-shape branch (label text looks like a displayed value)", () => {
+    it("HTML: plain-number label text fires with value-shape message", () => {
+      const v = runRule(rule, '<label for="range">50</label><input id="range" type="range">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain('"50"');
+      expect(v[0]?.message).toContain("looks like a value");
+      expect(v[0]?.message).toContain("a labelling element should name what the control controls");
+    });
+
+    it("HTML: decimal-number label text fires", () => {
+      const v = runRule(rule, '<label for="x">1.5</label><input id="x">', { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"1.5"');
+    });
+
+    it("HTML: currency label text fires", () => {
+      const v = runRule(rule, '<label for="p">$9.99</label><input id="p" name="price">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"$9.99"');
+    });
+
+    it("HTML: percentage label text fires", () => {
+      const v = runRule(rule, '<label for="b">75%</label><input id="b">', { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"75%"');
+    });
+
+    it("HTML: ISO-date label text fires", () => {
+      const v = runRule(rule, '<label for="d">2024-03-14</label><input id="d" type="date">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"2024-03-14"');
+    });
+
+    it("HTML: slash-date label text fires", () => {
+      const v = runRule(rule, '<label for="d2">3/14/2024</label><input id="d2">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"3/14/2024"');
+    });
+
+    it("HTML: time label text fires", () => {
+      const v = runRule(rule, '<label for="t">12:30</label><input id="t" type="time">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"12:30"');
+    });
+
+    it("HTML: time-with-seconds label text fires", () => {
+      const v = runRule(rule, '<label for="t2">12:30:45</label><input id="t2">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"12:30:45"');
+    });
+
+    it("HTML: suggestion cross-references the matching control", () => {
+      const v = runRule(rule, '<label for="range">50</label><input id="range" type="range">', {
+        filePath: "a.html",
+      });
+      expect(v[0]?.suggestion).toContain('for="range"');
+      expect(v[0]?.suggestion).toContain('<input type="range">');
+      expect(v[0]?.suggestion).toContain("`<output>`");
+    });
+
+    it("HTML: empty label still emits the empty-branch message, not the value-shape one", () => {
+      const v = runRule(rule, '<label for="x"></label><input id="x">', { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("<label> is empty");
+      expect(v[0]?.message).not.toContain("looks like a value");
+    });
+
+    it("HTML: label with a real name does NOT fire", () => {
+      const v = runRule(rule, '<label for="q">Quantity</label><input id="q">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: label text that embeds a number inside prose does NOT fire", () => {
+      // "Age (in years)" should not match — only pure value shapes do.
+      const v = runRule(rule, '<label for="a">Age (in years)</label><input id="a">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: label text that looks like an identifier/word does NOT fire", () => {
+      const v = runRule(rule, '<label for="t">Temperature</label><input id="t">', {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: unmatched for target → generic value-shape advice", () => {
+      const v = runRule(rule, '<label for="ghost">50</label>', { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain('for="ghost"');
+      expect(v[0]?.suggestion).toContain("no <input>, <select>, or <textarea>");
+    });
+
+    it("HTML: bare <label> with no for and value-shape text → generic advice only", () => {
+      const v = runRule(rule, "<label>75%</label>", { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("`<output>`");
+    });
+
+    it("JSX: value-shape text fires with htmlFor cross-reference", () => {
+      const v = runRule(
+        rule,
+        '<label htmlFor="range">50</label><input id="range" type="range" />',
+        { filePath: "a.tsx" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain('"50"');
+      expect(v[0]?.suggestion).toContain('htmlFor="range"');
+    });
+
+    it("JSX: empty label and value-shape label on same file emit separate findings", () => {
+      const v = runRule(rule, `<><label htmlFor="a"></label><label htmlFor="b">50</label></>`, {
+        filePath: "a.tsx",
+      });
+      expect(v).toHaveLength(2);
+      const messages = v.map((x) => x.message);
+      expect(messages.some((m) => m.includes("<label> is empty"))).toBe(true);
+      expect(messages.some((m) => m.includes("looks like a value"))).toBe(true);
+    });
+  });
+
+  it("cites WCAG 2.4.6, 1.3.1, and 3.3.2 across both 2.1 and 2.2", () => {
     expect(rule.satisfies).toContain("wcag22:2.4.6");
     expect(rule.satisfies).toContain("wcag21:2.4.6");
     expect(rule.satisfies).toContain("wcag22:1.3.1");
+    expect(rule.satisfies).toContain("wcag22:3.3.2");
+    expect(rule.satisfies).toContain("wcag21:3.3.2");
   });
 });
