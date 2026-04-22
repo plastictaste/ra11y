@@ -183,4 +183,57 @@ describe("review/images-of-text", () => {
       expect(out[0]?.reason).toContain("text-baked-in concern is provably lower");
     });
   });
+
+  describe("parent-text corpus partitions <svg> subtrees", () => {
+    // Invariant: when the only "surrounding text" match for an <img>'s
+    // short alt attribute lives inside a sibling <svg>'s <text>/<tspan>
+    // descendant, the reason must NOT use the unqualified
+    // "repeated in surrounding text" phrasing (which implies equivalent
+    // live HTML text is already present). It must name the sibling
+    // <svg> as the match source so the agent can triage accurately.
+    // Per CLAUDE.md § 1 "Surface, don't suppress" the candidate still
+    // emits at the same confidence — only the phrasing differs.
+    // Captured case: Bootstrap's carousel renders inline SVG placeholder
+    // images whose <text> paints the slide label sibling-adjacent to an
+    // <img alt="First slide">.
+    it("names the sibling <svg> when the match is SVG-only (HTML img)", () => {
+      const source = `<div><img alt="First slide" src="/p.png"><svg><text>First slide</text></svg></div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).toContain("inside a sibling <svg>");
+      expect(out[0]?.reason).not.toContain("is repeated in surrounding text");
+    });
+
+    it("names the sibling <svg> when the match is in a <tspan> (HTML img)", () => {
+      // <tspan> inside <text> still renders as SVG-painted glyphs, not live HTML.
+      const source = `<div><img alt="Hello" src="/p.png"><svg><text><tspan>Hello</tspan></text></svg></div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).toContain("inside a sibling <svg>");
+    });
+
+    it("prefers live-HTML phrasing when BOTH live text and SVG text match", () => {
+      // Live HTML text equivalence IS present — agent should see the
+      // existing phrasing, not the SVG-only variant.
+      const source = `<div><img alt="Sale" src="/p.png"><svg><text>Sale</text></svg><span>Sale</span></div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).toContain("is repeated in surrounding text");
+      expect(out[0]?.reason).not.toContain("inside a sibling <svg>");
+    });
+
+    it("names the sibling <svg> when the match is SVG-only (JSX img)", () => {
+      const source = `
+        const x = (
+          <div>
+            <img alt="First slide" src="/p.png" />
+            <svg><text>First slide</text></svg>
+          </div>
+        );
+      `;
+      const out = runFinder(finder, source);
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.reason).toContain("inside a sibling <svg>");
+    });
+  });
 });

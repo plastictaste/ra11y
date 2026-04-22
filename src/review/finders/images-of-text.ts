@@ -19,12 +19,7 @@
  */
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
-import {
-  getHtmlAttribute,
-  getJsxAttribute,
-  htmlTextContent,
-  jsxTextContent,
-} from "../../engine/ast-helpers.ts";
+import { getHtmlAttribute, getJsxAttribute } from "../../engine/ast-helpers.ts";
 import type {
   HtmlDocument,
   HtmlElement,
@@ -88,7 +83,7 @@ function findHtmlCandidates(
 
 function scanHtmlChildren(
   children: readonly HtmlNode[],
-  parentText: string | null,
+  parentText: ParentText | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
@@ -96,7 +91,7 @@ function scanHtmlChildren(
     const child = children[index];
     if (child?.kind !== "HtmlElement") continue;
     emitHtmlImageCandidate(child, children, index, parentText, filePath, candidates);
-    scanHtmlChildren(child.children, htmlTextContent(child), filePath, candidates);
+    scanHtmlChildren(child.children, splitHtmlTextContent(child), filePath, candidates);
   }
 }
 
@@ -104,7 +99,7 @@ function emitHtmlImageCandidate(
   element: HtmlElement,
   siblings: readonly HtmlNode[],
   index: number,
-  parentText: string | null,
+  parentText: ParentText | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
@@ -140,12 +135,12 @@ function scanJsxElement(
   element: JsxElement,
   siblings: readonly JsxNode[] | null,
   index: number,
-  parentText: string | null,
+  parentText: ParentText | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
   emitJsxImageCandidate(element, siblings, index, parentText, filePath, candidates);
-  const currentText = jsxTextContent(element);
+  const currentText = splitJsxTextContent(element);
   for (let childIndex = 0; childIndex < element.children.length; childIndex++) {
     const child = element.children[childIndex];
     if (child?.kind !== "JsxElement") continue;
@@ -157,7 +152,7 @@ function emitJsxImageCandidate(
   element: JsxElement,
   siblings: readonly JsxNode[] | null,
   index: number,
-  parentText: string | null,
+  parentText: ParentText | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
@@ -205,7 +200,7 @@ function adjacentJsxText(siblings: readonly JsxNode[] | null, index: number): re
 
 function collectSignals(
   alt: ImageText | null,
-  parentText: string | null,
+  parentText: ParentText | null,
   siblingText: readonly string[],
   keywordSignal: string | null,
 ): readonly string[] {
@@ -216,9 +211,35 @@ function collectSignals(
   return signals;
 }
 
+/**
+ * Decide which "alt repeats nearby text" variant to emit, if any.
+ *
+ * The parent-text corpus is partitioned by {@link splitHtmlTextContent}
+ * (and its JSX sibling) into `liveText` — text nodes outside any
+ * descendant <svg> subtree — and `svgText` — text nodes inside
+ * descendant <svg> subtrees. The partition matters because `<text>`
+ * and `<tspan>` inside an `<svg>` are painted as glyphs, not rendered
+ * as CSS-styled HTML text. When the `<img>`'s short alt attribute
+ * appears only inside the `<svg>` corpus, claiming the alt is
+ * "repeated in surrounding text" misleads the agent into believing
+ * the page already has the equivalent styled HTML text that 1.4.5
+ * would want as the remedy — it does not; the match is itself another
+ * potential image-of-text surface.
+ *
+ * Match precedence mirrors how a human would read the snippet:
+ *   1. Immediate-sibling HTML text nodes (closest visible text).
+ *   2. Parent descendant live HTML text.
+ *   3. Parent descendant text *only* inside a sibling <svg> subtree.
+ *
+ * The candidate is surfaced in every case — per the AI-first consumer
+ * model ("Surface, don't suppress"). Only the reason phrasing
+ * changes, so the agent can triage without the misleading "equivalent
+ * styled text is already present" framing when the only match lives
+ * inside an SVG.
+ */
 function repeatedTextSignal(
   alt: ImageText | null,
-  parentText: string | null,
+  parentText: ParentText | null,
   siblingText: readonly string[],
 ): string | null {
   if (!alt) return null;
@@ -227,8 +248,12 @@ function repeatedTextSignal(
       return `short alt text "${alt.raw}" is repeated in an immediate sibling text node`;
     }
   }
-  if (parentText && containsWholePhrase(parentText, alt.normalized)) {
+  if (!parentText) return null;
+  if (containsWholePhrase(parentText.liveText, alt.normalized)) {
     return `short alt text "${alt.raw}" is repeated in surrounding text`;
+  }
+  if (containsWholePhrase(parentText.svgText, alt.normalized)) {
+    return `short alt text "${alt.raw}" appears inside a sibling <svg> element's descendant text (\`<text>\`/\`<tspan>\`) — that SVG may itself be an image of text; the match is not equivalent live HTML text`;
   }
   return null;
 }
@@ -421,4 +446,76 @@ function percentDecode(value: string): string | null {
 interface ImageText {
   readonly raw: string;
   readonly normalized: string;
+}
+
+/**
+ * Partitioned view of a parent element's descendant text. `liveText`
+ * is the concatenation of text nodes outside any descendant `<svg>`
+ * subtree — this is what CSS styles and what a sighted user reads as
+ * page copy. `svgText` is the concatenation of text nodes inside
+ * descendant `<svg>` subtrees — glyphs painted by the SVG renderer,
+ * which from a 1.4.5 perspective are closer to an image-of-text than
+ * to the "equivalent styled text" remedy.
+ *
+ * The split lets `repeatedTextSignal` emit a different reason variant
+ * when an `<img>`'s short alt appears only in the `svgText` half — so
+ * the agent isn't told live HTML text equivalence exists when it
+ * doesn't. See docs/kb/architecture/ai-first-consumer.md ("Review
+ * candidates, not assertions" + "Enrich reason with dismissal signal").
+ */
+interface ParentText {
+  readonly liveText: string;
+  readonly svgText: string;
+}
+
+/** Classifies a descendant `<svg>` by tag name (case-insensitive). */
+function isSvgHtmlElement(element: HtmlElement): boolean {
+  return element.tagName.toLowerCase() === "svg";
+}
+
+/** Classifies a descendant `<svg>` JSX element. Preserves case (JSX is XML-ish). */
+function isSvgJsxElement(element: JsxElement): boolean {
+  return element.tagName === "svg";
+}
+
+/**
+ * Walk the element's descendants concatenating text nodes into two
+ * buckets. A text node's bucket is determined by whether any ancestor
+ * between it and `element` (exclusive) is an `<svg>` — if yes, the
+ * text is classified as `svgText`; otherwise `liveText`. Matches the
+ * contract of {@link htmlTextContent} (trimmed concatenation of
+ * descendant text) but with the partitioning needed by the
+ * images-of-text finder.
+ */
+function splitHtmlTextContent(element: HtmlElement): ParentText {
+  const live: string[] = [];
+  const svg: string[] = [];
+  const visit = (node: HtmlNode, insideSvg: boolean): void => {
+    if (node.kind === "HtmlText") {
+      (insideSvg ? svg : live).push(node.value);
+      return;
+    }
+    if (node.kind !== "HtmlElement") return;
+    const nextInsideSvg = insideSvg || isSvgHtmlElement(node);
+    for (const child of node.children) visit(child, nextInsideSvg);
+  };
+  for (const child of element.children) visit(child, false);
+  return { liveText: live.join("").trim(), svgText: svg.join("").trim() };
+}
+
+/** JSX counterpart to {@link splitHtmlTextContent}. */
+function splitJsxTextContent(element: JsxElement): ParentText {
+  const live: string[] = [];
+  const svg: string[] = [];
+  const visit = (node: JsxNode, insideSvg: boolean): void => {
+    if (node.kind === "JsxText") {
+      (insideSvg ? svg : live).push(node.value);
+      return;
+    }
+    if (node.kind !== "JsxElement") return;
+    const nextInsideSvg = insideSvg || isSvgJsxElement(node);
+    for (const child of node.children) visit(child, nextInsideSvg);
+  };
+  for (const child of element.children) visit(child, false);
+  return { liveText: live.join("").trim(), svgText: svg.join("").trim() };
 }
