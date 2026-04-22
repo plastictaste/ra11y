@@ -30,12 +30,13 @@ import {
   parseFilesWithDiagnostics,
   resolveStandards,
   runScanAndFormat,
+  type ScanFormatted,
   type StructuredErrorCode,
   strArrayParam,
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField, warningsFromScanMeta } from "./warnings.ts";
+import { type WarningInputs, warningsField, warningsFieldFromScanMeta } from "./warnings.ts";
 import type { NativeWrapperSources } from "./wrappers-meta.ts";
 
 export const scanProjectTool: McpTool = {
@@ -278,11 +279,11 @@ export const scanProjectTool: McpTool = {
         page,
         pageOffset: pageParams.offset,
         fullMeta,
-        baseWarnings: warningsFromScanMeta({
-          meta: formatted.meta,
+        ...buildBaseWarningsForScanProject({
+          formatted,
           rootSource,
           configSource: projectConfig.sourcePath,
-          scannedBuildArtifactsPresent: buildArtifacts.present,
+          buildArtifacts,
           storybookPresetActive,
           sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
         }),
@@ -290,6 +291,123 @@ export const scanProjectTool: McpTool = {
     );
   },
 };
+
+/**
+ * Q6-BUDGET-UNDER-VENDOR-NOISE assembly seam. Cross-references
+ * the build-artifact labels with `formatted.files` to detect the
+ * vendor-CSS dominance regime, then emits the spreadable
+ * `baseWarnings` + `baseWarningsDetails` pair for the assembler.
+ * Per doctrine, the finding paths are NOT filtered — the tally
+ * only drives an additive warning code + structured payload so
+ * the agent sees "vendor filtering first" before re-budgeting.
+ * Extracted as its own helper so the handler's cognitive
+ * complexity stays inside the lint budget.
+ */
+function buildBaseWarningsForScanProject(args: {
+  readonly formatted: ScanFormatted;
+  readonly rootSource: "explicit" | "host-root" | "git" | "spawn-cwd";
+  readonly configSource: string | null;
+  readonly buildArtifacts: {
+    readonly present: boolean;
+    readonly entries: readonly ScannedBuildArtifact[];
+  };
+  readonly storybookPresetActive: boolean;
+  readonly sessionWrappersMismatchCwd: boolean;
+}): {
+  readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
+} {
+  const {
+    formatted,
+    rootSource,
+    configSource,
+    buildArtifacts,
+    storybookPresetActive,
+    sessionWrappersMismatchCwd,
+  } = args;
+  const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
+  const warningsFromMeta = warningsFieldFromScanMeta({
+    meta: formatted.meta,
+    rootSource,
+    configSource,
+    scannedBuildArtifactsPresent: buildArtifacts.present,
+    storybookPresetActive,
+    sessionWrappersMismatchCwd,
+    ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
+  });
+  return warningsFieldsForAssembler(warningsFromMeta);
+}
+
+/**
+ * Narrows the spreadable `warningsField`-shaped object into the
+ * discrete `baseWarnings` + `baseWarningsDetails` keys the
+ * assembler expects — both conditional-spread so absent fields
+ * are omitted rather than sentineled (CLAUDE.md §1 "Ambiguous
+ * field shapes are dishonest"). Extracted so the handler's
+ * cognitive complexity stays inside the lint budget.
+ */
+function warningsFieldsForAssembler(warningsFromMeta: {
+  readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+}): {
+  readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
+} {
+  const codes = warningsFromMeta.warnings;
+  const details = warningsFromMeta.warningsDetails;
+  return {
+    ...(codes === undefined ? {} : { baseWarnings: codes }),
+    ...(details === undefined ? {} : { baseWarningsDetails: details }),
+  };
+}
+
+/**
+ * Cross-references the build-artifact detector's output with the
+ * per-file findings list to drive the
+ * `vendor_css_dominates_findings` warning. Returns `undefined`
+ * when the scan produced no findings at all (the dominance
+ * question isn't meaningful on a clean scan) — otherwise returns
+ * the tally plus the densest CSS build-artifact file so the
+ * warning payload has a concrete first-pivot.
+ *
+ * CSS-only scope: JS/HTML build artifacts (sourcemap pairs,
+ * `dist/*.js`) are surfaced under `scanned_build_artifacts_present`
+ * but aren't counted here — the dominance regime we're naming is
+ * specifically "vendor CSS bundles (bootstrap.css, font-awesome.css,
+ * compiled Tailwind) firing contrast / motion rules at scale," not
+ * the broader "build artifact presence" signal.
+ */
+function computeVendorCssNoise(
+  buildArtifacts: readonly ScannedBuildArtifact[],
+  files: ScanFormatted["files"],
+): WarningInputs["vendorCssNoise"] | undefined {
+  const vendorCssPaths = new Set<string>();
+  for (const artifact of buildArtifacts) {
+    const lower = artifact.path.toLowerCase();
+    if (lower.endsWith(".css") || lower.endsWith(".scss")) {
+      vendorCssPaths.add(artifact.path);
+    }
+  }
+  let totalFindingsCount = 0;
+  let vendorFindingsCount = 0;
+  let topVendorFile: { readonly path: string; readonly findingsCount: number } | undefined;
+  for (const file of files) {
+    const count = file.findings.length;
+    totalFindingsCount += count;
+    if (vendorCssPaths.has(file.path)) {
+      vendorFindingsCount += count;
+      if (topVendorFile === undefined || count > topVendorFile.findingsCount) {
+        topVendorFile = { path: file.path, findingsCount: count };
+      }
+    }
+  }
+  if (totalFindingsCount === 0) return undefined;
+  return {
+    totalFindingsCount,
+    vendorFindingsCount,
+    ...(topVendorFile === undefined ? {} : { topVendorFile }),
+  };
+}
 
 /**
  * Maps a loaded project config onto the discovery-side options
@@ -667,17 +785,21 @@ function structuredField(nextStep: { readonly structured?: unknown }): {
 }
 
 /**
- * Build-artifacts spread: a `metaField` to mix into `meta` (omitted
- * when no artifacts) and a `present` boolean for
+ * Build-artifacts spread: the raw `entries` list (for downstream
+ * cross-referencing against findings, e.g. the vendor-CSS
+ * dominance predicate), a `metaField` to mix into `meta` (omitted
+ * when no artifacts), and a `present` boolean for
  * `warningsFieldFromScanMeta`.
  */
 function buildArtifactsFields(files: readonly ParsedFile[]): {
   readonly present: boolean;
+  readonly entries: readonly ScannedBuildArtifact[];
   readonly metaField: { readonly scannedBuildArtifacts?: readonly ScannedBuildArtifact[] };
 } {
   const entries = collectBuildArtifacts(files);
   return {
     present: entries.length > 0,
+    entries,
     metaField: entries.length > 0 ? { scannedBuildArtifacts: entries } : {},
   };
 }

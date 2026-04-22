@@ -116,7 +116,33 @@ export type ScanWarningCode =
   // `{ language, fileCount, percentageOfSkipped }` so the agent
   // can branch on the specific language without re-deriving it
   // from the ext map.
-  | "source_language_unsupported";
+  | "source_language_unsupported"
+  // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS build artifacts
+  // (bootstrap.css, font-awesome.css, jquery-era bundles) dominate
+  // the finding set so heavily that the response's file budget is
+  // being consumed by unactionable findings. Canonical repro: a
+  // website-templates scan where bootstrap.css emitted 5,458
+  // findings and font-awesome.css emitted 8,940 — 69% of 24,772
+  // findings across three rules firing on vendor CSS. The code
+  // fires when (a) at least one scanned file is a CSS build
+  // artifact (per `scannedBuildArtifacts` with a `.css` / `.scss`
+  // extension), AND (b) findings on those artifact files account
+  // for at least half of the scan's total findings, AND (c) the
+  // total finding count clears an absolute floor so a trivial
+  // 2-finding scan on a `.min.css` doesn't trip the signal.
+  // Paired with `scanned_build_artifacts_present` — the presence
+  // code tells the agent "at least one file is from the build";
+  // this code tells the agent "most of your findings are AND
+  // vendor-filtering is the first triage step before widening the
+  // budget." Additive surface only — findings are NOT suppressed;
+  // the warning tells the agent vendor filtering via exclude
+  // globs or the in-file `ra11y-disable` pragma is the lever.
+  // Paired payload: `warningsDetails.vendor_css_dominates_findings`
+  // carries `{ vendorFindingsCount, totalFindings,
+  // percentageOfFindings, topVendorFile: { path, findingsCount } }`
+  // so the agent branches on the dominance without recounting
+  // `files[]` against `meta.scannedBuildArtifacts`.
+  | "vendor_css_dominates_findings";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -176,6 +202,27 @@ export interface WarningInputs {
    * call site so the warnings module stays pure over its inputs.
    */
   readonly sessionWrappersMismatchCwd?: boolean;
+  /**
+   * Q6-BUDGET-UNDER-VENDOR-NOISE inputs. Drive the
+   * `vendor_css_dominates_findings` code + its structured payload.
+   * The caller computes the cross-reference between
+   * `scannedBuildArtifacts` (CSS-extension subset) and
+   * `formatted.files` and supplies the totals here so the warnings
+   * module stays pure over its inputs. Omit when the tool doesn't
+   * run the build-artifact detector (e.g. `scan` against arbitrary
+   * paths) — the code cannot fire without it.
+   */
+  readonly vendorCssNoise?: {
+    /** Total findings (all files, all rules) across `formatted.files`. */
+    readonly totalFindingsCount: number;
+    /** Findings whose file is a CSS / SCSS build artifact. */
+    readonly vendorFindingsCount: number;
+    /** Densest CSS build-artifact file in the scan, if any. */
+    readonly topVendorFile?: {
+      readonly path: string;
+      readonly findingsCount: number;
+    };
+  };
 }
 
 /** Threshold below which a Tailwind-detected codebase is considered CSS-undercounted. */
@@ -251,6 +298,40 @@ const SOURCE_LANGUAGE_FILE_THRESHOLD = 50;
  * code already says everything the agent needs to know.
  */
 const SOURCE_LANGUAGE_SHARE_THRESHOLD = 0.3;
+
+/**
+ * Absolute floor on the total finding count required for
+ * `vendor_css_dominates_findings` to fire. Pairs with the share
+ * threshold below — the share alone would let a 2-finding scan
+ * where both findings sit on a `.min.css` trip the code, which
+ * carries no actionable signal. The floor names the regime where
+ * vendor-CSS noise is actually consuming the response budget;
+ * below it the agent should triage individual findings without
+ * the additional cue. Picked at 200 from the canonical
+ * website-templates profile (5,458 + 8,940 vendor findings out of
+ * ~25k total) — well above the noise floor, well below any
+ * reasonable hand-authored finding count where vendor share would
+ * be meaningful.
+ *
+ * NOTE: this is NOT a suppression threshold — findings under the
+ * floor are still surfaced unmodified. The only thing the floor
+ * gates is whether the warning code fires alongside them.
+ */
+const VENDOR_CSS_DOMINATES_FINDINGS_FLOOR = 200;
+
+/**
+ * Share floor for `vendor_css_dominates_findings`. Vendor CSS
+ * findings must account for at least half of the scan's total
+ * findings before the code fires — at 50% the warning is honest
+ * ("most of your work is on vendor code"); below that the agent
+ * is better served by the existing `scanned_build_artifacts_present`
+ * label which already names the vendor presence without making a
+ * dominance claim. Same magnitude as the
+ * `SOURCE_LANGUAGE_SHARE_THRESHOLD` reasoning — share alone is
+ * never the predicate; the predicate is share plus a real-world
+ * absolute floor.
+ */
+const VENDOR_CSS_DOMINATES_SHARE_THRESHOLD = 0.5;
 
 /**
  * Structured sibling to the bare-string `warnings[]` channel — see
@@ -335,6 +416,27 @@ export interface ScanWarningDetails {
     readonly language: "ruby" | "python" | "go" | "php";
     readonly fileCount: number;
     readonly percentageOfSkipped: number;
+  };
+  /**
+   * Payload for `vendor_css_dominates_findings`. Carries the
+   * vendor-vs-total finding tally that earned the code so an agent
+   * can branch on the dominance without recounting `files[]`
+   * against `meta.scannedBuildArtifacts`. `topVendorFile` names
+   * the densest single CSS build-artifact file in the scan so the
+   * agent has a concrete first-pivot for vendor filtering (an
+   * exclude glob, a sourcemap-aware re-route, or a per-file
+   * `ra11y-disable` pragma). `percentageOfFindings` is a number
+   * in `[0, 100]` rounded to one decimal place so the wire shape
+   * stays deterministic across runs.
+   */
+  readonly vendor_css_dominates_findings?: {
+    readonly vendorFindingsCount: number;
+    readonly totalFindings: number;
+    readonly percentageOfFindings: number;
+    readonly topVendorFile: {
+      readonly path: string;
+      readonly findingsCount: number;
+    };
   };
 }
 
@@ -430,7 +532,36 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // "scan the template source."
     out.push("source_language_unsupported");
   }
+  if (vendorCssDominates(inputs.vendorCssNoise)) {
+    // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS bundles
+    // (bootstrap.css, font-awesome.css, jquery-era distributions)
+    // are emitting the bulk of the scan's findings. The
+    // `scanned_build_artifacts_present` code already labels their
+    // presence; this code names the dominance regime so an agent
+    // budgeting for manual review knows vendor-filtering (exclude
+    // globs, file-level pragmas, or `additionalPaths` re-targeting
+    // onto authored stylesheets) is the first lever, not "raise
+    // limit and re-page." Findings stay in `files[]` per surface-
+    // don't-suppress doctrine.
+    out.push("vendor_css_dominates_findings");
+  }
   return out;
+}
+
+/**
+ * Predicate for `vendor_css_dominates_findings`. Returns true when
+ * the caller-supplied vendor-CSS tally clears both the absolute
+ * floor and the share threshold. Returns false when the input is
+ * omitted (tool didn't run the build-artifact detector) or the
+ * vendor tally is empty / below either threshold. Pure over its
+ * inputs; the call site computes the cross-reference.
+ */
+function vendorCssDominates(noise: WarningInputs["vendorCssNoise"]): boolean {
+  if (noise === undefined) return false;
+  if (noise.totalFindingsCount < VENDOR_CSS_DOMINATES_FINDINGS_FLOOR) return false;
+  if (noise.vendorFindingsCount === 0) return false;
+  const share = noise.vendorFindingsCount / noise.totalFindingsCount;
+  return share >= VENDOR_CSS_DOMINATES_SHARE_THRESHOLD;
 }
 
 function hasParseErrors(coverage: Record<string, unknown> | undefined): boolean {
@@ -553,6 +684,7 @@ export function warningsFromScanMeta(args: {
   readonly scannedBuildArtifactsPresent?: boolean;
   readonly storybookPresetActive?: boolean;
   readonly sessionWrappersMismatchCwd?: boolean;
+  readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
 }): readonly ScanWarningCode[] {
   return computeScanWarnings({
     filesScanned: readNumber(args.meta, "filesScanned"),
@@ -569,6 +701,7 @@ export function warningsFromScanMeta(args: {
     ...(args.sessionWrappersMismatchCwd === undefined
       ? {}
       : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
+    ...(args.vendorCssNoise === undefined ? {} : { vendorCssNoise: args.vendorCssNoise }),
   });
 }
 
@@ -588,6 +721,9 @@ export function computeScanWarningDetails(
     extensions_skipped_no_parser?: NonNullable<ScanWarningDetails["extensions_skipped_no_parser"]>;
     content_files_skipped?: NonNullable<ScanWarningDetails["content_files_skipped"]>;
     source_language_unsupported?: NonNullable<ScanWarningDetails["source_language_unsupported"]>;
+    vendor_css_dominates_findings?: NonNullable<
+      ScanWarningDetails["vendor_css_dominates_findings"]
+    >;
   } = {};
   if (codes.includes("extensions_skipped_no_parser")) {
     const summary = summarizeSkippedExtensions(inputs.analysisCoverage);
@@ -601,7 +737,36 @@ export function computeScanWarningDetails(
     const summary = summarizeDominantLanguage(inputs.analysisCoverage);
     if (summary !== undefined) details.source_language_unsupported = summary;
   }
+  if (codes.includes("vendor_css_dominates_findings")) {
+    const summary = summarizeVendorCssDominance(inputs.vendorCssNoise);
+    if (summary !== undefined) details.vendor_css_dominates_findings = summary;
+  }
   return details;
+}
+
+/**
+ * Builds the `vendor_css_dominates_findings` payload from the
+ * caller's vendor-CSS noise tally. Returns `undefined` when
+ * `topVendorFile` is missing — the predicate doesn't strictly
+ * require it, but a payload without a concrete file pivot is
+ * weaker signal than the bare code itself, and the call site
+ * already computes both side-by-side. Percentage rounded to one
+ * decimal place for deterministic wire output.
+ */
+function summarizeVendorCssDominance(
+  noise: WarningInputs["vendorCssNoise"],
+): NonNullable<ScanWarningDetails["vendor_css_dominates_findings"]> | undefined {
+  if (noise === undefined) return undefined;
+  if (noise.topVendorFile === undefined) return undefined;
+  if (noise.totalFindingsCount === 0) return undefined;
+  const percentageOfFindings =
+    Math.round((noise.vendorFindingsCount / noise.totalFindingsCount) * 1000) / 10;
+  return {
+    vendorFindingsCount: noise.vendorFindingsCount,
+    totalFindings: noise.totalFindingsCount,
+    percentageOfFindings,
+    topVendorFile: noise.topVendorFile,
+  };
 }
 
 /**
@@ -758,6 +923,7 @@ export function warningsFieldFromScanMeta(args: {
   readonly scannedBuildArtifactsPresent?: boolean;
   readonly storybookPresetActive?: boolean;
   readonly sessionWrappersMismatchCwd?: boolean;
+  readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
 }): {
   readonly warnings?: readonly ScanWarningCode[];
   readonly warningsDetails?: ScanWarningDetails;
@@ -777,6 +943,7 @@ export function warningsFieldFromScanMeta(args: {
     ...(args.sessionWrappersMismatchCwd === undefined
       ? {}
       : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
+    ...(args.vendorCssNoise === undefined ? {} : { vendorCssNoise: args.vendorCssNoise }),
   };
   return warningsField(inputs);
 }

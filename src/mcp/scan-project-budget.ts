@@ -14,7 +14,11 @@ import { ruleCatalogField } from "./rule-catalog.ts";
 import type { McpSession } from "./session.ts";
 import { applyTokenBudget } from "./token-budget.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
-import { type ScanWarningCode, tokenBudgetTruncatedDetailsField } from "./warnings.ts";
+import {
+  type ScanWarningCode,
+  type ScanWarningDetails,
+  tokenBudgetTruncatedDetailsField,
+} from "./warnings.ts";
 
 type FileEntry = ScanFormatted["files"][number];
 
@@ -42,7 +46,25 @@ interface AssembleArgs {
   readonly page: PageShape;
   readonly pageOffset: number;
   readonly fullMeta: Record<string, unknown>;
-  readonly baseWarnings: readonly ScanWarningCode[];
+  /**
+   * Top-level `warnings[]` codes that the scan-meta pass produced.
+   * Optional so the caller can conditional-spread — present-when-
+   * meaningful applies to the *wire* shape; internally a caller
+   * that has no codes to report simply omits the key rather than
+   * passing `[]`, keeping the assembly site honest.
+   */
+  readonly baseWarnings?: readonly ScanWarningCode[];
+  /**
+   * Structured sibling payloads for the `baseWarnings` codes that
+   * carry one (see `ScanWarningDetails`). Threaded through the
+   * assembler so codes like `vendor_css_dominates_findings` reach
+   * the response on the non-truncated path too — the prior shape
+   * only emitted a details payload when the token-density cap
+   * fired, which would silently drop the new code's per-file
+   * pivot on the common "response fit" case. Omit when no code
+   * has a structured payload.
+   */
+  readonly baseWarningsDetails?: ScanWarningDetails;
 }
 
 /**
@@ -52,14 +74,28 @@ interface AssembleArgs {
  * wire shape before deciding how many file entries to drop.
  */
 export function assembleScanProjectResponse(args: AssembleArgs): Record<string, unknown> {
-  const { params, session, formatted, hoisted, page, pageOffset, fullMeta, baseWarnings } = args;
+  const {
+    params,
+    session,
+    formatted,
+    hoisted,
+    page,
+    pageOffset,
+    fullMeta,
+    baseWarnings,
+    baseWarningsDetails,
+  } = args;
+  const hasBaseCodes = baseWarnings !== undefined && baseWarnings.length > 0;
+  const hasBaseDetails =
+    baseWarningsDetails !== undefined && Object.keys(baseWarningsDetails).length > 0;
   const tentative = {
     plan: formatted.plan,
     files: hoisted.files,
     ...page.paginationFields,
     ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
     ...ruleCatalogField(params, session.registry.rules, formatted.files),
-    ...(baseWarnings.length > 0 ? { warnings: baseWarnings } : {}),
+    ...(hasBaseCodes ? { warnings: baseWarnings } : {}),
+    ...(hasBaseDetails ? { warningsDetails: baseWarningsDetails } : {}),
     meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta, session }),
   };
   const budgeted = applyTokenBudget({
@@ -72,7 +108,8 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
   return mergeBudgetedFields({
     tentative,
     budgeted,
-    baseWarnings,
+    ...(hasBaseCodes ? { baseWarnings } : {}),
+    ...(hasBaseDetails ? { baseWarningsDetails } : {}),
     totalFilesWithFindings: formatted.files.length,
     // `requestedLimit` is the file count the density cap saw entering
     // the guard — `hoisted.files` is the post-pagination, pre-density
@@ -98,7 +135,8 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
 function mergeBudgetedFields(args: {
   readonly tentative: Record<string, unknown>;
   readonly budgeted: ReturnType<typeof applyTokenBudget<FileEntry>>;
-  readonly baseWarnings: readonly ScanWarningCode[];
+  readonly baseWarnings?: readonly ScanWarningCode[];
+  readonly baseWarningsDetails?: ScanWarningDetails;
   readonly totalFilesWithFindings: number;
   readonly requestedLimit: number;
   readonly effectiveLimit: number;
@@ -107,12 +145,26 @@ function mergeBudgetedFields(args: {
     tentative,
     budgeted,
     baseWarnings,
+    baseWarningsDetails,
     totalFilesWithFindings,
     requestedLimit,
     effectiveLimit,
   } = args;
   const warnings: ScanWarningCode[] = warningsWithDensityCode(baseWarnings);
-  const detailsField = tokenBudgetTruncatedDetailsField({ requestedLimit, effectiveLimit });
+  const densityDetails = tokenBudgetTruncatedDetailsField({
+    requestedLimit,
+    effectiveLimit,
+  }).warningsDetails;
+  // Merge the density-cap payload with the pre-existing
+  // `baseWarningsDetails` so codes like
+  // `vendor_css_dominates_findings` that rode in from the scan
+  // meta aren't lost when the truncation path overwrites the
+  // field. Keys never overlap (density code is scan-assembly-
+  // only), so an object-spread is safe.
+  const mergedDetails: ScanWarningDetails = {
+    ...(baseWarningsDetails ?? {}),
+    ...densityDetails,
+  };
   return {
     ...tentative,
     files: budgeted.files,
@@ -131,11 +183,12 @@ function mergeBudgetedFields(args: {
     // aggressive trims (50→10) from marginal ones (50→48) without a
     // re-page. Structured payload lives under the ADR 0023 sibling
     // channel; the bare-string warnings array stays unchanged.
-    ...detailsField,
+    warningsDetails: mergedDetails,
   };
 }
 
-function warningsWithDensityCode(base: readonly ScanWarningCode[]): ScanWarningCode[] {
+function warningsWithDensityCode(base: readonly ScanWarningCode[] | undefined): ScanWarningCode[] {
+  if (base === undefined) return ["response_token_budget_truncated"];
   if (base.includes("response_token_budget_truncated")) return [...base];
   return [...base, "response_token_budget_truncated"];
 }

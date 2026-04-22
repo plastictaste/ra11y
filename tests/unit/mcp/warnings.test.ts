@@ -852,3 +852,164 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
     expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".md");
   });
 });
+
+// Q6-BUDGET-UNDER-VENDOR-NOISE — vendor-CSS dominance signal.
+// Canonical repro: a website-templates scan where bootstrap.css
+// + font-awesome.css emit the bulk of the findings and the
+// response's file budget is consumed by unactionable vendor
+// noise. The warning is additive — findings stay in `files[]`.
+describe("computeScanWarnings — vendor_css_dominates_findings", () => {
+  it("fires when vendor-CSS findings dominate the scan (≥50% share, ≥200 total findings, topVendorFile present)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4, ".html": 38 },
+      vendorCssNoise: {
+        totalFindingsCount: 25000,
+        vendorFindingsCount: 17000,
+        topVendorFile: { path: "vendor/bootstrap.css", findingsCount: 5458 },
+      },
+    });
+    expect(codes).toContain("vendor_css_dominates_findings");
+  });
+
+  it("does NOT fire below the absolute floor of 200 total findings (trivial scan where 2/2 sit on a .min.css is not a dominance regime)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 1 },
+      vendorCssNoise: {
+        totalFindingsCount: 2,
+        vendorFindingsCount: 2,
+        topVendorFile: { path: "dist/app.min.css", findingsCount: 2 },
+      },
+    });
+    expect(codes).not.toContain("vendor_css_dominates_findings");
+  });
+
+  it("does NOT fire when vendor findings are non-zero but below the 50% share threshold (hand-authored dominant)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 40,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      vendorCssNoise: {
+        // 90 / 500 = 18% — vendor presence is real but not the
+        // dominance regime. `scanned_build_artifacts_present`
+        // already names the vendor file; this code stays silent.
+        totalFindingsCount: 500,
+        vendorFindingsCount: 90,
+        topVendorFile: { path: "vendor/bootstrap.css", findingsCount: 50 },
+      },
+    });
+    expect(codes).not.toContain("vendor_css_dominates_findings");
+  });
+
+  it("does NOT fire when vendorCssNoise is omitted (tool didn't run the build-artifact detector)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+    });
+    expect(codes).not.toContain("vendor_css_dominates_findings");
+  });
+
+  it("fires at exactly the share floor (50% on the nose — threshold is `>=`, not strict `>`)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 2 },
+      vendorCssNoise: {
+        totalFindingsCount: 400,
+        vendorFindingsCount: 200,
+        topVendorFile: { path: "vendor/bootstrap.css", findingsCount: 180 },
+      },
+    });
+    expect(codes).toContain("vendor_css_dominates_findings");
+  });
+});
+
+describe("computeScanWarningDetails — vendor_css_dominates_findings payload", () => {
+  it("emits the payload with vendorFindingsCount, totalFindings, percentageOfFindings (1-decimal), and topVendorFile", () => {
+    const details = computeScanWarningDetails(["vendor_css_dominates_findings"] as const, {
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      vendorCssNoise: {
+        totalFindingsCount: 24772,
+        vendorFindingsCount: 17098,
+        topVendorFile: { path: "vendor/font-awesome.css", findingsCount: 8940 },
+      },
+    });
+    expect(details.vendor_css_dominates_findings).toBeDefined();
+    expect(details.vendor_css_dominates_findings?.vendorFindingsCount).toBe(17098);
+    expect(details.vendor_css_dominates_findings?.totalFindings).toBe(24772);
+    // 17098 / 24772 ≈ 0.69022… → 69.0 after one-decimal rounding.
+    expect(details.vendor_css_dominates_findings?.percentageOfFindings).toBe(69);
+    expect(details.vendor_css_dominates_findings?.topVendorFile.path).toBe(
+      "vendor/font-awesome.css",
+    );
+    expect(details.vendor_css_dominates_findings?.topVendorFile.findingsCount).toBe(8940);
+  });
+
+  it("omits the payload when the code fired but topVendorFile is absent (payload without a concrete pivot is weaker than the bare code)", () => {
+    const details = computeScanWarningDetails(["vendor_css_dominates_findings"] as const, {
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      vendorCssNoise: {
+        totalFindingsCount: 500,
+        vendorFindingsCount: 300,
+      },
+    });
+    expect(details.vendor_css_dominates_findings).toBeUndefined();
+  });
+
+  it("omits the payload when vendorCssNoise is absent entirely", () => {
+    const details = computeScanWarningDetails(["vendor_css_dominates_findings"] as const, {
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+    });
+    expect(details.vendor_css_dominates_findings).toBeUndefined();
+  });
+});
+
+describe("warningsField — vendor_css_dominates_findings", () => {
+  it("pairs the warning code with its structured payload on a website-templates-shaped scan", () => {
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4, ".html": 38 },
+      scannedBuildArtifactsPresent: true,
+      vendorCssNoise: {
+        totalFindingsCount: 24772,
+        vendorFindingsCount: 17098,
+        topVendorFile: { path: "vendor/font-awesome.css", findingsCount: 8940 },
+      },
+    });
+    expect(out.warnings).toContain("vendor_css_dominates_findings");
+    expect(out.warnings).toContain("scanned_build_artifacts_present");
+    expect(out.warningsDetails?.vendor_css_dominates_findings).toBeDefined();
+    expect(out.warningsDetails?.vendor_css_dominates_findings?.topVendorFile.path).toBe(
+      "vendor/font-awesome.css",
+    );
+  });
+});
