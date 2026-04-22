@@ -19,7 +19,8 @@ import {
   getHtmlAttribute,
   htmlTextContent,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument } from "../../types/ast.ts";
+import { htmlSubtreeHasStrippedDirective } from "../../input/parsers/html-template-directives.ts";
+import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 
 export const rule = defineRule({
   id: "document/page-titled",
@@ -89,17 +90,24 @@ export const rule = defineRule({
 
     for (const title of docTitles) {
       const text = htmlTextContent(title);
-      if (text.length === 0) {
-        ctx.emit(
-          buildEmit(
-            doc,
-            fragmentShape,
-            title.loc.start.line,
-            title.loc.start.column,
-            MESSAGE_EMPTY,
-          ),
-        );
+      if (text.length > 0) continue;
+      // Template-interpolated title (Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP):
+      // `<title>{{ page.title }}</title>` — the parser stripped the
+      // directive span so `htmlTextContent` returns "", but the static
+      // scanner has no way to know whether the rendered value will be
+      // a non-empty string. Emit a weaker-confidence finding (warning,
+      // distinct message, structured couldBeWrongBecause) rather than
+      // a confident "empty title" error. Per docs/kb/architecture/
+      // ai-first-consumer.md §"Surface, don't suppress": the candidate
+      // still surfaces so the agent sees it; the severity + message
+      // reflect the weaker evidence honestly.
+      if (htmlSubtreeHasStrippedDirective(title)) {
+        ctx.emit(buildTemplateInterpolatedEmit(doc, title));
+        continue;
       }
+      ctx.emit(
+        buildEmit(doc, fragmentShape, title.loc.start.line, title.loc.start.column, MESSAGE_EMPTY),
+      );
     }
   },
 });
@@ -152,6 +160,49 @@ function buildEmit(
  * stronger evidence than our tag-level heuristic.
  */
 const TITLE_MAY_BE_TEMPLATE_INJECTED = "title_may_be_template_injected";
+
+/**
+ * Structured `couldBeWrongBecause` code emitted when the `<title>`
+ * element's own body is a template directive (`<title>{{ page.title }}</title>`)
+ * — the parser stripped the directive span so the in-memory text is
+ * empty, but the rendered output at runtime is whatever the template
+ * expression evaluates to. Distinct from `title_may_be_template_injected`
+ * (which signals "<title> lives in a parent layout"): here the <title>
+ * IS present and its content IS a template expression; the rendered
+ * value just can't be known statically.
+ */
+const TITLE_IS_TEMPLATE_INTERPOLATED = "title_is_template_interpolated";
+
+const MESSAGE_TEMPLATE_INTERPOLATED =
+  "<title> is template-interpolated — verify the rendered output carries a non-empty title.";
+
+/**
+ * Emit for the template-interpolated-title branch
+ * (Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP). Downgraded to `warning`
+ * because the static scanner can't see whether the rendered value will
+ * be empty — the existing empty-title error would be a confident false
+ * positive on `<title>{{ page.title }}</title>`. Per docs/kb/
+ * architecture/ai-first-consumer.md §"Surface, don't suppress" the
+ * finding still surfaces so the agent reading the file can verify.
+ */
+function buildTemplateInterpolatedEmit(
+  doc: HtmlDocument,
+  title: HtmlElement,
+): {
+  severity: "warning";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+  couldBeWrongBecause: readonly string[];
+} {
+  return {
+    severity: "warning",
+    location: { filePath: "", line: title.loc.start.line, column: title.loc.start.column },
+    message: MESSAGE_TEMPLATE_INTERPOLATED,
+    suggestion: buildSuggestion(doc),
+    couldBeWrongBecause: [TITLE_IS_TEMPLATE_INTERPOLATED],
+  };
+}
 
 function isInsideHead(doc: HtmlDocument, target: { range: { start: number } }): boolean {
   // Heuristic: does any <head> element's range encompass the target's

@@ -143,4 +143,75 @@ describe("rule document/page-titled", () => {
     // dishonest-shape guard (CLAUDE.md §1) requires omission, not `[]`.
     expect(v[0]?.couldBeWrongBecause).toBeUndefined();
   });
+
+  // Template-interpolated title branch (Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP).
+  // `<title>{{ page.title }}</title>` — the parser strips the directive span
+  // so the in-memory text is empty, but the rendered value is whatever the
+  // template evaluates to. The original empty-title error would be a confident
+  // false positive; emit as weaker-confidence warning with the structured
+  // `title_is_template_interpolated` signal so the agent reading the file can
+  // verify the rendered output. Per docs/kb/architecture/ai-first-consumer.md
+  // §"Surface, don't suppress" the finding still surfaces — severity reflects
+  // the weaker evidence honestly.
+  it("downgrades empty <title> to warning when body is a Liquid interpolation", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>{{ page.title }}</title></head><body><p>x</p></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("warning");
+    expect(v[0]?.message).toContain("template-interpolated");
+    expect(v[0]?.message).toContain("verify the rendered output");
+    expect(v[0]?.couldBeWrongBecause).toContain("title_is_template_interpolated");
+  });
+
+  it("downgrades empty <title> to warning when body is a Jinja/ERB/mustache directive", () => {
+    const inputs = [
+      `<!DOCTYPE html><html lang="en"><head><title>{% block title %}{% endblock %}</title></head><body></body></html>`,
+      `<!DOCTYPE html><html lang="en"><head><title><%= page_title %></title></head><body></body></html>`,
+      `<!DOCTYPE html><html lang="en"><head><title>{{title}}</title></head><body></body></html>`,
+    ];
+    for (const html of inputs) {
+      const v = runRule(rule, html, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toContain("title_is_template_interpolated");
+    }
+  });
+
+  it("does NOT apply the template-interpolated downgrade to a genuinely empty <title>", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title></title></head><body><p>x</p></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.message).toContain("empty");
+    expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+  });
+
+  it("does NOT fire at all when the <title> mixes literal text with a template directive", () => {
+    // `<title>{{ site.name }} — Docs</title>` strips to " — Docs" (non-empty),
+    // so the rule is silent. The scanner has enough rendered evidence that a
+    // non-empty title will exist at runtime; no need to surface.
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>{{ site.name }} — Docs</title></head><body></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it("routes the template-interpolated branch through the same suggestion ladder", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>{{ page.title }}</title></head><body><h1>Contact</h1></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("Contact");
+    expect(v[0]?.suggestion).toContain("existing <h1>");
+  });
 });
