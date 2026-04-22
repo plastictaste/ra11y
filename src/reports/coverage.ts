@@ -149,14 +149,32 @@ function buildOne(standard: Standard, failingSet: ReadonlySet<string>): PerStand
   const criteria: CoverageCriterion[] = [];
 
   for (const criterion of standard.criteria) {
-    if (criterion.automatable === "manual") {
+    // A rule satisfying a metadata-"manual" criterion can still emit
+    // automated violations (e.g. `color/meaning-by-color-only`
+    // satisfies wcag22:1.4.1 "Use of Color" whose metadata flag is
+    // `automatable: "manual"`). Honor the emitted violation: if
+    // `failingSet.has(id)` the criterion counts as failing in the
+    // automated lane regardless of the metadata flag. The contract —
+    // `failingCriteria` = criteria with at least one emitted violation
+    // — matches scan_project's per-finding criteria and the VPAT
+    // report (which also treats violation-bearing manual criteria as
+    // "Does Not Support"). This avoids cross-surface drift per CLAUDE.md
+    // §1 "One tool call should answer 'what next?'": otherwise a scan
+    // would surface 14 color/meaning findings against 1.4.1 while
+    // coverage silently omits 1.4.1 from `failingAutomatedCriteria`.
+    // Metadata-manual criteria with no fired rule stay in the manual
+    // lane so the checklist only surfaces truly-untouched criteria —
+    // avoids asking the agent to manually review something that
+    // already failed an automated check.
+    const fired = failingSet.has(criterion.id);
+    if (criterion.automatable === "manual" && !fired) {
       manual += 1;
       manualCriteria.push(criterion.id);
       criteria.push({ criterionId: criterion.id, static: "manual" });
       continue;
     }
     automatable += 1;
-    if (failingSet.has(criterion.id)) {
+    if (fired) {
       failing += 1;
       failingCriteria.push(criterion.id);
       criteria.push({ criterionId: criterion.id, static: "fail" });

@@ -74,6 +74,60 @@ async function makeFixture(): Promise<string> {
   return dir;
 }
 
+/**
+ * Fixture that triggers at least one rule whose satisfying criterion
+ * is marked `automatable: "manual"` in the standards module — the
+ * `color/meaning-by-color-only` rule satisfies wcag22:1.4.1 "Use of
+ * Color" which has that flag. Used to prove the cross-surface
+ * invariant that scan_project and coverage agree on "fired" criteria
+ * regardless of the metadata automatable flag.
+ */
+async function makeManualCriterionFailureFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-manual-criterion-failure-"));
+  // `.text-danger` is Bootstrap's "paint the text red as a status"
+  // utility. The visible text ("Access denied") names no status word
+  // and the element has no icon / aria-label / role=alert / sr-only
+  // companion — all of color/meaning-by-color-only's pass conditions
+  // fail, so the rule fires against wcag22:1.4.1. See
+  // tests/fixtures/bad/color-meaning-by-color-only for the canonical
+  // shape; we inline it here so the fixture stays self-describing
+  // next to the invariant it proves.
+  await writeFile(
+    join(dir, "page.html"),
+    `<!DOCTYPE html>
+<html lang="en"><body><main>
+  <span class="text-danger">Access denied</span>
+</main></body></html>`,
+  );
+  return dir;
+}
+
+interface ScanFinding {
+  readonly criteria: readonly string[];
+}
+interface ScanFile {
+  readonly findings: readonly ScanFinding[];
+}
+interface ScanProjectBody {
+  readonly files: readonly ScanFile[];
+}
+
+/**
+ * Flatten every criterion across every finding in the scan_project
+ * response into one set. This is the set that `failingAutomatedCriteria`
+ * on coverage must be a subset of — "failing" means "a rule satisfying
+ * criterion C emitted a violation in this scan."
+ */
+function scanCriteriaSet(scan: ScanProjectBody): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const file of scan.files) {
+    for (const finding of file.findings) {
+      for (const id of finding.criteria) ids.add(id);
+    }
+  }
+  return ids;
+}
+
 interface NextStepStructured {
   readonly tool: string;
   readonly args: Record<string, unknown>;
@@ -254,5 +308,54 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const checklistHasProse = checklist.nextStep !== undefined;
     const checklistHasStructured = checklist.nextStepStructured !== undefined;
     expect(checklistHasProse).toBe(checklistHasStructured);
+  });
+
+  it("coverage.failingAutomatedCriteria is a subset of scan_project's fired criteria on the same cwd", async () => {
+    // Cross-surface invariant: "failing" means "a rule satisfying
+    // criterion C emitted a violation in this scan" — the contract
+    // spelled out in docs/kb/architecture/ai-first-consumer.md ("one
+    // tool call should answer 'what next?'"). If `coverage` surfaces
+    // a failing criterion ID that `scan_project` didn't emit a
+    // matching finding for, or if it silently drops a criterion that
+    // `scan_project` did surface, the agent has to reconcile the
+    // drift across two tool calls.
+    //
+    // The regression this locks in: wcag22:1.4.1 "Use of Color" is
+    // `automatable: "manual"` in the standards module, but the
+    // `color/meaning-by-color-only` rule satisfies it. Before the fix
+    // coverage dropped 1.4.1 from `failingAutomatedCriteria` purely
+    // because of the metadata flag, while scan_project surfaced
+    // findings against it — exactly the silent-miss failure mode this
+    // invariant forbids.
+    const dir = await makeManualCriterionFailureFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+    ]);
+    const scan = body<ScanProjectBody>(responses[1]);
+    const coverage = body<CoverageBody>(responses[2]);
+
+    const firedInScan = scanCriteriaSet(scan);
+    // Fixture sanity: the scan MUST surface 1.4.1 (color/meaning rule
+    // fires on `.text-danger` status text) — otherwise the invariant
+    // below tests nothing. A fixture regression should fail loudly
+    // here rather than silently trivialize the assertion.
+    expect(firedInScan.has("wcag22:1.4.1")).toBe(true);
+
+    // Coverage must NOT drop a criterion whose rule already fired.
+    for (const c of coverage.failingAutomatedCriteria) {
+      expect(firedInScan.has(c.id)).toBe(true);
+    }
+
+    // And coverage must include every fired criterion that falls
+    // inside its scoped standard (wcag22 by default). The scan can
+    // also surface wcag21:1.4.1 via equivalentTo, so we compare
+    // against the wcag22-prefixed subset.
+    const firedInScanScoped = new Set(
+      [...firedInScan].filter((id) => id.startsWith(`${coverage.standardId}:`)),
+    );
+    const coverageFailingIds = new Set(coverage.failingAutomatedCriteria.map((c) => c.id));
+    expect(coverageFailingIds).toEqual(firedInScanScoped);
   });
 });

@@ -70,6 +70,47 @@ describe("buildCoverageReport", () => {
     // 1.2.1 Audio-only/Video-only is a known manual criterion.
     expect(wcag22?.manualCriteria).toContain("wcag22:1.2.1");
   });
+
+  it("treats a metadata-manual criterion with emitted violations as failing", () => {
+    // wcag22:1.4.1 "Use of Color" is `automatable: "manual"` in the
+    // standards module, but `color/meaning-by-color-only` and other
+    // rules satisfy it and can emit automated violations. A fresh scan
+    // that surfaces findings for 1.4.1 must:
+    //   - list the criterion in `failingCriteria` (so coverage agrees
+    //     with scan_project's per-finding criteria),
+    //   - NOT include the criterion in `manualCriteria` (so the
+    //     checklist doesn't ask the agent to manually review something
+    //     that already failed an automated check),
+    //   - mark the per-criterion entry's `static` verdict as "fail".
+    const result = {
+      violations: withFindingIds([
+        {
+          ruleId: "color/meaning-by-color-only",
+          fixClass: "guidance" as const,
+          criteria: ["wcag22:1.4.1", "wcag21:1.4.1"],
+          severity: "error" as const,
+          location: { filePath: "src/ui/Status.tsx", line: 7, column: 3 },
+          message: "Meaning conveyed by color alone.",
+          suggestion: "Pair color with text or an icon.",
+        },
+      ]),
+      filesScanned: 1,
+      durationMs: 1,
+      enabledStandards: ["wcag22"],
+      isTTY: false,
+    };
+    const [entry] = buildCoverageReport(result, BUILTIN_STANDARDS);
+    if (entry === undefined) throw new Error("expected a coverage entry");
+    expect(entry.failingCriteria).toContain("wcag22:1.4.1");
+    expect(entry.manualCriteria).not.toContain("wcag22:1.4.1");
+    const c141 = entry.criteria.find((c) => c.criterionId === "wcag22:1.4.1");
+    expect(c141?.static).toBe("fail");
+    // Arithmetic invariant: `automatable == passing + failing` and
+    // `total == automatable + manual`. Promoting the fired manual
+    // criterion into the automated lane must preserve this.
+    expect(entry.automatable).toBe(entry.passing + entry.failing);
+    expect(entry.total).toBe(entry.automatable + entry.manual);
+  });
 });
 
 describe("buildChecklist + renderChecklistMarkdown", () => {
