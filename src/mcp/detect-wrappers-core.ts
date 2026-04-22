@@ -83,7 +83,7 @@ export interface WrapperCandidate {
 export function collectWrapperCandidates(
   files: readonly ParsedFile[],
 ): readonly WrapperCandidate[] {
-  const groups = new Map<string, { count: number; locations: { path: string; line: number }[] }>();
+  const groups: WrapperGroupMap = new Map();
   for (const file of files) {
     if (file.ast.language !== "tsx") continue;
     // Plain `.ts` / `.js` files cannot legally carry JSX; skip them
@@ -91,18 +91,7 @@ export function collectWrapperCandidates(
     // `opaque-tag-filter.ts` for the failure mode this guards
     // against (`Math.abs`, `J.length`, single-letter identifiers).
     if (!isJsxBearingFile(file.filePath)) continue;
-    const tsx = file.ast.root as TsxModule;
-    for (const el of walkJsxElements(tsx)) {
-      const component = extractComponentIdentifier(el.tagName);
-      if (component === null) continue;
-      if (!looksLikeWrapper(el)) continue;
-      const entry = groups.get(component) ?? { count: 0, locations: [] };
-      entry.count += 1;
-      if (entry.locations.length < SAMPLE_LIMIT) {
-        entry.locations.push({ path: file.filePath, line: el.loc.start.line });
-      }
-      groups.set(component, entry);
-    }
+    accumulateWrapperSightings(file, groups);
   }
   const definitions = indexProbeFiles(files.map(toProbeFile));
   return [...groups.entries()]
@@ -113,6 +102,32 @@ export function collectWrapperCandidates(
       sampleLocations: locations,
       definitionFile: definitions.get(component)?.filePath ?? null,
     }));
+}
+
+type WrapperGroupMap = Map<string, { count: number; locations: { path: string; line: number }[] }>;
+
+/**
+ * Per-file wrapper sighting collector. Walks the file's JSX, normalizes
+ * each tag's text through {@link extractComponentIdentifier}, and records
+ * up to {@link SAMPLE_LIMIT} example call sites per component. Extracted
+ * from {@link collectWrapperCandidates} so the outer loop's cognitive
+ * complexity stays under the repo cap — the filtering layers (JSX-bearing
+ * extension, component-identifier shape, wrapper-prop heuristic) compose
+ * cleanly when each reads as a single predicate.
+ */
+function accumulateWrapperSightings(file: ParsedFile, groups: WrapperGroupMap): void {
+  const tsx = file.ast.root as TsxModule;
+  for (const el of walkJsxElements(tsx)) {
+    const component = extractComponentIdentifier(el.tagName);
+    if (component === null) continue;
+    if (!looksLikeWrapper(el)) continue;
+    const entry = groups.get(component) ?? { count: 0, locations: [] };
+    entry.count += 1;
+    if (entry.locations.length < SAMPLE_LIMIT) {
+      entry.locations.push({ path: file.filePath, line: el.loc.start.line });
+    }
+    groups.set(component, entry);
+  }
 }
 
 /** Maps a scanner `ParsedFile` onto the minimal shape the probe needs. */
