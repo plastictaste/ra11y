@@ -445,7 +445,7 @@ describe("rule forms/labels-required", () => {
       });
       expect(v).toHaveLength(1);
       // Raw 300-char string doesn't appear verbatim; truncation applied.
-      expect(v[0]?.suggestion.includes(long)).toBe(false);
+      expect(v[0]?.suggestion?.includes(long)).toBe(false);
       // Still additive-context enrichment (placeholder was non-empty).
       expect(v[0]?.suggestion).toContain("may carry the intent");
       // Long strings are NOT suitable as label copy — edit stays generic.
