@@ -83,6 +83,84 @@ describe("rule forms/label-adjacent-unassociated", () => {
       const violations = runRule(rule, html, { filePath: "page.html" });
       expect(violations).toHaveLength(2);
     });
+
+    it("fires on the Bootstrap-template orphan shape where neither element carries an id — synthesizes an id from the label text and ships TWO mechanical edits", () => {
+      // This is the canonical bug this rule was widened for: Bootstrap-
+      // templated forms with `<label>Text Input</label><input class="form-
+      // control">` — 12+ instances per form in the wild. Before the fix
+      // the rule was silent and `forms/labels-required` took over with
+      // generic guidance; now the richer mechanical pair surfaces.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Text Input</label>
+  <input class="form-control">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      // Synthesized id: kebab-cased label text.
+      expect(v?.message).toMatch(/for="text-input"/);
+      expect(v?.message).toMatch(/id="text-input"/);
+      // Primary edit rewrites the <label> to add for=.
+      expect(v?.fixPaths?.primary.edit?.oldText).toBe("<label>");
+      expect(v?.fixPaths?.primary.edit?.newText).toBe('<label for="text-input">');
+      // First alternative carries the companion id= insertion on the input.
+      const controlEdit = v?.fixPaths?.alternatives[0]?.edit;
+      expect(controlEdit?.oldText).toBe('<input class="form-control">');
+      expect(controlEdit?.newText).toBe('<input id="text-input" class="form-control">');
+      // Suggestion text names both attributes concretely.
+      expect(v?.suggestion).toMatch(/add for="text-input".*AND add id="text-input"/);
+    });
+
+    it("resolves synthesized-id collisions against existing document ids with a -2 suffix", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <input id="email" type="email">
+  <label>Email</label>
+  <input class="form-control" type="email">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      // One firing — on the orphan <label>Email</label> pair. The first
+      // <input id="email"> is already labeled-by-id absence (no sibling),
+      // so labels-required's territory; this rule stays silent there.
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/for="email-2"/);
+      expect(violations[0]?.message).toMatch(/id="email-2"/);
+    });
+
+    it("resolves collisions between two orphan shapes that would both synthesize the same id", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Name</label>
+  <input class="form-control">
+  <label>Name</label>
+  <input class="form-control">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(2);
+      expect(violations[0]?.message).toMatch(/for="name"/);
+      expect(violations[1]?.message).toMatch(/for="name-2"/);
+    });
+
+    it("fires on JSX with no id — synthesizes id and emits both edits", () => {
+      const jsx = `function Form() {
+  return (
+    <form>
+      <label>First Name</label>
+      <input type="text" className="form-control" />
+    </form>
+  );
+}`;
+      const violations = runRule(rule, jsx, { filePath: "Form.tsx" });
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.fixPaths?.primary.edit?.newText).toBe('<label htmlFor="first-name">');
+      const controlEdit = v?.fixPaths?.alternatives[0]?.edit;
+      expect(controlEdit?.oldText).toBe('<input type="text" className="form-control" />');
+      expect(controlEdit?.newText).toBe(
+        '<input id="first-name" type="text" className="form-control" />',
+      );
+    });
   });
 
   describe("does not fire when", () => {
@@ -91,19 +169,6 @@ describe("rule forms/label-adjacent-unassociated", () => {
 <html><body>
   <label for="length">Length</label>
   <input id="length" type="number">
-</body></html>`;
-      const violations = runRule(rule, html, { filePath: "page.html" });
-      expect(violations).toHaveLength(0);
-    });
-
-    it("the input has no id — this rule only fires when a mechanical fix is possible", () => {
-      // `forms/labels-required` covers the no-label-at-all case; this
-      // rule is scoped to the situation where the agent can insert a
-      // concrete for= without first inventing an id.
-      const html = `<!DOCTYPE html>
-<html><body>
-  <label>Length</label>
-  <input type="number">
 </body></html>`;
       const violations = runRule(rule, html, { filePath: "page.html" });
       expect(violations).toHaveLength(0);
@@ -224,6 +289,77 @@ describe("rule forms/label-adjacent-unassociated", () => {
       // Suggestion still names the fix, just without a concrete oldText/newText.
       expect(violations[0]?.suggestion).toMatch(/for="length"/);
       expect(violations[0]?.fixPaths?.primary.edit).toBeUndefined();
+    });
+
+    it("label text with punctuation kebab-cases cleanly — 'E-mail Address:' → 'e-mail-address'", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>E-mail Address:</label>
+  <input class="form-control">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.fixPaths?.primary.edit?.newText).toBe('<label for="e-mail-address">');
+    });
+
+    it("empty or non-ASCII-only label text falls back to 'input' as the synthesized id", () => {
+      // An empty label is already a separate rule's concern
+      // (forms/non-empty-label) — but this rule still fires on the
+      // adjacency shape because the association channel is what's
+      // broken. The synthesized id falls back to `input` so the
+      // mechanical edit stays valid; the agent reads the file to
+      // decide whether "input" is a reasonable name.
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>   </label>
+  <input class="form-control">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.fixPaths?.primary.edit?.newText).toBe('<label for="input">');
+    });
+
+    it("label text starting with a digit gets an 'input-' prefix so CSS selectors stay valid", () => {
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>2FA Code</label>
+  <input class="form-control">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.fixPaths?.primary.edit?.newText).toBe('<label for="input-2fa-code">');
+    });
+
+    it("self-closing JSX input accepts the id-insertion edit", () => {
+      const jsx = `function F() {
+  return (
+    <form>
+      <label>Username</label>
+      <input />
+    </form>
+  );
+}`;
+      const violations = runRule(rule, jsx, { filePath: "F.tsx" });
+      expect(violations).toHaveLength(1);
+      const controlEdit = violations[0]?.fixPaths?.alternatives[0]?.edit;
+      expect(controlEdit?.oldText).toBe("<input />");
+      expect(controlEdit?.newText).toBe('<input id="username" />');
+    });
+
+    it("JSX with expression-valued id={foo} does not attempt synthesis", () => {
+      // The control has `id={dynamicId}` — we can't match a literal
+      // synthesized id against the runtime expression, so the rule
+      // stays silent (labels-required owns this case).
+      const jsx = `function F({ dynamicId }: { dynamicId: string }) {
+  return (
+    <form>
+      <label>Search</label>
+      <input id={dynamicId} type="text" />
+    </form>
+  );
+}`;
+      const violations = runRule(rule, jsx, { filePath: "F.tsx" });
+      expect(violations).toHaveLength(0);
     });
   });
 });

@@ -19,30 +19,38 @@
  * an unlabeled control and an unattached piece of text.
  *
  * Narrow shape: only fires when
- *   1. the labelable control (<input>/<select>/<textarea>) carries an id,
- *   2. the control's immediately-preceding element sibling is a <label>,
- *   3. the only nodes between label and control are whitespace text or
+ *   1. the labelable control's (<input>/<select>/<textarea>) immediately-
+ *      preceding element sibling is a <label>,
+ *   2. the only nodes between label and control are whitespace text or
  *      comments (no <br>, no prose, no intervening elements — those weaken
  *      the association enough that the agent needs to read the file), and
- *   4. the label has no `for=` / `htmlFor=` attribute and does not wrap the
+ *   3. the label has no `for=` / `htmlFor=` attribute and does not wrap the
  *      control implicitly.
+ *
+ * The control does NOT need to carry an `id` already — the canonical
+ * Bootstrap-templated shape `<label>Text Input</label><input class="form-
+ * control">` has 12+ instances per form and omits the id entirely. When
+ * the control has no id the rule synthesizes one from the label's visible
+ * text (kebab-case; collision-suffixed against existing document ids)
+ * and emits TWO mechanical edits: one to add `for="<synthesized>"` on the
+ * label, one to add `id="<synthesized>"` on the control. The agent
+ * applies both via `apply_fix`.
  *
  * Distinct from `forms/labels-required`. That rule fires whenever an
  * input has no accessible name at all; this one fires specifically on
  * the adjacent-but-unassociated shape. Both may fire on the same input
  * today — the agent sees both findings and the distinct suggestions tell
- * it which lever to pull (add `for=` to the existing label, vs. add a
- * label from scratch). De-overlapping the two rules is tracked as a
- * follow-up; silently suppressing one on this shape would hide the more
- * specific, mechanically-fixable signal.
+ * it which lever to pull (add `for=` + `id=`, vs. add a label from
+ * scratch). De-overlapping the two rules is tracked as a follow-up;
+ * silently suppressing one on this shape would hide the more specific,
+ * mechanically-fixable signal.
  *
- * Fix is mechanical: insert `for="<id>"` into the label's open tag. When
- * the label's raw open tag is the literal `<label>` with no attributes,
- * the rule emits a concrete `fixPaths.primary.edit` pair the agent can
- * apply without reading the source. When the label already has attributes,
- * the rule ships guidance only — the exact insertion point is a style
- * call (before `class=`, after `class=`, end of tag) the author should
- * make.
+ * The mechanical edits fire whenever the corresponding open tag is
+ * simple enough to rewrite safely (attribute-free `<label>` for the
+ * label edit; `<input …>` / `<textarea …>` / `<select …>` for the
+ * control edit). When an open tag already carries attributes the rule
+ * still fires, but ships guidance for that side only — the insertion
+ * point (before/after `class=`, end of tag) is a style call.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -52,6 +60,8 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
+  htmlTextContent,
+  jsxTextContent,
   truncateForEcho,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
@@ -140,26 +150,69 @@ type Emit = (v: {
 // ---------------------------------------------------------------------------
 
 function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
+  const taken = new Set(collectHtmlDocumentIds(doc));
   for (const control of collectHtmlLabelableControls(doc)) {
-    const id = getHtmlAttribute(control.el, "id");
-    if (id === null || id.length === 0) continue;
-    if (isExcludedHtmlControl(control.el)) continue;
-    // If the control is already associated (any of the channels
-    // `forms/labels-required` recognises), this rule has nothing to say.
-    // We intentionally DO NOT probe for the "nested inside a <label>"
-    // case here — `labels-required` covers it and this rule is scoped
-    // to the sibling shape by name.
-    if (isHtmlAssociatedSomeOtherWay(control.el)) continue;
-    const parentChildren = control.parentChildren;
-    const label = findPrecedingHtmlLabelSibling(parentChildren, control.index);
-    if (label === null) continue;
-    if (hasHtmlAttribute(label, "for")) continue;
-    // A label that already wraps the control is an implicit-association
-    // case, handled by `labels-required`. We only fire when the label
-    // sits beside the control.
-    if (htmlLabelWrapsControl(label)) continue;
-    emit(buildHtmlViolation(label, control.el, id, source));
+    const hit = applicableHtmlLabel(control);
+    if (hit === null) continue;
+    const resolved = resolveControlId(control.el, hit.label, taken);
+    if (resolved === null) continue;
+    if (resolved.synthesized) taken.add(resolved.id);
+    emit(buildHtmlViolation(hit.label, control.el, resolved.id, source, resolved.synthesized));
   }
+}
+
+/**
+ * Walks the control's candidate preconditions and returns the label
+ * we should fire on, or null when nothing about this control is
+ * actionable. Extracted so the main loop stays shallow.
+ */
+function applicableHtmlLabel(control: HtmlControlRef): { readonly label: HtmlElement } | null {
+  if (isExcludedHtmlControl(control.el)) return null;
+  // If the control is already associated (any of the channels
+  // `forms/labels-required` recognises), this rule has nothing to say.
+  // We intentionally DO NOT probe for the "nested inside a <label>"
+  // case here — `labels-required` covers it and this rule is scoped
+  // to the sibling shape by name.
+  if (isHtmlAssociatedSomeOtherWay(control.el)) return null;
+  const label = findPrecedingHtmlLabelSibling(control.parentChildren, control.index);
+  if (label === null) return null;
+  if (hasHtmlAttribute(label, "for")) return null;
+  // A label that already wraps the control is an implicit-association
+  // case, handled by `labels-required`. We only fire when the label
+  // sits beside the control.
+  if (htmlLabelWrapsControl(label)) return null;
+  return { label };
+}
+
+/**
+ * Return the id we'll cite in the fix: the control's own id when set,
+ * or a synthesized one derived from the label text. The `taken` set
+ * is the caller's running ledger — existing document ids plus ids the
+ * rule has already proposed during this pass. Returns null when no id
+ * can be synthesized (label text fully empty after fallback + ledger
+ * exhausted), caller skips the candidate.
+ */
+function resolveControlId(
+  control: HtmlElement,
+  label: HtmlElement,
+  taken: ReadonlySet<string>,
+): { readonly id: string; readonly synthesized: boolean } | null {
+  const existingId = getHtmlAttribute(control, "id");
+  if (existingId !== null && existingId.length > 0) {
+    return { id: existingId, synthesized: false };
+  }
+  const synthesized = synthesizeId(htmlTextContent(label), taken);
+  return synthesized === null ? null : { id: synthesized, synthesized: true };
+}
+
+/** Collect every `id` attribute value already present in the document. */
+function collectHtmlDocumentIds(doc: HtmlDocument): readonly string[] {
+  const out: string[] = [];
+  for (const el of walkHtmlElements(doc)) {
+    const v = getHtmlAttribute(el, "id");
+    if (v !== null && v.length > 0) out.push(v);
+  }
+  return out;
 }
 
 interface HtmlControlRef {
@@ -236,15 +289,19 @@ function buildHtmlViolation(
   control: HtmlElement,
   id: string,
   source: string,
+  synthesized: boolean,
 ): Parameters<Emit>[0] {
   const edit = buildHtmlEditPair(label, id, source);
+  const controlEdit = synthesized ? buildHtmlControlIdInsertPair(control, id, source) : null;
   return buildViolation({
     line: label.loc.start.line,
     column: label.loc.start.column,
     controlTag: control.tagName.toLowerCase(),
     controlType: getHtmlAttribute(control, "type"),
     id,
+    synthesized,
     edit,
+    controlEdit,
     attr: "for",
   });
 }
@@ -271,22 +328,96 @@ function buildHtmlEditPair(
   return { oldText, newText };
 }
 
+/**
+ * Rewrite the control's open tag to inject `id="<synthesized>"` as the
+ * first attribute (keeps existing attributes in their original order).
+ * Only fires when the control's open tag is a simple `<tag ...>` or
+ * `<tag .../>` with no quoted `>` inside an attribute value — the
+ * regex match covers the canonical Bootstrap-template shapes
+ * (`<input class="form-control">`, `<input type="text" name="x">`).
+ * When the shape is too exotic to pattern-match safely we return null
+ * and ship guidance instead.
+ */
+function buildHtmlControlIdInsertPair(
+  control: HtmlElement,
+  id: string,
+  source: string,
+): { readonly oldText: string; readonly newText: string } | null {
+  const raw = source.slice(control.range.start, control.range.end);
+  // Match `<tag` + attributes + optional `/` + `>`. The attribute-run
+  // regex rejects any `>` between attribute quotes — if the source is
+  // weirder than that, we bail.
+  const openMatch =
+    /^<([A-Za-z]+)((?:\s+[^>"'=\s][^>"']*(?:=(?:"[^"]*"|'[^']*'|[^\s>]*))?)*)(\s*\/?\s*)>/.exec(
+      raw,
+    );
+  if (!openMatch) return null;
+  const tag = openMatch[1];
+  const attrs = openMatch[2] ?? "";
+  const trailing = openMatch[3] ?? "";
+  const oldText = openMatch[0];
+  // Insert the id as the first attribute so the edit is deterministic
+  // regardless of the caller's attribute style.
+  const newText = `<${tag} id="${escapeAttributeValue(id)}"${attrs}${trailing}>`;
+  return { oldText, newText };
+}
+
 // ---------------------------------------------------------------------------
 // JSX
 // ---------------------------------------------------------------------------
 
 function checkJsx(module: TsxModule, source: string, emit: Emit): void {
+  const taken = new Set(collectJsxModuleIds(module));
   for (const control of collectJsxLabelableControls(module)) {
-    const id = getJsxAttributeString(control.el, "id");
-    if (id === null || id.length === 0) continue;
-    if (isExcludedJsxControl(control.el)) continue;
-    if (isJsxAssociatedSomeOtherWay(control.el)) continue;
-    const label = findPrecedingJsxLabelSibling(control.parentChildren, control.index);
-    if (label === null) continue;
-    if (hasJsxAttribute(label, "htmlFor") || hasJsxAttribute(label, "for")) continue;
-    if (jsxLabelWrapsControl(label)) continue;
-    emit(buildJsxViolation(label, control.el, id, source));
+    const hit = applicableJsxLabel(control);
+    if (hit === null) continue;
+    const resolved = resolveJsxControlId(control.el, hit.label, taken);
+    if (resolved === null) continue;
+    if (resolved.synthesized) taken.add(resolved.id);
+    emit(buildJsxViolation(hit.label, control.el, resolved.id, source, resolved.synthesized));
   }
+}
+
+function applicableJsxLabel(control: JsxControlRef): { readonly label: JsxElement } | null {
+  if (isExcludedJsxControl(control.el)) return null;
+  if (isJsxAssociatedSomeOtherWay(control.el)) return null;
+  const label = findPrecedingJsxLabelSibling(control.parentChildren, control.index);
+  if (label === null) return null;
+  if (hasJsxAttribute(label, "htmlFor") || hasJsxAttribute(label, "for")) return null;
+  if (jsxLabelWrapsControl(label)) return null;
+  return { label };
+}
+
+function resolveJsxControlId(
+  control: JsxElement,
+  label: JsxElement,
+  taken: ReadonlySet<string>,
+): { readonly id: string; readonly synthesized: boolean } | null {
+  const existingId = getJsxAttributeString(control, "id");
+  if (existingId !== null && existingId.length > 0) {
+    return { id: existingId, synthesized: false };
+  }
+  // Expression-valued `id={…}` is opaque; we can't synthesize because
+  // the label's synthesized literal wouldn't match whatever the
+  // expression resolves to. Bail so the agent reads the file.
+  const idAttr = getJsxAttribute(control, "id");
+  if (idAttr?.value?.kind === "Expression") return null;
+  const synthesized = synthesizeId(jsxTextContent(label), taken);
+  return synthesized === null ? null : { id: synthesized, synthesized: true };
+}
+
+/** Collect every literal-string `id=` attribute value across the module. */
+function collectJsxModuleIds(module: TsxModule): readonly string[] {
+  const out: string[] = [];
+  const visit = (el: JsxElement): void => {
+    const v = getJsxAttributeString(el, "id");
+    if (v !== null && v.length > 0) out.push(v);
+    for (const child of el.children) {
+      if (child.kind === "JsxElement") visit(child);
+    }
+  };
+  for (const root of module.jsxElements) visit(root);
+  return out;
 }
 
 interface JsxControlRef {
@@ -404,15 +535,19 @@ function buildJsxViolation(
   control: JsxElement,
   id: string,
   source: string,
+  synthesized: boolean,
 ): Parameters<Emit>[0] {
   const edit = buildJsxEditPair(label, id, source);
+  const controlEdit = synthesized ? buildJsxControlIdInsertPair(control, id, source) : null;
   return buildViolation({
     line: label.loc.start.line,
     column: label.loc.start.column,
     controlTag: control.tagName.toLowerCase(),
     controlType: getJsxAttributeString(control, "type"),
     id,
+    synthesized,
     edit,
+    controlEdit,
     // JSX uses `htmlFor`, not `for` — echo the JSX-correct attribute
     // name in the fix so the agent doesn't have to re-translate.
     attr: "htmlFor",
@@ -434,6 +569,32 @@ function buildJsxEditPair(
   return { oldText, newText };
 }
 
+/**
+ * Rewrite the JSX control's open tag to inject `id="<synthesized>"` as
+ * the first prop. Matches the canonical `<input className="..." />` /
+ * `<input type="text" />` shapes. Refuses expression-valued attributes
+ * or attribute names it can't parse safely.
+ */
+function buildJsxControlIdInsertPair(
+  control: JsxElement,
+  id: string,
+  source: string,
+): { readonly oldText: string; readonly newText: string } | null {
+  const raw = source.slice(control.range.start, control.range.end);
+  // `<Tag attrs />` or `<Tag attrs>`. Attributes are limited to
+  // `name`, `name="value"`, `name='value'` — we bail on `name={…}` to
+  // avoid interleaving with expressions whose evaluation we can't see.
+  const openMatch =
+    /^<([A-Za-z]+)((?:\s+[A-Za-z_][\w:-]*(?:=(?:"[^"]*"|'[^']*'))?)*)(\s*\/?\s*)>/.exec(raw);
+  if (!openMatch) return null;
+  const tag = openMatch[1];
+  const attrs = openMatch[2] ?? "";
+  const trailing = openMatch[3] ?? "";
+  const oldText = openMatch[0];
+  const newText = `<${tag} id="${escapeAttributeValue(id)}"${attrs}${trailing}>`;
+  return { oldText, newText };
+}
+
 // ---------------------------------------------------------------------------
 // Shared violation shape
 // ---------------------------------------------------------------------------
@@ -444,38 +605,79 @@ interface ViolationArgs {
   readonly controlTag: string;
   readonly controlType: string | null;
   readonly id: string;
+  /**
+   * True when the id did NOT exist on the control in source and was
+   * synthesized from the label's visible text. Drives two shape
+   * changes: the message mentions the synthesis so the agent knows
+   * the id is a proposal (not observed), and the fixPaths gain a
+   * second mechanical edit that inserts `id=` on the control itself.
+   */
+  readonly synthesized: boolean;
   readonly edit: { readonly oldText: string; readonly newText: string } | null;
+  readonly controlEdit: { readonly oldText: string; readonly newText: string } | null;
   readonly attr: "for" | "htmlFor";
 }
 
 function buildViolation(args: ViolationArgs): Parameters<Emit>[0] {
+  const ctx = buildMessageContext(args);
+  const fixPaths = buildFixPaths(args, ctx);
+  const alt0 = fixPaths.alternatives[0]?.label ?? "";
+  const alt1 = fixPaths.alternatives[1]?.label ?? "";
+  const suggestion = `Primary fix: ${ctx.primaryLabel}. Alternatives: (a) ${alt0}; (b) ${alt1}.`;
+  return {
+    severity: "error",
+    location: { filePath: "", line: args.line, column: args.column },
+    message: ctx.message,
+    suggestion,
+    fixPaths,
+  };
+}
+
+interface MessageContext {
+  readonly idHint: string;
+  readonly controlDescriptor: string;
+  readonly message: string;
+  readonly primaryLabel: string;
+}
+
+function buildMessageContext(args: ViolationArgs): MessageContext {
   const idHint = truncateForEcho(args.id);
   const controlDescriptor = args.controlType
     ? `<${args.controlTag} type="${args.controlType}">`
     : `<${args.controlTag}>`;
-  const message = `adjacent <label> has no ${args.attr}="${idHint}" — the label sits next to ${controlDescriptor} id="${idHint}" but the association is visual-only, so screen readers announce the control as unlabeled.`;
-  const primaryLabel = `add ${args.attr}="${idHint}" to the <label> to associate it with the adjacent ${controlDescriptor}`;
-  const fixPaths: FixPaths = {
+  const idClause = args.synthesized
+    ? `the adjacent ${controlDescriptor} has no id at all, so the association is visual-only and screen readers announce the control as unlabeled. Adding \`${args.attr}="${idHint}"\` on the <label> AND \`id="${idHint}"\` on the control (id synthesized from the label text) fixes both sides in one pass`
+    : `the label sits next to ${controlDescriptor} id="${idHint}" but the association is visual-only, so screen readers announce the control as unlabeled`;
+  const message = `adjacent <label> has no ${args.attr}="${idHint}" — ${idClause}.`;
+  const primaryLabel = args.synthesized
+    ? `add ${args.attr}="${idHint}" to the <label> AND add id="${idHint}" to the adjacent ${controlDescriptor} so the association resolves (id synthesized from the label's visible text)`
+    : `add ${args.attr}="${idHint}" to the <label> to associate it with the adjacent ${controlDescriptor}`;
+  return { idHint, controlDescriptor, message, primaryLabel };
+}
+
+function buildFixPaths(args: ViolationArgs, ctx: MessageContext): FixPaths {
+  const wrapAlternative = {
+    label: `wrap the ${ctx.controlDescriptor} inside the <label> element — <label>…<${args.controlTag}>…</${args.controlTag}></label> creates an implicit association without needing a matching id`,
+  };
+  const ambiguousAlternative = {
+    label: `if the adjacent <label> was intended for a *different* control and this ${ctx.controlDescriptor} has no real label, add an \`aria-label="…"\` or a separate <label ${args.attr}="${ctx.idHint}"> to this control — verify which control the existing label was meant for first`,
+  };
+  const alternatives = args.synthesized
+    ? [buildControlEditAlternative(args, ctx), wrapAlternative, ambiguousAlternative]
+    : [wrapAlternative, ambiguousAlternative];
+  return {
     primary: {
-      label: primaryLabel,
+      label: ctx.primaryLabel,
       ...(args.edit ? { edit: { ...args.edit } } : {}),
     },
-    alternatives: [
-      {
-        label: `wrap the ${controlDescriptor} inside the <label> element — <label>…<${args.controlTag}>…</${args.controlTag}></label> creates an implicit association without needing a matching id`,
-      },
-      {
-        label: `if the adjacent <label> was intended for a *different* control and this ${controlDescriptor} has no real label, add an \`aria-label="…"\` or a separate <label ${args.attr}="${idHint}"> to this control — verify which control the existing label was meant for first`,
-      },
-    ],
+    alternatives,
   };
-  const suggestion = `Primary fix: ${primaryLabel}. Alternatives: (a) ${fixPaths.alternatives[0]?.label}; (b) ${fixPaths.alternatives[1]?.label}.`;
+}
+
+function buildControlEditAlternative(args: ViolationArgs, ctx: MessageContext) {
   return {
-    severity: "error",
-    location: { filePath: "", line: args.line, column: args.column },
-    message,
-    suggestion,
-    fixPaths,
+    label: `add id="${ctx.idHint}" to the adjacent ${ctx.controlDescriptor} — companion edit to the <label> rewrite above; both must land for the association to resolve`,
+    ...(args.controlEdit ? { edit: { ...args.controlEdit } } : {}),
   };
 }
 
@@ -486,4 +688,51 @@ function buildViolation(args: ViolationArgs): Parameters<Emit>[0] {
  */
 function escapeAttributeValue(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+// ---------------------------------------------------------------------------
+// id synthesis
+// ---------------------------------------------------------------------------
+
+/**
+ * Synthesize a stable id from a label's visible text:
+ *   - lowercase ASCII letters / digits
+ *   - any other run (whitespace, punctuation, template-directive residue)
+ *     collapses to a single `-`
+ *   - leading/trailing `-` trimmed
+ *   - prefix with `input-` if the result starts with a digit (HTML ids
+ *     are legal starting with a digit, but CSS selectors like `#2fa`
+ *     are not, so the prefix keeps the synthesized id useful for the
+ *     adjacent stylesheet too)
+ *   - fall back to `input` when no ASCII-usable tokens remain (e.g.
+ *     pure CJK or emoji label)
+ *
+ * Collision resolution: append `-2`, `-3`, … until the proposal is
+ * not in `taken`. `taken` is caller-owned and mutated by the caller
+ * after accepting a returned id.
+ *
+ * Returns null only when the label text is completely empty after the
+ * fallback — caller treats that as "can't synthesize, don't fire."
+ * With the fallback above, this in practice only happens if `taken`
+ * somehow already contains every numeric suffix; the `-1000` ceiling
+ * is a safety valve, not an expected limit.
+ */
+function synthesizeId(labelText: string, taken: ReadonlySet<string>): string | null {
+  const base = kebabize(labelText);
+  const safeBase = base.length > 0 ? base : "input";
+  const needsPrefix = /^\d/.test(safeBase);
+  const root = needsPrefix ? `input-${safeBase}` : safeBase;
+  if (!taken.has(root)) return root;
+  for (let suffix = 2; suffix <= 1000; suffix += 1) {
+    const candidate = `${root}-${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+function kebabize(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
