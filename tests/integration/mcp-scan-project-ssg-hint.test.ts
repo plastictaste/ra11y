@@ -88,7 +88,12 @@ describe("scan_project: Q4-SSG-BUILD-HINT", () => {
       // This is the zero-parseable-files branch — canonically the
       // state of a Jekyll source tree before `bundle exec jekyll
       // build` runs, and exactly when the agent most needs the hint.
+      // `_layouts/` corroborates the Jekyll classification so the
+      // detector resolves to a confident `jekyll` (a bare `_config.yml`
+      // would resolve to null per the corroboration contract — see
+      // tests/unit/mcp/ssg-detect.test.ts).
       writeFileSync(join(root, "_config.yml"), "title: My site\nmarkdown: kramdown\n");
+      mkdirSync(join(root, "_layouts"));
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       expect(scan).toBeDefined();

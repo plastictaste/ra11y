@@ -26,12 +26,20 @@
  *     `docs/kb/architecture/ai-first-consumer.md` "Surface, don't
  *     suppress."
  *   - Probe is deterministic. One `existsSync` per marker for the
- *     unambiguous filenames (Jekyll, Hugo modern, Astro, Eleventy,
- *     Gatsby, MkDocs). Hugo's legacy `config.toml` is disambiguated by
- *     a bounded content probe for the `[markup]` section header —
+ *     unambiguous filenames (Hugo modern, Astro, Eleventy, Gatsby,
+ *     MkDocs). Hugo's legacy `config.toml` is disambiguated by a
+ *     bounded content probe for the `[markup]` section header —
  *     `config.toml` alone is shared with Rust / Cargo workspaces, so
  *     the filename is insufficient. The content read is capped at a
  *     small slice so large configs don't bloat the probe cost.
+ *     Jekyll's `_config.yml` is similarly ambiguous (third-party site
+ *     templates and unrelated YAML-config tools ship one), so it
+ *     additionally requires a corroborating signal — see
+ *     {@link detectJekyllWithCorroboration}. A confident
+ *     `detectedFramework: "jekyll"` on filename alone is overconfident-
+ *     from-weak-evidence; without corroboration the detector returns
+ *     `null` and the agent inspects, rather than acting on a hint that
+ *     names a build command the project doesn't have.
  *   - Framework tag is a stable kebab-case identifier agents branch on
  *     (`jekyll`, `hugo`, `astro`, `eleventy`, `gatsby`, `mkdocs`), not
  *     English prose. The hint prose embeds the tag inline so agents
@@ -95,12 +103,6 @@ interface SsgDescriptor {
 
 const SSG_DESCRIPTORS: readonly SsgDescriptor[] = [
   {
-    name: "jekyll",
-    markers: ["_config.yml"],
-    buildOutput: "_site/",
-    buildCommand: "bundle exec jekyll build",
-  },
-  {
     name: "hugo",
     markers: ["hugo.toml", "hugo.yaml", "hugo.json"],
     buildOutput: "public/",
@@ -133,6 +135,72 @@ const SSG_DESCRIPTORS: readonly SsgDescriptor[] = [
 ];
 
 /**
+ * Jekyll's only canonical config filename. Checked separately from
+ * {@link SSG_DESCRIPTORS} because the filename alone is not enough to
+ * confidently classify — bare `_config.yml` files ship in third-party
+ * site templates, ecosystem dumps, and unrelated YAML-config tools.
+ * The file's presence is necessary; the corroborating-signal probe in
+ * {@link detectJekyllWithCorroboration} provides the sufficient half.
+ */
+const JEKYLL_CONFIG = "_config.yml";
+
+/**
+ * Static descriptor for Jekyll (build output + command). Kept separate
+ * from {@link SSG_DESCRIPTORS} because Jekyll's resolution path is
+ * gated on a corroborating signal rather than a bare filename probe.
+ */
+const JEKYLL_DESCRIPTOR: DetectedFramework = {
+  name: "jekyll",
+  buildOutput: "_site/",
+  buildCommand: "bundle exec jekyll build",
+};
+
+/**
+ * Directory-shaped corroborators for Jekyll detection. A real Jekyll
+ * site lays out at least one of these at the project root: `_layouts/`
+ * for layout templates, `_includes/` for partials, `_posts/` for the
+ * dated-post collection, `_drafts/` for unpublished posts. Their
+ * presence is high-signal: Jekyll's loader walks them by name, so
+ * non-Jekyll projects don't ship a directory called `_layouts/` by
+ * coincidence (the leading underscore and exact name are Jekyll
+ * conventions, not generic configuration).
+ */
+const JEKYLL_DIR_CORROBORATORS: readonly string[] = [
+  "_layouts",
+  "_includes",
+  "_posts",
+  "_drafts",
+];
+
+/**
+ * Canonical Bundler manifest filename. When present alongside
+ * `_config.yml`, the file's text is probed for a `jekyll` gem
+ * declaration — `gem "jekyll"` or similar. The presence of the file
+ * itself is not corroboration: a Rails or Sinatra project with a
+ * stray YAML config has a Gemfile too.
+ */
+const JEKYLL_GEMFILE = "Gemfile";
+
+/**
+ * Cap on bytes read from the Gemfile during Jekyll corroboration.
+ * Gemfiles are typically ≤ 4 KB; capping at 16 KB covers legitimate
+ * monorepo Gemfiles without letting a pathological file slow the probe.
+ */
+const JEKYLL_GEMFILE_MAX_BYTES = 16 * 1024;
+
+/**
+ * Pattern matching a `gem "jekyll"` (or `'jekyll'`) declaration in a
+ * Gemfile, anchored to a word boundary so unrelated gems with `jekyll`
+ * in their name (e.g. `jekyll-feed`) ALSO corroborate — those gems
+ * exist only inside Jekyll projects, so any `jekyll`-prefixed gem
+ * counts. The match is permissive enough to cover the canonical
+ * `gem "jekyll", "~> 4.3"` shape and uncommon variants (`gem 'jekyll'`,
+ * `gem("jekyll")`). The optional `\(?` allows the parenthesised form
+ * without requiring it.
+ */
+const JEKYLL_GEMFILE_GEM_RE = /\bgem\b\s*\(?\s*["']jekyll/;
+
+/**
  * Canonical legacy Hugo config filename. Checked only when no modern
  * Hugo marker fired and no other SSG resolved — a `config.toml` at
  * the repo root is shared with Rust workspaces and Cargo-managed
@@ -160,14 +228,27 @@ const HUGO_MARKUP_SECTION_RE = /^\[markup\]/m;
 
 /**
  * Returns the detected SSG's descriptor, or `null` when no recognized
- * marker resolves. Probes in declaration order of {@link SSG_DESCRIPTORS};
- * the first match wins. When no modern marker fires, falls back to the
- * bounded-content probe for Hugo's legacy `config.toml` layout.
+ * marker resolves. Resolution order, with the first match winning:
+ *
+ *   1. Jekyll: `_config.yml` AND a corroborating signal (a Jekyll-
+ *      shaped directory or a Gemfile mentioning the `jekyll` gem).
+ *      See {@link detectJekyllWithCorroboration}.
+ *   2. The unambiguous filename markers in declaration order of
+ *      {@link SSG_DESCRIPTORS}: hugo (modern) → astro → eleventy →
+ *      gatsby → mkdocs.
+ *   3. Hugo's legacy `config.toml`, disambiguated by a bounded
+ *      content probe for the `[markup]` section header.
+ *
+ * Jekyll runs first to preserve the documented declaration-order
+ * tie-break (a hypothetical migration repo with both Jekyll and Astro
+ * markers still resolves to Jekyll).
  *
  * @param root Absolute path to the project root. Caller is responsible
  *             for path resolution; this module never re-resolves.
  */
 export function detectSsgFramework(root: string): DetectedFramework | null {
+  const jekyll = detectJekyllWithCorroboration(root);
+  if (jekyll !== null) return jekyll;
   for (const descriptor of SSG_DESCRIPTORS) {
     for (const marker of descriptor.markers) {
       if (existsSync(join(root, marker))) {
@@ -180,6 +261,78 @@ export function detectSsgFramework(root: string): DetectedFramework | null {
     }
   }
   return detectHugoLegacyConfigToml(root);
+}
+
+/**
+ * Jekyll detection requires `_config.yml` AND at least one
+ * corroborating signal:
+ *
+ *   - a `_layouts/`, `_includes/`, `_posts/`, or `_drafts/` directory
+ *     at the project root (Jekyll's loader walks them by name; the
+ *     leading-underscore convention is specific to Jekyll, not
+ *     generic configuration), OR
+ *   - a Gemfile whose contents reference the `jekyll` gem (matched
+ *     against `\bgem\b\s*[("]\s*["']jekyll`, which covers
+ *     `gem "jekyll"`, `gem 'jekyll'`, `gem("jekyll")`, and the
+ *     `jekyll-*` plugin-gem family — those plugins live only inside
+ *     Jekyll sites so a match on any `jekyll`-prefixed gem is
+ *     sufficient).
+ *
+ * Returns `null` when `_config.yml` is missing OR present without
+ * corroboration. The latter case is the Q6 false-positive: a stray
+ * top-level `_config.yml` from a third-party site template, ecosystem
+ * dump, or unrelated YAML-config tool resolves to `null` rather than
+ * to a confident Jekyll classification — letting the agent inspect
+ * rather than acting on a wrong build command.
+ *
+ * Per the AI-first doctrine, this is not heuristic suppression: the
+ * detector is moving from "confident classification on weak evidence"
+ * to "confident classification on stronger evidence OR no
+ * classification at all" — `null` is honest absence (the corroborated
+ * positive path always resolves), and the agent retains full source
+ * access to investigate. See `docs/kb/architecture/ai-first-consumer.md`
+ * "Surface, don't suppress" — surfacing a wrong answer is worse than
+ * surfacing nothing when the evidence is genuinely insufficient for
+ * the classification we'd otherwise emit.
+ *
+ * Any I/O failure (missing file, permission error, decode error)
+ * returns `null` — the probe never throws so {@link detectSsgFramework}
+ * stays total.
+ */
+function detectJekyllWithCorroboration(root: string): DetectedFramework | null {
+  if (!existsSync(join(root, JEKYLL_CONFIG))) return null;
+  for (const dir of JEKYLL_DIR_CORROBORATORS) {
+    const path = join(root, dir);
+    if (!existsSync(path)) continue;
+    try {
+      if (statSync(path).isDirectory()) return JEKYLL_DESCRIPTOR;
+    } catch {
+      // statSync failed (permission, race) — treat as missing and
+      // continue scanning the remaining corroborators.
+    }
+  }
+  if (gemfileMentionsJekyll(root)) return JEKYLL_DESCRIPTOR;
+  return null;
+}
+
+/**
+ * Returns true when a `Gemfile` at the project root exists, is a
+ * regular file, and contains a `jekyll` gem declaration within the
+ * first {@link JEKYLL_GEMFILE_MAX_BYTES} bytes. Any I/O failure
+ * (missing file, permission error, decode error) returns false.
+ */
+function gemfileMentionsJekyll(root: string): boolean {
+  const gemfilePath = join(root, JEKYLL_GEMFILE);
+  if (!existsSync(gemfilePath)) return false;
+  try {
+    const stats = statSync(gemfilePath);
+    if (!stats.isFile()) return false;
+    if (stats.size === 0) return false;
+    const contents = readFileSync(gemfilePath, "utf8");
+    return JEKYLL_GEMFILE_GEM_RE.test(contents.slice(0, JEKYLL_GEMFILE_MAX_BYTES));
+  } catch {
+    return false;
+  }
 }
 
 /**
