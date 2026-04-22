@@ -53,7 +53,13 @@ interface ScanFinding {
 }
 
 interface ScanPayload {
-  readonly plan: { readonly violations: number; readonly totalFindings: number };
+  // `totalFindings` was removed from the MCP `scan_project` plan shape
+  // (see `src/mcp/scan-assembly.ts`) and from the agent-formatter
+  // `AgentPlan` (see `src/output/agent-response/types.ts`) per
+  // CLAUDE.md §1 "Composite headline counts are dishonest" — the plan
+  // exposes split `violations` (severity error/warning) and `notes`
+  // (severity info) counters instead.
+  readonly plan: { readonly violations: number; readonly notes: number };
   readonly files: ReadonlyArray<{
     readonly path: string;
     readonly findings: readonly ScanFinding[];

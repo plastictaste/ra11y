@@ -67,22 +67,22 @@ function makeViolations(): Violation[] {
 
 describe("buildAgentPlan: fixesByClass structured tally", () => {
   it("counts violations in the mechanical lane", () => {
-    const plan = buildAgentPlan(makeViolations(), [], 4);
+    const plan = buildAgentPlan(makeViolations(), []);
     expect(plan.fixesByClass.mechanical).toBe(1);
   });
 
   it("counts violations in the guidance lane", () => {
-    const plan = buildAgentPlan(makeViolations(), [], 4);
+    const plan = buildAgentPlan(makeViolations(), []);
     expect(plan.fixesByClass.guidance).toBe(1);
   });
 
   it("counts violations in the runtimeOnly lane (camelCased from `runtime-only`)", () => {
-    const plan = buildAgentPlan(makeViolations(), [], 4);
+    const plan = buildAgentPlan(makeViolations(), []);
     expect(plan.fixesByClass.runtimeOnly).toBe(1);
   });
 
   it("counts violations in the verifyInSource lane (camelCased from `verify-in-source`)", () => {
-    const plan = buildAgentPlan(makeViolations(), [], 4);
+    const plan = buildAgentPlan(makeViolations(), []);
     expect(plan.fixesByClass.verifyInSource).toBe(1);
   });
 
@@ -91,7 +91,7 @@ describe("buildAgentPlan: fixesByClass structured tally", () => {
     // to disambiguate "field absent" from "lane zero." Zero-count
     // lanes surface as `0` rather than being omitted, matching the
     // shape consumers read on a violating scan.
-    const plan = buildAgentPlan([], [], 0);
+    const plan = buildAgentPlan([], []);
     expect(plan.fixesByClass).toEqual({
       mechanical: 0,
       guidance: 0,
@@ -110,7 +110,7 @@ describe("buildAgentPlan: safeEditsAvailable counter", () => {
     // findings when the AST lacks enough context — without an
     // explicit `fixPaths.primary.edit` on any test violation, the
     // counter reports 0 even though lanes are populated.
-    const plan = buildAgentPlan(makeViolations(), [], 4);
+    const plan = buildAgentPlan(makeViolations(), []);
     expect(plan.safeEditsAvailable).toBe(0);
   });
 
@@ -130,7 +130,7 @@ describe("buildAgentPlan: safeEditsAvailable counter", () => {
         alternatives: [],
       },
     };
-    const plan = buildAgentPlan([withEdit, ...rest], [], 4);
+    const plan = buildAgentPlan([withEdit, ...rest], []);
     expect(plan.safeEditsAvailable).toBe(1);
   });
 
@@ -160,7 +160,7 @@ describe("buildAgentPlan: safeEditsAvailable counter", () => {
           },
         },
       ])[0] as Violation;
-    const plan = buildAgentPlan([makeVerifyInSource(1), makeVerifyInSource(2)], [], 2);
+    const plan = buildAgentPlan([makeVerifyInSource(1), makeVerifyInSource(2)], []);
     expect(plan.safeEditsAvailable).toBe(2);
     expect(plan.fixesByClass.mechanical).toBe(0);
     expect(plan.fixesByClass.verifyInSource).toBe(2);
@@ -170,7 +170,7 @@ describe("buildAgentPlan: safeEditsAvailable counter", () => {
 describe("buildAgentPlan: summary string", () => {
   it("breaks the violations parenthetical down by fixClass lane (not by suggestion presence)", () => {
     const files: AgentFile[] = [];
-    const plan = buildAgentPlan(makeViolations(), files, 4);
+    const plan = buildAgentPlan(makeViolations(), files);
     // Lane order per `buildFixClassBreakdown`:
     // mechanical → guidance → runtime-only → verify-in-source.
     expect(plan.summary).toContain("4 findings");
@@ -184,8 +184,8 @@ describe("buildAgentPlan: summary string", () => {
     expect(plan.summary).not.toMatch(/\d+ guidance fixes/);
   });
 
-  it("reads 'No accessibility violations found.' when totalFindings is 0", () => {
-    const plan = buildAgentPlan([], [], 0);
+  it("reads 'No accessibility violations found.' when violations is 0", () => {
+    const plan = buildAgentPlan([], []);
     expect(plan.summary).toBe("No accessibility violations found.");
   });
 });

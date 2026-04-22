@@ -35,7 +35,13 @@ export const agentFormatter = defineFormatter({
     const sorted = sortViolations(result.violations);
     const byFile = groupByFile(sorted);
     const files = buildFiles(byFile);
-    const plan = buildAgentPlan(sorted, files, result.violations.length);
+    // `buildAgentPlan` splits the violations array internally by
+    // severity into the honest `violations` (error/warning) and `notes`
+    // (info) headline counters per CLAUDE.md §1 "Composite headline
+    // counts are dishonest" — passing the raw array keeps the split as
+    // the single source of truth (mirrors `src/mcp/tools-helpers.ts`'s
+    // pre-MCP split).
+    const plan = buildAgentPlan(sorted, files);
     const reviewCandidates = buildReviewCandidates(report.candidates ?? []);
     const meta = buildMeta(result);
 

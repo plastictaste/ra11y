@@ -221,6 +221,20 @@ export interface FixesByClass {
 /**
  * Executive summary for the agent: counts, effort, and a natural-language blurb.
  *
+ * `violations` and `notes` are the honest split of what `result.violations`
+ * carries. `violations` counts findings with `severity` of `error` or
+ * `warning` — real WCAG impact the agent is expected to triage. `notes`
+ * counts `severity: "info"` findings — additive context (e.g. labeled
+ * parents, deprecation hints) that share the violations array but do not
+ * represent failure. The former `totalFindings` counter summed both lanes
+ * under one headline (`plan.totalFindings: 24772` buried `notes: 1079`
+ * under `violations: 23693` on the website-templates field test); per
+ * CLAUDE.md §1 "Composite headline counts are dishonest," the split
+ * matches the MCP `scan_project` plan shape (`buildScanPlan`) and the
+ * `--format agent` summary prose ("N findings (… mechanical, …)") which
+ * already breaks the two lanes out — agents reading either surface get
+ * one shape to budget against.
+ *
  * `safeEditsAvailable` counts violations where `fixPaths?.primary.edit`
  * is present — deterministic, batch-apply work `apply_fix` can take without
  * a round-trip. These edits ride on rules whose `fixClass` is either
@@ -252,7 +266,8 @@ export interface FixesByClass {
  * field had.
  */
 export interface AgentPlan {
-  readonly totalFindings: number;
+  readonly violations: number;
+  readonly notes: number;
   readonly safeEditsAvailable: number;
   readonly fixesByClass: FixesByClass;
   readonly reviewNeeded: number;

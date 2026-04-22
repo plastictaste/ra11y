@@ -204,24 +204,43 @@ function countCategories(files: readonly AgentFile[]): CategoryCounts {
  * Build the {@link AgentPlan} headline from source violations and their
  * pre-built {@link AgentFile} representations.
  *
- * @param violations - The source violations (used for mechanical-edit detection
- *   via `fixPaths.primary.edit`, prose detection via `suggestion`, and
- *   per-{@link FixClass} lane tallying via `fixClass`).
+ * Splits the input violations array by `severity` into the honest
+ * `violations` (error/warning) and `notes` (info) counters per CLAUDE.md
+ * §1 "Composite headline counts are dishonest" — the former
+ * `totalFindings` summed both lanes under one label, which inflated the
+ * work agents budgeted against (a real-world scan returned
+ * `totalFindings: 24772` while only `23693` were error/warning
+ * violations and `1079` were info-severity notes). Effort and
+ * `fixesByClass` continue to derive from the violations slice only —
+ * notes carry no remediation.
+ *
+ * @param violations - The source violations (severity-mixed; the helper
+ *   splits internally into violation/note lanes for the headline counters,
+ *   then derives `safeEditsAvailable`/`fixesByClass`/effort from the
+ *   error+warning slice via `fixPaths.primary.edit` / `suggestion` /
+ *   `fixClass`).
  * @param files - Pre-built AgentFile array (used for per-rule counts and
  *   category tallies that derive from the finding shape).
- * @param totalFindings - Total finding count (usually `violations.length`;
- *   passed in so callers can apply pre-filtering without recomputing here).
  */
 export function buildAgentPlan(
   violations: readonly Violation[],
   files: readonly AgentFile[],
-  totalFindings: number,
 ): AgentPlan {
-  const { safeEditsAvailable, proseOnlySuggestions } = countFixes(violations);
-  const fixesByClass = countFixesByClass(violations);
+  // Split severity lanes the same way `src/mcp/tools-helpers.ts` does so
+  // the agent-formatter and MCP `buildScanPlan` emit aligned headline
+  // counters — agents reading either surface get one shape to budget.
+  const violationsList = violations.filter((v) => v.severity !== "info");
+  const notesList = violations.filter((v) => v.severity === "info");
+  const violationsCount = violationsList.length;
+  const notesCount = notesList.length;
+
+  // Remediation tallies derive from the violations slice only — notes
+  // are additive context and carry no fix payload.
+  const { safeEditsAvailable, proseOnlySuggestions } = countFixes(violationsList);
+  const fixesByClass = countFixesByClass(violationsList);
   const { reviewNeeded, manualOnly, ruleCounts } = countCategories(files);
   const fixCount = safeEditsAvailable + proseOnlySuggestions;
-  const effort = computeEffort(totalFindings, fixCount);
+  const effort = computeEffort(violationsCount, fixCount);
 
   // The `fixClass` tally drives the summary parenthetical. It's a
   // separate axis from `safeEditsAvailable` — that one counts "what
@@ -236,10 +255,17 @@ export function buildAgentPlan(
     "verify-in-source": fixesByClass.verifyInSource,
   };
 
-  const summary = buildSummary(totalFindings, fixClassCounts, reviewNeeded, manualOnly, ruleCounts);
+  const summary = buildSummary(
+    violationsCount,
+    fixClassCounts,
+    reviewNeeded,
+    manualOnly,
+    ruleCounts,
+  );
 
   return {
-    totalFindings,
+    violations: violationsCount,
+    notes: notesCount,
     safeEditsAvailable,
     fixesByClass,
     reviewNeeded,

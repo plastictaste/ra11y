@@ -89,7 +89,8 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
   const raw = agentFormatter.format(result, report);
   return JSON.parse(raw) as {
     plan: {
-      totalFindings: number;
+      violations: number;
+      notes: number;
       safeEditsAvailable: number;
       fixesByClass: {
         mechanical: number;
@@ -173,9 +174,16 @@ describe("formatter: agent — output shape", () => {
 });
 
 describe("formatter: agent — plan", () => {
-  it("plan.totalFindings matches violation count", () => {
+  it("plan splits violations from notes (no composite totalFindings counter)", () => {
+    // Per CLAUDE.md §1 "Composite headline counts are dishonest," the
+    // plan exposes split `violations` (severity error/warning) and
+    // `notes` (severity info) counters rather than a single
+    // `totalFindings` that summed both lanes. RESULT carries 3 errors +
+    // 1 warning + 0 info, so violations is 4 and notes is 0.
     const { plan } = parse();
-    expect(plan.totalFindings).toBe(4);
+    expect(plan.violations).toBe(4);
+    expect(plan.notes).toBe(0);
+    expect((plan as Record<string, unknown>)["totalFindings"]).toBeUndefined();
   });
 
   it("plan.summary includes the violation count", () => {
@@ -288,9 +296,10 @@ describe("formatter: agent — plan", () => {
     expect(runtimeIdx).toBeLessThan(verifyIdx);
   });
 
-  it("zero violations produces plan.totalFindings: 0 and trivial effort", () => {
+  it("zero violations produces plan.violations: 0, plan.notes: 0, and trivial effort", () => {
     const { plan } = parse(EMPTY_RESULT, EMPTY_REPORT);
-    expect(plan.totalFindings).toBe(0);
+    expect(plan.violations).toBe(0);
+    expect(plan.notes).toBe(0);
     expect(plan.estimatedEffort).toBe("trivial");
     expect(plan.summary).toBe("No accessibility violations found.");
   });
