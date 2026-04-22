@@ -1,0 +1,22 @@
+/*
+ * motion/pause-stop-hide — good (user-interaction-gated animation is OUT of scope)
+ *
+ * Every comma-separated part of these selectors carries a user-interaction
+ * pseudo-class (:hover / :focus-visible). The animation runs only in
+ * response to user input, which is the WCAG 2.3.3 "Animation from
+ * Interactions" domain, NOT WCAG 2.2.2 "Pause, Stop, Hide". This rule
+ * correctly stays silent; motion/animation-from-interactions is the one
+ * that flags 2.3.3 gaps here.
+ *
+ * The absence of a prefers-reduced-motion guard is intentional in this
+ * fixture — the point is to verify the 2.2.2 lane does NOT claim these
+ * declarations. The 2.3.3 lane has its own bad fixture.
+ */
+
+.btn:hover {
+  transition: transform 0.2s ease;
+}
+
+.input:focus-visible {
+  animation: glow 0.3s ease-in-out;
+}

@@ -1,0 +1,18 @@
+/*
+ * motion/animation-from-interactions — good (bare selector, not the 2.3.3 lane)
+ *
+ * `.spinner` and `@keyframes spin` describe auto-running motion with no
+ * user-interaction trigger. This is the 2.2.2 lane — motion/pause-stop-hide
+ * fires on it, NOT motion/animation-from-interactions. Verifying here that
+ * the 2.3.3 rule correctly stays silent on non-interaction selectors.
+ */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}

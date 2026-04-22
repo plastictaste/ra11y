@@ -1,0 +1,16 @@
+/*
+ * motion/animation-from-interactions — bad (user-interaction-gated transition)
+ *
+ * Every comma-separated part of this selector contains a user-interaction
+ * pseudo-class (:hover). WCAG 2.3.3 requires a mechanism to disable motion
+ * triggered by interaction — a @media (prefers-reduced-motion: reduce)
+ * guard would satisfy that, but this file has none.
+ */
+
+.btn:hover {
+  transition: transform 0.2s ease;
+}
+
+.card:focus-visible {
+  animation: pulse 0.4s ease-in-out;
+}

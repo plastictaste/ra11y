@@ -1,0 +1,19 @@
+/*
+ * motion/animation-from-interactions — good (guarded by prefers-reduced-motion)
+ *
+ * The hover transition is present, but it is also overridden inside a
+ * @media (prefers-reduced-motion: reduce) block — users who prefer
+ * reduced motion get the `transition: none` override. WCAG 2.3.3 is
+ * satisfied because the mechanism to disable the interaction-triggered
+ * animation exists.
+ */
+
+.btn:hover {
+  transition: transform 0.2s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn:hover {
+    transition: none;
+  }
+}

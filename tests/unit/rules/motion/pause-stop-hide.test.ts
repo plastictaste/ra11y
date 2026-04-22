@@ -157,6 +157,72 @@ describe("rule motion/pause-stop-hide", () => {
     expect(rule.satisfies).toContain("wcag21:2.2.2");
   });
 
+  it("does NOT cite wcag22:2.3.3 — interaction-gated motion is a sibling rule's lane", () => {
+    // Spec-correctness invariant: 2.2.2 targets auto-updating content;
+    // 2.3.3 targets animation from interactions. Each finding must carry
+    // exactly one SC, and this rule is the 2.2.2 lane.
+    expect(rule.satisfies).not.toContain("wcag22:2.3.3");
+    expect(rule.satisfies).not.toContain("wcag21:2.3.3");
+  });
+
+  describe("spec-lane discrimination (user-interaction-gated → 2.3.3 lane, not this rule)", () => {
+    it(".btn:hover transition does NOT fire under 2.2.2", () => {
+      const v = runRule(rule, `.btn:hover { transition: transform 0.2s; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it(".input:focus animation does NOT fire under 2.2.2", () => {
+      const v = runRule(rule, `.input:focus { animation: pulse 0.6s; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it(".card:active transition-duration does NOT fire under 2.2.2", () => {
+      const v = runRule(rule, `.card:active { transition-duration: 150ms; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it(":focus-visible and :focus-within both route to 2.3.3, not here", () => {
+      const src = [
+        `.link:focus-visible { animation: glow 0.4s; }`,
+        `.panel:focus-within { transition: background 0.2s; }`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "styles.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("mixed list (one gated part, one bare) STILL fires under 2.2.2 — the bare part animates without interaction", () => {
+      const v = runRule(rule, `.btn, .btn:hover { transition: transform 0.2s; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("mixes interaction-gated and always-on");
+    });
+
+    it("bare .spinner still fires under 2.2.2 even when a sibling .btn:hover rule exists", () => {
+      const src = [
+        `.spinner { animation: spin 1s infinite; }`,
+        `.btn:hover { transition: transform 0.2s; }`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "styles.css" });
+      // Only the .spinner fires under 2.2.2; the :hover rule is the 2.3.3 lane.
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain(".spinner");
+    });
+
+    it("inline style= transition still fires under 2.2.2 (not pseudo-class-gated)", () => {
+      const v = runRule(rule, `<div style="transition: opacity 0.3s"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+  });
+
   describe("inline <style> blocks in HTML: fires when", () => {
     it("animation property inside <style> without reduced-motion guard", () => {
       const src = [

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/animation-from-interactions — bad (focus-gated animation in a &lt;style&gt; block)</title>
+    <style>
+      /*
+        User-interaction-gated animation inside a <style> block. The rule
+        parses the <style> content as CSS and applies the same
+        prefers-reduced-motion guard check. This declaration is outside any
+        reduced-motion media query, so WCAG 2.3.3 fires.
+      */
+      @keyframes shake {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        50% {
+          transform: translateX(-2px);
+        }
+      }
+
+      .input:focus {
+        animation: shake 0.3s ease-in-out;
+      }
+    </style>
+  </head>
+  <body>
+    <input class="input" />
+  </body>
+</html>
