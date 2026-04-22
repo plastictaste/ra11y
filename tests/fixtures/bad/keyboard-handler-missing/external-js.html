@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>External-JS handler — keyboard-unreachable action tile</title>
+    <script src="./external-js.js" defer></script>
+  </head>
+  <body>
+    <!-- Vanilla-JS pattern: the HTML looks harmless because there are no
+         inline handlers. The click handler is wired in external-js.js via
+         document.querySelector('#save-tile').addEventListener('click', …)
+         with no sibling keydown, so keyboard users can't reach or
+         activate the action. The rule flags the JS line (same-file
+         static-analysis scope); the agent grep-traces the selector into
+         this HTML to decide the fix (convert <div> to <button>, or add
+         a keyboard handler on the same target). -->
+    <div id="save-tile" class="action-tile">Save</div>
+  </body>
+</html>
