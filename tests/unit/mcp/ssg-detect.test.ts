@@ -219,7 +219,10 @@ describe("detectSsgFramework: jekyll requires corroborating signal", () => {
   it("resolves _config.yml + Gemfile mentioning jekyll to jekyll", async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await writeFile(join(dir, "Gemfile"), 'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n');
+      await writeFile(
+        join(dir, "Gemfile"),
+        'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n',
+      );
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
     });
@@ -232,7 +235,10 @@ describe("detectSsgFramework: jekyll requires corroborating signal", () => {
     // must reference the gem.
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await writeFile(join(dir, "Gemfile"), 'source "https://rubygems.org"\ngem "rails", "~> 7.1"\n');
+      await writeFile(
+        join(dir, "Gemfile"),
+        'source "https://rubygems.org"\ngem "rails", "~> 7.1"\n',
+      );
       expect(detectSsgFramework(dir)).toBeNull();
     });
   });

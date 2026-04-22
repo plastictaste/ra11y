@@ -165,12 +165,7 @@ const JEKYLL_DESCRIPTOR: DetectedFramework = {
  * coincidence (the leading underscore and exact name are Jekyll
  * conventions, not generic configuration).
  */
-const JEKYLL_DIR_CORROBORATORS: readonly string[] = [
-  "_layouts",
-  "_includes",
-  "_posts",
-  "_drafts",
-];
+const JEKYLL_DIR_CORROBORATORS: readonly string[] = ["_layouts", "_includes", "_posts", "_drafts"];
 
 /**
  * Canonical Bundler manifest filename. When present alongside
