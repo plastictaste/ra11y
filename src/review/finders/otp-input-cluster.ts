@@ -68,13 +68,7 @@ import {
   getJsxAttribute,
   getJsxAttributeString,
 } from "../../engine/ast-helpers.ts";
-import type {
-  HtmlDocument,
-  HtmlElement,
-  JsxElement,
-  JsxNode,
-  TsxModule,
-} from "../../types/ast.ts";
+import type { HtmlDocument, HtmlElement, JsxElement, JsxNode, TsxModule } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 
 const CRITERION_IDS = [
@@ -190,7 +184,10 @@ function inspectHtmlSiblings(
 function htmlInputLooksSingleChar(input: HtmlElement): boolean {
   const type = (getHtmlAttribute(input, "type") ?? "text").trim().toLowerCase();
   if (!SINGLE_CHAR_INPUT_TYPES.has(type)) return false;
-  return narrowsToSingleChar(getHtmlAttribute(input, "maxlength"), getHtmlAttribute(input, "pattern"));
+  return narrowsToSingleChar(
+    getHtmlAttribute(input, "maxlength"),
+    getHtmlAttribute(input, "pattern"),
+  );
 }
 
 function htmlClusterShapeSummary(inputs: readonly HtmlElement[]): string {
@@ -216,7 +213,11 @@ function scanJsx(root: TsxModule, filePath: string, candidates: ReviewCandidate[
   }
 }
 
-function inspectJsxParent(parent: JsxElement, filePath: string, candidates: ReviewCandidate[]): void {
+function inspectJsxParent(
+  parent: JsxElement,
+  filePath: string,
+  candidates: ReviewCandidate[],
+): void {
   const singleCharInputs: JsxElement[] = [];
   for (const child of parent.children) {
     if (child.kind !== "JsxElement") continue;
@@ -244,7 +245,8 @@ function inspectJsxParent(parent: JsxElement, filePath: string, candidates: Revi
   }
   for (const child of parent.children) {
     if (child.kind === "JsxElement") inspectJsxParent(child, filePath, candidates);
-    else if (child.kind === "JsxExpression") inspectJsxExpressionChildren(child, filePath, candidates);
+    else if (child.kind === "JsxExpression")
+      inspectJsxExpressionChildren(child, filePath, candidates);
   }
 }
 
@@ -287,7 +289,8 @@ function jsxClusterShapeSummary(inputs: readonly JsxElement[]): string {
  * per-input label rules still fire and the agent can dismiss / promote.
  */
 function jsxMaxLength(input: JsxElement): string | null {
-  const literal = getJsxAttributeString(input, "maxLength") ?? getJsxAttributeString(input, "maxlength");
+  const literal =
+    getJsxAttributeString(input, "maxLength") ?? getJsxAttributeString(input, "maxlength");
   if (literal !== null) return literal;
   const attr = getJsxAttribute(input, "maxLength") ?? getJsxAttribute(input, "maxlength");
   if (attr?.value?.kind !== "Expression") return null;
@@ -346,7 +349,7 @@ function buildReason(count: number, shape: string): string {
     `${count} sibling <input> elements${shapePhrase} share the shape of a one-time-code (OTP) cluster.`,
     "Screen readers will announce N individual edit fields instead of a single one-time-code field.",
     'Add `autocomplete="one-time-code"` to at least one input, and provide a single group-level',
-    'accessible name covering the cluster (`<fieldset><legend>...</legend>` or a wrapping element',
+    "accessible name covering the cluster (`<fieldset><legend>...</legend>` or a wrapping element",
     'with `role="group"` and `aria-labelledby`).',
     "Per-input label findings on the same boxes (e.g. forms/labels-required) are addressed by the",
     "same group fix.",
