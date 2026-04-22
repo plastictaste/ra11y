@@ -77,43 +77,58 @@ export const rule = defineRule({
     const reportedAnchors = new Set<HtmlElement>();
 
     checkPrimaryNavPath(ctx, doc, ids, reportedAnchors);
-
-    // Second path: any skip-link-shaped anchor with an in-page href whose
-    // target id does not exist in this parsed file. Runs even when the
-    // primary-nav gating above didn't fire (no <nav>, or only one link),
-    // because a skip link that points at nothing is a 2.4.1 failure
-    // regardless of whether the page also has a multi-link nav.
-    for (const el of walkHtmlElements(doc)) {
-      if (el.tagName.toLowerCase() !== "a") continue;
-      if (reportedAnchors.has(el)) continue;
-      const href = getHtmlAttribute(el, "href");
-      if (href === null) continue;
-      if (!href.startsWith("#") || href === "#") continue;
-      if (!looksLikeSkipLink(el)) continue;
-      // Skip template-valued hrefs (`#{{ section.slug }}`): the target
-      // id renders at runtime, so we cannot determine statically
-      // whether the landing element exists. Defer to the agent; echoing
-      // the raw directive as the "missing target" would be dishonest.
-      if (stripTemplateDirectives(href).stripped) continue;
-
-      const targetId = href.slice(1);
-      if (ids.has(targetId)) continue;
-
-      const echoTargetId = truncateForEcho(targetId);
-      ctx.emit({
-        severity: "warning",
-        location: {
-          filePath: "",
-          line: el.loc.start.line,
-          column: el.loc.start.column,
-        },
-        message: `Skip link targets '#${echoTargetId}' but no element in the document has that id.`,
-        suggestion: `Add id="${echoTargetId}" to the landing element (usually your <main> landmark) so focus lands there on activation. If the target lives in a different file (e.g. a shared layout), move the skip link into the same document as its target — in-page anchors don't resolve across files.`,
-      });
-      reportedAnchors.add(el);
-    }
+    checkSkipLinkShapedAnchors(ctx, doc, ids, reportedAnchors);
   },
 });
+
+/**
+ * Second path: any skip-link-shaped anchor with an in-page href whose
+ * target id does not exist in this parsed file. Runs even when the
+ * primary-nav gating above didn't fire (no `<nav>`, or only one link),
+ * because a skip link that points at nothing is a 2.4.1 failure
+ * regardless of whether the page also has a multi-link nav.
+ */
+function checkSkipLinkShapedAnchors(
+  ctx: FileContext,
+  doc: HtmlDocument,
+  ids: Set<string>,
+  reportedAnchors: Set<HtmlElement>,
+): void {
+  for (const el of walkHtmlElements(doc)) {
+    const targetId = resolveSkipLinkTargetId(el, reportedAnchors);
+    if (targetId === null) continue;
+    if (ids.has(targetId)) continue;
+    const echoTargetId = truncateForEcho(targetId);
+    ctx.emit({
+      severity: "warning",
+      location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
+      message: `Skip link targets '#${echoTargetId}' but no element in the document has that id.`,
+      suggestion: `Add id="${echoTargetId}" to the landing element (usually your <main> landmark) so focus lands there on activation. If the target lives in a different file (e.g. a shared layout), move the skip link into the same document as its target — in-page anchors don't resolve across files.`,
+    });
+    reportedAnchors.add(el);
+  }
+}
+
+/**
+ * Narrows a walked element to a skip-link-shaped anchor whose href is
+ * a static in-page fragment. Returns the trimmed target id when the
+ * caller should evaluate id-existence, or `null` to skip. Template-
+ * valued hrefs (`#{{ section.slug }}`) render at runtime and are
+ * deferred to the agent; echoing the raw directive as the "missing
+ * target" would be dishonest.
+ */
+function resolveSkipLinkTargetId(
+  el: HtmlElement,
+  reportedAnchors: Set<HtmlElement>,
+): string | null {
+  if (el.tagName.toLowerCase() !== "a") return null;
+  if (reportedAnchors.has(el)) return null;
+  const href = getHtmlAttribute(el, "href");
+  if (href === null || !href.startsWith("#") || href === "#") return null;
+  if (!looksLikeSkipLink(el)) return null;
+  if (stripTemplateDirectives(href).stripped) return null;
+  return href.slice(1);
+}
 
 function checkPrimaryNavPath(
   ctx: FileContext,
