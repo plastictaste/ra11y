@@ -11,6 +11,7 @@
  */
 
 import { buildListRulesNextStep } from "./list-rules-next-step.ts";
+import type { McpSession } from "./session.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
 import { attestTool } from "./tool-attest.ts";
 import { auditTool } from "./tool-audit.ts";
@@ -37,7 +38,6 @@ import { suppressTool } from "./tool-suppress.ts";
 import { verdictCandidateTool } from "./tool-verdict-candidate.ts";
 import { vpatTool } from "./tool-vpat.ts";
 import { wrapperIntrospectTool } from "./tool-wrapper-introspect.ts";
-import type { McpSession } from "./session.ts";
 import {
   buildConfigureOpts,
   errorResult,
@@ -63,10 +63,7 @@ export type { McpTool, McpToolDef, McpToolResult } from "./tools-helpers.ts";
  * frameworks without cross-reading rule metadata against the standards
  * registry.
  */
-function expandSatisfies(
-  declared: readonly string[],
-  session: McpSession,
-): readonly string[] {
+function expandSatisfies(declared: readonly string[], session: McpSession): readonly string[] {
   const declaredSet = new Set(declared);
   const expanded = new Set<string>();
   for (const critId of declared) {
