@@ -7,7 +7,12 @@
  *
  * Invariants under test:
  *   1. Each canonical config marker in isolation resolves to the
- *      expected framework tag + build output + build command.
+ *      expected framework tag + build output + build command. Jekyll's
+ *      `_config.yml` additionally requires a corroborating signal
+ *      (`_layouts/`, `_includes/`, `_posts/`, `_drafts/`, or a
+ *      jekyll-mentioning Gemfile) — the filename alone is too ambiguous
+ *      to confidently classify (bare `_config.yml` files ship in
+ *      unrelated templates and ecosystem dumps).
  *   2. Hugo's legacy `config.toml` only resolves when it carries a
  *      `[markup]` section header — a bare `config.toml` (ambiguous
  *      with Rust workspaces) returns `null`.
@@ -21,7 +26,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -44,7 +49,9 @@ describe("detectSsgFramework: canonical single-marker repos", () => {
   // One representative marker per framework — the modern / most-common
   // filename the SSG documents as the canonical config. Alternate
   // filenames (hugo.yaml, eleventy.config.js, etc.) are covered in
-  // the alternate-markers block below.
+  // the alternate-markers block below. Jekyll is excluded here because
+  // `_config.yml` alone is ambiguous (third-party templates ship one);
+  // see the dedicated jekyll corroboration block below.
   const cases: ReadonlyArray<{
     readonly marker: string;
     readonly name: SsgFramework;
@@ -52,13 +59,6 @@ describe("detectSsgFramework: canonical single-marker repos", () => {
     readonly buildCommand: string;
     readonly body: string;
   }> = [
-    {
-      marker: "_config.yml",
-      name: "jekyll",
-      buildOutput: "_site/",
-      buildCommand: "bundle exec jekyll build",
-      body: "title: My site\n",
-    },
     {
       marker: "hugo.toml",
       name: "hugo",
@@ -151,6 +151,104 @@ describe("detectSsgFramework: alternate markers within a framework", () => {
   });
 });
 
+describe("detectSsgFramework: jekyll requires corroborating signal", () => {
+  // `_config.yml` alone is too weak: third-party site templates,
+  // ecosystem dumps, and unrelated YAML-config tools ship a stray
+  // top-level `_config.yml`. A confident `detectedFramework: "jekyll"`
+  // on filename alone is overconfident-from-weak-evidence (same class
+  // as the closed Q3 template-directive misdetect). The detector
+  // requires `_config.yml` AND at least one of:
+  //   (a) a `_layouts/` directory
+  //   (b) an `_includes/` directory
+  //   (c) a top-level `_posts/` directory
+  //   (d) a top-level `_drafts/` directory
+  //   (e) a Gemfile mentioning `jekyll`
+  // When only `_config.yml` is present, the detector returns null so
+  // the caller can omit `detectedFramework` and let the agent inspect.
+  // (Per the AI-first doctrine, surfacing a confident wrong answer is
+  // worse than surfacing nothing — `null` here is honest, not
+  // suppression: the evidence is genuinely insufficient for the
+  // classification, and the corroborated path always resolves.)
+
+  it("returns null for a bare _config.yml with no jekyll-shaped neighbours", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      expect(detectSsgFramework(dir)).toBeNull();
+    });
+  });
+
+  it("resolves _config.yml + _layouts/ to jekyll", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_layouts"));
+      expect(detectSsgFramework(dir)).toEqual({
+        name: "jekyll",
+        buildOutput: "_site/",
+        buildCommand: "bundle exec jekyll build",
+      });
+    });
+  });
+
+  it("resolves _config.yml + _includes/ to jekyll", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_includes"));
+      const result = detectSsgFramework(dir);
+      expect(result?.name).toBe("jekyll");
+    });
+  });
+
+  it("resolves _config.yml + _posts/ to jekyll", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_posts"));
+      const result = detectSsgFramework(dir);
+      expect(result?.name).toBe("jekyll");
+    });
+  });
+
+  it("resolves _config.yml + _drafts/ to jekyll", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_drafts"));
+      const result = detectSsgFramework(dir);
+      expect(result?.name).toBe("jekyll");
+    });
+  });
+
+  it("resolves _config.yml + Gemfile mentioning jekyll to jekyll", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await writeFile(join(dir, "Gemfile"), 'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n');
+      const result = detectSsgFramework(dir);
+      expect(result?.name).toBe("jekyll");
+    });
+  });
+
+  it("returns null for _config.yml + Gemfile that does NOT mention jekyll", async () => {
+    // A Ruby project with a stray YAML config file but a non-jekyll
+    // Gemfile (rails, sinatra, plain bundler) is not a Jekyll site.
+    // Filename + presence-of-Gemfile alone is not enough; the Gemfile
+    // must reference the gem.
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await writeFile(join(dir, "Gemfile"), 'source "https://rubygems.org"\ngem "rails", "~> 7.1"\n');
+      expect(detectSsgFramework(dir)).toBeNull();
+    });
+  });
+
+  it("returns null when a corroborating path exists but is a regular file (not directory)", async () => {
+    // `_layouts` as a stray text file (some unrelated template might
+    // ship one) does not corroborate Jekyll — the directory shape
+    // matters, since Jekyll resolves layouts by reading children.
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await writeFile(join(dir, "_layouts"), "not a directory\n");
+      expect(detectSsgFramework(dir)).toBeNull();
+    });
+  });
+});
+
 describe("detectSsgFramework: legacy Hugo config.toml disambiguation", () => {
   // `config.toml` without `[markup]` is ambiguous — a Rust workspace or
   // any other TOML-config tool could drop one. The detector must NOT
@@ -195,10 +293,12 @@ describe("detectSsgFramework: declaration order breaks ties", () => {
   // SSG_DESCRIPTORS is declared jekyll → hugo → astro → eleventy →
   // gatsby → mkdocs; the first match wins. Confirm the ordering
   // empirically so a future reshuffle that changed the tie-break
-  // doesn't silently land.
-  it("prefers jekyll over astro when both markers are present", async () => {
+  // doesn't silently land. Jekyll needs corroboration to satisfy
+  // its detection precondition (see jekyll corroboration block above).
+  it("prefers jekyll over astro when both markers are present (with jekyll corroboration)", async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_layouts"));
       await writeFile(join(dir, "astro.config.mjs"), "export default {};\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
