@@ -42,8 +42,15 @@
  *     [semantics/landmark-main]    hidden-search.html:body — branch C (heading + ul + button)
  *     [semantics/landmark-main]    progress-steps.html:body — branch B
  *     [semantics/heading-hierarchy] faq-accordion.html:16 — h2→h4 skip
- *     [semantics/heading-hierarchy] hidden-search.html:17 — no h1 (first is h3)
+ *     [semantics/heading-hierarchy] hidden-search.html:body — no h1 on full page (variant)
  *     [semantics/heading-hierarchy] progress-steps.html:12 — h1→h3 skip
+ *
+ * The hidden-search.html emit shifted from "Document has no <h1>"
+ * (anchored at the <h3>) to "Page contains no <h1> heading" (anchored
+ * at the <body>) once Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT landed —
+ * the file's body shape (h3 + ul + button) clears `looksLikeFullPage`,
+ * so the page-level variant takes precedence over the legacy
+ * first-heading emit.
  *
  * Both rule families are guarded below: heading-hierarchy was firing pre-fix
  * (no looksLikeFullPage gate); landmark-main fires post-fix once the heuristic
@@ -104,10 +111,15 @@ export const assertions: FixtureAssertions = {
     },
 
     // hidden-search.html: first (and only) heading is h3 — no h1.
+    // The file's body shape (h3 + ul + button) clears `looksLikeFullPage`,
+    // so the missing-h1-on-full-page variant fires (anchored at the
+    // <body> tag with the page-level message) instead of the legacy
+    // first-heading emit ("Document has no <h1>"). Either message is a
+    // valid signal that the page lacks an <h1>.
     {
       kind: "violation-present",
       ruleId: "semantics/heading-hierarchy",
-      reasonIncludes: "Document has no <h1>",
+      reasonIncludes: "no <h1>",
     },
 
     // faq-accordion.html: h2 → h4 (skips h3).

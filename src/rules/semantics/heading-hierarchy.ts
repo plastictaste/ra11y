@@ -1,26 +1,43 @@
 /**
  * Rule: semantics/heading-hierarchy
- * Satisfies: wcag22:1.3.1, wcag21:1.3.1
+ * Satisfies: wcag22:1.3.1, wcag21:1.3.1, wcag22:2.4.6, wcag21:2.4.6
  * Spec: https://www.w3.org/TR/WCAG22/#info-and-relationships
+ *       https://www.w3.org/TR/WCAG22/#headings-and-labels
  *
  * > Information, structure, and relationships conveyed through
  * > presentation can be programmatically determined or are available
- * > in text.
+ * > in text. (1.3.1)
+ *
+ * > Headings and labels describe topic or purpose. (2.4.6)
  *
  * Source: https://www.w3.org/TR/WCAG22/#info-and-relationships
+ *         https://www.w3.org/TR/WCAG22/#headings-and-labels
  *
- * Flags two structural problems in heading order:
- *   1. A document with no <h1>.
- *   2. A heading that skips a level (e.g., <h1> followed directly by
+ * Flags three structural problems in heading order:
+ *   1. A full-page document with no <h1> at all (variant:
+ *      `missing-h1-on-full-page`). Anchored at the <body> line so the
+ *      finding sits at the natural insertion point for an h1, rather
+ *      than at an unrelated h2/h3 that happens to be the first heading
+ *      in the file. Fires only when `looksLikeFullPage` is true — a
+ *      bare component fragment (alt-text snippet, attribute-rule
+ *      fixture, email template) has nothing to anchor a top-level
+ *      heading to and doesn't deserve the warning.
+ *   2. A document that contains other headings (h2+) but no <h1>, and
+ *      doesn't reach the full-page bar — anchored at the first
+ *      heading. Catches the partial-page / fragment case where the
+ *      author wrote `<h2>Section</h2>` without a parent layout
+ *      supplying the page title.
+ *   3. A heading that skips a level (e.g., <h1> followed directly by
  *      <h3>, or <h2> followed by <h4>).
  *
  * Heading hierarchy is how screen-reader users navigate a page — the
  * virtual cursor jumps between headings with a shortcut key, and
  * skipped levels break the mental model of "this is a subsection of
- * that". SC 1.3.1 does not mandate an <h1>, but a document without
- * one loses the single top-of-document landmark AT relies on; authors
- * should verify the page has a designated main heading (via <h1> or
- * an equivalent role="heading" aria-level="1").
+ * that". A page with no <h1> at all leaves the user with no
+ * top-of-document landmark to anchor on. SC 1.3.1 governs the
+ * structural relationship; SC 2.4.6 is satisfied by the page having
+ * headings whose presence and ordering convey topic — a page without
+ * any top-level heading fails both.
  *
  * Document-scoped. Works on HTML (not JSX — JSX heading detection is
  * handled by the upcoming semantics/headings-non-empty rule because
@@ -28,10 +45,11 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { walkHtmlElements } from "../../engine/ast-helpers.ts";
+import { findHtmlElementsByTag, walkHtmlElements } from "../../engine/ast-helpers.ts";
 import {
   hasLeadingTemplateDirective,
   looksLikeContentPartialPath,
+  looksLikeFullPage,
 } from "../../engine/layout-partial.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 
@@ -39,7 +57,7 @@ const HEADING_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5",
 
 export const rule = defineRule({
   id: "semantics/heading-hierarchy",
-  satisfies: ["wcag22:1.3.1", "wcag21:1.3.1"],
+  satisfies: ["wcag22:1.3.1", "wcag21:1.3.1", "wcag22:2.4.6", "wcag21:2.4.6"],
   severity: "warning",
   scope: "document",
   fixClass: "verify-in-source",
@@ -48,15 +66,16 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      'Heading levels should follow a logical hierarchy without skipping levels (e.g., h1 → h3); a document without an <h1> should have a designated main heading via <h1> or role="heading" aria-level="1".',
+      'Heading levels should follow a logical hierarchy without skipping levels (e.g., h1 → h3); a full-page document without an <h1> should add one (or an equivalent role="heading" aria-level="1") so screen-reader users have a top-of-document landmark.',
     rationale:
-      'Screen-reader users navigate by heading with the H key. A skipped level (h1 → h3) tells them "this is a sub-sub-section of something that doesn\'t exist", breaking their mental model of the page structure. SC 1.3.1 does not mandate an <h1>, but a document without one loses the single top-of-document landmark AT relies on; verify the page has a designated main heading via <h1> or role="heading" aria-level="1".',
+      'Screen-reader users navigate by heading with the H key. A skipped level (h1 → h3) tells them "this is a sub-sub-section of something that doesn\'t exist", breaking their mental model of the page structure. A full page with no <h1> at all leaves the user with no top-of-document landmark to anchor on. SC 1.3.1 governs the structural relationship; SC 2.4.6 is satisfied by the page having headings whose presence and ordering convey topic — a page without any top-level heading fails both.',
     goodExample: `<h1>Page</h1>\n  <h2>Section</h2>\n    <h3>Detail</h3>`,
     badExample: `<h1>Page</h1>\n    <h3>Detail</h3>  <!-- skipped h2 -->`,
     normativeQuote:
-      "Information, structure, and relationships conveyed through presentation can be programmatically determined or are available in text.",
+      "Information, structure, and relationships conveyed through presentation can be programmatically determined or are available in text. Headings and labels describe topic or purpose.",
     references: [
       "https://www.w3.org/TR/WCAG22/#info-and-relationships",
+      "https://www.w3.org/TR/WCAG22/#headings-and-labels",
       "https://www.w3.org/WAI/tutorials/page-structure/headings/",
     ],
   },
@@ -64,7 +83,6 @@ export const rule = defineRule({
     if (ctx.language !== "html") return;
     const doc = ctx.ast as HtmlDocument;
     const headings = collectHeadings(doc);
-    if (headings.length === 0) return;
 
     // Partial / layout enrichment (Q4-HEADING-HIERARCHY-PARTIAL-ENRICH-REASON).
     // Jekyll `_docs/*.md`, `_includes/*.html`, Hugo partials and
@@ -83,8 +101,33 @@ export const rule = defineRule({
     // `semantics/landmark-main`.
     const partialShape = looksLikePartialFile(ctx.filePath, ctx.source);
 
-    reportMissingH1(headings, partialShape, (v) => ctx.emit(v));
-    reportSkippedLevels(headings, partialShape, (v) => ctx.emit(v));
+    // Variant: missing-h1-on-full-page (Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT).
+    // Bootstrap visual-test pages, 50projects50days demos, and similar
+    // hand-authored hobby pages routinely ship with full-page DOCTYPE +
+    // <html> + <body> shape but zero <h1> — the level-skip check above
+    // is silent because there's no skip when there are no headings, and
+    // the missing-h1 emit on `headings[0]` is silent because there's no
+    // heading to anchor at. The variant fills that gap: when the body
+    // looks like a real page (`looksLikeFullPage`) and has no <h1>, we
+    // anchor at the <body> tag — the natural insertion point for the
+    // missing top-level heading. Partial files are skipped because their
+    // composed page may supply <h1> from a parent layout (same rationale
+    // as the `partialShape` enrichment above; for the variant, it's a
+    // hard skip rather than an enrichment because the variant's whole
+    // point is "full pages should have an h1" and partials aren't full
+    // pages). When the variant fires, the legacy first-heading emit is
+    // suppressed for the same file so we don't double-report.
+    const hasH1 = headings.some((h) => h.level === 1);
+    const fullPageMissingH1 = !(hasH1 || partialShape) && isFullPageBody(doc);
+    if (fullPageMissingH1) {
+      reportMissingH1OnFullPage(doc, headings, (v) => ctx.emit(v));
+    } else if (headings.length > 0) {
+      reportMissingH1(headings, partialShape, (v) => ctx.emit(v));
+    }
+
+    if (headings.length > 0) {
+      reportSkippedLevels(headings, partialShape, (v) => ctx.emit(v));
+    }
   },
 });
 
@@ -110,6 +153,7 @@ type Emit = (v: {
   message: string;
   suggestion: string;
   couldBeWrongBecause?: readonly string[];
+  variantKey?: string;
 }) => void;
 
 /**
@@ -134,9 +178,56 @@ function looksLikePartialFile(filePath: string, source: string): boolean {
   return false;
 }
 
+/**
+ * True when the document carries a `<body>` whose shape clears the
+ * `looksLikeFullPage` bar (the same predicate `semantics/landmark-main`
+ * uses to decide whether to expect a `<main>` landmark). Bodyless
+ * documents and minimal fragments return false — we don't expect them
+ * to carry a top-level heading.
+ */
+function isFullPageBody(doc: HtmlDocument): boolean {
+  const bodies = findHtmlElementsByTag(doc, "body");
+  const body = bodies[0];
+  if (!body) return false;
+  return looksLikeFullPage(body, doc);
+}
+
 const PARTIAL_OR_LAYOUT_CODE = "partial_or_layout_file_requires_composed_check";
 const PARTIAL_NOTE_SUFFIX =
   " Note: this file looks like a partial / layout (path under _docs/_includes/_layouts/_posts/_partials, or starts with a Liquid / ERB template directive) — the composed page's heading hierarchy depends on the parent layout. Verify the rendered page has <h1> before acting, or add a source-level disable pragma if the composition is intentional.";
+
+/**
+ * Emits the `missing-h1-on-full-page` variant. Anchored at the `<body>`
+ * tag — the natural insertion point for the missing top-level heading.
+ * When the file has other headings (h2+), the message inlines the first
+ * one so the agent can decide whether to promote it to <h1> or insert
+ * a new <h1> above it. When the file has no headings at all, the
+ * message simply states the gap.
+ */
+function reportMissingH1OnFullPage(
+  doc: HtmlDocument,
+  headings: readonly HeadingEntry[],
+  emit: Emit,
+): void {
+  const body = findHtmlElementsByTag(doc, "body")[0];
+  // Caller has already confirmed isFullPageBody(doc), so body is
+  // guaranteed present — fall back to 1:1 defensively.
+  const line = body?.loc.start.line ?? 1;
+  const column = body?.loc.start.column ?? 1;
+  const first = headings[0];
+  const headingHint = first
+    ? ` The first heading in the document is <${first.element.tagName}> at line ${first.element.loc.start.line} — promote it to <h1> if it names the page, or insert a new <h1> above it.`
+    : " The document has no headings at all; add an <h1> that names the page.";
+  emit({
+    severity: "warning",
+    location: { filePath: "", line, column },
+    message: `Page contains no <h1> heading; the document outline lacks a top-level title for screen reader users.${headingHint}`,
+    suggestion: first
+      ? `Insert an <h1> at the top of <body> that names the page, or change the existing <${first.element.tagName}> at line ${first.element.loc.start.line} to <h1> if it serves as the page title. Screen readers expose <h1> as the document's primary landmark; without one, the user has no anchor for "what is this page about".`
+      : 'Insert an <h1> at the top of <body> that names the page. Screen readers expose <h1> as the document\'s primary landmark; without one, the user has no anchor for "what is this page about". If this page is rendered inside a parent layout that supplies the title, suppress with <!-- ra11y-disable wcag22:1.3.1 -->.',
+    variantKey: "missing-h1-on-full-page",
+  });
+}
 
 function reportMissingH1(
   headings: readonly HeadingEntry[],

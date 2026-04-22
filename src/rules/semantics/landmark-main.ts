@@ -17,14 +17,14 @@
  *   - have more than one (ARIA requires exactly one main landmark)
  *
  * Scope: HTML documents with a `<body>` AND enough page-shape
- * evidence to warrant a landmark — see `looksLikeFullPage()` for
- * the layered branches (explicit landmarks, h1 + body content, or
- * heading + list + interactive). Fragments without a body are
- * typically components, not pages, and we don't assume they need
- * a landmark. JSX files are out of scope because a JSX fragment
- * rarely represents a full page — apps use router layouts to add
- * the main landmark at the shell level, and we'd produce false
- * positives flagging every route component.
+ * evidence to warrant a landmark — see `looksLikeFullPage()` in
+ * `src/engine/layout-partial.ts` for the layered branches (explicit
+ * landmarks, h1 + body content, or heading + list + interactive).
+ * Fragments without a body are typically components, not pages, and
+ * we don't assume they need a landmark. JSX files are out of scope
+ * because a JSX fragment rarely represents a full page — apps use
+ * router layouts to add the main landmark at the shell level, and
+ * we'd produce false positives flagging every route component.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -33,7 +33,7 @@ import {
   getHtmlAttribute,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
-import { isHtmlLayoutOrPartial } from "../../engine/layout-partial.ts";
+import { isHtmlLayoutOrPartial, looksLikeFullPage } from "../../engine/layout-partial.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
 
@@ -91,8 +91,8 @@ export const rule = defineRule({
     // Only flag on documents that look like real pages — skip
     // minimal documents (e.g. email templates, OG meta shells,
     // and test fixtures for other rules) without enough page-shape
-    // evidence. See `looksLikeFullPage()` below for the layered
-    // branches.
+    // evidence. See `looksLikeFullPage()` in
+    // `src/engine/layout-partial.ts` for the layered branches.
     if (!looksLikeFullPage(bodies[0] as HtmlElement, doc)) return;
 
     const mains = collectMainLandmarks(doc);
@@ -287,143 +287,8 @@ function isMainLandmark(el: HtmlElement): boolean {
   return role !== null && role.toLowerCase() === "main";
 }
 
-// A page "looks like a page" when one of the following signals is
-// present in the body. The branches are layered cheapest-first and
-// reflect successively weaker structural evidence:
-//
-//   A. Explicit landmark structure — header, nav, footer, or aside.
-//      The author has already reached for landmarks; expecting `main`
-//      is the natural completion.
-//
-//   B. An `<h1>` plus body content (≥ 5 element descendants of body).
-//      A top-level page heading paired with non-trivial body content
-//      is the canonical "I'm a page" shape — counter / FAQ / multi-step
-//      widget pages all hit this branch. The descendant threshold keeps
-//      one-h1-plus-one-img demonstration fixtures (alt-text snippets,
-//      parsing-id-shape snippets) below the bar.
-//
-//   C. Any heading + a list (ul/ol/dl) + at least one interactive
-//      element. A heading naming a list of items below an interactive
-//      control is "real content area" shape — the hidden-search /
-//      product-list pattern. This branch is intentionally narrow: it
-//      requires three concurrent signals so isolated demo fixtures
-//      (radio group with a heading, link cluster with a heading) stay
-//      below the bar.
-//
-//   D. Any heading + a `<script>` descendant of `<body>`. A page that
-//      loads its own JavaScript in the body is a real script-driven
-//      page, not a fragment/fixture (no good-path HTML fixture in the
-//      repo carries a `<script>` at all). The `<h3>`-only expanding-
-//      cards / card-gallery shape hits this branch: card titles are
-//      headings below h1, and the widget script is included at body
-//      close. Pairing script-presence with *any* heading (not h1
-//      specifically) catches the shape without widening past the
-//      "author wrote content" baseline that branches B and C assume.
-//
-// Below the bar: minimal documents (alt-text snippets, attribute-rule
-// fixtures, email templates) that have no landmarks, no h1 + body
-// content, no heading + list + interactive trio, and no heading +
-// body-script pair. Treating those as fragments avoids noisy
-// "missing <main>" warnings on documents that genuinely have nothing
-// to wrap.
-//
-// Doctrine note (`docs/kb/architecture/ai-first-consumer.md`): the
-// thresholds here gate *whether the rule evaluates*, not whether a
-// finding is reported. A document above the bar always emits its
-// finding to the agent; a document below the bar is treated as a
-// fragment, the same way a body-less document is. This is rule-level
-// scope selection, not finding-level suppression.
-const LANDMARK_TAGS: ReadonlySet<string> = new Set(["header", "nav", "footer", "aside"]);
-const HEADING_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
-const LIST_TAGS: ReadonlySet<string> = new Set(["ul", "ol", "dl"]);
-const INTERACTIVE_TAGS: ReadonlySet<string> = new Set([
-  "a",
-  "button",
-  "input",
-  "select",
-  "textarea",
-  "details",
-  "summary",
-]);
-
-interface BodyShape {
-  readonly hasExplicitLandmark: boolean;
-  readonly hasH1: boolean;
-  readonly hasHeading: boolean;
-  readonly hasList: boolean;
-  readonly hasInteractive: boolean;
-  readonly hasBodyScript: boolean;
-  readonly descendantCount: number;
-}
-
-/**
- * True when `el` is a descendant of `body` — implemented via source-range
- * containment because HtmlElement nodes don't carry parent pointers and
- * the document walk surfaces `<head>` children, the `<html>` root, and
- * any post-`</body>` content alongside body descendants. Range comparison
- * is the cheapest filter that distinguishes them in a single O(n) pass.
- */
-function isInsideBody(el: HtmlElement, body: HtmlElement): boolean {
-  return el !== body && el.range.start >= body.range.start && el.range.end <= body.range.end;
-}
-
-interface ContentSignals {
-  hasH1: boolean;
-  hasHeading: boolean;
-  hasList: boolean;
-  hasInteractive: boolean;
-  hasBodyScript: boolean;
-}
-
-function tallySignals(tag: string, signals: ContentSignals): void {
-  if (tag === "h1") signals.hasH1 = true;
-  if (HEADING_TAGS.has(tag)) signals.hasHeading = true;
-  if (LIST_TAGS.has(tag)) signals.hasList = true;
-  if (INTERACTIVE_TAGS.has(tag)) signals.hasInteractive = true;
-  if (tag === "script") signals.hasBodyScript = true;
-}
-
-function inspectBody(body: HtmlElement, doc: HtmlDocument): BodyShape {
-  let hasExplicitLandmark = false;
-  let descendantCount = 0;
-  const signals: ContentSignals = {
-    hasH1: false,
-    hasHeading: false,
-    hasList: false,
-    hasInteractive: false,
-    hasBodyScript: false,
-  };
-  // Single document walk: landmark check sees the whole tree (so a
-  // `<header>` placed outside `<body>` in parser-tolerant input still
-  // counts), content-signal tally is restricted to body descendants
-  // via `isInsideBody` — `hasBodyScript` in particular MUST be body-
-  // scoped (scripts in `<head>` are the common pattern for asset
-  // bundlers and would false-positive on minimal rule-testing
-  // fixtures).
-  for (const el of walkHtmlElements(doc)) {
-    const tag = el.tagName.toLowerCase();
-    if (LANDMARK_TAGS.has(tag)) hasExplicitLandmark = true;
-    if (!isInsideBody(el, body)) continue;
-    descendantCount += 1;
-    tallySignals(tag, signals);
-  }
-  return { hasExplicitLandmark, ...signals, descendantCount };
-}
-
-function looksLikeFullPage(body: HtmlElement, doc: HtmlDocument): boolean {
-  const shape = inspectBody(body, doc);
-  // Branch A: explicit landmark structure (existing behavior).
-  if (shape.hasExplicitLandmark) return true;
-  // Branch B: top-level heading + non-trivial body content.
-  if (shape.hasH1 && shape.descendantCount >= 5) return true;
-  // Branch C: heading + list + interactive (content-area shape).
-  if (shape.hasHeading && shape.hasList && shape.hasInteractive) return true;
-  // Branch D: any heading + body-level <script> (widget-page shape).
-  // A body-scoped script is the strongest zero-false-positive page-
-  // vs-fragment signal we have — zero good-path HTML fixtures in the
-  // repo carry a body script — and pairing it with *any* heading
-  // catches the h3-only expanding-cards / card-gallery shape that
-  // branch B (h1-gated) and branch C (list+interactive-gated) miss.
-  if (shape.hasHeading && shape.hasBodyScript) return true;
-  return false;
-}
+// `looksLikeFullPage` lives in `src/engine/layout-partial.ts` so that
+// `semantics/heading-hierarchy` can share it (per Q3-HEADING-HIERARCHY-
+// MISSING-H1-VARIANT) — the predicate is the conceptual opposite of
+// `looksLikePartialFile`, and keeping both in the same module gives one
+// canonical answer to "is this file a page or a fragment?"

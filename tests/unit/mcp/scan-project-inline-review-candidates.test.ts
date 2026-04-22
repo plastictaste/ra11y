@@ -152,7 +152,13 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
           '      <a href="two.html">Two</a>',
           '      <a href="three.html">Three</a>',
           "    </nav>",
-          '    <main id="main"><p>No media here.</p></main>',
+          // <h1> required so the missing-h1-on-full-page variant of
+          // semantics/heading-hierarchy doesn't fire on this fixture
+          // (Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT). The test's
+          // intent is "no media + no automated findings"; a missing
+          // <h1> on a full-page document is a legitimate finding the
+          // variant correctly emits.
+          '    <main id="main"><h1>About</h1><p>No media here.</p></main>',
           "  </body>",
           "</html>",
           "",

@@ -101,6 +101,191 @@ describe("rule semantics/heading-hierarchy", () => {
     expect(rule.satisfies).toContain("wcag21:1.3.1");
   });
 
+  it("cites wcag22:2.4.6 and wcag21:2.4.6 (added by missing-h1-on-full-page variant)", () => {
+    expect(rule.satisfies).toContain("wcag22:2.4.6");
+    expect(rule.satisfies).toContain("wcag21:2.4.6");
+  });
+
+  describe("missing-h1-on-full-page variant", () => {
+    // Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT. Bootstrap visual-test
+    // pages, 50projects50days demos, and similar hand-authored hobby
+    // pages routinely ship with full-page DOCTYPE + <html> + <body>
+    // shape but zero <h1> — neither the level-skip check nor the
+    // legacy missing-h1 emit (anchored at the first heading) catches
+    // it. The variant fires when `looksLikeFullPage` is true and the
+    // document has no <h1>, anchored at the <body> tag.
+
+    it("fires on a full-page (header + body content) document with no h1", () => {
+      // Branch A of looksLikeFullPage: explicit landmark structure.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>nav</header>",
+        "    <p>Some intro text without any heading.</p>",
+        "    <button>Click</button>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "page.html" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeDefined();
+      // Anchored at the <body> line, not at the header / button.
+      expect(variant?.location.line).toBe(2);
+    });
+
+    it("fires on a heading + list + interactive page with no h1 (branch C)", () => {
+      // Branch C: heading + list + interactive — content-area shape
+      // with h3 instead of h1.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <h3>Items</h3>",
+        "    <ul><li>one</li><li>two</li></ul>",
+        "    <button>Filter</button>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "items.html" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeDefined();
+      expect(variant?.location.line).toBe(2);
+      // Suggestion should reference promoting the existing <h3> to <h1>.
+      expect(variant?.suggestion).toContain("<h3>");
+      expect(variant?.suggestion).toContain("line 3");
+    });
+
+    it("fires on a heading + body-script page with no h1 (branch D)", () => {
+      // Branch D: any heading + body-level <script> — widget-page
+      // shape (the bootstrap visual-test / 50p-card-gallery pattern).
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <h2>Card</h2>",
+        "    <p>Card body</p>",
+        '    <script src="widget.js"></script>',
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "cards.html" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeDefined();
+      expect(variant?.location.line).toBe(2);
+    });
+
+    it("fires on a full-page document with no headings at all", () => {
+      // Bootstrap `js/tests/visual/button.html` shape: full page
+      // with header + body but only buttons inside, no headings.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>nav</header>",
+        "    <button>Primary</button>",
+        "    <button>Secondary</button>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "buttons.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no <h1> heading");
+      expect(v[0]?.message).toContain("no headings at all");
+      expect(v[0]?.location.line).toBe(2);
+    });
+
+    it("does NOT fire when the document has an <h1>", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>nav</header>",
+        "    <h1>Page</h1>",
+        "    <p>Body</p>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "page.html" });
+      expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+    });
+
+    it("does NOT fire on a bare component fragment (no body, doesn't look like a page)", () => {
+      // A fragment without <html>/<body> with only an <h2>: legacy
+      // missing-h1 emit fires (anchored at the h2), but the variant
+      // does NOT — the file isn't a full page.
+      const v = runRule(rule, "<h2>Section</h2>", { filePath: "fragment.html" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeUndefined();
+      // Legacy emit still fires so the user gets some signal.
+      const legacy = v.find((x) => x.message.includes("Document has no <h1>."));
+      expect(legacy).toBeDefined();
+    });
+
+    it("does NOT fire on a partial / layout file (composed page may supply h1)", () => {
+      // Even though the body shape (header + button + script) clears
+      // looksLikeFullPage, the path lives under `_includes/` so the
+      // composed parent layout supplies the <h1>. The variant must
+      // skip rather than enrich, because the variant's whole point is
+      // "full pages should have an h1" and partials aren't full pages.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>nav</header>",
+        "    <button>Click</button>",
+        '    <script src="x.js"></script>',
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "_includes/page.html" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeUndefined();
+    });
+
+    it("does NOT fire on a minimal document below the looksLikeFullPage bar", () => {
+      // No header/nav/footer, no heading + list + interactive trio,
+      // no heading + body-script pair — the rule treats this as a
+      // fragment, the same way landmark-main does.
+      const v = runRule(rule, "<html><body><p>just text</p></body></html>", {
+        filePath: "minimal.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("variant suppresses the legacy first-heading emit (no double-report)", () => {
+      // Same source as the branch-C case above. The legacy
+      // reportMissingH1 would have anchored at the <h3> on line 3;
+      // the variant takes precedence and emits at body line 2.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <h3>Items</h3>",
+        "    <ul><li>one</li></ul>",
+        "    <button>Filter</button>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "items.html" });
+      const noH1 = v.filter((x) => x.message.includes("no <h1>"));
+      expect(noH1).toHaveLength(1);
+      expect(noH1[0]?.location.line).toBe(2);
+    });
+
+    it("does NOT suppress the skipped-level emit on the same document", () => {
+      // Full-page shape, no h1, AND a level skip h2 → h4. The variant
+      // fires for the missing h1 AND the skipped-level check still
+      // fires for the h2 → h4 jump.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>nav</header>",
+        "    <h2>Section</h2>",
+        "    <h4>Sub-sub</h4>",
+        '    <script src="x.js"></script>',
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "page.html" });
+      expect(v.some((x) => x.message.includes("no <h1> heading"))).toBe(true);
+      expect(v.some((x) => x.message.includes("skipped"))).toBe(true);
+    });
+  });
+
   describe("partial / layout enrichment", () => {
     // Q4-HEADING-HIERARCHY-PARTIAL-ENRICH-REASON. Jekyll `_docs/*.md`,
     // `_includes/*.html`, Hugo partials, Eleventy includes — files
