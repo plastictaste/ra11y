@@ -97,7 +97,7 @@ interface VpatBody {
     readonly contactEmail?: string;
     readonly contactOrganization?: string;
   };
-  readonly evaluator: string;
+  readonly evaluator: { readonly name: string; readonly scanLevel?: "A" | "AA" | "AAA" };
   readonly generatedAt: string;
   readonly standards: readonly VpatStandardBody[];
   readonly markdownRendering?: string;
@@ -129,7 +129,11 @@ describe("MCP tool: vpat", () => {
     expect(body.product.productVersion).toBe("1.2.3");
     expect(body.product.contactEmail).toBe("a11y@acme.example");
     expect(body.product.contactOrganization).toBe("Acme Inc.");
-    expect(body.evaluator).toContain("ra11y");
+    expect(body.evaluator.name).toContain("ra11y");
+    // Q-SHARED-VPAT-HONESTY-PACK: scanLevel threaded through from the
+    // session's resolved conformance level; reader sees scope in header.
+    expect(body.evaluator.scanLevel).toBeDefined();
+    expect(["A", "AA", "AAA"]).toContain(body.evaluator.scanLevel ?? "");
     expect(typeof body.generatedAt).toBe("string");
     expect(body.standards.length).toBeGreaterThan(0);
     const wcag22 = body.standards.find((s) => s.standardId === "wcag22");

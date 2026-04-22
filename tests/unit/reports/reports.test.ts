@@ -526,6 +526,236 @@ describe("buildVpatReport + renderVpatMarkdown", () => {
     const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.4.2");
     expect(entry?.conformance).toBe("Supports");
   });
+
+  // Q-SHARED-VPAT-HONESTY-PACK fix (1): evidence-backed pass vs untested.
+  describe("untested split (firedCriteria option)", () => {
+    it("routes automatable zero-violation criterion with no rule fired to 'Not Evaluated' + evidenceStatus 'untested'", () => {
+      // No rule ran on eligible inputs for 2.4.2 in this scan (e.g.
+      // Tailwind-only project with zero authored HTML). The previous
+      // behavior stamped `Supports`; after the fix, an explicit empty
+      // `firedCriteria` routes 2.4.2 to `Not Evaluated` with the
+      // untested reason — the canonical field-report case.
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        firedCriteria: new Set(),
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.4.2");
+      expect(entry?.conformance).toBe("Not Evaluated");
+      expect(entry?.evidenceStatus).toBe("untested");
+      expect(entry?.remarks).toContain("no rule satisfying this criterion ran");
+    });
+
+    it("stamps 'Supports' when the criterion is in firedCriteria (evidence-backed pass)", () => {
+      // Same fixture, but the caller asserts 2.4.2 had a rule evaluate
+      // eligible inputs with zero findings. That's the honest Supports
+      // case — evidence-backed, not a ledger default.
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        firedCriteria: new Set(["wcag22:2.4.2"]),
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.4.2");
+      expect(entry?.conformance).toBe("Supports");
+      expect(entry?.evidenceStatus).toBeUndefined();
+    });
+
+    it("preserves the legacy Supports default when firedCriteria is absent (backward compat)", () => {
+      // No firedCriteria passed — behave exactly as before: zero-violation
+      // automatable criterion routes to Supports regardless of whether
+      // a rule actually ran. Legacy CLI callers that haven't wired the
+      // evidence derivation must keep working.
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, "2026-04-11T00:00:00Z");
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.4.2");
+      expect(entry?.conformance).toBe("Supports");
+      expect(entry?.evidenceStatus).toBeUndefined();
+    });
+
+    it("summary.untested counts untested-routed criteria", () => {
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        firedCriteria: new Set(),
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      expect(wcag22?.summary.untested).toBeGreaterThan(0);
+      // Every untested entry must map to an evidenceStatus flag — the
+      // summary counter is derivable from the entry list, so the
+      // invariant holds by construction.
+      const untestedEntries = (wcag22?.entries ?? []).filter(
+        (e) => e.evidenceStatus === "untested",
+      );
+      expect(wcag22?.summary.untested).toBe(untestedEntries.length);
+    });
+
+    it("a fresh attestation still routes to Supports even when firedCriteria is empty", () => {
+      // An attestation (runtime harness / manual review / human study)
+      // is independent evidence — it closes the gap the static layer
+      // couldn't. Untested override must skip when an attestation is in
+      // hand; otherwise valid attestations on axes the scanner
+      // structurally can't cover would silently flip to untested.
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        firedCriteria: new Set(),
+        attestations: [
+          {
+            criterionId: "wcag22:2.4.2",
+            by: "manual-review",
+            reason: "Page titles verified manually.",
+            attestedAt: "2026-04-11T00:00:00Z",
+            evidenceSource: "manual_review",
+            verdict: "pass",
+          },
+        ],
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:2.4.2");
+      expect(entry?.conformance).toBe("Supports");
+      expect(entry?.evidenceStatus).toBeUndefined();
+    });
+
+    it("demonstrated failures still win over the untested override", () => {
+      // 1.1.1 has a violation in RESULT. Even when firedCriteria is
+      // empty, a proven failure is honest negative evidence — the
+      // violation path must fire first and keep `Does Not Support`.
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        firedCriteria: new Set(),
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.1.1");
+      expect(entry?.conformance).toBe("Does Not Support");
+      expect(entry?.evidenceStatus).toBeUndefined();
+    });
+  });
+
+  // Q-SHARED-VPAT-HONESTY-PACK fix (2): scope-level + out-of-scope split.
+  describe("scanLevel out-of-scope routing", () => {
+    it("AAA criterion on an AA scan renders as 'Not Applicable' + evidenceStatus 'out-of-scope'", () => {
+      // 1.4.6 Contrast (Enhanced) is a Level AAA criterion. A scan
+      // running at AA never evaluated any AAA-only rule; the honest
+      // verdict is "out of scope," not "Not Evaluated" (which mixed
+      // with un-evaluated manual criteria in the old shape).
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "AA",
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.6");
+      expect(entry?.conformance).toBe("Not Applicable");
+      expect(entry?.evidenceStatus).toBe("out-of-scope");
+      expect(entry?.remarks).toContain("out of scope");
+      expect(entry?.remarks).toContain("AAA");
+      expect(entry?.remarks).toContain("scanLevel AA");
+    });
+
+    it("leaves in-scope criteria unchanged when scanLevel equals their level", () => {
+      // 1.4.3 Contrast (Minimum) is AA — on an AA scan it must route
+      // through the normal paths (violation / applicability / manual /
+      // runtime / automated-pass), never through the out-of-scope path.
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "AA",
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.3");
+      expect(entry?.evidenceStatus).not.toBe("out-of-scope");
+    });
+
+    it("A scan excludes AA and AAA criteria as out-of-scope", () => {
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "A",
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      // 1.4.3 is AA, 1.4.6 is AAA — both out of scope on level A.
+      const aa = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.3");
+      const aaa = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.6");
+      expect(aa?.evidenceStatus).toBe("out-of-scope");
+      expect(aaa?.evidenceStatus).toBe("out-of-scope");
+    });
+
+    it("surfaces evaluator.scanLevel in the report header", () => {
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "AA",
+      });
+      expect(report.evaluator.name).toContain("ra11y");
+      expect(report.evaluator.scanLevel).toBe("AA");
+    });
+
+    it("omits evaluator.scanLevel when the caller didn't supply it", () => {
+      // Present-when-meaningful: the absent-vs-empty rule says an
+      // optional field stays off the response when the caller hasn't
+      // threaded the value through.
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+      });
+      expect(report.evaluator.name).toContain("ra11y");
+      expect(report.evaluator.scanLevel).toBeUndefined();
+    });
+
+    it("summary.outOfScope counts out-of-scope routed criteria", () => {
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "AA",
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      expect(wcag22?.summary.outOfScope).toBeGreaterThan(0);
+      const outOfScopeEntries = (wcag22?.entries ?? []).filter(
+        (e) => e.evidenceStatus === "out-of-scope",
+      );
+      expect(wcag22?.summary.outOfScope).toBe(outOfScopeEntries.length);
+    });
+
+    it("demonstrated failure on an out-of-scope level still wins", () => {
+      // If someone scanned at AA but a rule satisfying a AAA criterion
+      // emits a violation anyway (unusual but possible), the violation
+      // path must fire first — hiding a proven failure behind "Not
+      // Applicable (out of scope)" would be worse than stamping it.
+      const aaaFail: ScanResult = {
+        ...RESULT,
+        violations: withFindingIds([
+          {
+            ruleId: "contrast/enhanced",
+            fixClass: "mechanical",
+            criteria: ["wcag22:1.4.6"],
+            severity: "error",
+            location: { filePath: "src/style.css", line: 1, column: 1 },
+            message: "Contrast 4:1 against white (AAA requires 7:1).",
+            suggestion: "Darken foreground.",
+          },
+        ]),
+      };
+      const report = buildVpatReport(aaaFail, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "AA",
+      });
+      const wcag22 = report.standards.find((s) => s.standardId === "wcag22");
+      const entry = wcag22?.entries.find((e) => e.criterionId === "wcag22:1.4.6");
+      expect(entry?.conformance).toBe("Does Not Support");
+      expect(entry?.evidenceStatus).toBeUndefined();
+    });
+
+    it("markdown render includes 'Scan Level' line when evaluator.scanLevel is set", () => {
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "AA",
+      });
+      const md = renderVpatMarkdown(report);
+      expect(md).toContain("Scan Level");
+      expect(md).toContain("AA");
+    });
+
+    it("markdown render summary surfaces 'out-of-scope' split suffix when present", () => {
+      const report = buildVpatReport(RESULT, BUILTIN_STANDARDS, {
+        generatedAt: "2026-04-11T00:00:00Z",
+        scanLevel: "AA",
+      });
+      const md = renderVpatMarkdown(report);
+      expect(md).toContain("out-of-scope");
+    });
+  });
 });
 
 describe("buildCertificationScorecard + renderCertificationMarkdown", () => {
