@@ -20,6 +20,7 @@ import {
 import { buildConfigHint } from "./config-hint.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { hasMetaArrayTruncation } from "./meta-array-cap.ts";
 import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
@@ -412,6 +413,7 @@ function buildBaseWarningsForScanProject(args: {
   readonly buildArtifacts: {
     readonly present: boolean;
     readonly entries: readonly ScannedBuildArtifact[];
+    readonly metaField: { readonly scannedBuildArtifacts?: BuildArtifactsGrouped };
   };
   readonly storybookPresetActive: boolean;
   readonly sessionWrappersMismatchCwd: boolean;
@@ -455,6 +457,17 @@ function buildBaseWarningsForScanProject(args: {
     templateDirectivesOverlap,
     additionalPathsRedundant,
     configSearchSawProjectMarker,
+    // Q-SHARED-META-ARRAY-BUDGET-CAP: scan-project is the primary
+    // driver of meta-array bloat (CSS build-artifact tails, parse-
+    // error dumps on bulk-template repos). We look at the assembled
+    // meta directly — including the `scannedBuildArtifacts`
+    // sub-object the caller just mixed in — so every capped array
+    // in scope is covered. Pure over the assembled meta; no
+    // duplicated predicate at each cap call site.
+    metaArrayTruncated: hasMetaArrayTruncation({
+      ...formatted.meta,
+      ...buildArtifacts.metaField,
+    }),
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
   });
   return warningsFieldsForAssembler(warningsFromMeta);

@@ -1371,4 +1371,125 @@ describe("buildAnalysisCoverage — hints", () => {
       }
     });
   });
+
+  // Q-SHARED-META-ARRAY-BUDGET-CAP: `parseErrorFiles`,
+  // `partialParseFiles`, and `fragmentFiles` all grow linearly with
+  // input. A bulk-template scan produced 121KB of parse-error entries
+  // alone. The cap trims the *list* to META_ARRAY_CAP entries while
+  // the paired count stays full and a sibling `*Truncated: { shown,
+  // total }` describes the trim. Downstream `response_meta_truncated`
+  // warning code fires via the returned `metaArrayTruncated` signal.
+  describe("meta path-array cap (Q-SHARED-META-ARRAY-BUDGET-CAP)", () => {
+    function htmlFileWithErrorsAt(path: string): ParsedFile {
+      return {
+        filePath: path,
+        source: "<div",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "Unexpected end of input while parsing tag",
+              position: { line: 1, column: 5, offset: 4 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+    }
+
+    it("caps parseErrorFiles at META_ARRAY_CAP (50), surfaces `{ shown, total }`, preserves count", () => {
+      // 120 errored HTML files, none with findings — all route into
+      // the invisible bucket. The list caps to 50 deterministic head
+      // entries (alphabetical sort → paths 000..049) while
+      // parseErrorFileCount stays at 120.
+      const paths = Array.from({ length: 120 }, (_, i) => `f${String(i).padStart(3, "0")}.html`);
+      const files = paths.map(htmlFileWithErrorsAt);
+      const result = buildAnalysisCoverage(
+        files,
+        [],
+        [],
+        false,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      const coverage = result.analysisCoverage;
+      expect(coverage?.["parseErrorFileCount"]).toBe(120);
+      const capped = coverage?.["parseErrorFiles"] as readonly { path: string }[] | undefined;
+      expect(capped?.length).toBe(50);
+      expect(capped?.[0]?.path).toBe("f000.html");
+      expect(capped?.[49]?.path).toBe("f049.html");
+      expect(coverage?.["parseErrorFilesTruncated"]).toEqual({ shown: 50, total: 120 });
+      expect(result.metaArrayTruncated).toBe(true);
+    });
+
+    it("caps partialParseFiles independently and emits its own truncation summary", () => {
+      // 60 errored HTML files, every one producing a finding → all
+      // route to partial bucket. Cap at 50, count stays 60.
+      const paths = Array.from({ length: 60 }, (_, i) => `p${String(i).padStart(3, "0")}.html`);
+      const files = paths.map(htmlFileWithErrorsAt);
+      const result = buildAnalysisCoverage(
+        files,
+        [],
+        [],
+        false,
+        0,
+        undefined,
+        undefined,
+        new Set(paths),
+      );
+      const coverage = result.analysisCoverage;
+      expect(coverage?.["partialParseFileCount"]).toBe(60);
+      expect((coverage?.["partialParseFiles"] as readonly unknown[]).length).toBe(50);
+      expect(coverage?.["partialParseFilesTruncated"]).toEqual({ shown: 50, total: 60 });
+      expect(result.metaArrayTruncated).toBe(true);
+    });
+
+    it("omits truncation sibling + metaArrayTruncated when arrays fit under the cap", () => {
+      // 3 errored files → no truncation; the count is authoritative
+      // and the sibling field is absent (present-when-meaningful).
+      const files = ["a.html", "b.html", "c.html"].map(htmlFileWithErrorsAt);
+      const result = buildAnalysisCoverage(
+        files,
+        [],
+        [],
+        false,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      const coverage = result.analysisCoverage;
+      expect((coverage?.["parseErrorFiles"] as readonly unknown[]).length).toBe(3);
+      expect(coverage?.["parseErrorFilesTruncated"]).toBeUndefined();
+      expect(result.metaArrayTruncated).toBeUndefined();
+    });
+
+    it("caps fragmentFiles and signals metaArrayTruncated", () => {
+      const many = Array.from({ length: 75 }, (_, i) => {
+        const parsed = parseHtml("<div>x</div>"); // fragment → no <html>, no <body>
+        return {
+          filePath: `_includes/frag${String(i).padStart(3, "0")}.html`,
+          source: "<div>x</div>",
+          ast: { language: "html" as const, root: parsed.root, errors: parsed.errors },
+        };
+      });
+      const result = buildAnalysisCoverage(many, [], [], false);
+      const coverage = result.analysisCoverage;
+      expect(coverage?.["fragmentFileCount"]).toBe(75);
+      expect((coverage?.["fragmentFiles"] as readonly string[]).length).toBe(50);
+      expect(coverage?.["fragmentFilesTruncated"]).toEqual({ shown: 50, total: 75 });
+      expect(result.metaArrayTruncated).toBe(true);
+    });
+  });
 });

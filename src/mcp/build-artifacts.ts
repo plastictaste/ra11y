@@ -77,6 +77,8 @@
  * sorting through a bag.
  */
 
+import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
+
 /** Closed set of classification reasons emitted on `ScannedBuildArtifact.reason`. */
 export type BuildArtifactReason =
   | "minified"
@@ -426,6 +428,15 @@ export interface BuildArtifactGroup {
 export interface BuildArtifactsGrouped {
   readonly grouped: readonly BuildArtifactGroup[];
   readonly ungrouped: readonly ScannedBuildArtifact[];
+  /**
+   * Q-SHARED-META-ARRAY-BUDGET-CAP: present only when `ungrouped`
+   * was trimmed to its head slice ({@link META_ARRAY_CAP} entries).
+   * `shown` always equals the cap; `total` is the pre-cap length so
+   * the agent can reconstruct the gap. Grouped entries are already
+   * compact (one row per ≥3-entry basename cluster), so only the
+   * `ungrouped` tail grows linearly with input and needs capping.
+   */
+  readonly ungroupedTruncated?: MetaArrayTruncationSummary;
 }
 
 /**
@@ -458,29 +469,69 @@ export function groupBuildArtifactsByBasename(
   if (entries.length === 0) {
     return { grouped: [], ungrouped: [] };
   }
+  const buckets = bucketByBasename(entries, root);
+  const { grouped, ungroupedRaw } = partitionBuckets(buckets);
+  // Deterministic sort: grouped by count desc then basename asc;
+  // ungrouped by path asc. Stable across runs even when the scanner
+  // re-orders its discovery pass.
+  grouped.sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.basename.localeCompare(b.basename);
+  });
+  const ungroupedSorted = [...ungroupedRaw].sort((a, b) => a.path.localeCompare(b.path));
+  // Q-SHARED-META-ARRAY-BUDGET-CAP: `ungrouped` is the linear-with-
+  // input tail — a website-templates scan observed 148KB of these
+  // entries. `grouped` rows are already compact (one per ≥3-entry
+  // basename cluster), so only the tail needs capping. Count-level
+  // signal is preserved via the caller's `present` bit plus the
+  // `ungroupedTruncated: { shown, total }` sibling below.
+  const capped = capMetaArray(ungroupedSorted);
+  const base: {
+    grouped: readonly BuildArtifactGroup[];
+    ungrouped: readonly ScannedBuildArtifact[];
+  } = {
+    grouped,
+    ungrouped: capped.values,
+  };
+  return capped.truncated === undefined ? base : { ...base, ungroupedTruncated: capped.truncated };
+}
+
+/**
+ * Relativize every entry against the scan root and bucket by
+ * basename. Paths that escape the root (startsWith `..`) or equal
+ * it exactly are dropped — an exclude pattern outside the project
+ * is meaningless. Extracted from {@link groupBuildArtifactsByBasename}
+ * so the orchestrator stays under the cognitive-complexity cap.
+ */
+function bucketByBasename(
+  entries: readonly ScannedBuildArtifact[],
+  root: string,
+): Map<string, ScannedBuildArtifact[]> {
   const rootPosix = root.replace(/\\/g, "/");
-  // Relativize every entry up front so the downstream longest-common-
-  // prefix + suggestedGlob computations operate on one consistent
-  // path form. Paths that escape the root (startsWith `..`) or equal
-  // it exactly are dropped — an exclude pattern outside the project
-  // is meaningless, and the flat form would have surfaced the path
-  // too noisily anyway.
-  const relativized: ScannedBuildArtifact[] = [];
+  const buckets = new Map<string, ScannedBuildArtifact[]>();
   for (const e of entries) {
     const rel = relativizeToPosix(e.path, rootPosix);
     if (rel === null) continue;
-    relativized.push({ path: rel, reason: e.reason });
-  }
-  // Bucket by basename. Each bucket holds the relativized
-  // `ScannedBuildArtifact` so the per-reason dedup and pathHint
-  // computations work off one shape.
-  const buckets = new Map<string, ScannedBuildArtifact[]>();
-  for (const entry of relativized) {
-    const base = basenameOf(entry.path);
+    const relativized: ScannedBuildArtifact = { path: rel, reason: e.reason };
+    const base = basenameOf(rel);
     const bucket = buckets.get(base);
-    if (bucket === undefined) buckets.set(base, [entry]);
-    else bucket.push(entry);
+    if (bucket === undefined) buckets.set(base, [relativized]);
+    else bucket.push(relativized);
   }
+  return buckets;
+}
+
+/**
+ * Walk the basename buckets and split each into a grouped row (≥
+ * {@link BASENAME_GROUP_THRESHOLD} members) or the ungrouped
+ * residue. Pure over its input; extracted from
+ * {@link groupBuildArtifactsByBasename} to keep the orchestrator
+ * under the cognitive-complexity cap.
+ */
+function partitionBuckets(buckets: ReadonlyMap<string, readonly ScannedBuildArtifact[]>): {
+  grouped: BuildArtifactGroup[];
+  ungroupedRaw: ScannedBuildArtifact[];
+} {
   const grouped: BuildArtifactGroup[] = [];
   const ungroupedRaw: ScannedBuildArtifact[] = [];
   for (const [basename, members] of buckets) {
@@ -498,15 +549,7 @@ export function groupBuildArtifactsByBasename(
       for (const m of members) ungroupedRaw.push(m);
     }
   }
-  // Deterministic sort: grouped by count desc then basename asc;
-  // ungrouped by path asc. Stable across runs even when the scanner
-  // re-orders its discovery pass.
-  grouped.sort((a, b) => {
-    if (b.count !== a.count) return b.count - a.count;
-    return a.basename.localeCompare(b.basename);
-  });
-  const ungrouped = [...ungroupedRaw].sort((a, b) => a.path.localeCompare(b.path));
-  return { grouped, ungrouped };
+  return { grouped, ungroupedRaw };
 }
 
 /**

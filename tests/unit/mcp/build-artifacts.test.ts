@@ -553,3 +553,52 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     expect(groupBuildArtifactsByBasename(three, "/root").grouped.length).toBe(1);
   });
 });
+
+// Q-SHARED-META-ARRAY-BUDGET-CAP: `ungrouped` is the tail of the
+// grouped shape — it held hundreds of sub-threshold entries on the
+// website-templates scan that motivated the cap (148KB of the 281KB
+// meta block). The cap trims the *list* head-first (alphabetical,
+// deterministic) while `ungroupedTruncated: { shown, total }` names
+// the settlement.
+describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-BUDGET-CAP)", () => {
+  it("caps ungrouped at 50 entries and emits ungroupedTruncated with the pre-cap total", () => {
+    // 120 unique basenames (no clusters form) → every entry lands in
+    // `ungrouped`, which must cap to 50 with a sibling summary.
+    const entries = Array.from({ length: 120 }, (_, i) => ({
+      path: `/root/dist/f${String(i).padStart(3, "0")}.css`,
+      reason: "dist-path" as const,
+    }));
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped).toEqual([]);
+    expect(out.ungrouped.length).toBe(50);
+    expect(out.ungroupedTruncated).toEqual({ shown: 50, total: 120 });
+    // Head is alphabetical — stable across runs.
+    expect(out.ungrouped[0]?.path).toBe("dist/f000.css");
+    expect(out.ungrouped[49]?.path).toBe("dist/f049.css");
+  });
+
+  it("omits ungroupedTruncated when the list fits under the cap", () => {
+    const entries = Array.from({ length: 10 }, (_, i) => ({
+      path: `/root/dist/f${i}.css`,
+      reason: "dist-path" as const,
+    }));
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.ungrouped.length).toBe(10);
+    expect(out.ungroupedTruncated).toBeUndefined();
+  });
+
+  it("grouped rows stay compact and uncapped — the cap is a tail-only concern", () => {
+    // 60 entries sharing one basename → one grouped row (compact by
+    // definition), ungrouped stays empty. The cap doesn't fire and
+    // the grouped row's count stays honest.
+    const entries = Array.from({ length: 60 }, (_, i) => ({
+      path: `/root/d${i}/bootstrap.css`,
+      reason: "dist-path" as const,
+    }));
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.grouped.length).toBe(1);
+    expect(out.grouped[0]?.count).toBe(60);
+    expect(out.ungrouped).toEqual([]);
+    expect(out.ungroupedTruncated).toBeUndefined();
+  });
+});

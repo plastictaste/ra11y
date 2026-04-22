@@ -55,6 +55,7 @@ import type { ConfigPreset } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { hasMetaArrayTruncation } from "./meta-array-cap.ts";
 import {
   buildReferenceGuide,
   hoistAndBuildReferenceGuide,
@@ -220,6 +221,15 @@ function buildAssemblerWarningsField(args: {
     })),
     sourcesByPath: new Map(args.parsedFiles.map((f) => [f.filePath, f.source])),
   });
+  // Q-SHARED-META-ARRAY-BUDGET-CAP: the assembler-seam meta block
+  // already carries the capped `analysisCoverage.*` arrays with
+  // their per-array `*Truncated: { shown, total }` siblings; derive
+  // the top-level `response_meta_truncated` code by scanning meta
+  // for any truncation summary. `scannedBuildArtifacts` is NOT
+  // assembled through this seam (`scan_project` handles it) so
+  // only the coverage block's flags surface here — safe because
+  // `hasMetaArrayTruncation` handles both containers uniformly.
+  const metaArrayTruncated = hasMetaArrayTruncation(args.meta);
   return warningsField({
     filesScanned: args.parsedFiles.length,
     rootSource: args.rootSource,
@@ -239,6 +249,7 @@ function buildAssemblerWarningsField(args: {
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
+    ...(metaArrayTruncated ? { metaArrayTruncated: true } : {}),
   });
 }
 

@@ -202,6 +202,10 @@ export const coverageTool: McpTool = {
       configSource: undefined,
       analysisCoverage: analysisCoverageField.analysisCoverage,
       filesByExtension,
+      // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate truncation so the
+      // response-level `response_meta_truncated` code fires when
+      // the coverage helper head-sliced any path-array.
+      ...(analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
       // Q4-WARNING-DOWNGRADE-NOISE: gate
       // `template_files_parsed_as_literal` on actual overlap between
       // emitted findings and detected template-directive lines — the

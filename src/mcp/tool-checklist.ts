@@ -466,6 +466,10 @@ export const checklistTool: McpTool = {
           })),
           sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
         }),
+        // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage
+        // helper's truncation bit so `response_meta_truncated`
+        // fires honestly when a parse-error dump was head-sliced.
+        ...(analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
       }),
     });
   },

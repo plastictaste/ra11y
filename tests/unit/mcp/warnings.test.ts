@@ -1146,3 +1146,47 @@ describe("warningsField — vendor_css_dominates_findings", () => {
     );
   });
 });
+
+// Q-SHARED-META-ARRAY-BUDGET-CAP: the top-level presence bit an agent
+// reads without descending into `meta`. Fires only when at least one
+// meta path-array was trimmed; drops conservatively when the input
+// is omitted or `false` (callers that didn't participate in the cap
+// regime stay unaffected).
+describe("computeScanWarnings — response_meta_truncated", () => {
+  it("fires when metaArrayTruncated is true", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      metaArrayTruncated: true,
+    });
+    expect(codes).toContain("response_meta_truncated");
+  });
+
+  it("does NOT fire when metaArrayTruncated is false (every capped array fit)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      metaArrayTruncated: false,
+    });
+    expect(codes).not.toContain("response_meta_truncated");
+  });
+
+  it("does NOT fire when metaArrayTruncated is omitted (caller didn't opt in)", () => {
+    // Derivative-tool callers that don't participate in the cap regime
+    // stay unaffected — the warning drops conservatively.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+    });
+    expect(codes).not.toContain("response_meta_truncated");
+  });
+});

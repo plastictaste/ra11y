@@ -56,6 +56,7 @@ import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile } from "../utils/path.ts";
+import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { extractComponentIdentifier, isJsxBearingFile } from "./opaque-tag-filter.ts";
 
 /**
@@ -221,7 +222,7 @@ export function buildAnalysisCoverage(
   preset?: ConfigPreset,
   discoveryDiagnostics?: import("../input/discover.ts").DiscoveryDiagnostics,
   findingFilePaths?: ReadonlySet<string>,
-): { analysisCoverage?: Record<string, unknown> } {
+): { analysisCoverage?: Record<string, unknown>; metaArrayTruncated?: boolean } {
   const acc: CoverageAccumulator = {
     opaqueComponents: new Map(),
     templateEngines: new Set(),
@@ -244,18 +245,26 @@ export function buildAnalysisCoverage(
       readonly parser: string;
       readonly reason: string;
     }[];
+    parseErrorFilesTruncated?: MetaArrayTruncationSummary;
     partialParseFileCount?: number;
     partialParseFiles?: readonly {
       readonly path: string;
       readonly parser: string;
       readonly reason: string;
     }[];
+    partialParseFilesTruncated?: MetaArrayTruncationSummary;
     rulesByExtension?: Readonly<Record<string, readonly string[]>>;
     hints?: readonly string[];
     skippedByExtension?: Readonly<Record<string, number>>;
     fragmentFileCount?: number;
     fragmentFiles?: readonly string[];
+    fragmentFilesTruncated?: MetaArrayTruncationSummary;
   } = {};
+  // Q-SHARED-META-ARRAY-BUDGET-CAP: OR across every cap in this
+  // block. Propagated to the return record so `warningsField` can
+  // emit `response_meta_truncated` honestly — "at least one meta
+  // path-array was trimmed."
+  let metaArrayTruncated = false;
   if (acc.opaqueComponents.size > 0) {
     assembleOpaqueComponentBlock(acc.opaqueComponents, verbose, coverage);
     // P1-ACCT: when autoDetectWrappers: true promotes N PascalCase
@@ -275,30 +284,42 @@ export function buildAnalysisCoverage(
     coverage.templateDirectiveHandling = describeTemplateDirectiveHandling(acc.templateEngines);
   }
   if (acc.parseErrorEntries.length > 0) {
-    assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage);
+    if (assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage)) {
+      metaArrayTruncated = true;
+    }
   }
   if (acc.fragmentFiles.length > 0) {
-    // Scan-confidence telemetry naming the
-    // HTML files that parsed as fragments (no `<html>` root, no
-    // `<body>`). Page-level rules — `navigation/skip-link`'s primary-
-    // nav path, `semantics/landmark-main`, `semantics/section-
-    // accessible-name-missing` — skip these files because the premise
-    // of those checks is "this document IS the page," which a partial
-    // / include target is not. Surfacing the list lets an agent
-    // verify the composed layout (parent `_layouts/*.html`,
-    // `partials/base.html`, Astro slot host) elsewhere rather than
-    // concluding "clean scan" when the scan merely didn't evaluate
-    // page-level invariants. Shipped at every verbosity (no
-    // `verboseMeta` gate): the count alone is ambiguous ("which
-    // files?") and the path list is the actionable signal — same
-    // reasoning as `parseErrorFiles` / `partialParseFiles`. Count +
-    // list are always populated together; sorted for deterministic
-    // wire output. Doctrine: verbose meta is scan-confidence signal
-    // (CLAUDE.md §1 "Surface, don't suppress" +
-    // docs/kb/architecture/ai-first-consumer.md).
-    coverage.fragmentFileCount = acc.fragmentFiles.length;
-    coverage.fragmentFiles = [...acc.fragmentFiles].sort((a, b) => a.localeCompare(b));
+    if (assembleFragmentFilesBlock(acc.fragmentFiles, coverage)) {
+      metaArrayTruncated = true;
+    }
   }
+  populateCoverageTail(coverage, files, activeRules, acc, verbose, discoveryDiagnostics);
+  if (Object.keys(coverage).length === 0) return {};
+  return {
+    analysisCoverage: coverage,
+    ...(metaArrayTruncated ? { metaArrayTruncated: true } : {}),
+  };
+}
+
+/**
+ * Populates the non-cap tail of the coverage block — `rulesByExtension`
+ * (verbose-only), `hints`, and `skippedByExtension`. Extracted from
+ * {@link buildAnalysisCoverage} so the orchestrator stays under the
+ * cognitive-complexity cap as cap-related branches accrete in the
+ * early section.
+ */
+function populateCoverageTail(
+  coverage: {
+    rulesByExtension?: Readonly<Record<string, readonly string[]>>;
+    hints?: readonly string[];
+    skippedByExtension?: Readonly<Record<string, number>>;
+  },
+  files: readonly ParsedFile[],
+  activeRules: readonly Rule[],
+  acc: CoverageAccumulator,
+  verbose: boolean,
+  discoveryDiagnostics: import("../input/discover.ts").DiscoveryDiagnostics | undefined,
+): void {
   if (verbose) {
     const byExt = rulesByExtension(files, activeRules);
     if (Object.keys(byExt).length > 0) coverage.rulesByExtension = byExt;
@@ -315,7 +336,6 @@ export function buildAnalysisCoverage(
   ) {
     coverage.skippedByExtension = discoveryDiagnostics.skippedByExtension;
   }
-  return Object.keys(coverage).length > 0 ? { analysisCoverage: coverage } : {};
 }
 
 /**
@@ -410,14 +430,16 @@ function assembleParseErrorBlocks(
       readonly parser: string;
       readonly reason: string;
     }[];
+    parseErrorFilesTruncated?: MetaArrayTruncationSummary;
     partialParseFileCount?: number;
     partialParseFiles?: readonly {
       readonly path: string;
       readonly parser: string;
       readonly reason: string;
     }[];
+    partialParseFilesTruncated?: MetaArrayTruncationSummary;
   },
-): void {
+): boolean {
   const totalFailure: ParseErrorEntry[] = [];
   const partial: ParseErrorEntry[] = [];
   for (const entry of entries) {
@@ -427,18 +449,76 @@ function assembleParseErrorBlocks(
       totalFailure.push(entry);
     }
   }
+  let truncated = false;
   if (totalFailure.length > 0) {
+    // Count stays honest (full size) — only the list is capped.
+    // Q-SHARED-META-ARRAY-BUDGET-CAP.
     coverage.parseErrorFileCount = totalFailure.length;
-    coverage.parseErrorFiles = [...totalFailure].sort((a, b) => a.path.localeCompare(b.path));
+    const sorted = [...totalFailure].sort((a, b) => a.path.localeCompare(b.path));
+    const capped = capMetaArray(sorted);
+    coverage.parseErrorFiles = capped.values;
+    if (capped.truncated !== undefined) {
+      coverage.parseErrorFilesTruncated = capped.truncated;
+      truncated = true;
+    }
   }
   if (partial.length > 0) {
     coverage.partialParseFileCount = partial.length;
     // `partialParseFiles` always ships when non-empty (no verbose gate):
     // the per-entry `parser` + `reason` pair is the actionable signal
     // an agent needs to decide what to investigate, not a dumpable path
-    // list. Sorted for deterministic wire output.
-    coverage.partialParseFiles = [...partial].sort((a, b) => a.path.localeCompare(b.path));
+    // list. Sorted for deterministic wire output. Capped per
+    // Q-SHARED-META-ARRAY-BUDGET-CAP — the count is the honest total.
+    const sorted = [...partial].sort((a, b) => a.path.localeCompare(b.path));
+    const capped = capMetaArray(sorted);
+    coverage.partialParseFiles = capped.values;
+    if (capped.truncated !== undefined) {
+      coverage.partialParseFilesTruncated = capped.truncated;
+      truncated = true;
+    }
   }
+  return truncated;
+}
+
+/**
+ * Populates the `fragmentFiles` / `fragmentFileCount` /
+ * `fragmentFilesTruncated` sub-block. Returns `true` when the cap
+ * actually trimmed the list so the caller can OR the signal into
+ * the enclosing `metaArrayTruncated` flag. Extracted from
+ * {@link buildAnalysisCoverage} so the enclosing function stays
+ * under the cognitive-complexity cap.
+ *
+ * Fragment-file list is scan-confidence telemetry naming the HTML
+ * files that parsed as fragments (no `<html>` root, no `<body>`).
+ * Page-level rules — `navigation/skip-link`'s primary-nav path,
+ * `semantics/landmark-main`, `semantics/section-accessible-name-
+ * missing` — skip these files because the premise of those checks
+ * is "this document IS the page," which a partial / include target
+ * is not. Shipped at every verbosity (no `verboseMeta` gate): the
+ * count alone is ambiguous ("which files?") and the path list is
+ * the actionable signal — same reasoning as `parseErrorFiles` /
+ * `partialParseFiles`. Count + list are always populated together;
+ * sorted for deterministic wire output. Capped per
+ * Q-SHARED-META-ARRAY-BUDGET-CAP because fragment-heavy static
+ * sites (Jekyll `_includes/`, Astro `layouts/`) can produce
+ * hundreds of paths; the count stays honest even when the list is
+ * head-sliced.
+ */
+function assembleFragmentFilesBlock(
+  fragmentFiles: readonly string[],
+  coverage: {
+    fragmentFileCount?: number;
+    fragmentFiles?: readonly string[];
+    fragmentFilesTruncated?: MetaArrayTruncationSummary;
+  },
+): boolean {
+  coverage.fragmentFileCount = fragmentFiles.length;
+  const sorted = [...fragmentFiles].sort((a, b) => a.localeCompare(b));
+  const capped = capMetaArray(sorted);
+  coverage.fragmentFiles = capped.values;
+  if (capped.truncated === undefined) return false;
+  coverage.fragmentFilesTruncated = capped.truncated;
+  return true;
 }
 
 /**

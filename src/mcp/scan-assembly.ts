@@ -168,6 +168,24 @@ export function buildScanMeta(args: {
     discoveryDiagnostics,
     findingFilePaths,
   } = args;
+  // Q-SHARED-META-ARRAY-BUDGET-CAP: `buildAnalysisCoverage` returns
+  // `{ analysisCoverage?, metaArrayTruncated? }` — we spread only the
+  // coverage block onto the wire (the per-array `*Truncated` siblings
+  // inside that block are the load-bearing signal). The bare
+  // `metaArrayTruncated` bit is an internal signal surfaced separately
+  // by callers that need to emit the `response_meta_truncated`
+  // warning code; at this seam it's derived on-demand from the
+  // materialized coverage block via {@link anyMetaArrayTruncated}.
+  const coverageResult = buildAnalysisCoverage(
+    files,
+    wrappers,
+    activeRules,
+    verboseMeta,
+    wrapperProvenance.fromAutoDetect.confirmed.length,
+    preset,
+    discoveryDiagnostics,
+    findingFilePaths,
+  );
   return {
     filesScanned,
     // Per-extension counts build confidence that the scan actually saw
@@ -202,16 +220,9 @@ export function buildScanMeta(args: {
     // agent can calibrate confidence in "automated clean." Each entry
     // is a structural gap, not a heuristic guess — fields are
     // empty/omitted when there's nothing to report.
-    ...buildAnalysisCoverage(
-      files,
-      wrappers,
-      activeRules,
-      verboseMeta,
-      wrapperProvenance.fromAutoDetect.confirmed.length,
-      preset,
-      discoveryDiagnostics,
-      findingFilePaths,
-    ),
+    ...(coverageResult.analysisCoverage === undefined
+      ? {}
+      : { analysisCoverage: coverageResult.analysisCoverage }),
     // Audit trail for every in-source `ra11y-disable` pragma — keeps
     // suppressions visible and accountable. Omitted when no pragmas
     // exist in any scanned file.

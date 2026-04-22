@@ -134,6 +134,23 @@ export type ScanWarningCode =
   // the remediation differs (fix the path vs. drop the param). Companion
   // to `Q3-ADDITIONAL-PATHS-SKIP-REASON`; surface-don't-suppress doctrine.
   | "redundant_additional_paths"
+  // Q-SHARED-META-ARRAY-BUDGET-CAP: at least one of the path-list
+  // meta arrays (`scannedBuildArtifacts.ungrouped`,
+  // `analysisCoverage.parseErrorFiles`,
+  // `analysisCoverage.partialParseFiles`,
+  // `analysisCoverage.fragmentFiles`) exceeded
+  // {@link META_ARRAY_CAP} entries and was trimmed to its head
+  // slice. Without this code, a large-site response where the
+  // ungrouped list trimmed from 1,200 to 50 is indistinguishable
+  // from one where everything fit — the agent reading the meta
+  // cannot tell whether the displayed list is the full signal or
+  // the prefix of a much larger one. The paired `*Truncated:
+  // { shown, total }` sibling on each affected sub-field carries
+  // the per-array settlement; this top-level code is the presence
+  // bit the agent can branch on without reading into meta. Fires
+  // only when at least one cap actually trimmed (never on a
+  // response where every capped array fit under the threshold).
+  | "response_meta_truncated"
   // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS build artifacts
   // (bootstrap.css, font-awesome.css, jquery-era bundles) dominate
   // the finding set so heavily that the response's file budget is
@@ -290,6 +307,19 @@ export interface WarningInputs {
    * parent repo's `package.json` reachable still drop the warning.
    */
   readonly configSearchSawProjectMarker?: boolean;
+  /**
+   * Q-SHARED-META-ARRAY-BUDGET-CAP: true when at least one of the
+   * path-list meta arrays (`scannedBuildArtifacts.ungrouped`,
+   * `analysisCoverage.parseErrorFiles`,
+   * `analysisCoverage.partialParseFiles`,
+   * `analysisCoverage.fragmentFiles`) was trimmed to its head slice
+   * during response assembly. Drives the `response_meta_truncated`
+   * code — an additive surface, not suppression: the deterministic
+   * head + count + per-array `*Truncated: { shown, total }` summary
+   * stay in `meta` unchanged. Omit or pass `false` when no cap
+   * applied; the code drops conservatively.
+   */
+  readonly metaArrayTruncated?: boolean;
 }
 
 // MARKER_PROBE_002
@@ -632,6 +662,19 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // are unaffected.
     out.push("redundant_additional_paths");
   }
+  if (inputs.metaArrayTruncated === true) {
+    // Q-SHARED-META-ARRAY-BUDGET-CAP: at least one linear-with-input
+    // meta path-array exceeded META_ARRAY_CAP and the head slice
+    // landed on the wire with a `*Truncated: { shown, total }`
+    // sibling. Without this top-level code, an agent reading the
+    // meta cannot tell whether the displayed list is the full signal
+    // or a prefix. The counts (`parseErrorFileCount`,
+    // `partialParseFileCount`, `fragmentFileCount`) and per-array
+    // truncation summaries carry the full-size signal; this code
+    // is the presence bit the agent can branch on without descending
+    // into meta.
+    out.push("response_meta_truncated");
+  }
   if (vendorCssDominates(inputs.vendorCssNoise)) {
     // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS bundles
     // (bootstrap.css, font-awesome.css, jquery-era distributions)
@@ -881,6 +924,7 @@ type ScanMetaWarningArgs = {
   readonly templateDirectivesOverlap?: boolean;
   readonly additionalPathsRedundant?: boolean;
   readonly configSearchSawProjectMarker?: boolean;
+  readonly metaArrayTruncated?: boolean;
 };
 
 function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
@@ -909,6 +953,9 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
+    ...(args.metaArrayTruncated === undefined
+      ? {}
+      : { metaArrayTruncated: args.metaArrayTruncated }),
   };
 }
 
