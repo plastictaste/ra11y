@@ -245,7 +245,11 @@ describe("parseTsx", () => {
       const { root } = parseTsx(src, { filePath: "Img.stories.tsx" });
       const synth = syntheticOf(root, "Img");
       expect(synth).toBeDefined();
-      expect(synth?.synthesized?.storyName).toBe("Hero");
+      const origin = synth?.synthesized;
+      expect(origin?.source).toBe("storybook-args");
+      if (origin?.source === "storybook-args") {
+        expect(origin.storyName).toBe("Hero");
+      }
     });
 
     it("emits an empty-attributes element when args is `{}`", () => {
@@ -333,7 +337,9 @@ describe("parseTsx", () => {
       const { root } = parseTsx(src, { filePath: "Button.stories.tsx" });
       const synth = root.jsxElements.filter((el) => el.synthesized?.source === "storybook-args");
       expect(synth.length).toBe(2);
-      const stories = synth.map((s) => s.synthesized?.storyName).sort();
+      const stories = synth
+        .map((s) => (s.synthesized?.source === "storybook-args" ? s.synthesized.storyName : null))
+        .sort();
       expect(stories).toEqual(["First", "Second"]);
     });
 

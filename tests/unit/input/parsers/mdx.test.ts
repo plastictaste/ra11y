@@ -374,3 +374,190 @@ describe("parseMdx — recoverable parse errors", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// docs-component `code` prop extractor (Starlight / Bootstrap-docs
+// `<Example code={`…`}/>` substrate). Landed with the extractor itself
+// — see src/input/parsers/mdx-example-extractor.ts for the full design.
+// ---------------------------------------------------------------------------
+
+describe("parseMdx — <Example code={`…`}/> template-literal extractor", () => {
+  it("extracts a single <input> inside a template-literal code prop", () => {
+    // Mirrors the canonical Bootstrap-docs shape referenced in the
+    // backlog (site/src/content/docs/forms/overview.mdx): a form
+    // preview inside `<Example code={`…`}/>`. Before the extractor,
+    // the HTML <input> never entered the JSX stream so
+    // `forms/labels-required` could not fire on it.
+    const src = [
+      "# Forms",
+      "",
+      '<Example code={`<input type="email" class="form-control" id="exampleInputEmail1">`}/>',
+      "",
+    ].join("\n");
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const input = findElement(root.jsxElements, "input");
+    expect(input).toBeDefined();
+    const typeAttr = getAttr(input!, "type");
+    expect(typeAttr?.value?.kind).toBe("StringLiteral");
+    if (typeAttr?.value?.kind === "StringLiteral") {
+      expect(typeAttr.value.value).toBe("email");
+    }
+    // HTML `class` must be translated to JSX `className` so the JSX
+    // branch of downstream rules finds it by its JSX name.
+    const classAttr = getAttr(input!, "className");
+    expect(classAttr).toBeDefined();
+    // Original HTML `class` attribute name must NOT persist — the
+    // translation has to replace, not alias, or rules that probe for
+    // JSX `className` and `class` separately would double-count.
+    expect(getAttr(input!, "class")).toBeUndefined();
+    expect(input!.synthesized).toEqual({
+      source: "mdx-example-code",
+      componentName: "Example",
+    });
+  });
+
+  it("preserves the author's line for an <input> extracted from line 3", () => {
+    // The <Example> sits on line 3 of the MDX; the template body
+    // starts mid-line with the opening `<input…>`. The synthesized
+    // element must carry line 3 so a finding like "input at line N"
+    // points an agent at the authored source, not a synthesized
+    // pseudo-offset.
+    const src = ["intro paragraph", "", '<Example code={`<input type="email" id="x">`}/>'].join(
+      "\n",
+    );
+    const { root } = parseMdx(src);
+    const input = findElement(root.jsxElements, "input");
+    expect(input).toBeDefined();
+    expect(input!.loc.start.line).toBe(3);
+  });
+
+  it("preserves line numbers for multi-line HTML bodies", () => {
+    // Template body spans three lines; first element at body-line-1
+    // is on MDX line 3, third element is on MDX line 5.
+    const src = [
+      "# Title",
+      "",
+      "<Example code={`",
+      '  <label for="x">Email</label>',
+      '  <input type="email" id="x">',
+      "`}/>",
+    ].join("\n");
+    const { root } = parseMdx(src);
+    const label = findElement(root.jsxElements, "label");
+    const input = findElement(root.jsxElements, "input");
+    expect(label).toBeDefined();
+    expect(input).toBeDefined();
+    // HTML `for` → JSX `htmlFor` translation.
+    expect(getAttr(label!, "htmlFor")).toBeDefined();
+    expect(getAttr(label!, "for")).toBeUndefined();
+    // Template body starts on line 3 mid-line; the template's first
+    // newline puts us on MDX line 4 for the <label>; <input> lives
+    // on line 5 of the MDX source.
+    expect(label!.loc.start.line).toBe(4);
+    expect(input!.loc.start.line).toBe(5);
+  });
+
+  it("recognizes Demo and Playground by default", () => {
+    const src = [
+      '<Demo code={`<input id="d">`}/>',
+      "",
+      '<Playground code={`<input id="p">`}/>',
+    ].join("\n");
+    const { root } = parseMdx(src);
+    const inputs = root.jsxElements.filter((e) => e.tagName === "input");
+    expect(inputs).toHaveLength(2);
+  });
+
+  it("does not extract from components outside the allow-list", () => {
+    // <NotAllowed> is not in the default allow-list; its template
+    // body stays opaque and no <input> is synthesized.
+    const src = `<NotAllowed code={\`<input id="hidden">\`}/>`;
+    const { root } = parseMdx(src);
+    expect(findElement(root.jsxElements, "input")).toBeUndefined();
+  });
+
+  it("honours a caller-supplied allow-list", () => {
+    // Widen to include a custom wrapper name — the extractor picks
+    // it up.
+    const src = `<CustomWrap code={\`<input id="c">\`}/>`;
+    const { root } = parseMdx(src, { exampleComponentNames: ["CustomWrap"] });
+    expect(findElement(root.jsxElements, "input")).toBeDefined();
+  });
+
+  it("disables extraction entirely when the allow-list is empty", () => {
+    const src = `<Example code={\`<input id="e">\`}/>`;
+    const { root } = parseMdx(src, { exampleComponentNames: [] });
+    expect(findElement(root.jsxElements, "input")).toBeUndefined();
+  });
+
+  it("skips template literals that contain ${…} substitutions", () => {
+    // A template-literal with a substitution cannot be statically
+    // resolved — we refuse to parse a partial body and the extractor
+    // bails, leaving the <input> unseen by downstream rules. Honest
+    // absence over confidently wrong findings.
+    // eslint-disable-next-line no-template-curly-in-string
+    const src = "<Example code={`<input id=${dynamic}>`}/>";
+    const { root } = parseMdx(src);
+    expect(findElement(root.jsxElements, "input")).toBeUndefined();
+  });
+
+  it("ignores a non-template `code` value (plain string attribute)", () => {
+    // A string attribute `code="<input/>"` is not a template literal;
+    // the extractor skips it. The TSX parser does not enter HTML
+    // mode inside attribute strings, so no <input> is synthesized —
+    // this keeps the extractor's scope narrow to the template-
+    // literal shape the backlog calls out.
+    const src = `<Example code="<input id=\\"s\\">"/>`;
+    const { root } = parseMdx(src);
+    expect(findElement(root.jsxElements, "input")).toBeUndefined();
+  });
+
+  it("preserves the original <Example> element alongside synthesized children", () => {
+    // Extraction must be additive — the original component element
+    // stays in the AST so rules targeting the docs-component itself
+    // (and consumers that read `hasSpreadProps` / opaque-component
+    // meta) see what they saw before.
+    const src = `<Example code={\`<input id="x">\`}/>`;
+    const { root } = parseMdx(src);
+    expect(findElement(root.jsxElements, "Example")).toBeDefined();
+    expect(findElement(root.jsxElements, "input")).toBeDefined();
+  });
+
+  it("surfaces <img> without alt inside a template body", () => {
+    // The canonical alt-text rule input — covers the alt-text finder's
+    // ability to reach HTML substrate ferried through the extractor.
+    const src = `<Example code={\`<img src="/hero.png">\`}/>`;
+    const { root } = parseMdx(src);
+    const img = findElement(root.jsxElements, "img");
+    expect(img).toBeDefined();
+    expect(getAttr(img!, "alt")).toBeUndefined();
+    // Provenance marker is honest about where it came from.
+    expect(img!.synthesized?.source).toBe("mdx-example-code");
+  });
+
+  it("handles multiple <Example> blocks independently", () => {
+    // Two separate <Example> components, each with its own code body.
+    // Both synthesize their own <input>; line numbers anchor to the
+    // right authored source line for each.
+    const src = [
+      '<Example code={`<input id="a">`}/>',
+      "",
+      '<Example code={`<input id="b">`}/>',
+    ].join("\n");
+    const { root } = parseMdx(src);
+    const inputs = root.jsxElements.filter((e) => e.tagName === "input");
+    expect(inputs).toHaveLength(2);
+    // Line 1 and line 3 respectively.
+    expect(inputs[0]!.loc.start.line).toBe(1);
+    expect(inputs[1]!.loc.start.line).toBe(3);
+  });
+
+  it("recovers gracefully from an unterminated template body", () => {
+    // The extractor must not throw on a missing closing backtick —
+    // the TSX parser itself already recovers (the prop remains
+    // unresolved); we just leave the body un-extracted.
+    const src = '<Example code={`<input id="u">';
+    expect(() => parseMdx(src)).not.toThrow();
+  });
+});
