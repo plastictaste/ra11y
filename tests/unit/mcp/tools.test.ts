@@ -823,6 +823,91 @@ describe("MCP tool: scan_project", () => {
       expect(data.meta.additionalPathsScanned?.filesAdded).toBe(0);
     });
 
+    // Q4-ADDITIONALPATHS-REDUNDANT: `filesAdded: 0` + no `skipped`
+    // entries is ambiguous on its own — the caller can't tell whether
+    // the paths were ignored (skipped reasons) or redundant (files
+    // already in the default set). The `redundant_additional_paths`
+    // warning names the second case so the caller can drop the param
+    // instead of re-targeting the path.
+    it("fires the `redundant_additional_paths` warning when additional files were all in the base set", async () => {
+      const { mkdtemp, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-redundant-"));
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["."] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        warnings?: string[];
+        meta: { additionalPathsScanned?: { filesAdded: number } };
+      };
+      expect(data.meta.additionalPathsScanned?.filesAdded).toBe(0);
+      expect(data.warnings).toContain("redundant_additional_paths");
+    });
+
+    // Distinct-from-ignored invariant: when `additionalPaths` resolved
+    // to nothing (the path doesn't exist, has an unsupported extension,
+    // or is excluded by glob), the code path is `skipped` reasons —
+    // NOT `redundant_additional_paths`. The two codes name different
+    // remediations (fix the path vs. drop the param) and must not
+    // co-fire on the same input.
+    it("does NOT fire `redundant_additional_paths` when the path was classified as skipped", async () => {
+      const { mkdtemp, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-skipped-"));
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["does-not-exist"] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        warnings?: string[];
+        meta: {
+          additionalPathsScanned?: {
+            filesAdded: number;
+            skipped?: { path: string; reason: string }[];
+          };
+        };
+      };
+      expect(data.meta.additionalPathsScanned?.skipped).toEqual([
+        { path: "does-not-exist", reason: "not-found" },
+      ]);
+      expect(data.warnings ?? []).not.toContain("redundant_additional_paths");
+    });
+
+    // Regression guard: when the additional path contributed at least
+    // one genuinely new file (gitignored dist/ etc.), the flag was NOT
+    // redundant — the warning must stay dropped.
+    it("does NOT fire `redundant_additional_paths` when at least one new file was added", async () => {
+      const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-productive-"));
+      await writeFile(joinPath(dir, ".gitignore"), "dist/\n");
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+      await mkdir(joinPath(dir, "dist", "assets"), { recursive: true });
+      await writeFile(
+        joinPath(dir, "dist", "assets", "main.css"),
+        ".foo { color: #eee; background: #fff; }",
+      );
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["dist/assets"] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        warnings?: string[];
+        meta: { additionalPathsScanned?: { filesAdded: number } };
+      };
+      expect(data.meta.additionalPathsScanned?.filesAdded).toBe(1);
+      expect(data.warnings ?? []).not.toContain("redundant_additional_paths");
+    });
+
     // Per-path skip reason reporting — filesAdded alone hides WHY a
     // given additionalPath contributed zero. Three deterministic
     // reasons are surfaced so the caller can distinguish unparseable

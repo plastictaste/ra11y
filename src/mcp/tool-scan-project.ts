@@ -294,6 +294,11 @@ export const scanProjectTool: McpTool = {
           buildArtifacts,
           storybookPresetActive,
           sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
+          additionalPathsRedundant: isAdditionalPathsRedundant({
+            additionalPaths,
+            additionalFilesCount: additionalFiles.length,
+            filesAdded: files.length - baseFiles.length,
+          }),
         }),
       }),
     );
@@ -322,6 +327,7 @@ function buildBaseWarningsForScanProject(args: {
   };
   readonly storybookPresetActive: boolean;
   readonly sessionWrappersMismatchCwd: boolean;
+  readonly additionalPathsRedundant: boolean;
 }): {
   readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
@@ -334,6 +340,7 @@ function buildBaseWarningsForScanProject(args: {
     buildArtifacts,
     storybookPresetActive,
     sessionWrappersMismatchCwd,
+    additionalPathsRedundant,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
   // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
@@ -356,6 +363,7 @@ function buildBaseWarningsForScanProject(args: {
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     templateDirectivesOverlap,
+    additionalPathsRedundant,
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
   });
   return warningsFieldsForAssembler(warningsFromMeta);
@@ -754,6 +762,29 @@ function buildEmptyFilesResult(args: {
       filesByExtension: undefined,
     }),
   });
+}
+
+/**
+ * Q4-ADDITIONALPATHS-REDUNDANT predicate. Returns true when the
+ * caller supplied `additionalPaths`, those paths resolved to at
+ * least one parseable file, AND every one of those parsed files was
+ * already in the default-discovered base set — i.e. the merge pass
+ * de-duped every additional file. Distinguishes "flag did nothing
+ * because paths were ignored" (per-path `skipped` reasons under
+ * `additionalPathsScanned.skipped`) from "flag did nothing because
+ * paths were already covered" — two cases with different
+ * remediations (fix the path vs. drop the param). Lives as its own
+ * function so the handler's cognitive complexity stays inside the
+ * lint budget.
+ */
+function isAdditionalPathsRedundant(args: {
+  readonly additionalPaths: readonly string[];
+  readonly additionalFilesCount: number;
+  readonly filesAdded: number;
+}): boolean {
+  if (args.additionalPaths.length === 0) return false;
+  if (args.additionalFilesCount === 0) return false;
+  return args.filesAdded === 0;
 }
 
 /**

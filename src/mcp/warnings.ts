@@ -118,6 +118,20 @@ export type ScanWarningCode =
   // can branch on the specific language without re-deriving it
   // from the ext map.
   | "source_language_unsupported"
+  // Q4-ADDITIONALPATHS-REDUNDANT: the caller passed `additionalPaths`,
+  // the paths resolved to parseable files, but every one of those files
+  // was already in the default-discovered set — the flag was redundant,
+  // not ignored. Distinct from the per-path `skipped` reasons on
+  // `additionalPathsScanned` (which name "not-found" /
+  // "unsupported-extension" / "excluded-by-glob" — cases where the path
+  // contributed nothing because the scanner rejected it). Here the path
+  // contributed files, but those files were already going to be scanned,
+  // so the flag bought nothing. Without this code a caller seeing
+  // `filesAdded: 0` can't tell "flag did nothing because paths were
+  // ignored" from "flag did nothing because paths were already covered" —
+  // the remediation differs (fix the path vs. drop the param). Companion
+  // to `Q3-ADDITIONAL-PATHS-SKIP-REASON`; surface-don't-suppress doctrine.
+  | "redundant_additional_paths"
   // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS build artifacts
   // (bootstrap.css, font-awesome.css, jquery-era bundles) dominate
   // the finding set so heavily that the response's file budget is
@@ -224,6 +238,21 @@ export interface WarningInputs {
       readonly findingsCount: number;
     };
   };
+  /**
+   * Q4-ADDITIONALPATHS-REDUNDANT: true when the caller supplied
+   * `additionalPaths`, those paths resolved to at least one parseable
+   * file, AND every one of those parsed files was already in the
+   * default-discovered base set — i.e. the merge pass de-duped every
+   * additional file. Drives the `redundant_additional_paths` code.
+   * Omit or pass `false` when the tool didn't receive `additionalPaths`,
+   * when the paths contributed at least one new file, OR when the paths
+   * resolved to zero parseable files (that case is already classified
+   * under `additionalPathsScanned.skipped` with one of the three
+   * deterministic skip reasons and is NOT redundancy). The predicate
+   * runs at the call site so the warnings module stays pure over its
+   * inputs.
+   */
+  readonly additionalPathsRedundant?: boolean;
   /**
    * Q4-WARNING-DOWNGRADE-NOISE: true when at least one emitted finding's
    * line sits inside a detected template-directive range in the same
@@ -463,6 +492,29 @@ function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean
 }
 
 /**
+ * Sub-chain extracted from {@link computeScanWarnings} to keep its
+ * cognitive complexity under the lint cap as new codes accrete. These
+ * are the content-distribution codes keyed off the `analysisCoverage`
+ * block's `skippedByExtension` map: one names the map's presence, the
+ * other two name the two ecosystem-foreign dominance regimes. Grouping
+ * them is honest because they share the same conceptual input.
+ *
+ * Order matches the original if-chain in {@link computeScanWarnings}
+ * verbatim for this subset so consumers reading `warnings[]` see a
+ * stable code sequence.
+ */
+function contentDistributionCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (computeContentFileCount(inputs.analysisCoverage) >= CONTENT_FILES_SKIPPED_THRESHOLD) {
+    out.push("content_files_skipped");
+  }
+  if (dominantUnsupportedLanguage(inputs.analysisCoverage) !== undefined) {
+    out.push("source_language_unsupported");
+  }
+  return out;
+}
+
+/**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
  */
@@ -542,25 +594,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // findings while also landing in `parseErrorFiles`).
     out.push("parse_errors_present");
   }
-  if (computeContentFileCount(inputs.analysisCoverage) >= CONTENT_FILES_SKIPPED_THRESHOLD) {
-    // Canonical Jekyll repro — 307 `.md` files dropped at discovery
-    // because markdown isn't yet parseable. `extensions_skipped_no_parser` already fires for
-    // the same map; this code adds the named-ecosystem signal so
-    // an agent sees "this is a content-first repo with a scanner
-    // coverage gap" at the top level without pattern-matching on
-    // the ext map itself. See ADR 0025 for the markdown plan.
-    out.push("content_files_skipped");
-  }
-  if (dominantUnsupportedLanguage(inputs.analysisCoverage) !== undefined) {
-    // The dominant ecosystem in the skipped set is a template-layer
-    // ra11y doesn't parse — Rails
-    // view partials, Django templates, Go html/template, PHP.
-    // Crossing both the absolute and share thresholds names the
-    // repo as definitionally out-of-scope for static scanning in
-    // its source form; the agent's next step is usually "run ra11y
-    // against the emitted HTML after the build step" rather than
-    // "scan the template source."
-    out.push("source_language_unsupported");
+  // Content-distribution codes — see `contentDistributionCodes`. Two
+  // branches extracted into the helper so the main function's
+  // cognitive complexity stays under the lint cap; the emitted order
+  // is unchanged because the helper preserves the original sequence
+  // and runs at the original insertion point.
+  out.push(...contentDistributionCodes(inputs));
+  if (inputs.additionalPathsRedundant === true) {
+    // Q4-ADDITIONALPATHS-REDUNDANT: the caller's `additionalPaths`
+    // resolved to files that were already in the default-discovered
+    // set. The flag bought nothing — not because the paths were
+    // ignored (that case surfaces under
+    // `additionalPathsScanned.skipped`), but because the requested
+    // files were already going to be scanned. Warning-only; findings
+    // are unaffected.
+    out.push("redundant_additional_paths");
   }
   if (vendorCssDominates(inputs.vendorCssNoise)) {
     // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS bundles
@@ -801,6 +849,7 @@ export function warningsFromScanMeta(args: {
   readonly sessionWrappersMismatchCwd?: boolean;
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
   readonly templateDirectivesOverlap?: boolean;
+  readonly additionalPathsRedundant?: boolean;
 }): readonly ScanWarningCode[] {
   return computeScanWarnings({
     filesScanned: readNumber(args.meta, "filesScanned"),
@@ -821,6 +870,9 @@ export function warningsFromScanMeta(args: {
     ...(args.templateDirectivesOverlap === undefined
       ? {}
       : { templateDirectivesOverlap: args.templateDirectivesOverlap }),
+    ...(args.additionalPathsRedundant === undefined
+      ? {}
+      : { additionalPathsRedundant: args.additionalPathsRedundant }),
   });
 }
 
@@ -1044,6 +1096,7 @@ export function warningsFieldFromScanMeta(args: {
   readonly sessionWrappersMismatchCwd?: boolean;
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
   readonly templateDirectivesOverlap?: boolean;
+  readonly additionalPathsRedundant?: boolean;
 }): {
   readonly warnings?: readonly ScanWarningCode[];
   readonly warningsDetails?: ScanWarningDetails;
@@ -1067,6 +1120,9 @@ export function warningsFieldFromScanMeta(args: {
     ...(args.templateDirectivesOverlap === undefined
       ? {}
       : { templateDirectivesOverlap: args.templateDirectivesOverlap }),
+    ...(args.additionalPathsRedundant === undefined
+      ? {}
+      : { additionalPathsRedundant: args.additionalPathsRedundant }),
   };
   return warningsField(inputs);
 }

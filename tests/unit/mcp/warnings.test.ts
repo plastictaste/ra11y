@@ -570,6 +570,46 @@ describe("warningsFromScanMeta", () => {
     });
     expect(codesFalse).not.toContain("storybook_preset_active");
   });
+
+  // Q4-ADDITIONALPATHS-REDUNDANT: `additionalPaths` contributed
+  // parseable files, but every one of those files was already in the
+  // default-discovered set — the flag did nothing, and the caller
+  // needs to distinguish that from "did nothing because the paths
+  // were ignored" (the three `skipped` reasons). The pure predicate
+  // runs at the call site; this test locks the warning emission on
+  // the single boolean input.
+  it("fires `redundant_additional_paths` when the flag is true", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      additionalPathsRedundant: true,
+    });
+    expect(codes).toContain("redundant_additional_paths");
+  });
+
+  it("does not fire `redundant_additional_paths` when the flag is absent or false", () => {
+    const codesAbsent = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+    });
+    expect(codesAbsent).not.toContain("redundant_additional_paths");
+
+    const codesFalse = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      additionalPathsRedundant: false,
+    });
+    expect(codesFalse).not.toContain("redundant_additional_paths");
+  });
 });
 
 describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)", () => {
