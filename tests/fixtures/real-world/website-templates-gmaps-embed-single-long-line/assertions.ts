@@ -50,8 +50,8 @@ export const assertions: FixtureAssertions = {
     feedbackRound: "Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE",
     notes:
       "Sanitized from the website-templates field scan pattern: contact / location " +
-      "pages each embed a Google Maps iframe (`src=\"https://www.google.com/maps/embed/v1/" +
-      "place?key=…&q=…&feature_flags=…\"`) whose URL is authored on one file-line and " +
+      'pages each embed a Google Maps iframe (`src="https://www.google.com/maps/embed/v1/' +
+      'place?key=…&q=…&feature_flags=…"`) whose URL is authored on one file-line and ' +
       "crosses 500 characters. This reproduction preserves the single-long-line shape " +
       "with a synthetic URL (no real coordinates or API key), and surrounds it with 56 " +
       "short authored lines of ordinary HTML, so only the single-long-line probe can fire.",
