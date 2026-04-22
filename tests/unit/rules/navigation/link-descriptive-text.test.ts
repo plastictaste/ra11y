@@ -112,6 +112,11 @@ describe("rule navigation/link-descriptive-text", () => {
     expect(rule.satisfies).toContain("wcag21:4.1.2");
   });
 
+  it("also cites wcag22:2.4.9 and wcag21:2.4.9 for duplicate-href detection", () => {
+    expect(rule.satisfies).toContain("wcag22:2.4.9");
+    expect(rule.satisfies).toContain("wcag21:2.4.9");
+  });
+
   describe("HTML icon-only links (no accessible name)", () => {
     it("fires on <a><i class='fa fa-twitter'></i></a>", () => {
       const v = runRule(rule, `<a href="/twitter"><i class="fa fa-twitter"></i></a>`, {
@@ -231,6 +236,159 @@ describe("rule navigation/link-descriptive-text", () => {
         `const X = <Link to="/follow"><i className="fa fa-bell" aria-hidden="true" /> Follow</Link>;`,
       );
       expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("HTML duplicate same-href detection", () => {
+    it("fires on two <a>Buy Now</a> both pointing at href='#'", () => {
+      const v = runRule(rule, `<section><a href="#">Buy Now</a><a href="#">Buy Now</a></section>`, {
+        filePath: "index.html",
+      });
+      // Both anchors flagged.
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(2);
+      expect(dupFindings[0]?.message).toContain("Buy Now");
+      expect(dupFindings[0]?.message).toContain(`href="#"`);
+    });
+
+    it("fires on three duplicates with count=3 in the message", () => {
+      const v = runRule(
+        rule,
+        `<a href="/x">Sign up</a><a href="/x">Sign up</a><a href="/x">Sign up</a>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(3);
+      expect(dupFindings[0]?.message).toContain("3 links");
+    });
+
+    it("partitions correctly: two same-href dups + one distinct-href sharing the name", () => {
+      // Two <a href="/a">Buy Now</a> should group (and both fire); the
+      // third <a href="/b">Buy Now</a> has a different href and stays silent.
+      const v = runRule(
+        rule,
+        `<a href="/a">Buy Now</a><a href="/b">Buy Now</a><a href="/a">Buy Now</a>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(2);
+      // Both surviving findings should reference href="/a" in the text.
+      for (const f of dupFindings) expect(f.message).toContain(`href="/a"`);
+    });
+
+    it("normalizes whitespace and case when grouping", () => {
+      const v = runRule(rule, `<a href="/x">  Buy   Now  </a><a href="/x">buy now</a>`, {
+        filePath: "index.html",
+      });
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("treats <img alt> as accessible name when grouping (img-only anchor)", () => {
+      // An anchor with only a non-decorative <img> picks up the alt as its name.
+      const v = runRule(
+        rule,
+        `<a href="/p"><img src="/a.png" alt="Buy Now"></a><a href="/p">Buy Now</a>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("does NOT fire on same-name-different-href (left to agent judgment)", () => {
+      const v = runRule(
+        rule,
+        `<a href="/post1">Read more</a><a href="/post2">Read more</a><a href="/post3">Read more</a>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(0);
+      // The existing generic-phrase path still fires per-anchor (3 times).
+      expect(v.filter((x) => x.message.includes('"read more"'))).toHaveLength(3);
+    });
+
+    it("does NOT fire when an anchor lacks the href attribute entirely", () => {
+      // `<a>Buy Now</a>` (no href) + `<a href="">Buy Now</a>` → only the
+      // href-bearing one is grouped; a single entry never fires.
+      const v = runRule(rule, `<a>Buy Now</a><a href="">Buy Now</a>`, { filePath: "index.html" });
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+
+    it("does NOT fire when aria-labelledby points at different targets", () => {
+      // aria-labelledby defers to the agent — grouping is skipped when
+      // present. Both anchors share href and visible text, but the
+      // override keeps them out of the duplicate-href pass.
+      const v = runRule(
+        rule,
+        `<h2 id="a">Alpha</h2><h2 id="b">Beta</h2>` +
+          `<a href="/x" aria-labelledby="a">Go</a>` +
+          `<a href="/x" aria-labelledby="b">Go</a>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+
+    it("uses aria-label as the grouping name when present", () => {
+      const v = runRule(
+        rule,
+        `<a href="/x" aria-label="Account menu">X</a><a href="/x" aria-label="account menu">Y</a>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(2);
+      expect(dupFindings[0]?.message).toContain("Account menu");
+    });
+
+    it("co-fires with the generic-phrase path on the same anchor", () => {
+      // Both paths fire — agent sees both concerns. The generic-phrase
+      // violation describes the out-of-context failure; the duplicate-
+      // href violation describes the within-context indistinguishability.
+      const v = runRule(rule, `<a href="/x">Read more</a><a href="/x">Read more</a>`, {
+        filePath: "index.html",
+      });
+      const genericFindings = v.filter((x) => x.message.includes('"read more"'));
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(genericFindings).toHaveLength(2);
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("suggestion offers three concrete differentiation paths", () => {
+      const v = runRule(rule, `<a href="#">Buy Now</a><a href="#">Buy Now</a>`, {
+        filePath: "index.html",
+      });
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings[0]?.suggestion).toContain("aria-label");
+      expect(dupFindings[0]?.suggestion).toContain("merging");
+      expect(dupFindings[0]?.suggestion).toContain("context");
+    });
+  });
+
+  describe("JSX duplicate same-href detection", () => {
+    it("fires on two <a href='#'>Buy Now</a> duplicates", () => {
+      const v = runRule(
+        rule,
+        `const X = <section><a href="#">Buy Now</a><a href="#">Buy Now</a></section>;`,
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("fires on <Link to='/x'>Buy Now</Link> duplicates", () => {
+      const v = runRule(
+        rule,
+        `const X = <><Link to="/x">Buy Now</Link><Link to="/x">Buy Now</Link></>;`,
+      );
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("skips anchors whose name depends on an expression child", () => {
+      // Runtime label — scanner can't see it; grouping skips these.
+      const v = runRule(rule, `const X = <><a href="/x">{label}</a><a href="/x">{label}</a></>;`);
+      const dupFindings = v.filter((x) => x.message.includes("same accessible name"));
+      expect(dupFindings).toHaveLength(0);
     });
   });
 

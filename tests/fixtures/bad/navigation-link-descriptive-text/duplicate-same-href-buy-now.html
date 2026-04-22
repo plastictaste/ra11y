@@ -1,0 +1,26 @@
+<!--
+  Bad: two anchors share the same accessible name ("Buy Now") and the
+  same href ("#"). A screen-reader user navigating by link list
+  (VoiceOver rotor, JAWS links dialog) sees two entries that look
+  identical and cannot distinguish them — and because the href is also
+  identical, only one destination is actually reachable from the link
+  list.
+  Expect: rule navigation/link-descriptive-text fires twice (once per
+  anchor) with severity "warning", citing SC 2.4.4 + 2.4.9 via a
+  message that mentions "same accessible name" and echoes the href.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <section class="pricing">
+      <div class="card">
+        <h2>Basic</h2>
+        <a href="#">Buy Now</a>
+      </div>
+      <div class="card">
+        <h2>Pro</h2>
+        <a href="#">Buy Now</a>
+      </div>
+    </section>
+  </body>
+</html>

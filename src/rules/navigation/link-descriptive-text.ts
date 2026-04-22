@@ -1,8 +1,10 @@
 /**
  * Rule: navigation/link-descriptive-text
- * Satisfies: wcag22:2.4.4, wcag21:2.4.4, wcag22:4.1.2, wcag21:4.1.2
- * Spec (Link Purpose):   https://www.w3.org/TR/WCAG22/#link-purpose-in-context
- * Spec (Name, Role, Val): https://www.w3.org/TR/WCAG22/#name-role-value
+ * Satisfies: wcag22:2.4.4, wcag21:2.4.4, wcag22:4.1.2, wcag21:4.1.2,
+ *            wcag22:2.4.9, wcag21:2.4.9
+ * Spec (Link Purpose):            https://www.w3.org/TR/WCAG22/#link-purpose-in-context
+ * Spec (Name, Role, Val):         https://www.w3.org/TR/WCAG22/#name-role-value
+ * Spec (Link Purpose Link Only):  https://www.w3.org/TR/WCAG22/#link-purpose-link-only
  *
  * > The purpose of each link can be determined from the link text alone
  * > or from the link text together with its programmatically determined
@@ -12,7 +14,10 @@
  * > form elements, links …), the name and role can be programmatically
  * > determined. (SC 4.1.2)
  *
- * This rule covers two unnamed-link failure modes:
+ * > A mechanism is available to allow the purpose of each link to be
+ * > identified from link text alone. (SC 2.4.9, AAA)
+ *
+ * This rule covers three unnamed-link failure modes:
  *
  *   1. GENERIC-PHRASE PATH — the anchor has visible text, but the text
  *      is a known non-descriptive phrase: "click here", "here", "read
@@ -35,11 +40,32 @@
  *        - any element with `aria-hidden="true"` or `role="presentation"
  *          | "none"`.
  *
+ *   3. DUPLICATE SAME-HREF PATH — two or more anchors in the same file
+ *      share the same normalized accessible name AND the same `href`.
+ *      A screen-reader user navigating by link list (VoiceOver rotor,
+ *      JAWS links dialog) sees two identical-looking entries and cannot
+ *      tell them apart; the `href` being the same means only one of
+ *      the two destinations is reachable from the links list. The
+ *      strictly-worse variant of the "same name, different href"
+ *      pattern (which is legitimate when paired with unique aria-label
+ *      or surrounding context — e.g. three "Read more" links under
+ *      three blog cards) — so that looser variant stays silent here
+ *      and the agent decides via the file content. Fires SC 2.4.4
+ *      (programmatically determined context cannot distinguish) and
+ *      SC 2.4.9 AAA (link text alone must identify purpose). Anchors
+ *      without an `href` attribute are excluded from grouping because
+ *      they are not activatable controls.
+ *
  * Pairs with `aria/icon-font-hidden`: that rule fires when the link IS
  * labeled AND an icon child is unannotated (double-announce risk); this
  * rule fires when the link has NO label AND only presentational
- * children (silent link). Both cannot fire on the same element —
- * presence of a usable accessible name is the pivot.
+ * children (silent link). Icon-only and duplicate-href paths cannot
+ * both fire on the same anchor (icon-only has an empty accessible name,
+ * which is excluded from the duplicate-href grouping step). The
+ * generic-phrase path CAN co-fire with the duplicate-href path on the
+ * same anchor — both are real concerns (the text is generic AND the
+ * links are indistinguishable in context) and surfacing both keeps the
+ * agent's triage honest.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -61,6 +87,10 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
+import {
+  checkDuplicateHrefHtml as checkDuplicateHrefHtmlImpl,
+  checkDuplicateHrefJsx as checkDuplicateHrefJsxImpl,
+} from "./link-duplicate-href.ts";
 
 /**
  * Phrases that are never acceptable as link text on their own. Matched
@@ -87,7 +117,14 @@ const JSX_LINK_TAGS: ReadonlySet<string> = new Set(["a", "Link", "NavLink", "Anc
 
 export const rule = defineRule({
   id: "navigation/link-descriptive-text",
-  satisfies: ["wcag22:2.4.4", "wcag21:2.4.4", "wcag22:4.1.2", "wcag21:4.1.2"],
+  satisfies: [
+    "wcag22:2.4.4",
+    "wcag21:2.4.4",
+    "wcag22:4.1.2",
+    "wcag21:4.1.2",
+    "wcag22:2.4.9",
+    "wcag21:2.4.9",
+  ],
   severity: "warning",
   scope: "node",
   fixClass: "guidance",
@@ -125,6 +162,37 @@ export const rule = defineRule({
       ctx.language === "js"
     ) {
       checkJsx(ctx.ast as TsxModule, ctx.wrappersForElement, (v) => ctx.emit(v));
+    }
+  },
+  afterFile(ctx) {
+    // Same-page pass: when two or more anchors in the SAME file share
+    // the same normalized accessible name AND the same `href`, every
+    // occurrence is reported. This complements `check()` — the node-
+    // scoped pass fires on generic-phrase and icon-only failures per
+    // anchor, while `afterFile` sees whole-file state and catches the
+    // "indistinguishable-duplicate" failure mode that only manifests
+    // when ≥2 anchors share identity. See rule header (path 3) for
+    // rationale and scope boundaries (same-name-different-href is
+    // intentionally silent here).
+    if (ctx.language === "html") {
+      checkDuplicateHrefHtmlImpl(
+        ctx.ast as HtmlDocument,
+        visibleTextExcludingPresentationalHtml,
+        (v) => ctx.emit(v),
+      );
+    } else if (
+      ctx.language === "tsx" ||
+      ctx.language === "jsx" ||
+      ctx.language === "ts" ||
+      ctx.language === "js"
+    ) {
+      checkDuplicateHrefJsxImpl(
+        ctx.ast as TsxModule,
+        JSX_LINK_TAGS,
+        ctx.wrappersForElement,
+        visibleTextExcludingPresentationalJsx,
+        (v) => ctx.emit(v),
+      );
     }
   },
 });
@@ -530,3 +598,8 @@ function buildIconOnlySuggestion(href: string | null, evidence: readonly string[
     `stay aria-hidden="true"; it is decoration once the link has a real name.`
   );
 }
+
+// Duplicate same-href detection (SC 2.4.4 + 2.4.9) is implemented in
+// `link-duplicate-href.ts` and invoked from `afterFile()` above. The
+// helper is private to this rule (no other rule imports it); splitting
+// the module keeps this file under the 500-effective-line file budget.

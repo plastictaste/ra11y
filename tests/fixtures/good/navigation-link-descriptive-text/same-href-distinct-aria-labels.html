@@ -1,0 +1,23 @@
+<!--
+  Good: two anchors share the same href ("#") but each carries a
+  distinct aria-label, so the accessible names differ — AT announces
+  "Buy Now — Basic Plan" vs "Buy Now — Pro Plan". The duplicate-href
+  pass groups by (normalizedName, href); distinct aria-labels mean
+  distinct names, so no grouping fires.
+  Expect: rule navigation/link-descriptive-text does not fire.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <section class="pricing">
+      <div class="card">
+        <h2>Basic</h2>
+        <a href="#" aria-label="Buy Now — Basic Plan">Buy Now</a>
+      </div>
+      <div class="card">
+        <h2>Pro</h2>
+        <a href="#" aria-label="Buy Now — Pro Plan">Buy Now</a>
+      </div>
+    </section>
+  </body>
+</html>
