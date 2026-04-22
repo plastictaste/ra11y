@@ -5,6 +5,7 @@
 
 import type { CandidateFinder } from "../types/review.ts";
 import { finder as captcha } from "./finders/captcha.ts";
+import { finder as carouselPattern } from "./finders/carousel-pattern.ts";
 import { finder as consistentIdentification } from "./finders/consistent-identification.ts";
 import { finder as consistentNavigation } from "./finders/consistent-navigation.ts";
 import { finder as errorIdentification } from "./finders/error-identification.ts";
@@ -36,6 +37,7 @@ import { finder as validationTiming } from "./finders/validation-timing.ts";
 
 export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   captcha,
+  carouselPattern,
   consistentIdentification,
   consistentNavigation,
   errorIdentification,

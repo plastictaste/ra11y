@@ -1,0 +1,33 @@
+<!-- Good (but still a candidate): Bootstrap carousel with auto-advance
+     disabled (`data-bs-ride` omitted; `data-bs-interval="false"`). The
+     element still carries the `.carousel` class so the finder surfaces
+     it — the reviewer confirms manual-advance is the intended behaviour
+     and that the prev/next controls exist, then dismisses. -->
+<div id="manualCarousel" class="carousel slide" data-bs-interval="false">
+  <div class="carousel-inner">
+    <div class="carousel-item active">
+      <img src="one.jpg" alt="Slide one" class="d-block w-100" />
+    </div>
+    <div class="carousel-item">
+      <img src="two.jpg" alt="Slide two" class="d-block w-100" />
+    </div>
+  </div>
+  <button
+    type="button"
+    class="carousel-control-prev"
+    data-bs-target="#manualCarousel"
+    data-bs-slide="prev"
+    aria-label="Previous slide"
+  >
+    <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+  </button>
+  <button
+    type="button"
+    class="carousel-control-next"
+    data-bs-target="#manualCarousel"
+    data-bs-slide="next"
+    aria-label="Next slide"
+  >
+    <span class="carousel-control-next-icon" aria-hidden="true"></span>
+  </button>
+</div>

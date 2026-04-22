@@ -1,0 +1,24 @@
+<!-- Good: WAI-ARIA carousel pattern with accessible name and visible
+     pause control. The finder still surfaces this for review (the three
+     review questions need confirming), but the agent reading the file
+     sees the controls and dismisses in one read. -->
+<section
+  role="region"
+  aria-roledescription="carousel"
+  aria-label="Featured articles"
+  class="hero-carousel"
+>
+  <div role="group" aria-roledescription="slide" aria-label="1 of 3">
+    <img src="a.png" alt="First article" />
+  </div>
+  <div role="group" aria-roledescription="slide" aria-label="2 of 3" hidden>
+    <img src="b.png" alt="Second article" />
+  </div>
+  <div class="carousel-controls">
+    <button type="button" aria-label="Previous slide">‹</button>
+    <button type="button" aria-label="Pause carousel" aria-pressed="false">
+      ⏸ Pause
+    </button>
+    <button type="button" aria-label="Next slide">›</button>
+  </div>
+</section>

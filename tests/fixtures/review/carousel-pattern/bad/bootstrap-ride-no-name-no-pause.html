@@ -1,0 +1,20 @@
+<!-- Bad: Bootstrap carousel with data-bs-ride="carousel" (auto-advance
+     at the default 5-second interval), no aria-label on the root, and no
+     visible pause control. WCAG 2.2.2 fails. Companion rule
+     motion/pause-stop-hide fires here; this finder additionally surfaces
+     the accessible-name gap and the broader review frame. -->
+<div id="heroCarousel" class="carousel slide" data-bs-ride="carousel">
+  <div class="carousel-inner">
+    <div class="carousel-item active">
+      <img src="promo1.jpg" alt="Summer sale" class="d-block w-100" />
+    </div>
+    <div class="carousel-item">
+      <img src="promo2.jpg" alt="New arrivals" class="d-block w-100" />
+    </div>
+    <div class="carousel-item">
+      <img src="promo3.jpg" alt="Free shipping" class="d-block w-100" />
+    </div>
+  </div>
+  <!-- No accessible name on the root, no play/pause button — only
+       Bootstrap's default pause-on-hover (incidental, not operable). -->
+</div>

@@ -1,0 +1,15 @@
+<!-- Bad: WAI-ARIA carousel pattern (role="region" +
+     aria-roledescription="carousel") with NO accessible name. ARIA
+     requires a name when `aria-roledescription` is used; without one
+     the user hears "carousel" with no context. The finder's reason
+     text flags the name gap explicitly. -->
+<section role="region" aria-roledescription="carousel">
+  <div role="group" aria-roledescription="slide" aria-label="1 of 4">
+    <h3>Breaking news</h3>
+    <p>Top story today.</p>
+  </div>
+  <div role="group" aria-roledescription="slide" aria-label="2 of 4" hidden>
+    <h3>Sports</h3>
+    <p>Match recap.</p>
+  </div>
+</section>

@@ -1,0 +1,13 @@
+<!-- Bad: `<div class="carousel">` root with no semantic markup — no
+     role, no aria-roledescription, no data-bs-ride, no landmark name.
+     The class-token signal fires; the reviewer confirms whether this is
+     a real auto-advancing carousel (look for JS wiring `setInterval`,
+     Swiper/Slick config, etc. — not visible in this fragment) and
+     whether controls exist. -->
+<div class="slideshow">
+  <ul class="slideshow-track">
+    <li class="slideshow-slide"><img src="a.jpg" alt="" /></li>
+    <li class="slideshow-slide"><img src="b.jpg" alt="" /></li>
+    <li class="slideshow-slide"><img src="c.jpg" alt="" /></li>
+  </ul>
+</div>
