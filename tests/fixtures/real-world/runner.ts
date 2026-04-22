@@ -35,6 +35,7 @@ import { pathToFileURL } from "node:url";
 import { type ParsedFile, runScan } from "../../../src/engine/scanner.ts";
 import { parseCss, parseHtml, parseTsx } from "../../../src/input/parsers/index.ts";
 import { collectBuildArtifacts } from "../../../src/mcp/build-artifacts.ts";
+import { detectCatalogShape, withCatalogHint } from "../../../src/mcp/catalog-detect.ts";
 import {
   classifyWrapperCandidates,
   collectWrapperCandidates,
@@ -374,7 +375,26 @@ export async function loadAndScanFixture(
     toolInput.verboseMeta === true,
   );
 
-  return { fixture, files, result, report, formatted };
+  // Mirror tool-scan-project's catalog-shape probe (Q6-CATALOG-REPO-
+  // SIBLING-HINT) so fixtures asserting on `meta.catalogHint` and the
+  // accompanying `analysisCoverage.hints` entry exercise the same
+  // surface an MCP scan_project response would carry. The detector
+  // is a pure FS probe over the fixture's source tree — running it
+  // here keeps fixture invariants honest without coupling them to
+  // the full MCP envelope.
+  const catalogHint = detectCatalogShape(fixture.sourceDir);
+  const enrichedFormatted: ScanFormatted =
+    catalogHint === null
+      ? formatted
+      : {
+          ...formatted,
+          meta: {
+            ...withCatalogHint(formatted.meta, catalogHint),
+            catalogHint,
+          },
+        };
+
+  return { fixture, files, result, report, formatted: enrichedFormatted };
 }
 
 /** Recursively parses every supported file under `dir`. */
