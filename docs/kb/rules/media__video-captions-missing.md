@@ -10,9 +10,9 @@ satisfies: ["wcag22:1.2.2", "wcag21:1.2.2"]
 - **Satisfies:** `wcag22:1.2.2`, `wcag21:1.2.2`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
-<video> elements with audio content need a <track kind='captions'> child so deaf and hard-of-hearing users can follow the dialogue.
+<video> elements need a <track kind='captions'> child, and <iframe> embeds of known video hosts (YouTube, Vimeo, Wistia, Brightcove, Loom) need host-side captions enabled — so deaf and hard-of-hearing users can follow the dialogue.
 ## Why it matters
-Captions are the minimum accessible representation of spoken content in prerecorded video. Without them, deaf users are locked out of the information — and in contexts where sound is off by default (social feeds, waiting rooms, open-plan offices) captions also benefit hearing users.
+Captions are the minimum accessible representation of spoken content in prerecorded and live video. For self-hosted `<video>`, a `<track kind="captions">` child is the author-owned mechanism. For iframe-embedded media, captions come from the host platform and static analysis can only point at the embed — the agent must verify captions are turned on upstream.
 ## Normative quote
 > Captions are provided for all prerecorded audio content in synchronized media.
 ## Good example
@@ -21,7 +21,7 @@ Captions are the minimum accessible representation of spoken content in prerecor
 ```
 ## Bad example
 ```tsx
-<video src="launch.mp4" controls></video>
+<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="Launch demo"></iframe>
 ```
 ## References
 - <https://www.w3.org/TR/WCAG22/#captions-prerecorded>
