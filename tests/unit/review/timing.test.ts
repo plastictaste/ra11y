@@ -1,11 +1,19 @@
 /**
  * Unit tests for the review/timing finder.
- * Covers wcag22:2.2.1, 2.2.3, 2.2.4, 2.2.5, 2.2.6.
+ * Covers wcag22:2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.2.5, 2.2.6.
  */
 
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { finder } from "../../../src/review/finders/timing.ts";
 import { runFinder } from "../../helpers/run-finder.ts";
+
+const FIXTURE_ROOT = join(import.meta.dir, "..", "..", "fixtures", "review", "timing");
+
+function loadFixture(kind: "good" | "bad", name: string): string {
+  return readFileSync(join(FIXTURE_ROOT, kind, name), "utf8");
+}
 
 describe("review/timing", () => {
   it('flags <meta http-equiv="refresh"> in HTML', () => {
@@ -222,6 +230,144 @@ describe("review/timing", () => {
       });
       const hit = out.find((c) => c.reason.includes("setTimeout"));
       expect(hit?.reason).toContain("verify the user can pause, extend, or disable");
+    });
+  });
+
+  describe("Pause, Stop, Hide (2.2.2) escalation for DOM-mutating setInterval", () => {
+    // When a setInterval callback statically mutates DOM state (style,
+    // className, classList, attributes, innerHTML, etc.), the finder
+    // enriches the reason text with the Pause/Stop/Hide sentence and
+    // emits additional candidates under wcag22:2.2.2 + wcag21:2.2.2 so
+    // the 2.2.2 question reaches the agent alongside 2.2.1. Reason-text
+    // enrichment per ai-first-consumer.md — no severity change, no
+    // suppression, candidate stays in the primary list.
+
+    it("escalates when the inline arrow body writes to .style", () => {
+      const src = `setInterval(() => { el.style.transform = "translateX(" + x + "px)"; }, 2000);`;
+      const out = runFinder(finder, src, { filePath: "carousel.js" });
+      const hit = out.find((c) => c.criterionId === "wcag22:2.2.1");
+      expect(hit?.reason).toContain("WCAG 2.2.2");
+      expect(hit?.reason).toContain("Pause, Stop, Hide");
+      expect(hit?.reason).toContain("auto-advancing visual motion");
+    });
+
+    it("adds wcag22:2.2.2 + wcag21:2.2.2 candidates at the same location", () => {
+      const src = `setInterval(() => { el.classList.add("on"); }, 1500);`;
+      const out = runFinder(finder, src, { filePath: "blink.js" });
+      const ids = new Set(out.map((c) => c.criterionId));
+      expect(ids.has("wcag22:2.2.2")).toBe(true);
+      expect(ids.has("wcag21:2.2.2")).toBe(true);
+    });
+
+    it("escalates on .classList.add/remove/toggle", () => {
+      const src = loadFixture("bad", "carousel-inline-arrow-classlist.js");
+      const out = runFinder(finder, src, { filePath: "carousel.js" });
+      const mutating = out.find((c) => c.reason.includes("Pause, Stop, Hide"));
+      expect(mutating).toBeDefined();
+    });
+
+    it("escalates on .innerHTML assignment", () => {
+      const src = loadFixture("bad", "blink-innerhtml-mutation.js");
+      const out = runFinder(finder, src, { filePath: "counter.js" });
+      const hit = out.find((c) => c.reason.includes("Pause, Stop, Hide"));
+      expect(hit).toBeDefined();
+    });
+
+    it("escalates on .setAttribute", () => {
+      const src = `setInterval(() => { el.setAttribute("data-step", step); }, 2000);`;
+      const out = runFinder(finder, src, { filePath: "a.js" });
+      const hit = out.find((c) => c.criterionId === "wcag22:2.2.2");
+      expect(hit).toBeDefined();
+    });
+
+    it("escalates via identifier callback with same-file function declaration", () => {
+      // This is the canonical image-carousel shape: setInterval(run, 2000)
+      // where `run` is defined as a named function in the same file and
+      // mutates DOM state. The probe must resolve the identifier one hop.
+      const src = loadFixture("bad", "carousel-inline-style-mutation.js");
+      const out = runFinder(finder, src, { filePath: "script.js" });
+      const hit = out.find((c) => c.reason.includes("Pause, Stop, Hide"));
+      expect(hit).toBeDefined();
+    });
+
+    it("escalates via identifier callback with const arrow definition", () => {
+      const src = `
+        const advance = () => {
+          el.style.left = next + "px";
+        };
+        setInterval(advance, 2500);
+      `;
+      const out = runFinder(finder, src, { filePath: "slider.js" });
+      const hit = out.find((c) => c.reason.includes("Pause, Stop, Hide"));
+      expect(hit).toBeDefined();
+    });
+
+    it("does NOT escalate when the interval callback does not write to the DOM", () => {
+      const src = loadFixture("good", "polling-no-dom-write.js");
+      const out = runFinder(finder, src, { filePath: "poll.js" });
+      const hasEscalation = out.some((c) => c.reason.includes("Pause, Stop, Hide"));
+      expect(hasEscalation).toBe(false);
+      // The base 2.2.1 candidate still surfaces — the agent reads the
+      // file to judge whether the fetch's result reaches the DOM.
+      const base = out.find((c) => c.criterionId === "wcag22:2.2.1");
+      expect(base).toBeDefined();
+    });
+
+    it("does NOT escalate setTimeout calls that write to the DOM", () => {
+      // setTimeout fires once — it is not "auto-updating information"
+      // under 2.2.2 even when it mutates the DOM. Surface at 2.2.1 as
+      // always; omit the Pause, Stop, Hide prefix.
+      const src = loadFixture("good", "settimeout-dom-mutation.js");
+      const out = runFinder(finder, src, { filePath: "notice.js" });
+      const hasEscalation = out.some((c) => c.reason.includes("Pause, Stop, Hide"));
+      expect(hasEscalation).toBe(false);
+      const ids = new Set(out.map((c) => c.criterionId));
+      expect(ids.has("wcag22:2.2.2")).toBe(false);
+      expect(ids.has("wcag22:2.2.1")).toBe(true);
+    });
+
+    it("does NOT escalate when the identifier callback cannot be resolved in-file", () => {
+      // `rotate` is imported from elsewhere; the probe is intentionally
+      // narrow (same-file, single hop) and must silently not escalate
+      // rather than guess. The agent reading the file sees the import
+      // and decides.
+      const src = `
+        import { rotate } from "./util";
+        setInterval(rotate, 4000);
+      `;
+      const out = runFinder(finder, src, { filePath: "main.js" });
+      const hasEscalation = out.some((c) => c.reason.includes("Pause, Stop, Hide"));
+      expect(hasEscalation).toBe(false);
+    });
+
+    it("keeps duration and enclosing-function enrichment after the 2.2.2 prefix", () => {
+      const src = `
+        class Carousel {
+          start() {
+            setInterval(() => { this.el.style.opacity = "0"; }, 5000);
+          }
+        }
+      `;
+      const out = runFinder(finder, src, { filePath: "carousel.tsx" });
+      const hit = out.find((c) => c.criterionId === "wcag22:2.2.1");
+      expect(hit?.reason).toContain("Pause, Stop, Hide");
+      expect(hit?.reason).toContain("duration `5000`");
+      expect(hit?.reason).toContain("in `start()`");
+      expect(hit?.reason).toContain("verify the user can pause, extend, or disable");
+    });
+
+    it("preserves confidence medium on the escalated candidates", () => {
+      // Escalation is additive annotation — it doesn't let the finder
+      // claim stronger evidence about user-facing intent. Stay at
+      // medium so consumers that filter by confidence see consistent
+      // semantics across 2.2.1 / 2.2.2 candidates from this finder.
+      const src = `setInterval(() => { el.style.color = "red"; }, 1000);`;
+      const out = runFinder(finder, src, { filePath: "blink.js" });
+      const twoTwoTwo = out.filter((c) => c.criterionId.endsWith(":2.2.2"));
+      expect(twoTwoTwo.length).toBeGreaterThan(0);
+      for (const c of twoTwoTwo) {
+        expect(c.confidence).toBe("medium");
+      }
     });
   });
 });

@@ -42,6 +42,7 @@ import type {
 } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 import type { RuleContext } from "../../types/rule.ts";
+import { callbackMutatesDom } from "./timing-dom-mutation.ts";
 
 const CRITERION_IDS = [
   "wcag22:2.2.1",
@@ -56,15 +57,32 @@ const CRITERION_IDS = [
   "wcag21:2.2.6",
 ] as const;
 
+/**
+ * Additional criterion IDs attached when a `setInterval` callback is
+ * statically observed to mutate DOM state. A repeating DOM mutation is
+ * the canonical shape of "auto-updating information" under 2.2.2
+ * Pause, Stop, Hide — the agent needs to see 2.2.2 next to 2.2.1 on
+ * the same site so both the "is the duration long enough to need a
+ * user control?" (2.2.1) and "does this auto-advancing content have a
+ * pause mechanism?" (2.2.2) questions get asked from the same finding.
+ */
+const PAUSE_STOP_HIDE_CRITERIA = ["wcag22:2.2.2", "wcag21:2.2.2"] as const;
+
 /** Source-text patterns for JS timing APIs. */
-const SOURCE_PATTERNS: readonly { readonly pattern: RegExp; readonly label: string }[] = [
+const SOURCE_PATTERNS: readonly {
+  readonly pattern: RegExp;
+  readonly label: string;
+  readonly isInterval: boolean;
+}[] = [
   {
     pattern: /\bsetInterval\s*\(/g,
     label: "setInterval() call",
+    isInterval: true,
   },
   {
     pattern: /\bsetTimeout\s*\(/g,
     label: "setTimeout() call",
+    isInterval: false,
   },
 ];
 
@@ -74,9 +92,19 @@ const META_REFRESH_REASON =
 const JS_REASON_PREFIX =
   " — verify the user can pause, extend, or disable any user-facing time limit this governs (not required for session-keepalive / debounce / animation)";
 
+/**
+ * Prepended to the reason text when a `setInterval` callback statically
+ * mutates DOM state. The sentence names the missing pause UI generically
+ * so the agent knows what to look for without a heuristic pretending the
+ * UI is definitely absent — see ai-first-consumer.md on reason-text
+ * enrichment over heuristic suppression.
+ */
+const PAUSE_STOP_HIDE_PREFIX =
+  "This `setInterval` callback mutates DOM state and may be driving auto-advancing visual motion. WCAG 2.2.2 (Pause, Stop, Hide) requires a user-controllable pause/stop/hide mechanism for auto-updating content running longer than 5 seconds; verify such a control exists and is keyboard-accessible. ";
+
 export const finder = defineCandidateFinder({
   id: "review/timing",
-  criterionIds: [...CRITERION_IDS],
+  criterionIds: [...CRITERION_IDS, ...PAUSE_STOP_HIDE_CRITERIA],
   scope: "node",
   appliesTo: { fileExtensions: [".html", ".htm", ".tsx", ".jsx", ".ts", ".js"] },
   docs: {
@@ -131,13 +159,13 @@ function findMetaRefreshJsx(module: TsxModule): readonly JsxElement[] {
 
 function findSourceCandidates(ctx: RuleContext, out: ReviewCandidate[]): void {
   const seen = new Set<number>();
-  for (const { pattern, label } of SOURCE_PATTERNS) {
+  for (const { pattern, label, isInterval } of SOURCE_PATTERNS) {
     pattern.lastIndex = 0;
     for (const match of ctx.source.matchAll(pattern)) {
       const offset = match.index ?? 0;
       if (seen.has(offset)) continue;
       seen.add(offset);
-      emitJsCandidates(ctx, out, offset, match[0].length, label);
+      emitJsCandidates(ctx, out, offset, match[0].length, label, isInterval);
     }
   }
 }
@@ -148,6 +176,16 @@ function findSourceCandidates(ctx: RuleContext, out: ReviewCandidate[]): void {
  * with the duration argument and the enclosing function name so the
  * agent has the dismissal signal inline — per AI-first consumer
  * doctrine, annotation instead of suppression.
+ *
+ * For `setInterval` calls whose callback statically mutates DOM state
+ * (style/class/attribute/innerHTML/etc.), the reason is further
+ * prepended with a Pause-Stop-Hide sentence and two additional
+ * candidates are emitted under `wcag22:2.2.2` / `wcag21:2.2.2` so the
+ * finding is also discoverable through a 2.2.2 criterion filter. The
+ * DOM-mutation signal is probe-level — a false positive (e.g. a DOM
+ * mutation that represents an *essential* animation, or one guarded
+ * by a pause control the scanner can't see) still surfaces and the
+ * agent dismisses by reading, per surface-don't-suppress doctrine.
  */
 function emitJsCandidates(
   ctx: RuleContext,
@@ -155,6 +193,7 @@ function emitJsCandidates(
   offset: number,
   matchLength: number,
   label: string,
+  isInterval: boolean,
 ): void {
   const { line, column } = offsetToLineColumn(ctx.source, offset);
   const openParen = offset + matchLength - 1;
@@ -162,8 +201,13 @@ function emitJsCandidates(
   const durationClause = duration ? ` with duration \`${duration}\`` : "";
   const enclosing = describeEnclosingFunction(ctx.source, offset);
   const enclosingClause = enclosing ? ` in \`${enclosing}\`` : "";
-  const reason = `${label}${durationClause}${enclosingClause}${JS_REASON_PREFIX}`;
-  for (const criterionId of CRITERION_IDS) {
+  const coreReason = `${label}${durationClause}${enclosingClause}${JS_REASON_PREFIX}`;
+  const escalate = isInterval && callbackMutatesDom(ctx.source, openParen);
+  const reason = escalate ? `${PAUSE_STOP_HIDE_PREFIX}${coreReason}` : coreReason;
+  const criteriaForSite: readonly string[] = escalate
+    ? [...CRITERION_IDS, ...PAUSE_STOP_HIDE_CRITERIA]
+    : CRITERION_IDS;
+  for (const criterionId of criteriaForSite) {
     // Confidence "medium": setTimeout/setInterval is concrete evidence
     // of a timer, but the reviewer's question — "does this govern a
     // user-facing time limit?" — depends on what the timer actually
