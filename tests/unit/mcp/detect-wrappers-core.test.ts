@@ -356,11 +356,11 @@ describe("collectWrapperCandidates: definitionFile (Q2-WRAPPATH)", () => {
 });
 
 describe("hasOpaquePascalCaseComponents", () => {
-  // Q3-BOOTSTRAP-WRAPPER-DETECT-EMPTY-REASON: the boolean branch signal
-  // the detect_native_wrappers tool uses to distinguish "no PascalCase
-  // components at all" from "PascalCase components present but none
-  // carry the detector's required onClick/controlled-input props."
-  // The latter case is the Astro/MDX pattern and produces the
+  // Boolean branch signal the detect_native_wrappers tool uses to
+  // distinguish "no PascalCase components at all" from "PascalCase
+  // components present but none carry the detector's required
+  // onClick/controlled-input props." The latter case is the Astro/MDX
+  // pattern and produces the
   // `no-jsx-onclick-candidates-found-but-opaque-components-present`
   // emptyReason code. The helper intentionally ignores prop shape —
   // opaqueness is a tag-name signal only.

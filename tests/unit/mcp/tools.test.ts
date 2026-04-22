@@ -1208,15 +1208,14 @@ describe("MCP tool: detect_native_wrappers", () => {
   });
 
   it("stamps emptyReason 'no-jsx-onclick-candidates-found-but-opaque-components-present' when PascalCase components exist but none carry onClick", async () => {
-    // Q3-BOOTSTRAP-WRAPPER-DETECT-EMPTY-REASON: the Astro/MDX case.
-    // The scanned JSX/TSX carries PascalCase wrappers (15 of them on
-    // the Bootstrap Astro repo that motivated this item) but none
-    // have inline `onClick` handlers — wrappers in MDX/Astro render as
-    // children and receive events at the leaf level, not the tag.
-    // The bare `candidates: []` reads as "nothing to wrap here" per
-    // "Zero-output success is ambiguous failure"; the structured
-    // reason closes the ambiguity so the agent can branch into the
-    // opaque-components inventory on the scan surfaces instead.
+    // The Astro/MDX case. The scanned JSX/TSX carries PascalCase
+    // wrappers but none have inline `onClick` handlers — wrappers in
+    // MDX/Astro render as children and receive events at the leaf
+    // level, not the tag. The bare `candidates: []` reads as "nothing
+    // to wrap here" per "Zero-output success is ambiguous failure";
+    // the structured reason closes the ambiguity so the agent can
+    // branch into the opaque-components inventory on the scan
+    // surfaces instead.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join: joinPath } = await import("node:path");
