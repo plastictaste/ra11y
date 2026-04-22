@@ -37,6 +37,7 @@ import { suppressTool } from "./tool-suppress.ts";
 import { verdictCandidateTool } from "./tool-verdict-candidate.ts";
 import { vpatTool } from "./tool-vpat.ts";
 import { wrapperIntrospectTool } from "./tool-wrapper-introspect.ts";
+import type { McpSession } from "./session.ts";
 import {
   buildConfigureOpts,
   errorResult,
@@ -50,11 +51,50 @@ export type { McpTool, McpToolDef, McpToolResult } from "./tools-helpers.ts";
 
 // ─── Tool: explain_rule ─────────────────────────────────────────────────────
 
+/**
+ * Expand a rule's declared `satisfies` list across every loaded standard via
+ * the criteria registry's reciprocal `equivalentTo` index (CLAUDE.md §6, the
+ * same index the scanner uses when a finding's per-criterion array crosses
+ * standards). Direct declarations come first in their original source order;
+ * equivalent criteria follow, grouped by loaded-standard order so the shape
+ * stays deterministic across calls. Keeps parity with `scan_file` findings —
+ * a rule declared as `["wcag22:1.1.1", "wcag21:1.1.1"]` must surface its
+ * `section508:` and `en301549:` equivalents here for agents auditing those
+ * frameworks without cross-reading rule metadata against the standards
+ * registry.
+ */
+function expandSatisfies(
+  declared: readonly string[],
+  session: McpSession,
+): readonly string[] {
+  const declaredSet = new Set(declared);
+  const expanded = new Set<string>();
+  for (const critId of declared) {
+    for (const equivalent of session.registry.criteria.equivalenceClosure(critId)) {
+      if (!declaredSet.has(equivalent)) expanded.add(equivalent);
+    }
+  }
+  // Group added equivalents by loaded-standard order so, e.g., section508
+  // entries land before en301549 entries regardless of the reciprocal
+  // traversal order.
+  const byStandard: string[] = [];
+  for (const standard of session.registry.standards) {
+    const prefix = `${standard.id}:`;
+    const group: string[] = [];
+    for (const id of expanded) {
+      if (id.startsWith(prefix)) group.push(id);
+    }
+    group.sort();
+    byStandard.push(...group);
+  }
+  return [...declared, ...byStandard];
+}
+
 const explainRuleTool: McpTool = {
   def: {
     name: "explain_rule",
     description:
-      "Get full details for a rule — description, rationale, normative WCAG quote, good/bad examples, and spec references. Use when a finding needs context.",
+      "Get full details for a rule — description, rationale, normative WCAG quote, good/bad examples, and spec references. Use when a finding needs context. `satisfies` is the full cross-standard set (declared criteria first, then equivalents from every loaded standard via the `equivalentTo` reciprocal index) so agents auditing Section 508 or EN 301 549 can see rule coverage without cross-reading the standards registry.",
     inputSchema: {
       type: "object",
       properties: {
@@ -86,7 +126,7 @@ const explainRuleTool: McpTool = {
     return textResult({
       id: rule.id,
       severity: rule.severity,
-      satisfies: [...rule.satisfies],
+      satisfies: expandSatisfies(rule.satisfies, session),
       description: rule.docs.description,
       rationale: rule.docs.rationale,
       ...(rule.docs.normativeQuote ? { normativeQuote: rule.docs.normativeQuote } : {}),

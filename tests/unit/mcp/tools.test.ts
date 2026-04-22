@@ -234,6 +234,34 @@ describe("MCP tool: explain_rule", () => {
 
     expect(result.isError).toBe(true);
   });
+
+  it("expands satisfies through the equivalentTo reciprocal index", async () => {
+    // media/alt-text-missing declares `["wcag22:1.1.1", "wcag21:1.1.1"]` —
+    // the criteria registry's reciprocal closure should pull in
+    // `section508:1.1.1` and `en301549:9.1.1.1` so Section 508 / EN 301 549
+    // auditors see the full cross-standard coverage without having to
+    // cross-read the standards registry.
+    const tool = findTool("explain_rule");
+    const session = new McpSession();
+    const result = await tool.handler({ ruleId: "media/alt-text-missing" }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as { satisfies: string[] };
+    expect(data.satisfies).toContain("wcag22:1.1.1");
+    expect(data.satisfies).toContain("wcag21:1.1.1");
+    expect(data.satisfies).toContain("section508:1.1.1");
+    expect(data.satisfies).toContain("en301549:9.1.1.1");
+    // Declared criteria come first in source order; equivalents follow.
+    expect(data.satisfies.indexOf("wcag22:1.1.1")).toBeLessThan(
+      data.satisfies.indexOf("section508:1.1.1"),
+    );
+    expect(data.satisfies.indexOf("wcag21:1.1.1")).toBeLessThan(
+      data.satisfies.indexOf("section508:1.1.1"),
+    );
+    // No duplicates (declared criteria are not re-added via their own
+    // equivalence closures).
+    expect(new Set(data.satisfies).size).toBe(data.satisfies.length);
+  });
 });
 
 describe("MCP tool: scan", () => {
