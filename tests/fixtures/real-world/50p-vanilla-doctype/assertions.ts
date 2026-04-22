@@ -34,22 +34,21 @@
  *                        landmark-main currently silent. After fix: both rules
  *                        must fire.
  *
- * Live scan evidence (probe run against current source — harness RED):
+ * Live scan evidence after the fix (looksLikeFullPage tightening):
  *
- *   Violations emitted today:
+ *   Violations emitted:
+ *     [semantics/landmark-main]    counter.html:body — branch B (h1 + content)
+ *     [semantics/landmark-main]    faq-accordion.html:body — branch B
+ *     [semantics/landmark-main]    hidden-search.html:body — branch C (heading + ul + button)
+ *     [semantics/landmark-main]    progress-steps.html:body — branch B
  *     [semantics/heading-hierarchy] faq-accordion.html:16 — h2→h4 skip
  *     [semantics/heading-hierarchy] hidden-search.html:17 — no h1 (first is h3)
  *     [semantics/heading-hierarchy] progress-steps.html:12 — h1→h3 skip
- *     (zero semantics/landmark-main violations — the fragment heuristic fires)
  *
- * The `violation-present { ruleId: "semantics/landmark-main" }` expectation
- * is the one that will be RED on this commit and GREEN after the fix.
- * The `semantics/heading-hierarchy` expectations are GREEN on this commit and
- * guard against those regressions independently.
- *
- * The fix (tightening `looksLikeFullPage` to treat DOCTYPE+html+body as
- * sufficient evidence of a full page, regardless of nav/header presence)
- * lands in a separate commit per CLAUDE.md §7 bug-fix workflow.
+ * Both rule families are guarded below: heading-hierarchy was firing pre-fix
+ * (no looksLikeFullPage gate); landmark-main fires post-fix once the heuristic
+ * recognises full-page shape from h1 + body content or heading + list +
+ * interactive trios.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
@@ -59,15 +58,16 @@ export const assertions: FixtureAssertions = {
     "Four full-page vanilla HTML files (DOCTYPE+html+head+body, no nav/header/footer) " +
     "with missing <main> landmarks and broken heading hierarchies — guards that the " +
     "fragment-or-layout heuristic in semantics/landmark-main does not silently skip " +
-    "files whose full-page shape is evidenced by DOCTYPE+html+body alone.",
+    "files whose full-page shape is evidenced by an h1 + body content (branch B) or " +
+    "a heading + list + interactive trio (branch C).",
   origin: {
     notes:
       "Sanitized from bradtraversy/50projects50days vanilla corpus. " +
-      "Field-test pass (52 files) produced 0 semantics/landmark-main findings. " +
-      "Root cause: looksLikeFullPage() in src/rules/semantics/landmark-main.ts " +
-      "requires header/nav/footer/aside presence; 50p files have none. " +
-      "This fixture is intentionally RED on the capturing commit and GREEN " +
-      "after the fix commit that tightens the fragment heuristic.",
+      "Field-test pass (52 files) produced 0 semantics/landmark-main findings " +
+      "pre-fix. Root cause: looksLikeFullPage() in src/rules/semantics/landmark-main.ts " +
+      "originally required header/nav/footer/aside presence; 50p files have none. " +
+      "Tightening added two layered branches that recognise full-page shape from " +
+      "h1 + body descendant count and heading + list + interactive presence.",
   },
   expectations: [
     // All four files must parse cleanly — any parse error would mean the
@@ -76,19 +76,19 @@ export const assertions: FixtureAssertions = {
 
     // ── semantics/landmark-main ─────────────────────────────────────────────
     //
-    // NOTE: The landmark-main assertion is intentionally disabled until the
-    // rule's fragment heuristic is tightened. A naive widening of
-    // `looksLikeFullPage` to "DOCTYPE + <html> + <body>" produces a large
-    // regression against good-path test fixtures that share that shape but
-    // legitimately don't need <main> (e.g. tests/fixtures/good/alt-text-missing/
-    // img-with-alt.html, tests/fixtures/good/button-name/*). The right design
-    // needs a stronger signal — body descendant count, form/interactive
-    // element density, or a content-vs-snippet classifier. See backlog item
-    // Q5-LANDMARK-FULLPAGE-HEURISTIC-TIGHTEN for the open design question.
-    //
-    // When the tightened heuristic ships, re-enable this expectation:
-    //   { kind: "violation-present", ruleId: "semantics/landmark-main",
-    //     reasonIncludes: "no <main> landmark" }
+    // The fragment heuristic in `looksLikeFullPage` was tightened to add two
+    // page-shape branches in addition to the original "explicit landmark"
+    // gate: (B) an `<h1>` plus ≥5 body descendants, and (C) any heading +
+    // a list (ul/ol/dl) + at least one interactive element. All four 50p
+    // files cross one of those branches: counter / progress-steps /
+    // faq-accordion via branch B (h1 + content), hidden-search via branch C
+    // (h3 + ul + button/input). The rule emits one violation per file at
+    // the body open-tag.
+    {
+      kind: "violation-present",
+      ruleId: "semantics/landmark-main",
+      reasonIncludes: "no <main> landmark",
+    },
 
     // ── semantics/heading-hierarchy ─────────────────────────────────────────
     //

@@ -142,4 +142,214 @@ describe("rule semantics/landmark-main", () => {
       expect(v).toHaveLength(0);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Heuristic branches — see `looksLikeFullPage()` in src/.../landmark-main.ts.
+  //
+  // The rule's eligibility predicate has three layered branches:
+  //   A. explicit landmark structure (header/nav/footer/aside)  — covered
+  //      by the "fires when" / "does NOT fire when" blocks above.
+  //   B. h1 + body content (≥5 element descendants of body).
+  //   C. any heading + list (ul/ol/dl) + at least one interactive element.
+  //
+  // The branches were added to recover under-detection on full-page vanilla
+  // HTML files that lack header/nav/footer (counter pages, FAQ pages,
+  // multi-step widgets) — the kind of page hand-authored hobbyist projects
+  // tend to produce. See `tests/fixtures/real-world/50p-vanilla-doctype/`.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("heuristic branch B (h1 + body content)", () => {
+    it("fires on a document with <h1> and ≥5 body descendants but no <main>", () => {
+      // Counter-style page: h1 + p (value display) + 2 buttons + script
+      // = 5 descendants. Only branch A (no landmarks present) and
+      // branch B (h1 + ≥5 descendants) gate this; branch B trips.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <h1>Counter</h1>",
+          '    <p id="value">0</p>',
+          '    <button id="decrease">Decrease</button>',
+          '    <button id="increase">Increase</button>',
+          '    <script src="script.js"></script>',
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no <main>");
+    });
+
+    it("does NOT fire when <h1> is present but body has only 1-2 descendants", () => {
+      // Documentary snippet — h1 + img is the canonical alt-text fixture
+      // shape, and shouldn't be nagged for a missing <main>.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <h1>About the report</h1>",
+          '    <img src="x.png" alt="">',
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when body has many descendants but no <h1>", () => {
+      // Demo snippet with multiple controls but no top-level page heading.
+      // Without an h1 and without explicit landmarks, the document reads
+      // as a fragment/widget rather than a full page.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <button>One</button>",
+          "    <button>Two</button>",
+          "    <button>Three</button>",
+          "    <button>Four</button>",
+          "    <button>Five</button>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("counts descendants from inside a wrapping <div class='container'>", () => {
+      // Common authored shape: <body><div class="container">…</div></body>.
+      // The wrapper isn't a landmark, but its descendants still count for
+      // the body-shape inspection. h1 + 4 sibling content blocks under
+      // the wrapper = 6+ descendants, branch B trips.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div class="container">',
+          "      <h1>Account Setup</h1>",
+          "      <h3>Choose a plan</h3>",
+          '      <div class="progress">',
+          '        <div class="circle">1</div>',
+          '        <div class="circle">2</div>',
+          "      </div>",
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(1);
+    });
+  });
+
+  describe("heuristic branch C (heading + list + interactive)", () => {
+    it("fires on a document with a heading, a <ul>, and an interactive element", () => {
+      // Hidden-search shape: h3 + button + input + ul of items.
+      // No h1 (so branch B misses), no landmarks (so branch A misses),
+      // but heading + list + interactive together signal "real content
+      // area" and branch C trips.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div class="container">',
+          '      <div class="search-box">',
+          '        <button id="btn"><span>Search</span></button>',
+          '        <input type="text" placeholder="Search..." />',
+          "      </div>",
+          "      <h3>Recent searches</h3>",
+          "      <ul>",
+          "        <li>Item one</li>",
+          "        <li>Item two</li>",
+          "      </ul>",
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no <main>");
+    });
+
+    it("does NOT fire on heading + list without an interactive element", () => {
+      // Two-of-three signals isn't enough — a heading-and-list pair is a
+      // common documentary shape (release notes, FAQ summaries) that
+      // doesn't necessarily warrant a <main>.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <h2>Recent changes</h2>",
+          "    <ul>",
+          "      <li>Bug fix</li>",
+          "      <li>New feature</li>",
+          "    </ul>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on heading + interactive without a list", () => {
+      // Heading-plus-control demo — a radio group below a heading is the
+      // forms-radio-group fixture shape, not a full-page shape.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <h3>Pick one</h3>",
+          '    <input type="radio" name="x" />',
+          '    <input type="radio" name="x" />',
+          '    <input type="radio" name="x" />',
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT count <head> children toward body descendants", () => {
+      // <meta>/<link>/<title> in <head> would inflate the descendant count
+      // and let a head-heavy document cross branch B's threshold without
+      // any visible body content. The body-range containment check in
+      // inspectBody() must filter them out.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <head>",
+          '    <meta charset="utf-8">',
+          '    <meta name="viewport" content="width=device-width">',
+          '    <meta name="description" content="x">',
+          '    <meta name="author" content="y">',
+          "    <title>X</title>",
+          '    <link rel="stylesheet" href="a.css">',
+          '    <link rel="stylesheet" href="b.css">',
+          "  </head>",
+          "  <body>",
+          "    <h1>Title</h1>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      // Body contains only <h1> (1 descendant); branch B requires ≥5.
+      // No list, no interactive — branch C fails. No landmarks — branch A
+      // fails. Rule does not fire.
+      expect(v).toHaveLength(0);
+    });
+  });
 });

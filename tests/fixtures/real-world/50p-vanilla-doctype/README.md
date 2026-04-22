@@ -21,9 +21,11 @@ those — the heuristic silently passes them.
 | `faq-accordion.html` | missing `<main>`, no header/nav/footer | h2 → h4 skip |
 
 **Lock-in assertion.** `violation-present { ruleId: "semantics/landmark-main" }`
-is RED on this commit (the bug) and GREEN after the fix tightens
-`looksLikeFullPage` to treat DOCTYPE+html+body as sufficient evidence of a
-full page.
+was RED on the capturing commit and is GREEN after the fix tightens
+`looksLikeFullPage` to recognise full-page shape from either (B) an `<h1>`
+plus ≥5 body descendants or (C) any heading + list (`ul`/`ol`/`dl`) + at
+least one interactive element. The original landmark-presence branch (A)
+still applies for pages that already declare `<header>`/`<nav>`/`<footer>`/`<aside>`.
 
 **Sanitization.** Class names, button labels, and content are replaced with
 neutral placeholders. No brand names or project-specific identifiers remain.

@@ -5,18 +5,20 @@
     <title>aria-labelledby — good (IDREF list, multiple tokens)</title>
   </head>
   <body>
-    <!--
-      aria-labelledby accepts a space-separated list of IDREFs. When
-      every token resolves, the element's accessible name is the
-      concatenation of the referenced elements' text content, in the
-      order listed. This pattern names a form section with a heading
-      followed by a sub-label.
-    -->
-    <h1 id="account-heading">Account</h1>
-    <span id="account-note">(required)</span>
-    <fieldset aria-labelledby="account-heading account-note">
-      <legend class="sr-only">Account details</legend>
-      <label>Email <input type="email" /></label>
-    </fieldset>
+    <main>
+      <!--
+        aria-labelledby accepts a space-separated list of IDREFs. When
+        every token resolves, the element's accessible name is the
+        concatenation of the referenced elements' text content, in the
+        order listed. This pattern names a form section with a heading
+        followed by a sub-label.
+      -->
+      <h1 id="account-heading">Account</h1>
+      <span id="account-note">(required)</span>
+      <fieldset aria-labelledby="account-heading account-note">
+        <legend class="sr-only">Account details</legend>
+        <label>Email <input type="email" /></label>
+      </fieldset>
+    </main>
   </body>
 </html>
