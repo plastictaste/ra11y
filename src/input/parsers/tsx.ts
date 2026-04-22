@@ -581,12 +581,7 @@ function isLowercase(s: string): boolean {
  * JSX-enabled default — tags in the post-transform residue are authored
  * JSX, not stray comparison operators.
  */
-const JSX_BEARING_EXTENSIONS: ReadonlySet<string> = new Set([
-  ".jsx",
-  ".tsx",
-  ".mdx",
-  ".astro",
-]);
+const JSX_BEARING_EXTENSIONS: ReadonlySet<string> = new Set([".jsx", ".tsx", ".mdx", ".astro"]);
 
 /**
  * File extensions that are JS/TS but do NOT carry authored JSX by
@@ -651,8 +646,7 @@ const JSX_IMPORT_SIGNAL_RE =
   /(?:\bfrom\s+["']react["']|\brequire\(\s*["']react["']\s*\)|\/\*\*?\s*@jsx\b|\/\/\s*@jsx\b)/;
 
 function hasJsxImportSignal(source: string): boolean {
-  const head = source.length <= JSX_IMPORT_SIGNAL_WINDOW
-    ? source
-    : source.slice(0, JSX_IMPORT_SIGNAL_WINDOW);
+  const head =
+    source.length <= JSX_IMPORT_SIGNAL_WINDOW ? source : source.slice(0, JSX_IMPORT_SIGNAL_WINDOW);
   return JSX_IMPORT_SIGNAL_RE.test(head);
 }
