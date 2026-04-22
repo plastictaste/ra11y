@@ -32,6 +32,7 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
+import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type {
   HtmlDocument,
   HtmlElement,
@@ -382,7 +383,15 @@ function hasErrorClassHint(value: string | null): boolean {
 }
 
 function bareMessageText(value: string): string | null {
-  const text = collapseWhitespace(value);
+  // HTML text content is parser-stripped of template directives, JSX
+  // text is not — and this helper feeds both paths. Strip first so
+  // `match.text` echoed in the reason ("bare text \"…\"") reflects
+  // the rendered shape, not a raw `{{ …}}` / `<% …%>` span. Also
+  // keeps the heuristic gates (keyword match, length bounds) honest:
+  // a Liquid tag like `{% if invalid %}` should not trip the
+  // error-keyword regex.
+  const stripped = stripTemplateDirectives(value).value;
+  const text = collapseWhitespace(stripped);
   if (!text) return null;
   const normalized = normalizeLower(text);
   if (!normalized) return null;

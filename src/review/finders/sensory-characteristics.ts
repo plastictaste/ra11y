@@ -16,6 +16,7 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
+import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 
@@ -116,6 +117,11 @@ function emitSensoryCandidates(
   candidates: ReviewCandidate[],
 ): void {
   const reason = `text references sensory characteristic "${matchedPhrase}" -- verify a non-sensory alternative exists`;
+  // HtmlText is parser-stripped, but attribute values and JSX text are
+  // not (see images-of-text.ts for the rationale) — strip defensively
+  // so the echoed `snippet` reflects the rendered-text shape, not raw
+  // Liquid/Jinja/ERB tokens that would read as noise to the agent.
+  const strippedSnippet = stripTemplateDirectives(text).value.slice(0, 120);
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": regex on visible text. "Click below" and
     // "the button above" match even when the surrounding UI does
@@ -125,7 +131,7 @@ function emitSensoryCandidates(
       criterionId,
       location: { filePath, line: loc.line, column: loc.column },
       reason,
-      snippet: text.slice(0, 120),
+      snippet: strippedSnippet,
       confidence: "low",
     });
   }

@@ -20,6 +20,7 @@
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
 import { getHtmlAttribute, getJsxAttribute } from "../../engine/ast-helpers.ts";
+import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type {
   HtmlDocument,
   HtmlElement,
@@ -180,21 +181,29 @@ function emitJsxImageCandidate(
 }
 
 function adjacentHtmlText(siblings: readonly HtmlNode[], index: number): readonly string[] {
+  // `HtmlText.value` is already template-directive-stripped at parse
+  // time (see `src/input/parsers/html.ts`), so a defensive re-strip
+  // here is a no-op in production — we keep the call so the finder
+  // holds the invariant locally and survives future parser changes.
   const out: string[] = [];
   const previous = siblings[index - 1];
-  if (previous?.kind === "HtmlText") out.push(previous.value);
+  if (previous?.kind === "HtmlText") out.push(stripTemplateDirectives(previous.value).value);
   const next = siblings[index + 1];
-  if (next?.kind === "HtmlText") out.push(next.value);
+  if (next?.kind === "HtmlText") out.push(stripTemplateDirectives(next.value).value);
   return out;
 }
 
 function adjacentJsxText(siblings: readonly JsxNode[] | null, index: number): readonly string[] {
   if (!siblings || index < 0) return [];
+  // JSX text-node values are NOT parser-stripped — the JSX tokenizer
+  // breaks on `{`, which shears `{{ … }}` into fragments but leaves
+  // ERB-style `<% … %>` intact (the `<` starts an element). Strip
+  // defensively so no surviving directive reaches the match/echo path.
   const out: string[] = [];
   const previous = siblings[index - 1];
-  if (previous?.kind === "JsxText") out.push(previous.value);
+  if (previous?.kind === "JsxText") out.push(stripTemplateDirectives(previous.value).value);
   const next = siblings[index + 1];
-  if (next?.kind === "JsxText") out.push(next.value);
+  if (next?.kind === "JsxText") out.push(stripTemplateDirectives(next.value).value);
   return out;
 }
 
@@ -286,8 +295,20 @@ function containsWholePhrase(haystack: string, needle: string): boolean {
   return ` ${normalized} `.includes(` ${needle} `);
 }
 
+/**
+ * Attribute values (`alt`, `aria-label`, `title`) are NOT stripped by
+ * the parser — only text-node content is. So `<img alt="{{ entry.name }}">`
+ * arrives here with the raw Liquid token intact, and if we echoed the
+ * unstripped `raw` into the candidate's reason it would quote the
+ * template expression at the agent ("short alt text `{{ entry.name }}`
+ * is repeated in surrounding text"). Run `stripTemplateDirectives` on
+ * the attribute value first so the reason shows the rendered-text
+ * shape, and so the normalized form used for matching isn't polluted
+ * by directive tokens either.
+ */
 function shortImageText(value: string | null): ImageText | null {
-  const raw = collapseWhitespace(value);
+  const stripped = value === null ? null : stripTemplateDirectives(value).value;
+  const raw = collapseWhitespace(stripped);
   if (!raw) return null;
   const normalized = normalizeForMatch(raw);
   if (!normalized) return null;
@@ -488,11 +509,15 @@ function isSvgJsxElement(element: JsxElement): boolean {
  * images-of-text finder.
  */
 function splitHtmlTextContent(element: HtmlElement): ParentText {
+  // HtmlText.value is pre-stripped by the parser; the re-strip keeps
+  // the finder's invariant local so a future parser change can't
+  // silently leak raw directive tokens into the "repeated in
+  // surrounding text" match path.
   const live: string[] = [];
   const svg: string[] = [];
   const visit = (node: HtmlNode, insideSvg: boolean): void => {
     if (node.kind === "HtmlText") {
-      (insideSvg ? svg : live).push(node.value);
+      (insideSvg ? svg : live).push(stripTemplateDirectives(node.value).value);
       return;
     }
     if (node.kind !== "HtmlElement") return;
@@ -505,11 +530,14 @@ function splitHtmlTextContent(element: HtmlElement): ParentText {
 
 /** JSX counterpart to {@link splitHtmlTextContent}. */
 function splitJsxTextContent(element: JsxElement): ParentText {
+  // JsxText.value is NOT parser-stripped — see `adjacentJsxText` for
+  // the rationale. Strip here too so parent-text match and any
+  // future echo path sees the rendered-text shape, not raw ERB.
   const live: string[] = [];
   const svg: string[] = [];
   const visit = (node: JsxNode, insideSvg: boolean): void => {
     if (node.kind === "JsxText") {
-      (insideSvg ? svg : live).push(node.value);
+      (insideSvg ? svg : live).push(stripTemplateDirectives(node.value).value);
       return;
     }
     if (node.kind !== "JsxElement") return;
