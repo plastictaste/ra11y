@@ -348,4 +348,130 @@ describe("review/images-of-text", () => {
       expect(hit?.reason).toContain("aria-label");
     });
   });
+
+  describe("sibling aggregation", () => {
+    // Honest aggregation per AI-first doctrine — same parent, same
+    // wrapping shape, enumerated-token alt, >= 4 consecutive members
+    // collapse to ONE consolidated candidate carrying
+    // siblingOccurrences. The fixture under
+    // tests/fixtures/real-world/jekyll-readme-sponsor-logos/ guards
+    // the same invariant on the canonical jekyll README repro; these
+    // unit tests cover the boundary conditions in isolation.
+
+    it("aggregates 4+ adjacent <a><img/></a> siblings with enumerated-token alt (HTML)", () => {
+      const links = Array.from(
+        { length: 5 },
+        (_, i) =>
+          `<a href="/s${i + 1}"><img class="sponsor-logo" src="/s${i + 1}.png" alt="Sponsor ${i + 1}"/></a>`,
+      ).join("");
+      const out = runFinder(finder, `<div>${links}</div>`, { filePath: "x.html" });
+      const aaCount = out.filter((c) => c.criterionId === "wcag22:1.4.5").length;
+      // 5 imgs collapse into 1 candidate per criterion, not 5 each.
+      expect(aaCount).toBe(1);
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain("aggregated from 5 adjacent sibling images");
+      expect(hit?.reason).toContain("<a><img/></a>");
+      expect(hit?.siblingOccurrences).toBeDefined();
+      expect(hit?.siblingOccurrences?.length).toBe(5);
+      // Each occurrence carries href + alt — present-when-meaningful.
+      const first = hit?.siblingOccurrences?.[0];
+      expect(first?.href).toBe("/s1");
+      expect(first?.alt).toBe("Sponsor 1");
+    });
+
+    it("aggregates 4+ adjacent bare <img/> siblings with enumerated-token alt (HTML)", () => {
+      const imgs = Array.from(
+        { length: 4 },
+        (_, i) => `<img class="sponsor-logo" src="/s${i + 1}.png" alt="Sponsor ${i + 1}"/>`,
+      ).join("");
+      const out = runFinder(finder, `<section>${imgs}</section>`, { filePath: "x.html" });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain("aggregated from 4 adjacent sibling images");
+      expect(hit?.reason).toContain("<img/>");
+      expect(hit?.siblingOccurrences?.length).toBe(4);
+      // Bare imgs carry no href.
+      expect(hit?.siblingOccurrences?.[0]?.href).toBeUndefined();
+    });
+
+    it("does NOT aggregate 3 siblings (below MIN_GROUP_SIZE)", () => {
+      const links = Array.from(
+        { length: 3 },
+        (_, i) =>
+          `<a href="/s${i + 1}"><img class="sponsor-logo" src="/s${i + 1}.png" alt="Sponsor ${i + 1}"/></a>`,
+      ).join("");
+      const out = runFinder(finder, `<div>${links}</div>`, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      // Three imgs each emit individually — no aggregation.
+      expect(aa.length).toBe(3);
+      for (const c of aa) {
+        expect(c.siblingOccurrences).toBeUndefined();
+      }
+    });
+
+    it("does NOT aggregate when shapes differ (mix of bare and wrapped)", () => {
+      // Same parent, but the wrapping shape alternates — provable-from-
+      // AST same-shape predicate fails, so no group.
+      const source = `<div>
+        <a href="/1"><img class="sponsor-logo" src="/1.png" alt="Sponsor 1"/></a>
+        <img class="sponsor-logo" src="/2.png" alt="Sponsor 2"/>
+        <a href="/3"><img class="sponsor-logo" src="/3.png" alt="Sponsor 3"/></a>
+        <img class="sponsor-logo" src="/4.png" alt="Sponsor 4"/>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(4);
+      for (const c of aa) {
+        expect(c.siblingOccurrences).toBeUndefined();
+      }
+    });
+
+    it("does NOT aggregate when alt-text differs in more than one token position", () => {
+      // First token is enumerated ("Gold"/"Silver"/etc.); second token
+      // is also distinct word ("Star"/"Comet"/etc.) — two divergent
+      // positions break the enumerated-token check.
+      const source = `<div>
+        <a href="/a"><img class="sponsor-logo" src="/a.png" alt="Gold Star"/></a>
+        <a href="/b"><img class="sponsor-logo" src="/b.png" alt="Silver Comet"/></a>
+        <a href="/c"><img class="sponsor-logo" src="/c.png" alt="Bronze Nova"/></a>
+        <a href="/d"><img class="sponsor-logo" src="/d.png" alt="Iron Moon"/></a>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(4);
+      for (const c of aa) {
+        expect(c.siblingOccurrences).toBeUndefined();
+      }
+    });
+
+    it("aggregates 4+ adjacent JSX <a><img/></a> siblings with enumerated-token alt", () => {
+      const source = `
+        const x = (
+          <div>
+            <a href="/s1"><img className="sponsor-logo" src="/s1.png" alt="Sponsor 1" /></a>
+            <a href="/s2"><img className="sponsor-logo" src="/s2.png" alt="Sponsor 2" /></a>
+            <a href="/s3"><img className="sponsor-logo" src="/s3.png" alt="Sponsor 3" /></a>
+            <a href="/s4"><img className="sponsor-logo" src="/s4.png" alt="Sponsor 4" /></a>
+          </div>
+        );
+      `;
+      const out = runFinder(finder, source);
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.reason).toContain("aggregated from 4 adjacent sibling images");
+      expect(hit?.siblingOccurrences?.length).toBe(4);
+      expect(hit?.siblingOccurrences?.[0]?.href).toBe("/s1");
+      expect(hit?.siblingOccurrences?.[0]?.alt).toBe("Sponsor 1");
+    });
+
+    it("singleton candidates omit siblingOccurrences (present-when-meaningful)", () => {
+      const out = runFinder(finder, `<a><img class="site-logo" src="/l.svg" alt="Acme"></a>`, {
+        filePath: "x.html",
+      });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      // Singletons NEVER carry the field — present-when-meaningful per
+      // CLAUDE.md §1 ("Ambiguous field shapes are dishonest").
+      expect(hit?.siblingOccurrences).toBeUndefined();
+    });
+  });
 });

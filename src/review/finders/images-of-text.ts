@@ -362,8 +362,9 @@ function htmlImgWouldFire(
 }
 
 function findJsxCandidates(root: TsxModule, filePath: string, candidates: ReviewCandidate[]): void {
+  const handled = new WeakSet<JsxElement>();
   for (const element of root.jsxElements) {
-    scanJsxElement(element, null, -1, null, null, filePath, candidates);
+    scanJsxElement(element, null, -1, null, null, filePath, candidates, handled);
   }
 }
 
@@ -375,13 +376,35 @@ function scanJsxElement(
   parentElement: JsxElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
+  handled: WeakSet<JsxElement>,
 ): void {
-  emitJsxImageCandidate(element, siblings, index, parentText, parentElement, filePath, candidates);
+  // Aggregation pre-pass for this element's direct children — same
+  // shape-provable rule as the HTML path. See emitHtmlAggregations.
+  emitJsxAggregations(element.children, filePath, candidates, handled);
+  emitJsxImageCandidate(
+    element,
+    siblings,
+    index,
+    parentText,
+    parentElement,
+    filePath,
+    candidates,
+    handled,
+  );
   const currentText = splitJsxTextContent(element);
   for (let childIndex = 0; childIndex < element.children.length; childIndex++) {
     const child = element.children[childIndex];
     if (child?.kind !== "JsxElement") continue;
-    scanJsxElement(child, element.children, childIndex, currentText, element, filePath, candidates);
+    scanJsxElement(
+      child,
+      element.children,
+      childIndex,
+      currentText,
+      element,
+      filePath,
+      candidates,
+      handled,
+    );
   }
 }
 
@@ -393,8 +416,10 @@ function emitJsxImageCandidate(
   parentElement: JsxElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
+  handled: WeakSet<JsxElement>,
 ): void {
   if (element.tagName !== "img") return;
+  if (handled.has(element)) return;
   const alt = shortImageText(literalJsxAttribute(element, "alt"));
   const classVal =
     literalJsxAttribute(element, "className") ?? literalJsxAttribute(element, "class");
@@ -417,6 +442,152 @@ function emitJsxImageCandidate(
     jsxSrOnlySiblingHint(siblings, index, parentElement),
     undefined,
   );
+}
+
+/** JSX counterpart to {@link emitHtmlAggregations}. */
+function emitJsxAggregations(
+  children: readonly JsxNode[],
+  filePath: string,
+  candidates: ReviewCandidate[],
+  handled: WeakSet<JsxElement>,
+): void {
+  const probes: { summary: SiblingSummary; imgElement: JsxElement }[] = [];
+  for (let index = 0; index < children.length; index++) {
+    const probe = probeJsxChildForAggregation(children, index);
+    if (probe) probes.push(probe);
+  }
+  if (probes.length < 4) return;
+  const groups = computeAggregationGroups(probes.map((p) => p.summary));
+  for (const group of groups) {
+    emitJsxAggregationGroup(group, probes, filePath, candidates, handled);
+  }
+}
+
+function emitJsxAggregationGroup(
+  group: AggregationGroup,
+  probes: readonly { summary: SiblingSummary; imgElement: JsxElement }[],
+  filePath: string,
+  candidates: ReviewCandidate[],
+  handled: WeakSet<JsxElement>,
+): void {
+  const imgByParentIndex = new Map<number, JsxElement>();
+  for (const p of probes) imgByParentIndex.set(p.summary.parentIndex, p.imgElement);
+  const imgsForGroup: JsxElement[] = [];
+  for (const member of group.members) {
+    const img = imgByParentIndex.get(member.parentIndex);
+    if (img) imgsForGroup.push(img);
+  }
+  if (imgsForGroup.length === 0) return;
+  for (const img of imgsForGroup) handled.add(img);
+  const anchorImg = imgsForGroup[0]!;
+  const classVal =
+    literalJsxAttribute(anchorImg, "className") ?? literalJsxAttribute(anchorImg, "class");
+  const srcVal = literalJsxAttribute(anchorImg, "src");
+  const keywordSignal = keywordHint(classVal, srcVal);
+  const reason = renderAggregatedReason(keywordSignal, group);
+  pushForAllCriteria(
+    candidates,
+    filePath,
+    anchorImg.loc.start.line,
+    anchorImg.loc.start.column,
+    reason,
+    logoLike(classVal, srcVal),
+    svgDataUriTextFreeHint(srcVal),
+    null,
+    group.occurrences,
+  );
+}
+
+/**
+ * JSX counterpart to {@link probeHtmlChildForAggregation}. Parallel
+ * structure — bare `<img>` child or `<a>` wrapping exactly one `<img>`.
+ */
+function probeJsxChildForAggregation(
+  children: readonly JsxNode[],
+  index: number,
+): { summary: SiblingSummary; imgElement: JsxElement } | null {
+  const child = children[index];
+  if (child?.kind !== "JsxElement") return null;
+  if (child.tagName === "img") {
+    if (!jsxImgWouldFire(child, children, index, null)) return null;
+    return {
+      imgElement: child,
+      summary: buildJsxSummary(child, "bare-img", null, index),
+    };
+  }
+  if (child.tagName === "a") {
+    const innerImg = soleJsxElementChild(child, "img");
+    if (!innerImg) return null;
+    const wrapperText = splitJsxTextContent(child);
+    if (
+      !jsxImgWouldFire(
+        innerImg,
+        child.children,
+        indexOfJsxNode(child.children, innerImg),
+        wrapperText,
+      )
+    ) {
+      return null;
+    }
+    const href = literalJsxAttribute(child, "href");
+    return {
+      imgElement: innerImg,
+      summary: buildJsxSummary(innerImg, "linked-img", href, index),
+    };
+  }
+  return null;
+}
+
+function buildJsxSummary(
+  img: JsxElement,
+  shape: AggregationShapeKind,
+  href: string | null,
+  parentIndex: number,
+): SiblingSummary {
+  const alt = shortImageText(literalJsxAttribute(img, "alt"));
+  return {
+    parentIndex,
+    line: img.loc.start.line,
+    shape,
+    altRaw: alt?.raw ?? null,
+    altNormalized: alt?.normalized ?? null,
+    href,
+  };
+}
+
+function indexOfJsxNode(children: readonly JsxNode[], target: JsxNode): number {
+  for (let i = 0; i < children.length; i += 1) if (children[i] === target) return i;
+  return -1;
+}
+
+function soleJsxElementChild(element: JsxElement, tagName: string): JsxElement | null {
+  let sole: JsxElement | null = null;
+  for (const c of element.children) {
+    if (c.kind === "JsxText") continue;
+    if (c.kind !== "JsxElement") return null;
+    if (sole !== null) return null;
+    if (c.tagName !== tagName) return null;
+    sole = c;
+  }
+  return sole;
+}
+
+function jsxImgWouldFire(
+  img: JsxElement,
+  siblings: readonly JsxNode[] | null,
+  index: number,
+  parentText: ParentText | null,
+): boolean {
+  const alt = shortImageText(literalJsxAttribute(img, "alt"));
+  const classVal = literalJsxAttribute(img, "className") ?? literalJsxAttribute(img, "class");
+  const srcVal = literalJsxAttribute(img, "src");
+  const signals = collectSignals(
+    alt,
+    parentText,
+    adjacentJsxText(siblings, index),
+    keywordHint(classVal, srcVal),
+  );
+  return signals.length > 0;
 }
 
 function adjacentHtmlText(siblings: readonly HtmlNode[], index: number): readonly string[] {
