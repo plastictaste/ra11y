@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   __resetSubprocessRecord,
+  __setBundlePathOverride,
   annotateStaleSubprocess,
   isSubprocessStale,
   recordSubprocessStart,
@@ -252,14 +253,30 @@ describe("annotateStaleSubprocess", () => {
   });
 });
 
-describe("mtime-based detection (integration with a real temp file)", () => {
+describe("mtime-based detection (deterministic repro — Q3-MCP-RESTART-HINT-SUBPROCESS-RACE)", () => {
+  // Field-report invariant: a subprocess running code at a known path, whose
+  // on-disk file is rewritten mid-session, must surface the stale warning on
+  // the next tool call. The 90-min session that motivated this backlog item
+  // hit 23 tool calls across a live `dist/cli.js` rewrite — the warning
+  // silently failed to fire because the detector's only baseline was
+  // `import.meta.url` (the stale-subprocess module file), which a
+  // `bun run build` rewrite-of-`dist/` never touches when the subprocess
+  // was spawned from a different entry path. The fix adds
+  // `process.argv[1]` as a second baseline so the actual spawned entry
+  // is always part of the stat set; this test drives both the entry-
+  // override and module-override paths via the test-only seam so the
+  // full record→rewrite→stale cycle is exercised without spawning a real
+  // subprocess.
   let tmpDir: string;
-  let bundlePath: string;
+  let entryPath: string;
+  let modulePath: string;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "ra11y-stale-"));
-    bundlePath = join(tmpDir, "fake-bundle.js");
-    writeFileSync(bundlePath, "// initial bundle\n");
+    entryPath = join(tmpDir, "fake-cli.js");
+    modulePath = join(tmpDir, "fake-stale-subprocess.js");
+    writeFileSync(entryPath, "// initial entry bundle\n");
+    writeFileSync(modulePath, "// initial stale-subprocess module\n");
     __resetSubprocessRecord();
   });
 
@@ -268,22 +285,96 @@ describe("mtime-based detection (integration with a real temp file)", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  // The record/compare logic is private to the module — we exercise it
-  // indirectly via the `isSubprocessStale` exported predicate. To test
-  // with a synthetic bundle path, we'd need to expose a seam; instead,
-  // this test exercises the public mtime semantics via a direct
-  // statSync comparison that mirrors what the module does internally.
-  // The behavioral contract is: strictly-greater mtime is stale;
-  // equal-mtime or stat failure is not. This test documents that
-  // contract so a future regression in the comparison direction surfaces.
-  it("documents the strictly-greater mtime contract", () => {
-    const { statSync } = require("node:fs") as typeof import("node:fs");
-    const initial = statSync(bundlePath).mtimeMs;
-    // Touch the file so its mtime advances by at least 1 second to dodge
-    // filesystem granularity on macOS HFS+ and some ext4 configs.
-    const future = new Date(initial + 2000);
-    utimesSync(bundlePath, future, future);
-    const after = statSync(bundlePath).mtimeMs;
-    expect(after).toBeGreaterThan(initial);
+  it("fires stale when the entry file (process.argv[1] analog) is rewritten after baseline", () => {
+    __setBundlePathOverride(entryPath, modulePath);
+    recordSubprocessStart();
+    expect(isSubprocessStale()).toBe(false);
+
+    // Simulate rebuild: advance entry mtime by 2s to dodge filesystem
+    // granularity (macOS HFS+, ext4 default atime).
+    const base = 1_700_000_000_000;
+    utimesSync(entryPath, new Date(base), new Date(base));
+    __resetSubprocessRecord();
+    __setBundlePathOverride(entryPath, modulePath);
+    recordSubprocessStart();
+    utimesSync(entryPath, new Date(base + 2_000), new Date(base + 2_000));
+    expect(isSubprocessStale()).toBe(true);
+  });
+
+  it("fires stale when the module file (import.meta.url analog) is rewritten — dev-mode coverage", () => {
+    __setBundlePathOverride(entryPath, modulePath);
+    const base = 1_700_000_000_000;
+    utimesSync(entryPath, new Date(base), new Date(base));
+    utimesSync(modulePath, new Date(base), new Date(base));
+    recordSubprocessStart();
+    expect(isSubprocessStale()).toBe(false);
+
+    // Advance only the module — entry untouched. Still fires: either
+    // baseline advancing is stale evidence.
+    utimesSync(modulePath, new Date(base + 2_000), new Date(base + 2_000));
+    expect(isSubprocessStale()).toBe(true);
+  });
+
+  it("does not fire when only the entry file is stat-accessible and its mtime is unchanged", () => {
+    __setBundlePathOverride(entryPath, join(tmpDir, "does-not-exist.js"));
+    recordSubprocessStart();
+    expect(isSubprocessStale()).toBe(false);
+    // Unreachable module baseline is treated as "unavailable" — only the
+    // entry baseline is consulted, and it's unchanged.
+    expect(isSubprocessStale()).toBe(false);
+  });
+
+  it("full end-to-end repro: record → rewrite → annotateStaleSubprocess merges the warning", () => {
+    // Mirrors the production dispatch path: `isSubprocessStale()` gates
+    // `annotateStaleSubprocess()` on every tool response.
+    __setBundlePathOverride(entryPath, modulePath);
+    const base = 1_700_000_000_000;
+    utimesSync(entryPath, new Date(base), new Date(base));
+    utimesSync(modulePath, new Date(base), new Date(base));
+    recordSubprocessStart();
+
+    // Before rewrite: no warning fires.
+    const freshResult = {
+      content: [{ type: "text" as const, text: JSON.stringify({ plan: { violations: 0 } }) }],
+    };
+    expect(isSubprocessStale()).toBe(false);
+
+    // Mid-session rebuild: entry replaced, new mtime.
+    writeFileSync(entryPath, "// rebuilt entry\n");
+    utimesSync(entryPath, new Date(base + 2_000), new Date(base + 2_000));
+
+    // Next tool call: stale gate fires, annotator merges the warning.
+    expect(isSubprocessStale()).toBe(true);
+    const annotated = annotateStaleSubprocess(freshResult);
+    const parsed = JSON.parse(annotated.content[0]!.text) as {
+      warnings: string[];
+      staleSubprocessHint: string;
+    };
+    expect(parsed.warnings).toEqual([STALE_SUBPROCESS_WARNING]);
+    expect(parsed.staleSubprocessHint).toBe(STALE_SUBPROCESS_HINT);
+  });
+
+  it("retries baseline capture when the initial record found no stat-able target", () => {
+    // Failure mode covered: a transient fs hiccup at startup makes both
+    // baselines null; the next tool call must retry, not wedge detection
+    // off for the whole process lifetime.
+    __setBundlePathOverride(join(tmpDir, "not-yet-created.js"), join(tmpDir, "also-missing.js"));
+    recordSubprocessStart();
+    expect(isSubprocessStale()).toBe(false);
+
+    // Create the entry path and pin its mtime to a known baseline, then
+    // retry the recording — simulates the caller (server dispatch)
+    // making a second attempt once the filesystem settles.
+    const latePath = join(tmpDir, "not-yet-created.js");
+    writeFileSync(latePath, "// late arrival\n");
+    const base = 1_700_000_000_000;
+    utimesSync(latePath, new Date(base), new Date(base));
+    recordSubprocessStart();
+    // Baseline now captured; isSubprocessStale stays false on same mtime.
+    expect(isSubprocessStale()).toBe(false);
+
+    // Advance that file's mtime past the recorded baseline — stale fires.
+    utimesSync(latePath, new Date(base + 5_000), new Date(base + 5_000));
+    expect(isSubprocessStale()).toBe(true);
   });
 });
