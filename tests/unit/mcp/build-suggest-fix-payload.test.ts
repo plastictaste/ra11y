@@ -231,3 +231,137 @@ describe("buildSuggestFixPayload — response-level `warnings` plumbing", () => 
     expect(payload).not.toHaveProperty("warnings");
   });
 });
+
+describe("buildSuggestFixPayload — template-directive poisoning of newText", () => {
+  // Doctrine (docs/kb/architecture/ai-first-consumer.md
+  // "Ambiguous field shapes are dishonest"): a `newText` that
+  // interpolates raw Liquid/Jinja/ERB template directives is worse
+  // than an omitted edit — an agent applying `primary.edit` verbatim
+  // would paste `aria-label="{% for x in y %}..."` into the static
+  // file, silently shipping a broken accessible name on every render.
+  //
+  // `suggest_fix` is the final assembly layer before the response
+  // reaches the agent; rules that harvest visible-text may forget to
+  // sanitize before synthesizing an edit (Q4 field report on Jekyll
+  // `docs_contents_mobile` via `semantics/label-in-name`). The
+  // response builder defends the response shape regardless of rule
+  // correctness — when `newText` carries template directives, drop
+  // the edit and downgrade the outcome to `kind: "guidance"` with a
+  // caveat naming the failure mode.
+  //
+  // `oldText` is intentionally NOT sanitized — it must literal-match
+  // the source file, which for a Liquid template legitimately
+  // contains `{% … %}` / `{{ … }}`. The poison check targets `newText`
+  // only.
+
+  function liquidFixPaths(newText: string): Violation {
+    return violationWithFixPaths({
+      fixPaths: {
+        primary: {
+          label: "widen aria-label to include the visible text",
+          edit: { oldText: 'aria-label="Choose"', newText },
+        },
+        alternatives: [{ label: "rephrase aria-label" }],
+      },
+    });
+  }
+
+  it("downgrades kind to 'guidance' when primary.edit.newText contains a `{% … %}` directive", () => {
+    const match = liquidFixPaths('aria-label="{% for section in site.data.docs_nav %}Choose"');
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    expect(payload["kind"]).toBe("guidance");
+  });
+
+  it("omits the poisoned edit from primary — never emits a newText containing a Liquid tag", () => {
+    const poisoned = 'aria-label="{% for section in site.data.docs_nav %}Choose"';
+    const match = liquidFixPaths(poisoned);
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    const primary = payload["primary"] as { readonly edit?: { readonly newText: string } };
+    // No edit field on primary — the poisoned pair was dropped.
+    expect(primary.edit).toBeUndefined();
+  });
+
+  it("downgrades when primary.edit.newText contains a `{{ … }}` interpolation", () => {
+    const match = liquidFixPaths('aria-label="{{ page.title }} Choose"');
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { readonly edit?: unknown };
+    expect(primary.edit).toBeUndefined();
+  });
+
+  it("downgrades when primary.edit.newText contains an ERB `<% … %>` directive", () => {
+    const match = liquidFixPaths('aria-label="<%= title %> Choose"');
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { readonly edit?: unknown };
+    expect(primary.edit).toBeUndefined();
+  });
+
+  it("emits a `caveat` naming the template-directive poison so the agent learns why the edit was dropped", () => {
+    const match = liquidFixPaths('aria-label="{% for section in site.data.docs_nav %}Choose"');
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    const caveat = payload["caveat"];
+    expect(typeof caveat).toBe("string");
+    expect(caveat as string).toMatch(/template|directive|liquid/i);
+  });
+
+  it("preserves a clean primary.edit when newText has no template directives (regression guard)", () => {
+    // Sanity check: the non-poisoned path still produces kind: 'edit'
+    // with the normal mechanical newText. Nothing about the poison
+    // defense can affect the clean case.
+    const payload = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
+    expect(payload["kind"]).toBe("edit");
+    const primary = payload["primary"] as { readonly edit?: { readonly newText: string } };
+    expect(primary.edit).toBeDefined();
+    expect(primary.edit?.newText).toContain("onKeyDown");
+  });
+
+  it("drops a poisoned `editCandidate` on primary without promoting kind — candidate was never an edit", () => {
+    // `editCandidate` is a softer sibling of `edit` — its presence
+    // doesn't promote kind to 'edit'. When it carries a template
+    // directive it's still dishonest (agents that crib from
+    // candidates get the same poison). The field is dropped, kind
+    // stays 'guidance'.
+    const match = violationWithFixPaths({
+      fixPaths: {
+        primary: {
+          label: "rephrase the label",
+          editCandidate: {
+            oldText: 'aria-label="Choose"',
+            newText: 'aria-label="{% for section in x %} Choose"',
+          },
+        },
+        alternatives: [{ label: "widen aria-label" }],
+      },
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { readonly editCandidate?: unknown };
+    expect(primary.editCandidate).toBeUndefined();
+  });
+
+  it("oldText containing directives is allowed — only newText is checked (regression guard)", () => {
+    // A Liquid template legitimately has `{% … %}` / `{{ … }}` in
+    // source. oldText must literal-match that source, so stripping
+    // it would break the find-and-replace. The poison check targets
+    // newText only.
+    const match = violationWithFixPaths({
+      fixPaths: {
+        primary: {
+          label: "swap aria-hidden for inert",
+          edit: {
+            oldText: '{% if focused %}aria-hidden="true"{% endif %}',
+            newText: "{% if focused %}inert{% endif %}",
+          },
+        },
+        alternatives: [],
+      },
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match));
+    // newText has directives too — this case also downgrades. The
+    // underlying rule would have to hand us a genuinely clean newText
+    // to keep the edit; the defense is one-sided (target newText
+    // only) because that's the field the agent pastes into the file.
+    expect(payload["kind"]).toBe("guidance");
+  });
+});
