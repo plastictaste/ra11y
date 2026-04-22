@@ -50,8 +50,14 @@ const ANIMATION_RESERVED: ReadonlySet<string> = new Set([
 ]);
 
 interface FlashInfo {
-  readonly declarationLine: number;
-  readonly declarationColumn: number;
+  /**
+   * Line of the ruleset opener (the selector line) — the structural
+   * anchor an agent reads first to understand which DOM context the
+   * animation runs in. Not the declaration line; see the comment in
+   * {@link extractShortCycleFlashInfo} for why.
+   */
+  readonly anchorLine: number;
+  readonly anchorColumn: number;
   readonly reason: string;
 }
 
@@ -79,7 +85,7 @@ export function findCssCandidates(
     if (guardedRules.has(cssRule)) continue;
     const flashInfo = extractShortCycleFlashInfo(cssRule, keyframesIndex);
     if (!flashInfo) continue;
-    emit(flashInfo.declarationLine, flashInfo.declarationColumn, flashInfo.reason);
+    emit(flashInfo.anchorLine, flashInfo.anchorColumn, flashInfo.reason);
   }
 }
 
@@ -96,9 +102,18 @@ function extractShortCycleFlashInfo(
     const summary = name ? keyframesIndex.get(name) : undefined;
     if (summary && !summary.mutatesFlashProperties) continue;
     const reason = buildCssFlashReason(cssRule.selector, durationMs, name, summary);
+    // Anchor on the ruleset opener (the selector line), not on the
+    // `animation:` declaration line. A multi-line ruleset like
+    // `:valid ~ .searchbox__reset { ...; animation: fade-in 0.3s ...; }`
+    // carries its declaration ten-plus rows past the selector; pointing
+    // at the declaration sends the agent reading from the wrong block
+    // entirely when adjacent rulesets share leading tokens. The selector
+    // is the structural anchor — it identifies which DOM context the
+    // animation runs in. See tests/fixtures/real-world/
+    // jekyll-docsearch-scss-line-drift for the regression guard.
     return {
-      declarationLine: decl.loc.start.line,
-      declarationColumn: decl.loc.start.column,
+      anchorLine: cssRule.loc.start.line,
+      anchorColumn: cssRule.loc.start.column,
       reason,
     };
   }
