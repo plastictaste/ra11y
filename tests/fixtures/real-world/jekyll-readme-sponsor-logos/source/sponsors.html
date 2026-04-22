@@ -1,0 +1,37 @@
+<!--
+  Sanitized snippet from jekyll/jekyll `README.markdown` lines 58-67:
+  ten adjacent `<a href="..."><img class="sponsor-logo" alt="Jekyll
+  Sponsor N"/></a>` siblings under the same parent, each enumerated
+  by a single token difference (Sponsor 1 … Sponsor 10).
+
+  The `class="sponsor-logo"` trigger makes the review/images-of-text
+  finder fire via its "class suggests 'logo' artwork" signal on every
+  sibling. Before aggregation the finder emitted ten near-identical
+  candidates — one per `<img>` — which reads as noise to the agent.
+  The fixture locks in the aggregation contract: when ≥4 adjacent
+  sibling `<a><img/></a>` wrappings share a structural pattern and
+  alt-text differs only by an enumerated token, the finder emits ONE
+  consolidated candidate carrying `siblingOccurrences` with the full
+  per-sibling line/alt/href trail.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <section>
+      <h2>Sponsors</h2>
+      <p>Jekyll is sponsored by the following organizations:</p>
+      <div class="sponsors">
+        <a href="https://example.com/sponsor-1"><img class="sponsor-logo" src="https://example.com/logos/s1.png" alt="Jekyll Sponsor 1"/></a>
+        <a href="https://example.com/sponsor-2"><img class="sponsor-logo" src="https://example.com/logos/s2.png" alt="Jekyll Sponsor 2"/></a>
+        <a href="https://example.com/sponsor-3"><img class="sponsor-logo" src="https://example.com/logos/s3.png" alt="Jekyll Sponsor 3"/></a>
+        <a href="https://example.com/sponsor-4"><img class="sponsor-logo" src="https://example.com/logos/s4.png" alt="Jekyll Sponsor 4"/></a>
+        <a href="https://example.com/sponsor-5"><img class="sponsor-logo" src="https://example.com/logos/s5.png" alt="Jekyll Sponsor 5"/></a>
+        <a href="https://example.com/sponsor-6"><img class="sponsor-logo" src="https://example.com/logos/s6.png" alt="Jekyll Sponsor 6"/></a>
+        <a href="https://example.com/sponsor-7"><img class="sponsor-logo" src="https://example.com/logos/s7.png" alt="Jekyll Sponsor 7"/></a>
+        <a href="https://example.com/sponsor-8"><img class="sponsor-logo" src="https://example.com/logos/s8.png" alt="Jekyll Sponsor 8"/></a>
+        <a href="https://example.com/sponsor-9"><img class="sponsor-logo" src="https://example.com/logos/s9.png" alt="Jekyll Sponsor 9"/></a>
+        <a href="https://example.com/sponsor-10"><img class="sponsor-logo" src="https://example.com/logos/s10.png" alt="Jekyll Sponsor 10"/></a>
+      </div>
+    </section>
+  </body>
+</html>

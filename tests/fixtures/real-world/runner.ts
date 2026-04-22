@@ -96,6 +96,21 @@ export type FixtureExpectation =
       readonly criterionId: string;
       readonly reasonExcludes: string;
     }
+  /**
+   * Assert the number of review candidates surfaced for a criterion
+   * falls within the given bounds. Used to lock aggregation invariants
+   * — e.g. "ten adjacent sibling <img> patterns yield ONE consolidated
+   * candidate, not ten near-identical ones" — without rehearsing a
+   * specific ordering or wording. Bounds semantics match
+   * {@link MetaFieldLengthPredicate}: `min` / `max` / `equals`, ANDed
+   * when multiple are provided. Surfacing = safety, so `min: 1` is the
+   * doctrine-preserving floor when an assertion also caps the total.
+   */
+  | {
+      readonly kind: "candidate-count";
+      readonly criterionId: string;
+      readonly predicate: CandidateCountPredicate;
+    }
   | { readonly kind: "meta-hint-includes"; readonly substring: string }
   | {
       readonly kind: "meta-field";
@@ -154,6 +169,20 @@ export interface MetaFieldLengthPredicate {
   /** Array length must be at most this value. */
   readonly max?: number;
   /** Array length must equal this value exactly. */
+  readonly equals?: number;
+}
+
+/**
+ * Predicates available for {@link candidate-count}. Semantics mirror
+ * {@link MetaFieldLengthPredicate}: at least one of `min` / `max` /
+ * `equals` must be provided; when multiple are set they are ANDed.
+ */
+export interface CandidateCountPredicate {
+  /** Candidate count for the criterion must be at least this value. */
+  readonly min?: number;
+  /** Candidate count for the criterion must be at most this value. */
+  readonly max?: number;
+  /** Candidate count for the criterion must equal this value exactly. */
   readonly equals?: number;
 }
 
@@ -482,6 +511,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalNoCandidate(fixtureId, exp, ctx.report.candidates ?? []);
     case "candidate-present-without":
       return evalCandidatePresentWithout(fixtureId, exp, ctx.report.candidates ?? []);
+    case "candidate-count":
+      return evalCandidateCount(fixtureId, exp, ctx.report.candidates ?? []);
     case "meta-hint-includes":
       return evalMetaHintIncludes(fixtureId, exp, ctx);
     case "meta-field":
@@ -730,6 +761,64 @@ function evalCandidatePresentWithout(
     pass: true,
     message: `real-world/${fixtureId}: candidate '${exp.criterionId}' present (${matching.length} match${matching.length === 1 ? "" : "es"}) and none contain '${exp.reasonExcludes}'`,
   };
+}
+
+// ─── candidate-count ────────────────────────────────────────────────────────
+
+/**
+ * Asserts the candidate count for a criterion satisfies the declared
+ * bounds. Guards aggregation invariants — e.g. ten adjacent sibling
+ * `<img>`s that share a structural pattern collapse into ONE
+ * consolidated candidate per criterion, not ten near-identical ones.
+ * Per AI-first doctrine ("surface, don't suppress") the typical
+ * aggregation assertion pairs an upper-bound cap (the aggregation
+ * target count) with an implicit floor ≥ 1 — the consolidated
+ * candidate itself must still surface; the agent reads
+ * `siblingOccurrences` to enumerate the per-sibling trail.
+ *
+ * Failure modes:
+ *   - bounds missing entirely → caller misuse, fail loudly
+ *   - count outside bounds → report observed count + declared bounds
+ */
+function evalCandidateCount(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "candidate-count" },
+  candidates: readonly ReviewCandidate[],
+): ExpectationResult {
+  const { min, max, equals } = exp.predicate;
+  if (min === undefined && max === undefined && equals === undefined) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: candidate-count predicate requires at least one of min/max/equals`,
+    };
+  }
+  const count = candidates.filter((c) => c.criterionId === exp.criterionId).length;
+  const ok =
+    (min === undefined || count >= min) &&
+    (max === undefined || count <= max) &&
+    (equals === undefined || count === equals);
+  const bounds = formatCandidateCountBounds(exp.predicate);
+  if (ok) {
+    return {
+      expectation: exp,
+      pass: true,
+      message: `real-world/${fixtureId}: candidate-count '${exp.criterionId}' = ${count} satisfies ${bounds}`,
+    };
+  }
+  return {
+    expectation: exp,
+    pass: false,
+    message: `real-world/${fixtureId}: candidate-count '${exp.criterionId}' = ${count} does not satisfy ${bounds}`,
+  };
+}
+
+function formatCandidateCountBounds(pred: CandidateCountPredicate): string {
+  const parts: string[] = [];
+  if (pred.min !== undefined) parts.push(`min=${pred.min}`);
+  if (pred.max !== undefined) parts.push(`max=${pred.max}`);
+  if (pred.equals !== undefined) parts.push(`equals=${pred.equals}`);
+  return parts.join(", ");
 }
 
 // ─── meta-hint-includes / meta-field ────────────────────────────────────────
