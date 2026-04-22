@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+  <body>
+    <!-- sr-only is visually-hidden-but-AT-visible — the live region IS present in the
+         accessibility tree. This is the canonical correct pattern; the finder must
+         not flag it. -->
+    <div role="status" aria-live="polite" class="sr-only" id="status-announcer"></div>
+    <script>
+      function announce(msg) {
+        document.getElementById('status-announcer').textContent = msg;
+      }
+    </script>
+  </body>
+</html>
