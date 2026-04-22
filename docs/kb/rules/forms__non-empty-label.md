@@ -2,12 +2,12 @@
 title: "forms/non-empty-label"
 severity: "error"
 scope: "document"
-satisfies: ["wcag22:2.4.6", "wcag21:2.4.6", "wcag22:1.3.1", "wcag21:1.3.1"]
+satisfies: ["wcag22:2.4.6", "wcag21:2.4.6", "wcag22:1.3.1", "wcag21:1.3.1", "wcag22:3.3.2", "wcag21:3.3.2"]
 ---
 # `forms/non-empty-label`
 - **Severity:** error
 - **Scope:** document
-- **Satisfies:** `wcag22:2.4.6`, `wcag21:2.4.6`, `wcag22:1.3.1`, `wcag21:1.3.1`
+- **Satisfies:** `wcag22:2.4.6`, `wcag21:2.4.6`, `wcag22:1.3.1`, `wcag21:1.3.1`, `wcag22:3.3.2`, `wcag21:3.3.2`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
 <label> elements must contain descriptive text. Empty labels announce controls as unnamed and defeat assistive-tech navigation.
