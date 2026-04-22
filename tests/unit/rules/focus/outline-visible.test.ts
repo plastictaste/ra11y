@@ -163,9 +163,28 @@ describe("rule focus/outline-visible", () => {
     const jsx = (cls: string) =>
       tsxFile("App.tsx", `export const App = () => <button className="${cls}">Go</button>;`);
 
-    // Guard: evidence must be co-attached, not merely "class exists in project."
-    it("still emits info when the class is used but no focus-visible utility accompanies it", () => {
+    // Guard: evidence must be co-attached, not merely "class exists in
+    // project." Without a qualifying focus-visible utility, the scoped
+    // candidate must still emit — as `error` because the class lands
+    // on a concrete interactive <button> (interactivity upgrade), or
+    // `info` if no interactive call site exists.
+    it("still emits when the class is used but no focus-visible utility accompanies it", () => {
       const v = scanFiles([cssFile("styles.css", css), jsx("btn hover:bg-blue-500")]);
+      expect(v).toHaveLength(1);
+      // <button className="btn"> supplies interactivity evidence → error.
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // Non-interactive call site: without a focus-visible utility and
+    // without interactivity evidence, the scoped candidate stays info.
+    it("emits info when the class is used only on non-interactive elements with no focus-visible utility", () => {
+      const v = scanFiles([
+        cssFile("styles.css", css),
+        tsxFile(
+          "App.tsx",
+          `export const App = () => <div className="btn hover:bg-blue-500">Go</div>;`,
+        ),
+      ]);
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("info");
     });
@@ -197,11 +216,14 @@ describe("rule focus/outline-visible", () => {
       ).toHaveLength(0);
     });
 
-    // Guard: `focus:` ≠ `focus-visible:`; different user state, not evidence.
+    // Guard: `focus:` ≠ `focus-visible:`; different user state, not
+    // evidence of a focus-visible replacement. The candidate must
+    // still emit. (Severity comes from interactivity — `<button>` is
+    // interactive, so error.)
     it("does not auto-resolve when the accompanying utility is focus: rather than focus-visible:", () => {
       const v = scanFiles([cssFile("styles.css", css), jsx("btn focus:ring-2")]);
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.severity).toBe("error");
     });
 
     // Guard: HTML `class=` also contributes evidence (not JSX-only).
@@ -235,6 +257,185 @@ describe("rule focus/outline-visible", () => {
       expect(
         scanFiles([cssFile("styles.css", css), jsx("btn focus-visible:ring-[3px]")]),
       ).toHaveLength(0);
+    });
+  });
+
+  // Scoped selectors whose class is applied in the project to a
+  // concrete interactive element (button, a[href], input, select,
+  // textarea, summary, or an element with an interactive role)
+  // upgrade from `info` to `error`: the evidence the class lands on
+  // a focusable element is concrete, and `info` would silently
+  // mis-triage what is a 2.4.7 violation
+  // (Q5-FOCUS-OUTLINE-VISIBLE-BUTTON-SEVERITY).
+  describe("interactive-element severity upgrade", () => {
+    const css = `.magic:focus { outline: none; }`;
+
+    // Gate (a): class on <button> in HTML → error.
+    it("upgrades to error when the class is applied to an HTML <button>", () => {
+      const v = scanFiles([
+        cssFile("styles.css", css),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><button class="magic">Go</button></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // Gate (a): class on <a href="..."> → error.
+    it("upgrades to error when the class is applied to an HTML <a href=...>", () => {
+      const v = scanFiles([
+        cssFile("styles.css", `.nav-link:focus { outline: none; }`),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><a class="nav-link" href="/x">X</a></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // Gate (a) negative: bare <a> (no href) does not contribute evidence — it has no default role.
+    it("stays at info when the class is applied to <a> without href", () => {
+      const v = scanFiles([
+        cssFile("styles.css", `.bare:focus { outline: none; }`),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><a class="bare">X</a></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+
+    // Gate (a): <input type="hidden"> does not contribute evidence.
+    it("stays at info when the class is applied only to input[type=hidden]", () => {
+      const v = scanFiles([
+        cssFile("styles.css", `.hidden-input:focus { outline: none; }`),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><input class="hidden-input" type="hidden"></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+
+    // Gate (a): <input> without a type contributes evidence (default type="text" is interactive).
+    it("upgrades to error when the class is applied to <input> with no type", () => {
+      const v = scanFiles([
+        cssFile("styles.css", `.field:focus { outline: none; }`),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><input class="field"></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // Gate (a): role="button" on a div counts as interactive.
+    it("upgrades to error when the class is applied to a <div role=\"button\">", () => {
+      const v = scanFiles([
+        cssFile("styles.css", `.rolebtn:focus { outline: none; }`),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><div class="rolebtn" role="button">Go</div></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // Gate (a): class on an interactive JSX element (lowercase bare tag).
+    it("upgrades to error when the class is applied to a JSX <button>", () => {
+      const v = scanFiles([
+        cssFile("styles.css", css),
+        tsxFile(
+          "App.tsx",
+          `export const App = () => <button className="magic">Go</button>;`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // Gate (a) negative: <Button> (capitalized React component) is not
+    // a native interactive element — we cannot prove it renders
+    // <button>, so evidence is insufficient. Info stays.
+    it("stays at info when the class appears only on a capitalized React component", () => {
+      const v = scanFiles([
+        cssFile("styles.css", css),
+        tsxFile(
+          "App.tsx",
+          `export const App = () => <Button className="magic">Go</Button>;`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+
+    // Gate (a) negative: class applied only to <div> → no evidence; info stays.
+    it("stays at info when the class is applied only to non-interactive elements", () => {
+      const v = scanFiles([
+        cssFile("styles.css", css),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><div class="magic">Panel</div></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+
+    // Mixed usage: at least one interactive site is sufficient
+    // evidence — numeric thresholds would be suppression.
+    it("upgrades to error when the class is applied to a <div> AND a <button>", () => {
+      const v = scanFiles([
+        cssFile("styles.css", css),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><div class="magic">Panel</div><button class="magic">Go</button></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // Gate precedence: explicit Tailwind `focus-visible:` replacement
+    // beats the interactivity upgrade — an author-stated replacement
+    // is a positive signal stronger than "interactive element."
+    it("tailwind focus-visible cross-ref suppresses even when the class lands on a <button>", () => {
+      expect(
+        scanFiles([
+          cssFile("styles.css", css),
+          htmlFile(
+            "index.html",
+            `<!doctype html><html><body><button class="magic focus-visible:ring-2">Go</button></body></html>`,
+          ),
+        ]),
+      ).toHaveLength(0);
+    });
+
+    // Compound selector `.card.active` upgrades on primary class `card`.
+    it("upgrades compound-class selector when primary class is on an interactive element", () => {
+      const v = scanFiles([
+        cssFile("styles.css", `.card.active:focus-visible { outline: none; }`),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><button class="card">Go</button></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    // No HTML/JSX in the project → no evidence available; info stays.
+    it("stays at info when no HTML or JSX files are scanned alongside the CSS", () => {
+      const v = scanFiles([cssFile("styles.css", css)]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
     });
   });
 });
