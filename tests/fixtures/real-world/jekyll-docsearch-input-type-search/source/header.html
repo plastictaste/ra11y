@@ -1,0 +1,62 @@
+<header class="site-header">
+  <!--
+    Case 1: canonical docsearch — type="search" + aria-label="Search".
+    Currently the rule's `matchPurpose` has a carve-out `type !== "search"`
+    that lets type=search inputs fall through to the name/id heuristic
+    branch. When the id happens to contain a heuristic needle (here
+    "email" because the site filters users by email), the rule fires and
+    suggests autocomplete="email" — but WCAG 1.3.5 has no "search"
+    purpose, and a site-search input is out of scope for the criterion
+    entirely, so any suggestion is spec-incorrect.
+  -->
+  <form class="docsearch-form" role="search">
+    <label for="docsearch-search-by-email" class="visually-hidden">Search by email</label>
+    <input
+      type="search"
+      id="docsearch-search-by-email"
+      name="q"
+      aria-label="Search"
+      placeholder="Search by user email…"
+    />
+  </form>
+
+  <!--
+    Case 2: aria-label="Search" only — type=text + name containing a
+    heuristic needle. The rule currently flags because the name matches
+    "phone" via `mobilesearch`, but the aria-label plainly labels this
+    as a search box.
+  -->
+  <form class="nav-search">
+    <label for="mobile-search" class="visually-hidden">Search mobile users</label>
+    <input
+      type="text"
+      id="mobile-search"
+      name="mobilesearch"
+      aria-label="Search users"
+    />
+  </form>
+
+  <!--
+    Case 3: role="searchbox" + id containing a heuristic needle. The
+    searchbox role plainly declares this is a search control.
+  -->
+  <form class="address-search">
+    <input
+      type="text"
+      role="searchbox"
+      id="search-address"
+      name="q"
+    />
+  </form>
+
+  <!--
+    Case 4: name token is exactly "q" (canonical search-query name).
+    The rule currently does NOT fire on this one (no heuristic match),
+    but the fixture captures it so future edits to the heuristic map
+    don't accidentally start flagging it.
+  -->
+  <form class="site-search">
+    <label for="q" class="visually-hidden">Search the site</label>
+    <input type="text" id="q" name="q" />
+  </form>
+</header>
