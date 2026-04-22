@@ -33,12 +33,19 @@ import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../typ
 
 /** Local copy of the emit signature — matches the shape the rule uses
  * for its per-file emits. Kept narrow so this helper file never pulls
- * the full EmittedViolation type with its transitive re-exports. */
+ * the full EmittedViolation type with its transitive re-exports.
+ *
+ * `variantKey` is optional and, when set, is folded into the finding's
+ * `findingId` hash so this helper's "duplicate-href" findings don't
+ * collide with the parent rule's "generic-phrase" / "icon-only" emits
+ * when both fire on the same anchor. See
+ * Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE. */
 type DupEmit = (v: {
   severity: "error" | "warning" | "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  variantKey?: string;
 }) => void;
 
 /** Trim + collapse internal whitespace + lowercase. */
@@ -109,6 +116,12 @@ function emitBucket(bucket: readonly AnchorRecord[], emit: DupEmit): void {
         "navigating by link list (VoiceOver rotor, JAWS links dialog) cannot distinguish " +
         "them (SC 2.4.4 + 2.4.9).",
       suggestion,
+      // Disambiguates this emission from the parent rule's
+      // "generic-phrase" / "icon-only" emits at the same `(file,
+      // line)` — the two concerns can legitimately co-fire on one
+      // anchor (the link text is generic AND there are duplicates).
+      // Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE.
+      variantKey: "duplicate-href",
     });
   }
 }

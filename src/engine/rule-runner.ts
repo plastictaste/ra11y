@@ -159,7 +159,19 @@ function stampViolation(
   source: string,
   ast: Ast,
 ): Violation {
-  const findingId = computeFindingId({ ruleId, filePath, source, line: emitted.location.line });
+  // `variantKey` disambiguates sub-variant emits from the same rule at
+  // the same `(filePath, line)` (e.g. navigation/link-descriptive-text
+  // firing both "generic-phrase" and "duplicate-href" on one anchor).
+  // Conditional spread per exactOptionalPropertyTypes: finding-id.ts
+  // folds the key into the hash only when present + non-empty, so
+  // rules that don't opt in preserve their existing `findingId`s.
+  const findingId = computeFindingId({
+    ruleId,
+    filePath,
+    source,
+    line: emitted.location.line,
+    ...(emitted.variantKey ? { variantKey: emitted.variantKey } : {}),
+  });
   const groupKey = computeGroupKey({
     ruleId,
     shape: shapeAtLocation(ast, emitted.location.line, emitted.location.column),

@@ -57,6 +57,28 @@ export interface FindingIdInputs {
    * it; callers that don't (tests, synthetic emitters) don't.
    */
   readonly scanRoot?: string;
+  /**
+   * Sub-variant discriminator for rules that emit more than one kind
+   * of finding against the same `(ruleId, filePath, line)` tuple.
+   *
+   * Most rules leave this undefined — the hash recipe is unchanged and
+   * existing `findingId`s stay stable across baselines and scan-diff
+   * snapshots. Rules that genuinely emit multiple sub-variants on the
+   * same site (e.g. `navigation/link-descriptive-text` firing both
+   * "not descriptive" and "duplicate same-href" against the same
+   * anchor — satisfies both 2.4.4 and 2.4.9 at once) pass a short,
+   * stable, snake-case key (`"generic-phrase"`, `"icon-only"`,
+   * `"duplicate-href"`, …) so the two findings get distinct ids —
+   * otherwise the agent's suppress + dedup flows silently merge them
+   * (Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE).
+   *
+   * Only folded into the hash when non-empty, so rules that never set
+   * it produce the exact same `findingId` as before. Do NOT use
+   * free-form user-facing message text here — any wording tweak would
+   * invalidate every `findingId` for the rule. Use a stable token the
+   * rule owns.
+   */
+  readonly variantKey?: string;
 }
 
 /**
@@ -66,7 +88,15 @@ export interface FindingIdInputs {
 export function computeFindingId(inputs: FindingIdInputs): string {
   const path = normalizeRelativePath(inputs.filePath, inputs.scanRoot);
   const contextHash = computeLineContextHash(inputs.source, inputs.line);
-  const canonical = `${inputs.ruleId}\u0000${path}\u0000${contextHash}`;
+  // Only fold `variantKey` in when non-empty: rules that don't need
+  // sub-variant disambiguation stay byte-for-byte identical to the
+  // pre-variantKey hash recipe, so every existing `findingId` across
+  // baselines and scan-diff snapshots continues to match.
+  const variantSuffix =
+    inputs.variantKey !== undefined && inputs.variantKey.length > 0
+      ? `\u0000${inputs.variantKey}`
+      : "";
+  const canonical = `${inputs.ruleId}\u0000${path}\u0000${contextHash}${variantSuffix}`;
   return createHash("sha256").update(canonical).digest("hex").slice(0, FINDING_ID_LENGTH);
 }
 

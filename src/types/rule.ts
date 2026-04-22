@@ -213,8 +213,22 @@ export interface ProjectContext {
  * docs/adr/0008-violation-group-key.md). `fixClass` is a Rule-level
  * property (see docs/adr/0007-violation-fix-class-metadata.md), stamped
  * onto every Violation at emit time.
+ *
+ * `variantKey` is an engine-internal hash-disambiguator for rules that
+ * emit more than one kind of finding against the same file:line. It is
+ * folded into the `findingId` hash and then dropped — it does NOT
+ * appear on the final Violation on the wire. A rule like
+ * `navigation/link-descriptive-text` satisfies multiple WCAG criteria
+ * and can legitimately fire both a "not descriptive" AND a "duplicate
+ * same-href" finding on the same anchor: without a variant key the two
+ * collapse to the same `findingId` and the agent's suppress + dedup
+ * flows silently merge them (Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE).
+ * Rules that only emit one kind of finding per site leave the field
+ * unset — the hash recipe is identical to before (back-compat).
  */
 export type EmittedViolation = Omit<
   Violation,
   "ruleId" | "criteria" | "findingId" | "groupKey" | "fixClass"
->;
+> & {
+  readonly variantKey?: string;
+};

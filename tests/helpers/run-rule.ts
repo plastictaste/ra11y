@@ -101,11 +101,15 @@ function shapeViolation(
   ast: Ast,
 ): Violation {
   const effectivePath = v.location.filePath || filePath;
+  // Thread the sub-variant discriminator through so unit-test findingIds
+  // match what `stampViolation` in the engine produces. Conditional
+  // spread per exactOptionalPropertyTypes.
   const findingId = computeFindingId({
     ruleId: rule.id,
     filePath: effectivePath,
     source,
     line: v.location.line,
+    ...(v.variantKey ? { variantKey: v.variantKey } : {}),
   });
   const node = findTargetNodeAtLocation(ast.root, v.location.line, v.location.column);
   const shape = node ? describeNodeShape(node) : UNKNOWN_SHAPE;

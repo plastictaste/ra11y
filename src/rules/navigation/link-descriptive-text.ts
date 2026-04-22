@@ -205,6 +205,17 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  /**
+   * Sub-variant discriminator folded into the `findingId` hash. This
+   * rule satisfies three distinct concerns that can legitimately
+   * co-fire on the same anchor (SC 2.4.4 generic-phrase / SC 2.4.4 +
+   * 4.1.2 icon-only / SC 2.4.4 + 2.4.9 duplicate-href). Without a
+   * variant key the co-fires collide on `findingId` and the agent's
+   * suppress + dedup flows silently merge them. See
+   * Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE and the `variantKey`
+   * field doc on `EmittedViolation`.
+   */
+  variantKey?: string;
 }) => void;
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
@@ -252,6 +263,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
       },
       message: `Link text "${generic}" is not descriptive — screen readers reading this out of context tell users nothing about where they'll end up.${strippedSuffix}`,
       suggestion: buildSuggestion(getHtmlAttribute(a, "href"), generic),
+      variantKey: "generic-phrase",
     });
   }
 }
@@ -263,6 +275,7 @@ function emitIconOnlyHtml(a: HtmlElement, emit: Emit): void {
     location: { filePath: "", line: a.loc.start.line, column: a.loc.start.column },
     message: buildIconOnlyMessage("a", iconEvidence),
     suggestion: buildIconOnlySuggestion(getHtmlAttribute(a, "href"), iconEvidence),
+    variantKey: "icon-only",
   });
 }
 
@@ -311,6 +324,7 @@ function checkJsx(module: TsxModule, wrappersForA: ReadonlySet<string>, emit: Em
         getJsxAttributeString(el, "href") ?? getJsxAttributeString(el, "to"),
         generic,
       ),
+      variantKey: "generic-phrase",
     });
   };
   // Pass the full set of tag names (native `<a>` + framework link tags
@@ -332,6 +346,7 @@ function emitIconOnlyJsx(el: JsxElement, emit: Emit): void {
     location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
     message: buildIconOnlyMessage(el.tagName, iconEvidence),
     suggestion: buildIconOnlySuggestion(href, iconEvidence),
+    variantKey: "icon-only",
   });
 }
 

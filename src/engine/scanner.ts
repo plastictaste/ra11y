@@ -345,12 +345,13 @@ function stampProjectEmission(
   sourcesByPath: ReadonlyMap<string, string>,
   astsByPath: ReadonlyMap<string, Ast>,
 ): Violation {
-  const source = sourcesByPath.get(em.location.filePath) ?? "";
   const findingId = computeFindingId({
     ruleId: rule.id,
     filePath: em.location.filePath,
-    source,
+    source: sourcesByPath.get(em.location.filePath) ?? "",
     line: em.location.line,
+    // Conditional spread per exactOptionalPropertyTypes; see rule-runner.ts.
+    ...(em.variantKey ? { variantKey: em.variantKey } : {}),
   });
   const groupKey = computeGroupKey({
     ruleId: rule.id,
