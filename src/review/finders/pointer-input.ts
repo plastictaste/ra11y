@@ -312,34 +312,45 @@ function findPathBasedPairs(ctx: RuleContext, out: ReviewCandidate[]): void {
 function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
   if (!hasCompanionSignal(ctx.source)) return;
   const seen = new Set<string>();
+  emitBasenameHit(ctx, out, seen);
+  emitIdentifierHits(ctx, out, seen);
+}
 
+function emitBasenameHit(
+  ctx: RuleContext,
+  out: ReviewCandidate[],
+  seen: Set<string>,
+): void {
   const basename = extractBasename(ctx.filePath);
   const basenameMatch = basename.match(NAME_TOKEN_PATTERN);
-  if (basenameMatch) {
-    const token = tokenFromMatch(basenameMatch);
-    if (token) {
-      const key = `basename:${basename}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        for (const criterionId of CRITERION_IDS) {
-          // Confidence "medium": a filename containing a gesture token
-          // is conventional evidence but not dispositive — `pan.ts`
-          // could be a camera-pan utility, or text-panning, or an
-          // animation helper that takes any pointer input. The reviewer
-          // opens the file and decides.
-          out.push({
-            criterionId,
-            location: { filePath: ctx.filePath, line: 1, column: 1 },
-            reason:
-              `file basename \`${basename}\` suggests a ${token} gesture interaction` +
-              GESTURE_REASON,
-            confidence: "medium",
-          });
-        }
-      }
-    }
+  if (!basenameMatch) return;
+  const token = tokenFromMatch(basenameMatch);
+  if (!token) return;
+  const key = `basename:${basename}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  for (const criterionId of CRITERION_IDS) {
+    // Confidence "medium": a filename containing a gesture token
+    // is conventional evidence but not dispositive — `pan.ts`
+    // could be a camera-pan utility, or text-panning, or an
+    // animation helper that takes any pointer input. The reviewer
+    // opens the file and decides.
+    out.push({
+      criterionId,
+      location: { filePath: ctx.filePath, line: 1, column: 1 },
+      reason:
+        `file basename \`${basename}\` suggests a ${token} gesture interaction` +
+        GESTURE_REASON,
+      confidence: "medium",
+    });
   }
+}
 
+function emitIdentifierHits(
+  ctx: RuleContext,
+  out: ReviewCandidate[],
+  seen: Set<string>,
+): void {
   for (const hit of collectIdentifierHits(ctx.source)) {
     const tokenMatch = hit.identifier.match(NAME_TOKEN_PATTERN);
     if (!tokenMatch) continue;
