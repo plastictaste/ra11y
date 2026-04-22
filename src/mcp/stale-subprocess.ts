@@ -8,12 +8,30 @@
  * subsequent tool call returns results from the pre-rebuild bundle;
  * without a signal, the agent reads them as current.
  *
- * Detection is a deterministic mtime comparison — the bundle file that
- * sourced this module is stat'd at server startup; on each tool call,
- * we re-stat it and compare. Newer on-disk mtime → the file was
- * rewritten after startup → the running subprocess is stale. Not a
- * heuristic: if the bundle changed, the process running the old bytes
- * is provably behind.
+ * Detection is a deterministic mtime comparison — two baseline stat
+ * targets are captured at MCP server startup, and each tool call
+ * re-stats both. A stat whose current mtime is strictly greater than
+ * the baseline means that file was rewritten after startup → the
+ * running subprocess is stale. Not a heuristic: if either stat advanced,
+ * the process running the old bytes is provably behind.
+ *
+ * The two targets are complementary:
+ *   - `process.argv[1]` — the actual entry script the process was spawned
+ *     from. In production this is `dist/cli.js`; in dev (`bun src/cli.ts`)
+ *     it is `src/cli.ts`. This is the canonical "what is this subprocess
+ *     running from" signal and the one most likely to advance on rebuild.
+ *   - `import.meta.url` — the path this module lives at. In a bundled
+ *     deployment it resolves to the same `dist/cli.js`; in dev it
+ *     resolves to `src/mcp/stale-subprocess.ts`. Redundant in production,
+ *     additive coverage in dev (catches direct edits to this module).
+ *
+ * Tracking both targets means a dev-mode subprocess whose entry script
+ * was edited mid-session also surfaces the warning — the previous
+ * single-target implementation relied on `import.meta.url` alone and
+ * silently missed the entry-script-change case (root cause of the
+ * Q3-MCP-RESTART-HINT-SUBPROCESS-RACE report: 23 tool calls across 90
+ * minutes, `dist/cli.js` mtime advanced, warning never fired because
+ * the process was running from a different entry path).
  *
  * When stale, we inject `"stale_mcp_subprocess"` into the tool response's
  * `warnings[]` (merged with any scan-meta warnings that already fired)
@@ -32,11 +50,29 @@ export const STALE_SUBPROCESS_HINT =
   "rebuild detected; reconnect the MCP to pick up parser and rule changes";
 
 interface RecordedStart {
+  /** Entry path recorded from `process.argv[1]` at startup. */
+  readonly argvEntry: PathBaseline | null;
+  /** Module path recorded from `import.meta.url` at startup. */
+  readonly moduleUrl: PathBaseline | null;
+}
+
+interface PathBaseline {
   readonly path: string;
   readonly mtimeMs: number;
 }
 
 let recorded: RecordedStart | null = null;
+
+/**
+ * Test-only override for the entry-path resolution. Leave `null` in
+ * production — real resolution reads `process.argv[1]`. Setting this
+ * lets a test point the detector at a synthetic temp file so the
+ * record→rewrite→stale cycle can be exercised without spawning a real
+ * subprocess. Paired with `overrideModulePath` so tests can control
+ * both baselines independently.
+ */
+let overrideEntryPath: string | null = null;
+let overrideModulePath: string | null = null;
 
 /**
  * Resolves the filesystem path of the module that called into this
@@ -53,7 +89,8 @@ let recorded: RecordedStart | null = null;
  * treats that as "detection unavailable" and the warning simply never
  * fires; the scanner stays fully functional.
  */
-function resolveBundlePath(): string | null {
+function resolveModulePath(): string | null {
+  if (overrideModulePath !== null) return overrideModulePath;
   try {
     const u = new URL(import.meta.url);
     if (u.protocol !== "file:") return null;
@@ -64,50 +101,120 @@ function resolveBundlePath(): string | null {
 }
 
 /**
- * Records the bundle mtime at MCP server startup. Subsequent calls are
- * no-ops so the captured baseline is never overwritten — a legitimate
- * rebuild must remain detectable even if the caller accidentally
- * re-records mid-session. Safe to call from module init or from
+ * Resolves the entry script the current process was spawned from.
+ * `process.argv[1]` is the canonical "what is this subprocess running
+ * from" signal — it's the path Node received on the command line.
+ *
+ * In production (`node dist/cli.js --mcp`) this is the bundle's
+ * absolute path; in dev (`bun src/cli.ts --mcp`) it is the source entry.
+ * Either way, a rebuild that replaces the entry will advance this
+ * file's mtime, which is what we want to detect.
+ *
+ * Returns `null` when `process.argv[1]` is missing (e.g. a REPL launch)
+ * or empty; the caller falls back to the module-url baseline alone.
+ */
+function resolveEntryPath(): string | null {
+  if (overrideEntryPath !== null) return overrideEntryPath;
+  const entry = process.argv[1];
+  if (typeof entry !== "string" || entry.length === 0) return null;
+  return entry;
+}
+
+/**
+ * Stats a path and returns the mtime in ms. Returns `null` on any stat
+ * failure — detection is additive signal, not a correctness gate, so
+ * inaccessible paths simply mean the baseline for that target is
+ * unavailable.
+ */
+function safeStatMtime(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Builds a baseline record for a given path. Returns `null` if the
+ * path is itself `null` or the stat fails — the caller preserves the
+ * null so subsequent {@link isSubprocessStale} calls don't misread an
+ * "unavailable baseline" as "same mtime."
+ */
+function recordBaseline(path: string | null): PathBaseline | null {
+  if (path === null) return null;
+  const mtimeMs = safeStatMtime(path);
+  if (mtimeMs === null) return null;
+  return { path, mtimeMs };
+}
+
+/**
+ * Records the baseline mtimes at MCP server startup. Subsequent calls
+ * are no-ops only when a baseline was successfully captured — if
+ * recording failed (both targets null), the next call retries so a
+ * transient fs hiccup at startup doesn't wedge detection off for the
+ * whole process lifetime. Safe to call from module init or from
  * {@link startMcpServer}; the latter is preferred so it only runs when
  * the MCP binary is actually serving.
  */
 export function recordSubprocessStart(): void {
-  if (recorded !== null) return;
-  const path = resolveBundlePath();
-  if (path === null) return;
-  try {
-    const stat = statSync(path);
-    recorded = { path, mtimeMs: stat.mtimeMs };
-  } catch {
-    // Bundle path inaccessible (chmod, deletion, etc.) — detection is
-    // unavailable; no warning will fire.
+  if (recorded !== null && (recorded.argvEntry !== null || recorded.moduleUrl !== null)) {
+    return;
   }
+  const argvEntry = recordBaseline(resolveEntryPath());
+  const moduleUrl = recordBaseline(resolveModulePath());
+  recorded = { argvEntry, moduleUrl };
 }
 
 /**
  * Test-only reset for the recorded baseline. Intentionally not exported
  * from the package barrel; tests import from this module directly.
+ * Also clears any path overrides set via {@link __setBundlePathOverride}.
  */
 export function __resetSubprocessRecord(): void {
+  recorded = null;
+  overrideEntryPath = null;
+  overrideModulePath = null;
+}
+
+/**
+ * Test-only seam — points the detector at synthetic paths so a test can
+ * exercise the full record→rewrite→stale cycle against a temp file
+ * without spawning a real subprocess. Either argument may be `null` to
+ * leave that baseline target at its production resolver. Mirrors
+ * {@link build-provenance.ts}'s `__setBundlePathOverride` pattern.
+ *
+ * The caller is responsible for invoking
+ * {@link __resetSubprocessRecord} between tests so the override and
+ * baseline stay in sync.
+ */
+export function __setBundlePathOverride(
+  entry: string | null,
+  moduleUrl: string | null = null,
+): void {
+  overrideEntryPath = entry;
+  overrideModulePath = moduleUrl;
   recorded = null;
 }
 
 /**
- * Returns true when the bundle file's current mtime is strictly greater
- * than the mtime captured at startup. Same-mtime is not stale — an fs
- * snapshot at the exact moment of write should not self-trigger. Read
- * failure at probe time returns `false`: the scanner keeps working and
- * the warning simply doesn't fire. Stale-detection is additive signal,
- * not a correctness gate.
+ * Returns true when any tracked baseline's current mtime is strictly
+ * greater than the mtime captured at startup. Both the entry path and
+ * the module path are checked; an advance on either fires. Same-mtime
+ * is not stale — an fs snapshot at the exact moment of write should not
+ * self-trigger. Read failure at probe time returns `false`: the scanner
+ * keeps working and the warning simply doesn't fire. Stale-detection
+ * is additive signal, not a correctness gate.
  */
 export function isSubprocessStale(): boolean {
   if (recorded === null) return false;
-  try {
-    const stat = statSync(recorded.path);
-    return stat.mtimeMs > recorded.mtimeMs;
-  } catch {
-    return false;
-  }
+  return isBaselineStale(recorded.argvEntry) || isBaselineStale(recorded.moduleUrl);
+}
+
+function isBaselineStale(baseline: PathBaseline | null): boolean {
+  if (baseline === null) return false;
+  const current = safeStatMtime(baseline.path);
+  if (current === null) return false;
+  return current > baseline.mtimeMs;
 }
 
 /**
