@@ -28,6 +28,7 @@ import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
+import { deriveTestableCriteria } from "./testable-criteria.ts";
 import {
   errorResult,
   findStandard,
@@ -244,7 +245,21 @@ export const checklistTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
-    const coverage = buildCoverageReport(result, session.registry.standards, level);
+    // Q-SHARED-PASS-RATE-COMPOSITE: thread testableCriteria so the
+    // `automatedCriteriaPassRate` surfaced on `summary.automatedCoverage`
+    // here uses the honest `clean / evaluated` denominator — same shape
+    // `coverage` emits. Without this, the two tools report different
+    // pass-rate numbers on the same scan (the canonical cross-surface
+    // drift the AI-first doctrine flags in "one tool call should answer
+    // 'what next?'").
+    const testableCriteria = deriveTestableCriteria(
+      activeRules,
+      perRuleCoverage,
+      session.registry.criteria,
+    );
+    const coverage = buildCoverageReport(result, session.registry.standards, level, undefined, {
+      testableCriteria,
+    });
     const applicability = detectApplicability(files, discoveryDiagnostics);
 
     const sources = sourceIndex(files);

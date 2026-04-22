@@ -46,7 +46,23 @@ import {
  */
 export interface CoverageCriterion {
   readonly criterionId: string;
-  readonly static: "pass" | "fail" | "manual";
+  /**
+   * Static verdict the scanner can defend by itself.
+   *   - `"pass"` — automatable, ran on eligible input, zero violations.
+   *   - `"fail"` — at least one violation emitted for this criterion.
+   *   - `"manual"` — metadata-manual criterion with no fired rule; the
+   *     agent has to triage via the checklist tool.
+   *   - `"untestable"` — automatable criterion whose satisfying rules
+   *     declared extension eligibility but saw zero applicable input
+   *     in this scan (e.g. `contrast/minimum` on a Tailwind project with
+   *     no authored `.css` files). Paired with the new `untestable`
+   *     counter on {@link PerStandardCoverage} so consumers can split
+   *     "ran + clean" from "never had input to look at." Only emitted
+   *     when the caller threads a `testableCriteria` set through
+   *     {@link buildCoverageReport}'s options; absent-by-default keeps
+   *     legacy callers on the original three-variant union.
+   */
+  readonly static: "pass" | "fail" | "manual" | "untestable";
   readonly attested?: {
     readonly verdict: "pass" | "fail" | "n/a" | "pending";
     readonly stale?: true;
@@ -66,7 +82,53 @@ export interface PerStandardCoverage {
   readonly failingCriteria: readonly string[];
   /** Criterion IDs that are manual-only and need human review. */
   readonly manualCriteria: readonly string[];
-  /** 0–100 automated-pass rate (passing / automatable). */
+  /**
+   * Automatable criteria that had eligible input (ran) AND emitted zero
+   * violations. Only populated when the caller threads a
+   * `testableCriteria` set through {@link buildCoverageReport}'s
+   * options; defaults to `passing` so legacy callers preserve the old
+   * "all automatable non-failing criteria count as clean" semantics.
+   *
+   * Shape rule: `clean + withFindings === evaluated`. When
+   * `testableCriteria` is supplied this holds exactly; when absent the
+   * `evaluated` / `untestable` split collapses to `automatable / 0`.
+   */
+  readonly clean: number;
+  /**
+   * Automatable criteria with ≥1 emitted violation. Alias for
+   * `failing` — kept as a sibling of the new evaluated/clean/untestable
+   * counters so the four-field story (`evaluated = clean +
+   * withFindings`, `automatable = evaluated + untestable`) reads as one
+   * shape at a glance instead of forcing consumers to cross-reference
+   * `failing` with the newer counters.
+   */
+  readonly withFindings: number;
+  /**
+   * Automatable criteria whose satisfying rules had extension eligibility
+   * but saw zero applicable input in this scan. Zero when the caller
+   * doesn't opt in (no `testableCriteria` threaded through), so the old
+   * `automatable = passing + failing` invariant still holds on legacy
+   * callers. When opt-in: `automatable = clean + withFindings + untestable`.
+   */
+  readonly untestable: number;
+  /**
+   * Count of automatable criteria that actually ran on eligible input
+   * (`clean + withFindings`). Equivalent to `automatable - untestable`.
+   * Agents should prefer this over `automatable` when reporting "how
+   * many criteria did the scan actually evaluate?" — the gap between
+   * the two is the canonical Tailwind-pre-build silent-miss shape.
+   */
+  readonly evaluated: number;
+  /** Criterion IDs that fell into the `untestable` lane. Sorted. */
+  readonly untestableCriteria: readonly string[];
+  /**
+   * 0–100 automated-pass rate. Denominator is `evaluated` — criteria
+   * the scan actually ran with eligible input — so a Tailwind project
+   * whose authored tree has zero `.css` files doesn't silently sink its
+   * pass rate on rules that never had anything to look at. Falls back
+   * to the legacy `passing / automatable` formula when the caller
+   * doesn't thread `testableCriteria` through (backward compat).
+   */
   readonly automatedPassRate: number;
   /**
    * Per-criterion detail — one entry per criterion in the standard
@@ -111,6 +173,7 @@ export function buildCoverageReport(
   loadedStandards: readonly Standard[],
   level?: "A" | "AA" | "AAA",
   profile?: ConformanceProfile,
+  options?: CoverageReportOptions,
 ): readonly PerStandardCoverage[] {
   const enabledSet = new Set(result.enabledStandards);
   const profileStandards = profile === undefined ? null : new Set(profile.standards);
@@ -123,9 +186,33 @@ export function buildCoverageReport(
     if (!enabledSet.has(standard.id)) continue;
     if (profileStandards !== null && !profileStandards.has(standard.id)) continue;
     const filtered = filterByLevel(standard, maxLevel);
-    out.push(buildOne(filtered, failingByStandard.get(standard.id) ?? new Set()));
+    out.push(buildOne(filtered, failingByStandard.get(standard.id) ?? new Set(), options));
   }
   return out;
+}
+
+/**
+ * Optional extras for {@link buildCoverageReport}. Threading a
+ * `testableCriteria` set in opts the builder into splitting the
+ * automatable-pass counter into `clean` (ran + zero findings) vs.
+ * `untestable` (rule declared extension eligibility but zero
+ * applicable input) — the canonical Tailwind-pre-build shape.
+ *
+ * Backward compat: when `testableCriteria` is absent, the report's
+ * `untestable` field is `0` and the pass-rate denominator stays on
+ * `automatable` so legacy callers see identical numbers.
+ */
+export interface CoverageReportOptions {
+  /**
+   * Criterion IDs for which at least one satisfying rule had
+   * `filesEligible > 0` on this scan. Callers typically derive this
+   * from `perRuleCoverage` via the equivalence closure so a rule
+   * satisfying `wcag22:1.4.3` also marks `section508:1194.22.c` /
+   * `en301549:9.1.4.3` as testable. When absent, the builder skips
+   * the untestable split entirely and the report's `evaluated` /
+   * `clean` counters collapse to `automatable` / `passing`.
+   */
+  readonly testableCriteria?: ReadonlySet<string>;
 }
 
 const LEVEL_RANKS: Readonly<Record<string, number>> = { A: 1, AA: 2, AAA: 3, base: 1 };
@@ -139,14 +226,28 @@ function filterByLevel(standard: Standard, maxLevel: number): Standard {
   return { ...standard, criteria: filtered };
 }
 
-function buildOne(standard: Standard, failingSet: ReadonlySet<string>): PerStandardCoverage {
+function buildOne(
+  standard: Standard,
+  failingSet: ReadonlySet<string>,
+  options: CoverageReportOptions | undefined,
+): PerStandardCoverage {
   let automatable = 0;
   let manual = 0;
   let passing = 0;
   let failing = 0;
+  let untestable = 0;
   const failingCriteria: string[] = [];
   const manualCriteria: string[] = [];
+  const untestableCriteria: string[] = [];
   const criteria: CoverageCriterion[] = [];
+  // Opt-in split: absent testableCriteria collapses to "every
+  // automatable non-failing criterion counts as clean" so legacy
+  // callers see identical numbers. Present set drives the
+  // Tailwind-pre-build fix where a rule with zero eligible input
+  // routes into the `untestable` lane instead of silently buffing the
+  // pass rate (the canonical Q-SHARED-PASS-RATE-COMPOSITE miss).
+  const testableCriteria = options?.testableCriteria;
+  const splitOn = testableCriteria !== undefined;
 
   for (const criterion of standard.criteria) {
     // A rule satisfying a metadata-"manual" criterion can still emit
@@ -175,16 +276,33 @@ function buildOne(standard: Standard, failingSet: ReadonlySet<string>): PerStand
     }
     automatable += 1;
     if (fired) {
+      // A fired criterion implies some rule evaluated at least one
+      // file, so `withFindings` is always testable by construction —
+      // we never route a fail into the untestable lane.
       failing += 1;
       failingCriteria.push(criterion.id);
       criteria.push({ criterionId: criterion.id, static: "fail" });
-    } else {
+      continue;
+    }
+    const testable = !splitOn || testableCriteria?.has(criterion.id) === true;
+    if (testable) {
       passing += 1;
       criteria.push({ criterionId: criterion.id, static: "pass" });
+    } else {
+      untestable += 1;
+      untestableCriteria.push(criterion.id);
+      criteria.push({ criterionId: criterion.id, static: "untestable" });
     }
   }
 
-  const automatedPassRate = automatable > 0 ? Math.round((passing / automatable) * 100) : 0;
+  // Denominator is `evaluated` (clean + failing) when the caller
+  // opted into the split, so rules with zero eligible input don't sink
+  // the pass rate. Falls back to the legacy `passing / automatable`
+  // formula when `testableCriteria` is absent so callers that haven't
+  // threaded per-rule coverage through see unchanged numbers.
+  const evaluated = passing + failing;
+  const denominator = splitOn ? evaluated : automatable;
+  const automatedPassRate = denominator > 0 ? Math.round((passing / denominator) * 100) : 0;
 
   return {
     standardId: standard.id,
@@ -197,6 +315,11 @@ function buildOne(standard: Standard, failingSet: ReadonlySet<string>): PerStand
     failing,
     failingCriteria: failingCriteria.sort(),
     manualCriteria: manualCriteria.sort(),
+    clean: passing,
+    withFindings: failing,
+    untestable,
+    evaluated,
+    untestableCriteria: untestableCriteria.sort(),
     automatedPassRate,
     criteria,
   };

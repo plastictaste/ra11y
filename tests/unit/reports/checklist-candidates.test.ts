@@ -65,6 +65,11 @@ const TEST_COVERAGE: readonly PerStandardCoverage[] = [
     failing: 0,
     failingCriteria: [],
     manualCriteria: ["wcag22:1.2.1", "wcag22:1.2.3"],
+    clean: 1,
+    withFindings: 0,
+    untestable: 0,
+    evaluated: 1,
+    untestableCriteria: [],
     automatedPassRate: 100,
     criteria: [
       { criterionId: "wcag22:1.1.1", static: "pass" },

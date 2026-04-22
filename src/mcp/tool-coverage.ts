@@ -14,6 +14,7 @@ import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.t
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
+import { deriveTestableCriteria } from "./testable-criteria.ts";
 import {
   errorResult,
   firstUnknownStandard,
@@ -101,7 +102,23 @@ export const coverageTool: McpTool = {
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
     const applicability = detectApplicability(files, discoveryDiagnostics);
-    const coverage = buildCoverageReport(result, session.registry.standards, level);
+    // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
+    // perRuleCoverage so the coverage report can split automatable-pass
+    // into `clean` (ran + zero findings) vs. `untestable` (satisfying
+    // rules declared extension eligibility but saw zero applicable
+    // input — canonical Tailwind-pre-build shape). Without this, a
+    // minified vendor bundle whose only finding is a
+    // review-candidate-only 2.2.1 setInterval silently sinks the
+    // headline pass rate by inflating the denominator with rules that
+    // never had anything to look at.
+    const testableCriteria = deriveTestableCriteria(
+      activeRules,
+      perRuleCoverage,
+      session.registry.criteria,
+    );
+    const coverage = buildCoverageReport(result, session.registry.standards, level, undefined, {
+      testableCriteria,
+    });
     const showUntargeted = params["showUntargeted"] === true;
     const entries = coverage.map((c) => {
       // Split by applicability first so the counts align with scan_project
@@ -114,13 +131,41 @@ export const coverageTool: McpTool = {
       return {
         standardId: c.standardId,
         // Named so the denominator is unmistakable: it's the share of
-        // the `criteriaAutomatable` subset that passed, not the share of
-        // the full standard. Previous name ("automatedPassRate") was
-        // repeatedly misread as overall conformance.
+        // the `criteriaEvaluated` subset that passed (`clean /
+        // evaluated`), not the share of the full standard. Previous
+        // formula was `passing / automatable` — on a scan where a
+        // minified vendor bundle supplies the only applicable input for
+        // a given criterion, the old denominator inflated the
+        // "automatable" count with untestable criteria (rules declared
+        // eligible but had zero applicable input) and the pass rate
+        // silently sank below reality (the canonical reveal-slide /
+        // Tailwind-pre-build shape). Q-SHARED-PASS-RATE-COMPOSITE split
+        // the denominator so the headline names one concept: "of the
+        // criteria we actually evaluated, how many were clean?"
         automatedCriteriaPassRate: c.automatedPassRate,
         criteriaTotal: c.total,
         criteriaAutomatable: c.automatable,
         criteriaAutomatablePassing: c.passing,
+        // Four-counter split for the automatable lane. Each counts one
+        // kind of thing (per CLAUDE.md §1 "Composite headline counts are
+        // dishonest"):
+        //   - `criteriaEvaluated`: ran with eligible input (= clean +
+        //     withFindings).
+        //   - `criteriaClean`: ran, zero violations.
+        //   - `criteriaWithFindings`: ran, ≥1 violation.
+        //   - `criteriaUntestable`: rule declared extension eligibility
+        //     but saw zero applicable input in this scan — the canonical
+        //     Tailwind-pre-build / reveal-slide vendor-bundle shape. The
+        //     list rides under `untestableCriteria` (with titles) so the
+        //     agent can call out what it couldn't verify.
+        // Invariant: `criteriaAutomatable === criteriaEvaluated +
+        // criteriaUntestable` and `criteriaEvaluated === criteriaClean +
+        // criteriaWithFindings`.
+        criteriaEvaluated: c.evaluated,
+        criteriaClean: c.clean,
+        criteriaWithFindings: c.withFindings,
+        criteriaUntestable: c.untestable,
+        untestableCriteria: withTitles(c.untestableCriteria, session),
         criteriaManualReviewRequired: applicable.length,
         // Split the manual-review pile so agents can see at the coverage
         // level (without a second checklist call) how many manual
@@ -145,7 +190,8 @@ export const coverageTool: McpTool = {
         // listed automated criteria that are currently failing.
         failingAutomatedCriteria: withTitles(c.failingCriteria, session),
         summary:
-          `${c.passing}/${c.automatable} automatable criteria passing (${c.automatedPassRate}%). ` +
+          `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +
+          `${c.untestable > 0 ? `; ${c.untestable} untestable (no applicable input in this scan)` : ""}. ` +
           `${applicable.length} of ${c.total} criteria in ${c.standardId} need manual review ` +
           `(${withCandidates.length} with concrete candidates, ${untargeted.length} untargeted` +
           `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}). ` +
