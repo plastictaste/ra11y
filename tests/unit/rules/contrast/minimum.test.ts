@@ -239,6 +239,124 @@ describe("rule contrast/minimum", () => {
     });
   });
 
+  describe("inline style= attributes (HTML)", () => {
+    it("fires on a paragraph with inline color/background-color below 4.5:1", () => {
+      // website-templates reproducer: the ideal-interior index.html silent
+      // miss — dark-gray text (#777) on medium-gray inline background (#ccc).
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="color:#777777;background-color:#cccccc">dark on gray</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("inline background");
+      expect(v[0]?.message).toContain("4.5:1");
+    });
+
+    it("does NOT fire when inline style is only a layout property (no color pair)", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="float:right">layout only</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when inline style has color only (no background)", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><span style="color:#aaaaaa">no bg</span></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on a passing inline pair (black on white)", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="color:#000;background:#fff">ok</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("applies large-text threshold when font-size >= 18pt", () => {
+      // #9c9c9c on white is ~2.85:1 — fails 4.5 but also fails large-text 3:1.
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="color:#9c9c9c;background:#fff;font-size:24px">big</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("3:1");
+    });
+
+    it("does NOT fire when large-text pair passes 3:1 via font-size", () => {
+      // #949494 on white is ~3.04:1 — passes large-text threshold.
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="color:#949494;background:#fff;font-size:24px">big</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("quotes the element tag and property in the message", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><div style="color:#aaa;background:#fff">faint</div></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v[0]?.message).toContain("<div");
+      expect(v[0]?.message).toContain("color");
+    });
+
+    it("suggestion names both the color and background declarations", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="color:#aaa;background:#fff">faint</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v[0]?.suggestion).toContain("#aaa");
+      expect(v[0]?.suggestion).toContain("#fff");
+    });
+
+    it("emits info when inline color is over an inline background-image url()", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><div style="color:#111;background-image:url('/img/hero.jpg')">text</div></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toContain("background_image_unresolvable");
+    });
+
+    it("emits info when inline color is over an inline linear-gradient", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><div style="color:#fff;background:linear-gradient(#ff0, #00f)">cta</div></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toContain("background_image_unresolvable");
+    });
+
+    it("flags multiple failing inline pairs in the same document", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body>
+           <p style="color:#aaa;background:#fff">one</p>
+           <span style="color:#ccc;background:#eee">two</span>
+         </body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(2);
+    });
+  });
+
   it("cites wcag22:1.4.3 and wcag21:1.4.3", () => {
     expect(rule.satisfies).toContain("wcag22:1.4.3");
     expect(rule.satisfies).toContain("wcag21:1.4.3");

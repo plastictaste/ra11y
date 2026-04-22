@@ -50,7 +50,7 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import type { CssStylesheet } from "../../types/ast.ts";
+import type { CssStylesheet, HtmlDocument } from "../../types/ast.ts";
 import type { EmittedViolation, ProjectContext } from "../../types/rule.ts";
 import { WCAG_AA_MIN_LARGE, WCAG_AA_MIN_NORMAL } from "../../utils/contrast.ts";
 import {
@@ -59,12 +59,21 @@ import {
   buildBgImageUnresolvableSuggestion,
   buildContrastMessage,
   buildContrastSuggestion,
+  type ContrastCheckOptions,
   collectBgImageUnresolvable,
   collectTailwindOverrideClasses,
   extractPrimarySelectorClass,
   findContrastFailures,
   TAILWIND_CLASS_ON_CONSUMER,
 } from "./_shared.ts";
+import {
+  buildInlineStyleBgImageUnresolvableMessage,
+  buildInlineStyleBgImageUnresolvableSuggestion,
+  buildInlineStyleContrastMessage,
+  buildInlineStyleContrastSuggestion,
+  collectInlineStyleBgImageUnresolvable,
+  findInlineStyleContrastFailures,
+} from "./_shared-inline.ts";
 
 const SC_LABEL = "WCAG 1.4.3 AA";
 
@@ -74,13 +83,13 @@ export const rule = defineRule({
   severity: "error",
   scope: "project",
   fixClass: "guidance",
-  // Kept for per-rule coverage telemetry — the canonical Tailwind
-  // pre-build acute case (0 eligible CSS files → low-confidence
-  // signal) still applies. The rule itself runs in `afterProject`, so
-  // the per-file runner never invokes it, but the runner threads every
-  // rule's extension gate through the evaluation tracker.
+  // `.html` / `.htm` are listed alongside `.css` so `rulesByExtension`
+  // honestly reports "this rule evaluated HTML files" when an inline
+  // `style="color:…;background:…"` pair is scored. The rule still runs
+  // in `afterProject` — the extension gate only threads through the
+  // per-rule coverage tracker, not per-file dispatch.
   appliesTo: {
-    fileExtensions: [".css"],
+    fileExtensions: [".css", ".html", ".htm"],
   },
   docs: {
     description:
@@ -98,26 +107,87 @@ export const rule = defineRule({
   },
   afterProject(ctx) {
     const overrideClasses = collectTailwindOverrideClasses(ctx);
+    const opts: ContrastCheckOptions = {
+      minNormal: WCAG_AA_MIN_NORMAL,
+      minLarge: WCAG_AA_MIN_LARGE,
+      scLabel: SC_LABEL,
+    };
     for (const file of ctx.files) {
-      if (file.language !== "css") continue;
-      const stylesheet = file.ast as CssStylesheet;
-      const failures = findContrastFailures(stylesheet, {
-        minNormal: WCAG_AA_MIN_NORMAL,
-        minLarge: WCAG_AA_MIN_LARGE,
-        scLabel: SC_LABEL,
-      });
-      for (const finding of failures) {
-        emitFinding(ctx, file.filePath, finding, overrideClasses);
-      }
-      // Image-backed backgrounds: `background-image: …url()…` and
-      // `background: …linear-gradient(…)` are unresolvable statically.
-      // Emit info-severity so the agent knows the pair went unevaluated.
-      for (const finding of collectBgImageUnresolvable(stylesheet)) {
-        emitUnresolvable(ctx, file.filePath, finding);
+      if (file.language === "css") {
+        checkCssFile(ctx, file.filePath, file.ast as CssStylesheet, opts, overrideClasses);
+      } else if (file.language === "html") {
+        // Inline `style="color:…;background:…"` on HTML elements.
+        // Silent-miss before this branch existed — static-site template
+        // scans reported zero contrast findings despite heavy inline
+        // use. Evaluated here with the same thresholds as stylesheet
+        // rules; image-backed inline backgrounds take the info-severity
+        // bg-image-unresolvable path.
+        checkHtmlInlineStyles(ctx, file.filePath, file.ast as HtmlDocument, opts);
       }
     }
   },
 });
+
+function checkCssFile(
+  ctx: ProjectContext,
+  filePath: string,
+  stylesheet: CssStylesheet,
+  opts: ContrastCheckOptions,
+  overrideClasses: ReadonlySet<string>,
+): void {
+  for (const finding of findContrastFailures(stylesheet, opts)) {
+    emitFinding(ctx, filePath, finding, overrideClasses);
+  }
+  // Image-backed backgrounds: `background-image: …url()…` and
+  // `background: …linear-gradient(…)` are unresolvable statically.
+  // Emit info-severity so the agent knows the pair went unevaluated.
+  for (const finding of collectBgImageUnresolvable(stylesheet)) {
+    emitUnresolvable(ctx, filePath, finding);
+  }
+}
+
+function checkHtmlInlineStyles(
+  ctx: ProjectContext,
+  filePath: string,
+  doc: HtmlDocument,
+  opts: ContrastCheckOptions,
+): void {
+  for (const finding of findInlineStyleContrastFailures(doc, opts)) {
+    emitInlineStyleFinding(ctx, filePath, finding);
+  }
+  for (const finding of collectInlineStyleBgImageUnresolvable(doc)) {
+    emitInlineStyleUnresolvable(ctx, filePath, finding);
+  }
+}
+
+function emitInlineStyleFinding(
+  ctx: ProjectContext,
+  filePath: string,
+  finding: ReturnType<typeof findInlineStyleContrastFailures>[number],
+): void {
+  const emitted: EmittedViolation = {
+    severity: "error",
+    location: { filePath, line: finding.line, column: finding.column },
+    message: buildInlineStyleContrastMessage(finding, SC_LABEL),
+    suggestion: buildInlineStyleContrastSuggestion(finding),
+  };
+  ctx.emit(emitted);
+}
+
+function emitInlineStyleUnresolvable(
+  ctx: ProjectContext,
+  filePath: string,
+  finding: ReturnType<typeof collectInlineStyleBgImageUnresolvable>[number],
+): void {
+  const emitted: EmittedViolation = {
+    severity: "info",
+    location: { filePath, line: finding.line, column: finding.column },
+    message: buildInlineStyleBgImageUnresolvableMessage(finding, WCAG_AA_MIN_NORMAL, SC_LABEL),
+    suggestion: buildInlineStyleBgImageUnresolvableSuggestion(finding, WCAG_AA_MIN_NORMAL),
+    couldBeWrongBecause: [BG_IMAGE_UNRESOLVABLE],
+  };
+  ctx.emit(emitted);
+}
 
 function emitUnresolvable(
   ctx: ProjectContext,

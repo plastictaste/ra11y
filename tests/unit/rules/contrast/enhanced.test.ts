@@ -95,6 +95,39 @@ describe("rule contrast/enhanced (WCAG 1.4.6 AAA)", () => {
     });
   });
 
+  describe("inline style= attributes (HTML)", () => {
+    it("fires on an inline pair that passes AA but fails AAA (#767676 on white)", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="color:#767676;background-color:#ffffff">text</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("7:1");
+    });
+
+    it("does NOT fire on an inline pair that passes AAA (near-black on white)", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="color:#222222;background-color:#ffffff">text</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("emits info for inline color over an inline gradient background", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><div style="color:#fff;background:linear-gradient(#123,#abc)">cta</div></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toContain("background_image_unresolvable");
+    });
+  });
+
   it("cites WCAG 1.4.6 across both 2.1 and 2.2", () => {
     expect(rule.satisfies).toContain("wcag22:1.4.6");
     expect(rule.satisfies).toContain("wcag21:1.4.6");
