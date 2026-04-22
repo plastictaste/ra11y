@@ -1,0 +1,25 @@
+<!--
+  Sanitized repro of the Jekyll showcase.html:16 finding that quoted the
+  raw Liquid expression `{{ entry.name }}` as "short alt text" in the
+  review/images-of-text candidate reason.
+
+  The `<img>` alt is a Liquid interpolation and the surrounding text
+  node contains the same template expression repeated inline — enough
+  for the finder to match "alt repeated in surrounding text" after
+  directive stripping, provided neither side echoes the raw token.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head><title>Showcase</title></head>
+<body>
+  <main>
+    <section class="showcase">
+      <h2>Featured entry</h2>
+      <a href="/entries/{{ entry.slug }}">
+        <img alt="{{ entry.name }}" src="/brand/{{ entry.logo }}.png">
+        <span>{{ entry.name }}</span>
+      </a>
+    </section>
+  </main>
+</body>
+</html>
