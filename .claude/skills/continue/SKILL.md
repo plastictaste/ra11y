@@ -67,7 +67,7 @@ Pull `plan.turns[n]` — the picks are already selected, classified, sequencing-
 
 If a pick's `collisionWith` is populated, note it for step 2's dispatch prompt.
 
-### 2. Build dispatch prompts (template-referenced)
+### 2. Build dispatch prompts (template-referenced + inline §0 reminder)
 
 Every worktree-isolated dispatch prompt has the same shape:
 
@@ -75,6 +75,13 @@ Every worktree-isolated dispatch prompt has the same shape:
 You are handling a /continue pick. Read .claude/skills/continue/dispatch-template.md
 in full and follow every rule it declares (scope-lock, worktree discipline,
 commit discipline, precommit-verify-before-return, structured JSON return).
+
+CRITICAL worktree-discipline reminder (load-bearing — do not skip): every
+Edit/Write/Read/Bash call must use paths RELATIVE to your $PWD (your worktree
+root). Never pass absolute /Users/, /tmp/, /private/, /Volumes/, /home/ paths —
+those bypass the worktree wall and silently corrupt MAIN. Never `cd` out of the
+worktree. Never `git stash`/`git clean`/`git checkout --`/`git reset --hard`. If
+your tree is unexpectedly dirty at boot, return blocked.
 
 Backlog item: <pick.item> (line <pick.backlogLine> of .claude/backlog.md — re-read
 for full description).
@@ -92,7 +99,17 @@ govern this decision space>.
 </if>
 ```
 
-That is the whole dispatch prompt. All the anti-stash / scope-lock / JSON-return boilerplate lives in `dispatch-template.md` — the orchestrator does not re-embed it per dispatch. Main-session picks (classified as `main-session`) are handled inline by the orchestrator and do not use this template.
+The inline §0 reminder is intentional duplication. Field-tested 2026-04-22:
+turn 1 of a 5-turn run dispatched without the inline reminder and the
+parser-author agent escaped its worktree (absolute paths to Edit), corrupting
+MAIN's `src/input/parsers/html.ts`. Turns 2–5 added the inline reminder and saw
+zero escapes across 12 dispatches. Don't trust agents to read the template's §0
+on their own — duplicate the load-bearing rules into the prompt.
+
+The rest of the anti-stash / scope-lock / JSON-return boilerplate lives in
+`dispatch-template.md` — the orchestrator does not re-embed it per dispatch.
+Main-session picks (classified as `main-session`) are handled inline by the
+orchestrator and do not use this template.
 
 ### 3. Dispatch — parallel, worktree-isolated
 
