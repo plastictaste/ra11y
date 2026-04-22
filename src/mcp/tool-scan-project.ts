@@ -296,10 +296,9 @@ export const scanProjectTool: McpTool = {
     // pattern (meta field + analysisCoverage.hints prose), different
     // trigger (sibling-site shape vs. SSG config marker).
     const catalogHint = detectCatalogShape(root);
-    const metaWithSsgHint = withSsgHint(formatted.meta, detectedFramework);
-    const metaWithCatalogHint = withCatalogHint(metaWithSsgHint, catalogHint);
+    const metaWithRouteHints = layerRouteHints(formatted.meta, detectedFramework, catalogHint);
     const fullMeta = {
-      ...metaWithCatalogHint,
+      ...metaWithRouteHints,
       ...skippedByCallerField(skipCriterion),
       scanned: scannedProject(root),
       scanMode: actualMode,
@@ -319,8 +318,7 @@ export const scanProjectTool: McpTool = {
       ...buildArtifacts.metaField,
       ...(configHint === null ? {} : { configHint }),
       ...buildWrapperMeta({ autoDetect, configMissing, detectedNames }),
-      ...(detectedFramework === null ? {} : { detectedFramework }),
-      ...(catalogHint === null ? {} : { catalogHint }),
+      ...routeHintMetaFields(detectedFramework, catalogHint),
       ...additionalPathsScannedField({
         additionalPaths,
         filesAdded: files.length - baseFiles.length,
@@ -1068,6 +1066,48 @@ function vendorPathSet(entries: readonly ScannedBuildArtifact[]): ReadonlySet<st
   const out = new Set<string>();
   for (const e of entries) out.add(e.path);
   return out;
+}
+
+/**
+ * Layers the SSG and catalog routing hints into the scanner-produced
+ * `meta` block in one pass. Each combinator is a no-op when its
+ * signal is absent, so the call site stays a single unconditional
+ * expression regardless of whether either detector fired. Extracted
+ * from the handler so its cognitive-complexity score stays inside
+ * the lint budget — the SSG detector and catalog detector both
+ * append to `analysisCoverage.hints` and both ride their own meta
+ * field, and stacking two combinator calls inline pushed the
+ * handler past the noComplexity cap.
+ *
+ * Ordering is deterministic: SSG hint first, then catalog hint,
+ * matching the read-order an agent triaging scan_project output
+ * walks through `analysisCoverage.hints`.
+ */
+function layerRouteHints(
+  meta: Record<string, unknown>,
+  detectedFramework: import("./ssg-detect.ts").DetectedFramework | null,
+  catalogHint: import("./catalog-detect.ts").CatalogHint | null,
+): Record<string, unknown> {
+  return withCatalogHint(withSsgHint(meta, detectedFramework), catalogHint);
+}
+
+/**
+ * Assembles the spreadable structured-field fragment for the two
+ * routing hints that ride their own meta keys (`detectedFramework`
+ * and `catalogHint`). Both are conditional-spread — absent when the
+ * corresponding detector returned `null` — so the handler's
+ * expression has one spread instead of two, keeping its cognitive-
+ * complexity score inside the lint cap per CLAUDE.md §1 "Ambiguous
+ * field shapes are dishonest."
+ */
+function routeHintMetaFields(
+  detectedFramework: import("./ssg-detect.ts").DetectedFramework | null,
+  catalogHint: import("./catalog-detect.ts").CatalogHint | null,
+): Record<string, unknown> {
+  return {
+    ...(detectedFramework === null ? {} : { detectedFramework }),
+    ...(catalogHint === null ? {} : { catalogHint }),
+  };
 }
 
 /**
