@@ -37,8 +37,11 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 2. **Cherry-pick loop** — in the order given, one pick at a time:
    - Skip picks where `changed: false`. Record them under `skipped` with `reason: "no_changes"`.
    - For picks with `changed: true`:
-     - `git cherry-pick <branch>`. Prefer `git merge --ff-only <branch>` only when the branch diverges from current HEAD by exactly the pick's commits and no earlier cherry-pick has moved HEAD — fast-forward is cleaner when available.
+     - **Cherry-pick EVERY commit the specialist made, not just the branch tip.** Specialists often commit in 2+ logical chunks (fix + test, source + KB regen, feat + refactor). Use `git cherry-pick main..<branch>` to pick the whole range since the fork-point. Never use `git cherry-pick <branch>` alone — that only picks HEAD and silently drops the earlier commits, which is how silent test-only lands that fail verify happen.
+     - Before cherry-picking, confirm the commit count: `git log --oneline main..<branch>` should show the specialist's commits in order. If it shows zero commits, the branch is already on main (no-op); record under `skipped`. If it shows more commits than expected (>5), inspect — the specialist may have rebased or the worktree base is stale.
+     - Prefer `git merge --ff-only <branch>` only when this is the FIRST pick of the turn AND the branch is a direct descendant of current HEAD — fast-forward is cleaner when it works but breaks as soon as an earlier cherry-pick moves HEAD.
      - If the cherry-pick hits a conflict, attempt to resolve by combining edits (per the cross-turn gotcha). Never discard the older side. If you cannot resolve, `git cherry-pick --abort`, record `{ item, reason: "cherry_pick_conflict: <paths>" }` under `blocked`, continue with remaining picks.
+     - If final verify fails with a "feature not implemented" / "fixture doesn't fire" / "source missing" signature, before concluding the specialist skipped the fix: check `git log --oneline <branch>` again — if the fix commit IS on the branch but NOT on main, you dropped commits at cherry-pick time. Cherry-pick the missing commits, re-verify, don't blame the specialist.
 
 3. **Remove worktrees BEFORE final verify.** This is the biome nested-root trap — leftover `.claude/worktrees/*/biome.json` files register as nested root configs and fail lint even though the worktree code is fine. For each pick (changed or not):
    - `git worktree remove -f -f <path>` (double `-f` — locked worktrees need override + unlock).
