@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseHtml } from "../../../../src/input/parsers/html.ts";
+import { detectLiquidIncludeHead, parseHtml } from "../../../../src/input/parsers/html.ts";
 import type { HtmlElement } from "../../../../src/types/ast.ts";
 
 function findFirst(root: ReturnType<typeof parseHtml>["root"], tag: string): HtmlElement | null {
@@ -282,5 +282,109 @@ describe("parseHtml", () => {
     const p = findFirst(root, "p");
     expect(p).not.toBeNull();
     expect(errors.length).toBe(0);
+  });
+
+  // ─── Liquid root-layout stray-closer rename ────────────────────────────
+  //
+  // Jekyll's canonical `_layouts/*.html` wraps `{{ content }}` between
+  // `{%- include top.html -%}` (opens `<html>` / `<body>`) and
+  // `{%- include footer.html -%}` (closes `</body></html>`); a literal
+  // trailing `</html>` in the wrapper file therefore has no matching
+  // open inside the file. The parser must still surface the recovery
+  // via a recoverable ParseError (so `analysisCoverage.partialParseFiles`
+  // keeps the honest "scan degraded" telemetry), but the reason string
+  // on that error earns a shape-naming rename so an agent reading the
+  // entry routes to the include-chain composition instead of treating
+  // it as an unexpected parse failure.
+  //
+  // The rename is narrow — `depth === 0` + root-tag closer + Liquid
+  // `{% include %}` / `{% render %}` head. A nested stray close, a
+  // non-root closer, or a non-Liquid (or non-include) head keeps the
+  // generic "Stray closing tag at top level" wording so real structural
+  // bugs don't get dressed up as layout-composition tails.
+
+  it("renames the stray-close diagnostic for a Liquid root-layout </html> tail", () => {
+    const src = `{%- include top.html -%}
+
+<main>content</main>
+</html>
+`;
+    const { errors } = parseHtml(src);
+    expect(errors.length).toBe(1);
+    expect(errors[0]?.recoverable).toBe(true);
+    expect(errors[0]?.message).toContain("Elided layout-tail </html>");
+    expect(errors[0]?.message).toContain("Liquid");
+  });
+
+  it("renames the stray-close diagnostic for a </body> layout tail", () => {
+    const src = `{% include head.html %}
+<main>x</main>
+</body>
+`;
+    const { errors } = parseHtml(src);
+    expect(errors.length).toBe(1);
+    expect(errors[0]?.message).toContain("Elided layout-tail </body>");
+  });
+
+  it("accepts {% render %} as an equivalent layout-composition head", () => {
+    const src = `{% render 'top.html' %}
+<main>x</main>
+</html>
+`;
+    const { errors } = parseHtml(src);
+    expect(errors[0]?.message).toContain("Elided layout-tail </html>");
+  });
+
+  it("keeps the generic stray-close wording for a non-root closer under a Liquid head", () => {
+    const src = `{%- include top.html -%}
+</div>
+`;
+    const { errors } = parseHtml(src);
+    expect(errors[0]?.message).toBe("Stray closing tag at top level");
+  });
+
+  it("keeps the generic stray-close wording when the file does not open with a Liquid include", () => {
+    const src = `<!DOCTYPE html>
+<div>x</div>
+</html>
+`;
+    const { errors } = parseHtml(src);
+    expect(errors[0]?.message).toBe("Stray closing tag at top level");
+  });
+
+  it("keeps the generic wording when the Liquid head is {% capture %} / {% if %} rather than an include", () => {
+    // `{% capture %}` and `{% if %}` don't delegate the root-tag open
+    // to a sibling partial — they render their body inline. A trailing
+    // bare `</html>` on those files really IS a parse bug; naming it
+    // "elided layout-tail" would hide the signal an agent needs.
+    const capture = parseHtml(`{% capture x %}a{% endcapture %}\n</html>\n`);
+    expect(capture.errors[0]?.message).toBe("Stray closing tag at top level");
+    const conditional = parseHtml(`{% if x %}a{% endif %}\n</html>\n`);
+    expect(conditional.errors[0]?.message).toBe("Stray closing tag at top level");
+  });
+
+  it("keeps the generic wording for a nested stray close even under a Liquid-include head", () => {
+    // `</html>` appears inside an unclosed `<section>` body here — it
+    // is NOT a top-level layout tail. The depth guard must catch this.
+    const src = `{%- include top.html -%}
+<section>
+  </html>
+`;
+    const { errors } = parseHtml(src);
+    // Multiple errors are fine; none of them should claim this is a
+    // recognised layout tail.
+    expect(errors.some((e) => e.message.includes("Elided layout-tail"))).toBe(false);
+  });
+
+  it("detectLiquidIncludeHead accepts BOM and leading blank lines; rejects non-include heads", () => {
+    expect(detectLiquidIncludeHead("{% include top.html %}")).toBe(true);
+    expect(detectLiquidIncludeHead("{%- include top.html -%}")).toBe(true);
+    expect(detectLiquidIncludeHead("{% render 'top.html' %}")).toBe(true);
+    expect(detectLiquidIncludeHead("﻿  \n{%- include top.html -%}")).toBe(true);
+    expect(detectLiquidIncludeHead("{% if x %}")).toBe(false);
+    expect(detectLiquidIncludeHead("{% capture y %}")).toBe(false);
+    expect(detectLiquidIncludeHead("{{ content }}")).toBe(false);
+    expect(detectLiquidIncludeHead("<!DOCTYPE html>")).toBe(false);
+    expect(detectLiquidIncludeHead("")).toBe(false);
   });
 });

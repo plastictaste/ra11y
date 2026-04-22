@@ -58,6 +58,19 @@ const VOID_ELEMENTS: ReadonlySet<string> = new Set([
 /** Elements whose content is treated as raw text (no nested parsing). */
 const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(["script", "style", "textarea", "title"]);
 
+/**
+ * Root-document tags that a Liquid-composed layout routinely closes on
+ * behalf of a sibling partial. Jekyll's canonical pattern splits the
+ * document across `_includes/top.html` (opens `<html>` / `<body>`) and
+ * a `_layouts/*.html` wrapper (closes `</body></html>`); the wrapper
+ * therefore ends with a bare `</html>` / `</body>` that has no matching
+ * open inside the same file. Matching on a closed set keeps the
+ * recognition precise — we rename the diagnostic for the documented
+ * layout-tail shape, not arbitrary stray closers that might mask a real
+ * structural bug.
+ */
+const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"]);
+
 export interface HtmlParseResult {
   readonly root: HtmlDocument;
   readonly errors: readonly ParseError[];
@@ -77,6 +90,26 @@ class HtmlParser {
   #line = 1;
   #col = 1;
   #errors: ParseError[] = [];
+  /**
+   * Element-nesting depth. Increments on entry to `#consumeChildren`
+   * and decrements on exit, so a stray closer observed from
+   * `#consumeNode` can distinguish "orphaned inside an element body"
+   * (the historic shape) from "tailing the whole document" (the
+   * Liquid root-layout shape). Tracked as a counter so the layout-
+   * tail recognition stays scoped to `depth === 0`; without it a
+   * nested recovered stray close on a Liquid-opened file would be
+   * mis-labeled as a layout tail on every ancestor re-entry.
+   */
+  #depth = 0;
+  /**
+   * Lazily-computed flag: is this file's first non-whitespace content
+   * a Liquid `{% include %}` / `{% render %}` directive? That shape
+   * means the partial handing us `<html>` / `<body>` lives in the
+   * included sibling, so a bare `</html>` / `</body>` / `</head>` at
+   * the document tail is expected layout composition, not a parse bug.
+   * `undefined` until first query; the detector runs at most once.
+   */
+  #liquidIncludeHead: boolean | undefined;
 
   constructor(source: string) {
     this.#source = source;
@@ -113,14 +146,29 @@ class HtmlParser {
         return this.#consumeDoctype();
       }
       if (this.#startsWith("</")) {
-        // Stray closing tag at top level — skip it but record the error.
+        // Stray closing tag — skip it but record the error. The message
+        // discriminates the Liquid root-layout shape (a top-level
+        // `</html>` / `</body>` / `</head>` on a file whose first non-
+        // whitespace content is `{% include %}` / `{% render %}`) from
+        // the generic recovered-stray-close path. Both still emit a
+        // recoverable error so `analysisCoverage.partialParseFiles`
+        // retains the honest "scan degraded" telemetry, but the Liquid
+        // case names the shape so an agent reading the entry routes to
+        // the include-chain composition instead of treating it as an
+        // unexpected parse failure. The partial AST built from this
+        // file (usually a `<body>` or `<main>` subtree plus a trailing
+        // stray closer) is still handed to the rule pipeline; document
+        // rules already gate on `isHtmlFragment` / `isHtmlLayoutOrPartial`,
+        // so this is not a suppression — it is a rename of the reason
+        // string the `partialParseFiles[].reason` surface echoes.
         const start = this.#pos;
         const startPos = this.#position();
         this.#advance(2);
+        const closerName = this.#readTagName();
         this.#readUntil(">");
         if (this.#peek() === ">") this.#advance(1);
         this.#errors.push({
-          message: "Stray closing tag at top level",
+          message: this.#strayClosingTagMessage(closerName),
           position: startPos,
           recoverable: true,
         });
@@ -207,14 +255,19 @@ class HtmlParser {
   #consumeChildren(parentTag: string): HtmlNode[] {
     const children: HtmlNode[] = [];
     const isRawText = RAW_TEXT_ELEMENTS.has(parentTag.toLowerCase());
+    // Track nesting depth so `#strayClosingTagMessage` can scope the
+    // Liquid layout-tail rename to document-top (`depth === 0`).
+    this.#depth += 1;
     while (!this.#eof()) {
       if (this.#startsWithClosingTag(parentTag)) {
         this.#consumeClosingTag();
+        this.#depth -= 1;
         return children;
       }
       if (isRawText) {
         children.push(this.#consumeRawText(parentTag));
         if (!this.#eof()) this.#consumeClosingTag();
+        this.#depth -= 1;
         return children;
       }
       const node = this.#consumeNode();
@@ -225,6 +278,7 @@ class HtmlParser {
       position: this.#position(),
       recoverable: true,
     });
+    this.#depth -= 1;
     return children;
   }
 
@@ -458,6 +512,57 @@ class HtmlParser {
     };
   }
 
+  /**
+   * Chooses the message for a stray closing tag. The generic message
+   * ("Stray closing tag at top level") is preserved for the majority
+   * case; the Liquid-composed-layout case earns a shape-naming
+   * message so the `partialParseFiles[].reason` an agent reads on
+   * the MCP response routes to the composition chain in one read.
+   *
+   * Recognition gates (all must hold) — intentionally narrow so the
+   * rename is precise and real parser bugs keep the generic wording:
+   *
+   *   - `#depth === 0` — the closer is tailing the whole document,
+   *     not orphaned inside an unclosed element body. Without this
+   *     guard a nested recovered close on a Liquid-opened file would
+   *     be mis-labeled as a layout tail.
+   *   - Closer name is one of `html` / `body` / `head` — the three
+   *     tags a sibling partial plausibly closes on our behalf. Any
+   *     other closer (`</div>`, `</section>`, …) is a real
+   *     structural bug, not the documented layout-tail shape.
+   *   - First non-whitespace content in the source is a Liquid
+   *     `{% include %}` / `{% render %}` directive — the partial
+   *     that contributes the opening root tag. See
+   *     {@link detectLiquidIncludeHead} for the exact detector.
+   *
+   * The rename is a reason-string enrichment — not a suppression.
+   * The recoverable error still fires so `partialParseFiles` still
+   * ships the file to an agent; only the `reason` surface changes.
+   * Per the AI-first consumer doctrine (surface, don't suppress),
+   * the right move when a heuristic is too coarse is to enrich the
+   * text an agent reads, not to hide the signal.
+   */
+  #strayClosingTagMessage(closerName: string): string {
+    const lower = closerName.toLowerCase();
+    if (this.#depth === 0 && LAYOUT_TAIL_CLOSERS.has(lower) && this.#hasLiquidIncludeHead()) {
+      return `Elided layout-tail </${lower}> — file opens with a Liquid {% include %} directive whose sibling partial closes this root tag`;
+    }
+    return "Stray closing tag at top level";
+  }
+
+  /**
+   * True when the file's first non-whitespace content is a Liquid
+   * `{%- include ... -%}` / `{% render ... %}` directive. Cached on
+   * first call so repeated stray-closer checks on the same document
+   * don't rescan the head. See {@link detectLiquidIncludeHead} for
+   * the shared detector (kept module-level so it is unit-testable
+   * without instantiating the parser).
+   */
+  #hasLiquidIncludeHead(): boolean {
+    this.#liquidIncludeHead ??= detectLiquidIncludeHead(this.#source);
+    return this.#liquidIncludeHead;
+  }
+
   // -------------------------------------------------------------------------
   // Character helpers
   // -------------------------------------------------------------------------
@@ -561,6 +666,36 @@ function isNameChar(ch: string): boolean {
   return /[a-zA-Z0-9\-_:]/.test(ch);
 }
 
+/**
+ * Returns true when `source` begins (after optional BOM + whitespace)
+ * with a Liquid `{% include %}` / `{% render %}` directive, permitting
+ * both plain and whitespace-control (`{%-` / `-%}`) delimiters. The
+ * parser uses this to distinguish a legitimate Liquid-composed layout
+ * wrapper (whose sibling partial contributes the opening root tag)
+ * from a structurally broken HTML file, so a trailing bare `</html>`
+ * gets an honest "layout-tail" diagnostic instead of the generic
+ * "stray closing tag" wording.
+ *
+ * Exported for unit testing so the detector's acceptance surface is
+ * visible as a pure function; the parser consumes it through the
+ * `#hasLiquidIncludeHead` cache. Intentionally narrow: `include` /
+ * `render` are the Liquid tags that pull in a sibling's markup;
+ * `{% extends %}` / `{% block %}` (Jinja-style) do not currently
+ * participate in the layout-tail rename — widening the list without
+ * a matching fixture would re-hide the silent-miss failure mode on
+ * every template shape we haven't verified.
+ */
+export function detectLiquidIncludeHead(source: string): boolean {
+  // Strip optional UTF-8 BOM, then anchor a single regex at the start.
+  // `^\s*` tolerates leading whitespace / blank lines; `\{%-?` accepts
+  // the whitespace-control (`{%-`) variant; `\b(include|render)\b`
+  // binds on the two Liquid tags that pull in a sibling partial. Any
+  // other head — `{% if %}`, `{% capture %}`, bare `{{ content }}` —
+  // falls through and keeps the parser's generic stray-close wording.
+  const head = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
+  return /^\s*\{%-?\s*(?:include|render)\b/.test(head);
+}
+
 /** Decodes HTML entities in attribute values and text nodes. */
 function decodeEntities(text: string): string {
   return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, entity: string) => {
@@ -585,15 +720,15 @@ const NAMED_ENTITIES: Readonly<Record<string, string>> = {
   gt: ">",
   quot: '"',
   apos: "'",
-  nbsp: "\u00a0",
-  copy: "\u00a9",
-  reg: "\u00ae",
-  trade: "\u2122",
-  hellip: "\u2026",
-  mdash: "\u2014",
-  ndash: "\u2013",
-  lsquo: "\u2018",
-  rsquo: "\u2019",
-  ldquo: "\u201c",
-  rdquo: "\u201d",
+  nbsp: " ",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+  hellip: "…",
+  mdash: "—",
+  ndash: "–",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
 };
