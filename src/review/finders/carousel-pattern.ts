@@ -199,8 +199,7 @@ function detectJsxSignal(el: JsxElement): PatternSignal | null {
     }
   }
   const role = getJsxAttributeString(el, "role")?.trim().toLowerCase() ?? null;
-  const roleDesc =
-    getJsxAttributeString(el, "aria-roledescription")?.trim().toLowerCase() ?? null;
+  const roleDesc = getJsxAttributeString(el, "aria-roledescription")?.trim().toLowerCase() ?? null;
   if (role === "region" && roleDesc === "carousel") {
     // JSX label presence: accept either a string literal or an
     // expression binding (`aria-label={labelId}`). `hasJsxAttribute`
