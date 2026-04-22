@@ -50,6 +50,25 @@ export interface NextStepOptions {
    * verify-loop tail when no fix suggestion is available.
    */
   readonly singleFilePath?: string;
+  /**
+   * Q6-NEXTSTEP-AVOIDS-VENDOR-CSS. Set of `files[].path` values that
+   * the classifier labelled as build artifacts (compiled CSS, minified
+   * bundles, hashed-filename output) — the same path strings that
+   * appear under `meta.scannedBuildArtifacts` on the response. When
+   * the first callable finding sits on a path in this set AND a later
+   * finding of the same `ruleId` exists on a path *outside* the set,
+   * `buildNextStep` reroutes its structured target to the non-vendor
+   * finding and prepends a reason-text note so the agent knows why
+   * the first-listed vendor finding isn't the first-action target.
+   *
+   * Omit when the caller has no artifact classification available
+   * (`scan_file` on a single file, tests, ad-hoc callers). When absent
+   * or empty, behavior is identical to today — the first callable
+   * finding wins regardless of path. Additive per the backlog item's
+   * "when no rerouting applies, `nextStepStructured` behaves exactly
+   * as today" constraint.
+   */
+  readonly vendorPaths?: ReadonlySet<string>;
 }
 
 /**
@@ -87,6 +106,17 @@ interface NextStepInputs {
   readonly actionableManual: number;
   readonly notes: number;
   readonly first: FirstFinding | null;
+  /**
+   * Q6-NEXTSTEP-AVOIDS-VENDOR-CSS. When `first` has been rerouted from
+   * a vendor-code finding to a non-vendor same-`ruleId` sibling, this
+   * carries the rerouted-away vendor path so the violation branch can
+   * prepend a reason-text note. `undefined` when no reroute happened
+   * (either no vendor-path set was supplied, the first finding was
+   * already in authored code, or no non-vendor same-family fallback
+   * existed — the vendor target stays per the backlog item's "fall
+   * back to vendor only when every violation is in vendor code" rule).
+   */
+  readonly reroutedFromVendorPath?: string;
   readonly iterativeTip: string;
   /**
    * Present-when-meaningful per CLAUDE.md §1 — omitted on the project-
@@ -146,17 +176,21 @@ export function buildNextStep(
   // `safeEditsAvailable` field (which counts a different slice:
   // violations that ship an inline `fixPaths.primary.edit` across the
   // mechanical + verify-in-source lanes).
+  const firstPick = pickFirstFinding(formatted.files, options.vendorPaths);
   const inputs: NextStepInputs = {
     violations: numFromPlan(formatted.plan, "violations"),
     fixable:
       fixesByClassLane(formatted.plan, "mechanical") + fixesByClassLane(formatted.plan, "guidance"),
     actionableManual: numFromPlan(formatted.plan, "actionableManualItems"),
     notes: numFromPlan(formatted.plan, "notes"),
-    first: firstCallableFinding(formatted.files),
+    first: firstPick.finding,
     iterativeTip: options.iterativeTip ?? "",
     // Conditional-spread per CLAUDE.md §1 — omit entirely when the
     // caller has no single-file anchor rather than emit `null`.
     ...(options.singleFilePath ? { singleFilePath: options.singleFilePath } : {}),
+    ...(firstPick.reroutedFromVendorPath === undefined
+      ? {}
+      : { reroutedFromVendorPath: firstPick.reroutedFromVendorPath }),
     allViolationsMechanical: allViolationsMechanical(formatted.files),
   };
   if (inputs.violations === 0 && inputs.notes === 0) return cleanScanNextStep(inputs);
@@ -190,6 +224,16 @@ function cleanScanNextStep(inputs: NextStepInputs): NextStepResult {
 
 function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextStepResult {
   const vPlural = inputs.violations === 1 ? "" : "s";
+  // Q6-NEXTSTEP-AVOIDS-VENDOR-CSS: when the picker rerouted away from
+  // a vendor-code finding to a non-vendor same-`ruleId` sibling,
+  // prepend a reason-text note so the agent knows why the first-listed
+  // vendor finding isn't the first-action target. The finding itself
+  // remains in `files[]` (surface-don't-suppress); this only changes
+  // which file the "start here" prose + structured hint name.
+  const reroutePrefix =
+    inputs.reroutedFromVendorPath === undefined
+      ? ""
+      : `note: highest-severity finding in this scan is in vendor code (\`${inputs.reroutedFromVendorPath}\`); next-step points at \`${first.path}\` where a same-family fix is applicable. `;
   if (inputs.fixable > 0) {
     const fPlural = inputs.fixable === 1 ? "" : "s";
     // Q2R2-FIX-DEDUPE: when EVERY violation already carries
@@ -207,11 +251,11 @@ function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextSte
     // trip.
     if (inputs.allViolationsMechanical) {
       return {
-        prose: `${inputs.violations} violation${vPlural} (${inputs.fixable} with fix suggestion${fPlural}); every finding carries an inline mechanical fix — apply \`primary.edit\` directly from the finding. For the multi-finding fix workflow, use the \`ra11y/fix\` prompt (via \`prompts/get\`).${manualTail(inputs)}${inputs.iterativeTip}`,
+        prose: `${reroutePrefix}${inputs.violations} violation${vPlural} (${inputs.fixable} with fix suggestion${fPlural}); every finding carries an inline mechanical fix — apply \`primary.edit\` directly from the finding. For the multi-finding fix workflow, use the \`ra11y/fix\` prompt (via \`prompts/get\`).${manualTail(inputs)}${inputs.iterativeTip}`,
       };
     }
     return {
-      prose: `${inputs.violations} violation${vPlural} (${inputs.fixable} with fix suggestion${fPlural}). Start with \`suggest_fix\` on ${first.path}:${first.line} (rule \`${first.ruleId}\`). For the multi-finding fix workflow, use the \`ra11y/fix\` prompt (via \`prompts/get\`).${manualTail(inputs)}${inputs.iterativeTip}`,
+      prose: `${reroutePrefix}${inputs.violations} violation${vPlural} (${inputs.fixable} with fix suggestion${fPlural}). Start with \`suggest_fix\` on ${first.path}:${first.line} (rule \`${first.ruleId}\`). For the multi-finding fix workflow, use the \`ra11y/fix\` prompt (via \`prompts/get\`).${manualTail(inputs)}${inputs.iterativeTip}`,
       structured: {
         tool: "suggest_fix",
         args: { ruleId: first.ruleId, file: first.path, line: first.line },
@@ -219,7 +263,7 @@ function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextSte
     };
   }
   return {
-    prose: `${inputs.violations} violation${vPlural} with no machine-generated fix. Call \`explain_rule\` on \`${first.ruleId}\` and apply manually; verify with \`scan_file ${first.path}\` after editing.${inputs.iterativeTip}`,
+    prose: `${reroutePrefix}${inputs.violations} violation${vPlural} with no machine-generated fix. Call \`explain_rule\` on \`${first.ruleId}\` and apply manually; verify with \`scan_file ${first.path}\` after editing.${inputs.iterativeTip}`,
     structured: { tool: "explain_rule", args: { ruleId: first.ruleId } },
   };
 }
@@ -260,6 +304,85 @@ function fixesByClassLane(
   if (!raw || typeof raw !== "object") return 0;
   const v = (raw as Record<string, unknown>)[lane];
   return typeof v === "number" ? v : 0;
+}
+
+/**
+ * Result of {@link pickFirstFinding}. `finding` is the chosen
+ * (file, line, ruleId) triple — or `null` when no callable finding
+ * exists. `reroutedFromVendorPath` is set only when the scanner picked
+ * a non-vendor finding in preference to an earlier vendor-code finding
+ * of the same `ruleId` (Q6-NEXTSTEP-AVOIDS-VENDOR-CSS); downstream
+ * branches use it to prepend a reason-text note naming the vendor
+ * file the agent is being steered away from.
+ */
+interface FirstFindingPick {
+  readonly finding: FirstFinding | null;
+  readonly reroutedFromVendorPath?: string;
+}
+
+/**
+ * Picks the first (file, line, ruleId) triple the `nextStep` hint
+ * should name, with an optional vendor-code reroute. The default
+ * answer is the first callable finding in `files[]` order — the
+ * response-assembly sort already puts the highest-priority finding
+ * first, so that's the one the agent should act on. The reroute
+ * (Q6-NEXTSTEP-AVOIDS-VENDOR-CSS) kicks in when `vendorPaths` is
+ * non-empty AND the first callable finding sits on a path in that
+ * set: we scan forward for a same-`ruleId` finding on a non-vendor
+ * path and hand THAT triple back instead, tagging the original
+ * vendor path so the prose can surface the reason.
+ *
+ * Why match on `ruleId` rather than broader rule-family/criterion:
+ * `ruleId` is the smallest, deterministic, AgentFinding-carried key
+ * that identifies "same fix shape." A reroute to a same-`ruleId`
+ * finding is a straight substitution — the agent does the same
+ * mental move as before, just in authored code. Broader "same
+ * criterion" fallbacks would couple next-step into the criteria
+ * index and risk routing to a finding with a different fix workflow;
+ * the backlog item explicitly notes the ruleId form as sufficient.
+ *
+ * When no non-vendor alternative exists (every finding of the
+ * first's `ruleId` lives in vendor code), the vendor target stays
+ * per the backlog's "fall back to vendor only when every violation
+ * is in vendor code" rule — no reroute, no reason-note, shape
+ * identical to today. When `vendorPaths` is absent or empty, the
+ * whole vendor-aware path short-circuits and the behavior is exactly
+ * the pre-change `firstCallableFinding` output.
+ */
+function pickFirstFinding(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string> | undefined,
+): FirstFindingPick {
+  const firstRaw = firstCallableFinding(files);
+  if (firstRaw === null) return { finding: null };
+  // No vendor classification → keep the first pick verbatim. Matches
+  // the pre-Q6 behavior for `scan` / `scan_file` callers that don't
+  // plumb `scannedBuildArtifacts` through.
+  if (vendorPaths === undefined || vendorPaths.size === 0) {
+    return { finding: firstRaw };
+  }
+  if (!vendorPaths.has(firstRaw.path)) {
+    return { finding: firstRaw };
+  }
+  // First finding is on a vendor path. Scan forward for a same-`ruleId`
+  // finding on a non-vendor path.
+  for (const file of files) {
+    if (vendorPaths.has(file.path)) continue;
+    for (const raw of file.findings) {
+      const extracted = readFindingRuleIdAndLine(raw);
+      if (extracted === null) continue;
+      if (extracted.ruleId !== firstRaw.ruleId) continue;
+      return {
+        finding: { path: file.path, ...extracted },
+        reroutedFromVendorPath: firstRaw.path,
+      };
+    }
+  }
+  // Every same-ruleId finding sits in vendor code. Per the backlog
+  // item's "fall back to vendor only when every violation is in
+  // vendor code" rule, keep the vendor target and emit no reroute
+  // note — the vendor pick is the honest answer.
+  return { finding: firstRaw };
 }
 
 /**

@@ -220,20 +220,34 @@ export const scanProjectTool: McpTool = {
     logger.debug(
       `scan_project: ${files.length} files, parse ${parseMs}ms + scan ${ms(t1)}ms = ${ms(t0)}ms`,
     );
-    const nextStep = buildNextStep(formatted, {
-      iterativeTip:
-        actualMode === "full"
-          ? ' For iterative work on a branch, pass `since: "HEAD~1"` or `changedOnly: true` to scan only diffs.'
-          : "",
-    });
-    const nextStepStructuredField = structuredField(nextStep);
     // Deterministic compiled-CSS / bundler-output label. Findings on
     // these files STILL appear in `formatted.files` — this is additive
     // information so an agent knows to investigate whether a given
     // finding sits on generated code before editing. Per CLAUDE.md §1
     // "Ambiguous field shapes are dishonest," the field is omitted
     // entirely when the detector finds no artifacts (never `[]`).
+    //
+    // Hoisted above `buildNextStep` so the classifier's output can
+    // also drive Q6-NEXTSTEP-AVOIDS-VENDOR-CSS: the raw `entries` list
+    // carries the same absolute-path form that `formatted.files[].path`
+    // uses, so the next-step builder can match vendor findings without
+    // additional normalization.
     const buildArtifacts = buildArtifactsFields(files, root);
+    const nextStep = buildNextStep(formatted, {
+      iterativeTip:
+        actualMode === "full"
+          ? ' For iterative work on a branch, pass `since: "HEAD~1"` or `changedOnly: true` to scan only diffs.'
+          : "",
+      // Q6-NEXTSTEP-AVOIDS-VENDOR-CSS: when the top-ranked violation
+      // sits in vendor code (bootstrap.css, font-awesome.css, etc.)
+      // AND a same-`ruleId` finding exists in authored code, the
+      // builder reroutes the structured hint to the authored file so
+      // the agent's first action lands where it can edit. When no
+      // alternative exists, the vendor target stays. Additive — empty
+      // set is a no-op.
+      vendorPaths: vendorPathSet(buildArtifacts.entries),
+    });
+    const nextStepStructuredField = structuredField(nextStep);
     // P2-BASE: probe the canonical baseline path so agents see whether
     // a baseline is in play alongside the scan result — prevents
     // re-proposing fixes for grandfathered violations without the
@@ -957,6 +971,25 @@ function buildArtifactsFields(
     entries,
     metaField: { scannedBuildArtifacts: grouped },
   };
+}
+
+/**
+ * Q6-NEXTSTEP-AVOIDS-VENDOR-CSS. Build a hash-set of the absolute
+ * filePaths the classifier flagged as build artifacts, so
+ * `buildNextStep`'s reroute predicate can lookup by path in O(1).
+ * The set carries the same absolute-path form that
+ * `formatted.files[].path` uses — the classifier's input is
+ * `ParsedFile.filePath`, which is the same value `rule-runner.ts`
+ * stamps onto every violation's `location.filePath` — so the set is
+ * a drop-in path-equality key with no normalization. Empty input
+ * yields an empty set (the builder short-circuits when
+ * `vendorPaths.size === 0`, making the whole Q6 code path a no-op
+ * for clean repos).
+ */
+function vendorPathSet(entries: readonly ScannedBuildArtifact[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const e of entries) out.add(e.path);
+  return out;
 }
 
 /**

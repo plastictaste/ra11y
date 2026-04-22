@@ -394,4 +394,200 @@ describe("buildNextStep", () => {
       }
     }
   });
+
+  // ── Q6-NEXTSTEP-AVOIDS-VENDOR-CSS ─────────────────────────────────
+  // When the top-ranked finding sits in vendor code (bootstrap.css,
+  // font-awesome.css, compiled Tailwind) AND a same-`ruleId` finding
+  // exists in authored code, the builder reroutes its structured
+  // target to the authored file so the agent's first action lands
+  // where it can edit. When no authored alternative exists, the
+  // vendor target stays — behavior is unchanged.
+
+  describe("vendorPaths reroute", () => {
+    const contrastFinding = (line: number) => ({
+      ruleId: "contrast/minimum",
+      line,
+      column: 1,
+      severity: "error" as const,
+      fixClass: "guidance" as const,
+    });
+
+    it("reroutes to an authored file when the first finding is vendor and a same-ruleId authored alternative exists", () => {
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            violations: 2,
+            safeEditsAvailable: 0,
+            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
+            { path: "authored/site.css", findings: [contrastFinding(42)] },
+          ],
+        }),
+        { vendorPaths: new Set(["vendor/bootstrap.css"]) },
+      );
+      // Structured form now points at the authored file — that's the
+      // whole point of the reroute.
+      expect(result.structured).toEqual({
+        tool: "suggest_fix",
+        args: { ruleId: "contrast/minimum", file: "authored/site.css", line: 42 },
+      });
+      // Prose prepends a reason-note naming the vendor file the agent
+      // is being steered away from.
+      expect(result.prose).toContain("vendor/bootstrap.css");
+      expect(result.prose).toContain("authored/site.css");
+      expect(result.prose).toContain("same-family fix");
+    });
+
+    it("keeps the vendor target when every same-ruleId finding sits in vendor code", () => {
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            violations: 2,
+            safeEditsAvailable: 0,
+            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
+            { path: "vendor/font-awesome.css", findings: [contrastFinding(12)] },
+          ],
+        }),
+        {
+          vendorPaths: new Set(["vendor/bootstrap.css", "vendor/font-awesome.css"]),
+        },
+      );
+      // No authored alternative exists — vendor target stays, no
+      // reason-note is prepended.
+      expect(result.structured).toEqual({
+        tool: "suggest_fix",
+        args: { ruleId: "contrast/minimum", file: "vendor/bootstrap.css", line: 365 },
+      });
+      expect(result.prose).not.toContain("note:");
+      expect(result.prose).not.toContain("same-family");
+    });
+
+    it("does not reroute when a non-vendor finding exists but has a different ruleId", () => {
+      // The backlog rule is "same ruleId" — routing to a different
+      // rule-family would hand the agent a finding with a different
+      // fix workflow, defeating the "same-family fix is applicable"
+      // guarantee the reason-note makes.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            violations: 2,
+            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
+            {
+              path: "authored/site.css",
+              findings: [{ ...contrastFinding(42), ruleId: "motion/pause-stop-hide" }],
+            },
+          ],
+        }),
+        { vendorPaths: new Set(["vendor/bootstrap.css"]) },
+      );
+      // Vendor target stays — different ruleId is not a same-family
+      // substitute.
+      expect(result.structured?.args).toEqual({
+        ruleId: "contrast/minimum",
+        file: "vendor/bootstrap.css",
+        line: 365,
+      });
+      expect(result.prose).not.toContain("same-family");
+    });
+
+    it("is a no-op when vendorPaths is empty or omitted (behavior unchanged from pre-Q6)", () => {
+      // Additive constraint: when the caller doesn't plumb
+      // `scannedBuildArtifacts` through (scan, scan_file, tests), the
+      // reroute code path short-circuits and the first-callable-
+      // finding answer is exactly what would have shipped before.
+      const withoutOption = buildNextStep(
+        formatted({
+          plan: {
+            violations: 1,
+            fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
+        }),
+      );
+      const withEmptySet = buildNextStep(
+        formatted({
+          plan: {
+            violations: 1,
+            fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
+        }),
+        { vendorPaths: new Set() },
+      );
+      expect(withoutOption.structured?.args).toEqual({
+        ruleId: "contrast/minimum",
+        file: "vendor/bootstrap.css",
+        line: 365,
+      });
+      expect(withEmptySet.structured?.args).toEqual({
+        ruleId: "contrast/minimum",
+        file: "vendor/bootstrap.css",
+        line: 365,
+      });
+      expect(withoutOption.prose).not.toContain("same-family");
+      expect(withEmptySet.prose).not.toContain("same-family");
+    });
+
+    it("does not reroute when the first finding is already in authored code", () => {
+      // The classifier may flag `vendor/bootstrap.css` under the same
+      // response that has an authored finding first. The reroute
+      // predicate is "first finding is vendor" — if the first is
+      // already authored, no rerouting is necessary and no
+      // reason-note should appear.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            violations: 2,
+            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "authored/site.css", findings: [contrastFinding(42)] },
+            { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
+          ],
+        }),
+        { vendorPaths: new Set(["vendor/bootstrap.css"]) },
+      );
+      expect(result.structured?.args).toEqual({
+        ruleId: "contrast/minimum",
+        file: "authored/site.css",
+        line: 42,
+      });
+      expect(result.prose).not.toContain("same-family");
+    });
+
+    it("reroutes inside the explain_rule branch when no fixes are available", () => {
+      // Structural parity: the reason-note + rerouted target apply to
+      // every violation branch that names a concrete finding, not just
+      // the fixable sub-branch. The explain_rule branch is exercised
+      // when `fixable === 0` — make sure the reroute lands there too.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            violations: 2,
+            fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+          },
+          files: [
+            { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
+            { path: "authored/site.css", findings: [contrastFinding(42)] },
+          ],
+        }),
+        { vendorPaths: new Set(["vendor/bootstrap.css"]) },
+      );
+      expect(result.structured).toEqual({
+        tool: "explain_rule",
+        args: { ruleId: "contrast/minimum" },
+      });
+      expect(result.prose).toContain("vendor/bootstrap.css");
+      expect(result.prose).toContain("authored/site.css");
+      expect(result.prose).toContain("same-family");
+    });
+  });
 });
