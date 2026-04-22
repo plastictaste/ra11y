@@ -741,10 +741,15 @@ function recordOpaqueSighting(
  * family, plus optionally the `<%...%>` family):
  *   - jinja-or-liquid: uses `{% ... %}` control blocks (Jinja / Liquid /
  *     Nunjucks). Whitespace-control variants `{%-` and `-%}` count.
- *     `{{ ... }}` interpolation in the same file is part of THIS family,
- *     not a separate handlebars signal.
+ *     Also wins on Liquid-only evidence in `{{ ... }}` interpolation —
+ *     specifically the `{{-` / `-}}` whitespace-stripping variant, which
+ *     Handlebars and Mustache do not support. `{{ ... }}` interpolation
+ *     (without whitespace control) in the same file is part of THIS
+ *     family when any Liquid evidence is present, not a separate
+ *     handlebars signal.
  *   - handlebars-or-mustache: uses `{{ ... }}` interpolation but no
- *     `{% ... %}` control blocks — the `{{ }}`-only shape.
+ *     `{% ... %}` control blocks AND no `{{- -}}` whitespace-control
+ *     variant — the plain `{{ }}`-only shape.
  *   - erb-or-ejs: uses `<% ... %>`. Independent of the `{{...}}` axis.
  *
  * The per-file scoping matters for `scan_project`: a prior implementation
@@ -754,6 +759,17 @@ function recordOpaqueSighting(
  * a mixed classification on projects that are pure Liquid. Classify
  * THIS file's source; the caller unions the per-file result into the
  * accumulator.
+ *
+ * A separate single-file variant (Q4-TEMPLATE-CLASSIFIER-LIQUID-AS-
+ * MUSTACHE-SINGLE-FILE): a pure-Liquid layout that uses only
+ * `{{- content -}}` / `{{- page.title -}}` whitespace-control
+ * interpolation — no `{% %}` blocks — was mis-tagged handlebars-or-
+ * mustache because the earlier classifier only treated `{% %}` blocks
+ * as Liquid evidence. `{{-` and `-}}` are decisive Liquid signals:
+ * Handlebars and Mustache don't support whitespace-stripping markers
+ * in interpolation. Treating that form as equivalent to a control
+ * block for classification purposes restores the honest family label
+ * so downstream rules reach for the correct strip helpers.
  */
 function detectTemplateEngines(source: string, into: Set<string>): void {
   // `\{%-?\s*` accepts both the plain `{%` opener and Liquid/Jinja's
@@ -765,16 +781,27 @@ function detectTemplateEngines(source: string, into: Set<string>): void {
     /\{%-?\s*(?:extends|include|block|if|for|set|assign|capture|unless|case|comment|raw|render|layout|tablerow|cycle)\b/.test(
       source,
     );
+  // `{{- ... -}}` / `{{ ... -}}` / `{{- ... }}` whitespace-stripping
+  // interpolation is Liquid-only. Handlebars and Mustache do not
+  // recognize the leading/trailing `-` as a whitespace-control marker.
+  // A Jekyll `_layouts/default.html` that uses only `{{- content -}}`
+  // (no `{% %}` blocks) is decisively Liquid even though its other
+  // interpolations are the shared `{{ ... }}` form. Checking either
+  // `{{-` or `-}}` is enough — the whitespace-strip pair is always
+  // parenthesized together by convention, but one side is sufficient
+  // evidence for the classifier.
+  const hasLiquidWhitespaceInterp = /\{\{-|-\}\}/.test(source);
   const hasInterpolation = /\{\{[^}]+\}\}/.test(source);
-  if (hasControlBlock) {
+  if (hasControlBlock || hasLiquidWhitespaceInterp) {
     into.add("jinja-or-liquid");
   } else if (hasInterpolation) {
     // `{{ }}`-only shape — handlebars/mustache's syntactic signature.
-    // Note: a pure-interpolation Liquid file (no control tags) will
-    // also land here and be labeled handlebars-or-mustache; that's the
-    // honest reading of the evidence — `{{ x }}` alone is ambiguous
-    // between the families, and the tag's combined name reflects the
-    // ambiguity rather than guessing.
+    // Note: a pure-interpolation Liquid file (no control tags, no
+    // whitespace-strip variant) will also land here and be labeled
+    // handlebars-or-mustache; that's the honest reading of the
+    // evidence — `{{ x }}` alone is ambiguous between the families,
+    // and the tag's combined name reflects the ambiguity rather than
+    // guessing.
     into.add("handlebars-or-mustache");
   }
   if (/<%[=-]?[\s\S]*?%>/.test(source)) into.add("erb-or-ejs");

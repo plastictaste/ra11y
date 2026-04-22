@@ -530,6 +530,45 @@ describe("buildAnalysisCoverage — hints", () => {
       const { analysisCoverage } = buildAnalysisCoverage([handlebars], [], NO_RULES, false);
       expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
     });
+
+    // Q4-TEMPLATE-CLASSIFIER-LIQUID-AS-MUSTACHE-SINGLE-FILE:
+    // a Jekyll `_layouts/default.html` that uses only the Liquid
+    // whitespace-stripping interpolation form `{{- content -}}`
+    // (no `{% %}` blocks anywhere) was mis-tagged
+    // handlebars-or-mustache because the earlier classifier only
+    // treated `{% %}` as Liquid evidence. `{{-` / `-}}` is a
+    // decisive Liquid-only signal — Handlebars and Mustache don't
+    // recognize the dash as a whitespace-control marker — so a
+    // file carrying it classifies as jinja-or-liquid even when
+    // every other interpolation is the shared `{{ x }}` form.
+    it("tags pure-Liquid layouts using only `{{- ... -}}` whitespace-control as jinja-or-liquid", () => {
+      const liquidLayout = htmlFile(
+        "_layouts/default.html",
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "<head><title>{{- page.title -}}</title></head>",
+          "<body>",
+          "{{- content -}}",
+          "</body>",
+          "</html>",
+        ].join("\n"),
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([liquidLayout], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
+
+    // Same invariant, one-sided whitespace-strip: Jekyll authors
+    // routinely write `{{ foo -}}` or `{{- foo }}` where only one
+    // end strips whitespace. Either half is decisive Liquid evidence.
+    it("tags files with one-sided `{{- x }}` or `{{ x -}}` strips as jinja-or-liquid", () => {
+      const leftStrip = htmlFile("_layouts/left.html", "<p>{{- page.title }}</p>");
+      const rightStrip = htmlFile("_layouts/right.html", "<p>{{ page.title -}}</p>");
+      const left = buildAnalysisCoverage([leftStrip], [], NO_RULES, false).analysisCoverage;
+      const right = buildAnalysisCoverage([rightStrip], [], NO_RULES, false).analysisCoverage;
+      expect(left?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+      expect(right?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
   });
 
   describe("preset: 'storybook'", () => {
