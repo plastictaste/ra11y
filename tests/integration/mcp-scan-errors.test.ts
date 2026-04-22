@@ -9,10 +9,18 @@
  * CLAUDE.md §1 "Zero-output success is ambiguous failure" is the rule
  * these envelopes enforce: an agent that typos a cwd or `paths` entry
  * gets `code: "cwd-not-found"` / `code: "scan-paths-not-found"` /
- * `code: "file-unsupported"` back with `isError: true`, not an empty
- * plan that reads the same as a clean codebase.
+ * `code: "file-not-found"` / `code: "file-unsupported"` back with
+ * `isError: true`, not an empty plan that reads the same as a clean
+ * codebase.
  *
- * Three directions guarded per tool:
+ * `scan_file` splits the file-error envelope into three codes (Q-SHARED-
+ * SCAN-FILE-ERROR-DISCRIMINATION): `file-not-found` (path doesn't exist),
+ * `file-unsupported` (extension not in PARSEABLE_EXTENSIONS), and
+ * `file-read-failed` (exists + supported but IO/permission blocked the
+ * read). Matches the `suppress` tool's three-code convention so agents
+ * branch uniformly across the scan + write surfaces.
+ *
+ * Directions guarded per tool:
  *
  *   - nonexistent path → `errorResult` with the expected code + details
  *   - valid path, zero parseable files → unchanged (success + warnings)
@@ -178,23 +186,53 @@ describe("scan hard-errors when every path is missing (P0-F)", () => {
   });
 });
 
-describe("scan_file envelope parity on missing files (P0-F verify)", () => {
-  it("emits the `file-unsupported` envelope (structuredContent + isError) when the file does not exist", async () => {
-    // Pre-P0-F this threw ENOENT out of `session.parseFile` and
-    // degraded to a JSON-RPC protocol error the caller couldn't
-    // `isError`-branch on. Post-P0-F the shape matches the existing
-    // unsupported-extension path exactly: structuredContent.code +
-    // details.filePath + remediation, isError: true.
+describe("scan_file error-code discrimination (Q-SHARED-SCAN-FILE-ERROR-DISCRIMINATION)", () => {
+  // Pre-split this single handler returned `file-unsupported` for every
+  // failure mode the tool could surface: nonexistent path, unsupported
+  // extension, unreadable file (permission / IO). An agent branching on
+  // the code couldn't tell "retry after fixing permissions" from "give
+  // up, this extension is out of scope" from "check the path you typed."
+  // The split mirrors the `suppress` tool's three-code convention so
+  // agents apply the same discriminator across scan + write surfaces.
+
+  it("emits `file-not-found` when the path does not exist (extension itself is supported)", async () => {
+    // NONEXISTENT_FILE carries a `.tsx` suffix — extension IS in
+    // PARSEABLE_EXTENSIONS. The failure mode here is path-not-on-disk,
+    // NOT unsupported-extension, so the envelope must differentiate.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_file", { path: NONEXISTENT_FILE }),
     ]);
     const result = resultOf(responses[1]);
     expect(result.isError).toBe(true);
-    expect(result.structuredContent?.code).toBe("file-unsupported");
+    expect(result.structuredContent?.code).toBe("file-not-found");
     const details = result.structuredContent?.details as { filePath?: string } | undefined;
     expect(details?.filePath).toBe(NONEXISTENT_FILE);
     expect(typeof result.structuredContent?.remediation).toBe("string");
+  });
+
+  it("emits `file-unsupported` when the file exists but extension is not parseable", async () => {
+    // Real file on disk, but `.yaml` is not in PARSEABLE_EXTENSIONS.
+    // The envelope must name this failure mode distinctly from path-
+    // not-found so the agent knows to pick a different file, not to
+    // double-check the path.
+    const dir = mkdtempSync(join(tmpdir(), "ra11y-scan-file-ext-"));
+    const yamlPath = join(dir, "config.yaml");
+    await Bun.write(yamlPath, "key: value\n");
+    try {
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_file", { path: yamlPath }),
+      ]);
+      const result = resultOf(responses[1]);
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent?.code).toBe("file-unsupported");
+      const details = result.structuredContent?.details as { filePath?: string } | undefined;
+      expect(details?.filePath).toBe(yamlPath);
+      expect(typeof result.structuredContent?.remediation).toBe("string");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("still succeeds on an existing parseable file", async () => {

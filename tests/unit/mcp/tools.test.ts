@@ -1003,9 +1003,21 @@ describe("MCP tool: scan_file", () => {
     // .html/.htm, .css and silently omitted .scss, .mdx, .astro —
     // agents reading it would conclude those extensions weren't
     // supported when in fact the scanner parses them.
+    //
+    // Scenario uses a real file with an unsupported extension so the
+    // pre-check (path-exists) passes and the handler reaches the
+    // extension-filter branch that emits `file-unsupported`. Post-
+    // Q-SHARED-SCAN-FILE-ERROR-DISCRIMINATION a nonexistent path
+    // returns `file-not-found` instead — covered by a sibling test.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-unsupported-ext-"));
+    const yamlPath = joinPath(dir, "config.yaml");
+    await writeFile(yamlPath, "key: value\n");
     const tool = findTool("scan_file");
     const session = new McpSession();
-    const result = await tool.handler({ path: "/definitely/does/not/exist.tsx" }, session);
+    const result = await tool.handler({ path: yamlPath }, session);
     expect(result.isError).toBe(true);
     const structured = result.structuredContent as { code?: string; remediation?: string };
     expect(structured.code).toBe("file-unsupported");
@@ -1027,6 +1039,25 @@ describe("MCP tool: scan_file", () => {
     ]) {
       expect(remediation).toContain(ext);
     }
+  });
+
+  it("scan_file emits `file-not-found` (distinct from `file-unsupported`) when the path does not exist", async () => {
+    // Q-SHARED-SCAN-FILE-ERROR-DISCRIMINATION invariant: a nonexistent
+    // path with an otherwise-parseable extension (e.g. `.tsx`) must
+    // branch on `file-not-found`, not the old umbrella
+    // `file-unsupported`. The unit-level guard complements the
+    // integration test — lives here so bun:test exercises the code
+    // path without spawning the CLI subprocess.
+    const tool = findTool("scan_file");
+    const session = new McpSession();
+    const result = await tool.handler({ path: "/definitely/does/not/exist.tsx" }, session);
+    expect(result.isError).toBe(true);
+    const structured = result.structuredContent as {
+      code?: string;
+      details?: Record<string, unknown>;
+    };
+    expect(structured.code).toBe("file-not-found");
+    expect(structured.details?.["filePath"]).toBe("/definitely/does/not/exist.tsx");
   });
 
   it("parses .scss end-to-end and fires CSS-shaped contrast rules on the AST", async () => {
