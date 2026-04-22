@@ -349,7 +349,7 @@ function assembleParseErrorBlocks(
   const totalFailure: string[] = [];
   const partial: { path: string; reason: string }[] = [];
   for (const entry of entries) {
-    if (findingFilePaths !== undefined && findingFilePaths.has(entry.path)) {
+    if (findingFilePaths?.has(entry.path)) {
       partial.push({ path: entry.path, reason: entry.reason });
     } else {
       totalFailure.push(entry.path);

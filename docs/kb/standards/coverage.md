@@ -127,7 +127,7 @@ Coverage: 40 rule · 31 finder · 13 attestation-only · 2 gap
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
 | `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/disabled-link-surrogate +22 | — | **rule** |
-| `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
+| `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence | **rule** |
 
 ## WCAG 2.1
 
@@ -214,7 +214,7 @@ Coverage: 38 rule · 28 finder · 10 attestation-only · 2 gap
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +1 | — | **rule** |
 | `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/disabled-link-surrogate +22 | — | **rule** |
-| `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
+| `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence | **rule** |
 
 ## Section 508 (2017 refresh)
 
@@ -320,4 +320,4 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
 | `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/disabled-link-surrogate +22 | — | **rule** |
-| `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid, forms/aria-invalid-missing | — | **rule** |
+| `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence | **rule** |

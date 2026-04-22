@@ -225,6 +225,7 @@ function findPathBasedPairs(ctx: RuleContext, out: ReviewCandidate[]): void {
   for (const pair of pairs) {
     const moveOffsets = moves.get(pair.move);
     if (!moveOffsets || moveOffsets.length === 0) continue;
+    // biome-ignore lint/style/noNonNullAssertion: length > 0 guard above ensures index 0 exists
     const anchorOffset = moveOffsets[0]!;
     const { line, column } = offsetToLineColumn(ctx.source, anchorOffset);
     // Dedupe: remove any standalone addEventListener candidate already
@@ -264,7 +265,7 @@ function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
   const basename = extractBasename(ctx.filePath);
   const basenameMatch = basename.match(NAME_TOKEN_PATTERN);
   if (basenameMatch) {
-    const token = basenameMatch[1]!.toLowerCase() as NameToken;
+    const token = basenameMatch[1]?.toLowerCase() as NameToken;
     const key = `basename:${basename}`;
     if (!seen.has(key)) {
       seen.add(key);
@@ -289,7 +290,7 @@ function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
   for (const hit of collectIdentifierHits(ctx.source)) {
     const tokenMatch = hit.identifier.match(NAME_TOKEN_PATTERN);
     if (!tokenMatch) continue;
-    const token = tokenMatch[1]!.toLowerCase() as NameToken;
+    const token = tokenMatch[1]?.toLowerCase() as NameToken;
     const { line, column } = offsetToLineColumn(ctx.source, hit.offset);
     const key = `ident:${line}:${column}:${hit.identifier}`;
     if (seen.has(key)) continue;
@@ -321,8 +322,11 @@ function collectIdentifierHits(source: string): IdentifierHit[] {
   IDENTIFIER_DECL_PATTERN.lastIndex = 0;
   for (const match of source.matchAll(IDENTIFIER_DECL_PATTERN)) {
     const matchOffset = match.index ?? 0;
+    // biome-ignore lint/style/noNonNullAssertion: matchAll pattern guarantees groups 0-2 exist
     const whole = match[0]!;
+    // biome-ignore lint/style/noNonNullAssertion: matchAll pattern guarantees groups 0-2 exist
     const keyword = match[1]!;
+    // biome-ignore lint/style/noNonNullAssertion: matchAll pattern guarantees groups 0-2 exist
     const identifier = match[2]!;
     // Locate the keyword inside the matched text (accounts for the
     // optional leading non-word char the pattern captures).
