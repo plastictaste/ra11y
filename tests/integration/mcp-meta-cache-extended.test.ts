@@ -85,7 +85,9 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
     const responses = await mcpSession([
       initMsg(1),
       { jsonrpc: "2.0", method: "notifications/initialized" },
-      // Legacy caller — must see no `meta` field at all.
+      // Legacy caller — must see no cache-mode `meta` fields
+      // (`metaMode`, `sessionRef`). Provenance-only meta still rides
+      // every response per Q3-META-BUILD-PROVENANCE.
       toolCall(2, "checklist", { paths: [FIXTURES_DIR] }),
       // First delta-mode call — full meta + sessionRef baseline.
       toolCall(3, "checklist", { paths: [FIXTURES_DIR], metaMode: "delta" }),
@@ -96,8 +98,13 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
     ]);
 
     const legacy = bodyOf(responses.find((r) => r.id === 2)!);
-    // Legacy shape preserved: checklist had no `meta` historically.
-    expect("meta" in legacy).toBe(false);
+    // Legacy shape: checklist had no cache-mode meta fields historically.
+    // After Q3-META-BUILD-PROVENANCE, `meta` always exists (provenance
+    // triple) but it must not carry `metaMode` / `sessionRef`.
+    const legacyMeta = (legacy.meta ?? {}) as Record<string, unknown>;
+    expect("metaMode" in legacyMeta).toBe(false);
+    expect("sessionRef" in legacyMeta).toBe(false);
+    expect(typeof legacyMeta["ra11yVersion"]).toBe("string");
 
     const first = bodyOf(responses.find((r) => r.id === 3)!);
     const firstMeta = first.meta as Record<string, unknown>;
@@ -143,8 +150,13 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
     ]);
 
     const legacy = bodyOf(responses.find((r) => r.id === 2)!);
-    // Legacy shape preserved: coverage had no `meta` historically.
-    expect("meta" in legacy).toBe(false);
+    // Legacy shape: coverage had no cache-mode meta fields historically.
+    // After Q3-META-BUILD-PROVENANCE, `meta` always exists (provenance
+    // triple) but it must not carry `metaMode` / `sessionRef`.
+    const legacyMeta = (legacy.meta ?? {}) as Record<string, unknown>;
+    expect("metaMode" in legacyMeta).toBe(false);
+    expect("sessionRef" in legacyMeta).toBe(false);
+    expect(typeof legacyMeta["ra11yVersion"]).toBe("string");
 
     const first = bodyOf(responses.find((r) => r.id === 3)!);
     const firstMeta = first.meta as Record<string, unknown>;
