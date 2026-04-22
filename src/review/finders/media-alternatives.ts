@@ -26,6 +26,25 @@ const CRITERION_IDS = [
 
 const MEDIA_TAGS = ["video", "audio", "iframe"] as const;
 
+// DOM-origin file extensions. JSX-family finders see `.js`/`.ts` too
+// via the `.js → .jsx` / `.ts → .tsx` alias in `extensionMatches`,
+// which is correct for finders where a component file can legitimately
+// live under any of the four extensions. It is wrong here: library
+// code inside `.js` / `.ts` often contains string-literal HTML
+// (`$(html).append('<iframe ...>')`) that builds DOM at runtime. Field
+// reports have surfaced review candidates at `jquery.fancybox.pack.js`
+// whose snippet is the packed library's iframe-builder string literal,
+// not a rendered element. Restricting to DOM-origin extensions kills
+// the entire class at the source. The agent reads the JS library
+// directly when investigating; per AI-first doctrine
+// (docs/kb/architecture/ai-first-consumer.md), the tool's job is to
+// point at real DOM iframes, not at string payloads inside JS.
+const DOM_ORIGIN_EXTENSIONS = [".html", ".htm", ".tsx", ".jsx"] as const;
+
+function isDomOriginFile(filePath: string): boolean {
+  return DOM_ORIGIN_EXTENSIONS.some((ext) => filePath.endsWith(ext));
+}
+
 function reasonForTag(tag: (typeof MEDIA_TAGS)[number]): string {
   switch (tag) {
     case "video":
@@ -55,6 +74,13 @@ export const finder = defineCandidateFinder({
   },
   find(ctx) {
     const candidates: ReviewCandidate[] = [];
+    // Extension gate: the `.js`/`.ts` alias into `.jsx`/`.tsx` feeds
+    // plain JS/TS into JSX-scoped finders via engine/candidate-runner.ts
+    // `extensionMatches`. For media-alternatives that's wrong — string-
+    // literal iframes in runtime DOM-builder libraries (jQuery,
+    // fancybox) are not rendered iframes. See the DOM_ORIGIN_EXTENSIONS
+    // comment above.
+    if (!isDomOriginFile(ctx.filePath)) return candidates;
     if (ctx.language === "html")
       findHtmlCandidates(ctx.ast as HtmlDocument, ctx.filePath, ctx.source, candidates);
     else if (ctx.language === "tsx" || ctx.language === "jsx")
