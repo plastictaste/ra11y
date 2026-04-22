@@ -31,6 +31,86 @@ import type { HtmlDocument } from "../types/ast.ts";
 import { findHtmlElementsByTag } from "./ast-helpers.ts";
 
 /**
+ * Path segments under which Jekyll, Hugo, Eleventy, and similar SSGs
+ * place files whose rendered output is composed by a parent layout —
+ * `_includes/foo.html`, `_layouts/default.html`, `_docs/intro.md`, etc.
+ * Detected as substrings flanked by `/` (or boundary) so a top-level
+ * `_layouts/` matches but `my_layouts_dir/` does not.
+ *
+ * Used by {@link looksLikeContentPartialPath} as one of the OR-branches
+ * for partial-or-layout detection in rules (heading-hierarchy,
+ * page-titled, …) where the file's *path* is the strongest signal that
+ * the rendered page is composed elsewhere — `_docs/intro.md` is a
+ * Jekyll content partial whose `<h1>` is supplied by the layout's
+ * `page.title` front-matter, not by the file itself.
+ */
+const PARTIAL_PATH_SEGMENTS: readonly string[] = [
+  "_docs",
+  "_includes",
+  "_layouts",
+  "_posts",
+  "_partials",
+];
+
+/**
+ * True when `filePath` lives under a directory segment conventionally
+ * used by static-site generators for content partials, layout wrappers,
+ * or include fragments (`_docs`, `_includes`, `_layouts`, `_posts`,
+ * `_partials`). The segment must be flanked by path separators (or be
+ * a leading segment), so `my_layouts_extra/` does not match `_layouts`.
+ *
+ * Pure path inspection — no AST or source content read. Cheap to call
+ * before the structural / source-content branches of
+ * {@link isHtmlLayoutOrPartial}.
+ */
+export function looksLikeContentPartialPath(filePath: string): boolean {
+  if (filePath.length === 0) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  for (const segment of PARTIAL_PATH_SEGMENTS) {
+    // Leading segment, mid-path segment, or trailing segment — the
+    // separator-flanking is what distinguishes `_layouts/x` from
+    // `my_layouts/x`.
+    const needle = `/${segment}/`;
+    if (normalized.startsWith(`${segment}/`)) return true;
+    if (normalized.includes(needle)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the file's first non-whitespace token is a Liquid / Jinja
+ * template directive (`{%- include … -%}`, `{% if … %}`, `{{ page.title }}`)
+ * — strong evidence the file is a partial whose rendered output is
+ * composed by a parent template. Skips a UTF-8 BOM and leading
+ * horizontal/vertical whitespace; an HTML comment or DOCTYPE at the top
+ * does NOT count (those are full-page signals).
+ *
+ * Distinct from {@link isHtmlLayoutOrPartial}'s composition-directive
+ * branch, which fires on `{% include %}` / `{{ content }}` / `<%= yield %>`
+ * *anywhere* in the source. The leading-token check is stricter — it
+ * fires only when the very top of the file is a directive, the shape
+ * Jekyll `_includes/header.html` and similar partials take.
+ */
+export function hasLeadingTemplateDirective(source: string): boolean {
+  let i = 0;
+  if (source.charCodeAt(0) === 0xfeff) i = 1;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  if (i >= source.length) return false;
+  const head = source.slice(i, i + 2);
+  // Liquid / Jinja interpolation, Liquid / Jinja tag (with optional
+  // whitespace-control dash), ERB. The two-char prefix is sufficient —
+  // we don't need to verify the closer here.
+  return head === "{{" || head === "{%" || head === "<%";
+}
+
+/**
  * True when the parsed HTML file looks like a layout wrapper or template
  * partial — a file whose rendered output is composed at build time from
  * (a) its own markup AND (b) another file's content. Distinct from
