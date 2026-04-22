@@ -97,6 +97,31 @@ export type FixtureExpectation =
       readonly reasonExcludes: string;
     }
   /**
+   * Assert that at least one candidate for the criterion is anchored at
+   * the given file:line. Use this when the invariant under test is the
+   * finder's positional honesty — the cited line must point at the
+   * structural anchor an agent will read (e.g. the opening line of a
+   * CSS ruleset whose `animation:` declaration triggered the candidate),
+   * NOT at a deeper sub-node many lines past the anchor. Without this
+   * predicate, a regression that drifts the reported line silently
+   * passes `candidate-present` because the criterion still surfaces.
+   *
+   * Match shape: ANY candidate for `criterionId` whose `location.filePath`
+   * equals `path` AND whose `location.line` equals `line`. `path` is
+   * root-relative POSIX under the fixture's `source/` directory, matching
+   * the form `ParsedFile.filePath` uses inside the harness. When
+   * `reasonIncludes` is set, the matching candidate's reason must also
+   * contain the substring — locks "the right candidate is at the right
+   * line" rather than "some candidate is at this line."
+   */
+  | {
+      readonly kind: "candidate-at-line";
+      readonly criterionId: string;
+      readonly path: string;
+      readonly line: number;
+      readonly reasonIncludes?: string;
+    }
+  /**
    * Assert the number of review candidates surfaced for a criterion
    * falls within the given bounds. Used to lock aggregation invariants
    * — e.g. "ten adjacent sibling <img> patterns yield ONE consolidated
@@ -511,6 +536,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalNoCandidate(fixtureId, exp, ctx.report.candidates ?? []);
     case "candidate-present-without":
       return evalCandidatePresentWithout(fixtureId, exp, ctx.report.candidates ?? []);
+    case "candidate-at-line":
+      return evalCandidateAtLine(fixtureId, exp, ctx.report.candidates ?? []);
     case "candidate-count":
       return evalCandidateCount(fixtureId, exp, ctx.report.candidates ?? []);
     case "meta-hint-includes":
@@ -760,6 +787,74 @@ function evalCandidatePresentWithout(
     expectation: exp,
     pass: true,
     message: `real-world/${fixtureId}: candidate '${exp.criterionId}' present (${matching.length} match${matching.length === 1 ? "" : "es"}) and none contain '${exp.reasonExcludes}'`,
+  };
+}
+
+// ─── candidate-at-line ──────────────────────────────────────────────────────
+
+/**
+ * Asserts that a review candidate for the criterion is anchored at the
+ * declared file:line. Guards finder positional honesty — when the
+ * structural anchor an agent reads is the opening line of a CSS ruleset
+ * (or the opening tag of a JSX element, etc.), the cited line must
+ * point there, not at a deeper sub-node many lines past the anchor.
+ *
+ * Failure modes (distinguished in the message so a regression is
+ * triagable without re-running the harness):
+ *   - no candidate for the criterion at all (silent miss)
+ *   - candidate(s) for the criterion exist but none on the named file
+ *   - candidates exist on the named file but at the wrong line(s)
+ *   - matching file:line found but reasonIncludes substring absent
+ */
+function evalCandidateAtLine(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "candidate-at-line" },
+  candidates: readonly ReviewCandidate[],
+): ExpectationResult {
+  const sameCriterion = candidates.filter((c) => c.criterionId === exp.criterionId);
+  if (sameCriterion.length === 0) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected candidate '${exp.criterionId}' at ${exp.path}:${exp.line}, got ${summariseCriterionIds(candidates)}`,
+    };
+  }
+  const sameFile = sameCriterion.filter((c) => c.location.filePath === exp.path);
+  if (sameFile.length === 0) {
+    const seen = [...new Set(sameCriterion.map((c) => c.location.filePath))].sort().join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected candidate '${exp.criterionId}' on file '${exp.path}', got matches on [${seen}] instead`,
+    };
+  }
+  const sameLine = sameFile.filter((c) => c.location.line === exp.line);
+  if (sameLine.length === 0) {
+    const seen = sameFile
+      .map((c) => c.location.line)
+      .sort((a, b) => a - b)
+      .join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected candidate '${exp.criterionId}' at ${exp.path}:${exp.line}, got line(s) [${seen}] on that file`,
+    };
+  }
+  if (exp.reasonIncludes !== undefined) {
+    const hit = sameLine.find((c) => c.reason.includes(exp.reasonIncludes ?? ""));
+    if (!hit) {
+      const seen = sameLine.map((c) => JSON.stringify(c.reason)).join(", ");
+      return {
+        expectation: exp,
+        pass: false,
+        message: `real-world/${fixtureId}: candidate '${exp.criterionId}' present at ${exp.path}:${exp.line} but no reason included '${exp.reasonIncludes}'. Saw: ${seen}`,
+      };
+    }
+  }
+  return {
+    expectation: exp,
+    pass: true,
+    message: `real-world/${fixtureId}: candidate '${exp.criterionId}' present at ${exp.path}:${exp.line} (${sameLine.length} match${sameLine.length === 1 ? "" : "es"})`,
   };
 }
 
