@@ -33,13 +33,21 @@
  *     in scan path" when CSS coverage is thin vs HTML/JSX. Each hint
  *     is a single sentence an agent can act on in one tool call.
  *
- * Under `verboseMeta`, `parseErrorFileCount` is joined by `parseErrorFiles`
- * (the path list) and `opaqueCustomComponentNames`, plus `rulesByExtension`
- * so the agent can verify which rules ran on which file types.
- * `partialParseFiles` ships with a `reason` per entry regardless of
- * `verboseMeta` — the reason is the actionable signal, not a dumpable
- * list. Fields are omitted when they'd be empty, so clean projects stay
- * terse.
+ * `parseErrorFiles` and `partialParseFiles` both ship `{ path, parser,
+ * reason }` entries whenever their bucket has entries — the reason +
+ * parser pair is the actionable signal an agent needs to investigate
+ * ("html parser: Unexpected end of input while parsing tag" is a
+ * different fix path than "css parser: Unterminated string literal"),
+ * so gating the detail behind `verboseMeta` would leave the top-level
+ * `parse_errors_present` / `parseErrorFileCount` signals as a silent-
+ * failure shape (CLAUDE.md §1 "Zero-output success is ambiguous
+ * failure" — the response-level analogue applies to partial-success
+ * signals too). `opaqueCustomComponentNames` and `rulesByExtension`
+ * still hide behind `verboseMeta` because they are bounded-but-large
+ * inventories whose per-entry value is lower than the top-level count;
+ * parse errors are high-signal per-entry and rarely exceed a handful
+ * per scan. Fields are omitted when they'd be empty, so clean projects
+ * stay terse.
  */
 
 import { walkJsxElements } from "../engine/ast-helpers.ts";
@@ -82,13 +90,18 @@ interface OpaqueComponentUsage {
  * A file whose parser emitted errors. The `reason` is the first parse
  * error's message — surfaced as-is so an agent can branch on the root
  * cause ("Unexpected token `<`" vs "Unterminated string literal") rather
- * than guessing from the file extension. Classification into either
- * `parseErrorFiles` (total-parse-failure, file invisible to rules) or
- * `partialParseFiles` (rules fired on the recovered slice) is decided
- * at emission time by checking whether the file produced any findings.
+ * than guessing from the file extension. The `parser` names which
+ * in-house parser owned the failure (`html`, `css`, `tsx`, `jsx`, `ts`,
+ * `js`) — distinguishable from the file extension because e.g. `.mdx`
+ * routes through the MDX → TSX bridge and emits `tsx`-class diagnostics.
+ * Classification into either `parseErrorFiles` (total-parse-failure,
+ * file invisible to rules) or `partialParseFiles` (rules fired on the
+ * recovered slice) is decided at emission time by checking whether the
+ * file produced any findings.
  */
 interface ParseErrorEntry {
   readonly path: string;
+  readonly parser: string;
   readonly reason: string;
 }
 
@@ -212,9 +225,17 @@ export function buildAnalysisCoverage(
     templateDirectivesFound?: readonly string[];
     templateDirectiveHandling?: string;
     parseErrorFileCount?: number;
-    parseErrorFiles?: readonly string[];
+    parseErrorFiles?: readonly {
+      readonly path: string;
+      readonly parser: string;
+      readonly reason: string;
+    }[];
     partialParseFileCount?: number;
-    partialParseFiles?: readonly { readonly path: string; readonly reason: string }[];
+    partialParseFiles?: readonly {
+      readonly path: string;
+      readonly parser: string;
+      readonly reason: string;
+    }[];
     rulesByExtension?: Readonly<Record<string, readonly string[]>>;
     hints?: readonly string[];
     skippedByExtension?: Readonly<Record<string, number>>;
@@ -238,7 +259,7 @@ export function buildAnalysisCoverage(
     coverage.templateDirectiveHandling = describeTemplateDirectiveHandling(acc.templateEngines);
   }
   if (acc.parseErrorEntries.length > 0) {
-    assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, verbose, coverage);
+    assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage);
   }
   if (verbose) {
     const byExt = rulesByExtension(files, activeRules);
@@ -313,13 +334,19 @@ function truncateParseErrorReason(message: string): string {
  * Splits the accumulated parse-error entries into the two honest
  * buckets and assigns them to the coverage block.
  *
- * - `parseErrorFiles` (count + — under verbose — the path list): files
- *   whose parser emitted errors AND produced zero findings. These are
- *   invisible to rules; an agent reading the count treats them as
- *   "could contain a11y violations the scanner never saw."
- * - `partialParseFiles` (always an array of `{ path, reason }` when
- *   non-empty): files whose parser emitted errors but for which at
- *   least one rule fired on the recovered slice. Findings on these
+ * - `parseErrorFiles` (always an array of `{ path, parser, reason }`
+ *   when non-empty): files whose parser emitted errors AND produced
+ *   zero findings. These are invisible to rules; an agent reading the
+ *   list treats them as "could contain a11y violations the scanner
+ *   never saw." The bare `parse_errors_present` / `parseErrorFileCount`
+ *   signals tell an agent a file didn't parse, but without the parser
+ *   + reason the agent has no fix pivot — `parse_errors_present: true`
+ *   alone is a silent-failure shape (CLAUDE.md §1 "Zero-output success
+ *   is ambiguous failure" applies to partial-success signals). The
+ *   entry list is the actionable detail; it ships at every verbosity.
+ * - `partialParseFiles` (always an array of `{ path, parser, reason }`
+ *   when non-empty): files whose parser emitted errors but for which
+ *   at least one rule fired on the recovered slice. Findings on these
  *   paths are present in the response with live line numbers; the
  *   entry is a calibration warning, not a blanket "invisible" signal.
  *
@@ -330,41 +357,48 @@ function truncateParseErrorReason(message: string): string {
  * demotes a file from "fully invisible" to "partially reported."
  *
  * Each bucket is emitted only when non-empty (present-when-meaningful).
- * The `reason` string on `partialParseFiles[]` is always populated;
- * conditional spreads at the field level are for whole-field absence,
- * not per-entry "did you mean empty or unknown" (see CLAUDE.md §1
- * "Ambiguous field shapes are dishonest").
+ * The `parser` and `reason` strings on every entry are always
+ * populated; conditional spreads at the field level are for whole-field
+ * absence, not per-entry "did you mean empty or unknown" (see CLAUDE.md
+ * §1 "Ambiguous field shapes are dishonest").
  */
 function assembleParseErrorBlocks(
   entries: readonly ParseErrorEntry[],
   findingFilePaths: ReadonlySet<string> | undefined,
-  verbose: boolean,
   coverage: {
     parseErrorFileCount?: number;
-    parseErrorFiles?: readonly string[];
+    parseErrorFiles?: readonly {
+      readonly path: string;
+      readonly parser: string;
+      readonly reason: string;
+    }[];
     partialParseFileCount?: number;
-    partialParseFiles?: readonly { readonly path: string; readonly reason: string }[];
+    partialParseFiles?: readonly {
+      readonly path: string;
+      readonly parser: string;
+      readonly reason: string;
+    }[];
   },
 ): void {
-  const totalFailure: string[] = [];
-  const partial: { path: string; reason: string }[] = [];
+  const totalFailure: ParseErrorEntry[] = [];
+  const partial: ParseErrorEntry[] = [];
   for (const entry of entries) {
     if (findingFilePaths?.has(entry.path)) {
-      partial.push({ path: entry.path, reason: entry.reason });
+      partial.push(entry);
     } else {
-      totalFailure.push(entry.path);
+      totalFailure.push(entry);
     }
   }
   if (totalFailure.length > 0) {
     coverage.parseErrorFileCount = totalFailure.length;
-    if (verbose) coverage.parseErrorFiles = [...totalFailure].sort();
+    coverage.parseErrorFiles = [...totalFailure].sort((a, b) => a.path.localeCompare(b.path));
   }
   if (partial.length > 0) {
     coverage.partialParseFileCount = partial.length;
     // `partialParseFiles` always ships when non-empty (no verbose gate):
-    // the per-entry `reason` is the actionable signal an agent needs to
-    // decide what to investigate, not a dumpable path list. Sorted for
-    // deterministic wire output.
+    // the per-entry `parser` + `reason` pair is the actionable signal
+    // an agent needs to decide what to investigate, not a dumpable path
+    // list. Sorted for deterministic wire output.
     coverage.partialParseFiles = [...partial].sort((a, b) => a.path.localeCompare(b.path));
   }
 }
@@ -630,9 +664,15 @@ function accumulateCoverageForFile(
     // noisy signal. Message truncation keeps the wire size bounded on
     // pathological cases (e.g. a recovered HTML parser echoing back a
     // 10 KB line). The cap is generous — real parser messages are
-    // ≤120 chars; this only bites on hostile input.
+    // ≤120 chars; this only bites on hostile input. `parser` comes
+    // straight from the AST language tag so the agent sees which
+    // in-house parser owned the failure (`html`, `css`, `tsx`, `jsx`,
+    // `ts`, `js`) — distinct from the file extension because e.g.
+    // `.mdx` routes through the MDX → TSX bridge and emits `tsx`-class
+    // diagnostics under a `.mdx` path.
     acc.parseErrorEntries.push({
       path: file.filePath,
+      parser: file.ast.language,
       reason: truncateParseErrorReason(file.ast.errors[0]?.message ?? ""),
     });
   }

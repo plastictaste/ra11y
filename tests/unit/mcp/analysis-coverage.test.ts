@@ -641,8 +641,11 @@ describe("buildAnalysisCoverage — hints", () => {
       };
     }
 
-    it("routes errored files with no findings into parseErrorFiles (invisible-to-rules bucket)", () => {
+    it("routes errored files with no findings into parseErrorFiles (invisible-to-rules bucket) with per-entry parser + reason", () => {
       // Errored file, empty finding set -> lands in the invisible bucket.
+      // The `{ path, parser, reason }` shape is the actionable fix pivot:
+      // without the parser + reason the top-level `parse_errors_present`
+      // flag is a silent-failure shape (Q4-PARSE-ERROR-DETAIL).
       const files = [htmlFileWithErrors("modal.mdx")];
       const { analysisCoverage } = buildAnalysisCoverage(
         files,
@@ -655,12 +658,18 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set<string>(),
       );
       expect(analysisCoverage?.["parseErrorFileCount"]).toBe(1);
-      expect(analysisCoverage?.["parseErrorFiles"]).toEqual(["modal.mdx"]);
+      expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
+        {
+          path: "modal.mdx",
+          parser: "html",
+          reason: "Unexpected end of input while parsing tag",
+        },
+      ]);
       expect(analysisCoverage?.["partialParseFileCount"]).toBeUndefined();
       expect(analysisCoverage?.["partialParseFiles"]).toBeUndefined();
     });
 
-    it("routes errored files WITH findings into partialParseFiles (reason carried per entry)", () => {
+    it("routes errored files WITH findings into partialParseFiles (parser + reason carried per entry)", () => {
       // Same errored file, but the violations set includes its path —
       // rules fired on the recovered slice. Must land in the partial
       // bucket, not `parseErrorFiles`, so the agent doesn't discard
@@ -680,14 +689,19 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["parseErrorFiles"]).toBeUndefined();
       expect(analysisCoverage?.["partialParseFileCount"]).toBe(1);
       expect(analysisCoverage?.["partialParseFiles"]).toEqual([
-        { path: "modal.mdx", reason: "Unexpected end of input while parsing tag" },
+        {
+          path: "modal.mdx",
+          parser: "html",
+          reason: "Unexpected end of input while parsing tag",
+        },
       ]);
     });
 
     it("classifies each errored file independently when some produced findings and some did not", () => {
       // Mixed scan: one errored file that rules saw (partial bucket),
       // one errored file they couldn't (invisible bucket). Two
-      // separate counts, two separate lists.
+      // separate counts, two separate lists — both carry the full
+      // `{ path, parser, reason }` triple.
       const files = [htmlFileWithErrors("a.html"), htmlFileWithErrors("b.html")];
       const { analysisCoverage } = buildAnalysisCoverage(
         files,
@@ -700,22 +714,29 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set(["a.html"]),
       );
       expect(analysisCoverage?.["parseErrorFileCount"]).toBe(1);
-      expect(analysisCoverage?.["parseErrorFiles"]).toEqual(["b.html"]);
+      const invisible = analysisCoverage?.["parseErrorFiles"] as
+        | { path: string; parser: string; reason: string }[]
+        | undefined;
+      expect(invisible?.map((e) => e.path)).toEqual(["b.html"]);
+      expect(invisible?.[0]?.parser).toBe("html");
       expect(analysisCoverage?.["partialParseFileCount"]).toBe(1);
       const partial = analysisCoverage?.["partialParseFiles"] as
-        | { path: string; reason: string }[]
+        | { path: string; parser: string; reason: string }[]
         | undefined;
       expect(partial?.map((e) => e.path)).toEqual(["a.html"]);
+      expect(partial?.[0]?.parser).toBe("html");
     });
 
-    it("ships partialParseFiles with reason regardless of verbose flag (reason is the signal, not a dumpable list)", () => {
-      // `parseErrorFiles` hides behind verboseMeta because the count
-      // is the load-bearing signal and the path list bloats the
-      // response. `partialParseFiles` inverts that: the per-entry
-      // reason frames what each file needs investigated, and an
-      // agent reading the response can't do anything useful with
-      // just a count — it needs the path+reason to triage.
-      const files = [htmlFileWithErrors("modal.mdx")];
+    it("ships both parse-error buckets with detail regardless of verbose flag (parser + reason is the signal, not a dumpable list)", () => {
+      // Previously `parseErrorFiles` hid its paths behind verboseMeta
+      // while `partialParseFiles` shipped `{ path, reason }` at every
+      // verbosity. The gating left the top-level `parse_errors_present`
+      // flag unactionable when verboseMeta: false — the agent knew one
+      // file didn't parse but couldn't see which one or why. Per
+      // Q4-PARSE-ERROR-DETAIL, both buckets now always ship the full
+      // `{ path, parser, reason }` triple so the fix pivot is present
+      // on every response.
+      const files = [htmlFileWithErrors("modal.mdx"), htmlFileWithErrors("broken.html")];
       const { analysisCoverage } = buildAnalysisCoverage(
         files,
         [],
@@ -727,28 +748,19 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set(["modal.mdx"]),
       );
       expect(analysisCoverage?.["partialParseFiles"]).toEqual([
-        { path: "modal.mdx", reason: "Unexpected end of input while parsing tag" },
+        {
+          path: "modal.mdx",
+          parser: "html",
+          reason: "Unexpected end of input while parsing tag",
+        },
       ]);
-    });
-
-    it("omits parseErrorFiles path list under non-verbose even when the bucket has entries", () => {
-      // Historical behavior for the invisible bucket: count at all
-      // verbosities, path list only under verbose. Partial-parse
-      // doesn't share this treatment (see prior test) — the two
-      // buckets carry different field-level visibility rules.
-      const files = [htmlFileWithErrors("a.html")];
-      const { analysisCoverage } = buildAnalysisCoverage(
-        files,
-        [],
-        NO_RULES,
-        false, // verbose: false
-        0,
-        undefined,
-        undefined,
-        new Set<string>(),
-      );
-      expect(analysisCoverage?.["parseErrorFileCount"]).toBe(1);
-      expect(analysisCoverage?.["parseErrorFiles"]).toBeUndefined();
+      expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
+        {
+          path: "broken.html",
+          parser: "html",
+          reason: "Unexpected end of input while parsing tag",
+        },
+      ]);
     });
 
     it("defaults to the invisible bucket when findingFilePaths is omitted (no silent demotion)", () => {
@@ -760,8 +772,59 @@ describe("buildAnalysisCoverage — hints", () => {
       const files = [htmlFileWithErrors("a.html")];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, true);
       expect(analysisCoverage?.["parseErrorFileCount"]).toBe(1);
-      expect(analysisCoverage?.["parseErrorFiles"]).toEqual(["a.html"]);
+      expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
+        {
+          path: "a.html",
+          parser: "html",
+          reason: "Unexpected end of input while parsing tag",
+        },
+      ]);
       expect(analysisCoverage?.["partialParseFileCount"]).toBeUndefined();
+    });
+
+    it("names the underlying parser honestly even when the extension disguises it (e.g. .mdx parses through the TSX bridge)", () => {
+      // `file.ast.language` is the source of truth for `parser`: an
+      // `.mdx` path routed through the MDX → TSX bridge emits
+      // `tsx`-class diagnostics even though the extension says `.mdx`.
+      // The agent needs the real parser name to pick the right fix
+      // pivot (tsx parser quirks vs html parser quirks).
+      const mdxAsTsx: ParsedFile = {
+        filePath: "content/post.mdx",
+        source: "<div",
+        ast: {
+          language: "tsx",
+          root: {
+            kind: "TsxModule",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            jsxElements: [],
+          },
+          errors: [
+            {
+              message: "Unexpected token in JSX expression",
+              position: { line: 1, column: 5, offset: 4 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [mdxAsTsx],
+        [],
+        NO_RULES,
+        true,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      const invisible = analysisCoverage?.["parseErrorFiles"] as
+        | { path: string; parser: string; reason: string }[]
+        | undefined;
+      expect(invisible?.[0]?.parser).toBe("tsx");
     });
 
     it("truncates very long parse-error reasons so response size stays bounded", () => {
@@ -804,7 +867,7 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set(["hostile.html"]),
       );
       const partial = analysisCoverage?.["partialParseFiles"] as
-        | { path: string; reason: string }[]
+        | { path: string; parser: string; reason: string }[]
         | undefined;
       expect(partial?.[0]?.reason.length).toBeLessThan(longMessage.length);
       // Head of the message survives — the actionable kind-of-error
