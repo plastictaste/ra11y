@@ -41,7 +41,6 @@
  */
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
-import { walkHtmlElements, walkJsxElements } from "../../engine/ast-helpers.ts";
 import type {
   HtmlAttribute,
   HtmlDocument,
