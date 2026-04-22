@@ -999,12 +999,7 @@ describe("buildAnalysisCoverage — hints", () => {
         "_includes/header.html",
         '<nav><a href="/">Home</a><a href="/about">About</a></nav>',
       );
-      const { analysisCoverage } = buildAnalysisCoverage(
-        [fragment],
-        [],
-        NO_RULES,
-        false,
-      );
+      const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual(["_includes/header.html"]);
     });
@@ -1042,16 +1037,8 @@ describe("buildAnalysisCoverage — hints", () => {
       // The fragment predicate matches: either signal turns the file
       // into a page.
       const bodyOnly = parsedHtml("page.html", "<body><h1>Hi</h1></body>");
-      const fragment = parsedHtml(
-        "_includes/nav.html",
-        '<nav><a href="/">Home</a></nav>',
-      );
-      const { analysisCoverage } = buildAnalysisCoverage(
-        [bodyOnly, fragment],
-        [],
-        NO_RULES,
-        false,
-      );
+      const fragment = parsedHtml("_includes/nav.html", '<nav><a href="/">Home</a></nav>');
+      const { analysisCoverage } = buildAnalysisCoverage([bodyOnly, fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual(["_includes/nav.html"]);
     });
