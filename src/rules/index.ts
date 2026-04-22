@@ -53,6 +53,7 @@ import { rule as altTextMissing } from "./media/alt-text-missing.ts";
 import { rule as altTextPlaceholder } from "./media/alt-text-placeholder.ts";
 import { rule as autoplaySound } from "./media/autoplay-sound.ts";
 import { rule as videoCaptionsMissing } from "./media/video-captions-missing.ts";
+import { rule as animationFromInteractions } from "./motion/animation-from-interactions.ts";
 import { rule as pauseStopHide } from "./motion/pause-stop-hide.ts";
 import { rule as hrefJavascriptVoid } from "./navigation/href-javascript-void.ts";
 import { rule as linkDescriptiveText } from "./navigation/link-descriptive-text.ts";
@@ -86,6 +87,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   accesskeyDuplicate,
   altTextMissing,
   altTextPlaceholder,
+  animationFromInteractions,
   ariaInvalidMissing,
   autocompleteMissing,
   autoplaySound,
@@ -164,6 +166,7 @@ export {
   accesskeyDuplicate,
   altTextMissing,
   altTextPlaceholder,
+  animationFromInteractions,
   ariaInvalidMissing,
   autocompleteMissing,
   autoplaySound,
