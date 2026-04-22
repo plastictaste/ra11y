@@ -59,8 +59,14 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import { findCssDeclaration, walkCssRules } from "../../engine/ast-helpers.ts";
-import type { CssRule, CssStylesheet } from "../../types/ast.ts";
+import {
+  findCssDeclaration,
+  getHtmlAttribute,
+  hasHtmlAttribute,
+  walkCssRules,
+  walkHtmlElements,
+} from "../../engine/ast-helpers.ts";
+import type { CssRule, CssStylesheet, HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { EmittedViolation, ProjectContext } from "../../types/rule.ts";
 import { parseColor, type Rgb } from "../../utils/color.ts";
 import { contrast, WCAG_AA_MIN_NON_TEXT } from "../../utils/contrast.ts";
@@ -75,6 +81,14 @@ import {
   NON_TEXT_FOREGROUND_PROPERTIES,
   TAILWIND_CLASS_ON_CONSUMER,
 } from "./_shared.ts";
+import {
+  buildInlineStyleBgImageUnresolvableMessage,
+  buildInlineStyleBgImageUnresolvableSuggestion,
+  collectInlineStyleBgImageUnresolvable,
+  findInlineStyleDeclaration,
+  type InlineStyleDeclaration,
+  parseInlineStyleDeclarations,
+} from "./_shared-inline.ts";
 
 const SC_LABEL = "WCAG 1.4.11";
 
@@ -82,15 +96,15 @@ export const rule = defineRule({
   id: "contrast/non-text",
   satisfies: ["wcag22:1.4.11", "wcag21:1.4.11"],
   severity: "error",
-  // Project scope mirrors `contrast/minimum` / `contrast/enhanced`: the
-  // cross-reference is cross-file by nature (CSS failure, JSX/HTML
-  // consumer). Kept `appliesTo.fileExtensions: [".css"]` for per-rule
-  // coverage telemetry — the Tailwind pre-build acute case (0 eligible
-  // CSS files → low-confidence signal) still applies.
+  // Project scope mirrors `contrast/minimum` / `contrast/enhanced`:
+  // the cross-reference is cross-file by nature (CSS failure, JSX/HTML
+  // consumer). `.html` / `.htm` are listed alongside `.css` so
+  // `rulesByExtension` honestly reports HTML inline-style evaluations
+  // alongside stylesheet rules.
   scope: "project",
   fixClass: "guidance",
   appliesTo: {
-    fileExtensions: [".css"],
+    fileExtensions: [".css", ".html", ".htm"],
   },
   docs: {
     description:
@@ -113,25 +127,209 @@ export const rule = defineRule({
       NON_TEXT_CONTRAST_OVERRIDE_FAMILIES,
     );
     for (const file of ctx.files) {
-      if (file.language !== "css") continue;
-      const stylesheet = file.ast as CssStylesheet;
-      for (const cssRule of walkCssRules(stylesheet)) {
-        checkRule(cssRule, file.filePath, overrideClasses, ctx);
-      }
-      // Image-backed backgrounds: surface info-severity findings for
-      // any authored boundary/graphic color (border, outline, fill,
-      // stroke) sitting on a rule whose background is an image or
-      // gradient. The scanner cannot compute luminance; the agent
-      // verifies manually. Same doctrine as `contrast/minimum`.
-      for (const finding of collectBgImageUnresolvable(
-        stylesheet,
-        NON_TEXT_FOREGROUND_PROPERTIES,
-      )) {
-        emitUnresolvable(ctx, file.filePath, finding);
+      if (file.language === "css") {
+        checkCssFile(ctx, file.filePath, file.ast as CssStylesheet, overrideClasses);
+      } else if (file.language === "html") {
+        // Inline-style boundary/graphic colors on elements classified
+        // as interactive / graphic by tag or role. Silent-miss before
+        // this branch existed — a
+        // `<button style="border:1px solid #ccc;background:#eee">`
+        // went unevaluated.
+        checkHtmlFile(ctx, file.filePath, file.ast as HtmlDocument);
       }
     }
   },
 });
+
+function checkCssFile(
+  ctx: ProjectContext,
+  filePath: string,
+  stylesheet: CssStylesheet,
+  overrideClasses: ReadonlySet<string>,
+): void {
+  for (const cssRule of walkCssRules(stylesheet)) {
+    checkRule(cssRule, filePath, overrideClasses, ctx);
+  }
+  // Image-backed backgrounds: surface info-severity findings for any
+  // authored boundary/graphic color (border, outline, fill, stroke)
+  // sitting on a rule whose background is an image or gradient. The
+  // scanner cannot compute luminance; the agent verifies manually.
+  for (const finding of collectBgImageUnresolvable(stylesheet, NON_TEXT_FOREGROUND_PROPERTIES)) {
+    emitUnresolvable(ctx, filePath, finding);
+  }
+}
+
+function checkHtmlFile(ctx: ProjectContext, filePath: string, doc: HtmlDocument): void {
+  for (const element of walkHtmlElements(doc)) {
+    checkInlineStyleElement(element, filePath, ctx);
+  }
+  for (const finding of collectInlineStyleBgImageUnresolvable(
+    doc,
+    NON_TEXT_FOREGROUND_PROPERTIES,
+  )) {
+    emitInlineUnresolvable(ctx, filePath, finding);
+  }
+}
+
+function emitInlineUnresolvable(
+  ctx: ProjectContext,
+  filePath: string,
+  finding: ReturnType<typeof collectInlineStyleBgImageUnresolvable>[number],
+): void {
+  const emitted: EmittedViolation = {
+    severity: "info",
+    location: { filePath, line: finding.line, column: finding.column },
+    message: buildInlineStyleBgImageUnresolvableMessage(finding, WCAG_AA_MIN_NON_TEXT, SC_LABEL),
+    suggestion: buildInlineStyleBgImageUnresolvableSuggestion(finding, WCAG_AA_MIN_NON_TEXT),
+    couldBeWrongBecause: [BG_IMAGE_UNRESOLVABLE],
+  };
+  ctx.emit(emitted);
+}
+
+/**
+ * Tag/role-level classification for an HTML element. Parallel to
+ * {@link classifySelector} but reads directly off the element —
+ * stronger evidence than a selector-pattern match.
+ */
+function classifyInlineElement(element: HtmlElement): "interactive" | "graphic" | "ignore" {
+  const tag = element.tagName.toLowerCase();
+  if (tag === "button" || tag === "input" || tag === "select" || tag === "textarea") {
+    return "interactive";
+  }
+  if (tag === "svg") return "graphic";
+  const role = getHtmlAttribute(element, "role");
+  if (role !== null) {
+    const lowered = role.trim().toLowerCase();
+    if (
+      lowered === "button" ||
+      lowered === "checkbox" ||
+      lowered === "switch" ||
+      lowered === "tab" ||
+      lowered === "menuitem" ||
+      lowered === "radio" ||
+      lowered === "combobox" ||
+      lowered === "slider" ||
+      lowered === "link" ||
+      lowered === "option" ||
+      lowered === "treeitem"
+    ) {
+      return "interactive";
+    }
+    if (lowered === "img") return "graphic";
+  }
+  return "ignore";
+}
+
+/**
+ * Mirrors {@link isExempt} for inline-style elements — the spec's
+ * "inactive components" and "presentation / essential" exemptions
+ * apply here too. We read `disabled` / `aria-disabled` / `aria-hidden`
+ * off the element's attribute list rather than parsing a selector.
+ */
+function isInlineElementExempt(element: HtmlElement): boolean {
+  const ariaDisabled = getHtmlAttribute(element, "aria-disabled");
+  if (ariaDisabled !== null && ariaDisabled.trim().toLowerCase() === "true") return true;
+  // `disabled` is a boolean HTML attribute — its presence alone
+  // qualifies for the "inactive components" WCAG carve-out, regardless
+  // of whether the author wrote `disabled` or `disabled=""`.
+  if (hasHtmlAttribute(element, "disabled")) return true;
+  const ariaHidden = getHtmlAttribute(element, "aria-hidden");
+  if (ariaHidden !== null && ariaHidden.trim().toLowerCase() === "true") return true;
+  const role = getHtmlAttribute(element, "role");
+  if (role !== null) {
+    const lowered = role.trim().toLowerCase();
+    if (lowered === "presentation" || lowered === "none") return true;
+  }
+  return false;
+}
+
+function checkInlineStyleElement(
+  element: HtmlElement,
+  filePath: string,
+  ctx: ProjectContext,
+): void {
+  const styleAttr = getHtmlAttribute(element, "style");
+  if (styleAttr === null || styleAttr.trim().length === 0) return;
+  if (isInlineElementExempt(element)) return;
+  const target = classifyInlineElement(element);
+  if (target === "ignore") return;
+  const decls = parseInlineStyleDeclarations(styleAttr);
+  if (decls.length === 0) return;
+  const bg = readInlineBackgroundColor(decls);
+  if (!bg) return;
+  const properties =
+    target === "interactive"
+      ? (["border", "border-color", "outline", "outline-color"] as const)
+      : (["fill", "stroke"] as const);
+  for (const prop of properties) {
+    checkInlineBoundary(element, decls, bg, prop, filePath, ctx);
+  }
+}
+
+function readInlineBackgroundColor(
+  decls: readonly InlineStyleDeclaration[],
+): { readonly rgb: Rgb; readonly source: string } | null {
+  const bgDecl =
+    findInlineStyleDeclaration(decls, "background-color") ??
+    findInlineStyleDeclaration(decls, "background");
+  if (!bgDecl) return null;
+  const token = extractColorToken(bgDecl.value);
+  const rgb = parseColor(token);
+  if (!rgb) return null;
+  if (rgb.a === 0) return null;
+  return { rgb, source: bgDecl.value };
+}
+
+function checkInlineBoundary(
+  element: HtmlElement,
+  decls: readonly InlineStyleDeclaration[],
+  bg: { readonly rgb: Rgb; readonly source: string },
+  prop: string,
+  filePath: string,
+  ctx: ProjectContext,
+): void {
+  const fgDecl = findInlineStyleDeclaration(decls, prop);
+  if (!fgDecl) return;
+  const fgToken = extractColorToken(fgDecl.value);
+  const fg = parseColor(fgToken);
+  if (!fg) return;
+  if (fg.a === 0) return;
+  const ratio = contrast(fg, bg.rgb);
+  if (ratio >= WCAG_AA_MIN_NON_TEXT) return;
+  const pseudoSelector = `<${element.tagName.toLowerCase()} inline style ${prop}>`;
+  const emitted: EmittedViolation = {
+    severity: "error",
+    location: {
+      filePath,
+      line: element.loc.start.line,
+      column: element.loc.start.column,
+    },
+    message: buildInlineBoundaryMessage(pseudoSelector, prop, fgDecl.value, bg.source, ratio),
+    suggestion: buildInlineBoundarySuggestion(prop, fgDecl.value, bg.source, ratio),
+  };
+  ctx.emit(emitted);
+}
+
+function buildInlineBoundaryMessage(
+  pseudoSelector: string,
+  prop: string,
+  fgSource: string,
+  bgSource: string,
+  ratio: number,
+): string {
+  return `${pseudoSelector} has ${prop} '${fgSource}' with contrast ${ratio.toFixed(2)}:1 against inline background '${bgSource}' — ${SC_LABEL} requires at least ${WCAG_AA_MIN_NON_TEXT}:1 for non-text UI components and graphics.`;
+}
+
+function buildInlineBoundarySuggestion(
+  prop: string,
+  fgSource: string,
+  bgSource: string,
+  ratio: number,
+): string {
+  const gap = (WCAG_AA_MIN_NON_TEXT / ratio).toFixed(2);
+  const darkerHint = suggestDarker(fgSource);
+  return `Increase contrast of inline \`${prop}: ${fgSource}\` against \`background: ${bgSource}\` to at least ${WCAG_AA_MIN_NON_TEXT}:1. The current ratio is ${ratio.toFixed(2)}:1 — you need ${gap}× more contrast.${darkerHint ? ` Try \`${prop}: ${darkerHint}\` for a quick fix, or move the declarations into a CSS class so they participate in the project's design-system palette.` : ` Pick a darker boundary color or a lighter background, then verify with the WebAIM Contrast Checker.`}`;
+}
 
 function emitUnresolvable(
   ctx: ProjectContext,

@@ -243,6 +243,102 @@ describe("rule contrast/non-text", () => {
     });
   });
 
+  describe("inline style= attributes (HTML)", () => {
+    it("fires on a <button> with inline border below 3:1 against inline background", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><button style="border:1px solid #d0d0d0;background:#ffffff">go</button></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("<button");
+      expect(v[0]?.message).toContain("border");
+    });
+
+    it('fires on an element with role="button" and failing inline outline', () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><div role="button" style="outline:2px solid #e8e8e8;background:#ffffff">click</div></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("outline");
+    });
+
+    it("fires on an <svg> with inline stroke failing 3:1", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><svg style="background:#ffffff;stroke:#d8d8d8"><path d=""/></svg></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("stroke");
+    });
+
+    it("does NOT fire on a non-interactive element (paragraph) with inline border", () => {
+      // The rule only fires on interactive / graphic tags; a <p> with
+      // inline border is not a UI component.
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><p style="border:1px solid #e8e8e8;background:#ffffff">text</p></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on a passing inline border (dark gray on white)", () => {
+      // #595959 on white ≈ 7.0:1
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><button style="border:1px solid #595959;background:#ffffff">ok</button></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on a disabled element (inactive-component exemption)", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><button disabled style="border:1px solid #eee;background:#fff">gone</button></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it('does NOT fire on aria-hidden="true" svg (decorative graphic exemption)', () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><svg aria-hidden="true" style="background:#fff;stroke:#eee"><path d=""/></svg></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("emits info when inline boundary color sits over an image-backed inline background", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><button style="border-color:#888;background-image:url('/btn.png')">go</button></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v.some((x) => x.severity === "info")).toBe(true);
+      const info = v.find((x) => x.severity === "info");
+      expect(info?.couldBeWrongBecause).toContain("background_image_unresolvable");
+    });
+
+    it("suggestion names the property, foreground, and background sources", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><button style="border:1px solid #d0d0d0;background:#ffffff">go</button></button></body></html>`,
+        { filePath: "page.html" },
+      );
+      const s = v[0]?.suggestion ?? "";
+      expect(s).toContain("border");
+      expect(s).toContain("#d0d0d0");
+      expect(s).toContain("#ffffff");
+    });
+  });
+
   it("cites wcag22:1.4.11 and wcag21:1.4.11", () => {
     expect(rule.satisfies).toContain("wcag22:1.4.11");
     expect(rule.satisfies).toContain("wcag21:1.4.11");

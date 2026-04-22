@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Inline-style contrast reproducer</title>
+  </head>
+  <body>
+    <main>
+      <h1>Services</h1>
+      <!--
+        Pattern lifted from a static-site-template codebase: a
+        `<p style="background-color:#cccccc">` whose inherited text
+        color was dark gray. The contrast rules historically only
+        looked at stylesheet declarations, so this silent-miss
+        shipped across every sampled template.
+      -->
+      <p style="color:#777777;background-color:#cccccc">
+        Fine print set against an inline gray card — ratio is ~2.3:1,
+        below the 4.5:1 minimum the spec requires for body text.
+      </p>
+
+      <button style="border:1px solid #d0d0d0;background:#ffffff;color:#000">
+        Book consultation
+      </button>
+    </main>
+  </body>
+</html>
