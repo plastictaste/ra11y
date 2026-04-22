@@ -39,12 +39,15 @@
  * the rule is not Bootstrap-specific (see CLAUDE.md §14 "no
  * vendor-specific runtime ingest adapters"). Any value from the
  * disclosure-ish set (`collapse`, `dropdown`, `accordion`, `offcanvas`,
- * `modal`, `tab`, `pill`, `tooltip`) on a `data-*-toggle` attribute
- * triggers the predicate regardless of prefix. `popover` is
- * deliberately excluded: popovers are tooltip-shaped widgets whose
+ * `modal`, `tab`, `pill`) on a `data-*-toggle` attribute triggers the
+ * predicate regardless of prefix. `popover` and `tooltip` are
+ * deliberately excluded: both are descriptive-content widgets whose
  * state is exposed via `role="tooltip"` + `aria-describedby`, not via
- * `aria-expanded`. Flagging `data-bs-toggle="popover"` here produced
- * false positives against Bootstrap's canonical popover markup.
+ * `aria-expanded`. Flagging `data-bs-toggle="tooltip"` /
+ * `data-bs-toggle="popover"` here produced false positives against
+ * Bootstrap's canonical tooltip and popover markup. Tooltip- and
+ * popover-specific checks (dismissability, described-by pairing) live
+ * in `src/rules/tooltip/dismissable.ts`.
  *
  * Exemptions:
  *   - `<summary>` inside `<details>`: native disclosure, state is
@@ -79,14 +82,14 @@ import type {
  * a value like `collapse,show` (multi-token, rare but observed) is
  * split on whitespace/comma.
  *
- * `modal` and `tooltip` are included: per the ARIA authoring practices
- * they have open/closed state that a trigger button should announce
- * via `aria-expanded`. `tab` / `pill` cover tab-panel disclosure
- * triggers. `popover` is intentionally *not* included — popovers
+ * `modal` is included: per the ARIA authoring practices it has
+ * open/closed state that a trigger button should announce via
+ * `aria-expanded`. `tab` / `pill` cover tab-panel disclosure triggers.
+ * `popover` and `tooltip` are intentionally *not* included — both
  * expose state via `role="tooltip"` + `aria-describedby`, not
  * `aria-expanded`, and flagging them here produced false positives on
- * Bootstrap's canonical popover markup. Popover-specific checks live
- * in `src/rules/tooltip/dismissable.ts`.
+ * Bootstrap's canonical tooltip and popover markup. Tooltip- and
+ * popover-specific checks live in `src/rules/tooltip/dismissable.ts`.
  */
 const DISCLOSURE_TOGGLE_VALUES: ReadonlySet<string> = new Set([
   "collapse",
@@ -96,7 +99,6 @@ const DISCLOSURE_TOGGLE_VALUES: ReadonlySet<string> = new Set([
   "modal",
   "tab",
   "pill",
-  "tooltip",
 ]);
 
 /**

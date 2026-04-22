@@ -142,6 +142,33 @@ describe("rule aria/expanded-on-disclosure", () => {
       );
       expect(violations).toHaveLength(0);
     });
+
+    it('a <button data-bs-toggle="tooltip"> has no aria-expanded (tooltips are descriptive content, not disclosure)', () => {
+      // Tooltips expose their content via role="tooltip" + aria-describedby,
+      // not aria-expanded. Forcing aria-expanded onto a tooltip trigger
+      // would misrepresent the widget as a disclosure. Tooltip-specific
+      // checks (described-by pairing, dismissability) live in
+      // src/rules/tooltip/dismissable.ts.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button type="button" data-bs-toggle="tooltip" title="Tooltip on top">Hover me</button>
+        </body></html>`,
+        { filePath: "tooltip.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('an <a data-bs-toggle="tooltip"> has no aria-expanded (tooltip anchor, not disclosure)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#" data-bs-toggle="tooltip" title="Helpful hint">Link with tooltip</a>
+        </body></html>`,
+        { filePath: "tooltip-anchor.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -230,6 +257,17 @@ describe("rule aria/expanded-on-disclosure", () => {
            return <button type="button" data-bs-toggle="popover" data-bs-content="Hi">Open</button>;
          }`,
         { filePath: "Popover.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('a <button data-bs-toggle="tooltip"> does not fire (tooltip is descriptive content)', () => {
+      const violations = runRule(
+        rule,
+        `function Tip() {
+           return <button type="button" data-bs-toggle="tooltip" title="Hint">Hover</button>;
+         }`,
+        { filePath: "Tip.tsx" },
       );
       expect(violations).toHaveLength(0);
     });

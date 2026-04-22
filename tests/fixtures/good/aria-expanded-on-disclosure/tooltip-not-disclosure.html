@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tooltip is not a disclosure — aria/expanded-on-disclosure must not fire</title>
+  </head>
+  <body>
+    <!--
+      Bootstrap's canonical tooltip markup. A tooltip is a
+      descriptive-content widget whose content is exposed via
+      `role="tooltip"` on the tooltip body + `aria-describedby` on the
+      trigger, not via `aria-expanded` on the trigger. WCAG 4.1.2's
+      "states, properties, and values" obligation is satisfied by the
+      tooltip role contract; forcing `aria-expanded` onto a tooltip
+      trigger would misrepresent the widget as a disclosure.
+
+      The disclosure rule at src/rules/aria/expanded-on-disclosure.ts
+      deliberately excludes `tooltip` from its disclosure-toggle
+      allow-list so this fixture scans clean for that rule.
+      Tooltip-specific checks (described-by pairing, dismissability)
+      live in the separate tooltip/dismissable rule.
+
+      See:
+        - https://www.w3.org/TR/WCAG22/#name-role-value
+        - https://www.w3.org/WAI/ARIA/apg/patterns/tooltip/
+        - https://getbootstrap.com/docs/5.3/components/tooltips/
+    -->
+    <button type="button" data-bs-toggle="tooltip" data-bs-placement="top" title="Tooltip on top">
+      Tooltip on top
+    </button>
+
+    <!-- A link-triggered tooltip (also canonical Bootstrap usage). -->
+    <a href="#" data-bs-toggle="tooltip" title="Helpful hint">Link with tooltip</a>
+
+    <!-- A real disclosure trigger (dropdown) shown here as a control:
+         the rule MUST still flag disclosure triggers elsewhere on the
+         page. This one is deliberately complete (aria-expanded +
+         aria-controls both present) so the whole fixture scans clean
+         against aria/expanded-on-disclosure. -->
+    <button type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-controls="menu-1">
+      Menu
+    </button>
+    <ul id="menu-1">
+      <li><a href="/a">Item A</a></li>
+      <li><a href="/b">Item B</a></li>
+    </ul>
+  </body>
+</html>
