@@ -9,50 +9,46 @@
  *
  * Source: https://www.w3.org/TR/WCAG22/#pause-stop-hide
  *
- * This rule checks five surfaces:
+ * This rule targets **auto-updating** motion — motion that starts
+ * without user interaction (timers, autoplay attributes, bare
+ * animation declarations). Motion that is gated by a user-interaction
+ * pseudo-class (`:hover` / `:focus` / `:active` / `:focus-visible` /
+ * `:focus-within`) is the domain of WCAG 2.3.3
+ * "Animation from Interactions" — see the sibling rule
+ * `motion/animation-from-interactions`.
+ *
+ * The rule checks five surfaces:
  *   1. HTML <marquee> — obsolete, always animated, no built-in pause.
- *   2. Standalone .css files — animation/transition properties without a
- *      prefers-reduced-motion guard.
- *   3. HTML <style> blocks — content parsed as CSS and fed through the
- *      same guard check (line numbers offset back into the HTML file).
+ *   2. Standalone .css files — animation/transition properties without
+ *      a prefers-reduced-motion guard, skipping rules whose selector
+ *      is entirely user-interaction-gated.
+ *   3. HTML <style> blocks — same walk, line numbers offset back into
+ *      the HTML file.
  *   4. Inline style="animation: …" / style="transition-duration: …"
- *      attributes — a single element can't be meaningfully wrapped in a
- *      reduced-motion query, so any non-zero duration on one of these
- *      properties is flagged.
+ *      attributes — a single element can't be meaningfully wrapped in
+ *      a reduced-motion query, so any non-zero duration on one of
+ *      these properties is flagged. Inline styles aren't gated by a
+ *      pseudo-class, so they always live in the 2.2.2 lane.
  *   5. Bootstrap data-bs-ride="carousel" — a static signal of auto-
- *      advancing content (5-second default cycle). Pause-on-hover is
- *      an incidental pause, not a user-operable mechanism; the WCAG
- *      criterion still requires explicit controls that the scanner
- *      cannot prove exist from the attribute alone.
+ *      advancing content (5-second default cycle).
  */
 
 import { defineRule } from "../../api/plugin.ts";
+import { findHtmlElementsByTag, walkHtmlElements } from "../../engine/ast-helpers.ts";
+import type { CssStylesheet, HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import {
-  findHtmlElementsByTag,
+  ANIMATION_PROPERTIES,
+  anyPartHasUserInteractionPseudoClass,
+  type Emit,
+  forEachStyleBlock,
   getHtmlAttribute,
+  isNearZeroDuration,
+  isNoneValue,
+  isUserInteractionGatedSelector,
+  type PositionOffset,
   truncateForEcho,
-  walkCssAtRules,
-  walkCssRules,
-  walkHtmlElements,
-} from "../../engine/ast-helpers.ts";
-import { parseCss } from "../../input/parsers/css.ts";
-import type {
-  CssAtRule,
-  CssRule,
-  CssStylesheet,
-  HtmlDocument,
-  HtmlElement,
-  HtmlText,
-} from "../../types/ast.ts";
-
-const ANIMATION_PROPERTIES: ReadonlySet<string> = new Set([
-  "animation",
-  "animation-name",
-  "animation-duration",
-  "transition",
-  "transition-property",
-  "transition-duration",
-]);
+  walkCandidateRules,
+} from "./_shared.ts";
 
 export const rule = defineRule({
   id: "motion/pause-stop-hide",
@@ -65,9 +61,9 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "Moving or auto-updating content must have a mechanism to pause, stop, or hide. Flags <marquee>, CSS animations without a prefers-reduced-motion guard (including inline <style> blocks), inline style= animation/transition declarations, and Bootstrap data-bs-ride='carousel' auto-advance markers.",
+      "Moving or auto-updating content must have a mechanism to pause, stop, or hide. Flags <marquee>, CSS animations without a prefers-reduced-motion guard (including inline <style> blocks), inline style= animation/transition declarations, and Bootstrap data-bs-ride='carousel' auto-advance markers. Skips user-interaction-gated animations (:hover / :focus / :active) — those are the domain of motion/animation-from-interactions (wcag22:2.3.3).",
     rationale:
-      "People with attention deficits, vestibular disorders, or seizure conditions can be severely affected by motion they cannot control. A prefers-reduced-motion media query lets the browser honor the user's OS-level motion preference. Inline styles and Bootstrap carousel auto-advance attributes evade stylesheet-level guards, so they need individual scrutiny.",
+      "People with attention deficits, vestibular disorders, or seizure conditions can be severely affected by motion they cannot control. A prefers-reduced-motion media query lets the browser honor the user's OS-level motion preference. Inline styles and Bootstrap carousel auto-advance attributes evade stylesheet-level guards, so they need individual scrutiny. Animations gated by user-interaction pseudo-classes run only when the user asks for them, and WCAG 2.3.3 (not 2.2.2) is the correct criterion for that trigger shape.",
     goodExample: `@media (prefers-reduced-motion: reduce) {\n  .spinner { animation: none; }\n}`,
     badExample: `<marquee>Breaking news</marquee>\n<div data-bs-ride="carousel">…</div>\n<div style="transition-duration: 2s"></div>\n\n.spinner { animation: spin 1s infinite; }`,
     normativeQuote:
@@ -82,7 +78,7 @@ export const rule = defineRule({
       const emit: Emit = (v) => ctx.emit(v);
       const doc = ctx.ast as HtmlDocument;
       checkHtmlMarquee(doc, emit);
-      checkHtmlStyleBlocks(doc, emit);
+      forEachStyleBlock({ doc, emit, onStylesheet: checkCssStylesheet });
       checkHtmlInlineStyles(doc, emit);
       checkHtmlCarouselAutoplay(doc, emit);
     }
@@ -95,18 +91,6 @@ export const rule = defineRule({
     });
   },
 });
-
-type Emit = (v: {
-  severity: "error" | "warning" | "info";
-  location: { filePath: string; line: number; column: number };
-  message: string;
-  suggestion: string;
-}) => void;
-
-interface PositionOffset {
-  readonly lineOffset: number;
-  readonly colOffset: number;
-}
 
 function checkHtmlMarquee(doc: HtmlDocument, emit: Emit): void {
   for (const element of findHtmlElementsByTag(doc, "marquee")) {
@@ -126,40 +110,11 @@ function checkHtmlMarquee(doc: HtmlDocument, emit: Emit): void {
 }
 
 /**
- * Parses every <style> element's text content as CSS and applies the
- * stylesheet guard check. Line/column positions are offset so findings
- * point into the HTML file, not the extracted CSS string.
- */
-function checkHtmlStyleBlocks(doc: HtmlDocument, emit: Emit): void {
-  for (const styleEl of findHtmlElementsByTag(doc, "style")) {
-    const textNode = firstTextChild(styleEl);
-    if (!textNode) continue;
-    if (textNode.value.trim().length === 0) continue;
-    const parsed = parseCss(textNode.value);
-    // First CSS line maps onto the HTML line where the text starts; its
-    // column is offset by the HTML start column (`<style>` tag width).
-    // Subsequent CSS lines use only the line offset — their columns are
-    // already in their own coordinate space (starting at 1 of a new line
-    // inside the style block).
-    const offset: PositionOffset = {
-      lineOffset: textNode.loc.start.line - 1,
-      colOffset: textNode.loc.start.column - 1,
-    };
-    checkCssStylesheet(parsed.root, emit, offset);
-  }
-}
-
-function firstTextChild(element: HtmlElement): HtmlText | null {
-  for (const child of element.children) {
-    if (child.kind === "HtmlText") return child;
-  }
-  return null;
-}
-
-/**
  * Flags inline style="…" attributes that set animation or transition
  * properties to a non-zero duration. Inline styles can't be wrapped in
  * a prefers-reduced-motion query, so any non-zero value is a violation.
+ * Inline styles are element-level and never gated by a pseudo-class,
+ * so this always routes to the 2.2.2 lane.
  */
 function checkHtmlInlineStyles(doc: HtmlDocument, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
@@ -211,177 +166,60 @@ function findOffendingInlineDeclaration(style: string): OffendingDeclaration | n
  */
 function checkHtmlCarouselAutoplay(doc: HtmlDocument, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
-    const ride = getHtmlAttribute(element, "data-bs-ride");
-    if (ride === null) continue;
-    const rideTrimmed = ride.trim().toLowerCase();
-    if (rideTrimmed !== "carousel" && rideTrimmed !== "true") continue;
-    const pause = getHtmlAttribute(element, "data-bs-pause");
-    const pauseNote =
-      pause === null
-        ? "no data-bs-pause attribute present"
-        : `data-bs-pause="${truncateForEcho(pause)}"`;
+    emitCarouselFinding(element, emit);
+  }
+}
+
+function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
+  const ride = getHtmlAttribute(element, "data-bs-ride");
+  if (ride === null) return;
+  const rideTrimmed = ride.trim().toLowerCase();
+  if (rideTrimmed !== "carousel" && rideTrimmed !== "true") return;
+  const pause = getHtmlAttribute(element, "data-bs-pause");
+  const pauseNote =
+    pause === null
+      ? "no data-bs-pause attribute present"
+      : `data-bs-pause="${truncateForEcho(pause)}"`;
+  emit({
+    severity: "warning",
+    location: {
+      filePath: "",
+      line: element.loc.start.line,
+      column: element.loc.start.column,
+    },
+    message: `<${element.tagName.toLowerCase()} data-bs-ride="${rideTrimmed}"> auto-advances on page load (Bootstrap's default cycle is 5 seconds) — WCAG 2.2.2 requires a user-operable pause/stop/hide mechanism; ${pauseNote}.`,
+    suggestion:
+      "Verify that the carousel ships visible prev/next and pause/play buttons (not just pause-on-hover, which is incidental), or remove data-bs-ride so the carousel does not auto-advance until the user activates it.",
+  });
+}
+
+/**
+ * Applies the stylesheet prefers-reduced-motion guard check in the
+ * 2.2.2 lane. Skips CSS rules whose selector is ENTIRELY
+ * user-interaction-gated — those belong to 2.3.3 and are flagged by
+ * the sibling `motion/animation-from-interactions` rule. A mixed
+ * selector list (`.foo, .foo:hover`) still fires under 2.2.2 because
+ * the bare `.foo` part animates without interaction.
+ */
+function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: PositionOffset): void {
+  for (const { rule: cssRule, decl } of walkCandidateRules(stylesheet)) {
+    if (isUserInteractionGatedSelector(cssRule.selector)) continue;
+    const echoSelector = truncateForEcho(cssRule.selector);
+    const mixedNote = anyPartHasUserInteractionPseudoClass(cssRule.selector)
+      ? " (selector list mixes interaction-gated and always-on parts — the non-gated parts animate without user input)"
+      : "";
     emit({
       severity: "warning",
       location: {
         filePath: "",
-        line: element.loc.start.line,
-        column: element.loc.start.column,
+        line: decl.loc.start.line + offset.lineOffset,
+        column:
+          decl.loc.start.line === 1
+            ? decl.loc.start.column + offset.colOffset
+            : decl.loc.start.column,
       },
-      message: `<${element.tagName.toLowerCase()} data-bs-ride="${rideTrimmed}"> auto-advances on page load (Bootstrap's default cycle is 5 seconds) — WCAG 2.2.2 requires a user-operable pause/stop/hide mechanism; ${pauseNote}.`,
-      suggestion:
-        "Verify that the carousel ships visible prev/next and pause/play buttons (not just pause-on-hover, which is incidental), or remove data-bs-ride so the carousel does not auto-advance until the user activates it.",
+      message: `'${echoSelector}' uses ${decl.property} without a prefers-reduced-motion media query guard${mixedNote} — users who prefer reduced motion cannot disable this animation.`,
+      suggestion: `Wrap the animation in @media (prefers-reduced-motion: reduce) { ${echoSelector} { ${decl.property}: none; } } or move the entire rule inside a prefers-reduced-motion query.`,
     });
   }
-}
-
-/**
- * Applies the stylesheet prefers-reduced-motion guard check. Callable
- * on a whole .css file (offsets 0/0) or on the CSS extracted from an
- * HTML <style> block (offsets shifting positions back into the HTML
- * source).
- */
-function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: PositionOffset): void {
-  const guardedRules = collectReducedMotionRules(stylesheet);
-  // Universal override: `@media (prefers-reduced-motion: reduce) { *, *::before, *::after { … } }`
-  // is the canonical pattern recommended by MDN. When present, every selector in
-  // the stylesheet is already covered — no need to flag individual animations.
-  if (hasUniversalReducedMotionOverride(guardedRules)) return;
-  for (const cssRule of walkCssRules(stylesheet)) {
-    if (guardedRules.has(cssRule)) continue;
-    for (const decl of cssRule.declarations) {
-      if (!ANIMATION_PROPERTIES.has(decl.property.toLowerCase())) continue;
-      // Skip declarations that disable animation (e.g., animation: none)
-      if (isNoneValue(decl.value)) continue;
-      // `cssRule.selector` is user-authored and echoed twice per
-      // finding; escaped Tailwind class selectors can be quite long.
-      const echoSelector = truncateForEcho(cssRule.selector);
-      emit({
-        severity: "warning",
-        location: {
-          filePath: "",
-          line: decl.loc.start.line + offset.lineOffset,
-          column:
-            decl.loc.start.line === 1
-              ? decl.loc.start.column + offset.colOffset
-              : decl.loc.start.column,
-        },
-        message: `'${echoSelector}' uses ${decl.property} without a prefers-reduced-motion media query guard — users who prefer reduced motion cannot disable this animation.`,
-        suggestion: `Wrap the animation in @media (prefers-reduced-motion: reduce) { ${echoSelector} { ${decl.property}: none; } } or move the entire rule inside a prefers-reduced-motion query.`,
-      });
-      // One violation per rule is enough — don't flag both animation and
-      // animation-duration on the same selector.
-      break;
-    }
-  }
-}
-
-/**
- * Collects all CssRule nodes that are nested inside a
- * @media (prefers-reduced-motion) at-rule.
- */
-function collectReducedMotionRules(stylesheet: CssStylesheet): ReadonlySet<CssRule> {
-  const guarded = new Set<CssRule>();
-  for (const atRule of walkCssAtRules(stylesheet)) {
-    if (!isReducedMotionQuery(atRule)) continue;
-    for (const child of walkAtRuleChildren(atRule)) {
-      guarded.add(child);
-    }
-  }
-  return guarded;
-}
-
-function isReducedMotionQuery(atRule: CssAtRule): boolean {
-  if (atRule.name.toLowerCase() !== "media") return false;
-  return /prefers-reduced-motion/i.test(atRule.params);
-}
-
-/**
- * Recognizes the canonical universal override:
- *   @media (prefers-reduced-motion: reduce) {
- *     *, *::before, *::after {
- *       animation-duration: 0.01ms !important;
- *       transition-duration: 0.01ms !important;
- *     }
- *   }
- * When this pattern is present, every selector in the stylesheet is covered.
- */
-function hasUniversalReducedMotionOverride(guardedRules: ReadonlySet<CssRule>): boolean {
-  for (const rule of guardedRules) {
-    if (!isUniversalSelector(rule.selector)) continue;
-    if (disablesAnimationOrTransition(rule)) return true;
-  }
-  return false;
-}
-
-/**
- * True if the selector targets every element.
- *
- * Accepts both the MDN-canonical `*, *::before, *::after` and the Tailwind-
- * compiled `*, :before, :after, ::backdrop` forms. Any comma-separated list
- * whose parts are all universal-equivalent qualifies.
- */
-const UNIVERSAL_PARTS: ReadonlySet<string> = new Set([
-  "*",
-  "*::before",
-  "*::after",
-  "*::backdrop",
-  "*:root",
-  "::before",
-  "::after",
-  "::backdrop",
-  ":before",
-  ":after",
-]);
-
-function isUniversalSelector(selector: string): boolean {
-  const parts = selector.split(",").map((s) => s.trim());
-  if (parts.length === 0) return false;
-  return parts.every((p) => UNIVERSAL_PARTS.has(p));
-}
-
-/** True if the rule zeroes out animation-duration or transition-duration. */
-function disablesAnimationOrTransition(rule: CssRule): boolean {
-  for (const decl of rule.declarations) {
-    const prop = decl.property.toLowerCase();
-    if (!ANIMATION_PROPERTIES.has(prop)) continue;
-    if (isNoneValue(decl.value) || isNearZeroDuration(decl.value)) return true;
-  }
-  return false;
-}
-
-/**
- * Accepts any value that disables animation for practical purposes:
- * 0, 0s, 0ms, .01ms, 0.01ms, etc. The `!important` suffix is tolerated.
- */
-function isNearZeroDuration(value: string): boolean {
-  const clean = value
-    .trim()
-    .toLowerCase()
-    .replace(/\s*!important\s*$/, "")
-    .trim();
-  // `0` alone counts. Otherwise require a number < 1 followed by `ms` or `s`.
-  if (clean === "0") return true;
-  const match = /^(\d*\.?\d+)(ms|s)$/.exec(clean);
-  if (!match) return false;
-  const n = Number.parseFloat(match[1] ?? "0");
-  return match[2] === "ms" ? n < 1 : n < 0.001;
-}
-
-function* walkAtRuleChildren(atRule: CssAtRule): Iterable<CssRule> {
-  for (const child of atRule.children) {
-    if (child.kind === "CssRule") {
-      yield child;
-    } else if (child.kind === "CssAtRule") {
-      yield* walkAtRuleChildren(child);
-    }
-  }
-}
-
-function isNoneValue(value: string): boolean {
-  const trimmed = value
-    .trim()
-    .toLowerCase()
-    .replace(/\s*!important\s*$/, "")
-    .trim();
-  return trimmed === "none" || trimmed === "0s" || trimmed === "0ms" || trimmed === "0";
 }
