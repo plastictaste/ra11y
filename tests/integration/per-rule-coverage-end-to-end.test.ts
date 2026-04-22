@@ -193,6 +193,43 @@ describe("per-rule coverage end-to-end", () => {
     }
   });
 
+  // Class-pattern rollup end-to-end: the canonical acute case is a
+  // Bootstrap-admin template repeating `<i class="fa fa-*">` inside
+  // sibling buttons. The rollup names that (file, pattern) cluster
+  // so one read triages many candidates.
+  it("stamps classPatternConcentration on aria/icon-font-hidden when a Font Awesome idiom dominates one file", () => {
+    const densePage = `<!doctype html><html lang="en"><head><title>admin</title></head><body>${Array.from(
+      { length: 12 },
+      (_, i) => `<button aria-label="Button ${i}"><i class="fa fa-glyph-${i % 4}"></i></button>`,
+    ).join("\n")}</body></html>`;
+    const files = [htmlFile("site/admin.html", densePage)];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const emitted = result.violations.filter((v) => v.ruleId === "aria/icon-font-hidden").length;
+    expect(emitted).toBeGreaterThanOrEqual(10);
+    const row = perRuleCoverage.find((r) => r.ruleId === "aria/icon-font-hidden");
+    expect(row).toBeDefined();
+    expect(row!.classPatternConcentration).toBeDefined();
+    expect(row!.classPatternConcentration!.length).toBeGreaterThan(0);
+    const [cluster] = row!.classPatternConcentration!;
+    expect(cluster!.file).toBe("site/admin.html");
+    expect(cluster!.classPattern).toBe("fa fa-*");
+    expect(cluster!.count).toBeGreaterThanOrEqual(10);
+    // Samples surface real class-attribute values (capped at 3,
+    // sorted) — the agent can sanity-check the pattern without
+    // re-reading N findings.
+    expect(cluster!.samples.length).toBeLessThanOrEqual(3);
+    expect(cluster!.samples.length).toBeGreaterThan(0);
+    for (const sample of cluster!.samples) {
+      expect(sample).toMatch(/^fa fa-glyph-\d+$/u);
+    }
+  });
+
   it("pure-TSX scan still lists CSS-only rules with filesEvaluated:0 (no silent absence)", () => {
     const files = [
       tsxFile("src/App.tsx", `export function App() { return <main><h1>Hi</h1></main>; }`),

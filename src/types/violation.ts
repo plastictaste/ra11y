@@ -213,6 +213,20 @@ export interface Violation {
    * See docs/adr/0009-violation-could-be-wrong-because.md.
    */
   readonly couldBeWrongBecause?: readonly string[];
+  /**
+   * Raw class-attribute evidence captured at emit time by rules whose
+   * detection keys off a class attribute (currently `aria/icon-font-hidden`).
+   * Fuels the per-file-per-class-pattern concentration aggregation in
+   * {@link PerRuleCoverage.classPatternConcentration} — the aggregator
+   * splits the value on whitespace, derives the rule-family pattern
+   * (e.g. `fa fa-*`), and rolls up samples + counts per file.
+   *
+   * Optional: present-when-meaningful. Rules that don't participate in
+   * class-pattern rollup omit the field. Never the empty string — the
+   * conditional spread at the emit site keeps `classEvidence: ""` off
+   * the wire per CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+   */
+  readonly classEvidence?: string;
 }
 
 /**
@@ -303,6 +317,58 @@ export interface PerRuleCoverage {
     readonly file: string;
     readonly count: number;
   };
+  /**
+   * Per-file-per-class-pattern concentration rollup for rules whose
+   * detection keys off a class attribute. Sibling of
+   * {@link concentration} with finer grain: instead of "one file
+   * dominates by finding count," it names "one class pattern repeats
+   * within one file" so the agent can route "one fix applied
+   * site-wide" triage in a single read.
+   *
+   * Canonical acute case: `aria/icon-font-hidden` emits 180 findings
+   * on a Bootstrap-admin template; most are sibling buttons repeating
+   * the `<i class="fa fa-*">` idiom in one file. `groupKey` already
+   * groups across files, but the agent still pays 180 findings' worth
+   * of attention budget to confirm the idiom is one fix; this hint
+   * names the (file, pattern) home so the confirmation is one file
+   * read.
+   *
+   * Zero information loss — every finding stays in `files[].findings`;
+   * this is additive scan-confidence telemetry on top of the per-rule
+   * row. Omitted entirely (conditional spread) when no (file, pattern)
+   * pair clears the thresholds, per CLAUDE.md §1 "Ambiguous field
+   * shapes are dishonest."
+   *
+   * Thresholds (deliberately strict so the hint names real clusters,
+   * not statistical noise — see `per-rule-coverage.ts`):
+   *   - (file, pattern) count ≥ {@link CLASS_PATTERN_MIN_COUNT}
+   *   - (file, pattern) count / rule's total findings on that file
+   *     ≥ {@link CLASS_PATTERN_MIN_SHARE}
+   *
+   * Populated only for rules in the class-pattern registry (currently
+   * `aria/icon-font-hidden`). Other rules omit the field regardless
+   * of their finding volume.
+   */
+  readonly classPatternConcentration?: readonly {
+    readonly file: string;
+    readonly count: number;
+    /**
+     * Canonicalized class pattern (e.g. `fa fa-*`, `material-icons`,
+     * `bi bi-*`) derived from the family marker plus glyph-slug
+     * prefix. Rule-specific — the extractor lives alongside the
+     * aggregation in `per-rule-coverage.ts` so new rules can opt in
+     * by registering their own pattern derivation.
+     */
+    readonly classPattern: string;
+    /**
+     * Up to {@link CLASS_PATTERN_MAX_SAMPLES} distinct class-attribute
+     * values observed in this (file, pattern) cluster — e.g.
+     * `["fa fa-times", "fa fa-home", "fa fa-search"]`. Lets the agent
+     * sanity-check the pattern against concrete evidence without
+     * re-reading N findings. Sorted for deterministic output.
+     */
+    readonly samples: readonly string[];
+  }[];
 }
 
 /** Aggregate result of a full scan. */

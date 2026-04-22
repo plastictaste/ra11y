@@ -198,6 +198,16 @@ function stampViolation(
     ...(emitted.couldBeWrongBecause && emitted.couldBeWrongBecause.length > 0
       ? { couldBeWrongBecause: emitted.couldBeWrongBecause }
       : {}),
+    // `classEvidence` is populated only by rules whose detection keys
+    // off a class attribute (currently `aria/icon-font-hidden`). The
+    // scanner surfaces it onto the Violation so the per-rule-coverage
+    // aggregator can roll up per-file-per-class-pattern concentration
+    // without rules having to re-derive the evidence. Conditional
+    // spread keeps `classEvidence: ""` / `undefined` off the wire
+    // (CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+    ...(typeof emitted.classEvidence === "string" && emitted.classEvidence.length > 0
+      ? { classEvidence: emitted.classEvidence }
+      : {}),
   };
 }
 

@@ -165,6 +165,16 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  /**
+   * Raw `class` attribute value from the icon host element. Omitted
+   * when the icon host has no `class` attribute (the Ionicons
+   * `<ion-icon>` custom-element case carries identity via tag name
+   * alone). Fuels the per-file-per-class-pattern rollup in
+   * {@link PerRuleCoverage.classPatternConcentration} — the
+   * aggregator derives the canonical pattern (`fa fa-*`,
+   * `material-icons`, `bi bi-*`) from this value.
+   */
+  classEvidence?: string;
 }) => void;
 
 // ---------------------------------------------------------------------------
@@ -367,7 +377,7 @@ function visitHtmlForIcon(
   const classValue = getHtmlAttribute(node, "class");
   const match = detectIconFont(node.tagName, classValue);
   if (match !== null && !isHtmlIconHidden(node)) {
-    emit(buildHtmlViolation(node, match, ancestorTag, ancestorName));
+    emit(buildHtmlViolation(node, match, ancestorTag, ancestorName, classValue));
   }
   for (const child of node.children) visitHtmlForIcon(child, ancestorTag, ancestorName, emit);
 }
@@ -383,17 +393,25 @@ function buildHtmlViolation(
   match: IconFontMatch,
   ancestorTag: string,
   ancestorName: string,
+  classValue: string | null,
 ): {
   severity: "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  classEvidence?: string;
 } {
   return {
     severity: "info",
     location: { filePath: "", line: icon.loc.start.line, column: icon.loc.start.column },
     message: buildMessage(icon.tagName, match, ancestorTag, ancestorName),
     suggestion: buildSuggestion(icon.tagName, match, ancestorTag, ancestorName),
+    // Conditional spread — the Ionicons custom-element (`<ion-icon>`)
+    // has no class attribute and should flow on the wire without a
+    // sentinel-empty `classEvidence: ""` (CLAUDE.md §1 "Ambiguous
+    // field shapes are dishonest"). Rule-family rollup skips findings
+    // without evidence.
+    ...(classValue !== null && classValue.length > 0 ? { classEvidence: classValue } : {}),
   };
 }
 
@@ -423,7 +441,7 @@ function visitJsxForIcon(
     getJsxAttributeString(node, "className") ?? getJsxAttributeString(node, "class");
   const match = detectIconFont(node.tagName, classValue);
   if (match !== null && !isJsxIconHidden(node)) {
-    emit(buildJsxViolation(node, match, ancestorTag, ancestorName));
+    emit(buildJsxViolation(node, match, ancestorTag, ancestorName, classValue));
   }
   for (const child of node.children) visitJsxForIcon(child, ancestorTag, ancestorName, emit);
 }
@@ -439,17 +457,21 @@ function buildJsxViolation(
   match: IconFontMatch,
   ancestorTag: string,
   ancestorName: string,
+  classValue: string | null,
 ): {
   severity: "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  classEvidence?: string;
 } {
   return {
     severity: "info",
     location: { filePath: "", line: icon.loc.start.line, column: icon.loc.start.column },
     message: buildMessage(icon.tagName, match, ancestorTag, ancestorName),
     suggestion: buildSuggestion(icon.tagName, match, ancestorTag, ancestorName),
+    // See `buildHtmlViolation` for the conditional-spread rationale.
+    ...(classValue !== null && classValue.length > 0 ? { classEvidence: classValue } : {}),
   };
 }
 

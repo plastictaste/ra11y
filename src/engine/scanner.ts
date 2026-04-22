@@ -374,9 +374,8 @@ function stampProjectEmission(
     // Named reason codes for known escape hatches. Conditional
     // spread per docs/adr/0009-violation-could-be-wrong-because.md
     // — `couldBeWrongBecause: []` must never reach the agent.
-    ...(em.couldBeWrongBecause && em.couldBeWrongBecause.length > 0
-      ? { couldBeWrongBecause: em.couldBeWrongBecause }
-      : {}),
+    ...(em.couldBeWrongBecause?.length ? { couldBeWrongBecause: em.couldBeWrongBecause } : {}),
+    ...(em.classEvidence ? { classEvidence: em.classEvidence } : {}),
   };
 }
 
