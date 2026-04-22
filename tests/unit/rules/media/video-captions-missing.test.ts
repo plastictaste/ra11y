@@ -125,6 +125,165 @@ describe("rule media/video-captions-missing", () => {
     });
   });
 
+  describe("HTML iframe embeds — fires when", () => {
+    it("iframe points at youtube.com/embed", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="Launch demo"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.ruleId).toBe("media/video-captions-missing");
+      expect(v?.severity).toBe("warning");
+      expect(v?.message).toContain("YouTube");
+      expect(v?.suggestion ?? "").toContain("iframe-embedded media");
+      expect(v?.suggestion ?? "").toContain("cc_load_policy=1");
+    });
+
+    it("iframe points at youtu.be short-link", () => {
+      const violations = runRule(rule, `<iframe src="https://youtu.be/dQw4w9WgXcQ"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("YouTube");
+    });
+
+    it("iframe points at youtube-nocookie.com", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://www.youtube-nocookie.com/embed/abc123"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("YouTube");
+    });
+
+    it("iframe points at player.vimeo.com", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://player.vimeo.com/video/76979871" title="Montage"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Vimeo");
+      expect(violations[0]?.suggestion ?? "").toContain("texttrack");
+    });
+
+    it("iframe points at fast.wistia.net", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://fast.wistia.net/embed/iframe/abc"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Wistia");
+    });
+
+    it("iframe points at players.brightcove.net", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://players.brightcove.net/123/default_default/index.html?videoId=456"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Brightcove");
+    });
+
+    it("iframe points at loom.com/embed", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://www.loom.com/embed/abcdef"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Loom");
+    });
+
+    it("protocol-relative YouTube URL still matches", () => {
+      const violations = runRule(rule, `<iframe src="//www.youtube.com/embed/xyz"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("YouTube");
+    });
+  });
+
+  describe("HTML iframe embeds — does not fire when", () => {
+    it("iframe host is not on the media allowlist (generic CMS embed)", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://example.com/widget" title="Sign-up widget"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("iframe has no src attribute", () => {
+      const violations = runRule(rule, `<iframe title="placeholder"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("iframe points at a relative path (not a host embed)", () => {
+      const violations = runRule(rule, `<iframe src="/local/page.html"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("iframe is aria-hidden", () => {
+      const violations = runRule(
+        rule,
+        `<iframe src="https://www.youtube.com/embed/x" aria-hidden="true"></iframe>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("host substring coincidence (malicious lookalike) is not matched", () => {
+      // `fakeyoutube.com` must NOT match `youtube.com` — the allowlist
+      // compares exact hosts, not substring contains.
+      const violations = runRule(rule, `<iframe src="https://fakeyoutube.com/embed/x"></iframe>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("JSX iframe embeds", () => {
+    it("fires on a JSX iframe pointing at vimeo", () => {
+      const violations = runRule(
+        rule,
+        `const Embed = () => <iframe src="https://player.vimeo.com/video/76979871" title="Demo" />;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Vimeo");
+    });
+
+    it("does not fire on JSX iframe with a relative src", () => {
+      const violations = runRule(rule, `const Embed = () => <iframe src="/local/widget" />;`);
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("coexistence: <video> and <iframe> in same doc", () => {
+    it("emits one finding per violating element", () => {
+      const source = `<!doctype html><html lang="en"><body>
+  <video src="promo.mp4" controls></video>
+  <iframe src="https://www.youtube.com/embed/xyz"></iframe>
+  <video src="captioned.mp4"><track kind="captions" src="captioned.vtt" srclang="en"></video>
+</body></html>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(2);
+      const messages = violations.map((v) => v.message).join("\n");
+      expect(messages).toContain("<video");
+      expect(messages).toContain("<iframe");
+      expect(messages).toContain("YouTube");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:1.2.2 and wcag21:1.2.2", () => {
       expect(rule.satisfies).toContain("wcag22:1.2.2");

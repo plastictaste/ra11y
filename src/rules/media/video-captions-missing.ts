@@ -9,19 +9,49 @@
  *
  * Source: https://www.w3.org/TR/WCAG22/#captions-prerecorded
  *
- * Flags `<video>` elements with no child `<track kind="captions">`
- * (or `kind="subtitles"`, which the HTML spec treats as user-facing
- * captions for a different language). Static analysis cannot tell
- * whether a given video is purely decorative; the rule is a warning
- * so teams can suppress it case-by-case via inline disables.
+ * Two shapes of finding:
+ *
+ *   1. `<video>` elements with no child `<track kind="captions">` (or
+ *      `kind="subtitles"`, which the HTML spec treats as user-facing
+ *      captions for a different language).
+ *   2. `<iframe>` elements whose `src` points at a known video-embed
+ *      host (YouTube, Vimeo, Wistia, Brightcove, Loom). Captions for
+ *      embedded media come from the host platform, not the embedding
+ *      document — we cannot verify them statically, so the rule emits
+ *      a warning asking the agent to confirm the underlying clip has
+ *      captions enabled (e.g. `cc_load_policy=1` for YouTube, a Vimeo
+ *      text-track setting for Vimeo).
+ *
+ * 1.2.4 (Captions, Live) is *not* in `satisfies`: WCAG's metadata
+ * flags 1.2.4 as manual-only, and the `review/media-variants` finder
+ * already surfaces every `<video>`/`<audio>` as a 1.2.4 review
+ * candidate. Adding 1.2.4 to this rule's `satisfies` would double-
+ * count (the rule's fail and the finder's candidate both for the
+ * same criterion) and would also create cross-surface drift:
+ * `coverage` drops a fired criterion from the manual pile while
+ * `collectManualCriteria` (scan-side) keeps it based on the raw
+ * `automatable: "manual"` flag. Agents pursuing 1.2.4 should read
+ * this rule's warning on iframe-embedded media as evidence that
+ * applies to both prerecorded and live captioning.
+ *
+ * Static analysis cannot tell whether a given video is purely
+ * decorative or whether an embed carries live vs. prerecorded content;
+ * the rule is a warning so teams can suppress it case-by-case via
+ * inline disables.
  *
  * Notes:
  *   - The rule does NOT fire on `<video muted>` — muted video still
  *     needs captions if it contains audio content, and the muted
  *     attribute is a display hint, not a semantic one.
- *   - The rule does NOT fire when the video declares
- *     aria-hidden="true" — the whole element is marked as
+ *   - The rule does NOT fire when the element declares
+ *     `aria-hidden="true"` — the whole element is marked as
  *     decorative so captions are moot.
+ *   - The iframe match is host-based. An `<iframe>` pointed at a
+ *     page that itself embeds a video (arbitrary third-party CMS)
+ *     is out of scope — the rule would have no signal about whether
+ *     media is present without crawling the target. The allowlist
+ *     names hosts whose URL shape unambiguously identifies video
+ *     content.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -45,11 +75,11 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "<video> elements with audio content need a <track kind='captions'> child so deaf and hard-of-hearing users can follow the dialogue.",
+      "<video> elements need a <track kind='captions'> child, and <iframe> embeds of known video hosts (YouTube, Vimeo, Wistia, Brightcove, Loom) need host-side captions enabled — so deaf and hard-of-hearing users can follow the dialogue.",
     rationale:
-      "Captions are the minimum accessible representation of spoken content in prerecorded video. Without them, deaf users are locked out of the information — and in contexts where sound is off by default (social feeds, waiting rooms, open-plan offices) captions also benefit hearing users.",
+      'Captions are the minimum accessible representation of spoken content in prerecorded and live video. For self-hosted `<video>`, a `<track kind="captions">` child is the author-owned mechanism. For iframe-embedded media, captions come from the host platform and static analysis can only point at the embed — the agent must verify captions are turned on upstream.',
     goodExample: `<video src="launch.mp4" controls><track kind="captions" src="launch.vtt" srclang="en" label="English"></video>`,
-    badExample: `<video src="launch.mp4" controls></video>`,
+    badExample: `<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="Launch demo"></iframe>`,
     normativeQuote:
       "Captions are provided for all prerecorded audio content in synchronized media.",
     references: [
@@ -84,7 +114,14 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (getHtmlAttribute(video, "aria-hidden") === "true") continue;
     if (hasCaptionsChildHtml(video)) continue;
     const videoSrc = getHtmlAttribute(video, "src") ?? findFirstSourceSrcHtml(video);
-    emit(buildViolation(video.loc.start, videoSrc, docLang));
+    emit(buildVideoViolation(video.loc.start, videoSrc, docLang));
+  }
+  for (const iframe of findHtmlElementsByTag(doc, "iframe")) {
+    if (getHtmlAttribute(iframe, "aria-hidden") === "true") continue;
+    const src = getHtmlAttribute(iframe, "src");
+    const host = mediaEmbedHost(src);
+    if (host === null) continue;
+    emit(buildIframeViolation(iframe.loc.start, src, host));
   }
 }
 
@@ -135,7 +172,14 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (getJsxAttributeString(video, "aria-hidden") === "true") continue;
     if (hasCaptionsChildJsx(video)) continue;
     const videoSrc = getJsxAttributeString(video, "src") ?? findFirstSourceSrcJsx(video);
-    emit(buildViolation(video.loc.start, videoSrc, docLang));
+    emit(buildVideoViolation(video.loc.start, videoSrc, docLang));
+  }
+  for (const iframe of findJsxElementsByTag(module, "iframe")) {
+    if (getJsxAttributeString(iframe, "aria-hidden") === "true") continue;
+    const src = getJsxAttributeString(iframe, "src");
+    const host = mediaEmbedHost(src);
+    if (host === null) continue;
+    emit(buildIframeViolation(iframe.loc.start, src, host));
   }
 }
 
@@ -178,7 +222,7 @@ function findJsxDocumentLang(module: TsxModule): string | null {
   return null;
 }
 
-function buildViolation(
+function buildVideoViolation(
   loc: { line: number; column: number },
   videoSrc: string | null,
   docLang: string | null,
@@ -191,12 +235,12 @@ function buildViolation(
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: buildMessage(videoSrc),
-    suggestion: buildSuggestion(videoSrc, docLang),
+    message: buildVideoMessage(videoSrc),
+    suggestion: buildVideoSuggestion(videoSrc, docLang),
   };
 }
 
-function buildMessage(videoSrc: string | null): string {
+function buildVideoMessage(videoSrc: string | null): string {
   if (videoSrc !== null) {
     // `basename` derives from a user-authored `src` URL/path; long
     // path tails (signed URLs, deeply-nested fixture paths) would
@@ -207,7 +251,7 @@ function buildMessage(videoSrc: string | null): string {
   return `<video> has no <track kind="captions"> child — deaf and hard-of-hearing users can't follow the dialogue.`;
 }
 
-function buildSuggestion(videoSrc: string | null, docLang: string | null): string {
+function buildVideoSuggestion(videoSrc: string | null, docLang: string | null): string {
   const srclang = docLang ?? "en";
   const label = describeLangLabel(srclang);
   const kindNote =
@@ -268,4 +312,141 @@ function describeLangLabel(lang: string): string {
   };
   const pretty = names[primary];
   return pretty ? `${pretty} captions` : "captions";
+}
+
+// ---------------------------------------------------------------------------
+// iframe-embedded media
+// ---------------------------------------------------------------------------
+
+/**
+ * Platform identifier (human-facing name used in the violation reason
+ * text) keyed off the set of hostnames the platform serves embeds
+ * from. The agent reads the platform name and consults the platform-
+ * specific caption-enabling guidance in the suggestion.
+ */
+interface MediaEmbedPlatform {
+  readonly name: string;
+  readonly hosts: readonly string[];
+  readonly captionHint: string;
+}
+
+/**
+ * Hostname allowlist for `<iframe>` embeds that definitionally carry
+ * video content. URL shape at these hosts unambiguously identifies
+ * media — e.g. `youtube.com/embed/<id>`, `player.vimeo.com/video/<id>`.
+ * Hosts whose primary surface is *not* a video embed (generic CMS
+ * iframes, payment widgets, map embeds) are deliberately excluded —
+ * adding them would surface captions warnings on non-media content.
+ */
+const MEDIA_EMBED_PLATFORMS: readonly MediaEmbedPlatform[] = [
+  {
+    name: "YouTube",
+    hosts: [
+      "youtube.com",
+      "www.youtube.com",
+      "youtu.be",
+      "youtube-nocookie.com",
+      "www.youtube-nocookie.com",
+    ],
+    captionHint:
+      "YouTube: captions are authored in YouTube Studio; append `cc_load_policy=1` to the embed URL to force the caption track on by default",
+  },
+  {
+    name: "Vimeo",
+    hosts: ["vimeo.com", "player.vimeo.com"],
+    captionHint:
+      "Vimeo: upload a text-track (VTT/SRT) on the clip's Distribution → Subtitles panel; enable the default text-track via the `texttrack` embed parameter",
+  },
+  {
+    name: "Wistia",
+    hosts: ["wistia.com", "wistia.net", "fast.wistia.net", "fast.wistia.com"],
+    captionHint:
+      "Wistia: enable captions on the Customize → Captions panel and upload a VTT/SRT; the caption toggle then surfaces in the player chrome",
+  },
+  {
+    name: "Brightcove",
+    hosts: ["brightcove.net", "players.brightcove.net"],
+    captionHint:
+      "Brightcove: attach a WebVTT file to the video in Video Cloud Studio; confirm the player has the captions plugin enabled",
+  },
+  {
+    name: "Loom",
+    hosts: ["loom.com", "www.loom.com"],
+    captionHint:
+      "Loom: Loom auto-generates captions after processing — verify the clip has finished processing and the transcript panel shows captions",
+  },
+];
+
+/**
+ * Extracts a hostname from a URL-shaped string. Accepts absolute
+ * (`https://host/…`), protocol-relative (`//host/…`), and scheme-less
+ * (`host/…`) inputs. Returns `null` for relative paths (`/foo`,
+ * `./video`) and empty strings. Never throws — `new URL` rejects
+ * protocol-relative URLs without a base, so we parse manually.
+ *
+ * The returned hostname is lowercased. Port suffixes (`host:8080`) are
+ * stripped so `youtube.com:443` still matches. IDN / punycode is not
+ * normalized — the allowlist names Latin-ASCII hosts only.
+ */
+function extractHost(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  // Strip scheme or protocol-relative prefix.
+  let rest = trimmed;
+  const schemeMatch = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.exec(rest);
+  if (schemeMatch) {
+    rest = rest.slice(schemeMatch[0].length);
+  } else if (rest.startsWith("//")) {
+    rest = rest.slice(2);
+  } else if (rest.startsWith("/") || rest.startsWith("./") || rest.startsWith("../")) {
+    // Relative path — no host to extract.
+    return null;
+  }
+  // Strip userinfo.
+  const at = rest.indexOf("@");
+  if (at !== -1) rest = rest.slice(at + 1);
+  // Host ends at the first slash, question mark, or hash.
+  const end = rest.search(/[/?#]/);
+  const hostPort = end === -1 ? rest : rest.slice(0, end);
+  if (hostPort.length === 0) return null;
+  // Drop port suffix.
+  const colon = hostPort.indexOf(":");
+  const host = colon === -1 ? hostPort : hostPort.slice(0, colon);
+  return host.toLowerCase();
+}
+
+/**
+ * Returns the matching {@link MediaEmbedPlatform} when `src` points at
+ * one of the known video-embed hosts, or `null` otherwise. `null` src
+ * (missing attribute, expression value, empty string) always returns
+ * `null` — we don't guess.
+ */
+function mediaEmbedHost(src: string | null): MediaEmbedPlatform | null {
+  if (src === null) return null;
+  const host = extractHost(src);
+  if (host === null) return null;
+  for (const platform of MEDIA_EMBED_PLATFORMS) {
+    if (platform.hosts.includes(host)) return platform;
+  }
+  return null;
+}
+
+function buildIframeViolation(
+  loc: { line: number; column: number },
+  src: string | null,
+  platform: MediaEmbedPlatform,
+): {
+  severity: "warning";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+} {
+  const srcEcho = src === null ? "" : truncateForEcho(src);
+  const srcInMessage = srcEcho.length > 0 ? ` src="${srcEcho}"` : "";
+  return {
+    severity: "warning",
+    location: { filePath: "", line: loc.line, column: loc.column },
+    message: `<iframe${srcInMessage}> embeds a ${platform.name} video — captions must be provided by the host platform; deaf and hard-of-hearing viewers depend on them to follow dialogue.`,
+    suggestion: `iframe-embedded media — captions must be provided by the host platform; verify the embedded source has captions enabled. ${platform.captionHint}. If the embed is decorative (silent ambient visuals with no spoken content), mark the iframe aria-hidden="true" instead.`,
+  };
 }
