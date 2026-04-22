@@ -32,6 +32,7 @@ import {
   type ProbeFile,
 } from "../engine/wrapper-probe.ts";
 import type { JsxElement, TsxModule } from "../types/ast.ts";
+import { extractComponentIdentifier, isJsxBearingFile } from "./opaque-tag-filter.ts";
 
 /** Max example call sites per component in the structured result. */
 const SAMPLE_LIMIT = 3;
@@ -85,16 +86,22 @@ export function collectWrapperCandidates(
   const groups = new Map<string, { count: number; locations: { path: string; line: number }[] }>();
   for (const file of files) {
     if (file.ast.language !== "tsx") continue;
+    // Plain `.ts` / `.js` files cannot legally carry JSX; skip them
+    // to avoid phantom tags from minified expression code. See
+    // `opaque-tag-filter.ts` for the failure mode this guards
+    // against (`Math.abs`, `J.length`, single-letter identifiers).
+    if (!isJsxBearingFile(file.filePath)) continue;
     const tsx = file.ast.root as TsxModule;
     for (const el of walkJsxElements(tsx)) {
-      if (!isPascalCase(el.tagName)) continue;
+      const component = extractComponentIdentifier(el.tagName);
+      if (component === null) continue;
       if (!looksLikeWrapper(el)) continue;
-      const entry = groups.get(el.tagName) ?? { count: 0, locations: [] };
+      const entry = groups.get(component) ?? { count: 0, locations: [] };
       entry.count += 1;
       if (entry.locations.length < SAMPLE_LIMIT) {
         entry.locations.push({ path: file.filePath, line: el.loc.start.line });
       }
-      groups.set(el.tagName, entry);
+      groups.set(component, entry);
     }
   }
   const definitions = indexProbeFiles(files.map(toProbeFile));
@@ -131,9 +138,16 @@ function toProbeFile(file: ParsedFile): ProbeFile {
 export function hasOpaquePascalCaseComponents(files: readonly ParsedFile[]): boolean {
   for (const file of files) {
     if (file.ast.language !== "tsx") continue;
+    // Same JSX-bearing-file guard as `collectWrapperCandidates`:
+    // phantom tags in `.ts` / `.js` would otherwise flip this
+    // signal `true` on a scan of a pure-utility bundle, misleading
+    // the `detect_native_wrappers` branch that uses this boolean to
+    // distinguish "no PascalCase components in tree" from "detector
+    // premise not met."
+    if (!isJsxBearingFile(file.filePath)) continue;
     const tsx = file.ast.root as TsxModule;
     for (const el of walkJsxElements(tsx)) {
-      if (isPascalCase(el.tagName)) return true;
+      if (extractComponentIdentifier(el.tagName) !== null) return true;
     }
   }
   return false;
@@ -152,11 +166,6 @@ function looksLikeWrapper(el: JsxElement): boolean {
     hasJsxAttribute(el, "defaultValue") ||
     hasJsxAttribute(el, "checked")
   );
-}
-
-function isPascalCase(name: string): boolean {
-  const first = name[0];
-  return first !== undefined && first >= "A" && first <= "Z";
 }
 
 // ---------------------------------------------------------------------------

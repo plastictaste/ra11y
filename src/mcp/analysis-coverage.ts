@@ -56,6 +56,7 @@ import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile } from "../utils/path.ts";
+import { extractComponentIdentifier, isJsxBearingFile } from "./opaque-tag-filter.ts";
 
 /**
  * Storybook primitives that should render transparent under
@@ -745,34 +746,49 @@ function accumulateCoverageForFile(
     return;
   }
   if (file.ast.language === "css") return;
+  // Plain `.ts` and `.js` cannot legally carry JSX syntax. The in-house
+  // TSX parser still runs on them (one parser for the whole
+  // JavaScript/TypeScript family) but any "JSX element" the parser
+  // emits from those files is a false positive: ambiguous
+  // angle-bracket sequences in minified or transpiled expression code
+  // (`if(Math.abs(x)<B.length)`, `{l:J<0}`) sometimes defeat the
+  // generic-vs-JSX classifier and materialize as phantom tags like
+  // `Math.abs`, `J.length`, `B`. Those phantoms polluted
+  // `opaqueCustomComponentNames` on real-world scans — skip extraction
+  // for non-JSX-bearing extensions so the inventory reflects real
+  // component sightings. See `opaque-tag-filter.ts`.
+  if (!isJsxBearingFile(file.filePath)) return;
   // Per-file Storybook transparency: only story files get the
   // primitive exemption, so a stray `<Story />` in product code is
   // still counted as opaque. Computed once per file so the hot JSX
   // walk below stays a set lookup.
   const storyFile = preset === "storybook" && isStorybookStoryFile(file.filePath);
   for (const el of walkJsxElements(file.ast.root)) {
-    if (!isOpaqueCandidate(el.tagName, wrapperSet, storyFile)) continue;
-    recordOpaqueSighting(acc.opaqueComponents, el.tagName, elementIsInteractive(el));
+    const component = extractComponentIdentifier(el.tagName);
+    if (component === null) continue;
+    if (!isOpaqueCandidate(component, wrapperSet, storyFile)) continue;
+    recordOpaqueSighting(acc.opaqueComponents, component, elementIsInteractive(el));
   }
 }
 
 /**
- * True when a JSX tag should be counted toward the opaque-component
- * inventory. Filters: PascalCase only, not already a registered
- * wrapper, and — when `preset: "storybook"` has tagged this file as a
- * story — not one of the Storybook primitives (`Meta`, `StoryObj`,
- * `StoryFn`, `Story`). Extracted so the per-file loop stays under the
- * cognitive-complexity cap while keeping the transparency decision on
- * one line.
+ * True when a component identifier should be counted toward the
+ * opaque-component inventory. The caller is expected to have already
+ * normalized the JSX tag text through
+ * {@link extractComponentIdentifier} so `component` is a PascalCase
+ * root identifier (plain or the root of a dotted member access) —
+ * this predicate layers the wrapper-registration and Storybook-
+ * primitive exemptions on top. Registered wrappers and, in story
+ * files, Storybook primitives (`Meta`, `StoryObj`, `StoryFn`, `Story`)
+ * drop out so they don't inflate the opaque count.
  */
 function isOpaqueCandidate(
-  tagName: string,
+  component: string,
   wrapperSet: ReadonlySet<string>,
   storyFile: boolean,
 ): boolean {
-  if (!/^[A-Z]/.test(tagName)) return false;
-  if (wrapperSet.has(tagName)) return false;
-  if (storyFile && STORYBOOK_TRANSPARENT_TAGS.has(tagName)) return false;
+  if (wrapperSet.has(component)) return false;
+  if (storyFile && STORYBOOK_TRANSPARENT_TAGS.has(component)) return false;
   return true;
 }
 

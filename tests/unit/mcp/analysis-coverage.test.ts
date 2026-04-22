@@ -399,6 +399,100 @@ describe("buildAnalysisCoverage — hints", () => {
         expect(names?.length).toBe(120);
       });
     });
+
+    // Q6 extraction-noise filter: the in-house TSX parser accepts plain
+    // `.ts` / `.js` files (one parser for the whole JS/TS family) and
+    // sometimes materializes phantom JSX elements when ambiguous
+    // angle-bracket expressions in minified bundles defeat the
+    // generic-vs-JSX classifier. On a real-world scan the phantoms
+    // leaked into `opaqueCustomComponentNames` as entries like
+    // `Math.abs`, `J.length`, `B`, `H.length`, `J`, `AG.y`. These tests
+    // lock down the three filters that keep the inventory honest:
+    // (a) skip non-JSX-bearing extensions; (b) extract the root
+    // identifier for a dotted member-access tag; (c) exclude
+    // single-character identifiers.
+    describe("phantom-tag extraction filter", () => {
+      it("excludes JSX elements from plain .js files — .js has no JSX syntax", () => {
+        // Simulate what the TSX parser emits on minified `.js` when the
+        // generic-vs-JSX classifier trips over `a<B.length` or
+        // `Math.abs(x)<y`. A real scanner would materialize phantom
+        // tags like `Math.abs`, `J.length`, `B`. None of them are real
+        // components — they must not pollute the opaque inventory.
+        const files = [tsxFile("bundle.min.js", ["Math.abs", "J.length", "B", "AG.y"])];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBeUndefined();
+        expect(analysisCoverage?.["opaqueCustomComponentNames"]).toBeUndefined();
+      });
+
+      it("excludes JSX elements from plain .ts files — .ts has no JSX syntax", () => {
+        // `.ts` files are accepted by the TSX parser for typechecking
+        // utility modules but cannot embed JSX; any tag the parser
+        // emits from them is noise, same failure class as `.js`.
+        const files = [tsxFile("utils.ts", ["Math.abs", "J", "HeaderNav"])];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBeUndefined();
+      });
+
+      it("keeps JSX elements from .tsx and .jsx files — those extensions legally carry JSX", () => {
+        // Positive control: the extension filter must not regress
+        // coverage on the extensions that DO carry JSX syntax. A
+        // single `HeaderNav` in a .tsx file still counts.
+        const files = [tsxFile("Header.tsx", ["HeaderNav"]), tsxFile("Sidebar.jsx", ["Sidebar"])];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(2);
+      });
+
+      it("extracts the root identifier for dotted member-access tags (Motion.div → Motion)", () => {
+        // Legitimate React namespaced components render as a single
+        // JSX tag whose `tagName` contains a dot. The `nativeWrappers`
+        // config lists the importable root, not the dotted leaf — so
+        // the extractor groups by the root. Three sightings of
+        // `Motion.div`, `Motion.span`, `Motion.section` collapse to
+        // one `Motion` entry with 3 call sites.
+        const files = [
+          tsxFile("a.tsx", ["Motion.div", "Motion.span", "Motion.section"], {
+            interactive: true,
+          }),
+        ];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(1);
+        const top = analysisCoverage?.["opaqueCustomComponentsTop"] as
+          | { name: string; callSites: number }[]
+          | undefined;
+        expect(top).toEqual([{ name: "Motion", callSites: 3 }]);
+      });
+
+      it("excludes single-character identifiers — minified-code noise", () => {
+        // Real React component names are meaningful words; a single
+        // uppercase letter is overwhelmingly minified-bundle noise
+        // (`<J>`, `<B>`). Accept a rare false negative on obscure
+        // single-char components to eliminate the large noise source.
+        // Alongside the single-char junk, a valid `Button` tag stays
+        // counted as the positive control.
+        const files = [tsxFile("a.tsx", ["J", "B", "X", "Button"])];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(1);
+        const names = analysisCoverage?.["opaqueCustomComponentNames"] as string[] | undefined;
+        expect(names).toEqual(["Button"]);
+      });
+
+      it("locks down the full real-world leak: .js with mixed noise does not pollute the inventory", () => {
+        // End-to-end repro of the Q6 field report: a .js bundle's
+        // phantom tag list was leaking into `opaqueCustomComponentNames`.
+        // Mixing the exact noise classes observed (`AG.y`, `B`,
+        // `H.length`, `J`, `J.length`, `Math.abs`) in a .js file
+        // alongside a legitimate .tsx component confirms the inventory
+        // holds only the real one.
+        const files = [
+          tsxFile("bundle.min.js", ["AG.y", "B", "H.length", "J", "J.length", "Math.abs"]),
+          tsxFile("HeaderNav.tsx", ["HeaderNav"], { interactive: true }),
+        ];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(1);
+        const names = analysisCoverage?.["opaqueCustomComponentNames"] as string[] | undefined;
+        expect(names).toEqual(["HeaderNav"]);
+      });
+    });
   });
 
   describe("thin CSS coverage", () => {

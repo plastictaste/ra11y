@@ -410,6 +410,113 @@ describe("hasOpaquePascalCaseComponents", () => {
   it("returns false on an empty file list", () => {
     expect(hasOpaquePascalCaseComponents([])).toBe(false);
   });
+
+  // Q6 phantom-tag filter. The TSX parser is called on plain `.ts` /
+  // `.js` inputs (one parser for the whole JS/TS family) but those
+  // files cannot legally carry JSX — any tag the parser emits from
+  // them is an artefact of the generic-vs-JSX classifier mis-stepping
+  // in minified expression code. `hasOpaquePascalCaseComponents`
+  // must match the `collectWrapperCandidates` extension guard so a
+  // pure-utility bundle doesn't flip the detector's "components
+  // present" branch on a repo that genuinely has no components.
+  it("returns false when the only PascalCase 'tag' originates from a .js file", () => {
+    const files: ParsedFile[] = [
+      fileOf("bundle.min.js", "export const App = () => <Button>text</Button>;"),
+    ];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(false);
+  });
+
+  it("returns false when the only PascalCase 'tag' originates from a .ts file", () => {
+    const files: ParsedFile[] = [
+      fileOf("utils.ts", "export const App = () => <Button>text</Button>;"),
+    ];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(false);
+  });
+
+  it("returns false when a .tsx file's only PascalCase 'tag' is a single-character noise identifier", () => {
+    // Minified bundles occasionally produce `<J>` / `<B>` phantoms
+    // that slip past the extension filter if the file happens to be
+    // mis-named `.tsx`. The single-char filter catches them.
+    const files: ParsedFile[] = [fileOf("bundle.tsx", "const f = () => <J>x</J>;")];
+    expect(hasOpaquePascalCaseComponents(files)).toBe(false);
+  });
+});
+
+describe("collectWrapperCandidates: Q6 phantom-tag filter", () => {
+  // Companion coverage to `hasOpaquePascalCaseComponents` above — the
+  // same filter applies at the wrapper-candidate extraction site so
+  // the `detect_native_wrappers` tool output doesn't list phantom
+  // names (the historical Q6 leak was `["AG.y","B","H.length","J",
+  // "J.length","Math.abs"]` returned from a scan of a website-
+  // templates repo where the phantom tags originated in minified
+  // vendor `.js` bundles).
+  it("skips wrapper candidates that would come from .js files", () => {
+    const files: ParsedFile[] = [
+      fileOf(
+        "bundle.min.js",
+        "const X = () => <Button onClick={() => {}}>x</Button>;",
+      ),
+    ];
+    expect(collectWrapperCandidates(files)).toEqual([]);
+  });
+
+  it("skips wrapper candidates that would come from .ts files", () => {
+    const files: ParsedFile[] = [
+      fileOf(
+        "utils.ts",
+        "const X = () => <Button onClick={() => {}}>x</Button>;",
+      ),
+    ];
+    expect(collectWrapperCandidates(files)).toEqual([]);
+  });
+
+  it("keeps wrapper candidates from .tsx and .jsx files — regression guard for the positive path", () => {
+    // The extension filter must not regress legitimate candidates.
+    // A single onClick-carrying Button in a .tsx file still surfaces.
+    const files: ParsedFile[] = [
+      fileOf(
+        "Button.tsx",
+        "const X = () => <Button onClick={() => {}}>x</Button>;",
+      ),
+    ];
+    const result = collectWrapperCandidates(files);
+    expect(result.map((c) => c.component)).toEqual(["Button"]);
+  });
+
+  it("excludes single-character tag names from the candidate set", () => {
+    // Guard against the residual `.tsx`-housed minified-bundle case
+    // (a `.min.tsx` happens in some build pipelines). `<J onClick>`
+    // must not become a Button-wrapper candidate.
+    const files: ParsedFile[] = [
+      fileOf(
+        "bundle.tsx",
+        "const X = () => <J onClick={() => {}}>x</J>;",
+      ),
+    ];
+    expect(collectWrapperCandidates(files)).toEqual([]);
+  });
+
+  it("collapses dotted member-access tags to the root identifier (Motion.div → Motion)", () => {
+    // Legitimate React namespaced components (framer-motion's
+    // `<Motion.div>`) must group under the importable root name,
+    // since that's what `nativeWrappers` would list. Three sightings
+    // of `Motion.div` / `Motion.span` / `Motion.section` collapse to
+    // one `Motion` entry with 3 occurrences.
+    const files: ParsedFile[] = [
+      fileOf(
+        "Hero.tsx",
+        [
+          "const a = () => <Motion.div onClick={() => {}}>x</Motion.div>;",
+          "const b = () => <Motion.span onClick={() => {}}>x</Motion.span>;",
+          "const c = () => <Motion.section onClick={() => {}}>x</Motion.section>;",
+        ].join("\n"),
+      ),
+    ];
+    const result = collectWrapperCandidates(files);
+    expect(result.map((c) => ({ component: c.component, occurrences: c.occurrences }))).toEqual([
+      { component: "Motion", occurrences: 3 },
+    ]);
+  });
 });
 
 describe("buildSuggestedConfigSnippet", () => {
