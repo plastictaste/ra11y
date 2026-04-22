@@ -50,9 +50,16 @@ import { widenToUniqueAnchor } from "./unique-anchor.ts";
 export interface VerifyCommandStructured {
   readonly tool: "scan_file";
   readonly args: {
-    readonly file: string;
-    readonly ruleId?: string;
+    readonly path: string;
   };
+  /**
+   * Advisory metadata: the rule ID the caller just fixed. Sits as a
+   * sibling of `args` (not inside it) because `scan_file` has no
+   * `ruleId` parameter — encoding it in `args` would emit an
+   * undeclared key against the tool's inputSchema. Agents that want
+   * to post-filter the verify scan to only this rule can read it here.
+   */
+  readonly verifyRuleId: string;
 }
 
 export interface BuildSuggestFixPayloadArgs {
@@ -95,10 +102,11 @@ export function buildVerifyCommand(
   readonly verifyCommandStructured: VerifyCommandStructured;
 } {
   return {
-    verifyCommand: `mcp: scan_file({ file: ${JSON.stringify(filePath)} }) and confirm \`${ruleId}\` no longer fires at this location`,
+    verifyCommand: `mcp: scan_file({ path: ${JSON.stringify(filePath)} }) and confirm \`${ruleId}\` no longer fires at this location`,
     verifyCommandStructured: {
       tool: "scan_file",
-      args: { file: filePath, ruleId },
+      args: { path: filePath },
+      verifyRuleId: ruleId,
     },
   };
 }

@@ -277,14 +277,16 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       verifyCommand: string;
       verifyCommandStructured: {
         tool: string;
-        args: { file: string; ruleId?: string };
+        args: { path: string };
+        verifyRuleId: string;
       };
     };
     expect(typeof fix.verifyCommand).toBe("string");
     expect(fix.verifyCommand).toContain("scan_file");
     expect(fix.verifyCommandStructured.tool).toBe("scan_file");
-    expect(fix.verifyCommandStructured.args.file).toBe(BAD_ALT_FILE);
-    expect(fix.verifyCommandStructured.args.ruleId).toBe("media/alt-text-missing");
+    expect(fix.verifyCommandStructured.args.path).toBe(BAD_ALT_FILE);
+    expect(fix.verifyCommandStructured.verifyRuleId).toBe("media/alt-text-missing");
+    expect(fix.verifyCommandStructured.args).not.toHaveProperty("ruleId");
   });
 
   it("suggest_fix with an unknown rule returns a tool-level error envelope with code rule-not-found", async () => {

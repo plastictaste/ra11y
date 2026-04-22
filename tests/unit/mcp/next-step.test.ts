@@ -97,7 +97,7 @@ describe("buildNextStep", () => {
 
     expect(result.prose).toContain("scan_file");
     expect(result.prose).toContain("Sidebar.tsx");
-    expect(result.structured).toEqual({ tool: "scan_file", args: { file: "Sidebar.tsx" } });
+    expect(result.structured).toEqual({ tool: "scan_file", args: { path: "Sidebar.tsx" } });
   });
 
   it("returns checklist on a clean automated scan — both prose and structured point at the manual half", () => {

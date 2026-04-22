@@ -85,7 +85,8 @@ describe("buildVerifyCommand", () => {
     const result = buildVerifyCommand(FILE_PATH, RULE_ID);
     expect(result.verifyCommandStructured).toEqual({
       tool: "scan_file",
-      args: { file: FILE_PATH, ruleId: RULE_ID },
+      args: { path: FILE_PATH },
+      verifyRuleId: RULE_ID,
     });
   });
 
@@ -114,7 +115,8 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'edit'", () => {
     expect((payload["verifyCommand"] as string).length).toBeGreaterThan(0);
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
-      args: { file: FILE_PATH, ruleId: RULE_ID },
+      args: { path: FILE_PATH },
+      verifyRuleId: RULE_ID,
     });
   });
 
@@ -124,23 +126,25 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'edit'", () => {
     expect(structured.tool).toBe("scan_file");
   });
 
-  it("verifyCommandStructured.args.file matches the input filePath exactly", () => {
+  it("verifyCommandStructured.args.path matches the input filePath exactly", () => {
     const customPath = "packages/ui/src/widgets/Toolbar.tsx";
     const payload = buildSuggestFixPayload(
       baseArgs(violationWithFixPaths(), { filePath: customPath }),
     );
     const structured = payload["verifyCommandStructured"] as {
-      args: { file: string };
+      args: { path: string };
     };
-    expect(structured.args.file).toBe(customPath);
+    expect(structured.args.path).toBe(customPath);
   });
 
-  it("verifyCommandStructured.args.ruleId is included when the rule is known", () => {
+  it("verifyCommandStructured.verifyRuleId is a sibling of args (not inside args)", () => {
     const payload = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
     const structured = payload["verifyCommandStructured"] as {
-      args: { ruleId?: string };
+      verifyRuleId?: string;
+      args: Record<string, unknown>;
     };
-    expect(structured.args.ruleId).toBe(RULE_ID);
+    expect(structured.verifyRuleId).toBe(RULE_ID);
+    expect(structured.args).not.toHaveProperty("ruleId");
   });
 });
 
@@ -151,7 +155,8 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'guidance'", () => {
     expect(typeof payload["verifyCommand"]).toBe("string");
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
-      args: { file: FILE_PATH, ruleId: RULE_ID },
+      args: { path: FILE_PATH },
+      verifyRuleId: RULE_ID,
     });
   });
 
@@ -170,7 +175,8 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'guidance'", () => {
     expect(typeof payload["verifyCommand"]).toBe("string");
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
-      args: { file: FILE_PATH, ruleId: RULE_ID },
+      args: { path: FILE_PATH },
+      verifyRuleId: RULE_ID,
     });
   });
 });
@@ -185,7 +191,8 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
     expect(typeof payload["verifyCommand"]).toBe("string");
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
-      args: { file: FILE_PATH, ruleId: RULE_ID },
+      args: { path: FILE_PATH },
+      verifyRuleId: RULE_ID,
     });
   });
 });

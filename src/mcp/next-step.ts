@@ -228,7 +228,7 @@ function notesNextStep(inputs: NextStepInputs, first: FirstFinding): NextStepRes
   const nPlural = inputs.notes === 1 ? "" : "s";
   return {
     prose: `No errors/warnings, ${inputs.notes} info-level note${nPlural} (scanner flagged things it can't fully verify). Open \`scan_file ${first.path}\` or read the source to resolve.${manualTail(inputs)}${inputs.iterativeTip}`,
-    structured: { tool: "scan_file", args: { file: first.path } },
+    structured: { tool: "scan_file", args: { path: first.path } },
   };
 }
 
