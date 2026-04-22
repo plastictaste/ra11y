@@ -117,14 +117,7 @@ describe("extractComponentIdentifier", () => {
       // `docs/kb/architecture/ai-first-consumer.md` calls out
       // empty-string sentinel fields as dishonest; the helper must
       // always return either a meaningful identifier or `null`.
-      const rejected = [
-        "",
-        "div",
-        "J",
-        "J.length",
-        "1Start",
-        "foo.bar",
-      ];
+      const rejected = ["", "div", "J", "J.length", "1Start", "foo.bar"];
       for (const input of rejected) {
         const out = extractComponentIdentifier(input);
         // Either null or a non-empty string. Never empty string.
