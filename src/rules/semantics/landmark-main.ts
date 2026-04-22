@@ -310,11 +310,22 @@ function isMainLandmark(el: HtmlElement): boolean {
 //      (radio group with a heading, link cluster with a heading) stay
 //      below the bar.
 //
+//   D. Any heading + a `<script>` descendant of `<body>`. A page that
+//      loads its own JavaScript in the body is a real script-driven
+//      page, not a fragment/fixture (no good-path HTML fixture in the
+//      repo carries a `<script>` at all). The `<h3>`-only expanding-
+//      cards / card-gallery shape hits this branch: card titles are
+//      headings below h1, and the widget script is included at body
+//      close. Pairing script-presence with *any* heading (not h1
+//      specifically) catches the shape without widening past the
+//      "author wrote content" baseline that branches B and C assume.
+//
 // Below the bar: minimal documents (alt-text snippets, attribute-rule
-// fixtures, email templates) that have neither landmarks nor an h1 +
-// body content nor a heading + list + interactive trio. Treating those
-// as fragments avoids noisy "missing <main>" warnings on documents
-// that genuinely have nothing to wrap.
+// fixtures, email templates) that have no landmarks, no h1 + body
+// content, no heading + list + interactive trio, and no heading +
+// body-script pair. Treating those as fragments avoids noisy
+// "missing <main>" warnings on documents that genuinely have nothing
+// to wrap.
 //
 // Doctrine note (`docs/kb/architecture/ai-first-consumer.md`): the
 // thresholds here gate *whether the rule evaluates*, not whether a
@@ -341,6 +352,7 @@ interface BodyShape {
   readonly hasHeading: boolean;
   readonly hasList: boolean;
   readonly hasInteractive: boolean;
+  readonly hasBodyScript: boolean;
   readonly descendantCount: number;
 }
 
@@ -360,6 +372,7 @@ interface ContentSignals {
   hasHeading: boolean;
   hasList: boolean;
   hasInteractive: boolean;
+  hasBodyScript: boolean;
 }
 
 function tallySignals(tag: string, signals: ContentSignals): void {
@@ -367,6 +380,7 @@ function tallySignals(tag: string, signals: ContentSignals): void {
   if (HEADING_TAGS.has(tag)) signals.hasHeading = true;
   if (LIST_TAGS.has(tag)) signals.hasList = true;
   if (INTERACTIVE_TAGS.has(tag)) signals.hasInteractive = true;
+  if (tag === "script") signals.hasBodyScript = true;
 }
 
 function inspectBody(body: HtmlElement, doc: HtmlDocument): BodyShape {
@@ -377,11 +391,15 @@ function inspectBody(body: HtmlElement, doc: HtmlDocument): BodyShape {
     hasHeading: false,
     hasList: false,
     hasInteractive: false,
+    hasBodyScript: false,
   };
   // Single document walk: landmark check sees the whole tree (so a
   // `<header>` placed outside `<body>` in parser-tolerant input still
   // counts), content-signal tally is restricted to body descendants
-  // via `isInsideBody`.
+  // via `isInsideBody` — `hasBodyScript` in particular MUST be body-
+  // scoped (scripts in `<head>` are the common pattern for asset
+  // bundlers and would false-positive on minimal rule-testing
+  // fixtures).
   for (const el of walkHtmlElements(doc)) {
     const tag = el.tagName.toLowerCase();
     if (LANDMARK_TAGS.has(tag)) hasExplicitLandmark = true;
@@ -400,5 +418,12 @@ function looksLikeFullPage(body: HtmlElement, doc: HtmlDocument): boolean {
   if (shape.hasH1 && shape.descendantCount >= 5) return true;
   // Branch C: heading + list + interactive (content-area shape).
   if (shape.hasHeading && shape.hasList && shape.hasInteractive) return true;
+  // Branch D: any heading + body-level <script> (widget-page shape).
+  // A body-scoped script is the strongest zero-false-positive page-
+  // vs-fragment signal we have — zero good-path HTML fixtures in the
+  // repo carry a body script — and pairing it with *any* heading
+  // catches the h3-only expanding-cards / card-gallery shape that
+  // branch B (h1-gated) and branch C (list+interactive-gated) miss.
+  if (shape.hasHeading && shape.hasBodyScript) return true;
   return false;
 }

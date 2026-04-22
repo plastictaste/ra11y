@@ -566,9 +566,9 @@ function evalViolationPresent(
   // on the specific file the fixture pinned."
   const ruleMatches = violations.filter((v) => v.ruleId === exp.ruleId);
   const matching =
-    exp.inFile !== undefined
-      ? ruleMatches.filter((v) => v.location.filePath === exp.inFile)
-      : ruleMatches;
+    exp.inFile === undefined
+      ? ruleMatches
+      : ruleMatches.filter((v) => v.location.filePath === exp.inFile);
   if (matching.length === 0) {
     if (exp.inFile !== undefined && ruleMatches.length > 0) {
       const seen = [...new Set(ruleMatches.map((v) => v.location.filePath))].sort().join(", ");
