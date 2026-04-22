@@ -2,13 +2,18 @@
  * Deterministic detection of compiled-CSS / bundler-output files among
  * the set of files a scan has already parsed.
  *
- * Surfaces as `meta.scannedBuildArtifacts: ScannedBuildArtifact[]` on
- * `scan_project` responses — a *labelled* list, not a filter. Each
- * entry pairs the `path` with a `reason` string drawn from a closed
- * set, so the consuming agent can triage without re-reading every
- * flagged file. Findings on these files still appear in `files`; the
- * meta entry tells the agent "this finding sits on a generated file,
- * and here is *why* the scanner classified it so."
+ * Surfaces as `meta.scannedBuildArtifacts: BuildArtifactsGrouped` on
+ * `scan_project` responses — a *labelled* grouped view, not a
+ * filter. Each entry pairs the `path` with a `reason` string drawn
+ * from a closed set, so the consuming agent can triage without
+ * re-reading every flagged file. Findings on these files still
+ * appear in `files`; the meta entry tells the agent "this finding
+ * sits on a generated file, and here is *why* the scanner
+ * classified it so." The on-wire shape collapses ≥3-entry same-
+ * basename clusters into `grouped[i]` rows with paste-ready
+ * `suggestedGlob`s; sub-threshold entries stay in `ungrouped` with
+ * their `{ path, reason }` records intact. See {@link
+ * groupBuildArtifactsByBasename}.
  *
  * Per CLAUDE.md §1 "Labeled buckets are suppression too," a label
  * earns its place only when it is *provable from the code* rather
@@ -82,12 +87,15 @@ export type BuildArtifactReason =
   | "tailwind-compiled-escape";
 
 /**
- * One classified artifact entry surfaced on
- * `meta.scannedBuildArtifacts`. The agent reads `reason` to triage
- * whether the file is worth investigating without opening it. The
- * paired `path` is the same path the rest of the response uses
- * (relative-to-scanned-root), so a caller can join against the
- * `files[]` bucket directly.
+ * One classified artifact entry. On `scan_project`, these records
+ * ride inside the grouped envelope —
+ * `meta.scannedBuildArtifacts.ungrouped[]` — for any sub-threshold
+ * basenames that didn't form a group of ≥
+ * {@link BASENAME_GROUP_THRESHOLD}. The agent reads `reason` to
+ * triage whether the file is worth investigating without opening
+ * it. The paired `path` is the same path the rest of the response
+ * uses (root-relative POSIX after the grouper's relativization),
+ * so a caller can join against the `files[]` bucket directly.
  */
 export interface ScannedBuildArtifact {
   readonly path: string;
@@ -351,4 +359,256 @@ function hasSiblingSourcemap(filePath: string, pathsInSet: ReadonlySet<string>):
   const normalized = filePath.replace(/\\/g, "/");
   if (normalized.endsWith(".map")) return false;
   return pathsInSet.has(`${normalized}.map`);
+}
+
+/**
+ * Minimum number of paths that share a basename before the grouping
+ * helper collapses them into one `{ basename, count, pathHint,
+ * suggestedGlob, reasons }` entry. Below the threshold the entries
+ * stay in the `ungrouped` array so a single-file basename doesn't get
+ * collapsed to an overreaching `**\/<name>` glob. Matches the
+ * `EXCLUDE_GLOB_COLLAPSE_THRESHOLD` used by `tool-propose-config.ts`
+ * for top-level directory collapsing — same doctrine (three-entry
+ * field-report-observed floor) applied one axis over (basename rather
+ * than top-dir).
+ */
+export const BASENAME_GROUP_THRESHOLD = 3;
+
+/**
+ * One group entry on `meta.scannedBuildArtifacts.grouped`. Surfaces
+ * the N same-named artifacts (e.g. `bootstrap.css` at 45 sites) as a
+ * single, inspect-once row rather than N individual paths. `basename`
+ * is the filename portion; `count` is the number of same-basename
+ * entries the group subsumes; `pathHint` is the longest directory
+ * prefix shared by every member, so the agent sees "these all sit
+ * under `vendor/bootstrap/5.x/`" without scanning the flat list;
+ * `reasons` is the deduped set of classifier reasons fired across the
+ * group (most groups carry a single reason — a vendor bundle shipped
+ * via `dist-path` — but e.g. a `bootstrap.css` and `bootstrap.min.css`
+ * mix would carry both `dist-path` and `minified`); `suggestedGlob`
+ * is inline-ready for `propose_config`'s `exclude: [...]` entry —
+ * root-relative POSIX, covers every member of the group (plus any
+ * future same-basename file that lands under the same prefix).
+ *
+ * Zero information loss vs. the flat form: the ungrouped sibling
+ * field retains every sub-threshold entry as `{ path, reason }`
+ * records, and `count` on a group equals the number of absorbed
+ * paths — the agent can reconstruct the per-path view by reading
+ * the group + the ungrouped list together.
+ */
+export interface BuildArtifactGroup {
+  readonly basename: string;
+  readonly count: number;
+  readonly pathHint: string;
+  readonly reasons: readonly BuildArtifactReason[];
+  readonly suggestedGlob: string;
+}
+
+/**
+ * Grouped shape emitted on `meta.scannedBuildArtifacts`, replacing
+ * the previous flat `ScannedBuildArtifact[]` array. Per doctrine
+ * ("verbose meta is signal, not clutter"), the grouped form is a
+ * strict information superset of the flat list: every same-basename
+ * cluster of ≥ {@link BASENAME_GROUP_THRESHOLD} paths collapses to
+ * one `{ basename, count, pathHint, suggestedGlob, reasons }` row
+ * so a scan with 301 artifact paths across one `dist/bootstrap/`
+ * tree surfaces as ~5 actionable group rows plus any
+ * unclustered residue under `ungrouped`.
+ *
+ * Deterministic ordering:
+ *   - `grouped` sorted by `count` descending, ties broken by
+ *     `basename` alphabetical — the agent sees the densest basename
+ *     first, and same-count groups appear in a stable order across
+ *     runs.
+ *   - `ungrouped` sorted by `path` alphabetical — stable across
+ *     runs even if the underlying scanner reorders discovery.
+ */
+export interface BuildArtifactsGrouped {
+  readonly grouped: readonly BuildArtifactGroup[];
+  readonly ungrouped: readonly ScannedBuildArtifact[];
+}
+
+/**
+ * Collapses a flat {@link ScannedBuildArtifact} list into the
+ * grouped-by-basename shape surfaced on
+ * `meta.scannedBuildArtifacts`. Groups form only when ≥
+ * {@link BASENAME_GROUP_THRESHOLD} paths share a basename — below
+ * that, the entries stay in `ungrouped` so a lone `bootstrap.css`
+ * doesn't collapse to an overreaching `**\/bootstrap.css` glob.
+ *
+ * Every `pathHint` and `suggestedGlob` is root-relative POSIX so the
+ * agent can paste them verbatim into a `propose_config` exclude
+ * entry — matches the precedent set by `tool-propose-config.ts` and
+ * the `Q-SHARED-PROPOSE-CONFIG-RELATIVE-PATHS` relativization pass.
+ * `ungrouped` entries carry the same root-relative POSIX `path` form
+ * so the two halves of the output agree on path shape.
+ *
+ * Input ordering does not affect output: `grouped` sorts by count
+ * desc then basename asc, `ungrouped` sorts by path asc. Emptiness
+ * is honest — `grouped` and `ungrouped` can both be empty on a clean
+ * scan, and the caller (`tool-scan-project.ts`) conditional-spreads
+ * the whole `scannedBuildArtifacts` meta field on total emptiness so
+ * downstream consumers see "no field" rather than
+ * `{ grouped: [], ungrouped: [] }`.
+ */
+export function groupBuildArtifactsByBasename(
+  entries: readonly ScannedBuildArtifact[],
+  root: string,
+): BuildArtifactsGrouped {
+  if (entries.length === 0) {
+    return { grouped: [], ungrouped: [] };
+  }
+  const rootPosix = root.replace(/\\/g, "/");
+  // Relativize every entry up front so the downstream longest-common-
+  // prefix + suggestedGlob computations operate on one consistent
+  // path form. Paths that escape the root (startsWith `..`) or equal
+  // it exactly are dropped — an exclude pattern outside the project
+  // is meaningless, and the flat form would have surfaced the path
+  // too noisily anyway.
+  const relativized: ScannedBuildArtifact[] = [];
+  for (const e of entries) {
+    const rel = relativizeToPosix(e.path, rootPosix);
+    if (rel === null) continue;
+    relativized.push({ path: rel, reason: e.reason });
+  }
+  // Bucket by basename. Each bucket holds the relativized
+  // `ScannedBuildArtifact` so the per-reason dedup and pathHint
+  // computations work off one shape.
+  const buckets = new Map<string, ScannedBuildArtifact[]>();
+  for (const entry of relativized) {
+    const base = basenameOf(entry.path);
+    const bucket = buckets.get(base);
+    if (bucket === undefined) buckets.set(base, [entry]);
+    else bucket.push(entry);
+  }
+  const grouped: BuildArtifactGroup[] = [];
+  const ungroupedRaw: ScannedBuildArtifact[] = [];
+  for (const [basename, members] of buckets) {
+    if (members.length >= BASENAME_GROUP_THRESHOLD) {
+      const pathHint = longestCommonDirPrefix(members.map((m) => m.path));
+      const reasons = dedupeReasonsSorted(members.map((m) => m.reason));
+      grouped.push({
+        basename,
+        count: members.length,
+        pathHint,
+        reasons,
+        suggestedGlob: buildSuggestedGlob(pathHint, basename),
+      });
+    } else {
+      for (const m of members) ungroupedRaw.push(m);
+    }
+  }
+  // Deterministic sort: grouped by count desc then basename asc;
+  // ungrouped by path asc. Stable across runs even when the scanner
+  // re-orders its discovery pass.
+  grouped.sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.basename.localeCompare(b.basename);
+  });
+  const ungrouped = [...ungroupedRaw].sort((a, b) => a.path.localeCompare(b.path));
+  return { grouped, ungrouped };
+}
+
+/**
+ * POSIX-relativize `filePath` against `rootPosix`. Returns `null`
+ * when the path equals the root (would yield an empty exclude
+ * entry), escapes the root (`..`-prefixed after relativization), or
+ * is an absolute host path that doesn't share the root prefix (a
+ * symlinked source outside the scan root — meaningless as an
+ * exclude entry). All three cases would emit broken glob
+ * suggestions; the caller drops them silently rather than
+ * surfacing a pattern the agent can't act on.
+ *
+ * Accepts absolute host paths with `\` separators and `/`-prefixed
+ * POSIX paths interchangeably — all input is normalized to POSIX up
+ * front. Already-relative input (no leading `/`, no drive letter)
+ * passes through unchanged so tests or callers that feed pre-
+ * relativized paths see the expected behavior.
+ */
+function relativizeToPosix(filePath: string, rootPosix: string): string | null {
+  const normalized = filePath.replace(/\\/g, "/");
+  // Strip trailing slash from root for prefix comparison.
+  const rootTrimmed = rootPosix.endsWith("/") ? rootPosix.slice(0, -1) : rootPosix;
+  if (normalized === rootTrimmed) return null;
+  if (normalized.startsWith(`${rootTrimmed}/`)) {
+    const rel = normalized.slice(rootTrimmed.length + 1);
+    if (rel === "" || rel.startsWith("../")) return null;
+    return rel;
+  }
+  // Absolute path outside the scan root — drop it. The probe is
+  // "starts with `/`" (POSIX-absolute) or "starts with drive letter"
+  // (Windows-absolute after normalization); either way, the path
+  // couldn't be relativized meaningfully against the scan root.
+  if (normalized.startsWith("/") || /^[A-Za-z]:\//u.test(normalized)) return null;
+  // Relative input (no absolute-path prefix) — accept verbatim,
+  // rejecting anything that escapes via `..`.
+  if (normalized.startsWith("../")) return null;
+  return normalized;
+}
+
+/**
+ * Longest shared directory prefix across `paths`, POSIX form, with
+ * a trailing slash so the suggested-glob builder can append
+ * `**\/<basename>` without an extra separator. Returns an empty
+ * string when the paths share no directory (e.g. two same-basename
+ * files at different top-level dirs) — the suggested glob degrades
+ * to `**\/<basename>`, which is still agent-actionable even if
+ * broader than ideal.
+ *
+ * Byte-level prefix match at directory-segment boundaries: never
+ * partial-matches a filename (`"vendor/bo"` shared between
+ * `vendor/bootstrap/x.css` and `vendor/bose/x.css` yields `"vendor/"`,
+ * not `"vendor/bo"`). Operates on pre-relativized input so the
+ * output is always repo-root-relative.
+ */
+function longestCommonDirPrefix(paths: readonly string[]): string {
+  const first = paths[0];
+  if (first === undefined) return "";
+  if (paths.length === 1) {
+    const slash = first.lastIndexOf("/");
+    return slash === -1 ? "" : `${first.slice(0, slash)}/`;
+  }
+  // Compute longest common prefix at the character level, then
+  // trim back to the last `/` so the result ends on a directory
+  // boundary.
+  let prefix = first;
+  for (let i = 1; i < paths.length; i++) {
+    const p = paths[i];
+    if (p === undefined) continue;
+    let j = 0;
+    const end = Math.min(prefix.length, p.length);
+    while (j < end && prefix.charCodeAt(j) === p.charCodeAt(j)) j++;
+    prefix = prefix.slice(0, j);
+    if (prefix === "") break;
+  }
+  const lastSlash = prefix.lastIndexOf("/");
+  return lastSlash === -1 ? "" : `${prefix.slice(0, lastSlash + 1)}`;
+}
+
+/**
+ * Builds the `**\/<basename>` glob the agent can paste into
+ * `propose_config`'s `exclude:`. When the members share a
+ * directory prefix, the glob anchors there so it doesn't
+ * over-capture identically-named files in unrelated subtrees; when
+ * they don't, the prefix is empty and the glob is repo-wide by
+ * basename — still a legal exclude, just broader.
+ */
+function buildSuggestedGlob(pathHint: string, basename: string): string {
+  return `${pathHint}**/${basename}`;
+}
+
+/**
+ * Dedup a list of {@link BuildArtifactReason} values and sort
+ * alphabetically so the `reasons` field on a group is deterministic
+ * across runs. Most groups carry a single reason; mixed-reason
+ * groups exist (e.g. a `bootstrap.css` under `dist/` + a
+ * `bootstrap.min.css` next to it), and the agent reads the array to
+ * know which falsifiable claim covers each subset.
+ */
+function dedupeReasonsSorted(
+  reasons: readonly BuildArtifactReason[],
+): readonly BuildArtifactReason[] {
+  const seen = new Set<BuildArtifactReason>();
+  for (const r of reasons) seen.add(r);
+  return [...seen].sort();
 }

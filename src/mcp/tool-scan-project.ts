@@ -11,7 +11,12 @@ import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
 import { additionalPathsScannedField } from "./additional-paths-classifier.ts";
 import { baselineStatusField, probeBaselineStatus } from "./baseline-status.ts";
-import { collectBuildArtifacts, type ScannedBuildArtifact } from "./build-artifacts.ts";
+import {
+  type BuildArtifactsGrouped,
+  collectBuildArtifacts,
+  groupBuildArtifactsByBasename,
+  type ScannedBuildArtifact,
+} from "./build-artifacts.ts";
 import { buildConfigHint } from "./config-hint.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
@@ -223,7 +228,7 @@ export const scanProjectTool: McpTool = {
     // finding sits on generated code before editing. Per CLAUDE.md §1
     // "Ambiguous field shapes are dishonest," the field is omitted
     // entirely when the detector finds no artifacts (never `[]`).
-    const buildArtifacts = buildArtifactsFields(files);
+    const buildArtifacts = buildArtifactsFields(files, root);
     // P2-BASE: probe the canonical baseline path so agents see whether
     // a baseline is in play alongside the scan result — prevents
     // re-proposing fixes for grandfathered violations without the
@@ -859,21 +864,39 @@ function structuredField(nextStep: { readonly structured?: unknown }): {
 
 /**
  * Build-artifacts spread: the raw `entries` list (for downstream
- * cross-referencing against findings, e.g. the vendor-CSS
- * dominance predicate), a `metaField` to mix into `meta` (omitted
- * when no artifacts), and a `present` boolean for
+ * cross-referencing against findings, e.g. the vendor-CSS dominance
+ * predicate), a `metaField` to mix into `meta` (omitted when no
+ * artifacts), and a `present` boolean for
  * `warningsFieldFromScanMeta`.
+ *
+ * Q6-SCANNED-BUILD-ARTIFACTS-GROUP-BY-BASENAME: the meta field
+ * carries the {@link BuildArtifactsGrouped} shape (grouped +
+ * ungrouped) rather than the flat `ScannedBuildArtifact[]` it used
+ * to. Per CLAUDE.md §1 "Verbose meta is signal, not clutter," the
+ * grouped form is a strict superset — every ≥3-entry basename
+ * cluster collapses to one row with a paste-ready `suggestedGlob`,
+ * and sub-threshold entries stay in `ungrouped` so zero information
+ * is lost. The raw `entries` list stays in the worker-internal
+ * return shape for the vendor-CSS dominance predicate, which cross-
+ * references path-level classification against findings.
  */
-function buildArtifactsFields(files: readonly ParsedFile[]): {
+function buildArtifactsFields(
+  files: readonly ParsedFile[],
+  root: string,
+): {
   readonly present: boolean;
   readonly entries: readonly ScannedBuildArtifact[];
-  readonly metaField: { readonly scannedBuildArtifacts?: readonly ScannedBuildArtifact[] };
+  readonly metaField: { readonly scannedBuildArtifacts?: BuildArtifactsGrouped };
 } {
   const entries = collectBuildArtifacts(files);
+  if (entries.length === 0) {
+    return { present: false, entries, metaField: {} };
+  }
+  const grouped = groupBuildArtifactsByBasename(entries, root);
   return {
-    present: entries.length > 0,
+    present: true,
     entries,
-    metaField: entries.length > 0 ? { scannedBuildArtifacts: entries } : {},
+    metaField: { scannedBuildArtifacts: grouped },
   };
 }
 
