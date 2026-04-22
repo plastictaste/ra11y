@@ -104,6 +104,103 @@ describe("classifyBuildArtifact — `minified` reason", () => {
   });
 });
 
+// Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE: the single-long-line
+// probe on its own mis-labeled authored Astro/Starlight template-literal
+// props, Google-Maps iframe URLs, SCSS type signatures, and MDX prop
+// bundles. The classifier now gates the `minified` verdict on a second-
+// tier corroborator (long-line ratio ≥ 25% OR median line length > 500).
+// These tests lock the NEGATIVE direction: one long line amid many short
+// lines must NOT label.
+describe("classifyBuildArtifact — single-long-line second-probe corroboration", () => {
+  it("does NOT classify a TSX file whose ONE line over 500 chars sits amid ~50 short authored lines", () => {
+    // Shape modeled on Astro `<Example code={`…`}/>` where a multi-tag
+    // HTML preview lives on one prop line. Short lines around it drag
+    // the median well below the threshold and the long-line ratio to
+    // ~2%, so neither corroborator fires and the file stays unlabeled.
+    const shortLines = Array.from({ length: 49 }, (_, i) => `const x${i} = ${i};`);
+    const longLine = `const html = "${"abc".repeat(200)}";`; // ~620 chars
+    const source = [...shortLines, longLine].join("\n");
+    expect(classifyBuildArtifact("src/components/Preview.tsx", source)).toBe(null);
+  });
+
+  it("does NOT classify an HTML file whose ONE iframe-src line crosses 500 chars amid short authored markup", () => {
+    // Website-templates shape: a contact page with a Google-Maps
+    // iframe whose URL is long, surrounded by ordinary multi-line
+    // HTML. One long line out of ~40 → ratio ~3%, median ~30 chars
+    // → neither corroborator fires.
+    const shortLines = Array.from({ length: 39 }, (_, i) => `  <p>Short paragraph ${i}.</p>`);
+    const iframe = `  <iframe src="https://example.com/?q=${"abc".repeat(180)}"></iframe>`;
+    const source = [
+      "<!doctype html>",
+      "<html><body>",
+      ...shortLines,
+      iframe,
+      "</body></html>",
+    ].join("\n");
+    expect(classifyBuildArtifact("contact.html", source)).toBe(null);
+  });
+
+  it("does NOT classify an SCSS-shape file whose ONE long line is a type signature amid authored rules", () => {
+    // SCSS function body shape — the function's signature line can
+    // stretch past 500 chars via a long `@return` type chain, but
+    // the rest of the file is hand-written. Extension is `.scss`
+    // (the CSS probes gate to .css / .scss so this is an authored
+    // SCSS file, not a compiled bundle).
+    const shortLines = Array.from({ length: 50 }, (_, i) => `.token-${i} { color: red; }`);
+    const longSig = `@function compute-token($a, $b, $c, $d, $e, $f) { @return ${"aaaaa, ".repeat(75)}end; }`;
+    const source = [...shortLines, longSig].join("\n");
+    expect(classifyBuildArtifact("src/_functions.scss", source)).toBe(null);
+  });
+
+  it("classifies a CSS bundle whose median line length crosses the threshold (one-enormous-line shape)", () => {
+    // Canonical minified-JS/CSS shape: one 700-char line, no newlines.
+    // 1 line total, 1 long → median = 700, ratio = 100% → corroborated.
+    const source = `.a{color:red;}`.repeat(50);
+    expect(classifyBuildArtifact("vendor/some-bundle.css", source)).toBe("minified");
+  });
+
+  it("classifies a CSS bundle whose long-line ratio crosses 25% (multi-long-line shape)", () => {
+    // Four long lines out of sixteen → 25% ratio corroborates; median
+    // sits below the cap because 12 of the 16 lines are short, so it
+    // is the RATIO predicate — not the median — that fires.
+    const shortLines = Array.from({ length: 12 }, () => ".btn { padding: 0.5rem; }");
+    const longLines = Array.from(
+      { length: 4 },
+      (_, i) => `.rule-${i} { ${"color:red;".repeat(55)} }`,
+    );
+    const source = [...shortLines, ...longLines].join("\n");
+    expect(classifyBuildArtifact("vendor/multi.css", source)).toBe("minified");
+  });
+
+  it("does NOT classify a TSX file whose long-line ratio stays under 25% (just under the floor)", () => {
+    // 3 long lines out of 16 → 18.75% — below the 25% floor. Median
+    // stays under 500 too (13 of the 16 lines are short). Neither
+    // corroborator fires so the file stays unlabeled, matching the
+    // doctrine that a few dense lines in authored code are not
+    // minification evidence.
+    const shortLines = Array.from({ length: 13 }, (_, i) => `const short${i} = ${i};`);
+    const longLines = Array.from({ length: 3 }, (_, i) => `const big${i} = "${"x".repeat(600)}";`);
+    const source = [...shortLines, ...longLines].join("\n");
+    expect(classifyBuildArtifact("src/prefs.tsx", source)).toBe(null);
+  });
+
+  it("treats CRLF line breaks the same as LF (minified bundle with Windows-style newlines still labels)", () => {
+    // Regression guard: the line-stats helper must fold CRLF pairs so
+    // a Windows-authored or Windows-checked-out bundle reports the
+    // same line stats as a POSIX one. Source is one 700-char run
+    // plus a trailing CRLF — still one line, median 700, corroborates.
+    const source = `${".a{color:red;}".repeat(50)}\r\n`;
+    expect(classifyBuildArtifact("vendor/windows-bundle.css", source)).toBe("minified");
+  });
+
+  it("does NOT classify a completely empty source (zero lines → no corroboration)", () => {
+    // Degenerate empty-input guard: computeLineStats returns
+    // totalLines = 0, and the corroborator caller treats that as "no
+    // evidence" rather than dividing by zero.
+    expect(classifyBuildArtifact("src/empty.css", "")).toBe(null);
+  });
+});
+
 describe("classifyBuildArtifact — `hashed-filename` reason", () => {
   it("classifies `app.a1b2c3d4.js` (8-char hex hash between dots)", () => {
     expect(classifyBuildArtifact("assets/app.a1b2c3d4.js", "// bundle")).toBe("hashed-filename");

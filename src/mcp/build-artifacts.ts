@@ -27,10 +27,19 @@
  *
  *   1. `minified`. Either the basename carries a `.min.` infix
  *      (canonical pre-minified bundle marker — `bootstrap.min.css`,
- *      `jquery.min.js`) or the source text contains a single
- *      uninterrupted line of more than {@link MINIFIED_LINE_THRESHOLD}
- *      characters. Both forms only appear on machine-emitted output;
- *      hand-authored source wraps lines.
+ *      `jquery.min.js`) OR the source text crosses the single-long-
+ *      line probe (> {@link MINIFIED_LINE_THRESHOLD} chars on one
+ *      line) AND a second-tier corroborator also fires: either ≥25%
+ *      of lines exceed the threshold or the median line length itself
+ *      exceeds it. The standalone long-line probe used to be enough
+ *      but mis-labeled authored files (Astro `<Example code={`…`}/>`
+ *      template literals, Google-Maps iframe URLs, SCSS type-signature
+ *      function bodies) that happen to cross 500 chars on exactly one
+ *      authored line — the single signal is too weak to be provable
+ *      from file shape alone. A real minified bundle reads as
+ *      either several long lines among few (ratio) or one enormous
+ *      line (median); one long line among fifty short is not
+ *      minification evidence.
  *   2. `sourcemap-sibling`. A sibling `.map` file is in the scanned
  *      set with the matching basename. Pairing a `.js` / `.css` with
  *      its `.map` is the signature of a compiled bundle. The `.map`
@@ -192,23 +201,42 @@ const HASHED_FILENAME_RE = /\.[a-f0-9]{8,}\./u;
 
 /**
  * Pure per-file classifier: returns the matching {@link
- * BuildArtifactReason} or `null` when no signal fires. Evaluation is
- * first-match wins in the order documented at the module docblock
- * — `minified` first because it is the most specific (a `.min.`
- * infix or a 500-char single line is unambiguous output), then path-
- * based signals, then content-based CSS signals.
+ * BuildArtifactReason} or `null` when no signal fires.
+ *
+ * Evaluation order:
+ *   1. `.min.` infix on the basename → `minified`. Canonical on pre-
+ *      minified bundles, unambiguous.
+ *   2. Hashed-filename segment (8+ hex between dots) → `hashed-filename`.
+ *   3. Bundler-output path ancestry → `dist-path`.
+ *   4. CSS-only: `data:image/` inline → `contains-data-url-gradient`.
+ *   5. CSS-only: Tailwind escape-bracket selector →
+ *      `tailwind-compiled-escape`.
+ *   6. Single-line-over-threshold + second-tier corroboration →
+ *      `minified`. The long-line probe alone is not enough: authored
+ *      Astro/Starlight template-literal props, Google-Maps iframe URLs,
+ *      SCSS type signatures, and MDX component prop bundles all cross
+ *      the 500-char line cap once while the rest of the file reads
+ *      short. At least one corroborator from {long-line ratio, median
+ *      line length} must also fire for the bundle verdict (see
+ *      {@link hasLongMinifiedLineCorroborated}). The path-based signals
+ *      above (`.min.`, hashed, dist-path) already handle the cases
+ *      where the single-long-line probe lines up with a deterministic
+ *      filesystem marker; this final branch covers short-path bundles
+ *      whose source text itself still proves minification.
  *
  * The `sourcemap-sibling` reason is NOT checked here because it
  * requires the full scanned set — use {@link collectBuildArtifacts}
- * for that branch. The path-based signals are intentionally
- * extension-agnostic: a file under `/dist/assets/` is a build
- * artifact regardless of whether it ends in `.css` or `.html`. The
- * Tailwind-escape and data-URL probes are gated to `.css` / `.scss`
- * (JSX sources can carry those patterns as string literals, which
- * are not compiled CSS).
+ * for that branch (a sibling `.map` fills in as the corroborator for
+ * files whose source-text alone is ambiguous). The path-based signals
+ * are intentionally extension-agnostic: a file under `/dist/assets/`
+ * is a build artifact regardless of whether it ends in `.css` or
+ * `.html`. The Tailwind-escape and data-URL probes are gated to
+ * `.css` / `.scss` (JSX sources can carry those patterns as string
+ * literals, which are not compiled CSS).
  *
- * O(file size) — one regex pass on the source when the file is CSS,
- * plus a few O(1) path probes.
+ * O(file size) — at most one linear pass on the source for the line-
+ * statistics helper when the cheaper signals miss, plus a few O(1)
+ * path probes.
  */
 export function classifyBuildArtifact(
   filePath: string,
@@ -222,12 +250,20 @@ export function classifyBuildArtifact(
   // map itself stays out.
   if (filePath.replace(/\\/g, "/").endsWith(".map")) return null;
   if (matchesMinInfix(filePath)) return "minified";
-  if (hasLongMinifiedLine(source)) return "minified";
   if (matchesHashedFilename(filePath)) return "hashed-filename";
   if (matchesBuildDirMarker(filePath)) return "dist-path";
-  if (!isCssPath(filePath)) return null;
-  if (source.includes(DATA_URL_IMAGE_MARKER)) return "contains-data-url-gradient";
-  if (TAILWIND_ESCAPED_SELECTOR.test(source)) return "tailwind-compiled-escape";
+  if (isCssPath(filePath)) {
+    if (source.includes(DATA_URL_IMAGE_MARKER)) return "contains-data-url-gradient";
+    if (TAILWIND_ESCAPED_SELECTOR.test(source)) return "tailwind-compiled-escape";
+  }
+  // Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE: the standalone
+  // single-long-line probe was the root cause of 54 authored files
+  // mis-labeled on a Bootstrap docs scan and 101 on a website-
+  // templates scan — one long line in an Astro template literal, a
+  // Google Maps iframe URL, or an MDX prop bundle is not minification
+  // evidence. Require a corroborating content signal so the verdict
+  // stays provable from file shape.
+  if (hasLongMinifiedLineCorroborated(source)) return "minified";
   return null;
 }
 
@@ -271,6 +307,18 @@ function isCssPath(filePath: string): boolean {
 }
 
 /**
+ * Ratio of long-line-to-total-line count that corroborates the
+ * single-long-line probe. A single authored template-literal, iframe
+ * URL, or MDX prop bundle can cross the character threshold once; a
+ * minified bundle crosses on a quarter or more of its lines. The cap
+ * is deliberately loose — minified bundles often run one or two very
+ * long lines followed by a trailing short newline, so {@link
+ * hasHighMedianLineLength} covers the pure-one-liner case and this
+ * predicate covers the "several long lines among a few short" shape.
+ */
+const MINIFIED_LONG_LINE_RATIO = 0.25;
+
+/**
  * Returns true when any single contiguous line in `source` exceeds
  * {@link MINIFIED_LINE_THRESHOLD} characters. The probe scans the
  * source linearly tracking inter-newline run length so the helper
@@ -283,8 +331,12 @@ function isCssPath(filePath: string): boolean {
  * verdict. For the negative case (authored source) the helper walks
  * the entire string but each step is a constant-time index advance,
  * so even a 500 KB authored CSS file is well under a millisecond.
+ *
+ * Exported for tests; production call sites should use
+ * {@link hasLongMinifiedLineCorroborated} so the single-long-line
+ * signal only labels when a second-tier predicate also fires.
  */
-function hasLongMinifiedLine(source: string): boolean {
+export function hasLongMinifiedLine(source: string): boolean {
   let runLength = 0;
   for (let i = 0; i < source.length; i++) {
     const ch = source.charCodeAt(i);
@@ -298,6 +350,119 @@ function hasLongMinifiedLine(source: string): boolean {
     if (runLength > MINIFIED_LINE_THRESHOLD) return true;
   }
   return false;
+}
+
+/**
+ * One contiguous line-statistics scan returning both corroboration
+ * predicates in a single pass: the count of long lines (over
+ * {@link MINIFIED_LINE_THRESHOLD}), the total line count, and the
+ * median line length. Splitting into two separate loops would double
+ * the hot-path work on every parsed file; folding them here keeps the
+ * helper O(N) with one pass (median is computed on a single
+ * line-length array allocated only when we actually need the stats,
+ * i.e. only once the single-long-line probe already fired).
+ *
+ * Line semantics match {@link hasLongMinifiedLine}: a trailing line
+ * without a terminator counts as one line; CRLF / LF are treated
+ * identically. Empty input returns zeroed stats (total = 0, median =
+ * 0, longLines = 0) — the caller must treat a zero-line file as "no
+ * corroboration" to avoid a degenerate median.
+ */
+function computeLineStats(source: string): {
+  readonly totalLines: number;
+  readonly longLineCount: number;
+  readonly medianLineLength: number;
+} {
+  if (source.length === 0) {
+    return { totalLines: 0, longLineCount: 0, medianLineLength: 0 };
+  }
+  const lengths = collectLineLengths(source);
+  let longLineCount = 0;
+  for (const l of lengths) {
+    if (l > MINIFIED_LINE_THRESHOLD) longLineCount += 1;
+  }
+  return {
+    totalLines: lengths.length,
+    longLineCount,
+    medianLineLength: medianOfUnsortedLengths(lengths),
+  };
+}
+
+/**
+ * Walks `source` once and returns one entry per line with its
+ * character length. CRLF sequences fold to a single line break so
+ * Windows-authored or Windows-checked-out files report the same line
+ * count as POSIX ones. A trailing line without a terminator still
+ * counts as one line. The helper allocates exactly the returned
+ * array — no intermediate splits.
+ */
+function collectLineLengths(source: string): readonly number[] {
+  const lengths: number[] = [];
+  let runLength = 0;
+  let lastWasCR = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source.charCodeAt(i);
+    if (ch === 10 || ch === 13) {
+      // CRLF collapses to one line break: the `\r` records the line,
+      // and the following `\n` sees `lastWasCR === true` so it skips
+      // recording a zero-length line.
+      if (ch === 10 && lastWasCR) {
+        lastWasCR = false;
+        continue;
+      }
+      lengths.push(runLength);
+      runLength = 0;
+      lastWasCR = ch === 13;
+      continue;
+    }
+    runLength++;
+    lastWasCR = false;
+  }
+  // Flush the final line (unterminated file).
+  lengths.push(runLength);
+  return lengths;
+}
+
+/**
+ * Median of `lengths` by sorting a COPY (the caller owns the scratch
+ * array, we don't mutate it). Empty input → 0; even lengths average
+ * the middle two (floored — medians of integer line lengths stay
+ * integer for easy comparison against the threshold).
+ */
+function medianOfUnsortedLengths(lengths: readonly number[]): number {
+  if (lengths.length === 0) return 0;
+  const sorted = [...lengths].sort((a, b) => a - b);
+  const mid = sorted.length >>> 1;
+  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
+  return Math.floor(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+}
+
+/**
+ * Returns true when the single-long-line probe fires AND at least one
+ * second-tier corroborator also fires:
+ *   (a) ≥{@link MINIFIED_LONG_LINE_RATIO} of lines exceed
+ *       {@link MINIFIED_LINE_THRESHOLD}, OR
+ *   (b) the median line length itself exceeds the threshold.
+ *
+ * The two corroborators catch different bundle shapes: (a) covers
+ * "many long lines" (canonical minified CSS with one rule per line
+ * but every line long), while (b) covers "one enormous line file"
+ * (canonical minified JS bundle with everything on a single unwrapped
+ * line).
+ *
+ * The `.min.` infix, hashed filenames, bundler-output path ancestry,
+ * and `.map` sibling signals are already deterministic standalone
+ * labels upstream of this call (see {@link classifyBuildArtifact} and
+ * {@link collectBuildArtifacts}); they do not need to participate
+ * here because a file carrying any of them is already labeled
+ * before the corroborated-long-line branch runs.
+ */
+function hasLongMinifiedLineCorroborated(source: string): boolean {
+  if (!hasLongMinifiedLine(source)) return false;
+  const { totalLines, longLineCount, medianLineLength } = computeLineStats(source);
+  if (totalLines === 0) return false;
+  if (medianLineLength > MINIFIED_LINE_THRESHOLD) return true;
+  return longLineCount / totalLines >= MINIFIED_LONG_LINE_RATIO;
 }
 
 /**
