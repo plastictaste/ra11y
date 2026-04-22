@@ -364,6 +364,16 @@ function buildSuggestion(tagName: string, role: string | null): string {
   if (role) {
     return `This <${tagName}> has role="${role}" but no keyboard handler. Add onKeyDown/onKeyUp handling Enter and Space keys, and ensure the element has tabIndex={0} so it's focusable.`;
   }
+  const tag = tagName.toLowerCase();
+  if (tag === "canvas") {
+    return `The <canvas> is a rendering surface — changing it to <button> would lose the drawing target. Two options: (a) wrap the <canvas> in a <button type="button"> and move the click handler to the button (agent decides based on whether the click represents a canvas-area gesture or a single action), or (b) keep the <canvas> and add role="button" + tabIndex={0} + onKeyDown handling Enter and Space on the canvas itself.`;
+  }
+  if (tag === "section" || tag === "header" || tag === "footer") {
+    return `<${tagName}> is a landmark, not a widget — making the landmark itself click-activatable conflates page structure with interactive controls and hides the action from assistive-tech landmark navigation. Move the onClick to a child interactive element (<button type="button"> inside the <${tagName}>) rather than putting role="button" on the landmark. Screen-reader users navigate landmarks to orient; they navigate buttons to act.`;
+  }
+  if (tag === "p") {
+    return `Two shapes depending on intent: if the whole paragraph is the control (e.g. a tappable call-to-action), replace <p> with <button type="button"> — the button element permits phrasing-content children. If only part of the paragraph is interactive (a word, a span inside surrounding prose), wrap the interactive inline content in a child <button type="button"> and leave the surrounding <p> as non-interactive prose.`;
+  }
   return `The simplest fix is to change <${tagName}> to <button type="button"> — buttons are focusable, announce as "button" to screen readers, and fire onClick on Enter/Space automatically.`;
 }
 
@@ -376,6 +386,16 @@ function buildAttributeSuggestion(
   const valueClause = attrValue === null ? "" : `="${attrValue}"`;
   if (role) {
     return `This <${tagName}> has role="${role}" and ${attrName}${valueClause} but is not keyboard-focusable. Change to <button type="button"> (preserves ${attrName} — the toggle library still wires it) or add tabIndex={0} plus onKeyDown handling Enter and Space.`;
+  }
+  const tag = tagName.toLowerCase();
+  if (tag === "canvas") {
+    return `<canvas> is a rendering surface — converting to <button> loses the drawing target. Move the ${attrName}${valueClause} attribute to a wrapping <button type="button"> around the <canvas>, or keep the <canvas> and add role="button" + tabIndex={0} + onKeyDown (Bootstrap and similar libraries wire the ${attrName} behavior off the attribute wherever it lives).`;
+  }
+  if (tag === "section" || tag === "header" || tag === "footer") {
+    return `<${tagName}> is a landmark, not a widget — hosting ${attrName}${valueClause} on the landmark itself conflates page structure with interactive controls. Move the attribute (and the toggle/dismiss/ride behavior it declares) to a child <button type="button"> inside the <${tagName}>. Keyboard and screen-reader users then reach the control via button navigation, and the landmark stays a landmark.`;
+  }
+  if (tag === "p") {
+    return `Two shapes: if the whole paragraph is the control, replace <p> with <button type="button"> and keep ${attrName}${valueClause} on the button. If only part of the paragraph is interactive, wrap that inline content in a child <button type="button"> and move ${attrName}${valueClause} onto it — Bootstrap and similar libraries wire the behavior off the attribute wherever it lives.`;
   }
   return `The simplest fix is to change <${tagName}> to <button type="button"> and keep the ${attrName} attribute — Bootstrap and similar libraries wire the toggle/dismiss/ride behavior off the attribute, so the interaction still works and keyboard users get native focus + Enter/Space activation.`;
 }

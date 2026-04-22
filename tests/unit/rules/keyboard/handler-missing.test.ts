@@ -87,6 +87,118 @@ describe("rule keyboard/handler-missing", () => {
       const v = runRule(rule, `const X = <div role="button" onClick={doThing}>click</div>;`);
       expect(v[0]?.suggestion).toContain("Enter and Space");
     });
+
+    // Tag-specific branches: generic rendering tags and landmarks get
+    // different guidance than the default `<div>` / `<span>` path.
+    // `<button>` is not always the right answer — `<canvas>` is a
+    // drawing surface, landmarks shouldn't be widgets, and `<p>` may
+    // host inline interactive content that belongs in a child button.
+    it("canvas: suggests wrapping in <button> or adding role+tabindex (rendering surface)", () => {
+      const v = runRule(rule, `<canvas onclick="draw()"></canvas>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // The rendering surface framing is the point — don't recommend
+      // converting the canvas itself to a button.
+      expect(suggestion).toContain("rendering surface");
+      expect(suggestion).toContain('role="button"');
+      expect(suggestion).toContain("tabIndex");
+    });
+
+    it("section: suggests moving handler to a child button (landmark, not widget)", () => {
+      const v = runRule(rule, `<section onclick="toggle()">Card</section>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("landmark");
+      expect(suggestion).toContain("child");
+      expect(suggestion).toContain("<button");
+    });
+
+    it("header: suggests moving handler to a child button (landmark, not widget)", () => {
+      const v = runRule(rule, `const X = <header onClick={toggle}>Top</header>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("landmark");
+    });
+
+    it("footer: suggests moving handler to a child button (landmark, not widget)", () => {
+      const v = runRule(rule, `const X = <footer onClick={toggle}>Bot</footer>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("landmark");
+    });
+
+    it("p: offers both shapes — replace <p> with <button>, or wrap inline content in child <button>", () => {
+      const v = runRule(rule, `<p onclick="act()">Tap here</p>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // Both escape hatches should be named so the agent picks based on intent.
+      expect(suggestion).toContain('<button type="button">');
+      expect(suggestion).toContain("inline");
+    });
+
+    it('div: keeps the existing <button type="button"> path unchanged', () => {
+      const v = runRule(rule, `const X = <div onClick={doThing}>x</div>;`);
+      expect(v[0]?.suggestion).toContain("<button");
+      // Shouldn't pick up the landmark / canvas / inline language by mistake.
+      expect(v[0]?.suggestion).not.toContain("landmark");
+      expect(v[0]?.suggestion).not.toContain("rendering surface");
+    });
+
+    it('span: keeps the existing <button type="button"> path unchanged', () => {
+      const v = runRule(rule, `const X = <span onClick={doThing}>x</span>;`);
+      expect(v[0]?.suggestion).toContain("<button");
+      expect(v[0]?.suggestion).not.toContain("landmark");
+    });
+  });
+
+  describe("suggestion quality — attribute-interaction grammar", () => {
+    // Attribute-grammar (Bootstrap `data-bs-*`) suggestions mirror the
+    // event-handler grammar's tag-specific branches. Non-div tags still
+    // get honest guidance even when the trigger was a `data-bs-toggle`
+    // on the landmark.
+    it("canvas with data-bs-toggle: preserves rendering-surface framing", () => {
+      const v = runRule(rule, `<canvas data-bs-toggle="modal"></canvas>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("rendering surface");
+      expect(suggestion).toContain("data-bs-toggle");
+    });
+
+    it("section with data-bs-toggle: routes attribute onto a child button", () => {
+      const v = runRule(rule, `<section data-bs-toggle="collapse">...</section>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("landmark");
+      expect(suggestion).toContain("data-bs-toggle");
+    });
+
+    it("p with data-bs-dismiss: offers replace-or-wrap for paragraph", () => {
+      const v = runRule(rule, `<p data-bs-dismiss="modal">Close</p>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain('<button type="button">');
+      expect(suggestion).toContain("data-bs-dismiss");
+    });
+
+    it("div with data-bs-toggle: keeps original Bootstrap suggestion text", () => {
+      const v = runRule(rule, `<div data-bs-toggle="modal">Open</div>`, {
+        filePath: "index.html",
+      });
+      expect(v[0]?.suggestion).toContain("<button");
+      expect(v[0]?.suggestion).toContain("data-bs-toggle");
+      expect(v[0]?.suggestion).not.toContain("landmark");
+      expect(v[0]?.suggestion).not.toContain("rendering surface");
+    });
   });
 
   // ---------------------------------------------------------------------------
