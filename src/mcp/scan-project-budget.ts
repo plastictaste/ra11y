@@ -11,6 +11,7 @@
 import { applyMetaCacheMode } from "./meta-cache.ts";
 import type { ReferenceGuide } from "./reference-guide.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
+import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
 import type { McpSession } from "./session.ts";
 import { applyTokenBudget } from "./token-budget.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
@@ -65,6 +66,17 @@ interface AssembleArgs {
    * has a structured payload.
    */
   readonly baseWarningsDetails?: ScanWarningDetails;
+  /**
+   * Q-SHARED-SCAN-PROJECT-INLINE-REVIEW-CANDIDATES: inline manual-review
+   * candidates for the narrow `formatted.files.length === 0 &&
+   * actionableManualItems > 0` case. Already filtered to `manualIds`
+   * and capped at the caller's `limit` by the handler's helper.
+   * Caller conditional-spreads — when the field reaches the assembler
+   * it is non-empty by construction; this keeps the "present-when-
+   * meaningful" shape honest (CLAUDE.md §1 "Ambiguous field shapes
+   * are dishonest").
+   */
+  readonly reviewCandidates?: readonly ScanProjectReviewCandidate[];
 }
 
 /**
@@ -84,16 +96,24 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     fullMeta,
     baseWarnings,
     baseWarningsDetails,
+    reviewCandidates,
   } = args;
   const hasBaseCodes = baseWarnings !== undefined && baseWarnings.length > 0;
   const hasBaseDetails =
     baseWarningsDetails !== undefined && Object.keys(baseWarningsDetails).length > 0;
+  // Q-SHARED-SCAN-PROJECT-INLINE-REVIEW-CANDIDATES: conditional-spread
+  // the field — caller only passes it when `formatted.files.length ===
+  // 0 && candidates survive`, so reaching this point means the array
+  // is meaningful. Defensive `.length > 0` here keeps the shape honest
+  // if a future caller forgets the gate.
+  const hasInlineReview = reviewCandidates !== undefined && reviewCandidates.length > 0;
   const tentative = {
     plan: formatted.plan,
     files: hoisted.files,
     ...page.paginationFields,
     ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
     ...ruleCatalogField(params, session.registry.rules, formatted.files),
+    ...(hasInlineReview ? { reviewCandidates } : {}),
     ...(hasBaseCodes ? { warnings: baseWarnings } : {}),
     ...(hasBaseDetails ? { warningsDetails: baseWarningsDetails } : {}),
     meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta, session }),

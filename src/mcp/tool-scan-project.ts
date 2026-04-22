@@ -25,10 +25,15 @@ import { buildNextStep } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import { assembleScanProjectResponse } from "./scan-project-budget.ts";
+import {
+  buildScanProjectReviewCandidates,
+  type ScanProjectReviewCandidate,
+} from "./scan-project-review-candidates.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
 import { detectSsgFramework, ssgEmptyResultMetaFields, withSsgHint } from "./ssg-detect.ts";
 import {
+  collectManualCriteria,
   errorResult,
   type McpTool,
   ms,
@@ -187,7 +192,7 @@ export const scanProjectTool: McpTool = {
     const classified = classifyIfAutoDetect(autoDetect, files, detectedNames);
     const t1 = performance.now();
     const skipCriterion = strArrayParam(params, "skipCriterion");
-    const { formatted } = await runScanAndFormat(
+    const { formatted, reviewCandidates: rawReviewCandidates } = await runScanAndFormat(
       files,
       session,
       standards,
@@ -291,6 +296,26 @@ export const scanProjectTool: McpTool = {
       nextStep: nextStep.prose,
       ...nextStepStructuredField,
     };
+    // Q-SHARED-SCAN-PROJECT-INLINE-REVIEW-CANDIDATES: when the scan
+    // produced zero automated findings (`formatted.files.length === 0`)
+    // but grounded manual-review candidates survived the per-level
+    // `manualIds` filter, surface them inline so the agent has a
+    // `file:line` pointer without a separate `checklist` round trip.
+    // Omitted when automated-findings files exist (the agent has
+    // file:line pointers already and can call `checklist` for the
+    // manual half) OR when no grounded candidates survive
+    // (present-when-meaningful; never `[]` on the wire). Cap at the
+    // caller's `limit` so one noisy finder can't blow the token
+    // budget. Helper returns a spreadable record — already empty when
+    // the gate fails, so the handler call site stays a single spread.
+    const inlineReviewCandidatesField = inlineReviewCandidatesFieldFor({
+      formattedFilesCount: formatted.files.length,
+      candidates: rawReviewCandidates,
+      enabledStandards: standards,
+      session,
+      files,
+      limit: pageParams.limit,
+    });
     return textResult(
       assembleScanProjectResponse({
         params,
@@ -300,6 +325,7 @@ export const scanProjectTool: McpTool = {
         page,
         pageOffset: pageParams.offset,
         fullMeta,
+        ...inlineReviewCandidatesField,
         ...buildBaseWarningsForScanProject({
           formatted,
           parsedFiles: files,
@@ -319,6 +345,39 @@ export const scanProjectTool: McpTool = {
     );
   },
 };
+
+/**
+ * Computes the spreadable `reviewCandidates` field fragment for the
+ * narrow case where `scan_project` produced zero automated findings
+ * but grounded manual-review candidates are available. Returns an
+ * empty record when the gate fails — automated-finding files exist
+ * (the agent already has `file:line` pointers and can call `checklist`
+ * itself) or no candidates survive the manual-id filter — so the
+ * handler call site stays a single unconditional spread.
+ * Present-when-meaningful per CLAUDE.md §1 "Ambiguous field shapes
+ * are dishonest." Extracted so the handler's cognitive-complexity
+ * score stays inside the lint cap.
+ */
+function inlineReviewCandidatesFieldFor(args: {
+  readonly formattedFilesCount: number;
+  readonly candidates: readonly import("../types/review.ts").ReviewCandidate[];
+  readonly enabledStandards: readonly string[];
+  readonly session: import("./session.ts").McpSession;
+  readonly files: readonly ParsedFile[];
+  readonly limit: number;
+}): { readonly reviewCandidates?: readonly ScanProjectReviewCandidate[] } {
+  const { formattedFilesCount, candidates, enabledStandards, session, files, limit } = args;
+  // Gate 1: when automated findings exist, the agent already has
+  // `file:line` pointers — it can choose to call `checklist` itself
+  // for the manual half. Don't duplicate that surface (doctrine:
+  // "Don't duplicate capability the agent already has").
+  if (formattedFilesCount > 0) return {};
+  if (candidates.length === 0) return {};
+  const manualIds = collectManualCriteria(enabledStandards, session, session.config.level, files);
+  const surfaced = buildScanProjectReviewCandidates({ candidates, manualIds, limit });
+  if (surfaced.length === 0) return {};
+  return { reviewCandidates: surfaced };
+}
 
 /**
  * Q6-BUDGET-UNDER-VENDOR-NOISE assembly seam. Cross-references
