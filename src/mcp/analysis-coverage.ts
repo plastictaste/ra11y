@@ -55,7 +55,7 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
-import { isStorybookStoryFile } from "../utils/path.ts";
+import { extensionMatches, isStorybookStoryFile } from "../utils/path.ts";
 
 /**
  * Storybook primitives that should render transparent under
@@ -659,8 +659,20 @@ function describeTemplateDirectiveHandling(engines: ReadonlySet<string>): string
 /**
  * For each file extension actually seen in this scan, lists the active
  * rule IDs that evaluated files with that extension. Mirrors the gate in
- * rule-runner.ts `applies()` — a rule with no `fileExtensions` constraint
- * runs on every extension; otherwise only on declared ones.
+ * rule-runner.ts `applies()` exactly: routes through
+ * {@link extensionMatches} so extension aliases (`.scss → .css`,
+ * `.mdx → .tsx`/`.jsx`, `.astro → .html`, `.md`/`.markdown → .html`,
+ * `.js → .jsx`, `.ts → .tsx`) expand into the declared gate the same way
+ * they do at runtime. A rule with no `fileExtensions` constraint runs on
+ * every extension; otherwise it runs on declared extensions plus any
+ * alias-equivalent extension the parser adapters funnel in. Without this,
+ * `rulesByExtension` disagreed with `perRuleCoverage` on alias-heavy
+ * scans — a `.scss`-only scan listed only the rules literally declaring
+ * `.scss` (typically zero), while `perRuleCoverage` correctly showed
+ * every `.css`-targeted rule with `filesEvaluated: 1` (because the SCSS
+ * adapter produces a CSS AST and `applies()` matches via alias). Two
+ * surfaces naming "rules run on this extension" must agree
+ * (Q3-RULES-BY-EXTENSION-UNDERCOUNT) — this is the agreement site.
  */
 function rulesByExtension(
   files: readonly ParsedFile[],
@@ -680,7 +692,12 @@ function rulesByExtension(
         ids.push(r.id);
         continue;
       }
-      if (declared.some((d) => d.toLowerCase() === ext)) ids.push(r.id);
+      // `extensionMatches` is the same helper rule-runner.ts `applies()`
+      // uses for per-file eligibility — routing through it is what keeps
+      // `rulesByExtension` and `perRuleCoverage` in agreement on
+      // alias-heavy scans. Literal equality silently dropped every
+      // aliased extension (the historical bug).
+      if (extensionMatches(ext, declared)) ids.push(r.id);
     }
     out[ext] = ids.sort();
   }

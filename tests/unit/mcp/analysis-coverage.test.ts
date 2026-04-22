@@ -1056,4 +1056,225 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(verbose?.["fragmentFiles"]).toEqual(["_includes/footer.html"]);
     });
   });
+
+  // Q3-RULES-BY-EXTENSION-UNDERCOUNT: `rulesByExtension` and
+  // `perRuleCoverage` both name "rules that ran on this extension." Two
+  // surfaces naming the same thing must agree — the historical bug was
+  // that `rulesByExtension` used literal extension equality while the
+  // rule-runner's `applies()` gate routes through `extensionMatches`,
+  // which honors the EXTENSION_ALIASES table (`.scss → .css`,
+  // `.mdx → .tsx/.jsx`, `.astro → .html`, `.md/.markdown → .html`,
+  // `.js → .jsx`, `.ts → .tsx`). On a `.scss`-only scan, every CSS-
+  // targeted rule (the entire `contrast/*`, `layout/*`, `focus/not-
+  // obscured`, `motion/pause-stop-hide`, …) fires — the SCSS adapter
+  // produces a CSS AST and the rule runner matches through the alias —
+  // yet `rulesByExtension[".scss"]` historically listed only the rules
+  // without any `fileExtensions` gate (e.g. `focus/outline-visible`,
+  // `wrapper/drift`). Cross-surface drift.
+  describe("rulesByExtension alias coverage (Q3-RULES-BY-EXTENSION-UNDERCOUNT)", () => {
+    function scssFile(path: string): ParsedFile {
+      // Mirrors the shape `scanFiles` produces for a `.scss` input: the
+      // SCSS parser path in `src/input/parsers/css.ts` emits a
+      // `CssStylesheet` AST under `language: "css"`, and the file's
+      // path retains the `.scss` extension. This is the exact shape
+      // `rulesByExtension` must honor — extension `.scss` seen in the
+      // file list, even though the AST language is `"css"`.
+      return {
+        filePath: path,
+        source: ".foo { color: red; }",
+        ast: {
+          language: "css",
+          root: {
+            kind: "CssStylesheet",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            rules: [],
+          },
+          errors: [],
+        },
+      };
+    }
+
+    function syntheticRule(id: string, fileExtensions?: readonly string[]): Rule {
+      return {
+        id,
+        satisfies: [],
+        severity: "error",
+        scope: "node",
+        fixClass: "verify-in-source",
+        ...(fileExtensions ? { appliesTo: { fileExtensions } } : {}),
+        docs: {
+          description: id,
+          rationale: "synthetic test rule",
+          goodExample: "",
+          badExample: "",
+          references: [],
+        },
+        check: () => [],
+      };
+    }
+
+    it("lists .css-targeted rules under `.scss` because .scss aliases to .css", () => {
+      // A rule declared `fileExtensions: [".css"]` runs on `.scss`
+      // files via alias — exactly the pattern every in-tree
+      // `contrast/*` / `layout/*` rule uses. `rulesByExtension[".scss"]`
+      // must include it so the meta-surface agrees with per-file
+      // eligibility.
+      const cssTargeted = syntheticRule("contrast/fake", [".css"]);
+      const unconstrained = syntheticRule("focus/fake");
+      const htmlOnly = syntheticRule("aria/fake", [".html", ".htm"]);
+      const files = [scssFile("styles/button.scss")];
+      const { analysisCoverage } = buildAnalysisCoverage(
+        files,
+        [],
+        [cssTargeted, unconstrained, htmlOnly],
+        true,
+      );
+      const byExt = analysisCoverage?.["rulesByExtension"] as
+        | Record<string, readonly string[]>
+        | undefined;
+      expect(byExt).toBeDefined();
+      // The .css-gated rule DOES appear under .scss (alias expansion),
+      // the unconstrained rule appears (no gate), and the .html-only
+      // rule is correctly absent (no alias from .scss to .html).
+      expect(byExt?.[".scss"]).toEqual(["contrast/fake", "focus/fake"]);
+    });
+
+    it("expands aliases symmetrically for .mdx → .tsx/.jsx, .astro → .html, .md/.markdown → .html, .js → .jsx, .ts → .tsx", () => {
+      // One synthetic rule per gate family. The alias table in
+      // src/utils/path.ts EXTENSION_ALIASES is the source of truth —
+      // this test pins the cross-surface expectation for every row of
+      // that table so a future alias addition can't silently drift
+      // rulesByExtension back out of sync with `applies()`.
+      const tsxOnly = syntheticRule("r/tsx", [".tsx"]);
+      const jsxOnly = syntheticRule("r/jsx", [".jsx"]);
+      const htmlOnly = syntheticRule("r/html", [".html"]);
+      const cssOnly = syntheticRule("r/css", [".css"]);
+      const rules = [tsxOnly, jsxOnly, htmlOnly, cssOnly];
+      // File list covers: .scss (→.css), .mdx (→.tsx/.jsx), .astro (→.html),
+      // .md (→.html), .markdown (→.html), .js (→.jsx), .ts (→.tsx).
+      // We construct the bare ParsedFile shape (AST language is cosmetic
+      // for `rulesByExtension` — only the filePath extension is read).
+      const mkFile = (path: string): ParsedFile => ({
+        filePath: path,
+        source: "",
+        ast: {
+          language: "css",
+          root: {
+            kind: "CssStylesheet",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            rules: [],
+          },
+          errors: [],
+        },
+      });
+      const files = [
+        mkFile("a.scss"),
+        mkFile("b.mdx"),
+        mkFile("c.astro"),
+        mkFile("d.md"),
+        mkFile("e.markdown"),
+        mkFile("f.js"),
+        mkFile("g.ts"),
+      ];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], rules, true);
+      const byExt = analysisCoverage?.["rulesByExtension"] as
+        | Record<string, readonly string[]>
+        | undefined;
+      expect(byExt).toBeDefined();
+      // .scss → .css
+      expect(byExt?.[".scss"]).toEqual(["r/css"]);
+      // .mdx → both .tsx and .jsx
+      expect(byExt?.[".mdx"]).toEqual(["r/jsx", "r/tsx"]);
+      // .astro → .html
+      expect(byExt?.[".astro"]).toEqual(["r/html"]);
+      // .md → .html
+      expect(byExt?.[".md"]).toEqual(["r/html"]);
+      // .markdown → .html
+      expect(byExt?.[".markdown"]).toEqual(["r/html"]);
+      // .js → .jsx
+      expect(byExt?.[".js"]).toEqual(["r/jsx"]);
+      // .ts → .tsx
+      expect(byExt?.[".ts"]).toEqual(["r/tsx"]);
+    });
+
+    it("still exact-matches non-aliased extensions (`.css` rule on `.css` file)", () => {
+      // Regression guard: the alias code path must not break the
+      // literal-match case. A rule declaring `.css` still appears
+      // under `.css` exactly as before.
+      const cssOnly = syntheticRule("contrast/fake", [".css"]);
+      const files = [cssFile("styles/main.css")];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], [cssOnly], true);
+      const byExt = analysisCoverage?.["rulesByExtension"] as
+        | Record<string, readonly string[]>
+        | undefined;
+      expect(byExt?.[".css"]).toEqual(["contrast/fake"]);
+    });
+
+    it("cross-surface invariant: `rulesByExtension[ext]` agrees with `perRuleCoverage` evaluation on alias-heavy inputs", async () => {
+      // End-to-end: run the real scanner against an in-tree `.scss`
+      // file and assert that every rule reporting `filesEvaluated > 0`
+      // on the scan is listed under `rulesByExtension[".scss"]`. This
+      // is the Q3-RULES-BY-EXTENSION-UNDERCOUNT invariant —
+      // two surfaces describing "rules run on this extension" must
+      // agree or the doctrine violation recurs silently.
+      const { MCP_TOOLS } = await import("../../../src/mcp/tools.ts");
+      const { McpSession } = await import("../../../src/mcp/session.ts");
+      const { writeFileSync, mkdirSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const dir = join(tmpdir(), `ra11y-rulesByExtension-scss-${process.pid}-${Date.now()}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "styles.scss"),
+        ".btn { color: #777; background: #888; outline: none; }\n",
+      );
+      try {
+        const scanTool = MCP_TOOLS.find((t) => t.def.name === "scan_project");
+        if (!scanTool) throw new Error("scan_project tool missing");
+        const session = new McpSession();
+        const result = await scanTool.handler({ cwd: dir, verboseMeta: true }, session);
+        const data = JSON.parse(result.content[0].text) as {
+          meta: {
+            perRuleCoverage?: readonly {
+              ruleId: string;
+              filesEvaluated: number;
+            }[];
+            analysisCoverage?: {
+              rulesByExtension?: Record<string, readonly string[]>;
+            };
+          };
+        };
+        const ranOnScss = new Set(
+          (data.meta.perRuleCoverage ?? [])
+            .filter((row) => row.filesEvaluated > 0)
+            .map((row) => row.ruleId),
+        );
+        const listed = new Set(data.meta.analysisCoverage?.rulesByExtension?.[".scss"] ?? []);
+        // Every rule that actually evaluated the .scss file must appear
+        // under rulesByExtension[".scss"]. Extra entries in `listed`
+        // are fine (unconstrained rules, rules whose other declared
+        // extensions also match — neither breaks the "agrees" direction
+        // the field report names) — what must not drift is the
+        // silent-miss direction (rule ran, not listed).
+        for (const ruleId of ranOnScss) {
+          expect(listed.has(ruleId)).toBe(true);
+        }
+        // Stronger: at least one .css-gated rule must make the cut,
+        // because a .scss scan definitionally exercises the alias.
+        // Without this tripwire the test could pass vacuously if the
+        // scanner produced no CSS-gated evaluations at all.
+        expect(listed.size).toBeGreaterThan(2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });
