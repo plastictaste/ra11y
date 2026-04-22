@@ -444,7 +444,6 @@ function fileUriToPath(uri: string): string | null {
   if (isAbsolute(uri)) return uri;
   return null;
 }
-
 function parseForExtension(filePath: string, source: string): Ast | null {
   if (filePath.endsWith(".html") || filePath.endsWith(".htm")) {
     const r = parseHtml(source);
