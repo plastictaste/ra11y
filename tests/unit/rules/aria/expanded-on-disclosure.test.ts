@@ -313,6 +313,161 @@ describe("rule aria/expanded-on-disclosure", () => {
     });
   });
 
+  describe("reason-text enrichment (visually-hidden label child / inline aria-label)", () => {
+    it('appends a note when a <button data-bs-toggle="collapse"> has a <span class="sr-only"> child', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+            <span class="navbar-toggler-icon"></span>
+            <span class="sr-only">Toggle navigation</span>
+          </button>
+        </body></html>`,
+        { filePath: "collapse.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/visually-hidden text child \(\.sr-only\)/);
+      expect(violations[0]?.message).toMatch(
+        /if that is the disclosure label, verify the accessible name is complete/,
+      );
+      expect(violations[0]?.suggestion).toMatch(/visually-hidden text child \(\.sr-only\)/);
+    });
+
+    it("appends a note for a .visually-hidden child on an HTML disclosure trigger", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#m" data-bs-toggle="collapse">
+            <i class="bi bi-list"></i>
+            <span class="visually-hidden">Open menu</span>
+          </a>
+        </body></html>`,
+        { filePath: "visually-hidden.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/visually-hidden text child \(\.visually-hidden\)/);
+    });
+
+    it("appends a note when the disclosure trigger carries an inline aria-label", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-label="Open menu" data-bs-toggle="collapse" data-bs-target="#m"></button>
+        </body></html>`,
+        { filePath: "aria-label.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/an inline aria-label/);
+      expect(violations[0]?.message).toMatch(/verify the accessible name is complete/);
+    });
+
+    it("combines both signals when the element has both aria-label AND a hidden child", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-label="Toggle" data-bs-toggle="collapse" data-bs-target="#m">
+            <span class="sr-only">Toggle navigation</span>
+          </button>
+        </body></html>`,
+        { filePath: "both.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/visually-hidden text child/);
+      expect(violations[0]?.message).toMatch(/aria-label/);
+    });
+
+    it("enriches the Bootstrap-canonical missing-aria-controls finding when a .sr-only child is present", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="dropdown" aria-expanded="false">
+            <span class="sr-only">Open user menu</span>
+          </button>
+        </body></html>`,
+        { filePath: "bs-dropdown-sr.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/missing aria-controls/);
+      expect(violations[0]?.message).toMatch(/visually-hidden text child \(\.sr-only\)/);
+    });
+
+    it("omits the enrichment note when no label evidence is present (present-when-meaningful)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m">Toggle</button>
+        </body></html>`,
+        { filePath: "no-label.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toMatch(/note: element has/);
+      expect(violations[0]?.suggestion).not.toMatch(/note: element has/);
+    });
+
+    it("does not enrich when a deep descendant (not a direct child) carries the visually-hidden token", () => {
+      // The label heuristic is direct-child-only: a grandchild carrying
+      // the token is not reliably the disclosure label, and the agent
+      // can read the file to confirm. Per doctrine, we point — we don't
+      // duplicate capability the agent already has.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m">
+            <span class="wrapper"><span class="sr-only">Toggle</span></span>
+          </button>
+        </body></html>`,
+        { filePath: "deep.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toMatch(/note: element has/);
+    });
+
+    it('enriches a JSX trigger with a <span className="sr-only"> child', () => {
+      const violations = runRule(
+        rule,
+        `function Toggle() {
+           return (
+             <button data-bs-toggle="collapse" data-bs-target="#m">
+               <span className="sr-only">Toggle navigation</span>
+             </button>
+           );
+         }`,
+        { filePath: "Toggle.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/visually-hidden text child \(\.sr-only\)/);
+    });
+
+    it("enriches a JSX trigger with a literal aria-label", () => {
+      const violations = runRule(
+        rule,
+        `function Menu() {
+           return <button aria-label="Open menu" data-bs-toggle="collapse" data-bs-target="#m" />;
+         }`,
+        { filePath: "Menu.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/an inline aria-label/);
+    });
+
+    it("does not enrich when className is a dynamic expression (points, doesn't duplicate agent capability)", () => {
+      const violations = runRule(
+        rule,
+        `function Toggle() {
+           const hiddenCls = "sr-only";
+           return (
+             <button data-bs-toggle="collapse" data-bs-target="#m">
+               <span className={hiddenCls}>Toggle</span>
+             </button>
+           );
+         }`,
+        { filePath: "Dynamic.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toMatch(/note: element has/);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2 in satisfies", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

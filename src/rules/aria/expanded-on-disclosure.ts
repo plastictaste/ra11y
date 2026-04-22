@@ -64,7 +64,13 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlDocument,
+  HtmlElement,
+  JsxAttributeValue,
+  JsxElement,
+  TsxModule,
+} from "../../types/ast.ts";
 
 /**
  * Values (on `data-*-toggle` / `data-toggle`) that mark the element as
@@ -117,6 +123,33 @@ const VISIBILITY_CLASS_TOKENS: readonly string[] = [
 const CLASSLIST_METHODS: readonly string[] = ["toggle", "add", "remove"];
 
 /**
+ * Class tokens screen-reader conventions use to mark a visually-hidden
+ * textual equivalent. When a flagged disclosure trigger carries a
+ * direct child with one of these tokens (e.g. Bootstrap's collapse-
+ * button ships `<span class="sr-only">Toggle navigation</span>` inside
+ * the trigger), that child is almost certainly the accessible name for
+ * the control. The rule still fires — the aria-expanded / aria-controls
+ * gap is real — but we enrich the reason so the agent knows the label
+ * is already in the tree and can verify the accessible name is
+ * complete rather than re-invent it. Per the AI-first consumer model
+ * (docs/kb/architecture/ai-first-consumer.md — "Enrich reason with
+ * dismissal signal; keep candidate in the primary list"), this is
+ * reason-text enrichment only, never suppression.
+ */
+const VISUALLY_HIDDEN_CLASS_TOKENS: readonly string[] = [
+  "sr-only",
+  "visually-hidden",
+  "visuallyhidden",
+  "screen-reader-only",
+  "screen-reader-text",
+  "screenreader-text",
+  "u-sr-only",
+  "u-visually-hidden",
+  "sr-only-focusable",
+  "visually-hidden-focusable",
+];
+
+/**
  * Which predicate branch matched. Feeds the fix suggestion so the
  * agent can see *why* the rule fired without having to rediscover
  * the evidence from the source.
@@ -137,6 +170,23 @@ type PredicateBranch =
  * target.
  */
 type FindingKind = "missing-expanded" | "missing-controls";
+
+/**
+ * Evidence that the flagged element already carries a label channel
+ * (inline `aria-label`, or a visually-hidden text child). Used only
+ * for reason-text enrichment: the rule's predicate is unchanged and
+ * the finding still surfaces in the primary list — the enrichment
+ * tells the agent "if the hidden child is the disclosure label, verify
+ * the accessible name is complete" so dismissal is faster. See
+ * docs/kb/architecture/ai-first-consumer.md — reason-text enrichment,
+ * never suppression, never bucketing.
+ */
+interface LabelEvidence {
+  readonly ariaLabel: boolean;
+  readonly visuallyHiddenClassToken: string | null;
+}
+
+const NO_LABEL_EVIDENCE: LabelEvidence = { ariaLabel: false, visuallyHiddenClassToken: null };
 
 export const rule = defineRule({
   id: "aria/expanded-on-disclosure",
@@ -197,11 +247,12 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (!branch) continue;
     const finding = classifyFinding(branch, hasHtmlAttribute(el, "aria-expanded"));
     if (!finding) continue;
+    const labelEvidence = collectHtmlLabelEvidence(el);
     emit({
       severity: "error",
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-      message: buildMessage(el.tagName, branch, finding),
-      suggestion: buildSuggestion(el.tagName, branch, finding),
+      message: buildMessage(el.tagName, branch, finding, labelEvidence),
+      suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
     });
   }
 }
@@ -327,11 +378,12 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (!branch) continue;
     const finding = classifyFinding(branch, hasJsxAttribute(el, "aria-expanded"));
     if (!finding) continue;
+    const labelEvidence = collectJsxLabelEvidence(el);
     emit({
       severity: "error",
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-      message: buildMessage(el.tagName, branch, finding),
-      suggestion: buildSuggestion(el.tagName, branch, finding),
+      message: buildMessage(el.tagName, branch, finding, labelEvidence),
+      suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
     });
   }
 }
@@ -420,22 +472,34 @@ function classifyFinding(branch: PredicateBranch, hasAriaExpanded: boolean): Fin
   return "missing-controls";
 }
 
-function buildMessage(tagName: string, branch: PredicateBranch, finding: FindingKind): string {
+function buildMessage(
+  tagName: string,
+  branch: PredicateBranch,
+  finding: FindingKind,
+  labelEvidence: LabelEvidence,
+): string {
   const evidence = describeBranch(branch);
+  const labelNote = formatLabelNote(labelEvidence);
   if (finding === "missing-controls") {
     return (
       `<${tagName}> has aria-expanded but is missing aria-controls — AT cannot ` +
-      `identify which region the trigger controls. (${evidence})`
+      `identify which region the trigger controls. (${evidence})${labelNote}`
     );
   }
   return (
     `<${tagName}> looks like a disclosure trigger but has no aria-expanded — AT ` +
-    `cannot announce whether the region is open or closed. (${evidence})`
+    `cannot announce whether the region is open or closed. (${evidence})${labelNote}`
   );
 }
 
-function buildSuggestion(tagName: string, branch: PredicateBranch, finding: FindingKind): string {
+function buildSuggestion(
+  tagName: string,
+  branch: PredicateBranch,
+  finding: FindingKind,
+  labelEvidence: LabelEvidence,
+): string {
   const evidence = describeBranch(branch);
+  const labelNote = formatLabelNote(labelEvidence);
   if (finding === "missing-controls") {
     return (
       `Add aria-controls="<id>" to the <${tagName}>, where <id> is the id of the ` +
@@ -444,7 +508,7 @@ function buildSuggestion(tagName: string, branch: PredicateBranch, finding: Find
       `reached by id (e.g. it is rendered as a sibling selected by runtime ` +
       `convention) and the trigger is otherwise WCAG 4.1.2 compliant, suppress ` +
       `with a source-level pragma (e.g. <!-- ra11y-disable aria/expanded-on-disclosure -->) ` +
-      `so the next scan dismisses it deterministically.`
+      `so the next scan dismisses it deterministically.${labelNote}`
     );
   }
   return (
@@ -453,7 +517,7 @@ function buildSuggestion(tagName: string, branch: PredicateBranch, finding: Find
     `disclosed region. Predicate match: ${evidence}. If this control is not a ` +
     `disclosure trigger, the detection is wrong — suppress with a source-level ` +
     `pragma (e.g. <!-- ra11y-disable aria/expanded-on-disclosure -->) so the ` +
-    `next scan dismisses it deterministically.`
+    `next scan dismisses it deterministically.${labelNote}`
   );
 }
 
@@ -465,4 +529,123 @@ function describeBranch(branch: PredicateBranch): string {
     return `${branch.attrName}="${branch.value}" is a disclosure-style toggle value`;
   }
   return `inline onclick toggles a visibility class "${branch.matchedClass}" via classList`;
+}
+
+// ---------------------------------------------------------------------------
+// Label evidence (reason-text enrichment)
+// ---------------------------------------------------------------------------
+
+/**
+ * Scans a flagged HTML trigger for an inline `aria-label` or a direct
+ * element child carrying a visually-hidden class token. Direct-child
+ * only: the Bootstrap collapse-button canonical pattern puts the
+ * hidden label as an immediate `<span class="sr-only">` child of the
+ * `<button>`, and we do not want to mis-classify a deep descendant
+ * `.sr-only` (e.g. inside a nested icon's tooltip) as the control's
+ * own label. If the label genuinely lives deeper, the agent reads the
+ * file and verifies — per doctrine, we point and the agent investigates.
+ */
+function collectHtmlLabelEvidence(el: HtmlElement): LabelEvidence {
+  const ariaLabelValue = getHtmlAttribute(el, "aria-label");
+  const ariaLabel = ariaLabelValue !== null && ariaLabelValue.trim().length > 0;
+  let visuallyHiddenClassToken: string | null = null;
+  for (const child of el.children) {
+    if (child.kind !== "HtmlElement") continue;
+    const classValue = getHtmlAttribute(child, "class");
+    const token = matchVisuallyHiddenClassToken(classValue);
+    if (token) {
+      visuallyHiddenClassToken = token;
+      break;
+    }
+  }
+  if (!(ariaLabel || visuallyHiddenClassToken)) return NO_LABEL_EVIDENCE;
+  return { ariaLabel, visuallyHiddenClassToken };
+}
+
+/**
+ * JSX counterpart of {@link collectHtmlLabelEvidence}. Only literal
+ * `className` / `class` string values and literal `aria-label` values
+ * are recognized; dynamic expression bindings (`className={cx(...)}`,
+ * `aria-label={t("toggle")}`) are deliberately not matched here —
+ * doing more than literals duplicates the capability the consuming
+ * agent already has (it can read the file and see the binding). See
+ * docs/kb/architecture/ai-first-consumer.md — "Don't duplicate
+ * capability the agent already has".
+ */
+function collectJsxLabelEvidence(el: JsxElement): LabelEvidence {
+  const ariaLabelValue = jsxLiteralAttributeString(el, "aria-label");
+  const ariaLabel = ariaLabelValue !== null && ariaLabelValue.trim().length > 0;
+  let visuallyHiddenClassToken: string | null = null;
+  for (const child of el.children) {
+    if (child.kind !== "JsxElement") continue;
+    const classValue =
+      jsxLiteralAttributeString(child, "className") ?? jsxLiteralAttributeString(child, "class");
+    const token = matchVisuallyHiddenClassToken(classValue);
+    if (token) {
+      visuallyHiddenClassToken = token;
+      break;
+    }
+  }
+  if (!(ariaLabel || visuallyHiddenClassToken)) return NO_LABEL_EVIDENCE;
+  return { ariaLabel, visuallyHiddenClassToken };
+}
+
+function matchVisuallyHiddenClassToken(classValue: string | null): string | null {
+  if (classValue === null) return null;
+  for (const token of classValue.toLowerCase().split(/\s+/)) {
+    if (!token) continue;
+    if (VISUALLY_HIDDEN_CLASS_TOKENS.includes(token)) return token;
+  }
+  return null;
+}
+
+/**
+ * Resolves a JSX attribute to its literal string value. Matches
+ * `attr="literal"`, `attr='literal'`, and `attr={"literal"}` /
+ * `attr={'literal'}` — the same surface the sibling sr-only review
+ * finders accept. Non-literal expressions return null.
+ */
+function jsxLiteralAttributeString(el: JsxElement, name: string): string | null {
+  const attr = getJsxAttribute(el, name);
+  if (!attr?.value) return null;
+  return jsxLiteralValue(attr.value);
+}
+
+function jsxLiteralValue(value: JsxAttributeValue): string | null {
+  if (value.kind === "StringLiteral") return value.value;
+  const trimmed = value.raw.trim();
+  if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (
+    (inner.startsWith('"') && inner.endsWith('"')) ||
+    (inner.startsWith("'") && inner.endsWith("'"))
+  ) {
+    return inner.slice(1, -1);
+  }
+  return null;
+}
+
+/**
+ * Formats the label-evidence suffix appended to the rule's message
+ * and suggestion. Returns the empty string when no evidence is
+ * present, so the shape stays terse on the no-label majority of
+ * disclosure findings. When evidence IS present, the note frames it
+ * as a verification prompt — the rule's predicate still fires (the
+ * aria-expanded / aria-controls gap is real) but the agent should
+ * check that the hidden child IS the intended disclosure label and
+ * that the accessible name covers the control's purpose.
+ */
+function formatLabelNote(evidence: LabelEvidence): string {
+  const parts: string[] = [];
+  if (evidence.visuallyHiddenClassToken) {
+    parts.push(`a visually-hidden text child (.${evidence.visuallyHiddenClassToken})`);
+  }
+  if (evidence.ariaLabel) parts.push("an inline aria-label");
+  if (parts.length === 0) return "";
+  const signal = parts.join(" and ");
+  return (
+    ` (note: element has ${signal} — if that is the disclosure label, ` +
+    `verify the accessible name is complete and, if so, the state attribute ` +
+    `is all that is missing.)`
+  );
 }
