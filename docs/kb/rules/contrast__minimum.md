@@ -8,7 +8,7 @@ satisfies: ["wcag22:1.4.3", "wcag21:1.4.3"]
 - **Severity:** error
 - **Scope:** project
 - **Satisfies:** `wcag22:1.4.3`, `wcag21:1.4.3`
-- **Applies to:** .css
+- **Applies to:** .css, .html, .htm
 ## What it checks
 Text must have a contrast ratio of at least 4.5:1 against its background (3:1 for large text).
 ## Why it matters

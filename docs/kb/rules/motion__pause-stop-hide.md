@@ -10,9 +10,9 @@ satisfies: ["wcag22:2.2.2", "wcag21:2.2.2"]
 - **Satisfies:** `wcag22:2.2.2`, `wcag21:2.2.2`
 - **Applies to:** .html, .htm, .css
 ## What it checks
-Moving or auto-updating content must have a mechanism to pause, stop, or hide. Flags <marquee>, CSS animations without a prefers-reduced-motion guard (including inline <style> blocks), inline style= animation/transition declarations, and Bootstrap data-bs-ride='carousel' auto-advance markers.
+Moving or auto-updating content must have a mechanism to pause, stop, or hide. Flags <marquee>, CSS animations without a prefers-reduced-motion guard (including inline <style> blocks), inline style= animation/transition declarations, and Bootstrap data-bs-ride='carousel' auto-advance markers. Skips user-interaction-gated animations (:hover / :focus / :active) — those are the domain of motion/animation-from-interactions (wcag22:2.3.3).
 ## Why it matters
-People with attention deficits, vestibular disorders, or seizure conditions can be severely affected by motion they cannot control. A prefers-reduced-motion media query lets the browser honor the user's OS-level motion preference. Inline styles and Bootstrap carousel auto-advance attributes evade stylesheet-level guards, so they need individual scrutiny.
+People with attention deficits, vestibular disorders, or seizure conditions can be severely affected by motion they cannot control. A prefers-reduced-motion media query lets the browser honor the user's OS-level motion preference. Inline styles and Bootstrap carousel auto-advance attributes evade stylesheet-level guards, so they need individual scrutiny. Animations gated by user-interaction pseudo-classes run only when the user asks for them, and WCAG 2.3.3 (not 2.2.2) is the correct criterion for that trigger shape.
 ## Normative quote
 > For moving, blinking, scrolling, or auto-updating information, all of the following are true.
 ## Good example

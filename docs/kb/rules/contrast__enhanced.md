@@ -8,7 +8,7 @@ satisfies: ["wcag22:1.4.6", "wcag21:1.4.6"]
 - **Severity:** warning
 - **Scope:** project
 - **Satisfies:** `wcag22:1.4.6`, `wcag21:1.4.6`
-- **Applies to:** .css
+- **Applies to:** .css, .html, .htm
 ## What it checks
 Text must have a contrast ratio of at least 7:1 against its background (4.5:1 for large text) — WCAG 1.4.6 AAA.
 ## Why it matters

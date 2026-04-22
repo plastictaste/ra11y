@@ -22,23 +22,21 @@ finders cover it and the resulting coverage verdict.
 **Finders column** strips the `review/` prefix for brevity.
 
 **Unique criteria across all standards:** 252
-**By verdict:** 134 rule · 89 finder · 25 attestation-only · 4 gap
+**By verdict:** 136 rule · 89 finder · 25 attestation-only · 2 gap
 
 ## Gaps
 
 The following criterion IDs have `gap` verdict — they are auto/partial automatable but have no rule or finder coverage yet.
 These are candidates for new rules or finders.
 
-- `wcag21:2.3.3`
 - `wcag21:2.5.5`
-- `wcag22:2.3.3`
 - `wcag22:2.5.5`
 
 ## WCAG 2.2
 
 **ID:** `wcag22` | **Version:** 2.2 | **Criteria:** 86
 
-Coverage: 40 rule · 31 finder · 13 attestation-only · 2 gap
+Coverage: 41 rule · 31 finder · 13 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -83,13 +81,13 @@ Coverage: 40 rule · 31 finder · 13 attestation-only · 2 gap
 | `wcag22:2.2.6` | Timeouts | AAA | manual | — | timing | **finder** |
 | `wcag22:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag22:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
-| `wcag22:2.3.3` | Animation from Interactions | AAA | partial | — | — | **gap** |
+| `wcag22:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | — | **rule** |
 | `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `wcag22:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
 | `wcag22:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
-| `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
+| `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `wcag22:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
 | `wcag22:2.4.8` | Location | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.4.9` | Link Purpose (Link Only) | AAA | partial | navigation/link-descriptive-text | — | **rule** |
@@ -133,7 +131,7 @@ Coverage: 40 rule · 31 finder · 13 attestation-only · 2 gap
 
 **ID:** `wcag21` | **Version:** 2.1 | **Criteria:** 78
 
-Coverage: 38 rule · 28 finder · 10 attestation-only · 2 gap
+Coverage: 39 rule · 28 finder · 10 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -178,13 +176,13 @@ Coverage: 38 rule · 28 finder · 10 attestation-only · 2 gap
 | `wcag21:2.2.6` | Timeouts | AAA | manual | — | timing | **finder** |
 | `wcag21:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag21:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
-| `wcag21:2.3.3` | Animation from Interactions | AAA | partial | — | — | **gap** |
+| `wcag21:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | — | **rule** |
 | `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `wcag21:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
 | `wcag21:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
-| `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
+| `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `wcag21:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
 | `wcag21:2.4.8` | Location | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.4.9` | Link Purpose (Link Only) | AAA | partial | navigation/link-descriptive-text | — | **rule** |
@@ -248,7 +246,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
 | `section508:2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
-| `section508:2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
+| `section508:2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `section508:2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |
 | `section508:3.1.1` | Language of Page | base | full | document/lang-attribute, parsing/html-has-lang | — | **rule** |
 | `section508:3.1.2` | Language of Parts | base | partial | document/lang-on-parts, parsing/html-has-lang | — | **rule** |
@@ -302,7 +300,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
 | `en301549:9.2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
-| `en301549:9.2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading | headings-and-labels | **rule** |
+| `en301549:9.2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `en301549:9.2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |
 | `en301549:9.2.5.1` | Pointer Gestures | base | manual | — | pointer-input | **finder** |
 | `en301549:9.2.5.2` | Pointer Cancellation | base | partial | pointer/cancellation | — | **rule** |
