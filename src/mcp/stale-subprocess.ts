@@ -153,8 +153,36 @@ export function annotateStaleSubprocess(result: McpToolResult): McpToolResult {
   payload["staleSubprocessHint"] = STALE_SUBPROCESS_HINT;
   const nextText = JSON.stringify(payload);
   const remaining = result.content.slice(1);
+  // Preserve structuredContent verbatim when present, but also merge the
+  // stale code into its warnings lane so agents reading structuredContent
+  // (not content[0].text) still see the signal. Leave the structured
+  // shape otherwise untouched — the error's code/message/details/
+  // remediation fields are the contract.
+  const nextStructured =
+    result.structuredContent === undefined
+      ? undefined
+      : mergeStaleIntoStructured(result.structuredContent);
   return {
     ...result,
     content: [{ type: "text", text: nextText }, ...remaining],
+    ...(nextStructured === undefined ? {} : { structuredContent: nextStructured }),
+  };
+}
+
+/**
+ * Merges the stale warning code into a `structuredContent` object's
+ * `warnings: string[]` lane. Non-string entries are filtered, the
+ * stale code is prepended, and existing fields are preserved. The
+ * input object is not mutated.
+ */
+function mergeStaleIntoStructured(structured: Record<string, unknown>): Record<string, unknown> {
+  const existing = Array.isArray(structured["warnings"])
+    ? (structured["warnings"] as readonly unknown[]).filter(
+        (w): w is string => typeof w === "string" && w !== STALE_SUBPROCESS_WARNING,
+      )
+    : [];
+  return {
+    ...structured,
+    warnings: [STALE_SUBPROCESS_WARNING, ...existing],
   };
 }
