@@ -353,4 +353,76 @@ describe("parseTsx", () => {
       expect(synth?.attributes[0]?.name).toBe("label");
     });
   });
+
+  // Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS — two invariants the fixture
+  // harness also guards, but landed here too so a typo in the parser
+  // scanner fails immediately with a clear per-case diagnostic rather
+  // than a single fixture-level "1 of 1 expectation failed" summary.
+  describe("false-JSX-context guards", () => {
+    it("does not close a JSX attribute expression early on a literal `}` inside a template literal", () => {
+      // Canonical Bootstrap/Astro-Starlight shape — the template
+      // literal is the body of a JSX attribute expression and contains
+      // a `}` that used to terminate `#skipBraceBlock` prematurely.
+      // Without the fix, the parser re-enters JSX-child mode inside
+      // the template content and emits "Unclosed JSX element <Example>".
+      const src =
+        '<Example code={`<button onclick="window.close()}" type="button">Close</button>`} />';
+      const { errors } = parseTsx(src);
+      expect(errors).toEqual([]);
+    });
+
+    it("does not close a JSX attribute expression early on a `}` inside a string literal", () => {
+      const src = '<Example code={"a}b"}><p>body</p></Example>';
+      const { errors } = parseTsx(src);
+      expect(errors).toEqual([]);
+    });
+
+    it("does not close a JSX attribute expression early on a `}` inside a block comment", () => {
+      const src = '<Example code={/* trailing } in comment */ "v"}><p>c</p></Example>';
+      const { errors } = parseTsx(src);
+      expect(errors).toEqual([]);
+    });
+
+    it("does not enter JSX mode on `<Ident` in a bare .js file", () => {
+      // Shape mirrors jekyll/lib/.../livereload.js — `r.length<b.length`
+      // comparisons in a minified IIFE used to emit
+      // "Unclosed JSX element <b.length>".
+      const src = "!function(r,b){var x=r.length<b.length?r.length:b.length;return x}([1],[2,3]);";
+      const { errors, root } = parseTsx(src, { filePath: "livereload.js" });
+      expect(errors).toEqual([]);
+      expect(root.jsxElements).toEqual([]);
+    });
+
+    it("does not enter JSX mode on `<Ident` in a bare .ts file without JSX imports", () => {
+      const src = "export function compare(a: number, b: number) { return a<b ? -1 : 1; }";
+      const { errors, root } = parseTsx(src, { filePath: "compare.ts" });
+      expect(errors).toEqual([]);
+      expect(root.jsxElements).toEqual([]);
+    });
+
+    it("keeps JSX mode ON for .jsx files — authored JSX still parses", () => {
+      const src = "const App = () => <div className='x'>hi</div>;";
+      const { errors, root } = parseTsx(src, { filePath: "App.jsx" });
+      expect(errors).toEqual([]);
+      expect(root.jsxElements.map((e) => e.tagName)).toEqual(["div"]);
+    });
+
+    it("keeps JSX mode ON for .js files that import React (classic runtime)", () => {
+      const src =
+        "import React from 'react';\nconst App = () => <div className='x'>hi</div>;\nexport default App;";
+      const { errors, root } = parseTsx(src, { filePath: "legacy-jsx.js" });
+      expect(errors).toEqual([]);
+      expect(root.jsxElements.map((e) => e.tagName)).toEqual(["div"]);
+    });
+
+    it("keeps JSX mode ON when no filePath is supplied (backward-compat default)", () => {
+      // Callers without filePath (test helpers, MCP session, apply-fix
+      // internals) must keep the v0.1.x behaviour so existing rule
+      // tests and live scans don't regress.
+      const src = "const App = () => <div className='x'>hi</div>;";
+      const { errors, root } = parseTsx(src);
+      expect(errors).toEqual([]);
+      expect(root.jsxElements.map((e) => e.tagName)).toEqual(["div"]);
+    });
+  });
 });

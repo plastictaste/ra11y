@@ -76,7 +76,8 @@ const SELF_CLOSING_VOID: ReadonlySet<string> = new Set([
 ]);
 
 export function parseTsx(source: string, options: TsxParseOptions = {}): TsxParseResult {
-  const result = new TsxParser(source).parse();
+  const jsxMode = inferJsxMode(source, options.filePath);
+  const result = new TsxParser(source, jsxMode).parse();
   // Storybook synthesis is the only file-path-aware pass today. Engage
   // when the path looks like a story file (`isStorybookStoryFile` is the
   // single source of truth — see `src/utils/path.ts`); otherwise the
@@ -105,9 +106,22 @@ class TsxParser {
   #col = 1;
   #errors: ParseError[] = [];
   #elements: JsxElement[] = [];
+  /**
+   * When `false`, the top-level scanner treats `<identifier` as a literal
+   * `<` character rather than a JSX element opener. Populated by
+   * {@link inferJsxMode} from the file extension and a light source-level
+   * JSX-import signal (see `hasJsxImportSignal`). Bare `.js`/`.ts`/`.mjs`/
+   * `.cjs` files without such a signal set this to `false`, so minified
+   * JS containing `r.length<b.length` comparison operators does not trip
+   * "Unclosed JSX element <b.length>" (Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS).
+   * JSX-bearing extensions (`.jsx`/`.tsx`/`.mdx`/`.astro`) stay at `true`
+   * and preserve every existing rule-evaluation path.
+   */
+  readonly #jsxEnabled: boolean;
 
-  constructor(source: string) {
+  constructor(source: string, jsxEnabled = true) {
     this.#source = source;
+    this.#jsxEnabled = jsxEnabled;
   }
 
   parse(): TsxParseResult {
@@ -140,6 +154,15 @@ class TsxParser {
       if (c === undefined) return;
       if (this.#skipSkippable(c)) continue;
       if (c === "<" && isTagStart(this.#peek(1))) {
+        // Bare `.js`/`.ts` files without a JSX-import signal: `<Ident`
+        // is almost always a comparison operator (e.g. `r.length<b.length`
+        // in minified IIFEs), never a JSX element opener. Advance past
+        // the `<` so the comparison parses as ordinary JS and the file
+        // doesn't drop to partial-parse.
+        if (!this.#jsxEnabled) {
+          this.#advance(1);
+          continue;
+        }
         const classified = classifyAngleBracket(this.#source, this.#pos);
         if (classified?.isGeneric) {
           this.#advance(classified.endPos - this.#pos);
@@ -355,12 +378,24 @@ class TsxParser {
 
   /**
    * Consumes a balanced `{...}` expression block starting at the current
-   * position. Respects nested braces. Advances past the closing `}`.
+   * position. Respects nested braces and skips over string literals,
+   * template literals, and comments — their inner `{`/`}` characters
+   * never contribute to depth. Without this, a JSX attribute expression
+   * whose template-literal body contains a literal `}` (e.g. an inline
+   * JS/HTML snippet in Astro/Starlight `<Example code={`<button
+   * onclick="x()}">`} />`) would close the expression early and leave
+   * the parser positioned inside template content, emitting a spurious
+   * "Unclosed JSX element" on the parent tag
+   * (Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS).
+   *
+   * Advances past the closing `}`.
    */
   #skipBraceBlock(): void {
     let depth = 0;
     while (!this.#eof()) {
       const c = this.#peek();
+      if (c === undefined) return;
+      if (this.#skipSkippable(c)) continue;
       if (c === "{") depth += 1;
       else if (c === "}") {
         depth -= 1;
@@ -531,4 +566,93 @@ function isLowercase(s: string): boolean {
   const first = s[0];
   if (first === undefined) return false;
   return first === first.toLowerCase() && first !== first.toUpperCase();
+}
+
+// ---------------------------------------------------------------------------
+// JSX-mode gate
+// ---------------------------------------------------------------------------
+
+/**
+ * File extensions that carry authored JSX by spec. Tokens of the form
+ * `<Identifier` in these files are JSX element openers by default.
+ *
+ * `.mdx` and `.astro` pre-transform through their own parsers before
+ * reaching `parseTsx`, but each of those parsers inherits the
+ * JSX-enabled default — tags in the post-transform residue are authored
+ * JSX, not stray comparison operators.
+ */
+const JSX_BEARING_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".jsx",
+  ".tsx",
+  ".mdx",
+  ".astro",
+]);
+
+/**
+ * File extensions that are JS/TS but do NOT carry authored JSX by
+ * default. Minified bundles under these extensions commonly include
+ * `a<b` comparison operators that the JSX scanner misreads as element
+ * openers (`Unclosed JSX element <b.length>` on
+ * `jekyll/lib/jekyll/commands/serve/livereload_assets/livereload.js`
+ * is the canonical case for Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS).
+ *
+ * The gate is bypassed when the file carries an explicit JSX-import
+ * signal (`from "react"` or a `@jsx` pragma) — some authored `.js`
+ * files in the wild still use JSX under a classic-runtime build.
+ */
+const BARE_JS_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".mts",
+  ".cts",
+]);
+
+/**
+ * Decides whether the parser's top-level scanner should treat
+ * `<Identifier` as a JSX element opener for this input. JSX-bearing
+ * extensions (`.jsx`/`.tsx`/`.mdx`/`.astro`) stay on; bare JS/TS turns
+ * off unless the source carries a JSX-import signal. Callers that don't
+ * supply `filePath` default to on — every existing test path continues
+ * to work.
+ */
+function inferJsxMode(source: string, filePath: string | undefined): boolean {
+  if (filePath === undefined) return true;
+  const ext = lowercaseExtension(filePath);
+  if (JSX_BEARING_EXTENSIONS.has(ext)) return true;
+  if (!BARE_JS_EXTENSIONS.has(ext)) return true;
+  return hasJsxImportSignal(source);
+}
+
+function lowercaseExtension(filePath: string): string {
+  const dot = filePath.lastIndexOf(".");
+  if (dot === -1) return "";
+  // Guard against `/path.to/file` (the dot precedes the final `/`).
+  const lastSep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  if (dot < lastSep) return "";
+  return filePath.slice(dot).toLowerCase();
+}
+
+/**
+ * Probes the leading window of the source for a classic-runtime JSX
+ * signal — a React import or an explicit `@jsx` pragma comment. Used
+ * only for bare `.js`/`.ts` inputs; JSX-bearing extensions skip the
+ * probe entirely.
+ *
+ * Deliberately narrow: a `react` import signals intent; reading deeper
+ * would add cost and false positives (e.g. `react-router` strings in
+ * prose comments). The 4KB window matches `CLASSIFY_WINDOW` in
+ * `tsx-generic-classifier.ts` so scan-confidence telemetry stays
+ * proportional to actual scan work.
+ */
+const JSX_IMPORT_SIGNAL_WINDOW = 4096;
+const JSX_IMPORT_SIGNAL_RE =
+  /(?:\bfrom\s+["']react["']|\brequire\(\s*["']react["']\s*\)|\/\*\*?\s*@jsx\b|\/\/\s*@jsx\b)/;
+
+function hasJsxImportSignal(source: string): boolean {
+  const head = source.length <= JSX_IMPORT_SIGNAL_WINDOW
+    ? source
+    : source.slice(0, JSX_IMPORT_SIGNAL_WINDOW);
+  return JSX_IMPORT_SIGNAL_RE.test(head);
 }
