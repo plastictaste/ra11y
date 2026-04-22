@@ -397,6 +397,7 @@ function removeCandidatesAt(
   column: number,
 ): void {
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    // biome-ignore lint/style/noNonNullAssertion: loop index is always within bounds
     const c = candidates[i]!;
     if (
       c.location.filePath === filePath &&

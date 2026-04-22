@@ -86,7 +86,7 @@ export const finder = defineCandidateFinder({
   appliesTo: { fileExtensions: [".html", ".htm", ".tsx", ".jsx"] },
   docs: {
     description:
-      'Surfaces ARIA live-region containers (role=alert/status/log or aria-live) that are hidden at initial render via display:none, visibility:hidden, the hidden attribute, or a hiding class (d-none, is-hidden, invisible, hide). sr-only / visually-hidden are NOT treated as hiding — those classes keep the element in the accessibility tree.',
+      "Surfaces ARIA live-region containers (role=alert/status/log or aria-live) that are hidden at initial render via display:none, visibility:hidden, the hidden attribute, or a hiding class (d-none, is-hidden, invisible, hide). sr-only / visually-hidden are NOT treated as hiding — those classes keep the element in the accessibility tree.",
     reviewPrompt:
       "For each candidate, verify whether the runtime pattern primes the live region before inserting a message. The live region must exist in the accessibility tree at the moment text is inserted; toggling a hide class and inserting the message in the same tick is unreliable across AT/browser combinations. The fix is usually to keep the live region mounted from initial render (use sr-only / visually-hidden for visually-hidden-but-AT-visible) and only mutate the contained text. WCAG 4.1.3 Status Messages.",
     references: [
@@ -197,8 +197,8 @@ function describeHtmlAttributeHide(attr: HtmlAttribute): string | null {
   const name = attr.name.toLowerCase();
   if (name === "hidden") return "the `hidden` attribute";
   if (name === "style" && attr.value !== null) {
-    if (STYLE_DISPLAY_NONE.test(attr.value)) return "inline `style=\"display: none\"`";
-    if (STYLE_VISIBILITY_HIDDEN.test(attr.value)) return "inline `style=\"visibility: hidden\"`";
+    if (STYLE_DISPLAY_NONE.test(attr.value)) return 'inline `style="display: none"`';
+    if (STYLE_VISIBILITY_HIDDEN.test(attr.value)) return 'inline `style="visibility: hidden"`';
   }
   if (name === "class" && attr.value !== null) {
     const match = HIDING_CLASS_PATTERN.exec(attr.value);
@@ -260,10 +260,7 @@ function jsxLiveRegionSignal(el: JsxElement): string | null {
   return null;
 }
 
-function nearestJsxHidingSignal(
-  el: JsxElement,
-  ancestors: readonly JsxElement[],
-): string | null {
+function nearestJsxHidingSignal(el: JsxElement, ancestors: readonly JsxElement[]): string | null {
   const selfSignal = jsxElementHidingSignal(el);
   if (selfSignal) return `${selfSignal} on the element itself`;
   for (let i = ancestors.length - 1; i >= 0; i--) {
@@ -283,25 +280,27 @@ function jsxElementHidingSignal(el: JsxElement): string | null {
   return null;
 }
 
+function describeJsxHiddenAttr(value: JsxAttributeValue | null): string | null {
+  if (value === null) return "the `hidden` attribute";
+  if (value.kind === "StringLiteral") return "the `hidden` attribute";
+  // {expression} — only count it when the expression is a literal `true`.
+  // Any other value (`{maybeHidden}`, `{false}`) is the agent's call.
+  const raw = value.raw.replace(/\s+/g, "");
+  return raw === "{true}" ? "the `hidden` attribute" : null;
+}
+
+function describeJsxClassAttr(value: JsxAttributeValue): string | null {
+  const literal = jsxAttributeStringValue(value);
+  if (literal === null) return null;
+  const match = HIDING_CLASS_PATTERN.exec(literal);
+  return match ? `class \`${match[1]}\`` : null;
+}
+
 function describeJsxAttributeHide(attr: JsxAttribute): string | null {
-  if (attr.name === "hidden") {
-    if (attr.value === null) return "the `hidden` attribute";
-    if (attr.value.kind === "StringLiteral") return "the `hidden` attribute";
-    // {expression} — only count it when the expression is a literal `true`.
-    // Any other value (`{maybeHidden}`, `{false}`) is the agent's call.
-    const raw = attr.value.raw.replace(/\s+/g, "");
-    if (raw === "{true}") return "the `hidden` attribute";
-    return null;
-  }
-  if (attr.name === "style" && attr.value !== null) {
-    return describeJsxStyleHide(attr.value);
-  }
+  if (attr.name === "hidden") return describeJsxHiddenAttr(attr.value);
+  if (attr.name === "style" && attr.value !== null) return describeJsxStyleHide(attr.value);
   if ((attr.name === "className" || attr.name === "class") && attr.value !== null) {
-    const literal = jsxAttributeStringValue(attr.value);
-    if (literal !== null) {
-      const match = HIDING_CLASS_PATTERN.exec(literal);
-      if (match) return `class \`${match[1]}\``;
-    }
+    return describeJsxClassAttr(attr.value);
   }
   return null;
 }
@@ -317,16 +316,16 @@ function describeJsxAttributeHide(attr: JsxAttribute): string | null {
  */
 function describeJsxStyleHide(value: JsxAttributeValue): string | null {
   if (value.kind === "StringLiteral") {
-    if (STYLE_DISPLAY_NONE.test(value.value)) return "inline `style=\"display: none\"`";
-    if (STYLE_VISIBILITY_HIDDEN.test(value.value)) return "inline `style=\"visibility: hidden\"`";
+    if (STYLE_DISPLAY_NONE.test(value.value)) return 'inline `style="display: none"`';
+    if (STYLE_VISIBILITY_HIDDEN.test(value.value)) return 'inline `style="visibility: hidden"`';
     return null;
   }
   // Expression — match the most idiomatic JSX object-style shapes.
   if (/\bdisplay\s*:\s*['"]none['"]/i.test(value.raw)) {
-    return "inline `style={{ display: \"none\" }}`";
+    return 'inline `style={{ display: "none" }}`';
   }
   if (/\bvisibility\s*:\s*['"]hidden['"]/i.test(value.raw)) {
-    return "inline `style={{ visibility: \"hidden\" }}`";
+    return 'inline `style={{ visibility: "hidden" }}`';
   }
   return null;
 }
@@ -349,8 +348,10 @@ function emitCandidates(
   liveSignal: string,
   hidingSignal: string,
 ): void {
-  const reason = `${REASON_PREFIX
-    .replace("$SIGNAL", `${hidingSignal} (live-region marker: ${liveSignal})`)}${REASON_SUFFIX}`;
+  const reason = `${REASON_PREFIX.replace(
+    "$SIGNAL",
+    `${hidingSignal} (live-region marker: ${liveSignal})`,
+  )}${REASON_SUFFIX}`;
   for (const criterionId of CRITERION_IDS) {
     // Confidence "medium": the static signals (role/aria-live + a hiding
     // attribute or class) are concrete and deterministic, but the
