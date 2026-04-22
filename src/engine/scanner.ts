@@ -663,14 +663,10 @@ interface CoverageCounts {
 
 /**
  * Walks the standard's criteria and tallies automatable passing/failing
- * counts. Pushes manual-only criterion IDs into `manualReviewNeeded` so
- * the caller can dedupe them across standards.
- *
- * Emitted-violations precedence: a metadata-"manual" criterion with at
- * least one fired rule moves to the automated lane (counted as failing)
- * so `failingCriteria`, `failing`, and `manualReviewNeeded` agree with
- * scan_project / VPAT on the same scan — matching
- * {@link ../reports/coverage.ts#buildOne}'s contract.
+ * counts. A metadata-"manual" criterion with at least one fired rule
+ * moves to the automated lane (counted as failing) so the engine's
+ * `ReportData` agrees with {@link ../reports/coverage.ts#buildOne} and
+ * scan_project / VPAT on the same scan.
  */
 function countCriteriaFor(
   criteria: readonly { readonly id: string; readonly automatable: string }[],
@@ -683,13 +679,12 @@ function countCriteriaFor(
   let failing = 0;
   for (const criterion of criteria) {
     total += 1;
-    const fired = failingCriteria.has(criterion.id);
-    if (criterion.automatable === "manual" && !fired) {
+    if (criterion.automatable === "manual" && !failingCriteria.has(criterion.id)) {
       manualReviewNeeded.push(criterion.id);
       continue;
     }
     automated += 1;
-    if (fired) failing += 1;
+    if (failingCriteria.has(criterion.id)) failing += 1;
     else passing += 1;
   }
   return { automated, total, passing, failing };
