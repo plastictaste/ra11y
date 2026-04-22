@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Date entry — sub-threshold cluster</title>
+  </head>
+  <body>
+    <main>
+      <h1>Date of birth</h1>
+      <!--
+        Three single-character inputs (MM/DD/YY style) — sub-threshold
+        for the OTP cluster finder by design. Three inputs is rarely an
+        OTP and almost always a date trio; the threshold draws the line
+        at four to keep this case quiet.
+      -->
+      <form>
+        <label>
+          Month <input type="text" maxlength="2">
+        </label>
+        <label>
+          Day <input type="text" maxlength="2">
+        </label>
+        <label>
+          Year <input type="text" maxlength="2">
+        </label>
+      </form>
+    </main>
+  </body>
+</html>

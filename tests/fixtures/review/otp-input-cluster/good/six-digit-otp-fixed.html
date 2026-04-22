@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Verify your account</title>
+  </head>
+  <body>
+    <main>
+      <!--
+        Six single-character inputs forming an OTP cluster — the finder
+        STILL fires on this fixture (the shape predicate is structural,
+        not "is the wrapping fix correct"). The fixture documents the
+        recommended fix: a <fieldset><legend> wrapping the cluster +
+        autocomplete="one-time-code" on the first input. The agent
+        reviewing the candidate would dismiss / suppress with a pragma
+        once the fix is in.
+      -->
+      <form>
+        <fieldset>
+          <legend>Enter the 6-digit verification code</legend>
+          <input type="number" maxlength="1" autocomplete="one-time-code" aria-label="Digit 1">
+          <input type="number" maxlength="1" aria-label="Digit 2">
+          <input type="number" maxlength="1" aria-label="Digit 3">
+          <input type="number" maxlength="1" aria-label="Digit 4">
+          <input type="number" maxlength="1" aria-label="Digit 5">
+          <input type="number" maxlength="1" aria-label="Digit 6">
+        </fieldset>
+        <button type="submit">Verify</button>
+      </form>
+    </main>
+  </body>
+</html>
