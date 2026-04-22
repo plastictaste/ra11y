@@ -45,6 +45,91 @@ const DOM_MUTATION_PATTERNS: readonly RegExp[] = [
   /\.(?:replaceChildren|appendChild|removeChild|replaceWith|insertBefore|insertAdjacentHTML|insertAdjacentElement)\s*\(/,
 ];
 
+/**
+ * Narrower subset of DOM-mutation patterns that evidence a VISUAL-PROPERTY
+ * mutation — the shape that can drive a flash/blink under WCAG 2.3.1
+ * (Three Flashes or Below Threshold). The finder uses these alongside a
+ * duration-below-333ms check (≈ >3Hz) to enrich the reason text with a
+ * 2.3.1 citation; below-threshold duration is additive evidence only,
+ * never a suppression gate — candidates always surface via 2.2.1/2.2.2
+ * regardless of duration (see ai-first-consumer.md on numeric-threshold
+ * heuristics).
+ *
+ * Two confidence tiers. Direct `.style.<visual-prop>` writes are high-
+ * confidence — the code literally names the visual property. classList
+ * changes whose class-name argument matches visual-effect vocabulary
+ * (opacity, fade, blur, color, bg, background) are lower-confidence —
+ * the author's class name is a hint, not a guarantee. The finder passes
+ * the tier through so the reason text can annotate honestly.
+ */
+const DIRECT_VISUAL_STYLE_PATTERNS: readonly RegExp[] = [
+  // `<any>.style.<visual-prop> = ...`
+  /\.style\s*\.\s*(?:opacity|transform|filter|color|background|backgroundColor|backgroundImage|backgroundPosition|visibility)\s*=(?!=)/,
+  // `<any>.style["visual-prop"] = ...` — index-access form
+  /\.style\s*\[\s*["'`](?:opacity|transform|filter|color|background|background-color|background-image|background-position|visibility|backgroundColor|backgroundImage|backgroundPosition)["'`]\s*\]/,
+];
+
+/**
+ * classList.(add|remove|toggle|replace) calls whose FIRST string
+ * argument matches visual-effect vocabulary. This is intentionally
+ * fuzzy: `"fade-in"`, `"opacity-0"`, `"bg-red"`, `"blur-md"`,
+ * `"text-color-hot"` are real-world examples where the class name
+ * encodes visual semantics the author meant to toggle on an interval.
+ * The match is one-per-call — any argument to `.classList.add(…)` or
+ * `.classList.toggle(…)` that contains one of these substrings counts.
+ * Flagged as LOWER-confidence in the reason text (class names can
+ * coincidentally contain these substrings without governing visuals;
+ * the agent reads the surrounding code to confirm).
+ */
+const VISUAL_CLASSNAME_PATTERN =
+  /\.classList\s*\.\s*(?:add|remove|toggle|replace)\s*\(\s*["'`][^"'`]*\b(?:opacity|fade|blur|color|bg|background)\b[^"'`]*["'`]/i;
+
+/**
+ * Static evidence tier returned by {@link callbackMutatesVisualProperty}.
+ *
+ * - `"direct-style"` — the callback writes to `.style.opacity`,
+ *   `.style.transform`, `.style.filter`, `.style.color`, `.style.background`
+ *   or similar. The code literally names the visual property; high-
+ *   confidence signal that a visual property changes on each tick.
+ * - `"classlist-fuzzy"` — the callback calls
+ *   `classList.(add|remove|toggle)(…)` with a class-name argument
+ *   containing one of {opacity, fade, blur, color, bg, background}.
+ *   Lower-confidence — class names can contain these substrings
+ *   coincidentally. The finder surfaces the 2.3.1 citation at this
+ *   tier with an explicit "class-name heuristic" annotation so the
+ *   agent knows to double-check.
+ * - `null` — no visual-property mutation detected. No 2.3.1
+ *   enrichment; any 2.2.1/2.2.2 citations stand on their own.
+ */
+type VisualMutationTier = "direct-style" | "classlist-fuzzy" | null;
+
+/**
+ * Duration (ms) below which a visual-property-mutating `setInterval`
+ * crosses the WCAG 2.3.1 rate threshold (more than 3 flashes per
+ * second). 1000 ms / 3 ≈ 333.3 ms — any interval at or below 333ms
+ * causes the callback to run at or above 3Hz.
+ *
+ * Doctrinally: this is NOT a suppression threshold. The candidate
+ * always surfaces via 2.2.1/2.2.2; the duration determines only
+ * whether 2.3.1 is additionally cited. A duration above the threshold
+ * simply means there's no *additional* 2.3.1 evidence — it does not
+ * mean the candidate is withheld.
+ */
+const FLASH_THRESHOLD_MS = 333;
+
+/**
+ * Resolved flash-threshold evidence for a single `setInterval` call.
+ * `null` (from {@link evaluateFlashThreshold}) means the 2.3.1
+ * citation is not warranted — either the callback doesn't statically
+ * mutate a visual property, or the duration is not a literal at or
+ * below {@link FLASH_THRESHOLD_MS}.
+ */
+export interface FlashEvidence {
+  readonly tier: NonNullable<VisualMutationTier>;
+  readonly durationMs: number;
+  readonly rateHz: number;
+}
+
 /** Minimal state carried across the char-by-char scans below. */
 interface ScanState {
   i: number;
@@ -69,13 +154,69 @@ interface ScanState {
  * A missed match is honest silence (no escalation) — we never guess.
  */
 export function callbackMutatesDom(source: string, openParen: number): boolean {
+  return anyCallbackTextMatches(source, openParen, containsDomMutation);
+}
+
+/**
+ * Returns the visual-mutation tier statically evidenced by the callback
+ * of a `setInterval` call whose opening `(` is at `openParen`:
+ *
+ *   - `"direct-style"` — the callback writes a known visual CSS
+ *     property via `.style.<prop>` or `.style["prop"]`.
+ *   - `"classlist-fuzzy"` — the callback toggles/adds/removes a class
+ *     whose name contains visual-effect vocabulary (opacity, fade,
+ *     blur, color, bg, background). Lower-confidence — authors can
+ *     pick class names that coincidentally match; the finder annotates
+ *     the reason text accordingly.
+ *   - `null` — no static evidence of a visual-property mutation.
+ *
+ * Companion signal to {@link callbackMutatesDom}; the two are stacked
+ * in `timing.ts` so a DOM-mutating `setInterval` with a short duration
+ * (≈ >3Hz) cites SC 2.3.1 alongside the 2.2.1/2.2.2 citations. The
+ * duration threshold is applied in the finder, not here — the finder
+ * decides whether to cite 2.3.1, and this probe decides whether the
+ * evidence is visual at all.
+ *
+ * Per ai-first-consumer.md: honest silence on non-matching input is
+ * the contract. We never guess a tier.
+ */
+function callbackMutatesVisualProperty(source: string, openParen: number): VisualMutationTier {
+  let tier: VisualMutationTier = null;
+  anyCallbackTextMatches(source, openParen, (text) => {
+    if (containsDirectVisualStyle(text)) {
+      tier = "direct-style";
+      return true;
+    }
+    if (tier === null && containsVisualClassname(text)) {
+      tier = "classlist-fuzzy";
+      // Don't short-circuit — a later body (resolved identifier) may
+      // upgrade to direct-style, which is strictly more informative.
+      return false;
+    }
+    return false;
+  });
+  return tier;
+}
+
+/**
+ * Walk the callback text (inline body and, for bare-identifier
+ * callbacks, the resolved same-file function body) and apply `test` to
+ * each. Returns true as soon as `test` returns true for any text; the
+ * caller's closure can collect side-effects (e.g. the highest-confidence
+ * tier seen) by returning false to continue scanning.
+ */
+function anyCallbackTextMatches(
+  source: string,
+  openParen: number,
+  test: (text: string) => boolean,
+): boolean {
   const callback = extractCallbackText(source, openParen);
   if (callback === null) return false;
-  if (containsDomMutation(callback.text)) return true;
+  if (test(callback.text)) return true;
   if (callback.identifier === null) return false;
   const body = findFunctionBodyByName(source, callback.identifier, openParen);
   if (body === null) return false;
-  return containsDomMutation(body);
+  return test(body);
 }
 
 function containsDomMutation(text: string): boolean {
@@ -83,6 +224,17 @@ function containsDomMutation(text: string): boolean {
     if (pattern.test(text)) return true;
   }
   return false;
+}
+
+function containsDirectVisualStyle(text: string): boolean {
+  for (const pattern of DIRECT_VISUAL_STYLE_PATTERNS) {
+    if (pattern.test(text)) return true;
+  }
+  return false;
+}
+
+function containsVisualClassname(text: string): boolean {
+  return VISUAL_CLASSNAME_PATTERN.test(text);
 }
 
 /** Extract the first-argument text of a setInterval call, and the bare identifier if it is one. */
@@ -287,4 +439,108 @@ function handleBracket(state: ScanState, c: number): boolean {
     return true;
   }
   return false;
+}
+
+/* -- WCAG 2.3.1 flash-rate evaluation ------------------------------------- */
+
+/**
+ * Decide whether the callback at `openParen` meets the SC 2.3.1
+ * evidence bar: visual-property mutation AND literal duration at or
+ * below {@link FLASH_THRESHOLD_MS}. Returns the tier + resolved
+ * duration + flash rate or null when the evidence is insufficient.
+ *
+ * Used by `timing.ts` to decide whether to attach wcag22:2.3.1 +
+ * wcag21:2.3.1 to a setInterval candidate. The citation is additive —
+ * a null return here does NOT suppress the candidate; the candidate
+ * still surfaces via 2.2.1 / 2.2.2. See ai-first-consumer.md on
+ * numeric-threshold heuristics.
+ */
+export function evaluateFlashThreshold(
+  source: string,
+  openParen: number,
+  rawDuration: string | null,
+): FlashEvidence | null {
+  const tier = callbackMutatesVisualProperty(source, openParen);
+  if (tier === null) return null;
+  const durationMs = resolveDurationLiteral(source, rawDuration);
+  if (durationMs === null) return null;
+  if (durationMs > FLASH_THRESHOLD_MS || durationMs <= 0) return null;
+  return { tier, durationMs, rateHz: 1000 / durationMs };
+}
+
+/**
+ * Build the SC 2.3.1 clause that gets appended to the timing
+ * candidate's reason text. The rate is rounded to the nearest integer
+ * for legibility ("~33Hz" vs "~33.333Hz"); the raw duration literal
+ * is already echoed by the earlier `duration \`...\`` clause, so the
+ * clause stays focused on the flash-rate framing.
+ *
+ * When the evidence tier is `classlist-fuzzy` (class name contains
+ * visual vocabulary but no direct `.style` write), the clause
+ * includes an explicit heuristic annotation so the agent knows the
+ * visual-property inference is weaker than a direct style mutation.
+ */
+export function flashClause(flash: FlashEvidence): string {
+  const rate = Math.round(flash.rateHz);
+  const heuristicNote =
+    flash.tier === "classlist-fuzzy"
+      ? " (visual-property inference is from the classList argument's name — heuristic; verify the class actually governs a visual property)"
+      : "";
+  return `note: callback runs at ~${rate}Hz — if the visual effect is a flash/blink, verify against SC 2.3.1 (Three Flashes or Below Threshold: must not flash more than 3 times per second)${heuristicNote}.`;
+}
+
+/**
+ * Resolve the duration expression to a numeric millisecond literal,
+ * one hop at most. Accepts:
+ *
+ *   - numeric literal: `30`, `30_000`, `0.5`, `.5`
+ *   - numeric-binding identifier: `setInterval(cb, DELAY)` where the
+ *     same file contains `const DELAY = 30;` (or `let` / `var`).
+ *
+ * Returns null for non-literal expressions (`Math.random() * 1000`,
+ * `config.interval`, `this._config.delay`) — the 2.3.1 citation is
+ * withheld when the evidence is insufficient. The candidate still
+ * surfaces via 2.2.1/2.2.2; this resolver only decides whether the
+ * 2.3.1 clause attaches.
+ */
+function resolveDurationLiteral(source: string, rawDuration: string | null): number | null {
+  if (rawDuration === null) return null;
+  const direct = parseNumericLiteral(rawDuration);
+  if (direct !== null) return direct;
+  if (!/^[A-Za-z_$][\w$]*$/.test(rawDuration)) return null;
+  return resolveSameFileNumericBinding(source, rawDuration);
+}
+
+/**
+ * Parse a single JS numeric literal. Accepts underscore separators
+ * (`30_000`) and leading-dot decimals (`.5`). Returns null for
+ * anything else — member expressions, arithmetic, function calls, or
+ * identifiers.
+ */
+function parseNumericLiteral(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^\d[\d_]*(\.\d[\d_]*)?$|^\.\d[\d_]*$/.test(trimmed)) return null;
+  const normalized = trimmed.replace(/_/g, "");
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Walk the source for a same-file binding `const|let|var <name> =
+ * <numeric-literal>;` and return the literal value. Single hop only
+ * (no chained re-bindings) — per the probe's narrow contract; the
+ * agent reading the file does the rest.
+ *
+ * The pattern tolerates TypeScript annotations (`const N: number = 30`)
+ * and the `as const` suffix (`const N = 30 as const`).
+ */
+function resolveSameFileNumericBinding(source: string, name: string): number | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$1");
+  const pattern = new RegExp(
+    String.raw`\b(?:const|let|var)\s+${escaped}\b(?:\s*:\s*[A-Za-z_$][\w$.<>\s,|&\[\]]*)?\s*=\s*([^;\n]+?)(?:\s+as\s+const)?\s*(?:;|$|\n)`,
+    "m",
+  );
+  const match = pattern.exec(source);
+  if (!match) return null;
+  return parseNumericLiteral(match[1] ?? "");
 }

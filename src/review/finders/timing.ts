@@ -42,7 +42,12 @@ import type {
 } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 import type { RuleContext } from "../../types/rule.ts";
-import { callbackMutatesDom } from "./timing-dom-mutation.ts";
+import {
+  callbackMutatesDom,
+  evaluateFlashThreshold,
+  type FlashEvidence,
+  flashClause,
+} from "./timing-dom-mutation.ts";
 
 const CRITERION_IDS = [
   "wcag22:2.2.1",
@@ -67,6 +72,20 @@ const CRITERION_IDS = [
  * pause mechanism?" (2.2.2) questions get asked from the same finding.
  */
 const PAUSE_STOP_HIDE_CRITERIA = ["wcag22:2.2.2", "wcag21:2.2.2"] as const;
+
+/**
+ * Additional criterion IDs attached when a `setInterval` callback
+ * mutates a visual property AND the duration literal is below the
+ * flash-rate threshold (see {@link evaluateFlashThreshold}). SC 2.3.1
+ * Three Flashes or Below Threshold forbids content that flashes more
+ * than three times per second; a repeating visual-property mutation
+ * at that rate is the exact shape the criterion addresses. The
+ * citation is additive — the finder never suppresses the candidate
+ * on duration alone (see ai-first-consumer.md on numeric-threshold
+ * heuristics). Candidates always surface via 2.2.1 / 2.2.2; 2.3.1
+ * joins the criterion set only when the evidence supports it.
+ */
+const FLASH_THRESHOLD_CRITERIA = ["wcag22:2.3.1", "wcag21:2.3.1"] as const;
 
 /** Source-text patterns for JS timing APIs. */
 const SOURCE_PATTERNS: readonly {
@@ -202,11 +221,10 @@ function emitJsCandidates(
   const enclosing = describeEnclosingFunction(ctx.source, offset);
   const enclosingClause = enclosing ? ` in \`${enclosing}\`` : "";
   const coreReason = `${label}${durationClause}${enclosingClause}${JS_REASON_PREFIX}`;
-  const escalate = isInterval && callbackMutatesDom(ctx.source, openParen);
-  const reason = escalate ? `${PAUSE_STOP_HIDE_PREFIX}${coreReason}` : coreReason;
-  const criteriaForSite: readonly string[] = escalate
-    ? [...CRITERION_IDS, ...PAUSE_STOP_HIDE_CRITERIA]
-    : CRITERION_IDS;
+  const pauseStopHide = isInterval && callbackMutatesDom(ctx.source, openParen);
+  const flash = isInterval ? evaluateFlashThreshold(ctx.source, openParen, duration) : null;
+  const reason = buildReason(coreReason, pauseStopHide, flash);
+  const criteriaForSite = buildCriteriaForSite(pauseStopHide, flash !== null);
   for (const criterionId of criteriaForSite) {
     // Confidence "medium": setTimeout/setInterval is concrete evidence
     // of a timer, but the reviewer's question — "does this govern a
@@ -223,6 +241,43 @@ function emitJsCandidates(
       confidence: "medium",
     });
   }
+}
+
+/**
+ * Assemble the final reason text from the three enrichment layers.
+ * Order matters:
+ *
+ *   1. Pause-Stop-Hide prefix (2.2.2) when it applies — this is the
+ *      most general framing and sets context.
+ *   2. The core reason (label + duration + enclosing + JS suffix).
+ *   3. SC 2.3.1 clause suffixed when visual-flash evidence applies —
+ *      "note: callback runs at ~N Hz…". Suffixed (not prefixed) so
+ *      existing assertions on `coreReason`/`PAUSE_STOP_HIDE_PREFIX`
+ *      keep passing.
+ */
+function buildReason(
+  coreReason: string,
+  pauseStopHide: boolean,
+  flash: FlashEvidence | null,
+): string {
+  const prefix = pauseStopHide ? PAUSE_STOP_HIDE_PREFIX : "";
+  const flashSuffix = flash ? ` ${flashClause(flash)}` : "";
+  return `${prefix}${coreReason}${flashSuffix}`;
+}
+
+/**
+ * Assemble the criterion-ID set for a single call site. The base
+ * CRITERION_IDS always apply; 2.2.2 is added when the callback
+ * statically mutates the DOM; 2.3.1 is added when visual-property
+ * mutation + sub-333ms literal duration both hold. The sets stack —
+ * a carousel that mutates both a `.style.transform` AND runs at 30ms
+ * cites 2.2.1 + 2.2.2 + 2.3.1 at the same file:line.
+ */
+function buildCriteriaForSite(pauseStopHide: boolean, flash: boolean): readonly string[] {
+  const ids: string[] = [...CRITERION_IDS];
+  if (pauseStopHide) ids.push(...PAUSE_STOP_HIDE_CRITERIA);
+  if (flash) ids.push(...FLASH_THRESHOLD_CRITERIA);
+  return ids;
 }
 
 /**
