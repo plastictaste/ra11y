@@ -316,11 +316,7 @@ function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
   emitIdentifierHits(ctx, out, seen);
 }
 
-function emitBasenameHit(
-  ctx: RuleContext,
-  out: ReviewCandidate[],
-  seen: Set<string>,
-): void {
+function emitBasenameHit(ctx: RuleContext, out: ReviewCandidate[], seen: Set<string>): void {
   const basename = extractBasename(ctx.filePath);
   const basenameMatch = basename.match(NAME_TOKEN_PATTERN);
   if (!basenameMatch) return;
@@ -338,19 +334,13 @@ function emitBasenameHit(
     out.push({
       criterionId,
       location: { filePath: ctx.filePath, line: 1, column: 1 },
-      reason:
-        `file basename \`${basename}\` suggests a ${token} gesture interaction` +
-        GESTURE_REASON,
+      reason: `file basename \`${basename}\` suggests a ${token} gesture interaction${GESTURE_REASON}`,
       confidence: "medium",
     });
   }
 }
 
-function emitIdentifierHits(
-  ctx: RuleContext,
-  out: ReviewCandidate[],
-  seen: Set<string>,
-): void {
+function emitIdentifierHits(ctx: RuleContext, out: ReviewCandidate[], seen: Set<string>): void {
   for (const hit of collectIdentifierHits(ctx.source)) {
     const tokenMatch = hit.identifier.match(NAME_TOKEN_PATTERN);
     if (!tokenMatch) continue;

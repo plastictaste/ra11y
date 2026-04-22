@@ -8,6 +8,13 @@
  * the `review/pointer-input` policy.
  */
 
+// Companion-signal: the finder's COMPANION_LIBRARY_PATTERN matches
+// the literal `from "@use-gesture/core"` substring. Use an
+// `@ts-expect-error` escape hatch because `@use-gesture/core` is not a
+// dependency of the test harness — the fixture only needs the source
+// text to contain the import, not to execute it.
+
+// @ts-expect-error — library not installed, source-text match only
 import { createGesture } from "@use-gesture/core";
 
 export class PinchZoom {
@@ -15,9 +22,7 @@ export class PinchZoom {
 
   constructor() {
     // Reference the imported binding so it survives tree-shaking and
-    // the companion-signal detector sees a real library import rather
-    // than a type-only one (`import type` would be erased by the
-    // transpiler and is invisible to the finder's source-text probe).
+    // stays present in the source text the finder probes.
     void createGesture;
   }
 

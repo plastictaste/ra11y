@@ -34,7 +34,7 @@ import type { FixtureAssertions } from "../runner.ts";
 
 export const assertions: FixtureAssertions = {
   description:
-    "`const panels = document.querySelectorAll(\".panel\")` plus click-only handlers " +
+    '`const panels = document.querySelectorAll(".panel")` plus click-only handlers ' +
     "and no touch/pointer listener must not trigger the review/pointer-input " +
     "name-pattern branch — the substring `pan` inside `panels` is insufficient " +
     "evidence without a companion signal.",
