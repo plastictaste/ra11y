@@ -31,7 +31,7 @@ export const assertions: FixtureAssertions = {
   origin: {
     notes:
       "Second-pass Jekyll field-test finding (2026-04-21). header.html " +
-      "in a Jekyll site has `<a><img alt=\"Jekyll\"><span class=\"sr-only\">Jekyll</span></a>` — " +
+      'in a Jekyll site has `<a><img alt="Jekyll"><span class="sr-only">Jekyll</span></a>` — ' +
       "the image is the visual rendering of the text and the sr-only span " +
       "is the SR-accessible equivalent. The finder must enrich `reason` " +
       "with that signal so the agent dismisses without reading the file.",

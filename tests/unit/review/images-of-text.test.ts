@@ -236,4 +236,116 @@ describe("review/images-of-text", () => {
       expect(out[0]?.reason).toContain("inside a sibling <svg>");
     });
   });
+
+  describe("visually-hidden text sibling annotation", () => {
+    // Reason-text enrichment only — the candidate must surface at the
+    // same confidence per the AI-first consumer model
+    // ("surface-not-suppress"; "enrich reason with the dismissal
+    // signal, keep candidate in the primary list"). The hint names the
+    // sibling so the agent can dismiss in one read when the sr-only
+    // span genuinely carries the textual equivalent. See
+    // docs/kb/architecture/ai-first-consumer.md.
+    it("annotates when a .sr-only sibling is present (HTML)", () => {
+      const source = `<a><img class="site-logo" src="/logo.svg" alt="Jekyll"><span class="sr-only">Jekyll</span></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain("visually-hidden text sibling");
+      expect(hit?.reason).toContain(".sr-only");
+      expect(hit?.reason).toContain("documented logotype pattern");
+    });
+
+    it("annotates when a .visually-hidden sibling is present (HTML)", () => {
+      const source = `<a><img class="brand-logo" src="/logo.png" alt="Acme"><span class="visually-hidden">Acme</span></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain(".visually-hidden");
+    });
+
+    it("annotates when the parent anchor carries aria-label (HTML)", () => {
+      const source = `<a href="/" aria-label="Jekyll home"><img class="site-logo" src="/l.svg" alt="Jekyll"></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain("aria-label");
+    });
+
+    it("annotates when the sr-only sibling is nested (HTML)", () => {
+      // Common pattern: the visually-hidden text lives inside a
+      // descendant (e.g. a nested <span>) rather than a direct sibling.
+      // The finder walks siblings' descendants looking for the class.
+      const source = `<a><img class="logo" src="/l.svg" alt="Acme"><span><em class="sr-only">Acme</em></span></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain("visually-hidden text sibling");
+    });
+
+    it("does NOT annotate when no sr-only sibling or parent aria-label is present", () => {
+      const source = `<a><img class="site-logo" src="/l.svg" alt="Acme"></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).not.toContain("visually-hidden text sibling");
+      expect(hit?.reason).not.toContain("documented logotype pattern");
+    });
+
+    it("does NOT annotate on an unrelated class name (.hidden is not sr-only)", () => {
+      // `.hidden` is a generic display utility, not a screen-reader
+      // convention — omitting the hint keeps the annotation honest
+      // (AI-first doctrine: present-when-meaningful).
+      const source = `<a><img class="logo" src="/l.svg" alt="Acme"><span class="hidden">Acme</span></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).not.toContain("visually-hidden text sibling");
+    });
+
+    it("still surfaces the candidate when the sr-only hint applies (no suppression)", () => {
+      const source = `<a><img class="site-logo" src="/l.svg" alt="Jekyll"><span class="sr-only">Jekyll</span></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      // Surface-not-suppress: the candidate stays at the same
+      // confidence and still fires for every criterion in the bundle.
+      const ids = new Set(out.map((c) => c.criterionId));
+      expect(ids.has("wcag22:1.4.5")).toBe(true);
+      expect(ids.has("wcag22:1.4.9")).toBe(true);
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.confidence).toBe("low");
+    });
+
+    it("annotates 1.4.9 (AAA) too — the sibling signal is criterion-agnostic", () => {
+      // The sr-only hint is evidence about the DOM, not about the
+      // criterion's exemption structure. Unlike the logotype exemption
+      // hint (which only applies to 1.4.5 AA), this annotation fires
+      // for every criterion in the 1.4.5 / 1.4.9 family — the agent
+      // still reads the file, but the dismissal signal surfaces
+      // uniformly.
+      const source = `<a><img class="site-logo" src="/l.svg" alt="Jekyll"><span class="sr-only">Jekyll</span></a>`;
+      const out = runFinder(finder, source, { filePath: "header.html" });
+      const aaa = out.find((c) => c.criterionId === "wcag22:1.4.9");
+      expect(aaa?.reason).toContain("visually-hidden text sibling");
+    });
+
+    it("annotates when a .sr-only sibling is present (JSX)", () => {
+      const source = `
+        const x = (
+          <a>
+            <img className="site-logo" src="/logo.svg" alt="Jekyll" />
+            <span className="sr-only">Jekyll</span>
+          </a>
+        );
+      `;
+      const out = runFinder(finder, source);
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain("visually-hidden text sibling");
+    });
+
+    it("annotates when the parent JSX element carries aria-label", () => {
+      const source = `
+        const x = (
+          <a href="/" aria-label="Jekyll home">
+            <img className="site-logo" src="/logo.svg" alt="Jekyll" />
+          </a>
+        );
+      `;
+      const out = runFinder(finder, source);
+      const hit = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(hit?.reason).toContain("aria-label");
+    });
+  });
 });

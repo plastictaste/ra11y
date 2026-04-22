@@ -31,6 +31,7 @@ import type {
   TsxModule,
 } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
+import { htmlSrOnlySiblingHint, jsxSrOnlySiblingHint } from "./images-of-text-sr-only.ts";
 
 const CRITERION_IDS = [
   "wcag22:1.4.5",
@@ -79,20 +80,21 @@ function findHtmlCandidates(
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
-  scanHtmlChildren(root.children, null, filePath, candidates);
+  scanHtmlChildren(root.children, null, null, filePath, candidates);
 }
 
 function scanHtmlChildren(
   children: readonly HtmlNode[],
   parentText: ParentText | null,
+  parentElement: HtmlElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
   for (let index = 0; index < children.length; index++) {
     const child = children[index];
     if (child?.kind !== "HtmlElement") continue;
-    emitHtmlImageCandidate(child, children, index, parentText, filePath, candidates);
-    scanHtmlChildren(child.children, splitHtmlTextContent(child), filePath, candidates);
+    emitHtmlImageCandidate(child, children, index, parentText, parentElement, filePath, candidates);
+    scanHtmlChildren(child.children, splitHtmlTextContent(child), child, filePath, candidates);
   }
 }
 
@@ -101,6 +103,7 @@ function emitHtmlImageCandidate(
   siblings: readonly HtmlNode[],
   index: number,
   parentText: ParentText | null,
+  parentElement: HtmlElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
@@ -123,12 +126,13 @@ function emitHtmlImageCandidate(
     renderReason(signals),
     logoLike(classVal, srcVal),
     svgDataUriTextFreeHint(srcVal),
+    htmlSrOnlySiblingHint(siblings, index, parentElement),
   );
 }
 
 function findJsxCandidates(root: TsxModule, filePath: string, candidates: ReviewCandidate[]): void {
   for (const element of root.jsxElements) {
-    scanJsxElement(element, null, -1, null, filePath, candidates);
+    scanJsxElement(element, null, -1, null, null, filePath, candidates);
   }
 }
 
@@ -137,15 +141,16 @@ function scanJsxElement(
   siblings: readonly JsxNode[] | null,
   index: number,
   parentText: ParentText | null,
+  parentElement: JsxElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
-  emitJsxImageCandidate(element, siblings, index, parentText, filePath, candidates);
+  emitJsxImageCandidate(element, siblings, index, parentText, parentElement, filePath, candidates);
   const currentText = splitJsxTextContent(element);
   for (let childIndex = 0; childIndex < element.children.length; childIndex++) {
     const child = element.children[childIndex];
     if (child?.kind !== "JsxElement") continue;
-    scanJsxElement(child, element.children, childIndex, currentText, filePath, candidates);
+    scanJsxElement(child, element.children, childIndex, currentText, element, filePath, candidates);
   }
 }
 
@@ -154,6 +159,7 @@ function emitJsxImageCandidate(
   siblings: readonly JsxNode[] | null,
   index: number,
   parentText: ParentText | null,
+  parentElement: JsxElement | null,
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
@@ -177,6 +183,7 @@ function emitJsxImageCandidate(
     renderReason(signals),
     logoLike(classVal, srcVal),
     svgDataUriTextFreeHint(srcVal),
+    jsxSrOnlySiblingHint(siblings, index, parentElement),
   );
 }
 
@@ -365,13 +372,21 @@ function pushForAllCriteria(
   reason: string,
   logoLikelyExempt: boolean,
   svgDataUriHint: string | null,
+  srOnlySiblingHint: string | null,
 ): void {
   for (const criterionId of CRITERION_IDS) {
     const withLogoHint =
       logoLikelyExempt && criterionAllowsLogotypeExemption(criterionId)
         ? `${reason} — if this is a logo or brand mark, WCAG 1.4.5 has a logotype exemption (essential presentation); the AAA "no exception" variant (1.4.9) still applies`
         : reason;
-    const augmented = svgDataUriHint ? `${withLogoHint} ${svgDataUriHint}` : withLogoHint;
+    const withSvgHint = svgDataUriHint ? `${withLogoHint} ${svgDataUriHint}` : withLogoHint;
+    // The sr-only hint follows the svg-data hint so both additive
+    // signals accumulate on the tail of the reason. The hint is per-
+    // candidate additive context, not a suppression signal — per
+    // AI-first doctrine, every criterion still surfaces its candidate
+    // at the same confidence and location; only the reason text grows
+    // so an agent can dismiss without reading the file.
+    const augmented = srOnlySiblingHint ? `${withSvgHint} ${srOnlySiblingHint}` : withSvgHint;
     // Confidence "low": alt/className/src pattern matching on
     // "logo"/"banner"/"heading" tokens and short-alt-duplicated-in-text
     // heuristics. Biased toward false positives by design (see
