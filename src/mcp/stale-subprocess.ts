@@ -123,17 +123,28 @@ export function isSubprocessStale(): boolean {
  *     something other than the conventional object-wrapped payload.
  *   - Existing `warnings: string[]` are preserved; the stale code is
  *     prepended so it's the first thing an agent sees. Duplicates are
- *     dropped so a second call doesn't double-surface.
+ *     dropped so a second call doesn't double-surface. Non-string
+ *     entries (junk the handler leaked) are filtered rather than
+ *     passed through — the agent reading the array gets a clean
+ *     `string[]`.
  *   - `staleSubprocessHint` is added as a sibling prose field so the
  *     agent can surface remediation text verbatim without decoding the
  *     warning code.
- *   - `isError: true` results (structured errors) are left alone —
- *     stale-warning overlay on top of an error envelope would muddy
- *     the error's shape, and the agent's next action in the error path
- *     is already distinct from the nominal path.
+ *   - `isError: true` results are annotated too — the warning is about
+ *     the *subprocess*, not the individual call's success, so hiding it
+ *     behind an error envelope is the canonical silent-miss failure
+ *     mode (an agent that hits `file-unsupported` on a `.md` file
+ *     during a stale subprocess never learns the tool needs a
+ *     restart). `isError` and `structuredContent` are preserved
+ *     verbatim; the warning + hint are merged into the text payload,
+ *     and the warning (not the hint prose — agents branch on codes,
+ *     not message text) is merged into `structuredContent` too so
+ *     consumers reading the structured lane still see it. See
+ *     AI-first consumer doctrine: "Zero-output success is ambiguous
+ *     failure" — an error envelope without the stale signal reads as
+ *     "tool is fine, just this call failed."
  */
 export function annotateStaleSubprocess(result: McpToolResult): McpToolResult {
-  if (result.isError === true) return result;
   const first = result.content[0];
   if (first === undefined || first.type !== "text") return result;
   let parsed: unknown;

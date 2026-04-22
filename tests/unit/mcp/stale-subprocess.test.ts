@@ -125,13 +125,113 @@ describe("annotateStaleSubprocess", () => {
     expect(annotateStaleSubprocess(stringResult)).toBe(stringResult);
   });
 
-  it("leaves isError results untouched — stale overlay on an error envelope would muddy its shape", () => {
+  it("annotates isError results — the warning is about the subprocess, not this call's failure", () => {
+    // Silent-miss mode the fix closes: an agent hitting `file-unsupported`
+    // on a `.md` file during a stale subprocess would, without this
+    // annotation, read the error as "extension truly unsupported" and
+    // never learn the tool needs a restart.
     const errorResult: McpToolResult = {
-      content: [{ type: "text", text: JSON.stringify({ error: "boom", code: "file-not-found" }) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ error: "unsupported extension", code: "file-unsupported" }),
+        },
+      ],
       isError: true,
     };
     const annotated = annotateStaleSubprocess(errorResult);
-    expect(annotated).toBe(errorResult);
+    expect(annotated.isError).toBe(true);
+    const parsed = JSON.parse(annotated.content[0]!.text) as {
+      warnings: string[];
+      staleSubprocessHint: string;
+      error: string;
+      code: string;
+    };
+    expect(parsed.warnings).toEqual([STALE_SUBPROCESS_WARNING]);
+    expect(parsed.staleSubprocessHint).toBe(STALE_SUBPROCESS_HINT);
+    // The error envelope's own fields remain intact — code + message are
+    // the contract agents branch on for the failed call itself.
+    expect(parsed.error).toBe("unsupported extension");
+    expect(parsed.code).toBe("file-unsupported");
+  });
+
+  it("filters non-string warning entries on an error envelope too", () => {
+    // Error envelopes can carry a pre-existing `warnings` array (e.g.
+    // from a handler that attaches soft-signals before failing). Junk
+    // entries get filtered the same way as on a nominal payload so the
+    // agent-facing array stays a clean `string[]`.
+    const result: McpToolResult = {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: "boom",
+            code: "file-not-found",
+            warnings: ["scanned_zero_files", 42, null, { not: "a string" }, "no_config_found"],
+          }),
+        },
+      ],
+      isError: true,
+    };
+    const annotated = annotateStaleSubprocess(result);
+    const parsed = JSON.parse(annotated.content[0]!.text) as { warnings: string[] };
+    expect(parsed.warnings).toEqual([
+      STALE_SUBPROCESS_WARNING,
+      "scanned_zero_files",
+      "no_config_found",
+    ]);
+  });
+
+  it("preserves structuredContent on an error envelope and merges the stale code into its warnings lane", () => {
+    // Error envelopes carry structuredContent with { code, message,
+    // details?, remediation? }. Annotating must not drop it — agents
+    // that branch on structuredContent (e.g. the audit meta-tool) still
+    // need those fields, plus the stale signal so they know the
+    // subprocess is stale regardless of which lane they read.
+    const structured: Record<string, unknown> = {
+      code: "file-unsupported",
+      message: "unsupported extension",
+      details: { path: "README.md", extension: ".md" },
+      remediation: "pass a .tsx/.jsx/.html/.css file",
+    };
+    const errorResult: McpToolResult = {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ error: "unsupported extension", code: "file-unsupported" }),
+        },
+      ],
+      structuredContent: structured,
+      isError: true,
+    };
+    const annotated = annotateStaleSubprocess(errorResult);
+    expect(annotated.isError).toBe(true);
+    expect(annotated.structuredContent).toBeDefined();
+    const nextStructured = annotated.structuredContent as Record<string, unknown>;
+    expect(nextStructured["code"]).toBe("file-unsupported");
+    expect(nextStructured["message"]).toBe("unsupported extension");
+    expect(nextStructured["details"]).toEqual({ path: "README.md", extension: ".md" });
+    expect(nextStructured["remediation"]).toBe("pass a .tsx/.jsx/.html/.css file");
+    expect(nextStructured["warnings"]).toEqual([STALE_SUBPROCESS_WARNING]);
+    // Source structuredContent object is not mutated — the handler that
+    // produced it may retain references for logging or telemetry.
+    expect(structured["warnings"]).toBeUndefined();
+  });
+
+  it("merges stale code into a pre-populated structuredContent.warnings lane (dedup + non-string filter)", () => {
+    const structured: Record<string, unknown> = {
+      code: "cwd-not-found",
+      message: "cwd does not exist",
+      warnings: [STALE_SUBPROCESS_WARNING, "scanned_zero_files", 99, null],
+    };
+    const errorResult: McpToolResult = {
+      content: [{ type: "text", text: JSON.stringify({ error: "cwd does not exist" }) }],
+      structuredContent: structured,
+      isError: true,
+    };
+    const annotated = annotateStaleSubprocess(errorResult);
+    const nextStructured = annotated.structuredContent as Record<string, unknown>;
+    expect(nextStructured["warnings"]).toEqual([STALE_SUBPROCESS_WARNING, "scanned_zero_files"]);
   });
 
   it("leaves results with no content items unchanged", () => {
