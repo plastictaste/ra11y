@@ -1,0 +1,57 @@
+<!--
+  Sanitized snippet of a real-estate / small-business contact page
+  shape from the website-templates field scan. The upstream produces
+  100+ of these pages mis-labeled `minified` because every template
+  variant embeds a Google Maps iframe whose `src` URL carries a
+  base64-encoded location payload and flag parameters on ONE authored
+  line — that single line crosses 500 characters. The surrounding
+  markup is normal multi-line authored HTML (head, nav, main content,
+  footer) so the file's line-ratio + median-line-length corroborators
+  stay well below their thresholds. Without the second-tier signal
+  gate, the one-line-over-threshold probe on its own pulls the whole
+  file into the `scannedBuildArtifacts` bucket and the agent's triage
+  lane drops findings on authored code.
+
+  The iframe URL below is synthetic (no real coordinates), matches the
+  shape of Google Maps' embed endpoint, and is long enough (>500
+  chars on one line) to reproduce the single-long-line probe.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Contact — Example Realty</title>
+    <meta name="description" content="Get in touch with Example Realty — office location and contact details.">
+    <link rel="stylesheet" href="/assets/css/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <nav aria-label="Primary">
+        <a href="/">Home</a>
+        <a href="/listings">Listings</a>
+        <a href="/contact">Contact</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Visit our office</h1>
+      <p>We welcome drop-in visits during business hours. The map below shows our address and nearby parking.</p>
+      <section class="map-embed" aria-label="Office location map">
+        <iframe title="Office location on Google Maps" width="600" height="450" loading="lazy" allowfullscreen src="https://www.google.com/maps/embed/v1/place?key=SANITIZED_PLACEHOLDER_KEY_0000000000000000000000000&q=123+Example+Street+Exampletown+EX+99999&zoom=15&maptype=roadmap&language=en&region=US&attribution_source=example-realty&feature_flags=satellite_toggle%2Cstreet_view%2Ctraffic_layer%2Ctransit_layer%2Cplace_card&marker_color=auto&marker_size=mid&marker_label=office&layer_hints=parking%2Csidewalk%2Ccrosswalk&ui_preferences=compact%3Dfalse%2Cshow_scale%3Dtrue%2Cshow_compass%3Dtrue%2Cshow_zoom%3Dtrue%2Chover_cards%3Dfalse&callout=business_hours&sanitized=true"></iframe>
+      </section>
+      <section class="contact-details">
+        <h2>Office contact</h2>
+        <dl>
+          <dt>Address</dt>
+          <dd>123 Example Street, Exampletown, EX 99999</dd>
+          <dt>Phone</dt>
+          <dd>+1 (555) 010-4242</dd>
+          <dt>Email</dt>
+          <dd>office@example-realty.invalid</dd>
+        </dl>
+      </section>
+    </main>
+    <footer>
+      <p>Copyright Example Realty. All rights reserved.</p>
+    </footer>
+  </body>
+</html>

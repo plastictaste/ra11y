@@ -34,6 +34,7 @@ import { extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type ParsedFile, runScan } from "../../../src/engine/scanner.ts";
 import { parseCss, parseHtml, parseTsx } from "../../../src/input/parsers/index.ts";
+import { collectBuildArtifacts } from "../../../src/mcp/build-artifacts.ts";
 import {
   classifyWrapperCandidates,
   collectWrapperCandidates,
@@ -101,7 +102,27 @@ export type FixtureExpectation =
       readonly kind: "meta-field-length";
       readonly path: readonly string[];
       readonly predicate: MetaFieldLengthPredicate;
-    };
+    }
+  /**
+   * Assert that `collectBuildArtifacts` does NOT label the given fixture
+   * source path as a build artifact. Guards `src/mcp/build-artifacts.ts`
+   * doctrine — the `scannedBuildArtifacts` label must be provable from
+   * the file shape, so authored files that happen to carry one long
+   * line (template-literal embeds, Google-Maps iframe URLs, multi-tag
+   * preview props) must not fall into the bucket when no second-tier
+   * signal corroborates. `path` is root-relative POSIX under the
+   * fixture's `source/` directory, matching the form `ParsedFile.filePath`
+   * uses inside the harness.
+   *
+   * Evaluated directly against the parsed `files` set rather than via
+   * `meta.scannedBuildArtifacts` because the fixture harness's
+   * `runScanAndFormat` does not populate that meta field (it is
+   * assembled one layer up in `tool-scan-project.ts`). The direct-call
+   * form keeps the assertion on the same function the production
+   * pipeline invokes, without widening the harness's surface to the
+   * full MCP scan envelope.
+   */
+  | { readonly kind: "no-build-artifact-label"; readonly path: string };
 
 /** Predicates available for the {@link MetaFieldExpectation}. */
 export type MetaFieldPredicate =
@@ -455,6 +476,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalMetaField(fixtureId, exp, ctx);
     case "meta-field-length":
       return evalMetaFieldLength(fixtureId, exp, ctx);
+    case "no-build-artifact-label":
+      return evalNoBuildArtifactLabel(fixtureId, exp, ctx);
     default: {
       // Exhaustive switch — `never` tells us a new variant was added.
       const _exhaustive: never = exp;
@@ -833,6 +856,59 @@ function formatLengthBounds(pred: MetaFieldLengthPredicate): string {
   if (pred.max !== undefined) parts.push(`max=${pred.max}`);
   if (pred.equals !== undefined) parts.push(`equals=${pred.equals}`);
   return parts.length > 0 ? parts.join(", ") : "(no bounds specified)";
+}
+
+// ─── no-build-artifact-label ────────────────────────────────────────────────
+
+/**
+ * Guards that `collectBuildArtifacts` does not label the named fixture
+ * source path as a build artifact. Three failure modes are
+ * distinguished so a regression surfaces precisely:
+ *   - fixture source has no file at the named path (typo / stale
+ *     assertion)
+ *   - classifier returned a reason (the false-positive the fix
+ *     prevents); message echoes the reason so the author sees which
+ *     predicate over-fired
+ *   - classifier returned `sourcemap-sibling` via `collectBuildArtifacts`
+ *     (handled the same as the positive case — any label is a
+ *     failure for this assertion)
+ *
+ * Runs against the same `ParsedFile[]` the scanner consumed so the
+ * assertion exercises the production input shape.
+ */
+function evalNoBuildArtifactLabel(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "no-build-artifact-label" },
+  ctx: FixtureScanContext,
+): ExpectationResult {
+  const match = ctx.files.find((f) => f.filePath === exp.path);
+  if (!match) {
+    const known = ctx.files.map((f) => f.filePath).join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: no parsed file at '${exp.path}' for no-build-artifact-label. Parsed: [${known}]`,
+    };
+  }
+  // `collectBuildArtifacts` runs on the full set so the sibling-.map
+  // branch is included — a `.map` sibling at the same stem would flip
+  // the label to `sourcemap-sibling` even when per-file classification
+  // returned null. Calling the batch helper matches what
+  // `tool-scan-project.ts` actually does.
+  const labeled = collectBuildArtifacts(ctx.files);
+  const hit = labeled.find((entry) => entry.path === exp.path);
+  if (hit) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: '${exp.path}' was labeled build-artifact with reason '${hit.reason}' — fixture shape must not carry any build-artifact signal`,
+    };
+  }
+  return {
+    expectation: exp,
+    pass: true,
+    message: `real-world/${fixtureId}: '${exp.path}' is not labeled as a build artifact`,
+  };
 }
 
 /**
