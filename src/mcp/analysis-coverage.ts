@@ -27,6 +27,14 @@
  *     (the historical `parseErrorFiles`) conflated "file invisible" with
  *     "file partially reported," and agents reading the combined shape
  *     would miss findings that did emerge on the listed paths.
+ *   - `parseModeByExtension`: per-extension disclosure of which parser
+ *     AST the scanner routed files through. Tells the agent why a
+ *     `filesByExtension[".scss"] = 584` count participates in every
+ *     `.css`-gated rule's `filesEvaluated` without appearing as a
+ *     separate `.scss` lane (the SCSS adapter emits a CSS AST). Values
+ *     are either `"native"` (extension name equals AST language — no
+ *     alias to explain) or the AST-language tag an alias routes
+ *     through (`"css"`, `"html"`, `"tsx"`). Present-when-meaningful.
  *   - `hints`: actionable suggestions derived from the above counts —
  *     e.g., "add these 8 design-system wrappers to nativeWrappers" when
  *     `opaqueCustomComponents` is high, or "post-compile CSS likely not
@@ -106,6 +114,38 @@ interface ParseErrorEntry {
   readonly path: string;
   readonly parser: string;
   readonly reason: string;
+}
+
+/**
+ * Structured coverage block written onto `meta.analysisCoverage`. Every
+ * field is optional and present-when-meaningful: a clean scan with no
+ * gaps sheds most fields entirely. Declared as a single interface so
+ * the outer `buildAnalysisCoverage` container and its sub-assemblers
+ * (`assembleOpaqueComponentBlock`, `assembleParseErrorBlocks`,
+ * `assembleFragmentFilesBlock`, `populateCoverageTail`) can accept
+ * the same shape by reference instead of redeclaring overlapping
+ * subsets — keeping the authoritative field set in one place.
+ */
+interface CoverageBlock {
+  opaqueCustomComponents?: number;
+  opaqueCustomComponentsTop?: readonly { readonly name: string; readonly callSites: number }[];
+  opaqueCustomComponentNames?: readonly string[];
+  opaqueCustomComponentsExcludedByAutoDetect?: number;
+  templateDirectivesFound?: readonly string[];
+  templateDirectiveHandling?: string;
+  parseErrorFileCount?: number;
+  parseErrorFiles?: readonly ParseErrorEntry[];
+  parseErrorFilesTruncated?: MetaArrayTruncationSummary;
+  partialParseFileCount?: number;
+  partialParseFiles?: readonly ParseErrorEntry[];
+  partialParseFilesTruncated?: MetaArrayTruncationSummary;
+  rulesByExtension?: Readonly<Record<string, readonly string[]>>;
+  parseModeByExtension?: Readonly<Record<string, string>>;
+  hints?: readonly string[];
+  skippedByExtension?: Readonly<Record<string, number>>;
+  fragmentFileCount?: number;
+  fragmentFiles?: readonly string[];
+  fragmentFilesTruncated?: MetaArrayTruncationSummary;
 }
 
 interface CoverageAccumulator {
@@ -232,34 +272,7 @@ export function buildAnalysisCoverage(
   const wrapperSet = new Set(wrappers);
   for (const file of files) accumulateCoverageForFile(file, wrapperSet, acc, preset);
 
-  const coverage: {
-    opaqueCustomComponents?: number;
-    opaqueCustomComponentsTop?: readonly { readonly name: string; readonly callSites: number }[];
-    opaqueCustomComponentNames?: readonly string[];
-    opaqueCustomComponentsExcludedByAutoDetect?: number;
-    templateDirectivesFound?: readonly string[];
-    templateDirectiveHandling?: string;
-    parseErrorFileCount?: number;
-    parseErrorFiles?: readonly {
-      readonly path: string;
-      readonly parser: string;
-      readonly reason: string;
-    }[];
-    parseErrorFilesTruncated?: MetaArrayTruncationSummary;
-    partialParseFileCount?: number;
-    partialParseFiles?: readonly {
-      readonly path: string;
-      readonly parser: string;
-      readonly reason: string;
-    }[];
-    partialParseFilesTruncated?: MetaArrayTruncationSummary;
-    rulesByExtension?: Readonly<Record<string, readonly string[]>>;
-    hints?: readonly string[];
-    skippedByExtension?: Readonly<Record<string, number>>;
-    fragmentFileCount?: number;
-    fragmentFiles?: readonly string[];
-    fragmentFilesTruncated?: MetaArrayTruncationSummary;
-  } = {};
+  const coverage: CoverageBlock = {};
   // Q-SHARED-META-ARRAY-BUDGET-CAP: OR across every cap in this
   // block. Propagated to the return record so `warningsField` can
   // emit `response_meta_truncated` honestly — "at least one meta
@@ -296,7 +309,7 @@ export function buildAnalysisCoverage(
   populateCoverageTail(coverage, files, activeRules, acc, verbose, discoveryDiagnostics);
   if (Object.keys(coverage).length === 0) return {};
   return {
-    analysisCoverage: coverage,
+    analysisCoverage: coverage as Record<string, unknown>,
     ...(metaArrayTruncated ? { metaArrayTruncated: true } : {}),
   };
 }
@@ -309,11 +322,7 @@ export function buildAnalysisCoverage(
  * early section.
  */
 function populateCoverageTail(
-  coverage: {
-    rulesByExtension?: Readonly<Record<string, readonly string[]>>;
-    hints?: readonly string[];
-    skippedByExtension?: Readonly<Record<string, number>>;
-  },
+  coverage: CoverageBlock,
   files: readonly ParsedFile[],
   activeRules: readonly Rule[],
   acc: CoverageAccumulator,
@@ -324,6 +333,20 @@ function populateCoverageTail(
     const byExt = rulesByExtension(files, activeRules);
     if (Object.keys(byExt).length > 0) coverage.rulesByExtension = byExt;
   }
+  // Per-extension parse-mode disclosure so the agent can reconcile
+  // `filesByExtension` counts against per-rule `filesEvaluated`.
+  // Extensions that alias into a foreign parser (`.scss` → css AST,
+  // `.mdx` → tsx, `.astro`/`.md`/`.markdown` → html, `.js`/`.ts` → tsx)
+  // show the AST-language label they route through; extensions whose
+  // parser name matches the extension itself show `"native"`. Without
+  // this, a scan reporting N `.scss` files in `filesByExtension` plus
+  // `perRuleCoverage.filesEvaluated` totals that don't sum (a
+  // real-world scan had `1637 ≠ 1053 + 584`) forces the agent to
+  // guess whether `.scss` was parsed as CSS, as something else, or
+  // skipped. Present-when-meaningful: omitted when no parseable files
+  // were scanned.
+  const parseMode = parseModeByExtension(files);
+  if (Object.keys(parseMode).length > 0) coverage.parseModeByExtension = parseMode;
   const hints = buildHints(files, acc);
   if (hints.length > 0) coverage.hints = hints;
   // V1-DETECT-SILENT-EXT: surface per-extension counts for files the
@@ -423,22 +446,7 @@ function truncateParseErrorReason(message: string): string {
 function assembleParseErrorBlocks(
   entries: readonly ParseErrorEntry[],
   findingFilePaths: ReadonlySet<string> | undefined,
-  coverage: {
-    parseErrorFileCount?: number;
-    parseErrorFiles?: readonly {
-      readonly path: string;
-      readonly parser: string;
-      readonly reason: string;
-    }[];
-    parseErrorFilesTruncated?: MetaArrayTruncationSummary;
-    partialParseFileCount?: number;
-    partialParseFiles?: readonly {
-      readonly path: string;
-      readonly parser: string;
-      readonly reason: string;
-    }[];
-    partialParseFilesTruncated?: MetaArrayTruncationSummary;
-  },
+  coverage: CoverageBlock,
 ): boolean {
   const totalFailure: ParseErrorEntry[] = [];
   const partial: ParseErrorEntry[] = [];
@@ -506,11 +514,7 @@ function assembleParseErrorBlocks(
  */
 function assembleFragmentFilesBlock(
   fragmentFiles: readonly string[],
-  coverage: {
-    fragmentFileCount?: number;
-    fragmentFiles?: readonly string[];
-    fragmentFilesTruncated?: MetaArrayTruncationSummary;
-  },
+  coverage: CoverageBlock,
 ): boolean {
   coverage.fragmentFileCount = fragmentFiles.length;
   const sorted = [...fragmentFiles].sort((a, b) => a.localeCompare(b));
@@ -530,11 +534,7 @@ function assembleFragmentFilesBlock(
 function assembleOpaqueComponentBlock(
   opaque: ReadonlyMap<string, OpaqueComponentUsage>,
   verbose: boolean,
-  coverage: {
-    opaqueCustomComponents?: number;
-    opaqueCustomComponentsTop?: readonly { readonly name: string; readonly callSites: number }[];
-    opaqueCustomComponentNames?: readonly string[];
-  },
+  coverage: CoverageBlock,
 ): void {
   coverage.opaqueCustomComponents = opaque.size;
   const ranked = rankOpaqueByCallSites(opaque);
@@ -755,6 +755,38 @@ function describeTemplateDirectiveHandling(engines: ReadonlySet<string>): string
  * surfaces naming "rules run on this extension" must agree
  * (Q3-RULES-BY-EXTENSION-UNDERCOUNT) — this is the agreement site.
  */
+/**
+ * Per-extension disclosure of which parser / AST-language each file
+ * routed through. Mirrors `parseForExtension` in `src/mcp/session.ts`
+ * and the EXTENSION_ALIASES table in `src/utils/path.ts`. Values are
+ * either `"native"` (extension name equals AST language — no alias to
+ * explain) or the AST-language tag an alias routes through
+ * (`"css"`, `"html"`, `"tsx"`). Canonical mappings: `.scss → "css"`,
+ * `.mdx → "tsx"`, `.astro → "html"`, `.md`/`.markdown → "html"`,
+ * `.js`/`.ts → "tsx"`. Native pairs: `.css`, `.html`, `.htm`, `.tsx`,
+ * `.jsx`. Values mirror the AST `language` alphabet so cross-
+ * referencing against `parseErrorFiles[].parser` is unambiguous.
+ * Derived from the ParsedFile list (no re-dispatch): every file
+ * carries `ast.language` and the extension comes off the path.
+ * `parseForExtension` dispatches purely on suffix, so two files with
+ * the same extension always produce the same language — safe to stop
+ * at the first sighting. Sorted for deterministic wire output.
+ */
+const NATIVE_EXT_LANG: Readonly<Record<string, string>> = { htm: "html", jsx: "tsx" };
+
+function parseModeByExtension(files: readonly ParsedFile[]): Record<string, string> {
+  const seen = new Map<string, string>();
+  for (const f of files) {
+    const dot = f.filePath.lastIndexOf(".");
+    const ext = dot === -1 ? "" : f.filePath.slice(dot).toLowerCase();
+    if (ext.length === 0 || seen.has(ext)) continue;
+    const lang = f.ast.language;
+    const isNative = ext.slice(1) === lang || NATIVE_EXT_LANG[ext.slice(1)] === lang;
+    seen.set(ext, isNative ? "native" : lang);
+  }
+  return Object.fromEntries([...seen.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
 function rulesByExtension(
   files: readonly ParsedFile[],
   activeRules: readonly Rule[],

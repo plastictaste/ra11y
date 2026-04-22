@@ -499,7 +499,12 @@ describe("buildAnalysisCoverage — hints", () => {
     it("does not hint when the project is small", () => {
       const files = [tsxFile("a.tsx", []), cssFile("a.css")];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
-      expect(analysisCoverage).toBeUndefined();
+      // `parseModeByExtension` still surfaces on small scans (it's
+      // scan-confidence telemetry that reconciles `filesByExtension`
+      // against per-rule `filesEvaluated` regardless of project size);
+      // the CSS-coverage hint stays absent, which is what this test
+      // pins.
+      expect(analysisCoverage?.["hints"]).toBeUndefined();
     });
 
     it("hints when CSS is absent from a React-sized codebase", () => {
@@ -1148,6 +1153,214 @@ describe("buildAnalysisCoverage — hints", () => {
       const verbose = buildAnalysisCoverage([fragment], [], NO_RULES, true).analysisCoverage;
       expect(terse?.["fragmentFiles"]).toEqual(["_includes/footer.html"]);
       expect(verbose?.["fragmentFiles"]).toEqual(["_includes/footer.html"]);
+    });
+  });
+
+  // `filesByExtension` counts .scss files separately, but every .scss
+  // file routes through the SCSS adapter → CSS AST and participates in
+  // `.css`-gated rules' `perRuleCoverage.filesEvaluated`. Without
+  // disclosing the parse mode, a scan with many `.scss` files and
+  // `filesEvaluated` totals that don't cleanly sum forces the agent
+  // to guess which parser the scanner used per extension. The
+  // `parseModeByExtension` field in `analysisCoverage` answers that
+  // question directly: extensions whose parser name equals the
+  // extension itself surface as `"native"`, alias-routed extensions
+  // surface the AST-language tag they feed into.
+  describe("parseModeByExtension disclosure", () => {
+    function fileWith(
+      path: string,
+      language: "html" | "css" | "tsx" | "jsx" | "ts" | "js",
+    ): ParsedFile {
+      // Minimal ParsedFile shape — only `filePath` + `ast.language`
+      // drive `parseModeByExtension`, so the AST body is a stub that
+      // satisfies the discriminated union for whichever language the
+      // caller asked for. Mirrors the `mkFile` helper used by the
+      // sibling `rulesByExtension` alias-coverage block. Real
+      // `parseForExtension` always tags the whole JSX family
+      // (`.tsx`/`.jsx`/`.ts`/`.js`) with `language: "tsx"`; the
+      // helper accepts the narrower union for deliberate test cases
+      // that want to exercise the language discriminator directly.
+      if (language === "html") {
+        return {
+          filePath: path,
+          source: "",
+          ast: {
+            language: "html",
+            root: {
+              kind: "HtmlDocument",
+              range: { start: 0, end: 0 },
+              loc: {
+                start: { line: 1, column: 1, offset: 0 },
+                end: { line: 1, column: 1, offset: 0 },
+              },
+              children: [],
+            },
+            errors: [],
+          },
+        };
+      }
+      if (language === "css") {
+        return {
+          filePath: path,
+          source: "",
+          ast: {
+            language: "css",
+            root: {
+              kind: "CssStylesheet",
+              range: { start: 0, end: 0 },
+              loc: {
+                start: { line: 1, column: 1, offset: 0 },
+                end: { line: 1, column: 1, offset: 0 },
+              },
+              rules: [],
+            },
+            errors: [],
+          },
+        };
+      }
+      return {
+        filePath: path,
+        source: "",
+        ast: {
+          language,
+          root: {
+            kind: "TsxModule",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            jsxElements: [],
+          },
+          errors: [],
+        },
+      };
+    }
+
+    it("labels native extensions (.html/.css/.tsx) as `native`", () => {
+      // An extension whose name equals the AST language has no alias
+      // indirection to disclose — the `"native"` sentinel is the honest
+      // read: same parser, same rule gate, same `filesEvaluated` lane.
+      const files = [
+        fileWith("index.html", "html"),
+        fileWith("styles.css", "css"),
+        fileWith("App.tsx", "tsx"),
+      ];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
+      expect(mode).toEqual({
+        ".css": "native",
+        ".html": "native",
+        ".tsx": "native",
+      });
+    });
+
+    it("labels `.scss` as `css` (the aliased AST language it routes through)", () => {
+      // The canonical disclosure case: 584 `.scss` files in the
+      // website-templates scan were parsed as CSS; an agent reading
+      // `parseModeByExtension[".scss"] === "css"` learns that every
+      // `.css`-gated rule's `filesEvaluated` includes these files.
+      const files = [fileWith("button.scss", "css"), fileWith("main.css", "css")];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
+      expect(mode?.[".scss"]).toBe("css");
+      expect(mode?.[".css"]).toBe("native");
+    });
+
+    it("labels `.htm` as `native` (same parser family as `.html`)", () => {
+      // `.htm` and `.html` both parse to an HTML AST with
+      // `language: "html"`. A literal equality check between extension
+      // name and language would wrongly tag `.htm` as aliased; the
+      // helper normalizes this to `"native"` so the disclosure is
+      // honest (no alias indirection to explain).
+      const files = [fileWith("legacy.htm", "html")];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
+      expect(mode?.[".htm"]).toBe("native");
+    });
+
+    it("labels `.jsx` as `native` even though the AST language tag is `tsx`", () => {
+      // The in-house parser emits `language: "tsx"` for the whole
+      // JSX family — `.tsx`, `.jsx`, `.ts`, `.js` all land on the
+      // same parser. `.tsx` and `.jsx` are the native JSX-family
+      // extensions (no alias indirection); `.ts` and `.js` ARE
+      // aliases (they can't legally carry JSX and are routed through
+      // the TSX parser only because Next.js-style codebases ship JSX
+      // in plain `.js`). Normalize `.jsx → "native"` here; keep
+      // `.ts` / `.js → "tsx"` as the honest alias disclosure. Real
+      // `parseForExtension` tags all four with `language: "tsx"`, so
+      // the test mirrors that production reality.
+      const files = [
+        fileWith("App.jsx", "tsx"),
+        fileWith("util.ts", "tsx"),
+        fileWith("legacy.js", "tsx"),
+      ];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
+      expect(mode?.[".jsx"]).toBe("native");
+      expect(mode?.[".ts"]).toBe("tsx");
+      expect(mode?.[".js"]).toBe("tsx");
+    });
+
+    it("covers every EXTENSION_ALIASES row: .scss → css, .mdx → tsx, .astro/.md/.markdown → html, .ts/.js → tsx", () => {
+      // Pin the full alias table to the parse-mode disclosure so a
+      // future alias addition in `src/utils/path.ts EXTENSION_ALIASES`
+      // can't silently drift the disclosure out of sync. AST languages
+      // mirror what the dedicated parsers in `src/mcp/session.ts
+      // parseForExtension` produce (the TSX parser handles the whole
+      // JSX family and tags everything `tsx`).
+      const files = [
+        fileWith("a.scss", "css"),
+        fileWith("b.mdx", "tsx"),
+        fileWith("c.astro", "html"),
+        fileWith("d.md", "html"),
+        fileWith("e.markdown", "html"),
+        fileWith("f.js", "tsx"),
+        fileWith("g.ts", "tsx"),
+      ];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
+      expect(mode).toEqual({
+        ".astro": "html",
+        ".js": "tsx",
+        ".markdown": "html",
+        ".md": "html",
+        ".mdx": "tsx",
+        ".scss": "css",
+        ".ts": "tsx",
+      });
+    });
+
+    it("omits the field when no parseable files were scanned (present-when-meaningful)", () => {
+      // Empty input → no disclosure to make. A caller distinguishing
+      // "no data" from "empty map" reads the field's absence as "no
+      // parseable files," matching the honest-shape rule from the
+      // ai-first-consumer doctrine.
+      const { analysisCoverage } = buildAnalysisCoverage([], [], NO_RULES, false);
+      expect(analysisCoverage?.["parseModeByExtension"]).toBeUndefined();
+    });
+
+    it("surfaces on the response by default (not gated on verboseMeta) — scan-confidence telemetry", () => {
+      // Sibling to `parseErrorFiles`/`fragmentFiles`/`rulesByExtension`:
+      // the reconciliation signal the field provides is load-bearing
+      // whenever the agent inspects `filesByExtension` — gating it
+      // behind verbose would make the field invisible on the default
+      // response shape exactly when the agent needs it to explain the
+      // `filesEvaluated` mismatch.
+      const files = [fileWith("a.scss", "css")];
+      const { analysisCoverage: defaultMeta } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      expect(defaultMeta?.["parseModeByExtension"]).toEqual({ ".scss": "css" });
+    });
+
+    it("sorts extensions alphabetically for deterministic wire output", () => {
+      const files = [
+        fileWith("z.tsx", "tsx"),
+        fileWith("a.scss", "css"),
+        fileWith("m.html", "html"),
+      ];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
+      expect(Object.keys(mode ?? {})).toEqual([".html", ".scss", ".tsx"]);
     });
   });
 
