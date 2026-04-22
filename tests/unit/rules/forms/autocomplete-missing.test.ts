@@ -118,6 +118,81 @@ describe("rule forms/autocomplete-missing", () => {
       });
       expect(violations).toHaveLength(0);
     });
+
+    // WCAG 1.3.5 Input Purposes enumerates 53 autocomplete tokens;
+    // "search" is not one of them. A site-search <input> is out of
+    // scope for the criterion entirely — no token would fit the fix.
+    // These guards are spec-correctness, not heuristic suppression.
+    it("type=search skips the name/id heuristic branch", () => {
+      // Before the fix, matchPurpose had a `type !== "search"` carve-out
+      // that let search-typed inputs fall through to name/id matching.
+      // An id like "search-user-email" would match the email needle and
+      // fire with suggestion="autocomplete=email" on a search box.
+      const violations = runRule(
+        rule,
+        `<input type="search" id="search-user-email" name="q">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("role=searchbox skips even when name matches a heuristic", () => {
+      const violations = runRule(rule, `<input type="text" role="searchbox" name="firstName">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it('aria-label="Search" skips even when name matches a heuristic', () => {
+      const violations = runRule(
+        rule,
+        `<input type="text" aria-label="Search users" name="firstName">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("name token includes search (camelCase) — skip", () => {
+      const violations = runRule(rule, `<input type="text" name="searchInput">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("id token includes search (kebab-case) — skip", () => {
+      const violations = runRule(rule, `<input type="text" id="search-input">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it('name="q" (canonical search-query name) — skip', () => {
+      const violations = runRule(rule, `<input type="text" name="q">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it('name="query" — skip', () => {
+      const violations = runRule(rule, `<input type="text" name="query">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("standalone q-as-token does not over-match identifiers containing q", () => {
+      // "query" is a search token too, so this case exercises the
+      // tokenize path rather than the q-alone path. The guard must not
+      // falsely skip identifiers that merely contain the letter q
+      // (e.g. "sequential", "liquor") — neither tokenizes to `q` or
+      // `query` as a standalone token, so the rule stays live.
+      const violations = runRule(rule, `<input type="text" name="sequentialEmail">`, {
+        filePath: "index.html",
+      });
+      // sequentialEmail contains `email` → rule still fires (name path).
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("email");
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -135,6 +210,30 @@ describe("rule forms/autocomplete-missing", () => {
 
     it("input has autocomplete (HTML attribute name, also allowed)", () => {
       const violations = runRule(rule, `const X = <input type="email" autocomplete="email" />;`);
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=search + id with heuristic needle — skip (spec-correctness)", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="search" id="search-user-email" name="q" />;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("role=searchbox — skip even when name matches a heuristic", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="text" role="searchbox" name="firstName" />;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('aria-label="Search" — skip even when name matches a heuristic', () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="text" aria-label="Search users" name="firstName" />;`,
+      );
       expect(violations).toHaveLength(0);
     });
   });

@@ -43,6 +43,19 @@ const EXPECTED_BY_TYPE: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * Tokens (post-normalization — lowercased, camelCase split, non-letters
+ * collapsed to delimiters) that identify a free-form site-search input.
+ * WCAG 1.3.5 Input Purposes enumerates 53 autocomplete tokens and
+ * "search" is not one of them: a site-search box is out of scope for
+ * the criterion, so the rule must not fire on it. This is
+ * spec-correctness, not heuristic suppression — see
+ * docs/kb/architecture/ai-first-consumer.md ("No heuristic suppression"
+ * applies when the criterion DOES apply and evidence is thin; here the
+ * criterion does not apply at all).
+ */
+const SEARCH_TOKENS: ReadonlySet<string> = new Set(["search", "searchbox", "query", "q"]);
+
+/**
  * Fallback: when `type` is text/empty, infer purpose from the name or
  * id attribute. Matched as a contains check against lowercase.
  */
@@ -117,6 +130,9 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     const type = (getHtmlAttribute(input, "type") ?? "text").toLowerCase();
     const nameAttr = getHtmlAttribute(input, "name");
     const idAttr = getHtmlAttribute(input, "id");
+    const roleAttr = getHtmlAttribute(input, "role");
+    const ariaLabel = getHtmlAttribute(input, "aria-label");
+    if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) continue;
     const match = matchPurpose(type, nameAttr, idAttr);
     if (!match) continue;
     emit(buildViolation("input", match, input.loc.start));
@@ -134,6 +150,9 @@ function checkJsxInput(input: JsxElement, emit: Emit): void {
   const type = (getJsxAttributeString(input, "type") ?? "text").toLowerCase();
   const nameAttr = getJsxAttributeString(input, "name");
   const idAttr = getJsxAttributeString(input, "id");
+  const roleAttr = getJsxAttributeString(input, "role");
+  const ariaLabel = getJsxAttributeString(input, "aria-label");
+  if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) return;
   const match = matchPurpose(type, nameAttr, idAttr);
   if (!match) return;
   emit(buildViolation("input", match, input.loc.start));
@@ -165,7 +184,9 @@ function matchPurpose(
   if (fromType) {
     return { expected: fromType, trigger: { kind: "type", value: type } };
   }
-  if (type !== "text" && type !== "" && type !== "search") return null;
+  // type="search" is handled earlier by isSearchInput; only text-typed
+  // (or type-omitted) inputs reach the name/id heuristics below.
+  if (type !== "text" && type !== "") return null;
   const fromName = matchNameHeuristic(nameAttr);
   if (fromName) {
     return {
@@ -192,6 +213,62 @@ function matchNameHeuristic(
     if (lowered.includes(heuristic.needle)) return heuristic;
   }
   return null;
+}
+
+/**
+ * Returns true when the input declares itself as a free-form site-
+ * search control. Any of the following signals is sufficient:
+ *
+ *   - `type="search"` (the native search type; WCAG Input Purposes
+ *     has no "search" token so the criterion does not apply)
+ *   - `role="searchbox"` (ARIA-declared search semantics)
+ *   - `name`, `id`, or `aria-label` normalizes to a token set
+ *     containing `search`, `searchbox`, `query`, or `q`
+ *
+ * Token matching uses `tokenizeIdentifier` so camelCase
+ * (`searchInput`), kebab-case (`search-input`), snake_case
+ * (`search_input`), and space-separated labels (`aria-label="Search
+ * users"`) all split cleanly. The standalone `q` branch catches the
+ * canonical `<input name="q">` search shape without matching every
+ * identifier that happens to contain the letter q — per the
+ * Q5-POINTER-GESTURES-SUBSTRING-FALSE-POSITIVE doctrine on
+ * word-boundary identifier matching.
+ */
+function isSearchInput(
+  type: string,
+  role: string | null | undefined,
+  nameAttr: string | null | undefined,
+  idAttr: string | null | undefined,
+  ariaLabel: string | null | undefined,
+): boolean {
+  if (type === "search") return true;
+  if (role !== null && role !== undefined && role.trim().toLowerCase() === "searchbox") return true;
+  if (containsSearchToken(nameAttr)) return true;
+  if (containsSearchToken(idAttr)) return true;
+  if (containsSearchToken(ariaLabel)) return true;
+  return false;
+}
+
+function containsSearchToken(value: string | null | undefined): boolean {
+  if (!value) return false;
+  for (const token of tokenizeIdentifier(value)) {
+    if (SEARCH_TOKENS.has(token)) return true;
+  }
+  return false;
+}
+
+/**
+ * Splits `value` into lowercased alphabetic tokens, treating camelCase
+ * transitions (`searchBox` → `search`, `box`), non-letters
+ * (`search-input`, `search_input`, `search input`), and digits as
+ * token boundaries. The output never contains empty tokens.
+ */
+function tokenizeIdentifier(value: string): readonly string[] {
+  const camelSplit = value.replace(/([a-z])([A-Z])/g, "$1 $2");
+  return camelSplit
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((tok) => tok.length > 0);
 }
 
 function describeTrigger(trigger: TriggerEvidence): string {
