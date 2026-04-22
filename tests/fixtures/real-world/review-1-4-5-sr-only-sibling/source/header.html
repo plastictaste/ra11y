@@ -1,0 +1,19 @@
+<!--
+  Sanitized fixture: Jekyll-style header fragment where a logo <img>
+  shares a parent <a> with a visually-hidden <span class="sr-only">
+  carrying the textual equivalent. Mirrors the real header.html shape
+  reported in the Jekyll field test — the image is the visual
+  rendering of the text, and an SR-only text equivalent is already
+  carried in the DOM.
+
+  The 1.4.5 review candidate must still SURFACE (per the AI-first
+  consumer model — no heuristic suppression of spec carve-outs), but
+  its reason must carry the "visually-hidden text sibling" dismissal
+  signal so the agent can triage without reading the file.
+-->
+<header class="site-header">
+  <a class="site-title" href="/">
+    <img src="/assets/logo.svg" alt="Jekyll" class="site-logo" />
+    <span class="sr-only">Jekyll</span>
+  </a>
+</header>

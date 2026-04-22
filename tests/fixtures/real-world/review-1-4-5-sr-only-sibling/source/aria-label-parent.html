@@ -1,0 +1,11 @@
+<!--
+  Variant: the parent anchor carries `aria-label` — the accessible
+  name for the link is supplied outside the image's alt, so a
+  duplicated SR-only sibling is not required. The finder should
+  enrich the reason with the `aria-label` dismissal signal.
+-->
+<header>
+  <a href="/" aria-label="Jekyll home">
+    <img src="/assets/logo.svg" alt="Jekyll" class="site-logo" />
+  </a>
+</header>
