@@ -33,7 +33,11 @@ function makeFile(filePath: string, source: string): ParsedFile {
   return {
     filePath,
     source,
-    ast: { type: "root", children: [], location: { line: 1, column: 1 } } as unknown as ParsedFile["ast"],
+    ast: {
+      type: "root",
+      children: [],
+      location: { line: 1, column: 1 },
+    } as unknown as ParsedFile["ast"],
   };
 }
 
@@ -85,7 +89,7 @@ describe("detectApplicability", () => {
       },
     };
     const applicability = detectApplicability([], diagnostics);
-    expect(Object.keys(applicability.skippedContentExtensions).sort()).toEqual([
+    expect(Object.keys(applicability.skippedContentExtensions ?? {}).sort()).toEqual([
       ".adoc",
       ".asciidoc",
       ".markdown",
