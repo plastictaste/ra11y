@@ -5,7 +5,7 @@
  * of the central tool-registration module.
  */
 
-import { runScan } from "../engine/scanner.ts";
+import { type ParsedFile, runScan } from "../engine/scanner.ts";
 import {
   type AttestationStalenessProbe,
   type AttestationSurface,
@@ -16,6 +16,7 @@ import {
 import { buildCoverageReport, type PerStandardCoverage } from "../reports/coverage.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
 import type { ReviewCandidate, ReviewConfidence } from "../types/review.ts";
+import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import {
   type Applicability,
   detectApplicability,
@@ -33,7 +34,7 @@ import {
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
-  parseFiles,
+  parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
   strArrayParam,
@@ -209,7 +210,21 @@ export const checklistTool: McpTool = {
     }
     const level = resolveLevel(strParam(params, "level"), session);
     const projectConfig = await session.loadProjectConfig(cwd);
-    const files = await parseFiles(paths, session, cwd);
+    // Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY: switch to the
+    // diagnostics-aware parse entrypoint so the same
+    // `skippedByExtension` map `coverage` feeds into its warnings
+    // channel is available here too. Without this, `checklist` and
+    // `coverage` run on identical inputs but emit different warning
+    // shapes (coverage surfaces `extensions_skipped_no_parser` +
+    // paired `warningsDetails`, checklist silently drops both) —
+    // the canonical cross-surface drift the AI-first doctrine flags
+    // in `ai-first-consumer.md` §"One tool call should answer 'what
+    // next?'". Details are computed downstream from `analysisCoverage`.
+    const { files, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
+      paths,
+      session,
+      cwd,
+    );
     const attestations = await loadDurableAttestations(cwd);
 
     // Q-SHARED-RULES-EVALUATED-SSOT: load project config and route
@@ -373,9 +388,17 @@ export const checklistTool: McpTool = {
     // checklist has no root-resolution step (it takes `paths` directly,
     // defaulting to `[cwd]`), mirroring `scan`; pass `rootSource: null`.
     // Config resolution isn't part of this handler, so `configSource:
-    // undefined` suppresses `no_config_found`. analysisCoverage /
-    // filesByExtension aren't computed here — the other codes will
-    // simply not fire until the tool plumbs that signal through.
+    // undefined` suppresses `no_config_found`.
+    //
+    // Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY: `analysisCoverage` +
+    // `filesByExtension` flow through the same `buildAnalysisCoverage`
+    // / `countFilesByExtension` helpers `coverage` uses, so
+    // cross-surface consumers see the same warning codes + paired
+    // `warningsDetails` shapes on identical inputs. Without the flow
+    // here, `scan_project`/`coverage` would surface
+    // `extensions_skipped_no_parser` + its structured payload while
+    // `checklist` silently dropped both — the AI-first doctrine's
+    // "cross-surface drift forces wasted round trips" footgun.
     //
     // `meta` is opt-in per metaMode — legacy callers (no metaMode)
     // never saw a `meta` block on this tool, and additive surface
@@ -385,6 +408,22 @@ export const checklistTool: McpTool = {
     // telemetry we DO ship under delta mode is scan-confidence data
     // the agent uses to cross-check parity with the scan-family
     // tools, not trimmed for terseness).
+    const analysisCoverageField = buildAnalysisCoverage(
+      files,
+      session.config.nativeWrappers,
+      activeRules,
+      false,
+      0,
+      undefined,
+      discoveryDiagnostics,
+      // Parse-error split by same rule as the scan surfaces: files
+      // that produced at least one violation land in
+      // `partialParseFiles` (findings present, recall degraded);
+      // files whose parser errored without emitting anything stay
+      // in `parseErrorFiles` (invisible to rules). Mirrors `coverage`.
+      new Set(result.violations.map((v) => v.location.filePath)),
+    );
+    const filesByExtension = countFilesByExtension(files);
     const metaField = buildChecklistMetaField({
       params,
       session,
@@ -410,12 +449,31 @@ export const checklistTool: McpTool = {
         filesScanned: files.length,
         rootSource: null,
         configSource: undefined,
-        analysisCoverage: undefined,
-        filesByExtension: undefined,
+        analysisCoverage: analysisCoverageField.analysisCoverage,
+        filesByExtension,
       }),
     });
   },
 };
+
+/**
+ * Tallies parseable files by extension. Mirrors the private helper in
+ * {@link ./tool-coverage.ts `countFilesByExtension`} so `checklist` can
+ * feed the same `filesByExtension` signal into the scan-confidence
+ * warnings channel (Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY — without
+ * this, `tailwind_detected_css_undercounted` would fire on `coverage`
+ * and `scan_project` but silently not on `checklist` for the same
+ * input set).
+ */
+function countFilesByExtension(files: readonly ParsedFile[]): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const f of files) {
+    const dot = f.filePath.lastIndexOf(".");
+    const ext = dot === -1 ? "(no-ext)" : f.filePath.slice(dot);
+    counts.set(ext, (counts.get(ext) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
 
 /**
  * Assembles the optional `meta` field for `checklist`. Emitted only

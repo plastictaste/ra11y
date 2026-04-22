@@ -1,0 +1,301 @@
+/**
+ * Cross-surface invariant (Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY):
+ * warning codes carried across scan_project / scan_file / coverage /
+ * checklist must ship the same `warningsDetails[code]` shape on
+ * identical inputs, or OMIT the code entirely from surfaces that
+ * cannot compute its canonical detail payload.
+ *
+ * Doctrine:
+ *   - `ai-first-consumer.md` §"One tool call should answer 'what next?'":
+ *     cross-surface drift (`coverage` surfaces a warning + payload,
+ *     `checklist` silently drops both) forces wasted round trips.
+ *   - `ai-first-consumer.md` §"Ambiguous field shapes are dishonest":
+ *     if a surface emits code `X` without the paired `warningsDetails[X]`
+ *     payload its siblings emit, downstream consumers can't tell
+ *     "unavailable" from "genuinely empty."
+ *   - `ai-first-consumer.md` §"Zero-output success is ambiguous failure":
+ *     the response-level analogue of the per-field rule — if `scan_project`
+ *     emits `extensions_skipped_no_parser` + `warningsDetails` but
+ *     `checklist` emits `warnings: ["no_config_found"]` alone on the
+ *     same scan, the agent has no way to discover the skipped-extension
+ *     signal without a second `scan_project` round trip.
+ *
+ * Surface taxonomy (taught by this test):
+ *   - `scan_project`: full discovery + project root → emits the full
+ *     warning battery including discovery-dependent codes.
+ *   - `coverage`: full discovery → same discovery-dependent codes as
+ *     scan_project (`extensions_skipped_no_parser`, etc.).
+ *   - `checklist`: full discovery → MUST match coverage on shared
+ *     discovery codes (this is what this test was written to enforce).
+ *   - `scan_file`: single-file, no discovery → cannot compute
+ *     discovery-only codes like `extensions_skipped_no_parser`; omits
+ *     them entirely per the "present-when-meaningful" rule.
+ */
+
+import { describe, expect, it } from "bun:test";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+
+interface JsonRpcResponse {
+  readonly id?: number;
+  readonly result?: { readonly content?: readonly { readonly text: string }[] };
+}
+
+async function mcpSession(
+  messages: readonly Record<string, unknown>[],
+): Promise<JsonRpcResponse[]> {
+  const proc = Bun.spawn(["bun", "run", "src/cli.ts", "--mcp"], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    cwd: PROJECT_ROOT,
+  });
+  proc.stdin.write(`${messages.map((m) => JSON.stringify(m)).join("\n")}\n`);
+  proc.stdin.end();
+  const text = await new Response(proc.stdout).text();
+  await proc.exited;
+  return text
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as JsonRpcResponse);
+}
+
+const initMsg = (id: number) => ({
+  jsonrpc: "2.0",
+  id,
+  method: "initialize",
+  params: {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "t", version: "0" },
+  },
+});
+
+const toolCall = (id: number, name: string, args: Record<string, unknown>) => ({
+  jsonrpc: "2.0",
+  id,
+  method: "tools/call",
+  params: { name, arguments: args },
+});
+
+function body<T>(resp: JsonRpcResponse): T {
+  const text = resp.result?.content?.[0]?.text;
+  if (typeof text !== "string") throw new Error("missing tool result text");
+  return JSON.parse(text) as T;
+}
+
+interface ExtensionsSkippedPayload {
+  readonly extensions: readonly string[];
+  readonly topExtension: string;
+  readonly topCount: number;
+  readonly totalSkipped: number;
+}
+
+interface WarningsEnvelope {
+  readonly warnings?: readonly string[];
+  readonly warningsDetails?: {
+    readonly extensions_skipped_no_parser?: ExtensionsSkippedPayload;
+    readonly content_files_skipped?: { readonly count: number };
+    readonly source_language_unsupported?: { readonly language: string };
+    readonly vendor_css_dominates_findings?: { readonly vendorFindingsCount: number };
+    readonly response_token_budget_truncated?: { readonly requestedLimit: number };
+  };
+}
+
+/**
+ * Makes a fixture that drops at least one `.vue` file into the scan
+ * root so discovery records an `extensions_skipped_no_parser` signal.
+ * We also seed one real HTML file so the scan has findings to report —
+ * otherwise the response is dominated by `scanned_zero_files` and the
+ * payload-bearing codes never fire. `.vue` is chosen over `.scss` /
+ * `.md` because both of those were added to `PARSEABLE_EXTENSIONS` —
+ * `.vue` remains a canonical non-parseable Web-framework extension so
+ * the skip counter fires deterministically regardless of future
+ * parser additions.
+ */
+async function makeSkippedExtensionFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-warn-"));
+  // Real parseable file — ensures the scan finishes with findings and
+  // the response is the "at least one file parsed" shape.
+  await writeFile(
+    join(dir, "page.html"),
+    `<html><body><img src="a.png"><p>hello</p></body></html>`,
+  );
+  // Unparseable-by-scanner file — drives the skip signal.
+  await writeFile(join(dir, "component.vue"), `<template><div>hi</div></template>`);
+  return dir;
+}
+
+/**
+ * Projects a surface's response body down to the shared warnings
+ * envelope. Every surface in scope must satisfy this shape; fields are
+ * optional because "omit when no code fires" is the correct honest
+ * behavior (present-when-meaningful rule).
+ */
+function warningsEnvelope(raw: Record<string, unknown>): WarningsEnvelope {
+  const warnings = Array.isArray(raw["warnings"])
+    ? (raw["warnings"] as readonly string[])
+    : undefined;
+  const details = raw["warningsDetails"] as WarningsEnvelope["warningsDetails"] | undefined;
+  return {
+    ...(warnings === undefined ? {} : { warnings }),
+    ...(details === undefined ? {} : { warningsDetails: details }),
+  };
+}
+
+/**
+ * Codes whose emission is tied to full discovery (a project walk that
+ * classifies files by extension). `scan_file` takes a single file and
+ * never runs discovery — it MUST omit these codes entirely per the
+ * task doctrine.
+ */
+const DISCOVERY_DEPENDENT_CODES: readonly string[] = [
+  "extensions_skipped_no_parser",
+  "content_files_skipped",
+  "source_language_unsupported",
+  "tailwind_detected_css_undercounted",
+  "template_files_parsed_as_literal",
+] as const;
+
+describe("Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY — warnings + warningsDetails coherence across scan_project / scan_file / coverage / checklist", () => {
+  it("scan_project, coverage, and checklist emit the same extensions_skipped_no_parser payload on the same scan root", async () => {
+    const dir = await makeSkippedExtensionFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const scanProj = warningsEnvelope(body<Record<string, unknown>>(responses[1]));
+    const coverage = warningsEnvelope(body<Record<string, unknown>>(responses[2]));
+    const checklist = warningsEnvelope(body<Record<string, unknown>>(responses[3]));
+
+    // Sanity: the fixture does trigger the code on scan_project —
+    // otherwise the invariant below is vacuously true.
+    expect(scanProj.warnings ?? []).toContain("extensions_skipped_no_parser");
+
+    // Cross-surface rule: any surface that runs full discovery and
+    // emits `extensions_skipped_no_parser` must carry the same
+    // structured payload. Deep-equal the payload so field shape drift
+    // (e.g., a surface dropping `topCount` while another keeps it) is
+    // caught.
+    const scanProjPayload = scanProj.warningsDetails?.extensions_skipped_no_parser;
+    const coveragePayload = coverage.warningsDetails?.extensions_skipped_no_parser;
+    const checklistPayload = checklist.warningsDetails?.extensions_skipped_no_parser;
+
+    expect(scanProjPayload).toBeDefined();
+    expect(coveragePayload).toBeDefined();
+    expect(checklistPayload).toBeDefined();
+
+    // All three surfaces see the same `.scss` file → identical payload.
+    expect(coveragePayload).toEqual(scanProjPayload);
+    expect(checklistPayload).toEqual(scanProjPayload);
+  });
+
+  it("every surface emitting `warnings: [code]` with a payload-bearing code also emits `warningsDetails[code]` (present-when-meaningful)", async () => {
+    const dir = await makeSkippedExtensionFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const envelopes = [
+      { name: "scan_project", env: warningsEnvelope(body<Record<string, unknown>>(responses[1])) },
+      { name: "coverage", env: warningsEnvelope(body<Record<string, unknown>>(responses[2])) },
+      { name: "checklist", env: warningsEnvelope(body<Record<string, unknown>>(responses[3])) },
+    ];
+
+    // The set of codes that carry a payload in the current assembler.
+    // Keep in sync with `ScanWarningDetails` keys in
+    // `src/mcp/warnings.ts`; a code appearing only under `warnings`
+    // without a paired payload MUST be presence-only (no code in this
+    // set satisfies that condition).
+    const payloadBearingCodes = new Set([
+      "extensions_skipped_no_parser",
+      "content_files_skipped",
+      "source_language_unsupported",
+      "vendor_css_dominates_findings",
+      "response_token_budget_truncated",
+    ]);
+
+    for (const { name, env } of envelopes) {
+      for (const code of env.warnings ?? []) {
+        if (payloadBearingCodes.has(code)) {
+          const detailKey = code as keyof NonNullable<typeof env.warningsDetails>;
+          const detail = env.warningsDetails?.[detailKey];
+          expect(
+            detail,
+            `${name} emitted warnings[${code}] but warningsDetails.${code} is missing — cross-surface consistency broken`,
+          ).toBeDefined();
+        }
+      }
+    }
+  });
+
+  it("every surface OMITS `warningsDetails` when no payload-bearing code fires (never ships empty `{}`)", async () => {
+    // Clean fixture: one well-formed HTML file, no discovery-skip
+    // triggers. Scan surfaces should emit at most presence-only codes
+    // (or no warnings at all) and `warningsDetails` must be absent.
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-clean-"));
+    await writeFile(
+      join(dir, "page.html"),
+      `<html><body><img src="a.png" alt="alt"><p>hello</p></body></html>`,
+    );
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+      toolCall(5, "scan_file", { filePath: join(dir, "page.html") }),
+    ]);
+    const envelopes = [
+      { name: "scan_project", env: warningsEnvelope(body<Record<string, unknown>>(responses[1])) },
+      { name: "coverage", env: warningsEnvelope(body<Record<string, unknown>>(responses[2])) },
+      { name: "checklist", env: warningsEnvelope(body<Record<string, unknown>>(responses[3])) },
+      { name: "scan_file", env: warningsEnvelope(body<Record<string, unknown>>(responses[4])) },
+    ];
+    for (const { name, env } of envelopes) {
+      // If `warningsDetails` is present, at least one key under it
+      // must correspond to a code actually in `warnings[]`. An
+      // empty-object `warningsDetails: {}` is a shape regression even
+      // under "surface cleanly emits warnings-only."
+      if (env.warningsDetails !== undefined) {
+        const keys = Object.keys(env.warningsDetails);
+        expect(
+          keys.length,
+          `${name} shipped warningsDetails with 0 keys — empty sentinel is forbidden`,
+        ).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("scan_file omits discovery-dependent warning codes entirely (single-file surface has no discovery phase)", async () => {
+    // Doctrine (task notes): "If a surface can emit a warning code
+    // but CANNOT compute the details that another surface provides
+    // (e.g. scan_file is single-file so `extensions_skipped_no_parser`
+    // doesn't apply), OMIT the code entirely from that surface."
+    //
+    // Dropped `.scss` alongside the HTML file. `scan_project` /
+    // `coverage` / `checklist` surface `extensions_skipped_no_parser`
+    // because they walk the directory; `scan_file` takes a single file
+    // path and must not surface the discovery-only codes at all —
+    // doing so without the paired payload would be the "bare code
+    // without details" anti-pattern the task explicitly forbids.
+    const dir = await makeSkippedExtensionFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_file", { filePath: join(dir, "page.html") }),
+    ]);
+    const env = warningsEnvelope(body<Record<string, unknown>>(responses[1]));
+    for (const code of DISCOVERY_DEPENDENT_CODES) {
+      expect(
+        env.warnings ?? [],
+        `scan_file must not emit the discovery-only code ${code}`,
+      ).not.toContain(code);
+    }
+  });
+});
