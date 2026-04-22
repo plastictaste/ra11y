@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sample Site</title>
+</head>
+<body>
+
+<!--
+  Anchor accessible-name gap: icon-only anchor detection.
+  Each <a> below exercises one pattern the rule must evaluate.
+
+  Expected outcomes per WCAG 4.1.2 + 2.4.4:
+    - Empty alt (<img alt="">): anchor has no accessible name → must fire.
+    - Non-empty alt (<img alt="Logo image">): alt IS the anchor's name
+      per WAI name computation (step F); anchor has a name → must NOT fire.
+    - Icon font with aria-hidden (<i aria-hidden="true">): presentational,
+      contributes nothing → anchor has no name → must fire.
+    - SVG with aria-hidden (<svg aria-hidden="true">): presentational,
+      contributes nothing → anchor has no name → must fire.
+    - Anchor with aria-label: name override present → must NOT fire.
+-->
+
+<header>
+  <nav>
+
+    <!-- Case 1: only child is <img alt=""> — decorative, no accessible name -->
+    <a href="#home"><img src="logo.png" alt=""></a>
+
+    <!-- Case 2: only child is <img alt="Logo image"> — non-empty alt
+         provides the anchor's accessible name via WAI name computation
+         (accname-1.1 step F). The name is "Logo image", which exists.
+         The rule must NOT fire (the anchor HAS a computable name). -->
+    <a href="#about"><img src="logo.png" alt="Logo image"></a>
+
+    <!-- Case 3: icon font glyph with aria-hidden — presentational, no name -->
+    <a href="#cart"><i class="fa fa-shopping-cart" aria-hidden="true"></i></a>
+
+    <!-- Case 4: SVG with aria-hidden — presentational, no name -->
+    <a href="#search"><svg aria-hidden="true" focusable="false"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg></a>
+
+    <!-- Case 5: anchor has aria-label — accessible name is explicitly set,
+         must NOT fire regardless of child content -->
+    <a href="#home" aria-label="Home"><img src="logo.png" alt=""></a>
+
+  </nav>
+</header>
+
+<main>
+  <h1>Welcome</h1>
+  <p>Page content.</p>
+</main>
+
+</body>
+</html>
