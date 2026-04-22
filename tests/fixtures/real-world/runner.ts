@@ -60,6 +60,18 @@ export type FixtureExpectation =
       readonly kind: "violation-present";
       readonly ruleId: string;
       readonly reasonIncludes?: string;
+      /**
+       * Optional file-path filter. When set, the violation must have
+       * been emitted on a file whose `filePath` (root-relative, as
+       * written by the harness) matches this string. Use this when
+       * the invariant under test is "rule X fires on file Y AND file
+       * Z" — two separate `violation-present` entries, each pinned to
+       * the file, will fail loudly if either file silently stops
+       * emitting. Without this field, cross-file "rule X fired
+       * somewhere" is the baseline — which silently passes even when
+       * one file's emit is lost.
+       */
+      readonly inFile?: string;
     }
   | { readonly kind: "no-violation"; readonly ruleId: string }
   | {
@@ -549,12 +561,27 @@ function evalViolationPresent(
   exp: FixtureExpectation & { kind: "violation-present" },
   violations: readonly Violation[],
 ): ExpectationResult {
-  const matching = violations.filter((v) => v.ruleId === exp.ruleId);
+  // Narrow by file first so the error message can distinguish
+  // "rule never fired on ANY file" from "rule fired elsewhere but not
+  // on the specific file the fixture pinned."
+  const ruleMatches = violations.filter((v) => v.ruleId === exp.ruleId);
+  const matching =
+    exp.inFile !== undefined
+      ? ruleMatches.filter((v) => v.location.filePath === exp.inFile)
+      : ruleMatches;
   if (matching.length === 0) {
+    if (exp.inFile !== undefined && ruleMatches.length > 0) {
+      const seen = [...new Set(ruleMatches.map((v) => v.location.filePath))].sort().join(", ");
+      return {
+        expectation: exp,
+        pass: false,
+        message: `real-world/${fixtureId}: expected violation '${exp.ruleId}' on file '${exp.inFile}', got matches on [${seen}] instead`,
+      };
+    }
     return {
       expectation: exp,
       pass: false,
-      message: `real-world/${fixtureId}: expected a violation of '${exp.ruleId}', got ${summariseRuleIds(violations)}`,
+      message: `real-world/${fixtureId}: expected a violation of '${exp.ruleId}'${exp.inFile ? ` on file '${exp.inFile}'` : ""}, got ${summariseRuleIds(violations)}`,
     };
   }
   if (exp.reasonIncludes !== undefined) {
