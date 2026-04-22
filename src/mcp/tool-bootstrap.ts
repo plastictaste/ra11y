@@ -30,6 +30,7 @@
 import { existsSync } from "node:fs";
 import { BASELINE_FILENAME } from "../engine/baseline.ts";
 import { gitRoot } from "../utils/git.ts";
+import { detectForeignEcosystem, type ForeignEcosystem } from "./ecosystem-detect.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { baselineTool } from "./tool-baseline.ts";
 import { detectNativeWrappersTool } from "./tool-detect-wrappers.ts";
@@ -139,10 +140,24 @@ export const bootstrapTool: McpTool = {
     // the three branches (exists / just-written-here / dry-run) emit
     // honest instructions.
     const baselineExistsOnDisk = existsSync(`${root}/${BASELINE_FILENAME}`);
+    // Ecosystem detection drives the snippet preface only — the ra11y
+    // job itself is IDENTICAL across ecosystems because `@ra11y/core` is
+    // a Node-based tool regardless of the repo's primary language. For
+    // foreign-ecosystem roots (Ruby / Python / Go / Rust without
+    // `package.json`) the preface clarifies this is a ra11y-only step
+    // added alongside the consumer's existing CI, so a reader pasting
+    // the snippet doesn't mistake `actions/setup-node@v4` for an
+    // instruction to replace their existing Ruby/Python/Go setup
+    // actions. Per ai-first-consumer.md "Surface, don't suppress," the
+    // node-setup step stays — suppressing it would produce a snippet
+    // that silently fails when the CI runs. Reuses the Q4 ecosystem
+    // detector (d8fdce5) so the predicate matches propose_config.
+    const foreignEcosystem = detectForeignEcosystem(root);
     const ciSnippet = buildCiSnippet({
       baselineExists: baselineExistsOnDisk,
       writeBaseline,
       baselineWrittenByThisCall: baseline?.written === true,
+      foreignEcosystem,
     });
     const nextStep = buildNextStep({
       scan: scanSubset,
@@ -451,6 +466,20 @@ interface CiSnippetArgs {
    * relevant in the first case, not the second.
    */
   readonly baselineWrittenByThisCall: boolean;
+  /**
+   * Detected foreign ecosystem tag (`ruby` / `python` / `go` / `rust`)
+   * when `package.json` is absent and a canonical foreign marker
+   * resolves at the scan root; `null` for Node projects. Drives the
+   * snippet preface only — the ra11y job body (including
+   * `actions/setup-node@v4`) is identical across ecosystems because
+   * `@ra11y/core` is a Node-based tool regardless of the consumer's
+   * primary language. For foreign ecosystems we emit a clarifying
+   * comment that the job is additive and the node-setup step is
+   * ra11y-only, so a reader pasting the snippet doesn't mistake it
+   * for an instruction to replace their existing Ruby / Python / Go
+   * setup actions.
+   */
+  readonly foreignEcosystem: ForeignEcosystem | null;
 }
 
 /**
@@ -474,11 +503,32 @@ interface CiSnippetArgs {
  *      prepend a `# create baseline first:` comment and a
  *      `npx @ra11y/core --baseline create` step so the copy-paste path
  *      is honest about first-run ordering.
+ *
+ * Foreign-ecosystem preface: when the scan root has no `package.json`
+ * but carries a canonical Ruby / Python / Go / Rust manifest, prepend
+ * an extra header comment clarifying the job is additive — added
+ * alongside the consumer's existing CI rather than replacing it — and
+ * that the `actions/setup-node@v4` step is a ra11y-only dependency
+ * (because `@ra11y/core` is a Node-based CLI). Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Surface, don't
+ * suppress," we do NOT strip the node-setup step for foreign
+ * ecosystems — doing so would produce a snippet that silently fails
+ * when CI runs. Only the prose preface changes; the job body is
+ * identical for Node and foreign roots.
  */
 function buildCiSnippet(args: CiSnippetArgs): string {
-  const { baselineExists, writeBaseline, baselineWrittenByThisCall } = args;
+  const { baselineExists, writeBaseline, baselineWrittenByThisCall, foreignEcosystem } = args;
+  const prefaceLines: string[] =
+    foreignEcosystem === null
+      ? ["# .github/workflows/a11y.yml"]
+      : [
+          "# .github/workflows/a11y.yml",
+          `# Add this job to your existing CI — it runs alongside your ${foreignEcosystem} workflow.`,
+          "# ra11y is a Node-based tool, so this job sets up Node for itself; your existing",
+          `# ${foreignEcosystem} setup actions are not affected.`,
+        ];
   const header = [
-    "# .github/workflows/a11y.yml",
+    ...prefaceLines,
     "name: a11y",
     "on: [push, pull_request]",
     "jobs:",

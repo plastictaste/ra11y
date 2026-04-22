@@ -370,6 +370,106 @@ describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
   });
 });
 
+describe("bootstrap: ciSnippet clarifies node-setup is ra11y-only for foreign ecosystems", () => {
+  // Q4-BOOTSTRAP-CI-SNIPPET-ECOSYSTEM. The ra11y job body is identical
+  // across ecosystems — `@ra11y/core` is a Node-based CLI regardless of
+  // the consumer's primary language, so `actions/setup-node@v4` stays
+  // in the snippet for Ruby / Python / Go / Rust roots too. Stripping
+  // the node-setup step would produce a snippet that silently fails
+  // when CI runs ("Surface, don't suppress"). What changes is the
+  // header preface: for a foreign-ecosystem root we emit a clarifying
+  // comment that the job is additive and the node-setup is ra11y-only,
+  // so a reader pasting the snippet into a Rails / Django / Go repo
+  // doesn't mistake it for an instruction to replace their existing
+  // setup actions.
+
+  it("emits the foreign-ecosystem preface for a Ruby root (Gemfile present, no package.json)", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      const snippet = response.ciSnippet;
+      // Preface names the ecosystem inline so the reader sees which
+      // detection fired.
+      expect(snippet).toContain("ruby");
+      // "Add this job to your existing CI" frames the job as additive
+      // — pasteable alongside whatever Ruby CI is already on disk.
+      expect(snippet.toLowerCase()).toContain("existing ci");
+      // Explicit callout that the node-setup step is ra11y-only (not
+      // a replacement for the Ruby setup).
+      expect(snippet.toLowerCase()).toContain("node-based tool");
+      // The `actions/setup-node@v4` step STAYS in the body — the
+      // preface is prose; the job itself is unchanged. Stripping the
+      // step would silently break the CI run ("Surface, don't
+      // suppress").
+      expect(snippet).toContain("actions/setup-node@v4");
+      expect(snippet).toContain("actions/checkout@v4");
+    });
+  });
+
+  it("emits the foreign-ecosystem preface for a Python root (pyproject.toml present, no package.json)", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "pyproject.toml"), '[project]\nname = "x"\nversion = "0"\n');
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      const snippet = response.ciSnippet;
+      expect(snippet).toContain("python");
+      expect(snippet).toContain("actions/setup-node@v4");
+    });
+  });
+
+  it("omits the foreign-ecosystem preface for a Node root (package.json present alongside Gemfile)", async () => {
+    await withScratch(async (dir) => {
+      // Mixed stack: Node toolchain short-circuits the foreign-ecosystem
+      // predicate even with Gemfile present (matches
+      // `detectForeignEcosystem`'s `package.json` short-circuit).
+      await writeFile(join(dir, "package.json"), '{ "name": "x" }\n');
+      await writeFile(join(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      const snippet = response.ciSnippet;
+      // No ecosystem name in the preface — pure Node-path snippet.
+      expect(snippet).not.toContain("ruby");
+      expect(snippet).not.toContain("python");
+      expect(snippet).not.toContain("go-based");
+      // The "add this job to your existing CI" framing is
+      // foreign-ecosystem-only; a Node repo's snippet stays in the
+      // original (pre-Q4) shape.
+      expect(snippet.toLowerCase()).not.toContain("existing ci");
+      expect(snippet).toContain("actions/setup-node@v4");
+    });
+  });
+
+  it("emits the foreign-ecosystem preface on a Go root when writeBaseline lands the file", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "go.mod"), "module x\n\ngo 1.22\n");
+      await writeFile(
+        join(dir, "a.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir, writeBaseline: true });
+      expect(response.baseline?.written).toBe(true);
+      const snippet = response.ciSnippet;
+      expect(snippet).toContain("go");
+      // Post-write: baseline check step stays; create-prelude does not.
+      expect(snippet).toContain("--baseline check");
+      expect(snippet).not.toContain("--baseline create");
+      // Preface is orthogonal to the baseline branching — foreign
+      // preface applies regardless of which baseline-branch ran.
+      expect(snippet.toLowerCase()).toContain("node-based tool");
+    });
+  });
+});
+
 describe("bootstrap: partial failure (sub-handler rejects)", () => {
   // Monkey-patch one sub-handler to throw so we can assert the
   // allSettled contract: the OTHER legs still compose, and the
