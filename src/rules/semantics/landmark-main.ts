@@ -33,7 +33,9 @@ import {
   getHtmlAttribute,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
+import { isHtmlLayoutOrPartial } from "../../engine/layout-partial.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
+import type { FileContext } from "../../types/rule.ts";
 
 export const rule = defineRule({
   id: "semantics/landmark-main",
@@ -61,10 +63,31 @@ export const rule = defineRule({
   afterFile(ctx) {
     if (ctx.language !== "html") return;
     const doc = ctx.ast as HtmlDocument;
-    // Only evaluate full documents — a fragment without <body> is
-    // probably a component template, not a page.
     const bodies = findHtmlElementsByTag(doc, "body");
-    if (bodies.length === 0) return;
+
+    // Layout / partial detection. Jekyll / Hugo / ERB / Razor layouts
+    // compose the rendered page from this file's markup PLUS another
+    // file's content (`{{ content }}`, `<%= yield %>`, `@RenderBody()`,
+    // `{% include %}`). Static analysis can't see the composed DOM, so
+    // a "missing <main>" emit shaped as a confident finding is dishonest
+    // — the <main> might live in a sibling partial. Per
+    // docs/kb/architecture/ai-first-consumer.md "Surface, don't
+    // suppress" + "No heuristic suppression," the rule still surfaces
+    // on these files so the agent sees the gap, but attaches
+    // `couldBeWrongBecause` + a fragment-shape message suffix so an
+    // agent routes to the parent/partial chain in one read. The
+    // deterministic escape hatch is the source-level disable pragma.
+    const layoutOrPartial = isHtmlLayoutOrPartial(doc, ctx.source);
+
+    // Bodyless files that also don't look like layout partials are
+    // just fragments (alt-text snippet, test-rule fixture, component
+    // sketch) — skip as before. Bodyless files that DO look like
+    // partials get the enriched emit.
+    if (bodies.length === 0) {
+      if (!layoutOrPartial) return;
+      emitBodylessPartial(ctx, doc);
+      return;
+    }
     // Only flag on documents that look like real pages — skip
     // minimal documents (e.g. email templates, OG meta shells,
     // and test fixtures for other rules) without enough page-shape
@@ -72,48 +95,134 @@ export const rule = defineRule({
     // branches.
     if (!looksLikeFullPage(bodies[0] as HtmlElement, doc)) return;
 
-    const mains: HtmlElement[] = [];
-    for (const el of walkHtmlElements(doc)) {
-      if (isMainLandmark(el)) mains.push(el);
-    }
-
+    const mains = collectMainLandmarks(doc);
     if (mains.length === 0) {
-      const body = bodies[0];
-      ctx.emit({
-        severity: "warning",
-        location: {
-          filePath: "",
-          line: body?.loc.start.line ?? 1,
-          column: body?.loc.start.column ?? 1,
-        },
-        message:
-          "Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.",
-        suggestion:
-          'Document has no <main>. Wrap the primary content region — typically the main article/content below the header/nav — in <main> or add role="main" to an existing container. Do not wrap the <header>, <nav>, or <footer> regions in the main landmark.',
-      });
+      emitMissingMain(ctx, bodies[0], layoutOrPartial);
       return;
     }
-
-    if (mains.length > 1) {
-      const suggestion = buildMultipleMainSuggestion(mains);
-      // Report on every extra main so the fix is unambiguous.
-      for (let i = 1; i < mains.length; i += 1) {
-        const extra = mains[i];
-        if (!extra) continue;
-        ctx.emit({
-          severity: "warning",
-          location: {
-            filePath: "",
-            line: extra.loc.start.line,
-            column: extra.loc.start.column,
-          },
-          message: `Document has ${mains.length} <main> landmarks — ARIA requires exactly one per page.`,
-          suggestion,
-        });
-      }
-    }
+    if (mains.length > 1) emitDuplicateMains(ctx, mains);
   },
 });
+
+/** Collects every `<main>` / `role="main"` landmark in the document. */
+function collectMainLandmarks(doc: HtmlDocument): readonly HtmlElement[] {
+  const out: HtmlElement[] = [];
+  for (const el of walkHtmlElements(doc)) {
+    if (isMainLandmark(el)) out.push(el);
+  }
+  return out;
+}
+
+/**
+ * Emits the layout-partial enriched "missing <main>" finding on a file
+ * with no `<body>` but that clears {@link isHtmlLayoutOrPartial}
+ * (e.g. Jekyll `_includes/top.html` with `<html>` + `<head>` but no
+ * body close). Anchors the finding at the first `<html>` tag when one
+ * exists — same line the user reads first — or falls back to 1:1.
+ */
+function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
+  const htmlElements = findHtmlElementsByTag(doc, "html");
+  const anchor = htmlElements[0];
+  ctx.emit(buildLayoutPartialEmit(anchor?.loc.start.line ?? 1, anchor?.loc.start.column ?? 1));
+}
+
+/**
+ * Emits the "missing <main>" finding on a page that looks like a full
+ * document. When the file ALSO looks like a layout/partial (Jekyll
+ * `_layouts/default.html` with `{{ content }}` and no local <main>),
+ * the emit is enriched with `couldBeWrongBecause` instead of firing at
+ * full confidence — the <main> may live in the included child.
+ */
+function emitMissingMain(
+  ctx: FileContext,
+  body: HtmlElement | undefined,
+  layoutOrPartial: boolean,
+): void {
+  const line = body?.loc.start.line ?? 1;
+  const column = body?.loc.start.column ?? 1;
+  if (layoutOrPartial) {
+    ctx.emit(buildLayoutPartialEmit(line, column));
+    return;
+  }
+  ctx.emit({
+    severity: "warning",
+    location: { filePath: "", line, column },
+    message:
+      "Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.",
+    suggestion:
+      'Document has no <main>. Wrap the primary content region — typically the main article/content below the header/nav — in <main> or add role="main" to an existing container. Do not wrap the <header>, <nav>, or <footer> regions in the main landmark.',
+  });
+}
+
+/**
+ * Emits one finding per "extra" main landmark so the fix is
+ * unambiguous. ARIA requires exactly one main landmark — every
+ * duplicate site needs the author's attention.
+ */
+function emitDuplicateMains(ctx: FileContext, mains: readonly HtmlElement[]): void {
+  const suggestion = buildMultipleMainSuggestion(mains);
+  for (let i = 1; i < mains.length; i += 1) {
+    const extra = mains[i];
+    if (!extra) continue;
+    ctx.emit({
+      severity: "warning",
+      location: {
+        filePath: "",
+        line: extra.loc.start.line,
+        column: extra.loc.start.column,
+      },
+      message: `Document has ${mains.length} <main> landmarks — ARIA requires exactly one per page.`,
+      suggestion,
+    });
+  }
+}
+
+/**
+ * Structured `couldBeWrongBecause` code surfaced when the scanned file
+ * looks like a layout wrapper or template partial (no `<html>`/`<body>`,
+ * Jekyll `layout:` front-matter, or a composition directive such as
+ * `{% include %}` / `{{ content }}` / `<%= yield %>` / `@RenderBody`).
+ * The scanner can't see the composed DOM — a sibling partial may carry
+ * the `<main>` — so the finding is emitted with this code rather than
+ * suppressed (docs/kb/architecture/ai-first-consumer.md §"Surface,
+ * don't suppress") and rather than at full confidence (§"No heuristic
+ * suppression"). Agents read the directive + parent chain and decide;
+ * the deterministic escape hatch is a source-level disable pragma.
+ */
+const PARTIAL_OR_LAYOUT_CODE = "partial_or_layout_file_requires_composed_check";
+
+const PARTIAL_OR_LAYOUT_SUFFIX =
+  " This file looks like a layout wrapper or template partial (no <body>, Jekyll layout: front-matter, or {% include %} / {{ content }} / <%= yield %> / @RenderBody directive) — the composed page may carry <main> from a sibling file. Verify against the parent/partial chain before acting, or add a source-level disable pragma if the composition is intentional.";
+
+/**
+ * Builds the layout-partial emit. Shared between the two branches that
+ * trigger it: a bodyless partial
+ * (e.g. Jekyll `_includes/top.html`) and a body-carrying layout file
+ * whose `{{ content }}` holds the main landmark in a sibling page
+ * (e.g. Jekyll `_layouts/default.html`). Severity stays at `warning`
+ * — same as the full-confidence emit — because the downgrade is
+ * signalled by `couldBeWrongBecause` + the message suffix, not by
+ * severity (per CLAUDE.md §14 "Don't downgrade priority to hide things").
+ */
+function buildLayoutPartialEmit(
+  line: number,
+  column: number,
+): {
+  severity: "warning";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+  couldBeWrongBecause: readonly string[];
+} {
+  return {
+    severity: "warning",
+    location: { filePath: "", line, column },
+    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}`,
+    suggestion:
+      "Document has no <main> in this file, but it looks like a layout wrapper or template partial — the <main> may be authored in the included/yielded file. Verify against the parent layout or partial chain; if this file is the root layout, add <main> around the composition point (typically surrounding the {{ content }} / <%= yield %> / @RenderBody site). Use a <!-- ra11y-disable semantics/landmark-main --> pragma if the composition is deliberate and the <main> lives in sibling files.",
+    couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE],
+  };
+}
 
 /**
  * Build a disambiguating suggestion for multiple main landmarks.

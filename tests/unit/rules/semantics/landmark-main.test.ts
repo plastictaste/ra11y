@@ -321,6 +321,150 @@ describe("rule semantics/landmark-main", () => {
       expect(v).toHaveLength(0);
     });
 
+    it("fires on a body-carrying layout with {{ content }} and no <main>, tagged as partial", () => {
+      // Jekyll `_layouts/default.html` canonical shape: <html>+<body>
+      // plus a {{ content }} composition site. The <main> might live in
+      // the child page's body — scanner can't see composed DOM. Rule
+      // should still surface (surface-don't-suppress) but enrich with
+      // `couldBeWrongBecause` so the agent reads the composition chain
+      // in one hop rather than acting on a confident false positive.
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <body>",
+          "    <header>site nav</header>",
+          "    {{ content }}",
+          "    <footer>site footer</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "default.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+      expect(v[0]?.message).toContain("layout wrapper or template partial");
+    });
+
+    it("fires on a bodyless partial with <html> opener but no <body> close, tagged as partial", () => {
+      // Jekyll `_includes/top.html` canonical shape: <html> + <head>
+      // (and sometimes an opening <body> that the sibling footer
+      // partial closes). Static analysis can't see the composed DOM.
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <head>",
+          "    <meta charset='utf-8'>",
+          "    {% seo %}",
+          "  </head>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "top.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+      expect(v[0]?.message).toContain("layout wrapper or template partial");
+    });
+
+    it("fires on an ERB layout with <%= yield %> and no <main>, tagged as partial", () => {
+      // Rails / Middleman ERB layout shape — `<%= yield %>` is the
+      // composition site the child view fills in. Detected via the
+      // composition-directive branch even though <html>+<body> are both
+      // present.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          "    <div class='container'>",
+          "      <%= yield %>",
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "layout.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+    });
+
+    it("fires on a full-document error page with no <main>, WITHOUT partial tag", () => {
+      // Regression guard: `error.html`-style content pages that have
+      // every page-shape signal but no <main> must still fire at full
+      // confidence — `couldBeWrongBecause` must be absent so the agent
+      // doesn't mis-route the finding as "probably fine, composed
+      // elsewhere." The backlog expectation explicitly preserves this
+      // coverage (Q4-CROSS-INCLUDE-LANDMARK-COMPOSITION).
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <head><title>Error</title></head>",
+          "  <body>",
+          "    <header><nav>home</nav></header>",
+          "    <h1>404</h1>",
+          "    <p>Not found.</p>",
+          "    <p>Check the URL.</p>",
+          "    <footer>site footer</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "error.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+      expect(v[0]?.message).not.toContain("layout wrapper or template partial");
+    });
+
+    it("does NOT fire on a bare component fragment with no <html>/<body>/composition", () => {
+      // `<div>just a fragment</div>` style — truly raw component
+      // snippets (JSX-less HTML unit-test sources, isolated demos) are
+      // not layout partials and must stay silent under the new
+      // predicate. The three-branch predicate requires either
+      // asymmetric root tags, Jekyll front-matter, or a composition
+      // directive; none apply here.
+      const v = runRule(rule, "<section><h1>Hi</h1><p>Some copy</p></section>", {
+        filePath: "a.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("fires on a page with Jekyll layout: front-matter even when <main> would otherwise clear it", () => {
+      // Page with `layout:` front-matter declares that it is composed
+      // INTO a parent layout — even if the page itself contains a
+      // <main>, the composed page might duplicate landmarks. But this
+      // test exercises the missing-<main> path: page declares a
+      // layout, has body+h1+content shape, no <main>. Firing is
+      // correct; the partial-tag reflects the composition.
+      const v = runRule(
+        rule,
+        [
+          "---",
+          "layout: default",
+          "title: About",
+          "---",
+          "<html>",
+          "  <body>",
+          "    <h1>About</h1>",
+          "    <p>Some prose.</p>",
+          "    <p>More prose.</p>",
+          "    <p>Even more prose.</p>",
+          "    <p>Yet more prose.</p>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "about.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+    });
+
     it("does NOT count <head> children toward body descendants", () => {
       // <meta>/<link>/<title> in <head> would inflate the descendant count
       // and let a head-heavy document cross branch B's threshold without
