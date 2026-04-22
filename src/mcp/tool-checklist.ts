@@ -245,7 +245,7 @@ export const checklistTool: McpTool = {
     });
 
     const coverage = buildCoverageReport(result, session.registry.standards, level);
-    const applicability = detectApplicability(files);
+    const applicability = detectApplicability(files, discoveryDiagnostics);
 
     const sources = sourceIndex(files);
     const attestationsByCriterion = indexAttestationsByCriterion(attestations);

@@ -100,7 +100,7 @@ export const coverageTool: McpTool = {
     });
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
-    const applicability = detectApplicability(files);
+    const applicability = detectApplicability(files, discoveryDiagnostics);
     const coverage = buildCoverageReport(result, session.registry.standards, level);
     const showUntargeted = params["showUntargeted"] === true;
     const entries = coverage.map((c) => {

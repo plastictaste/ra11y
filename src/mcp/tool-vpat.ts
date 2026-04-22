@@ -35,7 +35,7 @@ import {
   type McpTool,
   type McpToolResult,
   parseExplicitPaths,
-  parseFiles,
+  parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
   strArrayParam,
@@ -123,7 +123,11 @@ export const vpatTool: McpTool = {
     const { productName, productVersion, cwd, additionalPaths, standards, level, format } =
       validated;
 
-    const baseFiles = await parseFiles([cwd], session, cwd);
+    const { files: baseFiles, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
+      [cwd],
+      session,
+      cwd,
+    );
     const extraFiles =
       additionalPaths.length > 0 ? await parseExplicitPaths(additionalPaths, session, cwd) : [];
     const files: readonly ParsedFile[] = [...baseFiles, ...extraFiles];
@@ -139,7 +143,14 @@ export const vpatTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
-    const applicability = detectApplicability(files);
+    // Q4-RELEVANCE-REASON-PARSE-COVERAGE-CAVEAT: thread discovery
+    // diagnostics so `detectApplicability` can append the parse-coverage
+    // caveat when authored-content extensions (.md, .markdown, .rst,
+    // .adoc, …) were skipped. VPAT entries surface
+    // `irrelevanceReason` as auditor remarks; without this the remark
+    // claims "no <video>/<audio>" even when the scan never parsed the
+    // markdown files that might embed them.
+    const applicability = detectApplicability(files, discoveryDiagnostics);
     const report = buildVpatReport(result, session.registry.standards, {
       candidates: scanReport.candidates ?? [],
       applicability,
