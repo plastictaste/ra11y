@@ -37,6 +37,7 @@ import {
   readTemplateTagName,
   stripTemplateDirectives,
 } from "./html-template-directives.ts";
+import { looksLikeUrlSchemeOpener } from "./html-url-scheme.ts";
 
 /** HTML void elements that must not have closing tags. */
 const VOID_ELEMENTS: ReadonlySet<string> = new Set([
@@ -70,38 +71,6 @@ const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(["script", "style", "text
  * structural bug.
  */
 const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"]);
-
-/**
- * URL scheme keywords that must never be treated as element-opener tag
- * names. Markdown autolinks (`<https://example.com>`,
- * `<mailto:alice@example.com>`) survive the `.md` → HTML residue pass
- * and otherwise tokenize into a synthetic `<https:>` / `<mailto:alice>`
- * element — the tag-name reader accepts `:` as a name char (XML-style
- * `<svg:circle>` namespaces are real), so `https` becomes a tag name
- * and the unclosed-element recovery cascades through every following
- * `</p>` / `</li>` / `</td>`. Guarding the open side at tokenize time
- * keeps the error recovery coherent: `<https://…>` emits as literal
- * text, no phantom element, no cascade. Kept as a closed set (rather
- * than "tag ends with `:`") so XML namespace parses continue unchanged.
- *
- * See `docs/kb/architecture/input-parsers.md` §"html.ts" for the
- * character-driven recovery contract and `tests/unit/input/parsers/
- * html.test.ts` for the markdown-autolink regression guard.
- */
-const URL_SCHEME_NAMES: ReadonlySet<string> = new Set([
-  "about",
-  "data",
-  "file",
-  "ftp",
-  "http",
-  "https",
-  "javascript",
-  "mailto",
-  "sms",
-  "tel",
-  "ws",
-  "wss",
-]);
 
 export interface HtmlParseResult {
   readonly root: HtmlDocument;
@@ -177,55 +146,13 @@ class HtmlParser {
       ) {
         return this.#consumeDoctype();
       }
-      if (this.#startsWith("</")) {
-        // Stray closing tag — skip it but record the error. The message
-        // discriminates the Liquid root-layout shape (a top-level
-        // `</html>` / `</body>` / `</head>` on a file whose first non-
-        // whitespace content is `{% include %}` / `{% render %}`) from
-        // the generic recovered-stray-close path. Both still emit a
-        // recoverable error so `analysisCoverage.partialParseFiles`
-        // retains the honest "scan degraded" telemetry, but the Liquid
-        // case names the shape so an agent reading the entry routes to
-        // the include-chain composition instead of treating it as an
-        // unexpected parse failure. The partial AST built from this
-        // file (usually a `<body>` or `<main>` subtree plus a trailing
-        // stray closer) is still handed to the rule pipeline; document
-        // rules already gate on `isHtmlFragment` / `isHtmlLayoutOrPartial`,
-        // so this is not a suppression — it is a rename of the reason
-        // string the `partialParseFiles[].reason` surface echoes.
-        const start = this.#pos;
-        const startPos = this.#position();
-        this.#advance(2);
-        const closerName = this.#readTagName();
-        this.#readUntil(">");
-        if (this.#peek() === ">") this.#advance(1);
-        this.#errors.push({
-          message: this.#strayClosingTagMessage(closerName),
-          position: startPos,
-          recoverable: true,
-        });
-        return {
-          kind: "HtmlText",
-          range: this.#range(start),
-          loc: { start: startPos, end: this.#position() },
-          value: "",
-        };
-      }
+      if (this.#startsWith("</")) return this.#consumeStrayClosingTag();
       if (this.#peek(1) !== undefined && isNameStart(this.#peek(1) ?? "")) {
-        // Markdown-autolink recovery (V1-HTML-PARSER-MARKDOWN-URL-AUTOLINK):
-        // `<https://…>` / `<mailto:alice@example.com>` are Markdown
-        // autolink syntax that survives `.md` → HTML residue rewriting.
-        // The tag-name reader accepts `:` as a name char (to handle
-        // XML-style `<svg:circle>`), so the `:` in a URL scheme leaks
-        // into the tag name and we'd otherwise create a synthetic
-        // `<https:>` element whose unclosed recovery cascades through
-        // every following `</p>` / `</li>`. Rejecting at the open
-        // side — a closed set of URL scheme keywords followed by `:` —
-        // keeps the URL as literal text in a text node and lets the
-        // surrounding element structure parse normally. Narrower than
-        // "tag ends with `:`" so XML namespace parses stay on the
-        // element path.
-        if (this.#looksLikeUrlSchemeOpener()) {
+        // Markdown-autolink recovery: `<https://…>` / `<mailto:…>` look
+        // like element openers to the tag-name reader (which accepts `:`
+        // as a name char for XML namespaces). See
+        // `./html-url-scheme.ts` for the full rationale and keyword set.
+        if (looksLikeUrlSchemeOpener(this.#source, this.#pos)) {
           return this.#consumeText();
         }
         return this.#consumeElement();
@@ -359,6 +286,45 @@ class HtmlParser {
     this.#readTagName();
     this.#readUntil(">");
     if (this.#peek() === ">") this.#advance(1);
+  }
+
+  /**
+   * Consumes a stray top-level `</tag>` that has no matching open,
+   * records a recoverable ParseError, and returns an empty text node
+   * so the outer node iterator keeps progressing.
+   *
+   * The recorded error message discriminates the Liquid root-layout
+   * shape (top-level `</html>` / `</body>` / `</head>` on a file whose
+   * first non-whitespace content is `{% include %}` / `{% render %}`)
+   * from the generic recovered-stray-close path. Both still emit a
+   * recoverable error so `analysisCoverage.partialParseFiles` retains
+   * the honest "scan degraded" telemetry — the Liquid case just names
+   * the shape so an agent reading the entry routes to the include-
+   * chain composition instead of treating it as an unexpected parse
+   * failure. The partial AST (typically a `<body>` / `<main>` subtree
+   * plus a trailing stray closer) is still handed to the rule
+   * pipeline; document rules gate on `isHtmlFragment` /
+   * `isHtmlLayoutOrPartial` so this is reason-string enrichment, not
+   * suppression.
+   */
+  #consumeStrayClosingTag(): HtmlText {
+    const start = this.#pos;
+    const startPos = this.#position();
+    this.#advance(2);
+    const closerName = this.#readTagName();
+    this.#readUntil(">");
+    if (this.#peek() === ">") this.#advance(1);
+    this.#errors.push({
+      message: this.#strayClosingTagMessage(closerName),
+      position: startPos,
+      recoverable: true,
+    });
+    return {
+      kind: "HtmlText",
+      range: this.#range(start),
+      loc: { start: startPos, end: this.#position() },
+      value: "",
+    };
   }
 
   #consumeAttribute(): HtmlAttribute {
@@ -638,35 +604,6 @@ class HtmlParser {
 
   #startsWith(s: string): boolean {
     return this.#source.startsWith(s, this.#pos);
-  }
-
-  /**
-   * True when positioned at `<` followed by a URL-scheme keyword and a
-   * trailing `:` — the Markdown-autolink shape (`<https://…>`,
-   * `<mailto:alice@example.com>`). See {@link URL_SCHEME_NAMES} for the
-   * full list and rationale. Pure peek — does not advance.
-   *
-   * Letter-only name read (`[a-zA-Z]+:`) is sufficient because every
-   * entry in the keyword set is letter-only; widening to the full
-   * RFC 3986 scheme alphabet (`+`, `.`, `-`, digits) would admit non-
-   * scheme names without a matching fixture and break the narrow-by-
-   * design contract the surrounding `#strayClosingTagMessage` rename
-   * also follows.
-   */
-  #looksLikeUrlSchemeOpener(): boolean {
-    if (this.#peek() !== "<") return false;
-    let i = this.#pos + 1;
-    const nameStart = i;
-    while (i < this.#source.length) {
-      const ch = this.#source[i];
-      if (ch === undefined) return false;
-      if (!/[a-zA-Z]/.test(ch)) break;
-      i += 1;
-    }
-    if (i === nameStart) return false;
-    if (this.#source[i] !== ":") return false;
-    const name = this.#source.slice(nameStart, i).toLowerCase();
-    return URL_SCHEME_NAMES.has(name);
   }
 
   #startsWithIgnoreCase(s: string): boolean {

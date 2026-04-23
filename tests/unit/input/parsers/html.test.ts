@@ -388,7 +388,7 @@ describe("parseHtml", () => {
     expect(detectLiquidIncludeHead("")).toBe(false);
   });
 
-  // ─── Markdown-autolink recovery (V1-HTML-PARSER-MARKDOWN-URL-AUTOLINK) ──
+  // ─── Markdown-autolink recovery ────────────────────────────────────────
   //
   // Markdown autolinks (`<https://example.com>`, `<mailto:alice@x.com>`)
   // survive the `.md` → HTML residue pass and would otherwise tokenize
