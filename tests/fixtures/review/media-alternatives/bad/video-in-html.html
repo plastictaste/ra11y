@@ -4,6 +4,12 @@
   <body>
     <video src="/demo.mp4" controls></video>
     <audio src="/intro.mp3" controls></audio>
-    <iframe src="/video" title="Demo"></iframe>
+    <!--
+      Iframe is counted as media only when its src points at one of
+      the video-host allowlist entries (see
+      src/utils/video-embed-hosts.ts). The allowlist entry here is
+      a Vimeo player embed.
+    -->
+    <iframe src="https://player.vimeo.com/video/12345" title="Demo"></iframe>
   </body>
 </html>

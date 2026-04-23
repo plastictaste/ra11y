@@ -1,12 +1,15 @@
-// Real JSX iframe — finder SHOULD emit review candidates here. The
-// equivalent iframe payload wrapped in quotes inside a `.js` file
-// (see ../bad/fancybox-packed-iframe-literal.js) is skipped by the
-// extension gate, but a real JSX element in a `.jsx`/`.tsx` file
-// renders a DOM iframe and is reviewable as such.
+// Real JSX iframe pointed at a YouTube embed — finder SHOULD emit
+// review candidates here. Iframes pointed at non-video hosts (docs
+// CMS, payment widgets, maps) do NOT emit candidates; the iframe
+// allowlist gate is shared with `media/video-captions-missing` and
+// documented in `src/utils/video-embed-hosts.ts`.
 export function Embed() {
   return (
     <div>
-      <iframe src="/video" title="Product demo"></iframe>
+      <iframe
+        src="https://www.youtube.com/embed/dQw4w9WgXcQ"
+        title="Product demo"
+      ></iframe>
     </div>
   );
 }

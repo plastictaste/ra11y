@@ -63,6 +63,7 @@ import {
   truncateForEcho,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import { type MediaEmbedPlatform, mediaEmbedHost } from "../../utils/video-embed-hosts.ts";
 
 export const rule = defineRule({
   id: "media/video-captions-missing",
@@ -318,118 +319,11 @@ function describeLangLabel(lang: string): string {
 // iframe-embedded media
 // ---------------------------------------------------------------------------
 
-/**
- * Platform identifier (human-facing name used in the violation reason
- * text) keyed off the set of hostnames the platform serves embeds
- * from. The agent reads the platform name and consults the platform-
- * specific caption-enabling guidance in the suggestion.
- */
-interface MediaEmbedPlatform {
-  readonly name: string;
-  readonly hosts: readonly string[];
-  readonly captionHint: string;
-}
-
-/**
- * Hostname allowlist for `<iframe>` embeds that definitionally carry
- * video content. URL shape at these hosts unambiguously identifies
- * media — e.g. `youtube.com/embed/<id>`, `player.vimeo.com/video/<id>`.
- * Hosts whose primary surface is *not* a video embed (generic CMS
- * iframes, payment widgets, map embeds) are deliberately excluded —
- * adding them would surface captions warnings on non-media content.
- */
-const MEDIA_EMBED_PLATFORMS: readonly MediaEmbedPlatform[] = [
-  {
-    name: "YouTube",
-    hosts: [
-      "youtube.com",
-      "www.youtube.com",
-      "youtu.be",
-      "youtube-nocookie.com",
-      "www.youtube-nocookie.com",
-    ],
-    captionHint:
-      "YouTube: captions are authored in YouTube Studio; append `cc_load_policy=1` to the embed URL to force the caption track on by default",
-  },
-  {
-    name: "Vimeo",
-    hosts: ["vimeo.com", "player.vimeo.com"],
-    captionHint:
-      "Vimeo: upload a text-track (VTT/SRT) on the clip's Distribution → Subtitles panel; enable the default text-track via the `texttrack` embed parameter",
-  },
-  {
-    name: "Wistia",
-    hosts: ["wistia.com", "wistia.net", "fast.wistia.net", "fast.wistia.com"],
-    captionHint:
-      "Wistia: enable captions on the Customize → Captions panel and upload a VTT/SRT; the caption toggle then surfaces in the player chrome",
-  },
-  {
-    name: "Brightcove",
-    hosts: ["brightcove.net", "players.brightcove.net"],
-    captionHint:
-      "Brightcove: attach a WebVTT file to the video in Video Cloud Studio; confirm the player has the captions plugin enabled",
-  },
-  {
-    name: "Loom",
-    hosts: ["loom.com", "www.loom.com"],
-    captionHint:
-      "Loom: Loom auto-generates captions after processing — verify the clip has finished processing and the transcript panel shows captions",
-  },
-];
-
-/**
- * Extracts a hostname from a URL-shaped string. Accepts absolute
- * (`https://host/…`), protocol-relative (`//host/…`), and scheme-less
- * (`host/…`) inputs. Returns `null` for relative paths (`/foo`,
- * `./video`) and empty strings. Never throws — `new URL` rejects
- * protocol-relative URLs without a base, so we parse manually.
- *
- * The returned hostname is lowercased. Port suffixes (`host:8080`) are
- * stripped so `youtube.com:443` still matches. IDN / punycode is not
- * normalized — the allowlist names Latin-ASCII hosts only.
- */
-function extractHost(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
-  // Strip scheme or protocol-relative prefix.
-  let rest = trimmed;
-  const schemeMatch = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.exec(rest);
-  if (schemeMatch) {
-    rest = rest.slice(schemeMatch[0].length);
-  } else if (rest.startsWith("//")) {
-    rest = rest.slice(2);
-  } else if (rest.startsWith("/") || rest.startsWith("./") || rest.startsWith("../")) {
-    // Relative path — no host to extract.
-    return null;
-  }
-  // Strip userinfo.
-  const at = rest.indexOf("@");
-  if (at !== -1) rest = rest.slice(at + 1);
-  // Host ends at the first slash, question mark, or hash.
-  const end = rest.search(/[/?#]/);
-  const hostPort = end === -1 ? rest : rest.slice(0, end);
-  if (hostPort.length === 0) return null;
-  // Drop port suffix.
-  const colon = hostPort.indexOf(":");
-  const host = colon === -1 ? hostPort : hostPort.slice(0, colon);
-  return host.toLowerCase();
-}
-
-/**
- * Returns the matching {@link MediaEmbedPlatform} when `src` points at
- * one of the known video-embed hosts, or `null` otherwise. `null` src
- * (missing attribute, expression value, empty string) always returns
- * `null` — we don't guess.
- */
-function mediaEmbedHost(src: string | null): MediaEmbedPlatform | null {
-  if (src === null) return null;
-  const host = extractHost(src);
-  if (host === null) return null;
-  for (const platform of MEDIA_EMBED_PLATFORMS) {
-    if (platform.hosts.includes(host)) return platform;
-  }
-  return null;
-}
+// The video-host allowlist + `mediaEmbedHost` helpers live in
+// `src/utils/video-embed-hosts.ts` so the review finder for
+// wcag22:1.2.1/1.2.3/1.2.5 (`review/media-alternatives`) can gate
+// iframe-as-media candidate emission on the same list. See that file
+// for the platform records and the allowlist rationale.
 
 function buildIframeViolation(
   loc: { line: number; column: number },
