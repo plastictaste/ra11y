@@ -65,12 +65,18 @@ function buildSuppressPragma(filePath: string, ruleId: string): string {
   if (lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less")) {
     return `/* ra11y-disable-next-line ${ruleId} */`;
   }
-  if (lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".astro")) {
+  if (
+    lower.endsWith(".html") ||
+    lower.endsWith(".htm") ||
+    lower.endsWith(".astro") ||
+    lower.endsWith(".svg")
+  ) {
     // Astro templates are HTML, so the HTML-comment disable form is
     // the one that parses inside an Astro template body (a
     // `{/* … */}` would be interpreted as a JSX expression by Astro
     // only inside the component-script frontmatter, not in template
-    // position where the agent will land the pragma).
+    // position where the agent will land the pragma). Standalone SVG
+    // is XML, which also accepts `<!-- … -->` comments.
     return `<!-- ra11y-disable-next-line ${ruleId} -->`;
   }
   if (lower.endsWith(".tsx") || lower.endsWith(".jsx") || lower.endsWith(".mdx")) {
@@ -91,7 +97,12 @@ function buildSuppressPlacement(filePath: string): string {
   if (lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less")) {
     return "Place on the line immediately above the CSS rule whose declarations are flagged.";
   }
-  if (lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".astro")) {
+  if (
+    lower.endsWith(".html") ||
+    lower.endsWith(".htm") ||
+    lower.endsWith(".astro") ||
+    lower.endsWith(".svg")
+  ) {
     return "Place on the line immediately above the opening tag of the flagged element.";
   }
   return "Place on the line immediately above the flagged statement.";

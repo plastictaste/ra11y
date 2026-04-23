@@ -45,6 +45,7 @@ import {
   parseLess,
   parseMdx,
   parseScss,
+  parseSvg,
   parseTsx,
 } from "../../input/parsers/index.ts";
 import { createGitStalenessProbe } from "../../reports/attestation-surface.ts";
@@ -396,6 +397,10 @@ function parseFor(filePath: string, source: string): Ast | null {
   }
   if (filePath.endsWith(".astro")) {
     const r = parseAstro(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".svg")) {
+    const r = parseSvg(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   if (

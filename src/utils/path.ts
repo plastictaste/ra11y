@@ -40,6 +40,7 @@ export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".astro",
   ".md",
   ".markdown",
+  ".svg",
 ]);
 
 /**
@@ -89,6 +90,11 @@ const STORY_BASENAME_RE = /^[^.]+\.(?:stories|story)\.(?:tsx|jsx|ts|js)$/;
  *     adapter (ADR 0025 Option B) strips markdown syntax, rewrites
  *     `![alt](url)` as `<img>`, and feeds the residue to parseHtml,
  *     producing an HTML AST.
+ *   - `.svg` aliases into HTML-family: the SVG adapter passes through
+ *     to parseHtml (the HTML tokenizer tolerates SVG's tag zoo and
+ *     preserves `<title>` as raw-text), so every `.html`/`.htm`-scoped
+ *     rule that inspects `<svg>` / `<title>` / `role="img"` /
+ *     `aria-label` / `aria-hidden` applies.
  */
 const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly string[] }[] = [
   { from: ".js", to: [".jsx"] },
@@ -99,6 +105,7 @@ const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly
   { from: ".astro", to: [".html", ".htm"] },
   { from: ".md", to: [".html", ".htm"] },
   { from: ".markdown", to: [".html", ".htm"] },
+  { from: ".svg", to: [".html", ".htm"] },
 ];
 
 /**

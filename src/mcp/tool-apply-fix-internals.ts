@@ -28,6 +28,7 @@ import {
   parseMarkdown,
   parseMdx,
   parseScss,
+  parseSvg,
   parseTsx,
 } from "../input/parsers/index.ts";
 import { buildAgentFinding } from "../output/agent-response/index.ts";
@@ -43,7 +44,7 @@ export interface ResolvedEdit {
   readonly newText: string;
 }
 
-export type Ext = "tsx" | "html" | "css" | "scss" | "less" | "mdx" | "astro" | "markdown";
+export type Ext = "tsx" | "html" | "css" | "scss" | "less" | "mdx" | "astro" | "markdown" | "svg";
 
 export interface SingleFileScan {
   readonly violations: readonly Violation[];
@@ -337,6 +338,7 @@ function extensionOf(filePath: string): Ext | null {
   if (lower.endsWith(".mdx")) return "mdx";
   if (lower.endsWith(".astro")) return "astro";
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
+  if (lower.endsWith(".svg")) return "svg";
   return null;
 }
 
@@ -367,6 +369,10 @@ export function parseFor(ext: Ext, source: string): Ast {
   }
   if (ext === "markdown") {
     const r = parseMarkdown(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (ext === "svg") {
+    const r = parseSvg(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   const r = parseTsx(source);

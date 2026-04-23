@@ -12,6 +12,7 @@ export { parseLess } from "./less.ts";
 export { parseMarkdown } from "./markdown.ts";
 export { parseMdx } from "./mdx.ts";
 export { parseScss } from "./scss.ts";
+export { parseSvg } from "./svg.ts";
 export type { TailwindToken } from "./tailwind.ts";
 export { parseTailwind } from "./tailwind.ts";
 export type { TsxParseResult } from "./tsx.ts";

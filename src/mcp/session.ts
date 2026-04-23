@@ -21,6 +21,7 @@ import {
   parseMarkdown,
   parseMdx,
   parseScss,
+  parseSvg,
   parseTsx,
 } from "../input/parsers/index.ts";
 import type { Ast } from "../types/ast.ts";
@@ -468,6 +469,15 @@ function parseForExtension(filePath: string, source: string): Ast | null {
   }
   if (filePath.endsWith(".astro")) {
     const r = parseAstro(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".svg")) {
+    // Standalone `.svg` asset — the SVG adapter passes through to
+    // parseHtml (HTML tokenizer tolerates SVG's tag zoo and preserves
+    // `<title>` text). Aliased to `.html` in PARSEABLE_EXTENSIONS so
+    // every `.html`-scoped rule that inspects `<svg>` / `<title>` /
+    // `role="img"` / `aria-label` / `aria-hidden` applies.
+    const r = parseSvg(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   // `.md` / `.markdown` — ADR 0025 Option B. Strip markdown syntax
