@@ -297,13 +297,14 @@ function basenameOf(filePath: string): string {
 }
 
 function isCssPath(filePath: string): boolean {
-  // Case-insensitive .css / .scss suffix check. Avoids a regex for what
-  // is a two-field string probe and keeps the hot-path
-  // allocation-free. `.scss` counts here because our SCSS parser emits
-  // the CSS AST shape; consumers of this predicate (fingerprint /
-  // build-artifact heuristics) treat the two identically.
+  // Case-insensitive .css / .scss / .less suffix check. Avoids a
+  // regex for what is a three-field string probe and keeps the hot-
+  // path allocation-free. `.scss` and `.less` count here because our
+  // SCSS / Less parsers emit the CSS AST shape; consumers of this
+  // predicate (fingerprint / build-artifact heuristics) treat all
+  // three identically.
   const lower = filePath.toLowerCase();
-  return lower.endsWith(".css") || lower.endsWith(".scss");
+  return lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less");
 }
 
 /**

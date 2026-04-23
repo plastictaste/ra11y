@@ -17,6 +17,7 @@ import {
   parseAstro,
   parseCss,
   parseHtml,
+  parseLess,
   parseMarkdown,
   parseMdx,
   parseScss,
@@ -455,6 +456,10 @@ function parseForExtension(filePath: string, source: string): Ast | null {
   }
   if (filePath.endsWith(".scss")) {
     const r = parseScss(source);
+    return { language: "css", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".less")) {
+    const r = parseLess(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
   if (filePath.endsWith(".mdx")) {

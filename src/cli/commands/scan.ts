@@ -23,6 +23,7 @@ import {
   parseAstro,
   parseCss,
   parseHtml,
+  parseLess,
   parseMdx,
   parseScss,
   parseTsx,
@@ -304,6 +305,10 @@ function parseFor(filePath: string, source: string): Ast | null {
   }
   if (filePath.endsWith(".scss")) {
     const r = parseScss(source);
+    return { language: "css", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".less")) {
+    const r = parseLess(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
   if (filePath.endsWith(".mdx")) {

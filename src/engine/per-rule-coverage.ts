@@ -434,6 +434,7 @@ function primaryExtension(extensions: readonly string[]): string {
   const head = extensions[0]?.toLowerCase() ?? "";
   if (head === ".css") return "CSS";
   if (head === ".scss") return "SCSS";
+  if (head === ".less") return "Less";
   if (head === ".html" || head === ".htm") return "HTML";
   if (head === ".mdx") return "MDX";
   if (head === ".astro") return "Astro";

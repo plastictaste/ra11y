@@ -24,6 +24,7 @@ import {
   parseAstro,
   parseCss,
   parseHtml,
+  parseLess,
   parseMarkdown,
   parseMdx,
   parseScss,
@@ -42,7 +43,7 @@ export interface ResolvedEdit {
   readonly newText: string;
 }
 
-export type Ext = "tsx" | "html" | "css" | "scss" | "mdx" | "astro" | "markdown";
+export type Ext = "tsx" | "html" | "css" | "scss" | "less" | "mdx" | "astro" | "markdown";
 
 export interface SingleFileScan {
   readonly violations: readonly Violation[];
@@ -332,6 +333,7 @@ function extensionOf(filePath: string): Ext | null {
   if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
   if (lower.endsWith(".css")) return "css";
   if (lower.endsWith(".scss")) return "scss";
+  if (lower.endsWith(".less")) return "less";
   if (lower.endsWith(".mdx")) return "mdx";
   if (lower.endsWith(".astro")) return "astro";
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
@@ -349,6 +351,10 @@ export function parseFor(ext: Ext, source: string): Ast {
   }
   if (ext === "scss") {
     const r = parseScss(source);
+    return { language: "css", root: r.root, errors: r.errors };
+  }
+  if (ext === "less") {
+    const r = parseLess(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
   if (ext === "mdx") {

@@ -35,6 +35,7 @@ export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".htm",
   ".css",
   ".scss",
+  ".less",
   ".mdx",
   ".astro",
   ".md",
@@ -78,6 +79,8 @@ const STORY_BASENAME_RE = /^[^.]+\.(?:stories|story)\.(?:tsx|jsx|ts|js)$/;
  *     JSX inside plain `.js`, and the TSX parser handles both alike.
  *   - `.scss` aliases into `.css`: the SCSS adapter produces a CSS
  *     AST, so every `.css`-scoped rule applies.
+ *   - `.less` aliases into `.css`: the Less adapter likewise produces
+ *     a CSS AST. Same reasoning as `.scss`.
  *   - `.mdx` aliases into TSX-family: the MDX adapter produces a TSX
  *     AST, so every `.tsx`/`.jsx`-scoped rule applies.
  *   - `.astro` aliases into HTML-family: the Astro adapter produces
@@ -91,6 +94,7 @@ const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly
   { from: ".js", to: [".jsx"] },
   { from: ".ts", to: [".tsx"] },
   { from: ".scss", to: [".css"] },
+  { from: ".less", to: [".css"] },
   { from: ".mdx", to: [".tsx", ".jsx"] },
   { from: ".astro", to: [".html", ".htm"] },
   { from: ".md", to: [".html", ".htm"] },
