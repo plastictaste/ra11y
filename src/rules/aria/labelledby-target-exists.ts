@@ -132,6 +132,15 @@ export const rule = defineRule({
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },
+  // The rule verifies IDREF tokens resolve in the same parsed file —
+  // but SC 4.1.2's spec doesn't bound the target id to one file. A
+  // layout partial (`{{ content }}`, `<%= yield %>`), an include, or
+  // a JSX layout wrapper may be where the referenced element
+  // actually lives. Declaring `crossFileCapable: false` surfaces that
+  // gap as `coverageConfidence: "medium"` with a structured reason
+  // per ADR 0026, instead of a confident `"high"` that hides the
+  // cross-file blindspot.
+  crossFileCapable: false,
   docs: {
     description:
       "ARIA IDREF attributes (aria-labelledby, aria-describedby, aria-controls, aria-owns, aria-flowto, aria-errormessage, aria-activedescendant, aria-details) must reference existing element ids in the same document.",

@@ -127,6 +127,15 @@ export const rule = defineRule({
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },
+  // Per the scope note above: cross-file / cross-component
+  // `aria-describedby` resolutions are out of scope for the per-file
+  // check. The error-message element may be rendered in a parent
+  // component that injects `aria-describedby` on the control at the
+  // composition site, so a clean tally on the leaf component alone
+  // is not honest. `crossFileCapable: false` downgrades to
+  // `coverageConfidence: "medium"` with the IDREF-resolution reason
+  // code per ADR 0026.
+  crossFileCapable: false,
   docs: {
     description:
       "An error-message element (.invalid-feedback / .error-message / [role=alert]) adjacent to a form control must be referenced via aria-describedby on that control, or screen-reader users never hear the error.",

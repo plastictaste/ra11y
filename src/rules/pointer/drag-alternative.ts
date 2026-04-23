@@ -104,6 +104,14 @@ export const rule = defineRule({
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx", ".ts", ".js"],
   },
+  // Per the rule header: "a click alternative may live in a sibling
+  // file, a parent component, or a custom hook the scanner can't
+  // see." Declaring `crossFileCapable: false` routes a clean tally
+  // (drag present, no click alternative found IN THIS FILE) to
+  // `coverageConfidence: "medium"` with the click-alternative
+  // reason code per ADR 0026 — the rule ran, its evidence was
+  // bounded, and the agent reads the surrounding code to decide.
+  crossFileCapable: false,
   docs: {
     description:
       "All functionality that uses a dragging movement must also be achievable by a single pointer without dragging (e.g., a click, button, or keyboard handler).",

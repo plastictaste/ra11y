@@ -109,6 +109,18 @@ export const rule = defineRule({
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx", ".ts", ".js"],
   },
+  // SC 2.1.1 ("operable through a keyboard interface") spans
+  // cross-file wiring: a click handler may be attached from a sibling
+  // `.js` file via `addEventListener` after a `document.querySelector`
+  // grab. The external-JS grammar scans the JS file it was invoked
+  // against, but the HTML-on-this-call perspective is bounded to the
+  // current document — the scanner cannot resolve across files in one
+  // invocation. Declaring `crossFileCapable: false` downgrades a
+  // clean tally on HTML substrates to `coverageConfidence: "medium"`
+  // with `reason: "cross_file_listener_resolution_limited_on_this_input"`
+  // per ADR 0026 — honest "the rule ran but its evidence was bounded"
+  // in place of a silent-miss `"high"`.
+  crossFileCapable: false,
   docs: {
     description:
       "Elements that declare click or toggle behavior (onClick, data-bs-toggle, etc.) must be reachable by keyboard: use a native button/link or add tabIndex plus an onKeyDown/onKeyUp that handles Enter and Space.",

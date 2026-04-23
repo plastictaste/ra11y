@@ -56,6 +56,15 @@ export const rule = defineRule({
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },
+  // The skip-link target (`#main`, `#content`, …) may live in a
+  // sibling layout partial / include / server-rendered wrapper the
+  // scanner never parses in this call — the Bootstrap
+  // `accessibility.mdx` failure mode noted in the rule docs is
+  // exactly that shape. Declaring `crossFileCapable: false` routes a
+  // clean tally on HTML substrates to `coverageConfidence: "medium"`
+  // with the IDREF-resolution reason code per ADR 0026 — surfacing
+  // the blindspot rather than hiding it behind a confident `"high"`.
+  crossFileCapable: false,
   docs: {
     description:
       "Pages with a primary navigation should offer a skip link as the first focusable element so keyboard users can bypass the nav on every page, and any skip-link-shaped anchor must resolve to an existing id in the same document.",
