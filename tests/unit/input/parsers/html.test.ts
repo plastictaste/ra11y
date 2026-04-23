@@ -387,4 +387,107 @@ describe("parseHtml", () => {
     expect(detectLiquidIncludeHead("<!DOCTYPE html>")).toBe(false);
     expect(detectLiquidIncludeHead("")).toBe(false);
   });
+
+  // ─── Markdown-autolink recovery (V1-HTML-PARSER-MARKDOWN-URL-AUTOLINK) ──
+  //
+  // Markdown autolinks (`<https://example.com>`, `<mailto:alice@x.com>`)
+  // survive the `.md` → HTML residue pass and would otherwise tokenize
+  // into a synthetic element: the tag-name reader accepts `:` as a name
+  // char (XML-style `<svg:circle>` is real), so `<https:` becomes a
+  // `<https:>` element whose unclosed recovery cascades through every
+  // following `</p>` / `</li>`. Rejecting at the open side for a
+  // closed URL-scheme keyword set keeps the URL as literal text and
+  // lets surrounding structure parse normally. Narrower than "tag ends
+  // with `:`" so XML namespace parses stay on the element path.
+
+  it("treats <https://…> markdown autolinks as literal text, not element openers", () => {
+    const { root, errors } = parseHtml("<p>See <https://example.com> for details.</p>");
+    expect(errors.length).toBe(0);
+    const p = findFirst(root, "p");
+    expect(p).not.toBeNull();
+    // The `<https://example.com>` span is a text node — no phantom
+    // `<https:>` element and no unclosed-element cascade.
+    expect(findFirst(root, "https:")).toBeNull();
+    const joined = (p?.children ?? [])
+      .filter((c) => c.kind === "HtmlText")
+      .map((c) => (c as { value: string }).value)
+      .join("");
+    expect(joined).toContain("<https://example.com>");
+    expect(joined).toContain("for details.");
+  });
+
+  it("treats <mailto:…> autolinks as literal text", () => {
+    const { root, errors } = parseHtml("<p>Email <mailto:alice@example.com> now.</p>");
+    expect(errors.length).toBe(0);
+    const p = findFirst(root, "p");
+    expect(p).not.toBeNull();
+    expect(findFirst(root, "mailto:alice")).toBeNull();
+    const joined = (p?.children ?? [])
+      .filter((c) => c.kind === "HtmlText")
+      .map((c) => (c as { value: string }).value)
+      .join("");
+    expect(joined).toContain("<mailto:alice@example.com>");
+  });
+
+  it("recovers URL autolinks across every supported scheme (http, ftp, tel, sms, ws, …)", () => {
+    // Closed keyword set — widening requires a matching fixture, so a
+    // regression that drops one keyword surfaces here.
+    const schemes = ["http", "https", "mailto", "ftp", "file", "tel", "sms", "ws", "wss"];
+    for (const scheme of schemes) {
+      const { errors } = parseHtml(`<p>See <${scheme}:target> .</p>`);
+      expect(errors.length).toBe(0);
+    }
+  });
+
+  it("keeps XML-namespace elements intact — only URL-scheme keywords are rejected", () => {
+    // `<svg:circle>`, `<xmlns:foo>`, and any other `namespace:localname`
+    // whose namespace is not in the URL-scheme keyword set must still
+    // parse as real elements. This guards against overzealous widening
+    // to "tag ends with `:`".
+    const { root: svgRoot, errors: svgErrors } = parseHtml("<svg:circle r='5'/>");
+    expect(svgErrors.length).toBe(0);
+    expect(findFirst(svgRoot, "svg:circle")).not.toBeNull();
+
+    const { root: xmlRoot, errors: xmlErrors } = parseHtml("<xmlns:foo>x</xmlns:foo>");
+    expect(xmlErrors.length).toBe(0);
+    expect(findFirst(xmlRoot, "xmlns:foo")).not.toBeNull();
+  });
+
+  it("treats <http> as a normal element when there's no colon after the scheme word", () => {
+    // The guard fires only on `<scheme>:` — a bare `<http>` with no
+    // following `:` is still a (weird but parseable) element open. The
+    // rejection must require the `:` anchor so `<style>`, `<script>`,
+    // and any future three-to-four-letter element can't accidentally
+    // share a prefix with a scheme keyword.
+    const { root, errors } = parseHtml("<p><http>ok</http></p>");
+    expect(errors.length).toBe(0);
+    expect(findFirst(root, "http")).not.toBeNull();
+  });
+
+  it("emits the markdown autolink at a correct line/column so downstream rules point at the URL's line", () => {
+    // Line 2 has the autolink; line 1 is the opener. Position tracking
+    // must stay aligned — a regression that regressed the text-node's
+    // source location would misroute rule findings.
+    const { root } = parseHtml("<p>\n  See <https://example.com> here.\n</p>");
+    const p = findFirst(root, "p");
+    const textNodes = (p?.children ?? []).filter((c) => c.kind === "HtmlText");
+    const autolinkNode = textNodes.find((t) =>
+      (t as { value: string }).value.includes("https://example.com"),
+    ) as { loc: { start: { line: number } } } | undefined;
+    expect(autolinkNode?.loc.start.line).toBe(2);
+  });
+
+  it("does not cascade unclosed-element errors through sibling tags on the same page", () => {
+    // Before the fix: `<https:>` element-open + can't find `</https:>`
+    // would steal every sibling `</li>` / `</ul>` as its descendants
+    // and cascade `Unclosed <li>`, `Unclosed <ul>` errors through the
+    // rest of the file. Guard the full no-cascade shape.
+    const { errors } = parseHtml(
+      `<ul>
+  <li>Visit <https://a.com></li>
+  <li>Visit <https://b.com></li>
+</ul>`,
+    );
+    expect(errors.length).toBe(0);
+  });
 });

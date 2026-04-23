@@ -71,6 +71,38 @@ const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(["script", "style", "text
  */
 const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"]);
 
+/**
+ * URL scheme keywords that must never be treated as element-opener tag
+ * names. Markdown autolinks (`<https://example.com>`,
+ * `<mailto:alice@example.com>`) survive the `.md` → HTML residue pass
+ * and otherwise tokenize into a synthetic `<https:>` / `<mailto:alice>`
+ * element — the tag-name reader accepts `:` as a name char (XML-style
+ * `<svg:circle>` namespaces are real), so `https` becomes a tag name
+ * and the unclosed-element recovery cascades through every following
+ * `</p>` / `</li>` / `</td>`. Guarding the open side at tokenize time
+ * keeps the error recovery coherent: `<https://…>` emits as literal
+ * text, no phantom element, no cascade. Kept as a closed set (rather
+ * than "tag ends with `:`") so XML namespace parses continue unchanged.
+ *
+ * See `docs/kb/architecture/input-parsers.md` §"html.ts" for the
+ * character-driven recovery contract and `tests/unit/input/parsers/
+ * html.test.ts` for the markdown-autolink regression guard.
+ */
+const URL_SCHEME_NAMES: ReadonlySet<string> = new Set([
+  "about",
+  "data",
+  "file",
+  "ftp",
+  "http",
+  "https",
+  "javascript",
+  "mailto",
+  "sms",
+  "tel",
+  "ws",
+  "wss",
+]);
+
 export interface HtmlParseResult {
   readonly root: HtmlDocument;
   readonly errors: readonly ParseError[];
@@ -180,6 +212,22 @@ class HtmlParser {
         };
       }
       if (this.#peek(1) !== undefined && isNameStart(this.#peek(1) ?? "")) {
+        // Markdown-autolink recovery (V1-HTML-PARSER-MARKDOWN-URL-AUTOLINK):
+        // `<https://…>` / `<mailto:alice@example.com>` are Markdown
+        // autolink syntax that survives `.md` → HTML residue rewriting.
+        // The tag-name reader accepts `:` as a name char (to handle
+        // XML-style `<svg:circle>`), so the `:` in a URL scheme leaks
+        // into the tag name and we'd otherwise create a synthetic
+        // `<https:>` element whose unclosed recovery cascades through
+        // every following `</p>` / `</li>`. Rejecting at the open
+        // side — a closed set of URL scheme keywords followed by `:` —
+        // keeps the URL as literal text in a text node and lets the
+        // surrounding element structure parse normally. Narrower than
+        // "tag ends with `:`" so XML namespace parses stay on the
+        // element path.
+        if (this.#looksLikeUrlSchemeOpener()) {
+          return this.#consumeText();
+        }
         return this.#consumeElement();
       }
       // Not a recognized tag-like construct — treat '<' as literal text.
@@ -590,6 +638,35 @@ class HtmlParser {
 
   #startsWith(s: string): boolean {
     return this.#source.startsWith(s, this.#pos);
+  }
+
+  /**
+   * True when positioned at `<` followed by a URL-scheme keyword and a
+   * trailing `:` — the Markdown-autolink shape (`<https://…>`,
+   * `<mailto:alice@example.com>`). See {@link URL_SCHEME_NAMES} for the
+   * full list and rationale. Pure peek — does not advance.
+   *
+   * Letter-only name read (`[a-zA-Z]+:`) is sufficient because every
+   * entry in the keyword set is letter-only; widening to the full
+   * RFC 3986 scheme alphabet (`+`, `.`, `-`, digits) would admit non-
+   * scheme names without a matching fixture and break the narrow-by-
+   * design contract the surrounding `#strayClosingTagMessage` rename
+   * also follows.
+   */
+  #looksLikeUrlSchemeOpener(): boolean {
+    if (this.#peek() !== "<") return false;
+    let i = this.#pos + 1;
+    const nameStart = i;
+    while (i < this.#source.length) {
+      const ch = this.#source[i];
+      if (ch === undefined) return false;
+      if (!/[a-zA-Z]/.test(ch)) break;
+      i += 1;
+    }
+    if (i === nameStart) return false;
+    if (this.#source[i] !== ":") return false;
+    const name = this.#source.slice(nameStart, i).toLowerCase();
+    return URL_SCHEME_NAMES.has(name);
   }
 
   #startsWithIgnoreCase(s: string): boolean {
