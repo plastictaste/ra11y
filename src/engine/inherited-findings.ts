@@ -213,6 +213,13 @@ function buildInheritedViolation(
     },
     findingId,
     groupKey,
+    // Forward the source finding's `patternId` — an inherited finding
+    // describes the same canonicalized pattern as its source site, so
+    // agents bulk-dismissing by pattern across sibling template copies
+    // catch both the wrapper definition and every call site in one
+    // sweep. Conditional spread per CLAUDE.md §1 "Ambiguous field
+    // shapes are dishonest."
+    ...(source.patternId !== undefined && { patternId: source.patternId }),
     ...(source.couldBeWrongBecause && source.couldBeWrongBecause.length > 0
       ? { couldBeWrongBecause: source.couldBeWrongBecause }
       : {}),

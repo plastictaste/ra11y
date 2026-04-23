@@ -185,6 +185,37 @@ export interface Violation {
    */
   readonly groupKey: string;
   /**
+   * Stable *source-pattern* fingerprint — the third dedup token, sibling
+   * of `findingId` (cross-run identity) and `groupKey` (AST-shape
+   * grouping). Computed from the emitted `snippet` after canonicalizing
+   * attribute order, trivial whitespace, unique id/class tokens, and
+   * template/SSG interpolation placeholders.
+   *
+   * Motivation (Q6-PATTERN-FINGERPRINT-CROSS-TEMPLATE): website-template
+   * catalogs copy-paste the same Bootstrap navbar snippet across 174
+   * sibling template directories. `findingId` differs by file, and
+   * `groupKey` differs when attribute VALUES differ (e.g.
+   * `class="navbar-toggle btn-primary"` vs `class="navbar-toggle btn-secondary"`
+   * share the AST shape but not the full value set — yet both round
+   * to the same canonical pattern). Without `patternId`, an agent has
+   * no affordance to bulk-dismiss or bulk-fix "this pattern, everywhere
+   * it appears." With it, `patternId === X` identifies one canonical
+   * copy regardless of filename, line, or unique-id churn.
+   *
+   * Surface-don't-suppress: every finding still appears individually;
+   * `patternId` is additive affordance, not a filter (per
+   * docs/kb/architecture/ai-first-consumer.md).
+   *
+   * Optional / present-when-meaningful: only stamped when the rule
+   * emitted a non-empty `snippet` (otherwise the canonicalized input
+   * would be empty and the hash would be meaningless). Forwarders MUST
+   * use a conditional spread so `patternId: undefined` never reaches
+   * the wire (CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+   *
+   * See `src/utils/pattern-id.ts` for the canonicalization recipe.
+   */
+  readonly patternId?: string;
+  /**
    * Structured reason codes naming known escape hatches that could
    * make this finding a false positive in context. Each entry is a
    * stable snake_case identifier (`replacement_indicator_in_sibling_file`,

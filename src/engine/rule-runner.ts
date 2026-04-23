@@ -15,6 +15,7 @@ import type { Severity, Violation } from "../types/violation.ts";
 import { computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { extensionMatches } from "../utils/path.ts";
+import { maybePatternId } from "../utils/pattern-id.ts";
 import { describeNodeShape, findTargetNodeAtLocation } from "./ast-helpers.ts";
 import { buildContext, type ContextInput } from "./context-builder.ts";
 import type { StandardFilter } from "./standard-filter.ts";
@@ -176,6 +177,9 @@ function stampViolation(
     ruleId,
     shape: shapeAtLocation(ast, emitted.location.line, emitted.location.column),
   });
+  // Cross-template pattern fingerprint — stamped only when the rule
+  // emitted a non-empty `snippet`. See `src/utils/pattern-id.ts`.
+  const patternId = maybePatternId(ruleId, emitted.snippet);
   return {
     ruleId,
     fixClass,
@@ -186,6 +190,7 @@ function stampViolation(
     message: emitted.message,
     findingId,
     groupKey,
+    ...(patternId !== undefined && { patternId }),
     ...(emitted.suggestion !== undefined && { suggestion: emitted.suggestion }),
     ...(emitted.fix !== undefined && { fix: emitted.fix }),
     ...(emitted.fixPaths !== undefined && { fixPaths: emitted.fixPaths }),

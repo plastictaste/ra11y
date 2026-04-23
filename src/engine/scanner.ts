@@ -41,7 +41,6 @@ import type {
 } from "../types/violation.ts";
 import { computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
-import { describeNodeShape, findTargetNodeAtLocation } from "./ast-helpers.ts";
 import { runFindersForFile } from "./candidate-runner.ts";
 import { buildEvidenceLedger } from "./evidence-ledger.ts";
 import { synthesizeInheritedFindings } from "./inherited-findings.ts";
@@ -51,6 +50,7 @@ import { RulesRegistry } from "./registry/rules.ts";
 import { StandardsRegistry } from "./registry/standards.ts";
 import { resolvePragmaAttestations } from "./resolve-pragma-attestations.ts";
 import { type RuleEvaluationTracker, runRulesForFile } from "./rule-runner.ts";
+import { stampProjectEmission } from "./stamp-project-emission.ts";
 import {
   type ConformanceLevel,
   createStandardFilter,
@@ -329,73 +329,6 @@ function invokeOneProjectRule(
     if (disabled?.has("*") || disabled?.has(rule.id)) continue;
     out.push(stampProjectEmission(em, rule, criteria, criteriaTitles, sourcesByPath, astsByPath));
   }
-}
-
-/**
- * Builds the final {@link Violation} from a project-rule emission.
- * Split out of {@link invokeOneProjectRule} so the outer function stays
- * under the cognitive-complexity budget — the stamp logic and
- * conditional-spread block push it over otherwise.
- */
-function stampProjectEmission(
-  em: EmittedViolation,
-  rule: Rule,
-  criteria: readonly string[],
-  criteriaTitles: readonly string[],
-  sourcesByPath: ReadonlyMap<string, string>,
-  astsByPath: ReadonlyMap<string, Ast>,
-): Violation {
-  const findingId = computeFindingId({
-    ruleId: rule.id,
-    filePath: em.location.filePath,
-    source: sourcesByPath.get(em.location.filePath) ?? "",
-    line: em.location.line,
-    // Conditional spread per exactOptionalPropertyTypes; see rule-runner.ts.
-    ...(em.variantKey ? { variantKey: em.variantKey } : {}),
-  });
-  const groupKey = computeGroupKey({
-    ruleId: rule.id,
-    shape: shapeAtEmission(astsByPath, em.location.filePath, em.location.line, em.location.column),
-  });
-  return {
-    ruleId: rule.id,
-    fixClass: rule.fixClass,
-    criteria,
-    criteriaTitles,
-    severity: em.severity,
-    location: em.location,
-    message: em.message,
-    findingId,
-    groupKey,
-    ...(em.suggestion !== undefined && { suggestion: em.suggestion }),
-    ...(em.fix !== undefined && { fix: em.fix }),
-    ...(em.fixPaths !== undefined && { fixPaths: em.fixPaths }),
-    ...(em.snippet !== undefined && { snippet: em.snippet }),
-    // Named reason codes for known escape hatches. Conditional
-    // spread per docs/adr/0009-violation-could-be-wrong-because.md
-    // — `couldBeWrongBecause: []` must never reach the agent.
-    ...(em.couldBeWrongBecause?.length ? { couldBeWrongBecause: em.couldBeWrongBecause } : {}),
-    ...(em.classEvidence ? { classEvidence: em.classEvidence } : {}),
-  };
-}
-
-/**
- * Resolves the shape string for a project-rule emission. Mirrors the
- * per-file helper in rule-runner.ts but looks up the file's AST from
- * the `astsByPath` map — a project-rule emission can come from any
- * file in the scan. UNKNOWN_SHAPE when the file wasn't in the map
- * (shouldn't happen) or the location doesn't land on any node
- * (synthetic emit with a placeholder location).
- */
-function shapeAtEmission(
-  astsByPath: ReadonlyMap<string, Ast>,
-  filePath: string,
-  line: number,
-  column: number,
-): string {
-  const ast = astsByPath.get(filePath);
-  const node = ast ? findTargetNodeAtLocation(ast.root, line, column) : null;
-  return node ? describeNodeShape(node) : UNKNOWN_SHAPE;
 }
 
 function projectRuleCrashViolation(ruleId: string, err: unknown): Violation {
