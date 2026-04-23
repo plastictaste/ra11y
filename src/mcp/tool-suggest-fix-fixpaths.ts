@@ -37,11 +37,33 @@ export interface BuildFixPathsOutcomeInputs {
     readonly verifyCommandStructured: VerifyCommandStructured;
   };
   readonly warningsField: { readonly warnings?: readonly string[] };
+  /**
+   * Pre-built `{ meta: { mechanicalInPrinciple: true } }` spread (or
+   * `{}` when not applicable) computed by the caller from the matched
+   * violation's `fixClass`. Forwarded verbatim onto the guidance lane
+   * so agents reading a `kind: "guidance"` response learn that the rule
+   * family supports a mechanical path in principle — even though the
+   * specific context made the replacement ambiguous. See Q6-SUGGEST-
+   * FIX-MECHANICAL-VS-GUIDANCE-DRIFT. Not emitted on the `kind: "edit"`
+   * lane (the edit is concrete; the in-principle hint would be noise).
+   */
+  readonly mechanicalInPrincipleField: {
+    readonly meta?: { readonly mechanicalInPrinciple: true };
+  };
 }
 
 export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record<string, unknown> {
-  const { match, source, line, sourceContext, confidence, snippetField, verify, warningsField } =
-    inputs;
+  const {
+    match,
+    source,
+    line,
+    sourceContext,
+    confidence,
+    snippetField,
+    verify,
+    warningsField,
+    mechanicalInPrincipleField,
+  } = inputs;
   const fixPaths = match.fixPaths;
   if (fixPaths === undefined) {
     throw new Error(
@@ -127,5 +149,6 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
     ...caveatField,
     ...verify,
     ...warningsField,
+    ...mechanicalInPrincipleField,
   };
 }
