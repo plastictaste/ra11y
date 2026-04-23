@@ -63,12 +63,20 @@ export const VENDOR_DEDUPE_MIN_DISTINCT_PATHS = 2;
  *
  * Pure function — never mutates input. No I/O.
  */
-export function collapseVendorCssFindings(
-  violations: readonly Violation[],
-): readonly Violation[] {
-  // Pass 1: bucket by (basename, ruleId, dedupeValue). Insertion order on
-  // the Map reflects first-appearance order in the input stream, which
-  // Pass 3 preserves when emitting canonical entries.
+export function collapseVendorCssFindings(violations: readonly Violation[]): readonly Violation[] {
+  const buckets = bucketByKey(violations);
+  const plan = planCollapse(buckets);
+  if (plan.size === 0) return violations;
+  return emitDeduped(violations, plan);
+}
+
+/**
+ * Groups findings into buckets keyed by `(basename, ruleId, dedupeValue)`.
+ * Insertion order on the returned Map reflects first-appearance order in
+ * the input stream — downstream passes depend on this for deterministic
+ * output.
+ */
+function bucketByKey(violations: readonly Violation[]): Map<string, Violation[]> {
   const buckets = new Map<string, Violation[]>();
   for (const v of violations) {
     const key = bucketKey(v);
@@ -79,84 +87,84 @@ export function collapseVendorCssFindings(
       existing.push(v);
     }
   }
+  return buckets;
+}
 
-  // Pass 2: identify buckets that qualify for collapse. A bucket qualifies
-  // when it contains findings from ≥ VENDOR_DEDUPE_MIN_DISTINCT_PATHS
-  // distinct file paths. Same-basename findings sitting in one file (e.g.
-  // the same rule firing on two rules in one bootstrap.css) never collapse
-  // — that's a per-file rollup lane, not a cross-file dedupe lane.
-  const collapsedKeys = new Set<string>();
-  const canonicalByKey = new Map<string, Violation>();
-  const occurrencesByKey = new Map<string, { path: string; line: number }[]>();
+/**
+ * Collapse plan per bucket — the canonical Violation to surface and the
+ * ordered occurrences list to stamp on it. A bucket appears in the plan
+ * only when it spans ≥ {@link VENDOR_DEDUPE_MIN_DISTINCT_PATHS} distinct
+ * file paths. Same-file-multi-finding buckets and same-basename-different-
+ * content buckets sit out.
+ */
+interface CollapseEntry {
+  readonly canonical: Violation;
+  readonly occurrences: readonly { readonly path: string; readonly line: number }[];
+}
+
+function planCollapse(buckets: Map<string, Violation[]>): Map<string, CollapseEntry> {
+  const plan = new Map<string, CollapseEntry>();
   for (const [key, bucket] of buckets) {
     const distinctPaths = new Set(bucket.map((v) => v.location.filePath));
     if (distinctPaths.size < VENDOR_DEDUPE_MIN_DISTINCT_PATHS) continue;
-    collapsedKeys.add(key);
     // Canonical = lexicographically smallest (path, line) so output is
     // stable across runs regardless of discovery order. The violation we
     // surface is the one that lives in the canonical file at the canonical
     // line; the rest ride inside `vendorOccurrences` on that same finding.
-    const sorted = [...bucket].sort(
-      (a, b) =>
-        a.location.filePath.localeCompare(b.location.filePath) ||
-        a.location.line - b.location.line,
-    );
+    const sorted = [...bucket].sort(compareByLocation);
     const canonical = sorted[0] as Violation;
-    canonicalByKey.set(key, canonical);
     // `vendorOccurrences` includes the canonical finding's own
     // `(path, line)` as the first entry — consumers iterating the list
     // see every copy at a glance without cross-referencing the outer
     // finding's `location`.
-    occurrencesByKey.set(
-      key,
-      sorted.map((v) => ({ path: v.location.filePath, line: v.location.line })),
-    );
+    const occurrences = sorted.map((v) => ({ path: v.location.filePath, line: v.location.line }));
+    plan.set(key, { canonical, occurrences });
   }
+  return plan;
+}
 
-  if (collapsedKeys.size === 0) return violations;
+/**
+ * Lexicographic sort by (filePath, line). Kept as a top-level function so
+ * the main pass stays at one level of nesting.
+ */
+function compareByLocation(a: Violation, b: Violation): number {
+  return (
+    a.location.filePath.localeCompare(b.location.filePath) || a.location.line - b.location.line
+  );
+}
 
-  // Pass 3: emit the deduped list. For each collapsed bucket, emit the
-  // canonical finding once with `vendorOccurrences` stamped on; drop the
-  // rest. For non-collapsed buckets, pass the findings through unchanged.
-  const emittedCanonicalKeys = new Set<string>();
+/**
+ * Emits the deduped list: canonical findings with `vendorOccurrences`
+ * stamped on, plus any non-bucketed findings unchanged. Canonical entries
+ * surface at the position of their bucket's first appearance in the input
+ * stream; later duplicates are dropped.
+ */
+function emitDeduped(
+  violations: readonly Violation[],
+  plan: Map<string, CollapseEntry>,
+): readonly Violation[] {
+  const emitted = new Set<string>();
   const out: Violation[] = [];
   for (const v of violations) {
     const key = bucketKey(v);
-    if (!collapsedKeys.has(key)) {
+    const entry = plan.get(key);
+    if (entry === undefined) {
       out.push(v);
       continue;
     }
-    const canonical = canonicalByKey.get(key);
-    if (canonical === undefined) continue;
-    // Emit the canonical exactly once, at the position of the bucket's
-    // first appearance in the input. Subsequent duplicates in the input
-    // stream are silently dropped.
-    if (v !== canonical) continue;
-    if (emittedCanonicalKeys.has(key)) continue;
-    emittedCanonicalKeys.add(key);
-    const vendorOccurrences = occurrencesByKey.get(key);
-    if (vendorOccurrences === undefined) {
-      out.push(v);
-      continue;
-    }
-    out.push({ ...v, vendorOccurrences });
+    if (v !== entry.canonical || emitted.has(key)) continue;
+    emitted.add(key);
+    out.push({ ...v, vendorOccurrences: entry.occurrences });
   }
-
-  // Safety net: canonical violations whose input-order first-appearance
-  // landed on a NON-canonical duplicate wouldn't get emitted in Pass 3's
-  // main loop (the canonical never appears at that earlier index).
-  // Iterate any collapsed buckets whose canonical was never emitted and
-  // append them at the end. Preserves determinism while guaranteeing
-  // every collapsed bucket surfaces its canonical on the wire.
-  for (const key of collapsedKeys) {
-    if (emittedCanonicalKeys.has(key)) continue;
-    const canonical = canonicalByKey.get(key);
-    const vendorOccurrences = occurrencesByKey.get(key);
-    if (canonical === undefined || vendorOccurrences === undefined) continue;
-    out.push({ ...canonical, vendorOccurrences });
-    emittedCanonicalKeys.add(key);
+  // Safety net: if a canonical's input-order first-appearance landed on a
+  // NON-canonical duplicate, the main loop's identity check skips it.
+  // Append any unemitted canonicals at the end so every collapsed bucket
+  // surfaces on the wire.
+  for (const [key, entry] of plan) {
+    if (emitted.has(key)) continue;
+    emitted.add(key);
+    out.push({ ...entry.canonical, vendorOccurrences: entry.occurrences });
   }
-
   return out;
 }
 

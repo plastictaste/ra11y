@@ -208,12 +208,8 @@ describe("collapseVendorCssFindings — determinism", () => {
     const reverse = collapseVendorCssFindings([c, b, a]);
     expect(forward).toHaveLength(1);
     expect(reverse).toHaveLength(1);
-    expect((forward[0] as Violation).location.filePath).toBe(
-      "templates/site-a/css/bootstrap.css",
-    );
-    expect((reverse[0] as Violation).location.filePath).toBe(
-      "templates/site-a/css/bootstrap.css",
-    );
+    expect((forward[0] as Violation).location.filePath).toBe("templates/site-a/css/bootstrap.css");
+    expect((reverse[0] as Violation).location.filePath).toBe("templates/site-a/css/bootstrap.css");
     // Same occurrences list either way.
     const forwardPaths = (forward[0] as Violation).vendorOccurrences?.map((o) => o.path);
     const reversePaths = (reverse[0] as Violation).vendorOccurrences?.map((o) => o.path);
