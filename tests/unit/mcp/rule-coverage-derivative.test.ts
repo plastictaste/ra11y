@@ -136,10 +136,7 @@ describe("buildRuleCoverageDerivative", () => {
     // `"medium"` and `"low"` both land here — the derivative's two-
     // bucket shape is unchanged. Sorted alphabetically for
     // cross-run stability (same invariant the high bucket honors).
-    expect(result!.lowConfidenceClean).toEqual([
-      "contrast/minimum",
-      "keyboard/handler-missing",
-    ]);
+    expect(result!.lowConfidenceClean).toEqual(["contrast/minimum", "keyboard/handler-missing"]);
     // Per-row honesty: the derivative does not mutate the input rows.
     const medium = per.find((r) => r.ruleId === "keyboard/handler-missing");
     expect(medium?.coverageConfidence).toBe("medium");
