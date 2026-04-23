@@ -18,6 +18,17 @@
  * different work lanes — agents budgeting against the headline got
  * `runtime-only` and `verify-in-source` items counted as "guidance"
  * without a way to split them back out from the prose.
+ *
+ * The leading noun for the lane breakdown is `"N finding(s)"`, not
+ * `"N violation(s)"`. Two of the four lanes (`guidance`,
+ * `verify-in-source`) are prose-only — "please verify / please rewrite"
+ * signals that aren't directly actionable in the way `mechanical`
+ * edits are. Labeling the composite total as "violations" promises one
+ * kind of work, then delivers four under the same noun — the exact
+ * "composite headline counts are dishonest" mismatch flagged in the
+ * AI-first consumer doctrine. "Findings" is the honest umbrella noun
+ * and matches the CLI agent surface in `build-plan.ts`, so both
+ * summary formatters emit the same shape.
  */
 
 import {
@@ -59,8 +70,13 @@ function buildFindingParts(
   if (violations === 0 && notes === 0) return ["No automated findings"];
   const parts: string[] = [];
   if (violations > 0) {
+    // Noun is "finding", not "violation": the lane breakdown mixes
+    // directly-actionable (`mechanical`) with prose-only
+    // (`guidance`, `verify-in-source`, `runtime-only`) lanes, so
+    // summing them under "violations" promises work the breakdown
+    // doesn't deliver. See the module docblock for rationale.
     parts.push(
-      `${violations} violation${violations === 1 ? "" : "s"}${buildFixClassBreakdown(fixClassCounts)}`,
+      `${violations} finding${violations === 1 ? "" : "s"}${buildFixClassBreakdown(fixClassCounts)}`,
     );
   }
   if (notes > 0) parts.push(`${notes} note${notes === 1 ? "" : "s"} to review`);
