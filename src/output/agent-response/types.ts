@@ -185,6 +185,35 @@ export interface AgentFinding {
 export interface AgentFile {
   readonly path: string;
   readonly findings: readonly AgentFinding[];
+  /**
+   * Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: per-file scan-
+   * degradation telemetry. When the parser emitted errors on this
+   * file, the surrounding findings ran on a degraded AST (recovered
+   * slice) or didn't see the file at all. Without this signal on the
+   * per-file entry, `findings: []` on a parse-errored file reads as
+   * "rules ran clean on this file" when the honest reading is "rules
+   * couldn't see the file." Each entry carries
+   * `{ reason: "parse_error" | "partial_parse", file, parser,
+   * detail? }`; the file/parser/detail fields match the per-entry
+   * shape of `meta.analysisCoverage.parseErrorFiles` so the two
+   * surfaces stay in lockstep (same source data, different
+   * presentation lane). Present-when-meaningful: omitted when the
+   * file parsed cleanly (never `[]`).
+   */
+  readonly limitations?: readonly FileLimitation[];
+}
+
+/**
+ * Per-file scan-degradation reason surfaced on {@link AgentFile}. The
+ * authoritative constructor lives in `src/mcp/file-limitations.ts`;
+ * the shape is declared here so {@link AgentFile} can carry it without
+ * the output layer importing from the MCP layer.
+ */
+export interface FileLimitation {
+  readonly reason: "parse_error" | "partial_parse";
+  readonly file: string;
+  readonly parser: string;
+  readonly detail?: string;
 }
 
 export interface AgentReviewCandidate {

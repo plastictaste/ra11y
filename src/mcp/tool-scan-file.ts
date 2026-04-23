@@ -19,6 +19,7 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { LoadedConfig } from "../types/config.ts";
 import { parseableExtensions } from "../utils/path.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
+import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
@@ -259,6 +260,18 @@ function buildScanFileResponse(args: {
   // of the scan family emits. Agents iterating the fix-verify loop
   // key off the flat `findings` array.
   const flatFindings = assembled.files[0]?.findings ?? [];
+  // Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: surface a top-level
+  // `limitations` signal whenever the parser emitted errors on this
+  // file. Without it, `fired: 0` + `warnings: [parse_errors_present]`
+  // reads as "scan ran clean" at a glance — the degradation is only
+  // visible after cross-reading `meta.analysisCoverage.parseErrorFiles`.
+  // `partial_parse` vs `parse_error` comes from whether any rule
+  // actually fired on the recovered slice (flatFindings.length > 0);
+  // `detail` echoes the first parser-error message so the agent has
+  // the fix pivot inline. Conditional-spread per CLAUDE.md §1
+  // "Ambiguous field shapes are dishonest" — clean scans omit the
+  // field entirely rather than ship `[]`.
+  const limitation: FileLimitation | null = buildFileLimitation(parsed, flatFindings.length > 0);
   const nextStep = buildNextStep(
     {
       plan: assembled.plan,
@@ -308,6 +321,7 @@ function buildScanFileResponse(args: {
       ? {}
       : { reviewCandidates: assembled.reviewCandidates }),
     plan: assembled.plan,
+    ...(limitation === null ? {} : { limitations: [limitation] }),
     ...(assembled.referenceGuide === undefined ? {} : { referenceGuide: assembled.referenceGuide }),
     ...(assembled.warnings === undefined ? {} : { warnings: assembled.warnings }),
     ...(assembled.warningsDetails === undefined

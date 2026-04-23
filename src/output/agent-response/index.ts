@@ -28,6 +28,7 @@ export type {
   Category,
   Confidence,
   Effort,
+  FileLimitation,
   FixesByClass,
   Safety,
 } from "./types.ts";

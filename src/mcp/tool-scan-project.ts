@@ -25,6 +25,7 @@ import {
 import { buildConfigHint } from "./config-hint.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { buildFileLimitation } from "./file-limitations.ts";
 import { hasMetaArrayTruncation } from "./meta-array-cap.ts";
 import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
@@ -274,6 +275,18 @@ export const scanProjectTool: McpTool = {
     // findings that never reach the caller, leaving a pointer with
     // no lookup target.
     const hoisted = hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide);
+    // Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: annotate each per-file
+    // entry with `limitations` when the underlying ParsedFile carried
+    // parse errors. Scoped to files currently on this page so the
+    // enrichment cost tracks the response size, not the whole scan —
+    // every file in `hoisted.files` has findings by construction (only
+    // finding-bearing files reach `files[]`), so any parse-errored file
+    // in here is a `partial_parse` case. Pure parse-error (0 findings)
+    // files stay surfaced via `meta.analysisCoverage.parseErrorFiles`;
+    // the per-file limitation is for the degraded-recall signal that
+    // would otherwise be invisible when a file emitted findings.
+    const enrichedHoistedFiles = attachPerFileLimitations(hoisted.files, files);
+    const hoistedWithLimitations = { ...hoisted, files: enrichedHoistedFiles };
     // Q4-SSG-BUILD-HINT: probe the scan root for an SSG config marker
     // (Jekyll / Hugo / Astro / Eleventy / Gatsby / MkDocs). When a
     // framework resolves, `detectedFramework` ships as a structured
@@ -353,7 +366,7 @@ export const scanProjectTool: McpTool = {
         params,
         session,
         formatted,
-        hoisted,
+        hoisted: hoistedWithLimitations,
         page,
         pageOffset: pageParams.offset,
         fullMeta,
@@ -409,6 +422,42 @@ function inlineReviewCandidatesFieldFor(args: {
   const surfaced = buildScanProjectReviewCandidates({ candidates, manualIds, limit });
   if (surfaced.length === 0) return {};
   return { reviewCandidates: surfaced };
+}
+
+/**
+ * Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: enriches per-file entries
+ * with a `limitations` field when the underlying `ParsedFile`'s
+ * in-house parser emitted errors. The finding-bearing path is always
+ * `partial_parse` (file is in `files[]` because it produced findings);
+ * the classifier in {@link buildFileLimitation} uses `fileHasFindings:
+ * true` to stamp the correct reason. Returns the input list unchanged
+ * when no entry's source file carried parse errors — a hot path for
+ * clean scans.
+ *
+ * Doctrine: CLAUDE.md §1 "Ambiguous field shapes are dishonest" —
+ * omit the field on cleanly-parsed entries rather than ship `[]`. The
+ * enrichment runs post-pagination + post-hoist so only files that
+ * actually ship on this page pay the lookup cost.
+ */
+function attachPerFileLimitations(
+  entries: readonly ScanFormatted["files"][number][],
+  parsedFiles: readonly ParsedFile[],
+): readonly ScanFormatted["files"][number][] {
+  const parsedByPath = new Map<string, ParsedFile>();
+  for (const pf of parsedFiles) {
+    if (pf.ast.errors.length > 0) parsedByPath.set(pf.filePath, pf);
+  }
+  if (parsedByPath.size === 0) return entries;
+  return entries.map((entry) => {
+    const pf = parsedByPath.get(entry.path);
+    if (pf === undefined) return entry;
+    // `entry.findings.length > 0` by construction — only finding-bearing
+    // files reach `formatted.files`. Threaded explicitly so the
+    // classifier's contract stays honest at the call site.
+    const limitation = buildFileLimitation(pf, entry.findings.length > 0);
+    if (limitation === null) return entry;
+    return { ...entry, limitations: [limitation] };
+  });
 }
 
 /**
