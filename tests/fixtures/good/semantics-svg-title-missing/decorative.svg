@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Decorative flourish served as a CSS background. aria-hidden="true"
+     tells assistive tech to skip this asset entirely. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 10" aria-hidden="true">
+  <line x1="0" y1="5" x2="120" y2="5" stroke="currentColor" stroke-width="1"/>
+</svg>

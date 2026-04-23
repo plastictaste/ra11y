@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Exported from a design tool with no title child, no aria-label, no
+     aria-hidden. Assistive tech has nothing to announce but the file
+     name when this SVG is rendered. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <path d="M12 2L2 22h20L12 2z" fill="currentColor"/>
+</svg>

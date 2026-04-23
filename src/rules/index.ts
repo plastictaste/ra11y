@@ -77,6 +77,7 @@ import { rule as landmarkMain } from "./semantics/landmark-main.ts";
 import { rule as listStructure } from "./semantics/list-structure.ts";
 import { rule as nestedInteractive } from "./semantics/nested-interactive.ts";
 import { rule as sectionAccessibleNameMissing } from "./semantics/section-accessible-name-missing.ts";
+import { rule as svgTitleMissing } from "./semantics/svg-title-missing.ts";
 import { rule as tableCaptionMissing } from "./semantics/table-caption-missing.ts";
 import { rule as tableHeaders } from "./semantics/table-headers.ts";
 import { rule as tableThScopeMissing } from "./semantics/table-th-scope-missing.ts";
@@ -149,6 +150,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   sectionAccessibleNameMissing,
   skipLink,
   stretchedLinkMultipleInContainer,
+  svgTitleMissing,
   tabindexPositive,
   tableCaptionMissing,
   tableHeaders,
@@ -228,6 +230,7 @@ export {
   sectionAccessibleNameMissing,
   skipLink,
   stretchedLinkMultipleInContainer,
+  svgTitleMissing,
   tabindexPositive,
   tableCaptionMissing,
   tableHeaders,

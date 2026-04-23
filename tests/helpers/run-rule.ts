@@ -145,7 +145,14 @@ function guessFilePath(source: string): string {
 }
 
 function parseSource(filePath: string, source: string): Ast {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm")) {
+  if (
+    filePath.endsWith(".html") ||
+    filePath.endsWith(".htm") ||
+    // `.svg` routes through `parseHtml` via the `parseSvg` adapter in
+    // production (see `src/input/parsers/svg.ts`). Unit tests that
+    // point `filePath` at an `.svg` get the same HTML-AST shape.
+    filePath.endsWith(".svg")
+  ) {
     const result = parseHtml(source);
     return { language: "html", root: result.root, errors: result.errors };
   }
