@@ -64,6 +64,7 @@ import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile } from "../utils/path.ts";
+import { isBuildArtifact } from "./build-artifacts.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { extractComponentIdentifier, isJsxBearingFile } from "./opaque-tag-filter.ts";
 
@@ -870,6 +871,35 @@ function accumulateCoverageForFile(
   // for non-JSX-bearing extensions so the inventory reflects real
   // component sightings. See `opaque-tag-filter.ts`.
   if (!isJsxBearingFile(file.filePath)) return;
+  // Belt-and-braces filter (Q6-OPAQUE-COMPONENTS-MINIFIED-JS-REGRESSION).
+  // The extension filter above already excludes plain `.ts` / `.js`, but
+  // the parser's JSX-mode recovery path still runs on `.tsx` / `.jsx`
+  // sources that fail to parse cleanly — when that happens, fake tag
+  // positions from degraded AST recovery slip through and pollute
+  // `opaqueCustomComponentNames`. Two additional structural skips keep
+  // the inventory honest regardless of how fake positions originate:
+  //
+  //   1. Files whose parser emitted errors. The AST is degraded and any
+  //      JSX element materialized off the recovered slice is on weaker
+  //      evidence than a clean parse — skip extraction so the parse-
+  //      error paths can never contribute to the opaque inventory.
+  //      This upholds the invariant that every name in
+  //      `opaqueCustomComponentNames` traces back to a cleanly-parsed
+  //      source file (see the per-extension filter above for the
+  //      companion language-level guard). The `parseErrorFiles` /
+  //      `partialParseFiles` sibling blocks on this same coverage object
+  //      are how an agent triages the invisible / degraded paths; the
+  //      opaque inventory staying clean is how it trusts the rest.
+  //   2. Files classified as build artifacts. Minified bundles, hashed
+  //      vendor output, and `dist/`-tree files can still reach
+  //      `.tsx`/`.jsx` extensions (shipped bundles, pre-compiled
+  //      component libraries). The `scannedBuildArtifacts` classifier
+  //      runs deterministic checks — `.min.` infix, hashed filename,
+  //      bundler-output directory, single-long-line minification — so
+  //      skipping here is structural, not heuristic. A compiled bundle
+  //      is not a source of authored component sightings.
+  if (file.ast.errors.length > 0) return;
+  if (isBuildArtifact(file.filePath, file.source)) return;
   // Per-file Storybook transparency: only story files get the
   // primitive exemption, so a stray `<Story />` in product code is
   // still counted as opaque. Computed once per file so the hot JSX

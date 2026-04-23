@@ -493,6 +493,115 @@ describe("buildAnalysisCoverage — hints", () => {
         expect(names).toEqual(["HeaderNav"]);
       });
     });
+
+    // Q6-OPAQUE-COMPONENTS-MINIFIED-JS-REGRESSION belt-and-braces:
+    // regardless of how fake JSX tag positions originate (upstream
+    // TSX-parser error-parse leakage on `.js`, parser recovery on
+    // syntactically-broken `.tsx`, vendored compiled bundles that
+    // happen to land at a JSX-bearing extension), the wrapper
+    // extraction must skip files whose parser emitted errors AND files
+    // classified as build artifacts. The invariant: every name in
+    // `opaqueCustomComponentNames` must trace back to a cleanly-parsed,
+    // non-artifact source file.
+    describe("parseErrorFiles + scannedBuildArtifacts invariant", () => {
+      function tsxFileWithErrors(path: string, tagNames: readonly string[]): ParsedFile {
+        const base = tsxFile(path, tagNames, { interactive: true });
+        return {
+          ...base,
+          ast: {
+            ...base.ast,
+            errors: [
+              {
+                message: "Unexpected token `<` at position 42",
+                position: { line: 1, column: 1, offset: 0 },
+                recoverable: true,
+              },
+            ],
+          },
+        };
+      }
+
+      it("skips wrapper extraction on .tsx files whose parser emitted errors", () => {
+        // A broken-parse `.tsx` file recovers a partial AST and can emit
+        // fake tag positions off the recovered slice — the `isJsxBearingFile`
+        // extension filter admits `.tsx`, so the parse-error filter has
+        // to kick in independently. A clean `.tsx` peer ships a real
+        // component so the positive control stays visible.
+        const files = [
+          tsxFileWithErrors("Broken.tsx", ["Phantom", "FakeTag"]),
+          tsxFile("Real.tsx", ["HeaderNav"], { interactive: true }),
+        ];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(1);
+        const names = analysisCoverage?.["opaqueCustomComponentNames"] as string[] | undefined;
+        expect(names).toEqual(["HeaderNav"]);
+      });
+
+      it("skips wrapper extraction on files classified as build artifacts", () => {
+        // A shipped bundle at a `.jsx` extension (canonical `.min.`
+        // infix marker) must not contribute names to the inventory —
+        // `scannedBuildArtifacts` classification is deterministic from
+        // file shape (not a heuristic on tag contents) and an authored
+        // wrapper sighting in a compiled artifact is definitionally
+        // upstream of scope.
+        const files = [
+          tsxFile("vendor/lib.min.jsx", ["Phantom", "FakeTag"], { interactive: true }),
+          tsxFile("Real.tsx", ["HeaderNav"], { interactive: true }),
+        ];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(1);
+        const names = analysisCoverage?.["opaqueCustomComponentNames"] as string[] | undefined;
+        expect(names).toEqual(["HeaderNav"]);
+      });
+
+      it("invariant: every name in opaqueCustomComponentNames traces to a file not in parseErrorFiles", () => {
+        // The load-bearing cross-field invariant — the opaque inventory
+        // and the parse-error file list are disjoint. Exercised with
+        // a scan that produces both a non-empty opaque inventory AND
+        // a non-empty `parseErrorFiles` bucket, so the assertion tests
+        // the actual filter rather than a vacuous empty-vs-empty case.
+        // Passing an empty `findingFilePaths` set routes every errored
+        // file into `parseErrorFiles` (invisible bucket) — that's the
+        // classification the invariant is named against.
+        const files = [
+          tsxFileWithErrors("BadA.tsx", ["PhantomA"]),
+          tsxFileWithErrors("BadB.tsx", ["PhantomB"]),
+          tsxFile("GoodA.tsx", ["HeaderNav", "Footer"], { interactive: true }),
+          tsxFile("GoodB.tsx", ["Sidebar"], { interactive: true }),
+        ];
+        const { analysisCoverage } = buildAnalysisCoverage(
+          files,
+          [],
+          NO_RULES,
+          false,
+          0,
+          undefined,
+          undefined,
+          new Set<string>(),
+        );
+        const names =
+          (analysisCoverage?.["opaqueCustomComponentNames"] as string[] | undefined) ?? [];
+        const parseErrorEntries =
+          (analysisCoverage?.["parseErrorFiles"] as readonly { path: string }[] | undefined) ?? [];
+        const parseErrorPaths = new Set(parseErrorEntries.map((e) => e.path));
+        // Sanity: both sides populated so the disjointness check isn't vacuous.
+        expect(names.length).toBeGreaterThan(0);
+        expect(parseErrorPaths.size).toBeGreaterThan(0);
+        // Invariant: no name originated from a parseErrorFiles path.
+        // Since `opaqueCustomComponentNames` is a deduped set of names
+        // (not tagged with source paths), the assertion is that none of
+        // the phantom tag names that appear ONLY in parse-error files
+        // leak into the inventory.
+        for (const phantom of ["PhantomA", "PhantomB"]) {
+          expect(names).not.toContain(phantom);
+        }
+        // Positive control: the names that ONLY appear in clean files
+        // are present.
+        expect(names).toContain("HeaderNav");
+        expect(names).toContain("Footer");
+        expect(names).toContain("Sidebar");
+      });
+    });
   });
 
   describe("thin CSS coverage", () => {
