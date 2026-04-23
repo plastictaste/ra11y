@@ -193,14 +193,25 @@ export function rewriteLineComment(out: string[], start: number, bodyEnd: number
 // ---------------------------------------------------------------------------
 
 /**
- * Given the raw RHS of a `$var:` declaration, returns a literal CSS
+ * Given the raw RHS of a variable declaration, returns a literal CSS
  * value if one is present, or null if the value can't be statically
  * resolved. Only literals we can safely inline into the CSS output
  * qualify: hex colours, named colours, simple length/number units,
  * rgb/rgba/hsl/hsla function calls with no interpolation or math,
  * and aliases to already-resolved variables.
+ *
+ * `sigil` is the variable-reference prefix character for the calling
+ * dialect (SCSS uses `$`, Less uses `@`). It parameterizes both the
+ * alias-to-other-variable check on the RHS and the "is the arg list a
+ * literal" guard used by the colour-function match (so `rgba(@a, …)`
+ * is rejected as non-literal in Less the same way `rgba($a, …)` is in
+ * SCSS). Defaults to `$` so existing SCSS callers are unchanged.
  */
-export function extractLiteralValue(raw: string, vars: ReadonlyMap<string, string>): string | null {
+export function extractLiteralValue(
+  raw: string,
+  vars: ReadonlyMap<string, string>,
+  sigil = "$",
+): string | null {
   const trimmed = raw.replace(/\s*!default\s*$/i, "").trim();
   if (trimmed.length === 0) return null;
   if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) return trimmed;
@@ -208,9 +219,9 @@ export function extractLiteralValue(raw: string, vars: ReadonlyMap<string, strin
   const colorFnMatch = /^(rgba?|hsla?)\(([^()]*)\)$/i.exec(trimmed);
   if (colorFnMatch) {
     const args = colorFnMatch[2] ?? "";
-    if (isLiteralArgList(args)) return trimmed;
+    if (isLiteralArgList(args, sigil)) return trimmed;
   }
-  if (trimmed.startsWith("$")) {
+  if (trimmed.startsWith(sigil)) {
     const name = readIdent(trimmed, 1);
     if (name.length > 0 && name.length === trimmed.length - 1) {
       return vars.get(name) ?? null;
@@ -221,8 +232,8 @@ export function extractLiteralValue(raw: string, vars: ReadonlyMap<string, strin
   return null;
 }
 
-function isLiteralArgList(args: string): boolean {
-  if (args.includes("$")) return false;
+function isLiteralArgList(args: string, sigil: string): boolean {
+  if (args.includes(sigil)) return false;
   if (args.includes("#{")) return false;
   if (/\d\s*[*/]\s*\d/.test(args)) return false;
   if (/\d\s*[+-]\s*\d/.test(args)) return false;
