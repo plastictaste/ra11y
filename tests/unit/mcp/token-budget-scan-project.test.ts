@@ -144,6 +144,9 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
         truncated?: boolean;
         nextOffset?: number;
         totalFilesWithFindings?: number;
+        requestedLimit?: number;
+        effectiveLimit?: number;
+        pageClipReason?: string;
         warnings?: readonly string[];
         warningsDetails?: {
           response_token_budget_truncated?: {
@@ -163,6 +166,15 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
       // nextOffset resumes at offset + keptFileCount so the next
       // page picks up the dropped tail.
       expect(body.nextOffset).toBe(body.files.length);
+      // Top-level pagination settlement: the density cap trimmed
+      // below the caller's `limit: 50`, so `pageClipReason` names
+      // the regime and `effectiveLimit` matches the returned file
+      // count. A caller seeing the two fields in one read can tell
+      // "token_density" from "end_of_results" without cracking open
+      // `warningsDetails`.
+      expect(body.requestedLimit).toBe(50);
+      expect(body.effectiveLimit).toBe(body.files.length);
+      expect(body.pageClipReason).toBe("token_density");
       // Envelope echo of requested vs. effective file counts: a
       // caller seeing `warnings: ["response_token_budget_truncated"]`
       // + `files.length: N` cannot tell aggressive trims from

@@ -1145,6 +1145,16 @@ function readPageParams(params: Record<string, unknown>): PageParams {
  * together when the whole result fits (CLAUDE.md §1 "Ambiguous field
  * shapes are dishonest" — `truncated: false` would be dishonest since
  * it reads as "present but nothing to report").
+ *
+ * When pagination is active (any page after the first, or any page
+ * where `truncated` fires), the response carries `requestedLimit` +
+ * `effectiveLimit` + `pageClipReason` so a caller seeing "returned <
+ * limit" can distinguish the three clip regimes without a re-page.
+ * `end_of_results` is emitted at this layer only — the density cap
+ * downstream overrides to `token_density` when it trims further.
+ * Pages that returned exactly `limit` carry `effectiveLimit` equal to
+ * `requestedLimit` and no `pageClipReason` (the "full page" is not
+ * clipped at this layer).
  */
 function paginateFiles<T>(
   files: readonly T[],
@@ -1155,6 +1165,9 @@ function paginateFiles<T>(
     readonly truncated?: true;
     readonly nextOffset?: number;
     readonly totalFilesWithFindings?: number;
+    readonly requestedLimit?: number;
+    readonly effectiveLimit?: number;
+    readonly pageClipReason?: "end_of_results";
   };
 } {
   const page = files.slice(offset, offset + limit);
@@ -1162,11 +1175,15 @@ function paginateFiles<T>(
   if (!hasMore && offset === 0) {
     return { files: page, paginationFields: {} };
   }
+  const clippedByEnd = !hasMore && page.length < limit;
   return {
     files: page,
     paginationFields: {
       ...(hasMore ? { truncated: true as const, nextOffset: offset + limit } : {}),
       totalFilesWithFindings: files.length,
+      requestedLimit: limit,
+      effectiveLimit: page.length,
+      ...(clippedByEnd ? { pageClipReason: "end_of_results" as const } : {}),
     },
   };
 }

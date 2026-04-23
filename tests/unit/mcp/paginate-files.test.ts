@@ -146,15 +146,113 @@ describe("scan_project pagination (P1-OVF)", () => {
         truncated?: boolean;
         nextOffset?: number;
         totalFilesWithFindings?: number;
+        requestedLimit?: number;
+        effectiveLimit?: number;
+        pageClipReason?: string;
       };
       // Page 2 of 2: the remaining 2 files (5 total - offset 3).
       // `truncated` should be ABSENT (final page), but
       // `totalFilesWithFindings` stays so the agent can confirm it's
-      // seen the whole inventory.
+      // seen the whole inventory. The last-page clip (`limit: 3`
+      // requested, 2 returned because the tail ran out) surfaces as
+      // `pageClipReason: "end_of_results"` + the limit/effective
+      // settlement so the caller can distinguish "ran out of data"
+      // from the density-cap regime without a re-page.
       expect(body.files.length).toBe(2);
       expect(body.truncated).toBeUndefined();
       expect(body.nextOffset).toBeUndefined();
       expect(body.totalFilesWithFindings).toBe(5);
+      expect(body.requestedLimit).toBe(3);
+      expect(body.effectiveLimit).toBe(2);
+      expect(body.pageClipReason).toBe("end_of_results");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("carries requestedLimit + effectiveLimit on every page where pagination is active, and no pageClipReason when the full limit returned", async () => {
+    // Page 1 of a limit:2 / 6-file scan returns exactly 2 files — the
+    // page is "full." `truncated: true` fires because more pages
+    // remain, so pagination is active; `requestedLimit` and
+    // `effectiveLimit` are both 2 (no clip at this layer), and the
+    // honest shape omits `pageClipReason` because nothing clipped
+    // below the requested size. Any future clip cause (density,
+    // end_of_results, per_criterion_cap) must surface as a reason
+    // code — emitting `effectiveLimit: 2` alongside `requestedLimit: 2`
+    // without a reason is the invariant: the caller can tell from a
+    // single read whether the page was clipped, and by what.
+    const root = buildFixture(6);
+    try {
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_project", { cwd: root, limit: 2 }),
+      ]);
+      const body = bodyOf(responses[1]) as {
+        files: unknown[];
+        truncated?: boolean;
+        requestedLimit?: number;
+        effectiveLimit?: number;
+        pageClipReason?: string;
+      };
+      expect(body.files.length).toBe(2);
+      expect(body.truncated).toBe(true);
+      expect(body.requestedLimit).toBe(2);
+      expect(body.effectiveLimit).toBe(2);
+      expect(body.pageClipReason).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("cross-surface invariant: every paginated response with files.length < requestedLimit carries exactly one pageClipReason", async () => {
+    // Walk three scenarios that all trigger a clipped-page shape:
+    // (a) last page with a short tail (end_of_results),
+    // (b) last page on a single-page call with a smaller tail than
+    //     the default limit — but only when pagination is active.
+    // The invariant: whenever `requestedLimit` is present on the wire
+    // and `effectiveLimit < requestedLimit`, `pageClipReason` MUST be
+    // set to exactly one of the documented codes. Cross-surface drift
+    // here (one page honest, one page silent) is the exact regime the
+    // backlog's Q5 field report named.
+    const root = buildFixture(5);
+    try {
+      const responses = await mcpSession([
+        initMsg(1),
+        // Last page: offset 3, limit 10 → 2 files, end_of_results.
+        toolCall(2, "scan_project", { cwd: root, limit: 10, offset: 3 }),
+        // Mid page: offset 0, limit 10 → 5 files, and the default-no-
+        // pagination branch kicks in because offset === 0 && !hasMore.
+        toolCall(3, "scan_project", { cwd: root, limit: 10, offset: 0 }),
+      ]);
+      const lastPage = bodyOf(responses[1]) as {
+        files: unknown[];
+        requestedLimit?: number;
+        effectiveLimit?: number;
+        pageClipReason?: string;
+      };
+      expect(lastPage.files.length).toBe(2);
+      expect(lastPage.requestedLimit).toBe(10);
+      expect(lastPage.effectiveLimit).toBe(2);
+      expect(lastPage.pageClipReason).toBe("end_of_results");
+      // Non-paginated single-page response (offset === 0, whole thing
+      // fit): pagination fields all omitted per the honest-shape rule
+      // in `paginateFiles`. A caller who didn't pass `offset` doesn't
+      // see `requestedLimit`/`effectiveLimit`/`pageClipReason` because
+      // pagination wasn't active — there's no ambiguity to resolve.
+      const onePage = bodyOf(responses[2]) as {
+        files: unknown[];
+        requestedLimit?: number;
+        effectiveLimit?: number;
+        pageClipReason?: string;
+        truncated?: unknown;
+        totalFilesWithFindings?: unknown;
+      };
+      expect(onePage.files.length).toBe(5);
+      expect(onePage.truncated).toBeUndefined();
+      expect(onePage.totalFilesWithFindings).toBeUndefined();
+      expect(onePage.requestedLimit).toBeUndefined();
+      expect(onePage.effectiveLimit).toBeUndefined();
+      expect(onePage.pageClipReason).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

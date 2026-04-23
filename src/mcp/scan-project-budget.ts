@@ -23,10 +23,34 @@ import {
 
 type FileEntry = ScanFormatted["files"][number];
 
+/**
+ * Structured reason a paginated response returned fewer files than
+ * the caller's `limit`. Three regimes the caller cannot otherwise
+ * distinguish from `files.length < requestedLimit` alone:
+ *
+ * - `token_density` — the density cap trimmed trailing entries so
+ *   the response fits under {@link DEFAULT_TOKEN_BUDGET_CHARS}.
+ *   Resumable via `nextOffset`; the dropped files live on the next
+ *   page.
+ * - `end_of_results` — the page is the last page and the remaining
+ *   file-count is naturally less than `limit`. Not resumable (there
+ *   are no more files); `nextOffset` is absent.
+ * - `per_criterion_cap` — not emitted by scan_project today; reserved
+ *   for future use in case the tool grows a per-criterion clip
+ *   primitive. The matching orthogonal signal in `checklist` today
+ *   is `perCriterionClipped: true`, not this `pageClipReason` code,
+ *   because checklist's clip is per-criterion-within-page rather
+ *   than a whole-page reason.
+ */
+type PageClipReason = "token_density" | "end_of_results" | "per_criterion_cap";
+
 interface PaginationFields {
   readonly truncated?: true;
   readonly nextOffset?: number;
   readonly totalFilesWithFindings?: number;
+  readonly requestedLimit?: number;
+  readonly effectiveLimit?: number;
+  readonly pageClipReason?: PageClipReason;
 }
 
 interface PageShape {
@@ -125,20 +149,33 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     offset: pageOffset,
   });
   if (budgeted.droppedCount === 0) return tentative;
+  // The caller's requested page size is the top-level `requestedLimit`
+  // — what the caller asked for, not the post-pagination page count
+  // the density cap saw entering. `page.paginationFields.requestedLimit`
+  // is stamped by the paginator on every page that carries pagination
+  // state; it's the clamped `limit` param. Falling back to
+  // `hoisted.files.length` covers the (unreachable in production) case
+  // where the paginator emitted no pagination fields but the density
+  // cap still fired.
+  const callerRequestedLimit = page.paginationFields.requestedLimit ?? hoisted.files.length;
   return mergeBudgetedFields({
     tentative,
     budgeted,
     ...(hasBaseCodes ? { baseWarnings } : {}),
     ...(hasBaseDetails ? { baseWarningsDetails } : {}),
     totalFilesWithFindings: formatted.files.length,
-    // `requestedLimit` is the file count the density cap saw entering
-    // the guard — `hoisted.files` is the post-pagination, pre-density
-    // page. `effectiveLimit` is what survived the trim. Together they
-    // name the settlement so a caller seeing `files.length: 10` +
-    // `truncated: true` can tell whether the density cap trimmed
-    // aggressively (50→10) or marginally (50→48) without a re-page.
-    requestedLimit: hoisted.files.length,
-    effectiveLimit: budgeted.files.length,
+    // `warningsDetails.response_token_budget_truncated.requestedLimit`
+    // keeps its original meaning — the file count the density cap saw
+    // entering the guard — so the payload echo (50→10 vs 50→48) stays
+    // anchored to the density cap's input, not the caller's kwarg. The
+    // top-level `requestedLimit` below uses the caller's kwarg. Both
+    // pivots are useful: the density echo for debugging the cap's
+    // decision; the top-level for "did the response honor my page
+    // size" at a glance.
+    densityRequestedLimit: hoisted.files.length,
+    densityEffectiveLimit: budgeted.files.length,
+    topLevelRequestedLimit: callerRequestedLimit,
+    topLevelEffectiveLimit: budgeted.files.length,
   });
 }
 
@@ -158,8 +195,10 @@ function mergeBudgetedFields(args: {
   readonly baseWarnings?: readonly ScanWarningCode[];
   readonly baseWarningsDetails?: ScanWarningDetails;
   readonly totalFilesWithFindings: number;
-  readonly requestedLimit: number;
-  readonly effectiveLimit: number;
+  readonly densityRequestedLimit: number;
+  readonly densityEffectiveLimit: number;
+  readonly topLevelRequestedLimit: number;
+  readonly topLevelEffectiveLimit: number;
 }): Record<string, unknown> {
   const {
     tentative,
@@ -167,13 +206,15 @@ function mergeBudgetedFields(args: {
     baseWarnings,
     baseWarningsDetails,
     totalFilesWithFindings,
-    requestedLimit,
-    effectiveLimit,
+    densityRequestedLimit,
+    densityEffectiveLimit,
+    topLevelRequestedLimit,
+    topLevelEffectiveLimit,
   } = args;
   const warnings: ScanWarningCode[] = warningsWithDensityCode(baseWarnings);
   const densityDetails = tokenBudgetTruncatedDetailsField({
-    requestedLimit,
-    effectiveLimit,
+    requestedLimit: densityRequestedLimit,
+    effectiveLimit: densityEffectiveLimit,
   }).warningsDetails;
   // Merge the density-cap payload with the pre-existing
   // `baseWarningsDetails` so codes like
@@ -196,6 +237,18 @@ function mergeBudgetedFields(args: {
     truncated: true as const,
     ...(budgeted.nextOffset === undefined ? {} : { nextOffset: budgeted.nextOffset }),
     totalFilesWithFindings,
+    // Overwrite the paginator's top-level pagination settlement. The
+    // paginator stamped `effectiveLimit: hoisted.files.length` and (on
+    // last-page clips) `pageClipReason: "end_of_results"`; the density
+    // cap ran AFTER pagination, so the truthful top-level shape is the
+    // post-density file count plus `pageClipReason: "token_density"`.
+    // The pre-density paginator-level settlement is recoverable via
+    // `warningsDetails.response_token_budget_truncated.requestedLimit`
+    // (the density cap's input) vs. this top-level `requestedLimit`
+    // (the caller's kwarg). Two pivots, two useful views.
+    requestedLimit: topLevelRequestedLimit,
+    effectiveLimit: topLevelEffectiveLimit,
+    pageClipReason: "token_density" as const,
     warnings,
     // Echo the requested vs. effective file counts the density cap
     // settled on, so a caller seeing
