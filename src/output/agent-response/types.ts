@@ -143,7 +143,15 @@ export interface AgentFinding {
    *     `referenceGuide.fixDescriptions[ruleId][hash]`.
    *   - When `fixDescriptionRef` is absent and `fix.description` is
    *     present, the prose is unique-in-response and stays inline.
-   *   - Never emit both.
+   *   - When `fixDescriptionRef` is absent but the finding's
+   *     `groupKey` appears in `file.groupFixDescriptionRefs`, the ref
+   *     was hoisted one more level (Q-SHARED-FIXDESCREF-SAME-GROUP-
+   *     INLINE-DEDUPE) — resolve via
+   *     `file.groupFixDescriptionRefs[groupKey].hash` →
+   *     `referenceGuide.fixDescriptions[ruleId][hash]`.
+   *   - Never emit both the per-finding ref and the per-finding
+   *     description; never emit both the per-finding ref and a
+   *     group-level ref for the same groupKey.
    *
    * The hash is a 12-hex-char truncated SHA-256 of the description —
    * same recipe as `findingId` — so it reads cleanly in agent
@@ -201,6 +209,39 @@ export interface AgentFile {
    * file parsed cleanly (never `[]`).
    */
   readonly limitations?: readonly FileLimitation[];
+  /**
+   * Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE: file-level pointer
+   * into `referenceGuide.fixDescriptions` for cases where ≥2 findings
+   * in this file share the same `(groupKey, fixDescriptionRef.hash)`
+   * pair. The ref hoists out of each sibling finding and rides once
+   * on the file bucket, indexed by `groupKey`; per-finding
+   * `fixDescriptionRef` is omitted on those siblings.
+   *
+   * The per-finding `fixDescriptionRef` already collapses N identical
+   * prose descriptions into a single `referenceGuide.fixDescriptions`
+   * entry, but V1-REF-DEDUPE still re-inlined the pointer (`{ hash }`)
+   * on every finding. On the 50projects50days `verify-account-ui`
+   * sample, six adjacent `forms/labels-required` findings shared one
+   * `groupKey` and one `hash` — the same 12-hex-char pointer rode the
+   * wire six times. That's repeated identical payload, not signal
+   * (CLAUDE.md §1 "verbose meta is signal, but repeated identical
+   * payload is bloat"). Emitting the ref once at the group level lets
+   * the agent resolve all siblings via `file.groupFixDescriptionRefs`.
+   *
+   * Each entry is `{ groupKey, hash }`. Findings in the group still
+   * carry `groupKey` inline on themselves, so the agent walks from
+   * finding → `groupKey` → `groupFixDescriptionRefs[groupKey].hash` →
+   * `referenceGuide.fixDescriptions[ruleId][hash]` without re-parsing.
+   *
+   * Present-when-meaningful (CLAUDE.md §1): omitted when no group in
+   * this file has ≥2 findings sharing a ref. Findings whose ref was
+   * unique within their group keep the inline `fixDescriptionRef` as
+   * before — hoisting a singleton would be pure overhead.
+   */
+  readonly groupFixDescriptionRefs?: readonly {
+    readonly groupKey: string;
+    readonly hash: string;
+  }[];
 }
 
 /**

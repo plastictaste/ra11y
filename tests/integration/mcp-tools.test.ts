@@ -74,6 +74,97 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
   return JSON.parse(result.content[0].text) as Record<string, unknown>;
 }
 
+/**
+ * Shape expected by {@link assertHoistShape}. Narrow projection of a
+ * scan-family response — only the fields the fixDescriptionRef hoist
+ * test reads. Kept module-local so the test body stays under the
+ * cognitive-complexity cap (the integration test only cares about a
+ * subset of fields but biome counts every nested loop + conditional
+ * against the test function).
+ */
+interface FixDescriptionHoistBody {
+  readonly files: readonly {
+    readonly groupFixDescriptionRefs?: readonly { groupKey: string; hash: string }[];
+    readonly findings: readonly {
+      readonly ruleId: string;
+      readonly groupKey: string;
+      readonly fix?: { readonly description?: string };
+      readonly fixDescriptionRef?: { readonly hash: string };
+    }[];
+  }[];
+  readonly referenceGuide?: {
+    readonly fixDescriptions?: Record<string, Record<string, string>>;
+  };
+}
+
+/**
+ * Walks a scan-family response body and asserts the invariant that
+ * (a) every per-finding `fixDescriptionRef` resolves to a string in
+ * `referenceGuide.fixDescriptions` and no inline `fix.description`
+ * rides beside it, and (b) every file-level
+ * `groupFixDescriptionRefs` entry points at a hash that resolves in
+ * the guide, with every sibling finding in that `groupKey` stripped
+ * of its own `fixDescriptionRef` (Q-SHARED-FIXDESCREF-SAME-GROUP-
+ * INLINE-DEDUPE).
+ *
+ * Returns the per-lane counts so the caller can assert "at least one
+ * hoist happened" without re-walking the tree.
+ */
+function assertHoistShape(body: FixDescriptionHoistBody): {
+  hoistedFindings: number;
+  liftedGroupRefs: number;
+} {
+  let hoistedFindings = 0;
+  let liftedGroupRefs = 0;
+  for (const file of body.files) {
+    for (const f of file.findings) {
+      if (f.fixDescriptionRef === undefined) continue;
+      hoistedFindings += 1;
+      const desc = body.referenceGuide?.fixDescriptions?.[f.ruleId]?.[f.fixDescriptionRef.hash];
+      expect(typeof desc).toBe("string");
+      expect(f.fix?.description).toBeUndefined();
+    }
+    for (const g of file.groupFixDescriptionRefs ?? []) {
+      liftedGroupRefs += 1;
+      assertGroupRefStripsSiblings(file.findings, g);
+      assertHashResolves(body.referenceGuide?.fixDescriptions ?? {}, g.hash);
+    }
+  }
+  return { hoistedFindings, liftedGroupRefs };
+}
+
+/**
+ * Every finding sharing the lifted groupKey must have neither its own
+ * `fixDescriptionRef` nor an inline `fix.description` — the file-level
+ * ref is the single source of truth for that cohort's prose.
+ */
+function assertGroupRefStripsSiblings(
+  findings: FixDescriptionHoistBody["files"][number]["findings"],
+  g: { groupKey: string; hash: string },
+): void {
+  for (const f of findings) {
+    if (f.groupKey !== g.groupKey) continue;
+    expect(f.fixDescriptionRef).toBeUndefined();
+    expect(f.fix?.description).toBeUndefined();
+  }
+}
+
+/**
+ * A group-level ref must resolve against at least one rule bucket in
+ * `referenceGuide.fixDescriptions`. Multiple rules can share a hash
+ * when they emit the same description prose — the invariant is that
+ * the pointer isn't dangling, not that it binds to one specific rule.
+ */
+function assertHashResolves(
+  fixDescriptions: Record<string, Record<string, string>>,
+  hash: string,
+): void {
+  const resolved = Object.values(fixDescriptions).some(
+    (bucket) => typeof bucket[hash] === "string",
+  );
+  expect(resolved).toBe(true);
+}
+
 describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   it("scan_project returns a scanned envelope and plan", async () => {
     const responses = await mcpSession([
@@ -567,33 +658,21 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
 `,
       );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: dir })]);
-      const body = bodyOf(responses[1]) as {
-        files: readonly {
-          findings: readonly {
-            ruleId: string;
-            fix?: { description?: string };
-            fixDescriptionRef?: { hash: string };
-          }[];
-        }[];
-        referenceGuide?: {
-          fixDescriptions?: Record<string, Record<string, string>>;
-        };
-      };
+      const body = bodyOf(responses[1]) as unknown as FixDescriptionHoistBody;
       // At least one rule fired with ≥2 duplicates that hoisted.
       const hoistedRuleIds = Object.keys(body.referenceGuide?.fixDescriptions ?? {});
       expect(hoistedRuleIds.length).toBeGreaterThan(0);
-      // Every hoisted finding has a ref + missing inline description.
-      let hoistedFindings = 0;
-      for (const file of body.files) {
-        for (const f of file.findings) {
-          if (f.fixDescriptionRef === undefined) continue;
-          hoistedFindings += 1;
-          const desc = body.referenceGuide?.fixDescriptions?.[f.ruleId]?.[f.fixDescriptionRef.hash];
-          expect(typeof desc).toBe("string");
-          expect(f.fix?.description).toBeUndefined();
-        }
-      }
-      expect(hoistedFindings).toBeGreaterThanOrEqual(2);
+      // Count refs in two places: per-finding inline refs AND file-
+      // level groupFixDescriptionRefs (Q-SHARED-FIXDESCREF-SAME-GROUP-
+      // INLINE-DEDUPE). Same-rule AST-equivalent siblings now lift to
+      // the file level, so the three `<input type="text">` hoisted
+      // findings show up as one group-level entry whose hash resolves
+      // against `referenceGuide.fixDescriptions`.
+      const { hoistedFindings, liftedGroupRefs } = assertHoistShape(body);
+      // The fixture guarantees at least one cohort hoisted somewhere —
+      // either per-finding (distinct groupKeys) or at the group level
+      // (shared groupKey).
+      expect(hoistedFindings + liftedGroupRefs).toBeGreaterThanOrEqual(1);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

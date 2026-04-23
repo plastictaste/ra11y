@@ -56,13 +56,19 @@ import { withFindingId } from "../../../helpers/make-violation.ts";
  * Shape invariant: a finding with a `fix` object must carry more than
  * `{ safety }` alone. Returns `true` when the finding either has no
  * fix at all, or its fix is honest (more than one key, or sits next
- * to a `fixDescriptionRef`).
+ * to a `fixDescriptionRef`, or its groupKey is covered by the
+ * file-level `groupFixDescriptionRefs` — the
+ * Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE lift branch).
  */
-function fixShapeIsHonest(finding: AgentFinding): boolean {
+function fixShapeIsHonest(
+  finding: AgentFinding,
+  fileGroupRefs?: readonly { readonly groupKey: string; readonly hash: string }[],
+): boolean {
   if (finding.fix === undefined) return true;
   const keyCount = Object.keys(finding.fix).length;
   if (keyCount > 1) return true;
   if (finding.fixDescriptionRef !== undefined) return true;
+  if (fileGroupRefs?.some((e) => e.groupKey === finding.groupKey)) return true;
   return false;
 }
 
@@ -156,29 +162,35 @@ describe("AgentFix shape invariant — honest after the fix-description hoist", 
   it("after hoist, stripped description is always paired with a fixDescriptionRef on the finding", () => {
     // Classic guidance-only hoist case. Pre-hoist shape:
     //   fix: { safety, description }
-    // Post-hoist shape:
+    // Post-hoist shape (when siblings do NOT share a groupKey):
     //   fix: { safety } — BUT finding.fixDescriptionRef is populated.
-    // The bare { safety } fix is only honest when the ref is present,
-    // which is exactly what rewriteFinding guarantees atomically.
+    //
+    // These two findings are on the same rule but different AST
+    // targets, so we force distinct groupKeys to exercise the
+    // per-finding ref branch specifically. The group-level lift
+    // (Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE) has its own
+    // coverage in reference-guide-hoist.test.ts.
     const desc = "Add an alt attribute describing the image purpose.";
+    const base0 = buildAgentFinding(
+      violation({
+        ruleId: "media/alt-text-missing",
+        location: { filePath: "a.tsx", line: 1, column: 1 },
+        suggestion: desc,
+      }),
+    );
+    const base1 = buildAgentFinding(
+      violation({
+        ruleId: "media/alt-text-missing",
+        location: { filePath: "a.tsx", line: 2, column: 1 },
+        suggestion: desc,
+      }),
+    );
     const files = [
       {
         path: "a.tsx",
         findings: [
-          buildAgentFinding(
-            violation({
-              ruleId: "media/alt-text-missing",
-              location: { filePath: "a.tsx", line: 1, column: 1 },
-              suggestion: desc,
-            }),
-          ),
-          buildAgentFinding(
-            violation({
-              ruleId: "media/alt-text-missing",
-              location: { filePath: "a.tsx", line: 2, column: 1 },
-              suggestion: desc,
-            }),
-          ),
+          { ...base0, groupKey: "distinct-g-0" },
+          { ...base1, groupKey: "distinct-g-1" },
         ],
       },
     ];
@@ -200,39 +212,45 @@ describe("AgentFix shape invariant — honest after the fix-description hoist", 
   });
 
   it("after hoist, mechanical-edit findings keep oldText + newText alongside the ref", () => {
+    // Two same-rule findings with distinct AST targets → distinct
+    // groupKeys — exercises the per-finding ref branch. Same-groupKey
+    // siblings lift to `file.groupFixDescriptionRefs` (covered in
+    // reference-guide-hoist.test.ts).
     const desc = "Replace role=button with the native <button> element.";
+    const base0 = buildAgentFinding(
+      violation({
+        ruleId: "semantics/prefer-native",
+        location: { filePath: "a.tsx", line: 1, column: 1 },
+        suggestion: desc,
+        fixPaths: {
+          primary: {
+            label: "Prefer <button>",
+            edit: { oldText: "<div>", newText: "<button>" },
+          },
+          alternatives: [],
+        },
+      }),
+    );
+    const base1 = buildAgentFinding(
+      violation({
+        ruleId: "semantics/prefer-native",
+        location: { filePath: "a.tsx", line: 2, column: 1 },
+        suggestion: desc,
+        fixPaths: {
+          primary: {
+            label: "Prefer <button>",
+            edit: { oldText: "<div>", newText: "<button>" },
+          },
+          alternatives: [],
+        },
+      }),
+    );
     const files = [
       {
         path: "a.tsx",
         findings: [
-          buildAgentFinding(
-            violation({
-              ruleId: "semantics/prefer-native",
-              location: { filePath: "a.tsx", line: 1, column: 1 },
-              suggestion: desc,
-              fixPaths: {
-                primary: {
-                  label: "Prefer <button>",
-                  edit: { oldText: "<div>", newText: "<button>" },
-                },
-                alternatives: [],
-              },
-            }),
-          ),
-          buildAgentFinding(
-            violation({
-              ruleId: "semantics/prefer-native",
-              location: { filePath: "a.tsx", line: 2, column: 1 },
-              suggestion: desc,
-              fixPaths: {
-                primary: {
-                  label: "Prefer <button>",
-                  edit: { oldText: "<div>", newText: "<button>" },
-                },
-                alternatives: [],
-              },
-            }),
-          ),
+          { ...base0, groupKey: "mech-g-0" },
+          { ...base1, groupKey: "mech-g-1" },
         ],
       },
     ];
@@ -302,9 +320,13 @@ describe("AgentFix shape invariant — honest after the fix-description hoist", 
       suppressPlacement: { tsx: "Place above the JSX." },
     });
     const rewrittenFindings = result.files[0]?.findings ?? [];
+    const fileGroupRefs = result.files[0]?.groupFixDescriptionRefs;
     expect(rewrittenFindings.length).toBe(4);
     for (const f of rewrittenFindings) {
-      expect(fixShapeIsHonest(f)).toBe(true);
+      // The invariant now accepts three honest branches: keyed fix,
+      // per-finding ref, or a file-level groupFixDescriptionRefs entry
+      // that covers this finding's groupKey.
+      expect(fixShapeIsHonest(f, fileGroupRefs)).toBe(true);
     }
   });
 });

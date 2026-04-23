@@ -271,13 +271,46 @@ function buildHoistResult(byRule: Map<string, Map<string, TallyEntry>>): HoistRe
 }
 
 /**
+ * Per-file group-level hoist entry. Surfaces on the file bucket as
+ * `groupFixDescriptionRefs` when ≥2 findings in the same `groupKey`
+ * share the same post-hoist `fixDescriptionRef.hash`.
+ */
+export interface GroupFixDescriptionRef {
+  readonly groupKey: string;
+  readonly hash: string;
+}
+
+/**
+ * Minimum number of findings in one (groupKey, hash) cohort that
+ * triggers the per-file group-level hoist. At the singleton (1), the
+ * ref stays inline on the finding — no savings. At 2+, every additional
+ * sibling would re-inline the same 12-hex-char pointer, so lifting it
+ * to the group level pays. Same threshold as the response-wide
+ * description hoist ({@link FIX_DESCRIPTION_HOIST_THRESHOLD}) — a
+ * single finding doesn't earn indirection at either level.
+ */
+const GROUP_FIX_DESC_REF_HOIST_THRESHOLD = 2;
+
+/**
  * Second pass: walk every finding and — for those whose description
  * was hoisted in the first pass — replace the inline `fix.description`
  * with `fixDescriptionRef: { hash }`. Findings whose description was
  * unique in the response (or whose description is absent entirely)
  * pass through unchanged.
  *
- * Returns a new file-entries array; does not mutate the input.
+ * Then — Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE — walk each
+ * file's findings and collapse any `(groupKey, hash)` cohort of ≥2
+ * findings into a single file-level `groupFixDescriptionRefs` entry,
+ * stripping `fixDescriptionRef` from each sibling finding in that
+ * cohort. Findings with no `groupKey` pair, or whose cohort is a
+ * singleton within the file, pass through with their inline
+ * `fixDescriptionRef` unchanged.
+ *
+ * Returns a new file-entries array; does not mutate the input. Returned
+ * entries may carry an optional `groupFixDescriptionRefs: readonly
+ * GroupFixDescriptionRef[]` — present-when-meaningful (omitted entirely
+ * when no group in that file crossed
+ * {@link GROUP_FIX_DESC_REF_HOIST_THRESHOLD}).
  */
 export function applyFixDescriptionHoist<T extends AgentFinding>(
   fileEntries: readonly {
@@ -285,12 +318,105 @@ export function applyFixDescriptionHoist<T extends AgentFinding>(
     readonly findings: readonly T[];
   }[],
   hoistedKeys: ReadonlySet<string>,
-): readonly { readonly path: string; readonly findings: readonly T[] }[] {
+): readonly {
+  readonly path: string;
+  readonly findings: readonly T[];
+  readonly groupFixDescriptionRefs?: readonly GroupFixDescriptionRef[];
+}[] {
   if (hoistedKeys.size === 0) return fileEntries;
-  return fileEntries.map((file) => ({
-    path: file.path,
-    findings: file.findings.map((finding) => rewriteFinding(finding, hoistedKeys)),
-  }));
+  return fileEntries.map((file) => {
+    const rewrittenFindings = file.findings.map((finding) => rewriteFinding(finding, hoistedKeys));
+    return liftGroupFixDescriptionRefs(file.path, rewrittenFindings);
+  });
+}
+
+/**
+ * Third pass, per-file: tally `(groupKey, hash)` cohorts across the
+ * already-rewritten findings. For any cohort that meets
+ * {@link GROUP_FIX_DESC_REF_HOIST_THRESHOLD}, strip `fixDescriptionRef`
+ * from each sibling and emit a single file-level entry pointing at the
+ * shared hash. Cohorts that don't cross the threshold pass through
+ * unchanged so a group of 1 keeps its inline pointer.
+ *
+ * Pure function — no mutation of the input findings. The per-finding
+ * `groupKey` stays inline so the agent can walk back from any sibling
+ * to the lifted entry.
+ */
+function liftGroupFixDescriptionRefs<T extends AgentFinding>(
+  path: string,
+  findings: readonly T[],
+): {
+  readonly path: string;
+  readonly findings: readonly T[];
+  readonly groupFixDescriptionRefs?: readonly GroupFixDescriptionRef[];
+} {
+  const cohorts = tallyGroupRefCohorts(findings);
+  const liftedCohorts = new Set<string>();
+  const groupRefs: GroupFixDescriptionRef[] = [];
+  for (const [key, entry] of cohorts) {
+    if (entry.count < GROUP_FIX_DESC_REF_HOIST_THRESHOLD) continue;
+    liftedCohorts.add(key);
+    groupRefs.push({ groupKey: entry.groupKey, hash: entry.hash });
+  }
+  if (liftedCohorts.size === 0) return { path, findings };
+  const rewritten = findings.map((f) => stripRefIfLifted(f, liftedCohorts));
+  // Deterministic order — groupKey ascending so two equivalent scans
+  // produce byte-identical output (matches the rest of the assembler's
+  // sort-on-emit discipline; see `groupByFile` in response-assembler.ts).
+  groupRefs.sort((a, b) => (a.groupKey < b.groupKey ? -1 : a.groupKey > b.groupKey ? 1 : 0));
+  return { path, findings: rewritten, groupFixDescriptionRefs: groupRefs };
+}
+
+interface GroupRefTally {
+  readonly groupKey: string;
+  readonly hash: string;
+  count: number;
+}
+
+/**
+ * Counts (groupKey, hash) cohorts across the POST-rewrite findings in
+ * one file. Only findings that actually carry a `fixDescriptionRef`
+ * contribute — a finding that kept its inline description (singleton
+ * across the response) has no ref to lift.
+ */
+function tallyGroupRefCohorts<T extends AgentFinding>(
+  findings: readonly T[],
+): Map<string, GroupRefTally> {
+  const cohorts = new Map<string, GroupRefTally>();
+  for (const f of findings) {
+    const hash = f.fixDescriptionRef?.hash;
+    if (hash === undefined) continue;
+    const { groupKey } = f;
+    if (groupKey === undefined || groupKey.length === 0) continue;
+    const key = compositeKey(groupKey, hash);
+    const existing = cohorts.get(key);
+    if (existing === undefined) {
+      cohorts.set(key, { groupKey, hash, count: 1 });
+      continue;
+    }
+    existing.count += 1;
+  }
+  return cohorts;
+}
+
+/**
+ * Drops `fixDescriptionRef` from a finding whose (groupKey, hash)
+ * cohort was lifted to the file-level. Never emits both per-finding
+ * and group-level refs for the same cohort — doctrine in
+ * `docs/kb/architecture/ai-first-consumer.md` under "Ambiguous field
+ * shapes are dishonest."
+ */
+function stripRefIfLifted<T extends AgentFinding>(
+  finding: T,
+  liftedCohorts: ReadonlySet<string>,
+): T {
+  const hash = finding.fixDescriptionRef?.hash;
+  if (hash === undefined) return finding;
+  const { groupKey } = finding;
+  if (groupKey === undefined || groupKey.length === 0) return finding;
+  if (!liftedCohorts.has(compositeKey(groupKey, hash))) return finding;
+  const { fixDescriptionRef: _omitted, ...rest } = finding;
+  return rest as T;
 }
 
 /**
@@ -320,7 +446,11 @@ export function hoistAndBuildReferenceGuide<T extends AgentFinding>(
   }[],
   sourceGuide: ReferenceGuide | undefined,
 ): {
-  readonly files: readonly { readonly path: string; readonly findings: readonly T[] }[];
+  readonly files: readonly {
+    readonly path: string;
+    readonly findings: readonly T[];
+    readonly groupFixDescriptionRefs?: readonly GroupFixDescriptionRef[];
+  }[];
   readonly referenceGuide: ReferenceGuide | undefined;
 } {
   const { fixDescriptions, hoistedKeys } = hoistFixDescriptions(fileEntries);
