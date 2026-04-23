@@ -96,6 +96,37 @@ export interface Rule {
    * the field unset and keep ignoring the map.
    */
   readonly wrapperTreatsAsElement?: string;
+  /**
+   * Declares whether this rule's evaluation can resolve evidence across
+   * files. Consumed by
+   * {@link import("./violation.ts").PerRuleCoverage.coverageConfidence}
+   * at scan-confidence-telemetry time — a rule declaring
+   * `crossFileCapable: false` tells the scanner its spec *could* require
+   * cross-file evidence but its implementation is single-file today, so
+   * a clean tally on a single-file substrate should downgrade to
+   * `"medium"` confidence rather than report `"high"` dishonestly.
+   *
+   * Three states:
+   *   - `true` — the rule resolves cross-file evidence in its own
+   *     implementation (e.g. a project-scoped rule walking every file's
+   *     AST via `afterProject`). Confidence stays `"high"` even on
+   *     single-file substrates.
+   *   - `false` — the rule's target spec encompasses cross-file wiring
+   *     (e.g. `keyboard/handler-missing` — a click handler may be
+   *     attached from an external `.js` file via `addEventListener`)
+   *     but the current implementation only inspects the file it was
+   *     invoked on. Confidence downgrades to `"medium"` on single-file
+   *     scans (the rule ran; its evidence was bounded).
+   *   - Absent — the rule's spec is single-file-scoped; cross-file
+   *     evidence is not in scope. No downgrade applies; confidence
+   *     follows the standard `filesEligible` / `filesEvaluated` logic.
+   *
+   * Present-when-meaningful — rules whose spec is single-file-scoped
+   * omit the field. Declared per rule, not per invocation: the field
+   * describes the rule's architectural capability, not a runtime
+   * heuristic. See ADR 0026.
+   */
+  readonly crossFileCapable?: boolean;
   /** Called once per applicable file before the node walk. Optional. */
   beforeFile?(ctx: FileContext): void;
   /** Node-scoped check — called for every matching node. */

@@ -326,13 +326,29 @@ export interface Violation {
  *     `coverageConfidence` to distinguish "confidently clean" from
  *     "clean but didn't exercise the pattern." Schema-required: never
  *     omit, never `null` (V1-SHAPE-RULECOV-COUNT).
- *   - `coverageConfidence` — `"low"` when `filesEligible === 0` or the
- *     rule ran on fewer than `MIN_FILES_FOR_HIGH_CONFIDENCE` files;
- *     `"high"` otherwise. The `"low"` variant carries the zero-
- *     eligible-files case (`filesEvaluated: 0` with a `reason` naming
- *     the gap) — the union is deliberately narrow; finer-grained
- *     labels like `"no-eligible-files"` would encode in the enum what
- *     the `reason` field already names structurally.
+ *   - `coverageConfidence` — three-valued discriminator:
+ *       - `"low"` when `filesEligible === 0` or the rule ran on fewer
+ *         than `MIN_FILES_FOR_HIGH_CONFIDENCE` files. Carries the
+ *         zero-eligible-files case (`filesEvaluated: 0` with a `reason`
+ *         naming the gap).
+ *       - `"medium"` when the rule has `crossFileCapable: false` (see
+ *         {@link import("./rule.ts").Rule.crossFileCapable}) and was
+ *         invoked on a substrate that truncates its evidence horizon —
+ *         e.g. `keyboard/handler-missing` on an HTML-only scan_file
+ *         call where the click handler is wired from an external `.js`
+ *         file the rule cannot see. The rule ran; its evidence was
+ *         bounded. Carries a structured `reason` naming the bound
+ *         (e.g. `"cross_file_listener_resolution_limited_on_this_input"`).
+ *         Introduced by ADR 0026; not yet emitted by any producer —
+ *         the downstream audit (Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-
+ *         FILE-BLINDSPOT) wires the downgrade.
+ *       - `"high"` otherwise — the rule ran on eligible inputs and the
+ *         substrate was not known to bound its evidence horizon.
+ *     The three-valued enum names the continuum in one place rather
+ *     than pairing `"high" | "low"` with a sibling `coverageBounded`
+ *     boolean (see ADR 0026). Finer-grained labels like `"no-eligible-
+ *     files"` were rejected — the `reason` field already names that
+ *     structurally.
  *   - `reason` / `remediation` — populated only on low-confidence
  *     entries, per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
  *     (conditional spread at the response-assembly site).
@@ -365,7 +381,20 @@ export interface PerRuleCoverage {
    * "clean but didn't exercise the pattern."
    */
   readonly findingsEmitted: number;
-  readonly coverageConfidence: "high" | "low";
+  /**
+   * Scan-confidence discriminator. Three values:
+   *
+   *   - `"high"` — rule ran on eligible inputs; trust the clean tally.
+   *   - `"medium"` — rule ran but its evidence horizon was bounded
+   *     (see {@link import("./rule.ts").Rule.crossFileCapable}). Paired
+   *     with a structured {@link reason}. Introduced by ADR 0026 and
+   *     reserved for the downstream audit — current producers never
+   *     emit this value.
+   *   - `"low"` — rule had zero eligible files, or ran on fewer than
+   *     `MIN_FILES_FOR_HIGH_CONFIDENCE` files. Paired with a {@link reason}
+   *     + {@link remediation}.
+   */
+  readonly coverageConfidence: "high" | "medium" | "low";
   readonly reason?: string;
   readonly remediation?: string;
   /**
