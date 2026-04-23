@@ -440,6 +440,93 @@ describe("review/consistent-navigation (edge cases)", () => {
     expect(candidates.length).toBeGreaterThan(0);
   });
 
+  // Guards the cross-tree confidence cap: on the heuristic-fallback
+  // path, when two paired files live in materially-separate sub-trees
+  // (e.g. `js/tests/visual/` paired with `site/src/assets/examples/`),
+  // the finder emits `confidence: "medium"` instead of `"high"` and
+  // enriches the reason text with the "heuristically paired" note
+  // pointing at `processes` config as the deterministic upgrade.
+  // Matches the doctrine in ai-first-consumer.md: confidence claims
+  // must match evidence strength; surface-don't-suppress means the
+  // candidate still fires, but the label is honest about the weaker
+  // signal.
+  it("caps confidence at 'medium' and enriches reason when pair crosses directory trees on heuristic-fallback path", () => {
+    const demo = htmlFile(
+      "/repo/js/tests/visual/dropdown.html",
+      `<html><body><nav><a href="/">Home</a><a href="/about">About</a></nav></body></html>`,
+    );
+    const docs = htmlFile(
+      "/repo/site/src/assets/examples/navbars/index.html",
+      `<html><body><nav><a href="/about">About</a><a href="/">Home</a></nav></body></html>`,
+    );
+    const candidates = runWith([demo, docs]).filter((c) => c.criterionId === "wcag22:3.2.3");
+    expect(candidates.length).toBe(2);
+    for (const c of candidates) {
+      expect(c.confidence).toBe("medium");
+      expect(c.reason).toContain("heuristically paired by token similarity");
+      expect(c.reason).toContain("declare `processes` in ra11y.config.ts");
+    }
+  });
+
+  // Guards that same-tree pairs on the heuristic-fallback path keep
+  // the `"high"` confidence — the cap fires only when evidence is
+  // materially weaker (cross-tree). Sibling pages that share an
+  // immediate parent directory pass the common-sense "these are the
+  // same site" test; the divergent-ordering evidence is still
+  // concrete and the reviewer's question is still bounded.
+  it("keeps confidence 'high' on heuristic-fallback path when paired files share a sub-tree", () => {
+    const home = htmlFile(
+      "/repo/src/pages/home.html",
+      `<html><body><nav><a href="/">Home</a><a href="/about">About</a></nav></body></html>`,
+    );
+    const about = htmlFile(
+      "/repo/src/pages/about.html",
+      `<html><body><nav><a href="/about">About</a><a href="/">Home</a></nav></body></html>`,
+    );
+    const candidates = runWith([home, about]).filter((c) => c.criterionId === "wcag22:3.2.3");
+    expect(candidates.length).toBe(2);
+    for (const c of candidates) {
+      expect(c.confidence).toBe("high");
+      expect(c.reason).not.toContain("heuristically paired by token similarity");
+    }
+  });
+
+  // Guards the with-processes escape hatch: even when the two files
+  // live in materially-separate sub-trees, a declared `processes`
+  // config routes the scan through the process-aware path where the
+  // caller has told us these pages participate in a user journey.
+  // That deterministic evidence keeps confidence at `"high"` and the
+  // cross-tree note never appears — the whole rationale for the cap
+  // (token-similarity pairing) doesn't apply when the caller named
+  // the page set explicitly.
+  it("keeps confidence 'high' even for cross-tree paths when `processes` is declared", () => {
+    const demo = htmlFile(
+      "/repo/js/tests/visual/dropdown.html",
+      `<html><body><nav><a href="/">Home</a><a href="/about">About</a></nav></body></html>`,
+    );
+    const docs = htmlFile(
+      "/repo/site/src/assets/examples/navbars/index.html",
+      `<html><body><nav><a href="/about">About</a><a href="/">Home</a></nav></body></html>`,
+    );
+    const processes: readonly Process[] = [
+      {
+        name: "cross-tree-journey",
+        pages: [
+          "/repo/js/tests/visual/dropdown.html",
+          "/repo/site/src/assets/examples/navbars/index.html",
+        ],
+      },
+    ];
+    const candidates = runWith([demo, docs], processes).filter(
+      (c) => c.criterionId === "wcag22:3.2.3",
+    );
+    expect(candidates.length).toBeGreaterThan(0);
+    for (const c of candidates) {
+      expect(c.confidence).toBe("high");
+      expect(c.reason).not.toContain("heuristically paired by token similarity");
+    }
+  });
+
   // Guards the inline-disable pragma path: an agent that reviewed a
   // divergent nav and decided the reorder is user-initiated (per the
   // spec carve-out) uses `<!-- ra11y-disable wcag22:3.2.3 -->` on the

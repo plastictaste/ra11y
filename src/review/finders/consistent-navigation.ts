@@ -275,25 +275,74 @@ function emitGroupCandidates(members: readonly NavInstance[], out: ReviewCandida
   for (const inst of members) {
     const counterpart = pickCounterpart(members, inst);
     if (counterpart === null) continue;
+    const crossTree = pairCrossesDirectoryTrees(inst.filePath, counterpart.filePath);
     const reasonCore =
       `<nav> link order diverges from ${counterpart.filePath}:${counterpart.line} ` +
       `— this file: [${inst.order.join(", ")}]; counterpart: [${counterpart.order.join(", ")}]`;
+    const crossTreeNote = crossTree
+      ? " note: these files are heuristically paired by token similarity; declare `processes` in ra11y.config.ts to bind the correct page sets."
+      : "";
     const reason =
       `${reasonCore} — verify the repeated navigational mechanism appears in the same relative order on both pages. ` +
-      `Heuristic match across the whole scanned tree; declare \`processes: [...]\` in ra11y.config.ts to anchor this check deterministically to declared user journeys.`;
+      `Heuristic match across the whole scanned tree; declare \`processes: [...]\` in ra11y.config.ts to anchor this check deterministically to declared user journeys.${crossTreeNote}`;
+    // Confidence: "high" when the counterpart sits in the same
+    // sub-tree (the evidence is concrete — two real navs in the
+    // scanned files share a link set and emit them in a different
+    // order; the reviewer's question is only whether the divergence
+    // is user-initiated). Cap at "medium" when the pair crosses
+    // directory-tree boundaries on the heuristic-fallback path —
+    // token similarity across unrelated sub-projects (e.g. a demo
+    // file in `js/tests/visual/` paired with a docs snippet in
+    // `site/src/assets/examples/`) is materially weaker evidence
+    // than same-tree pairing. Caller can restore determinism by
+    // declaring `processes: []` in ra11y.config.ts, which routes
+    // the scan through the process-aware path above.
+    const confidence: "high" | "medium" = crossTree ? "medium" : "high";
     for (const criterionId of CRITERION_IDS) {
-      // Confidence "high": the divergent-ordering evidence is concrete
-      // — two real navs in the scanned files share a link set and
-      // emit them in a different order. The reviewer's question is
-      // only whether the divergence is user-initiated.
       out.push({
         criterionId,
         location: { filePath: inst.filePath, line: inst.line, column: inst.column },
         reason,
-        confidence: "high",
+        confidence,
       });
     }
   }
+}
+
+/**
+ * Heuristic gate for the fallback path's confidence claim: returns true
+ * when the two paired files live in materially-separate sub-trees of
+ * the scan. Defined as "after trimming the longest shared directory
+ * prefix, both remaining tails have ≥2 directory segments" — i.e.,
+ * each file sits at least two levels deep inside its own divergent
+ * subtree. This catches the canonical cross-tree shape (e.g.
+ * `js/tests/visual/dropdown.html` vs. `site/src/assets/examples/
+ * navbars/index.astro`) without false-alarming on sibling pages that
+ * share an immediate parent (`/p/a.html` vs. `/p/b.html` — trivially
+ * same-tree). Uses the paired paths alone; no scan-root context is
+ * available in the afterProject contract.
+ */
+function pairCrossesDirectoryTrees(aPath: string, bPath: string): boolean {
+  const aSegs = splitPathSegments(aPath);
+  const bSegs = splitPathSegments(bPath);
+  // Each `segs` ends with the filename; directory depth is segs.length - 1.
+  const prefixLen = commonPrefixLength(aSegs, bSegs);
+  const aDivergentDirs = Math.max(0, aSegs.length - 1 - prefixLen);
+  const bDivergentDirs = Math.max(0, bSegs.length - 1 - prefixLen);
+  return aDivergentDirs >= 2 && bDivergentDirs >= 2;
+}
+
+function splitPathSegments(p: string): readonly string[] {
+  // Split on both POSIX and Windows separators; drop empty leading
+  // entries from absolute-path leading slash.
+  return p.split(/[/\\]+/).filter((s) => s !== "");
+}
+
+function commonPrefixLength(a: readonly string[], b: readonly string[]): number {
+  const max = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < max && a[i] === b[i]) i++;
+  return i;
 }
 
 /**
