@@ -36,7 +36,11 @@ import type { StandardFilter } from "../../../src/engine/standard-filter.ts";
 import type { Rule } from "../../../src/types/rule.ts";
 import type { Violation } from "../../../src/types/violation.ts";
 
-function mkRule(id: string, extensions?: readonly string[]): Rule {
+function mkRule(
+  id: string,
+  extensions?: readonly string[],
+  opts: { crossFileCapable?: boolean } = {},
+): Rule {
   return {
     id,
     satisfies: ["wcag22:1.4.3"],
@@ -44,6 +48,7 @@ function mkRule(id: string, extensions?: readonly string[]): Rule {
     scope: "node",
     fixClass: "guidance",
     ...(extensions === undefined ? {} : { appliesTo: { fileExtensions: extensions } }),
+    ...(opts.crossFileCapable === undefined ? {} : { crossFileCapable: opts.crossFileCapable }),
     docs: {
       description: "test",
       rationale: "test",
@@ -682,5 +687,166 @@ describe("buildPerRuleCoverage", () => {
     expect(cluster!.samples).toHaveLength(3);
     // Samples sorted — deterministic regardless of insertion order.
     expect(cluster!.samples).toEqual(["fa fa-cog", "fa fa-home", "fa fa-user"]);
+  });
+
+  // ADR 0026 + Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT:
+  // rules that declare `crossFileCapable: false` must downgrade a
+  // would-be-high entry to `"medium"` with a structured reason code,
+  // because their target spec encompasses cross-file wiring their
+  // current implementation can't see.
+  it("downgrades crossFileCapable:false rule from 'high' to 'medium' on eligible inputs", () => {
+    const rules = [
+      mkRule("keyboard/handler-missing", [".html", ".htm"], { crossFileCapable: false }),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({ "keyboard/handler-missing": { eligible: 2, evaluated: 2 } }),
+      rules,
+      passAllFilter,
+      [],
+      2,
+    );
+    const [row] = entries;
+    expect(row!.coverageConfidence).toBe("medium");
+    // Per-family structured reason code — agent-triage-useful beyond
+    // the flat `cross_file_evidence_bounded_on_this_input` fallback.
+    expect(row!.reason).toBe("cross_file_listener_resolution_limited_on_this_input");
+    // No `remediation` on medium — the agent's next action is to read
+    // the cited file, not to reshape the scan inputs. Conditional
+    // spread at the builder keeps the field out of the row entirely.
+    expect(row!.remediation).toBeUndefined();
+    // File counts still honest: the rule did run on 2 eligible files.
+    expect(row!.filesEligible).toBe(2);
+    expect(row!.filesEvaluated).toBe(2);
+    expect(row!.findingsEmitted).toBe(0);
+  });
+
+  it("keeps 'low' (not 'medium') when a crossFileCapable:false rule had zero eligible files", () => {
+    // Rule with zero eligible files stays `"low"` — the existing
+    // zero-eligible reason/remediation is strictly more actionable
+    // than the medium downgrade. `"low"` already signals "don't trust
+    // the clean tally"; routing through `"medium"` here would drop
+    // the remediation string that tells the agent how to fix the
+    // scan inputs. Zero-eligible precedes the cross-file downgrade.
+    const rules = [
+      mkRule("keyboard/handler-missing", [".html", ".htm"], { crossFileCapable: false }),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({ "keyboard/handler-missing": { eligible: 0, evaluated: 0 } }),
+      rules,
+      passAllFilter,
+      [],
+      2,
+    );
+    const [row] = entries;
+    expect(row!.coverageConfidence).toBe("low");
+    expect(row!.reason).toContain("no files matching");
+    expect(row!.remediation).toBeDefined();
+  });
+
+  it("routes per-family reason codes for each tagged rule (idref, click-alternative, listener)", () => {
+    // The per-family mapping keeps triage signal sharp: agents reading
+    // `cross_file_idref_resolution_limited_on_this_input` know to look
+    // for ids in sibling layout partials; `cross_file_click_
+    // alternative_resolution_limited_on_this_input` points at a
+    // possible parent-component fallback; `cross_file_listener_
+    // resolution_limited_on_this_input` points at external `.js`.
+    const rules = [
+      mkRule("aria/labelledby-target-exists", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("forms/error-message-not-associated", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("navigation/skip-link", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("pointer/drag-alternative", [".html", ".htm"], { crossFileCapable: false }),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({
+        "aria/labelledby-target-exists": { eligible: 1, evaluated: 1 },
+        "forms/error-message-not-associated": { eligible: 1, evaluated: 1 },
+        "navigation/skip-link": { eligible: 1, evaluated: 1 },
+        "pointer/drag-alternative": { eligible: 1, evaluated: 1 },
+      }),
+      rules,
+      passAllFilter,
+      [],
+      1,
+    );
+    // Sorted alphabetically by rule id — same invariant the other
+    // tests honor. Every entry is medium.
+    expect(entries.map((r) => r.coverageConfidence)).toEqual([
+      "medium",
+      "medium",
+      "medium",
+      "medium",
+    ]);
+    const byId = new Map(entries.map((r) => [r.ruleId, r.reason]));
+    expect(byId.get("aria/labelledby-target-exists")).toBe(
+      "cross_file_idref_resolution_limited_on_this_input",
+    );
+    expect(byId.get("forms/error-message-not-associated")).toBe(
+      "cross_file_idref_resolution_limited_on_this_input",
+    );
+    expect(byId.get("navigation/skip-link")).toBe(
+      "cross_file_idref_resolution_limited_on_this_input",
+    );
+    expect(byId.get("pointer/drag-alternative")).toBe(
+      "cross_file_click_alternative_resolution_limited_on_this_input",
+    );
+  });
+
+  it("falls back to the generic reason code for a crossFileCapable:false rule not in the per-family map", () => {
+    // A rule that opts into `crossFileCapable: false` but hasn't been
+    // added to the per-family mapping yet still gets an honest
+    // downgrade — the fallback code names the downgrade in generic
+    // terms. Better than hiding the signal; prompts rule authors to
+    // add a specific code if the triage distinction matters.
+    const rules = [
+      mkRule("future/hypothetical-rule", [".html", ".htm"], { crossFileCapable: false }),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({ "future/hypothetical-rule": { eligible: 1, evaluated: 1 } }),
+      rules,
+      passAllFilter,
+      [],
+      1,
+    );
+    const [row] = entries;
+    expect(row!.coverageConfidence).toBe("medium");
+    expect(row!.reason).toBe("cross_file_evidence_bounded_on_this_input");
+  });
+
+  it("crossFileCapable:true (or unset) keeps coverageConfidence='high' (no downgrade)", () => {
+    // Project-scoped rules that walk every file's AST are the
+    // canonical `crossFileCapable: true` case — they see the
+    // cross-file evidence in their implementation, so no downgrade
+    // applies. Rules that leave the field unset likewise stay high:
+    // absence means "spec is single-file-scoped; cross-file evidence
+    // is not in scope."
+    const rules = [
+      mkRule("contrast/minimum", [".css"], { crossFileCapable: true }),
+      mkRule("media/alt-text-missing", [".html", ".htm"]), // unset — single-file spec
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({
+        "contrast/minimum": { eligible: 2, evaluated: 2 },
+        "media/alt-text-missing": { eligible: 3, evaluated: 3 },
+      }),
+      rules,
+      passAllFilter,
+      [],
+      5,
+    );
+    expect(entries.map((r) => r.coverageConfidence)).toEqual(["high", "high"]);
+  });
+
+  it("downgrades a project-scoped crossFileCapable:false rule symmetrically to the extension-gated branch", () => {
+    // The cross-file downgrade applies to both branches of the
+    // builder. A `crossFileCapable: false` rule without an extension
+    // gate (unusual in practice — project-scoped rules almost
+    // always walk the full file set — but the path exists for
+    // symmetry so rule authors can trust the flag regardless of
+    // where they wire their check).
+    const rules = [mkRule("hypothetical/project-bounded", undefined, { crossFileCapable: false })];
+    const entries = buildPerRuleCoverage(tracker({}), rules, passAllFilter, [], 5);
+    const [row] = entries;
+    expect(row!.coverageConfidence).toBe("medium");
+    expect(row!.reason).toBe("cross_file_evidence_bounded_on_this_input");
   });
 });

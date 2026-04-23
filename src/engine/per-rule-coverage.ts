@@ -15,6 +15,18 @@
  * anything to evaluate." Surfacing `coverageConfidence: "low"` with a
  * reason + remediation gives the agent the signal it needs to call
  * `scan_project` again with `additionalPaths: ["dist/assets"]`.
+ *
+ * Companion case (ADR 0026,
+ * Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT): a rule whose
+ * *spec* spans cross-file wiring but whose *implementation* is
+ * bounded to the current file (canonical: `keyboard/handler-missing`
+ * can't see a click listener wired from a sibling `.js`; `navigation/
+ * skip-link` can't see an `#main` target that lives in a layout
+ * partial). These rules declare `crossFileCapable: false`; a clean
+ * tally on any substrate then reports `coverageConfidence: "medium"`
+ * with a structured `reason` code naming the cross-file thing the
+ * rule can't see — honest "the rule ran but its evidence was
+ * bounded" instead of a silent-miss `"high"`.
  */
 
 import type { Rule } from "../types/rule.ts";
@@ -33,6 +45,40 @@ import type { StandardFilter } from "./standard-filter.ts";
  * thresholds.
  */
 const MIN_FILES_FOR_HIGH_CONFIDENCE = 1;
+
+/**
+ * Per-rule reason codes emitted when a `crossFileCapable: false` rule
+ * is downgraded from `"high"` to `"medium"` coverage because its
+ * evidence horizon is bounded to the current file (ADR 0026, follow-up
+ * Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT).
+ *
+ * Each entry is a stable snake_case identifier (`cross_file_<kind>_
+ * resolution_limited_on_this_input`) naming the specific cross-file
+ * thing the rule can't see on this invocation — `listener` for click
+ * handlers wired in a sibling `.js`, `idref` for ARIA / anchor target
+ * ids that may live in a layout partial, `click_alternative` for a
+ * drag-rule's alternative-pointer pathway that may live in a parent
+ * component.
+ *
+ * Agents read the code + the cited file and decide. The distinction
+ * between codes is triage-useful: "the listener lives in a sibling
+ * `.js`" and "the `#main` target lives in a partial" route to
+ * different follow-up reads. One flat code would flatten that signal.
+ *
+ * The fallback `"cross_file_evidence_bounded_on_this_input"` catches
+ * rules that declare `crossFileCapable: false` but aren't yet in the
+ * per-family mapping — honest default, surfaces the downgrade without
+ * inventing specifics the per-family codes earn.
+ */
+const CROSS_FILE_BOUND_REASONS: Readonly<Record<string, string>> = {
+  "keyboard/handler-missing": "cross_file_listener_resolution_limited_on_this_input",
+  "aria/labelledby-target-exists": "cross_file_idref_resolution_limited_on_this_input",
+  "navigation/skip-link": "cross_file_idref_resolution_limited_on_this_input",
+  "forms/error-message-not-associated": "cross_file_idref_resolution_limited_on_this_input",
+  "pointer/drag-alternative": "cross_file_click_alternative_resolution_limited_on_this_input",
+};
+
+const CROSS_FILE_BOUND_REASON_FALLBACK = "cross_file_evidence_bounded_on_this_input";
 
 /**
  * Minimum total-findings-per-rule before a per-file concentration hint
@@ -185,6 +231,7 @@ export function buildPerRuleCoverage(
           extensions,
           concentration,
           classPatternConcentration,
+          rule.crossFileCapable,
         ),
       );
       continue;
@@ -205,6 +252,7 @@ export function buildPerRuleCoverage(
         findingsEmitted,
         concentration,
         classPatternConcentration,
+        rule.crossFileCapable,
       ),
     );
   }
@@ -329,6 +377,7 @@ function buildExtensionGatedEntry(
   classPatternConcentration:
     | readonly { file: string; count: number; classPattern: string; samples: readonly string[] }[]
     | undefined,
+  crossFileCapable: boolean | undefined,
 ): PerRuleCoverage {
   const concentrationSpread = concentration ? { concentration } : {};
   const classPatternSpread =
@@ -357,6 +406,28 @@ function buildExtensionGatedEntry(
       coverageConfidence: "low",
       reason: "all eligible files were excluded or empty",
       remediation: "check exclude patterns and file contents",
+      ...concentrationSpread,
+      ...classPatternSpread,
+    };
+  }
+  // Cross-file downgrade (ADR 0026,
+  // Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT): the rule ran
+  // on eligible inputs — normally `"high"` — but its `crossFileCapable`
+  // flag declares the spec *could* require cross-file evidence while
+  // the implementation is bounded to the current file. Reporting
+  // `"high"` on a clean tally here is the same silent-miss shape as
+  // reporting `"high"` on a rule that never found its target
+  // extension. The conservative-honest answer is to downgrade to
+  // `"medium"` with a structured reason — the rule *ran*, its evidence
+  // *was bounded*, and the agent reads the cited code to decide.
+  if (crossFileCapable === false) {
+    return {
+      ruleId,
+      filesEvaluated: evaluated,
+      filesEligible: eligible,
+      findingsEmitted,
+      coverageConfidence: "medium",
+      reason: crossFileBoundReason(ruleId),
       ...concentrationSpread,
       ...classPatternSpread,
     };
@@ -393,6 +464,7 @@ function buildProjectScopedEntry(
   classPatternConcentration:
     | readonly { file: string; count: number; classPattern: string; samples: readonly string[] }[]
     | undefined,
+  crossFileCapable: boolean | undefined,
 ): PerRuleCoverage {
   const concentrationSpread = concentration ? { concentration } : {};
   const classPatternSpread =
@@ -413,6 +485,26 @@ function buildProjectScopedEntry(
       ...classPatternSpread,
     };
   }
+  // Cross-file downgrade — see the counterpart in
+  // `buildExtensionGatedEntry`. Project-scoped rules are almost always
+  // `crossFileCapable: true` (walking every file's AST in one shot is
+  // the whole point of `afterProject`), but the path exists so a
+  // project-scoped rule that authors its own cross-file gate
+  // incorrectly — or that inherits from a per-file predecessor —
+  // still honors the downgrade. When unset or `true`, confidence
+  // stays `"high"`.
+  if (crossFileCapable === false) {
+    return {
+      ruleId,
+      filesEvaluated: filesScanned,
+      filesEligible: filesScanned,
+      findingsEmitted,
+      coverageConfidence: "medium",
+      reason: crossFileBoundReason(ruleId),
+      ...concentrationSpread,
+      ...classPatternSpread,
+    };
+  }
   return {
     ruleId,
     filesEvaluated: filesScanned,
@@ -422,6 +514,22 @@ function buildProjectScopedEntry(
     ...concentrationSpread,
     ...classPatternSpread,
   };
+}
+
+/**
+ * Resolves the structured reason code for a `crossFileCapable: false`
+ * rule whose coverage downgraded from `"high"` to `"medium"`. Looks up
+ * the rule ID in {@link CROSS_FILE_BOUND_REASONS}; falls back to
+ * {@link CROSS_FILE_BOUND_REASON_FALLBACK} for rules that opted in but
+ * aren't in the per-family mapping yet.
+ *
+ * The fallback is an honest default, not a suppression — the agent
+ * still sees the downgrade and re-reads the rule's docs. Rule authors
+ * adding `crossFileCapable: false` should also add the per-family code
+ * here so the downstream triage signal stays sharp.
+ */
+function crossFileBoundReason(ruleId: string): string {
+  return CROSS_FILE_BOUND_REASONS[ruleId] ?? CROSS_FILE_BOUND_REASON_FALLBACK;
 }
 
 /**
