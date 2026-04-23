@@ -311,10 +311,7 @@ function isMixinDelim(ch: string, parenDepth: number): boolean {
 }
 
 /** Less statement-form at-rules we strip to the next `;` or newline. */
-const LESS_STATEMENT_STRIP_AT_RULES: ReadonlySet<string> = new Set([
-  "import",
-  "plugin",
-]);
+const LESS_STATEMENT_STRIP_AT_RULES: ReadonlySet<string> = new Set(["import", "plugin"]);
 
 // ---------------------------------------------------------------------------
 // Preprocess state helpers
