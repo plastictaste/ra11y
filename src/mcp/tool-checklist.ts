@@ -823,49 +823,82 @@ export function paginateChecklistItems(
     });
   }
   const truncated = rangeEnd < postClipTotal;
-  // Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE: count the candidates that
-  // actually shipped in this page so `effectiveLimit` is honest about
-  // what reached the wire. Summing `pageItems[].candidates.length`
-  // captures both the global slice AND the per-criterion clip — the
-  // same post-clip value the caller sees.
-  let pageCandidateCount = 0;
-  for (const item of pageItems) pageCandidateCount += item.candidates.length;
-  // Pagination is active when the response carries any non-trivial
-  // paging state: truncated, resumed from a non-zero offset, or at
-  // least one criterion was clipped by the per-criterion cap. On
-  // "whole inventory fit, nothing clipped" the honest shape is to
-  // omit the limit echo entirely — there's no ambiguity to resolve.
-  const paginationActive = truncated || offset > 0 || perCriterionClipped;
-  // `pageClipReason` fires when the returned candidate count is below
-  // the caller's requested limit AND that clip is an honest
-  // single-axis regime:
-  //   - `per_criterion_cap` when per-criterion clipping was the
-  //     proximate cause of the short page (per-criterion clipping
-  //     happened AND no further truncation).
-  //   - `end_of_results` when the tail simply ran out (no truncation,
-  //     no per-criterion involvement).
-  // Mid-page full pages (effective === requested) carry no reason —
-  // nothing clipped below the ask. Same three-regime shape as
-  // scan_project's paginateFiles, so cross-surface consumers read the
-  // same vocabulary on both tools.
-  const pageIsShort = pageCandidateCount < limit;
-  const clippedByPerCriterion = pageIsShort && perCriterionClipped && !truncated;
-  const clippedByEnd = pageIsShort && !truncated && !clippedByPerCriterion;
-  const pageClipReason: "end_of_results" | "per_criterion_cap" | undefined = clippedByPerCriterion
-    ? "per_criterion_cap"
-    : clippedByEnd
-      ? "end_of_results"
-      : undefined;
   return {
     items: pageItems,
     totalCandidates,
-    paginationFields: {
-      ...(truncated ? { truncated: true as const, nextOffset: rangeEnd } : {}),
-      ...(perCriterionClipped ? { perCriterionClipped: true as const } : {}),
-      ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
-      ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
-    },
+    paginationFields: buildChecklistPaginationFields({
+      limit,
+      offset,
+      pageItems,
+      rangeEnd,
+      truncated,
+      perCriterionClipped,
+    }),
   };
+}
+
+/**
+ * Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE: assembles the conditional-spread
+ * pagination fields for a checklist page. Lives as its own function so
+ * {@link paginateChecklistItems} stays under the lint's
+ * cognitive-complexity cap; the tri-state `pageClipReason` + the
+ * paginationActive gate together pushed the main function past the
+ * threshold.
+ *
+ * Wire shape mirrors scan_project's paginateFiles: the `requestedLimit`
+ * / `effectiveLimit` echo is present-when-pagination-is-active (any
+ * truncation, non-zero offset, or per-criterion clip), `pageClipReason`
+ * names the regime when `effectiveLimit < requestedLimit`. Cross-
+ * surface consumers read the same vocabulary on both tools.
+ */
+function buildChecklistPaginationFields(args: {
+  readonly limit: number;
+  readonly offset: number;
+  readonly pageItems: readonly ChecklistItemOut[];
+  readonly rangeEnd: number;
+  readonly truncated: boolean;
+  readonly perCriterionClipped: boolean;
+}): PaginatedChecklist["paginationFields"] {
+  const { limit, offset, pageItems, rangeEnd, truncated, perCriterionClipped } = args;
+  // Count the candidates that actually shipped so `effectiveLimit` is
+  // honest about what reached the wire. Summing post-slice captures
+  // both the global limit AND per-criterion clip.
+  let pageCandidateCount = 0;
+  for (const item of pageItems) pageCandidateCount += item.candidates.length;
+  // Pagination is active when the response carries any non-trivial
+  // paging state. Trivial "whole inventory fit, nothing clipped"
+  // pages omit the triple entirely — there's no ambiguity to resolve.
+  const paginationActive = truncated || offset > 0 || perCriterionClipped;
+  const pageClipReason = computeChecklistPageClipReason({
+    truncated,
+    perCriterionClipped,
+    pageIsShort: pageCandidateCount < limit,
+  });
+  return {
+    ...(truncated ? { truncated: true as const, nextOffset: rangeEnd } : {}),
+    ...(perCriterionClipped ? { perCriterionClipped: true as const } : {}),
+    ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
+    ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
+  };
+}
+
+/**
+ * Pure tri-state reducer — returns `undefined` when nothing clipped
+ * below the ask, or the `PageClipReason`-aligned token when a single-
+ * axis regime fired:
+ *   - `per_criterion_cap` — per-criterion clip AND no further trunc.
+ *   - `end_of_results` — tail ran out, no per-criterion involvement.
+ * Mid-page full pages (effective === requested) carry no reason.
+ */
+function computeChecklistPageClipReason(args: {
+  readonly truncated: boolean;
+  readonly perCriterionClipped: boolean;
+  readonly pageIsShort: boolean;
+}): "end_of_results" | "per_criterion_cap" | undefined {
+  if (!args.pageIsShort) return undefined;
+  if (args.truncated) return undefined;
+  if (args.perCriterionClipped) return "per_criterion_cap";
+  return "end_of_results";
 }
 
 interface ChecklistNextStepInputs {
