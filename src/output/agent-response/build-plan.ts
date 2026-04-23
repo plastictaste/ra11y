@@ -1,35 +1,42 @@
 /**
  * buildAgentPlan — violations + pre-built findings → AgentPlan headline.
  *
- * Emits two honest fix counters on the plan:
+ * Emits the honest per-lane fix tally on the plan:
  *
- *   - `safeEditsAvailable` — violations that ship an inline
- *     `fixPaths.primary.edit`, i.e. work `apply_fix` can batch-apply
- *     without a round-trip. Covers both the `mechanical` and
- *     `verify-in-source` lanes — the two rule classes whose
- *     remediation lands in source. The former name
- *     `mechanicalEditsAvailable` advertised one lane but counted two;
- *     the rename makes the semantics honest per CLAUDE.md §1
- *     "Composite headline counts are dishonest."
  *   - `fixesByClass` — a structured tally keyed by the rule-level
  *     `fixClass`: `{ mechanical, guidance, runtimeOnly, verifyInSource }`.
  *     Each key counts one kind of thing. Callers that need the
- *     finer per-lane edit split read `fixesByClass.mechanical`
- *     vs. `fixesByClass.verifyInSource` here, keyed off rule class.
+ *     apply-now editable lanes read `fixesByClass.mechanical +
+ *     fixesByClass.verifyInSource`; callers that need the
+ *     round-trip-prose lane read `fixesByClass.guidance`; the
+ *     runtime-only lane has no remediation the scanner can action.
  *
- * The former `guidanceFixesAvailable` counter summed four categorically
- * different `fixClass` lanes under one label — any violation with a prose
- * `suggestion` but no mechanical edit landed in the same bucket whether it
- * was a `guidance`, `runtime-only`, or `verify-in-source` rule. Agents
- * budgeting against the headline treated all of them as "things
- * `suggest_fix` can help with," which was wrong for the latter two lanes.
- * Exposing the fixClass tally as a structured sibling lets the agent
- * budget per-lane without a guess.
+ * The former `safeEditsAvailable` headline counted
+ * "violations that ship an inline `fixPaths.primary.edit`" across the
+ * mechanical + verify-in-source lanes. Field reports surfaced
+ * `plan.safeEditsAvailable: 14` sitting next to
+ * `plan.fixesByClass.mechanical: 266` on the same response — two
+ * sibling counters framed as "how many fixes an agent can apply"
+ * disagreed because they counted different slices (payload-availability
+ * vs. rule-demanded lane) under confusingly overlapping names. Per
+ * CLAUDE.md §1 "Composite headline counts are dishonest," the composite
+ * was dropped; the per-lane `fixesByClass` keys already carry the honest
+ * signal, and agents that want the "can apply-fix locally now" subset
+ * sum the two editable lanes themselves (`mechanical + verifyInSource`)
+ * rather than consume a composite whose name doesn't describe its
+ * coverage.
+ *
+ * The older `guidanceFixesAvailable` counter — which summed four
+ * categorically different `fixClass` lanes under one label — was
+ * replaced earlier by the structured `fixesByClass` sibling for the
+ * same reason.
  *
  * Effort is computed from the combined count of violations that carry
- * any actionable remediation (inline edit or prose-only guidance),
- * preserving the semantics of the former `mechanicalEditsAvailable +
- * guidanceFixesAvailable` sum.
+ * any actionable remediation (inline edit or prose-only guidance), via
+ * the internal {@link countFixes} helper which keeps its two-field
+ * return shape ({@link FixCounts}) so the effort math and the
+ * `violationsWithoutAnyFix` derivation stay centralised — these are
+ * internal signals, not headline counters.
  *
  * `buildSummary` breaks the violations parenthetical down by the
  * rule-level `fixClass` lane via the shared helper in
@@ -101,11 +108,18 @@ export interface FixCounts {
   /**
    * Count of violations with an inline `fixPaths.primary.edit`. Covers
    * both the `mechanical` and `verify-in-source` rule lanes — the two
-   * remediation lanes whose edit lands in source. Surfaced on the plan
-   * as `safeEditsAvailable`; the field name intentionally covers both
-   * lanes honestly rather than singling out one.
+   * remediation lanes whose edit lands in source. Internal to
+   * {@link buildAgentPlan}'s effort computation and to
+   * `violationsWithoutAnyFix` derivation — NOT exposed on the plan
+   * (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT): the former
+   * `plan.safeEditsAvailable` headline disagreed with
+   * `plan.fixesByClass.mechanical` by up to 18× because the two
+   * counters measured different slices under confusingly overlapping
+   * names. Callers that need per-lane budgeting read `fixesByClass`
+   * on the plan; callers that want the "apply-fix can run this now"
+   * subset sum `fixesByClass.mechanical + fixesByClass.verifyInSource`.
    */
-  readonly safeEditsAvailable: number;
+  readonly editsWithInlineFixPath: number;
   /**
    * Count of violations that ship a prose `suggestion` but no inline
    * edit. Internal to {@link buildAgentPlan}'s effort computation — NOT
@@ -119,37 +133,39 @@ export interface FixCounts {
 /**
  * Count the violations with an inline source edit vs. prose-only suggestion.
  *
- * Exported so the MCP layer can reuse the same accounting without
- * rebuilding a full {@link AgentPlan} — its plan wrapper carries
- * MCP-specific fields (actionableManualItems, untargetedCriteria,
- * limitations, etc.) that the CLI plan deliberately doesn't.
+ * Exported so the MCP layer can reuse the same accounting for effort
+ * math and `violationsWithoutAnyFix` derivation without rebuilding a
+ * full {@link AgentPlan} — its plan wrapper carries MCP-specific fields
+ * (actionableManualItems, untargetedCriteria, limitations, etc.) that
+ * the CLI plan deliberately doesn't.
  *
- * The returned `safeEditsAvailable` counts violations whose
- * `fixPaths.primary.edit` is populated — a rule in either the
- * `mechanical` or `verify-in-source` lane can ship such an edit, and
- * the field name reflects that both lanes are honest "safe to apply
- * locally" work. The older name `mechanicalEditsAvailable` promised
- * just one lane but always counted both; `safeEditsAvailable` fixes the
- * composite-under-a-singular-name mismatch per CLAUDE.md §1.
- *
- * The returned `proseOnlySuggestions` is an internal effort-math input,
- * not a headline counter: it sums across four `fixClass` lanes and is
- * therefore not honest on its own. For per-lane budgeting agents should
- * consume `plan.fixesByClass` (which is keyed by `fixClass` and counts
- * one kind of thing per key).
+ * Both returned fields are internal signals — neither is surfaced on
+ * the plan. `editsWithInlineFixPath` counts violations whose
+ * `fixPaths.primary.edit` is populated (across the mechanical +
+ * verify-in-source lanes); `proseOnlySuggestions` counts violations
+ * that ship only a prose `suggestion`. The former used to be exposed
+ * as `plan.safeEditsAvailable`, but per CLAUDE.md §1 "Composite
+ * headline counts are dishonest" that field was dropped — it summed
+ * two categorically different lanes under a name that sounded like
+ * "mechanical only," and disagreed with the per-lane
+ * `fixesByClass.mechanical` counter by up to 18× on real field-report
+ * responses. For per-lane budgeting agents consume `plan.fixesByClass`
+ * (keyed by `fixClass`, one-kind-per-key); for the "apply-fix can
+ * action this now" subset they sum
+ * `fixesByClass.mechanical + fixesByClass.verifyInSource`.
  */
 export function countFixes(violations: readonly Violation[]): FixCounts {
-  let safeEditsAvailable = 0;
+  let editsWithInlineFixPath = 0;
   let proseOnlySuggestions = 0;
   for (const v of violations) {
     const hasInlineEdit = v.fixPaths?.primary.edit !== undefined;
     if (hasInlineEdit) {
-      safeEditsAvailable += 1;
+      editsWithInlineFixPath += 1;
     } else if (typeof v.suggestion === "string" && v.suggestion.length > 0) {
       proseOnlySuggestions += 1;
     }
   }
-  return { safeEditsAvailable, proseOnlySuggestions };
+  return { editsWithInlineFixPath, proseOnlySuggestions };
 }
 
 /**
@@ -158,10 +174,12 @@ export function countFixes(violations: readonly Violation[]): FixCounts {
  * Returns the `{ mechanical, guidance, runtimeOnly, verifyInSource }`
  * shape consumed by `plan.fixesByClass` — one key per lane, each
  * counting one kind of thing. Distinct axis from
- * {@link FixCounts#safeEditsAvailable}: that one answers "does
- * this violation ship a ready-to-apply edit?" (mechanical or
- * verify-in-source lane), this one answers "which remediation lane
- * does the rule route into?".
+ * {@link FixCounts#editsWithInlineFixPath}: that internal counter
+ * answers "does this violation ship a ready-to-apply edit?"
+ * (mechanical or verify-in-source lane); this one answers "which
+ * remediation lane does the rule route into?". The former is an
+ * internal effort-math signal (never surfaced), this one is the
+ * plan's honest per-lane headline.
  */
 export function countFixesByClass(violations: readonly Violation[]): FixesByClass {
   const counts: Record<FixClass, number> = {
@@ -216,9 +234,8 @@ function countCategories(files: readonly AgentFile[]): CategoryCounts {
  *
  * @param violations - The source violations (severity-mixed; the helper
  *   splits internally into violation/note lanes for the headline counters,
- *   then derives `safeEditsAvailable`/`fixesByClass`/effort from the
- *   error+warning slice via `fixPaths.primary.edit` / `suggestion` /
- *   `fixClass`).
+ *   then derives `fixesByClass` and effort from the error+warning slice
+ *   via `fixPaths.primary.edit` / `suggestion` / `fixClass`).
  * @param files - Pre-built AgentFile array (used for per-rule counts and
  *   category tallies that derive from the finding shape).
  */
@@ -236,18 +253,21 @@ export function buildAgentPlan(
 
   // Remediation tallies derive from the violations slice only — notes
   // are additive context and carry no fix payload.
-  const { safeEditsAvailable, proseOnlySuggestions } = countFixes(violationsList);
+  const { editsWithInlineFixPath, proseOnlySuggestions } = countFixes(violationsList);
   const fixesByClass = countFixesByClass(violationsList);
   const { reviewNeeded, manualOnly, ruleCounts } = countCategories(files);
-  const fixCount = safeEditsAvailable + proseOnlySuggestions;
+  const fixCount = editsWithInlineFixPath + proseOnlySuggestions;
   const effort = computeEffort(violationsCount, fixCount);
 
   // The `fixClass` tally drives the summary parenthetical. It's a
-  // separate axis from `safeEditsAvailable` — that one counts "what
-  // the Violation ships" (inline edit present, across the mechanical
-  // and verify-in-source lanes), this one counts "what the rule
-  // demands" (remediation lane). The two are not interchangeable; see
-  // the module docblock.
+  // separate axis from the internal `editsWithInlineFixPath` — that
+  // one counts "what the Violation ships" (inline edit present, across
+  // the mechanical and verify-in-source lanes), this one counts "what
+  // the rule demands" (remediation lane). Only `fixesByClass` is
+  // surfaced on the plan (the former composite headline
+  // `safeEditsAvailable` was dropped per
+  // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT); the
+  // `editsWithInlineFixPath` count remains internal to effort math.
   const fixClassCounts: FixClassCounts = {
     mechanical: fixesByClass.mechanical,
     guidance: fixesByClass.guidance,
@@ -266,7 +286,6 @@ export function buildAgentPlan(
   return {
     violations: violationsCount,
     notes: notesCount,
-    safeEditsAvailable,
     fixesByClass,
     reviewNeeded,
     manualOnly,

@@ -172,10 +172,10 @@ export function buildNextStep(
   // can't action them, so they shouldn't pad the "with fix
   // suggestions" prose tail. Reads directly from `plan.fixesByClass`
   // so the semantics track the structured per-lane tally exposed to
-  // agents rather than re-deriving from the conditional-spread
-  // `safeEditsAvailable` field (which counts a different slice:
-  // violations that ship an inline `fixPaths.primary.edit` across the
-  // mechanical + verify-in-source lanes).
+  // agents — the former `safeEditsAvailable` composite was dropped
+  // per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT, and
+  // `fixesByClass` is the honest per-lane source this predicate has
+  // always read.
   const firstPick = pickFirstFinding(formatted.files, options.vendorPaths);
   const inputs: NextStepInputs = {
     violations: numFromPlan(formatted.plan, "violations"),

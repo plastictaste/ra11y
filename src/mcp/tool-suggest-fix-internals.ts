@@ -45,18 +45,21 @@ import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
 /**
  * Set of rule `fixClass` lanes that promise a source-edit path in
  * principle — the two lanes whose edits, when present, land in the
- * source file. Mirrors the `safeEditsAvailable` accounting in
- * `src/output/agent-response/build-plan.ts`: that counter is positive
- * when a rule's `fixClass` is one of these AND the finding shipped a
- * `fixPaths.primary.edit`.
+ * source file. Mirrors the editable-lane subset
+ * (`fixesByClass.mechanical + fixesByClass.verifyInSource`) that the
+ * scan plan surfaces; the `countFixes` helper in
+ * `src/output/agent-response/build-plan.ts` counts violations in these
+ * lanes that also ship a `fixPaths.primary.edit`, but the result is
+ * internal to effort math rather than a headline counter (the former
+ * composite `safeEditsAvailable` was dropped per
+ * Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT).
  *
  * Used by `mechanicalInPrincipleField` to annotate `kind: "guidance"`
  * responses whose rule family supports a mechanical path even though
  * this specific call couldn't produce a concrete `newText`. Closes the
- * cross-surface contradiction where `plan.fixesByClass`/
- * `safeEditsAvailable` advertise a mechanical/verify-in-source lane
- * but `suggest_fix` returns only prose (Q6-SUGGEST-FIX-MECHANICAL-VS-
- * GUIDANCE-DRIFT).
+ * cross-surface contradiction where `plan.fixesByClass` advertises a
+ * mechanical/verify-in-source lane but `suggest_fix` returns only
+ * prose (Q6-SUGGEST-FIX-MECHANICAL-VS-GUIDANCE-DRIFT).
  */
 const MECHANICAL_IN_PRINCIPLE_LANES: ReadonlySet<FixClass> = new Set<FixClass>([
   "mechanical",
@@ -201,7 +204,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // concrete `newText`, annotate with `meta.mechanicalInPrinciple:
   // true` so the agent knows the rule family supports a mechanical
   // path. Closes the cross-surface drift between this tool's `kind:
-  // "guidance"` and scan's `plan.fixesByClass` / `safeEditsAvailable`.
+  // "guidance"` and scan's `plan.fixesByClass` editable lanes.
   return {
     kind: "guidance",
     primary: {

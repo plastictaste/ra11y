@@ -316,8 +316,8 @@ export function assembleScanFamilyResponse(
   // (2) Split notes from non-notes; tally fixes.
   const nonNote = violations.filter((v) => v.severity !== "info");
   const notes = violations.filter((v) => v.severity === "info");
-  const { safeEditsAvailable: safeEdits, proseOnlySuggestions } = countFixes(nonNote);
-  const violationsWithoutAnyFix = nonNote.length - safeEdits - proseOnlySuggestions;
+  const { editsWithInlineFixPath, proseOnlySuggestions } = countFixes(nonNote);
+  const violationsWithoutAnyFix = nonNote.length - editsWithInlineFixPath - proseOnlySuggestions;
   const fixesByClass = countFixesByClass(nonNote);
   const fixClassCounts = {
     mechanical: fixesByClass.mechanical,
@@ -327,10 +327,12 @@ export function assembleScanFamilyResponse(
   };
 
   // (3) Plan — honest conditional-spread counters live inside buildScanPlan.
+  // The former `safeEdits` arg was removed per
+  // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT; the structured
+  // `fixesByClass` carries the honest per-lane signal.
   const plan = buildScanPlan({
     violations: nonNote.length,
     notes: notes.length,
-    safeEdits,
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,

@@ -101,20 +101,26 @@ describe("buildAgentPlan: fixesByClass structured tally", () => {
   });
 });
 
-describe("buildAgentPlan: safeEditsAvailable counter", () => {
-  it("counts only violations that ship an inline fixPaths.primary.edit", () => {
-    // `safeEditsAvailable` is the "apply_fix can batch this" counter.
-    // It covers both the `mechanical` and `verify-in-source` rule
-    // lanes (the two lanes whose remediation lands in source). A rule
-    // with `fixClass === "mechanical"` can still emit prose-only
-    // findings when the AST lacks enough context — without an
-    // explicit `fixPaths.primary.edit` on any test violation, the
-    // counter reports 0 even though lanes are populated.
+describe("buildAgentPlan: dropped safeEditsAvailable composite", () => {
+  // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT: the former
+  // `plan.safeEditsAvailable` counted violations whose
+  // `fixPaths.primary.edit` was populated across the mechanical +
+  // verify-in-source lanes. It sat as a sibling to
+  // `plan.fixesByClass.mechanical` under names both framed as "how
+  // many fixes an agent can apply" — the two disagreed by up to 18×
+  // on real field-report responses because they measured different
+  // slices. Per CLAUDE.md §1 "Composite headline counts are dishonest,"
+  // the composite was dropped; the per-lane `fixesByClass` carries
+  // the honest signal and agents sum
+  // `fixesByClass.mechanical + fixesByClass.verifyInSource` when they
+  // want the apply-now subset.
+
+  it("does NOT surface a safeEditsAvailable field on the plan", () => {
     const plan = buildAgentPlan(makeViolations(), []);
-    expect(plan.safeEditsAvailable).toBe(0);
+    expect((plan as unknown as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
   });
 
-  it("rises when a violation carries fixPaths.primary.edit", () => {
+  it("does NOT surface safeEditsAvailable even when a violation ships fixPaths.primary.edit", () => {
     const [first, ...rest] = makeViolations();
     if (first === undefined) throw new Error("fixture missing");
     const withEdit: Violation = {
@@ -131,17 +137,22 @@ describe("buildAgentPlan: safeEditsAvailable counter", () => {
       },
     };
     const plan = buildAgentPlan([withEdit, ...rest], []);
-    expect(plan.safeEditsAvailable).toBe(1);
+    expect((plan as unknown as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
+    // The per-lane `fixesByClass.mechanical` key still reflects the
+    // rule-level lane of the edited violation — that's the honest
+    // signal callers read instead of a composite.
+    expect(plan.fixesByClass.mechanical).toBe(1);
   });
 
-  it("rises for a verify-in-source violation that ships an inline edit", () => {
-    // Regression guard for the rename's motivating case: the scan
-    // that surfaced `plan.mechanicalEditsAvailable: 14` co-occurring
-    // with `plan.fixesByClass.mechanical: 0` — every editable
-    // violation routed through the `verify-in-source` lane. Under the
-    // new honest name the counter captures that population; under the
-    // old name the composite-under-a-singular-name mismatch this
-    // fixes was invisible.
+  it("lets callers derive the apply-now subset from fixesByClass on verify-in-source edits", () => {
+    // Regression guard for the motivating field-report case: a scan
+    // with `plan.safeEditsAvailable: 14` co-occurring with
+    // `plan.fixesByClass.mechanical: 0` — every editable violation
+    // routed through the `verify-in-source` lane. Under the dropped
+    // composite the two numbers disagreed and confused the caller;
+    // under the honest per-lane shape the caller sums
+    // `fixesByClass.mechanical + fixesByClass.verifyInSource`
+    // (= 2 here) without a second overlapping field on the wire.
     const makeVerifyInSource = (line: number): Violation =>
       withFindingIds([
         {
@@ -161,9 +172,12 @@ describe("buildAgentPlan: safeEditsAvailable counter", () => {
         },
       ])[0] as Violation;
     const plan = buildAgentPlan([makeVerifyInSource(1), makeVerifyInSource(2)], []);
-    expect(plan.safeEditsAvailable).toBe(2);
+    expect((plan as unknown as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
     expect(plan.fixesByClass.mechanical).toBe(0);
     expect(plan.fixesByClass.verifyInSource).toBe(2);
+    // The apply-now subset the former composite tried to express is
+    // now a trivial sum of two honest per-lane keys.
+    expect(plan.fixesByClass.mechanical + plan.fixesByClass.verifyInSource).toBe(2);
   });
 });
 

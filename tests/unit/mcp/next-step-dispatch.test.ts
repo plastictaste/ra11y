@@ -135,7 +135,6 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
       formatted({
         plan: {
           violations: 1,
-          safeEditsAvailable: 1,
           fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [{ path: "App.tsx", findings: [sampleFinding] }],

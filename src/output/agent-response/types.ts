@@ -277,40 +277,34 @@ export interface FixesByClass {
  * already breaks the two lanes out — agents reading either surface get
  * one shape to budget against.
  *
- * `safeEditsAvailable` counts violations where `fixPaths?.primary.edit`
- * is present — deterministic, batch-apply work `apply_fix` can take without
- * a round-trip. These edits ride on rules whose `fixClass` is either
- * `mechanical` (pure source rewrites) or `verify-in-source` (the edit
- * lands in source, though the agent is expected to read the surrounding
- * file to confirm). Those are the two lanes an agent can action with a
- * local edit; `guidance` and `runtime-only` findings ship prose and are
- * counted under `fixesByClass` instead. The former name
- * `mechanicalEditsAvailable` was misleading — the counter has always
- * included `verify-in-source` edits, so a scan with 14 edits could
- * co-occur with `fixesByClass.mechanical === 0` when every editable
- * finding routed through the `verify-in-source` lane.
- *
  * `fixesByClass` is the structured per-{@link FixClass} tally — one count
  * per remediation lane (`mechanical` / `guidance` / `runtimeOnly` /
- * `verifyInSource`). It replaces the former `guidanceFixesAvailable`
+ * `verifyInSource`). It replaced the former `guidanceFixesAvailable`
  * composite, which summed four categorically different lanes (anything
  * with a prose `suggestion` but no mechanical edit) under one headline.
  * Agents that previously budgeted against `guidanceFixesAvailable` read
  * `fixesByClass.guidance` (prose-rewrite work) or
  * `fixesByClass.mechanical + fixesByClass.guidance` (anything
- * `suggest_fix` can act on) instead.
+ * `suggest_fix` can act on) instead. For the "apply-fix can batch-apply
+ * this without a round-trip" slice, callers sum
+ * `fixesByClass.mechanical + fixesByClass.verifyInSource` — the two
+ * remediation lanes whose edit lands in source.
  *
- * Per CLAUDE.md §1 "Composite headline counts are dishonest," a
- * top-level counter must count one kind of thing; when several kinds
- * exist, a structured sibling keyed by kind is the honest shape.
- * `safeEditsAvailable` covers two kinds honestly by name — the
- * rename fixes the composite-under-a-singular-name problem the former
- * field had.
+ * The former `safeEditsAvailable` headline (which counted the two
+ * editable lanes under a single composite number) was dropped per
+ * Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT: it sat as a sibling
+ * to `fixesByClass.mechanical` under names that both framed as "how
+ * many fixes an agent can apply," but measured different slices
+ * (payload-availability vs. rule-demanded lane) and disagreed by up to
+ * 18× on real field-report responses. Per CLAUDE.md §1 "Composite
+ * headline counts are dishonest," the structured per-lane tally
+ * (`fixesByClass`) is the honest shape; the two editable lanes are
+ * adjacent keys the caller sums when they want the combined apply-now
+ * count.
  */
 export interface AgentPlan {
   readonly violations: number;
   readonly notes: number;
-  readonly safeEditsAvailable: number;
   readonly fixesByClass: FixesByClass;
   readonly reviewNeeded: number;
   readonly manualOnly: number;

@@ -36,7 +36,6 @@ interface BootstrapResponse {
     readonly violationsCount: number;
     readonly notesCount: number;
     readonly scanMode?: string;
-    readonly safeEditsAvailable?: number;
     readonly fixesByClass?: {
       readonly mechanical: number;
       readonly guidance: number;
@@ -104,9 +103,12 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(response.scan.notesCount).toBe(0);
       // Clean scan should not emit the per-lane fixesByClass tally —
       // upstream scan-assembly only sets it when violations > 0 and
-      // the subset forwards that shape verbatim.
+      // the subset forwards that shape verbatim. The former
+      // `safeEditsAvailable` composite was dropped upstream per
+      // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT; guard that it
+      // never reappears on the subset either.
       expect(response.scan.fixesByClass).toBeUndefined();
-      expect(response.scan.safeEditsAvailable).toBeUndefined();
+      expect((response.scan as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
       expect(response.baseline).toBeNull();
       expect(response.ciSnippet).toContain("ra11y");
       expect(response.ciSnippet).toContain("baseline check");

@@ -611,28 +611,35 @@ export async function runScanAndFormat(
   // Honest counters for the plan headline, computed from the source
   // violations via the shared helpers in `build-plan.ts` — same recipe
   // the CLI agent formatter uses through `buildAgentPlan`.
-  //   - `safeEdits`: violations that ship an inline
-  //     `fixPaths.primary.edit` — `apply_fix` batch-apply work across
-  //     the mechanical + verify-in-source lanes (the two lanes whose
-  //     remediation lands in source).
+  //   - `editsWithInlineFixPath`: violations that ship an inline
+  //     `fixPaths.primary.edit` — apply-fix batch-apply work across
+  //     the mechanical + verify-in-source lanes. Internal to the
+  //     `violationsWithoutAnyFix` derivation; NOT surfaced on the
+  //     plan after Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT —
+  //     the former `safeEditsAvailable` composite disagreed with
+  //     `fixesByClass.mechanical` by up to 18× on real responses, so
+  //     it was dropped; the per-lane `fixesByClass` carries the
+  //     honest signal, and agents sum
+  //     `fixesByClass.mechanical + fixesByClass.verifyInSource` when
+  //     they want the apply-now subset.
   //   - `proseOnlySuggestions`: violations with prose `suggestion` but
   //     no inline edit. Internal to the `violationsWithoutAnyFix`
   //     math; NOT exposed on the plan because it sums across four
   //     `fixClass` lanes and is therefore not honest on its own. Per-
   //     lane budgeting rides on `plan.fixesByClass` below.
-  const { safeEditsAvailable: safeEdits, proseOnlySuggestions } = countFixes(violations);
-  const violationsWithoutAnyFix = violations.length - safeEdits - proseOnlySuggestions;
+  const { editsWithInlineFixPath, proseOnlySuggestions } = countFixes(violations);
+  const violationsWithoutAnyFix = violations.length - editsWithInlineFixPath - proseOnlySuggestions;
   // Tally violations by their rule-level `fixClass` lane. Two consumers:
   //   1. `plan.fixesByClass` — structured per-lane tally the agent
   //      reads for honest per-lane budgeting.
   //   2. `plan.summary` parenthetical — prose breakdown by lane.
-  // Distinct axis from `safeEdits`: that answers "does the Violation
-  // ship a ready-to-apply edit?"; this answers "which remediation lane
-  // does the rule route into?". Per CLAUDE.md §1 "Composite headline
-  // counts are dishonest," the two axes stay separate — summing
-  // prose-only findings across `guidance`, `runtime-only`, and
-  // `verify-in-source` under one counter would be the dishonest shape
-  // this split replaces.
+  // Distinct axis from the internal `editsWithInlineFixPath`: that
+  // answers "does the Violation ship a ready-to-apply edit?"; this
+  // answers "which remediation lane does the rule route into?". Per
+  // CLAUDE.md §1 "Composite headline counts are dishonest," the two
+  // axes stay separate — summing prose-only findings across
+  // `guidance`, `runtime-only`, and `verify-in-source` under one
+  // counter would be the dishonest shape this split replaces.
   const fixesByClass = countFixesByClass(violations);
   const fixClassCounts = {
     mechanical: fixesByClass.mechanical,
@@ -683,7 +690,6 @@ export async function runScanAndFormat(
     plan: buildScanPlan({
       violations: violations.length,
       notes: notes.length,
-      safeEdits,
       violationsWithoutAnyFix,
       actionableManual,
       untargetedCriteria,

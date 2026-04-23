@@ -1176,11 +1176,15 @@ describe("MCP tools/call: missing-required-param error envelopes", () => {
 // The old `plan.manualReviewRequired` summed grounded candidates with bare-
 // criterion prompts into a single inflated number; the old
 // `plan.fixSuggestionAvailable` summed mechanical edits with prose-only
-// guidance. Both are now split into honest top-level counters. Agents
-// budget against `actionableManualItems` (not the manual total) and
-// `safeEditsAvailable` (not the fix total) at plan time.
+// guidance. The manual half is now split into honest top-level counters
+// (`actionableManualItems` + `untargetedCriteria`); the fix half is
+// surfaced exclusively as the structured per-lane `fixesByClass` tally
+// (agents sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
+// for the apply-now subset). The former `safeEditsAvailable` composite
+// was dropped per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT —
+// it sat next to `fixesByClass.mechanical` and disagreed by up to 18×.
 describe("scan_project plan: composite counters split into honest top-level fields (P1-M + P1-H)", () => {
-  it("emits the four split counters at the top level of plan", async () => {
+  it("emits the honest per-lane counters at the top level of plan", async () => {
     // `bad/alt-text-missing` has violations and a full WCAG 2.2 load —
     // exercises both splits: guidance fixes on the violation side, and
     // a non-zero untargeted-criteria count on the manual side.
@@ -1192,7 +1196,6 @@ describe("scan_project plan: composite counters split into honest top-level fiel
       plan: Record<string, unknown> & {
         actionableManualItems?: number;
         untargetedCriteria?: number;
-        safeEditsAvailable?: number;
         fixesByClass?: {
           mechanical?: number;
           guidance?: number;
@@ -1211,13 +1214,11 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     expect(body.plan.untargetedCriteria).toBeGreaterThanOrEqual(0);
     // The fixture has a full WCAG load, so untargeted is populated.
     expect(body.plan.untargetedCriteria ?? 0).toBeGreaterThan(0);
-    // Fix split: either the inline-edit counter fires or the per-
-    // fixClass tally has a non-zero lane. `safeEditsAvailable`
-    // is conditional-spread (omitted when zero) and covers both the
-    // `mechanical` and `verify-in-source` rule lanes (the two lanes
-    // whose remediation lands in source). `fixesByClass` is always
-    // present on violating scans so agents never have to disambiguate
-    // "absent" from "zero" per lane.
+    // Fix split: the per-lane `fixesByClass` tally is the sole honest
+    // shape — the former `safeEditsAvailable` composite was dropped
+    // per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT. `fixesByClass`
+    // is always present on violating scans so agents never have to
+    // disambiguate "absent" from "zero" per lane.
     expect(body.plan.fixesByClass).toBeDefined();
     const fbc = body.plan.fixesByClass ?? {};
     const anyLanePopulated =
@@ -1225,8 +1226,11 @@ describe("scan_project plan: composite counters split into honest top-level fiel
       (fbc.guidance ?? 0) > 0 ||
       (fbc.runtimeOnly ?? 0) > 0 ||
       (fbc.verifyInSource ?? 0) > 0;
-    const hasAnyFixCount = (body.plan.safeEditsAvailable ?? 0) > 0 || anyLanePopulated;
-    expect(hasAnyFixCount).toBe(true);
+    expect(anyLanePopulated).toBe(true);
+    // Regression guard: `safeEditsAvailable` must never reappear on the
+    // plan. Agents that want the apply-now subset sum the two editable
+    // lanes (`mechanical + verifyInSource`) off the structured tally.
+    expect(body.plan).not.toHaveProperty("safeEditsAvailable");
   });
 
   it("plan.fixesByClass never carries a sentinel guidanceFixesAvailable composite", async () => {
@@ -1244,20 +1248,27 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     expect(body.plan).not.toHaveProperty("guidanceFixesAvailable");
   });
 
-  it("plan never carries the renamed mechanicalEditsAvailable field", async () => {
-    // Regression guard for the rename: the former name promised one
-    // lane (mechanical) but always counted two (mechanical +
-    // verify-in-source), which field reports surfaced as
-    // `plan.mechanicalEditsAvailable: 14` co-occurring with
-    // `plan.fixesByClass.mechanical: 0`. The honest name
-    // `safeEditsAvailable` covers both editable lanes explicitly; no
-    // composite-under-a-singular-name field remains.
+  it("plan never carries the dropped mechanicalEditsAvailable or safeEditsAvailable fields", async () => {
+    // Regression guard for two successive drops of the same composite:
+    //   1. `mechanicalEditsAvailable` — renamed to `safeEditsAvailable`
+    //      after field reports surfaced `plan.mechanicalEditsAvailable:
+    //      14` co-occurring with `plan.fixesByClass.mechanical: 0` (the
+    //      former name promised one lane but always counted two).
+    //   2. `safeEditsAvailable` — dropped outright per
+    //      Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT because it
+    //      still disagreed with `fixesByClass.mechanical` by up to 18×
+    //      on real responses (two siblings under names both framed as
+    //      "how many fixes an agent can apply" measuring different
+    //      slices). The structured per-lane `fixesByClass` is the sole
+    //      honest shape; callers sum the editable lanes themselves
+    //      (`mechanical + verifyInSource`) for the apply-now subset.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
     const body = bodyOf(responses[1]) as { plan: Record<string, unknown> };
     expect(body.plan).not.toHaveProperty("mechanicalEditsAvailable");
+    expect(body.plan).not.toHaveProperty("safeEditsAvailable");
   });
 
   it("removes the old composite fields (manualReviewRequired, fixSuggestionAvailable)", async () => {

@@ -31,17 +31,15 @@ import { wrappersMetaBlock } from "./wrappers-meta.ts";
 export function buildScanPlan(args: {
   readonly violations: number;
   readonly notes: number;
-  readonly safeEdits: number;
   readonly violationsWithoutAnyFix: number;
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
   /**
    * Violation count per `fixClass` lane — powers the honest breakdown
-   * in the plan-summary prose. Distinct axis from `safeEdits`, which
-   * answers "payload-availability" (has `fixPaths.primary.edit`) across
-   * the mechanical + verify-in-source lanes rather than routing by
-   * rule-demanded remediation lane. Not interchangeable — see
-   * src/mcp/plan-summary.ts for rationale.
+   * in the plan-summary prose. Distinct axis from payload-availability
+   * ("does the Violation ship an inline `fixPaths.primary.edit`?")
+   * which is no longer surfaced separately — see the
+   * Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT drop rationale below.
    */
   readonly fixClassCounts: FixClassCounts;
   /**
@@ -53,13 +51,24 @@ export function buildScanPlan(args: {
    * dishonest." Always present on the response (zero-count lanes
    * surface as `0` so consumers never have to disambiguate "absent"
    * from "zero").
+   *
+   * Agents that want the former `safeEditsAvailable` slice (violations
+   * whose `fixPaths.primary.edit` is populated — apply-fix can
+   * batch-apply them without a round-trip) sum
+   * `fixesByClass.mechanical + fixesByClass.verifyInSource`. The
+   * composite was dropped per
+   * Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT: it sat next to
+   * `fixesByClass.mechanical` under a name that framed as "how many
+   * fixes an agent can apply" and disagreed with the per-lane
+   * mechanical count by up to 18× on real responses, forcing the agent
+   * to choose which number to trust. The structured per-lane tally
+   * answers both questions honestly without the composite.
    */
   readonly fixesByClass: FixesByClass;
 }): Record<string, unknown> {
   const {
     violations,
     notes,
-    safeEdits,
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,
@@ -79,9 +88,19 @@ export function buildScanPlan(args: {
     // CLAUDE.md §1 "Composite headline counts are dishonest," the
     // honest shape keeps `violations` and `notes` as split siblings
     // and trusts consumers to add them when they truly want a total.
+    //
+    // `safeEditsAvailable` was removed for the same reason
+    // (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT): it summed the
+    // two editable `fixClass` lanes (mechanical + verify-in-source)
+    // under a single headline and disagreed with the per-lane
+    // `fixesByClass.mechanical` counter sitting next to it. The
+    // structured `fixesByClass` sibling carries the honest per-lane
+    // signal; callers that want the apply-now subset sum
+    // `fixesByClass.mechanical + fixesByClass.verifyInSource` — which
+    // the agent can read directly off the structured tally without
+    // needing a second overlapping composite on the wire.
     violations,
     notes,
-    ...(safeEdits > 0 ? { safeEditsAvailable: safeEdits } : {}),
     ...(emitFixesByClass ? { fixesByClass } : {}),
     ...(violationsWithoutAnyFix > 0
       ? { violationsWithoutSuggestion: violationsWithoutAnyFix }

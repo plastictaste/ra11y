@@ -358,7 +358,6 @@ describe("MCP tool: scan_project", () => {
       const data = JSON.parse(result.content[0].text) as {
         plan: {
           violations?: number;
-          safeEditsAvailable?: number;
           fixesByClass?: {
             mechanical?: number;
             guidance?: number;

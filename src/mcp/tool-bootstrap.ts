@@ -20,11 +20,16 @@
  *     `bootstrap_<leg>_failed` entries; omitted when empty.
  *   - `scan` subset preserves the upstream `plan` split verbatim —
  *     `violationsCount` and `notesCount` stay separate (no
- *     `totalFindings` re-sum), `safeEditsAvailable` and the
- *     per-lane `fixesByClass` tally forward from the upstream plan
- *     when present. Per CLAUDE.md §1 "Composite headline counts are
- *     dishonest," the former summed `totalFindings` inflated the
- *     work budget by mixing info-severity notes with violations.
+ *     `totalFindings` re-sum), and the per-lane `fixesByClass` tally
+ *     forwards from the upstream plan when present. Per CLAUDE.md §1
+ *     "Composite headline counts are dishonest," the former summed
+ *     `totalFindings` inflated the work budget by mixing info-severity
+ *     notes with violations; the former `safeEditsAvailable` sibling
+ *     was dropped at the upstream shape
+ *     (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT) because it
+ *     disagreed with `fixesByClass.mechanical` on the same response —
+ *     callers sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
+ *     when they want the apply-now subset.
  */
 
 import { existsSync } from "node:fs";
@@ -277,15 +282,6 @@ interface ScanSubset {
   readonly scanMode?: string;
   readonly actionableManualItems?: number;
   /**
-   * Violations that ship an inline `fixPaths.primary.edit` — the
-   * `apply_fix` batch-apply lane. Covers both the `mechanical` and
-   * `verify-in-source` rule classes (the two lanes whose remediation
-   * lands in source). Forwarded verbatim from `plan.safeEditsAvailable`;
-   * present-when-meaningful (omitted when upstream omits it, i.e. zero
-   * such violations).
-   */
-  readonly safeEditsAvailable?: number;
-  /**
    * Per-`fixClass` remediation-lane tally forwarded verbatim from the
    * upstream `plan.fixesByClass` (set by `scan-assembly.ts` when
    * violations > 0). Keyed by camelCased `FixClass` so callers can
@@ -293,6 +289,12 @@ interface ScanSubset {
    * runtime harness vs. source-read decisions) without summing.
    * Conditional-spread: omitted on clean scans where upstream also
    * omits it.
+   *
+   * Callers that want the former `safeEditsAvailable` slice ("apply-fix
+   * can batch this now") sum
+   * `fixesByClass.mechanical + fixesByClass.verifyInSource` — the
+   * former composite headline was dropped per
+   * Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT.
    */
   readonly fixesByClass?: FixesByClassSubset;
   /**
@@ -327,7 +329,6 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionable = readNumberFromRecord(plan, "actionableManualItems");
-  const safeEdits = readNumberFromRecord(plan, "safeEditsAvailable");
   const fixesByClass = readFixesByClass(plan);
   const limitations = readStringArray(plan, "limitations");
   return {
@@ -338,7 +339,6 @@ function extractScanSubset(scan: unknown): ScanSubset {
     ...(actionable === null || actionable === undefined
       ? {}
       : { actionableManualItems: actionable }),
-    ...(typeof safeEdits === "number" ? { safeEditsAvailable: safeEdits } : {}),
     ...(fixesByClass === null ? {} : { fixesByClass }),
     ...(limitations.length > 0 ? { limitations } : {}),
   };

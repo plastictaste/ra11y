@@ -503,9 +503,11 @@ describe("buildSuggestFixPayload — template-directive poisoning of newText", (
 describe("buildSuggestFixPayload — meta.mechanicalInPrinciple (Q6-SUGGEST-FIX-MECHANICAL-VS-GUIDANCE-DRIFT)", () => {
   // Doctrine (CLAUDE.md §1 "Composite headline counts are dishonest" +
   // "Ambiguous field shapes are dishonest"): the scan's
-  // `plan.fixesByClass.mechanical` counts rules with `fixClass:
-  // "mechanical"` (and `safeEditsAvailable` also covers
-  // `verify-in-source` when an inline edit is shipped). But
+  // `plan.fixesByClass.mechanical` counts rules with
+  // `fixClass: "mechanical"`; `plan.fixesByClass.verifyInSource`
+  // counts rules in the verify-in-source lane (the former
+  // `safeEditsAvailable` composite summing the two editable lanes was
+  // dropped per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT). But
   // `suggest_fix` on a specific finding may return `kind: "guidance"`
   // because the rule didn't emit `fixPaths` for that finding's
   // context. The two surfaces appear to contradict unless the

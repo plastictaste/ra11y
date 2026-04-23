@@ -4,8 +4,10 @@
  *
  * Invariants guarded here (from docs/kb/architecture/ai-first-consumer.md):
  *
- *   - Clean scans carry no sentinel zeros — `safeEditsAvailable`
- *     and `fixesByClass` are absent, not zero.
+ *   - Clean scans carry no sentinel zeros — `fixesByClass` is absent,
+ *     not zero. The former `safeEditsAvailable` sibling was dropped
+ *     (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT); agents sum the
+ *     editable `fixesByClass` lanes instead of reading a composite.
  *   - `warnings` is entirely absent on a healthy scan, never `[]`.
  *   - Zero parsed files fires `scanned_zero_files`.
  *   - `configSource: null` + filesScanned ≥ 10 + walk saw a project
@@ -103,6 +105,9 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.plan["violations"]).toBe(0);
     expect(r.plan["notes"]).toBe(0);
     // Conditional-spread zero-counts are absent, not zero.
+    // `safeEditsAvailable` was dropped entirely
+    // (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT); it must never
+    // appear on the plan, populated or otherwise.
     expect(r.plan["safeEditsAvailable"]).toBeUndefined();
     expect(r.plan["fixesByClass"]).toBeUndefined();
     expect(r.warnings).toBeUndefined();
@@ -224,7 +229,13 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.nextOffset).toBeUndefined();
   });
 
-  it("emits plan counters for safe edits when violations carry fix paths", () => {
+  it("emits the per-lane fixesByClass tally when violations carry fix paths (no safeEditsAvailable composite)", () => {
+    // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT: the former
+    // `plan.safeEditsAvailable` counter was dropped because it
+    // disagreed with `fixesByClass.mechanical` on the same response.
+    // The honest shape surfaces only the per-lane tally; callers that
+    // want the apply-now subset sum
+    // `fixesByClass.mechanical + fixesByClass.verifyInSource`.
     const v: Violation = {
       ...violation("/src/a.tsx", 1),
       fixPaths: {
@@ -236,8 +247,18 @@ describe("assembleScanFamilyResponse", () => {
       },
     } as unknown as Violation;
     const r = assembleScanFamilyResponse(baseInput({ violations: [v] }));
-    expect(r.plan["safeEditsAvailable"]).toBe(1);
+    expect(r.plan["safeEditsAvailable"]).toBeUndefined();
     expect(r.plan["fixesByClass"]).toBeDefined();
+    const lanes = r.plan["fixesByClass"] as {
+      mechanical: number;
+      guidance: number;
+      runtimeOnly: number;
+      verifyInSource: number;
+    };
+    // The test `violation` helper stamps fixClass: "mechanical"; the
+    // editable-lane sum is a straightforward caller-side derivation.
+    expect(lanes.mechanical).toBe(1);
+    expect(lanes.mechanical + lanes.verifyInSource).toBe(1);
   });
 
   it("splits notes from non-note violations in plan counters", () => {

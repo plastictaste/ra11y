@@ -91,7 +91,6 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
     plan: {
       violations: number;
       notes: number;
-      safeEditsAvailable: number;
       fixesByClass: {
         mechanical: number;
         guidance: number;
@@ -197,13 +196,15 @@ describe("formatter: agent — plan", () => {
     expect(plan.summary).toContain("keyboard/handler-missing");
   });
 
-  it("plan exposes safeEditsAvailable and a per-fixClass fixesByClass tally", () => {
+  it("plan exposes the per-fixClass fixesByClass tally (no composite safeEditsAvailable)", () => {
     const { plan } = parse();
-    // None of the 4 violations ship an inline `fixPaths.primary.edit`,
-    // so `safeEditsAvailable` is 0 — that counter only sees
-    // batch-applyable edits (across the mechanical + verify-in-source
-    // lanes), not prose suggestions.
-    expect(plan.safeEditsAvailable).toBe(0);
+    // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT: the former
+    // `plan.safeEditsAvailable` composite was dropped because it
+    // disagreed with `fixesByClass.mechanical` on the same response.
+    // The structured per-lane tally is the honest shape callers read
+    // instead; for the former composite's "apply-fix can batch this"
+    // slice they sum `fixesByClass.mechanical + fixesByClass.verifyInSource`.
+    expect((plan as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
     // `fixesByClass` is the honest per-lane tally — RESULT has 1
     // mechanical (media/alt-text-missing) and 3 verify-in-source
     // (keyboard/handler-missing x2, semantics/button-name) violations.
