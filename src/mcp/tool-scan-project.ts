@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
+import type { PerRuleCoverage } from "../types/violation.ts";
 import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
 import { additionalPathsScannedField } from "./additional-paths-classifier.ts";
@@ -54,6 +55,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+import { enrichPerRuleCoverageWithVendorConcentration } from "./vendor-concentration.ts";
 import {
   computeTemplateDirectiveOverlap,
   type WarningInputs,
@@ -240,6 +242,15 @@ export const scanProjectTool: McpTool = {
     // uses, so the next-step builder can match vendor findings without
     // additional normalization.
     const buildArtifacts = buildArtifactsFields(files, root);
+    const vendorPaths = vendorPathSet(buildArtifacts.entries);
+    // Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION: stamp
+    // `concentration.kind: "vendor"` on perRuleCoverage rows whose
+    // densest file is a vendor build artifact AND whose count clears
+    // the stricter vendor-only floor (see `VENDOR_CONCENTRATION_MIN_TOTAL`).
+    // Additive annotation only — every finding continues to ship in
+    // `files[].findings` (surface-don't-suppress). Helper returns the
+    // input meta by identity when no row was rewritten.
+    const formattedMetaWithVendor = withVendorEnrichedPerRuleCoverage(formatted.meta, vendorPaths);
     const nextStep = buildNextStep(formatted, {
       iterativeTip:
         actualMode === "full"
@@ -252,7 +263,7 @@ export const scanProjectTool: McpTool = {
       // the agent's first action lands where it can edit. When no
       // alternative exists, the vendor target stays. Additive — empty
       // set is a no-op.
-      vendorPaths: vendorPathSet(buildArtifacts.entries),
+      vendorPaths,
     });
     const nextStepStructuredField = structuredField(nextStep);
     // P2-BASE: probe the canonical baseline path so agents see whether
@@ -309,7 +320,11 @@ export const scanProjectTool: McpTool = {
     // pattern (meta field + analysisCoverage.hints prose), different
     // trigger (sibling-site shape vs. SSG config marker).
     const catalogHint = detectCatalogShape(root);
-    const metaWithRouteHints = layerRouteHints(formatted.meta, detectedFramework, catalogHint);
+    const metaWithRouteHints = layerRouteHints(
+      formattedMetaWithVendor,
+      detectedFramework,
+      catalogHint,
+    );
     const fullMeta = {
       ...metaWithRouteHints,
       ...skippedByCallerField(skipCriterion),
@@ -1115,6 +1130,34 @@ function vendorPathSet(entries: readonly ScannedBuildArtifact[]): ReadonlySet<st
   const out = new Set<string>();
   for (const e of entries) out.add(e.path);
   return out;
+}
+
+/**
+ * Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION wrapper. Reads
+ * `perRuleCoverage` off the scanner-assembled meta block, runs the
+ * vendor-aware enricher, and returns either the same meta object
+ * (identity-stable, when no row was rewritten — the common case on
+ * scans without vendor build artifacts) or a shallow copy with the
+ * `perRuleCoverage` field replaced. Extracted from the handler so
+ * its cognitive-complexity score stays inside the lint budget; the
+ * handler sees one named call instead of three intermediate bindings.
+ *
+ * The array cast is defensive — `formatted.meta` is typed as
+ * `Record<string, unknown>` at this seam, but by construction the
+ * builder always sets `perRuleCoverage` to a `PerRuleCoverage[]` when
+ * the scan had any rules. Non-array values (should never happen in
+ * practice) fall through to the empty-set branch and the helper is
+ * an identity.
+ */
+function withVendorEnrichedPerRuleCoverage(
+  meta: Readonly<Record<string, unknown>>,
+  vendorPaths: ReadonlySet<string>,
+): Readonly<Record<string, unknown>> {
+  const raw = meta["perRuleCoverage"];
+  const rows = Array.isArray(raw) ? (raw as readonly PerRuleCoverage[]) : [];
+  const enriched = enrichPerRuleCoverageWithVendorConcentration(rows, vendorPaths);
+  if (enriched === rows) return meta;
+  return { ...meta, perRuleCoverage: enriched };
 }
 
 /**

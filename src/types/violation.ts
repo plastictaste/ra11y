@@ -312,10 +312,23 @@ export interface PerRuleCoverage {
    * instead of N times. Omitted (conditional spread) when the rule
    * doesn't clear both thresholds, per CLAUDE.md §1 "Ambiguous field
    * shapes are dishonest" (V1-NOISE-RULE-PER-FILE-ROLLUP).
+   *
+   * The optional `kind: "vendor"` annotation is stamped by the MCP
+   * response-assembly layer when the densest file is classified as a
+   * build artifact (see `src/mcp/build-artifacts.ts`) AND the finding
+   * count crosses a stricter vendor-only floor — the canonical acute
+   * case is `motion/pause-stop-hide` firing 8940 times against
+   * `bootstrap.css` alone on a vendor-heavy scan. Absence of `kind`
+   * means either (a) the file is authored code, or (b) the call site
+   * didn't plumb vendor classification (e.g. `scan_file` on an
+   * explicit path). Vendor awareness is additive signal only — no
+   * findings are filtered or downgraded by the tag
+   * (Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION).
    */
   readonly concentration?: {
     readonly file: string;
     readonly count: number;
+    readonly kind?: "vendor";
   };
   /**
    * Per-file-per-class-pattern concentration rollup for rules whose
