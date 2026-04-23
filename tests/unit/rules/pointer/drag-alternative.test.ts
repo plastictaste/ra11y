@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { rule as handlerMissingRule } from "../../../../src/rules/keyboard/handler-missing.ts";
 import { rule } from "../../../../src/rules/pointer/drag-alternative.ts";
 import { runRule } from "../../../helpers/run-rule.ts";
 
@@ -195,5 +196,60 @@ describe("rule pointer/drag-alternative", () => {
   it("cites wcag22:2.5.7 only (new in WCAG 2.2)", () => {
     expect(rule.satisfies).toContain("wcag22:2.5.7");
     expect(rule.satisfies).not.toContain("wcag21:2.5.7");
+  });
+
+  // A draggable element without keyboard wiring fails TWO distinct criteria:
+  // SC 2.1.1 (keyboard operability) AND SC 2.5.7 (single-pointer alternative
+  // to dragging). Both rules must fire on the same element so the agent sees
+  // two distinct criteria mapped to one location with two fix paths — per
+  // the AI-first doctrine that two honest findings beat silent suppression.
+  describe("composes with keyboard/handler-missing", () => {
+    it("<div draggable='true'> with no keyboard wiring fires BOTH rules", () => {
+      const src = `const X = <div draggable="true">Item</div>;`;
+      const dragFindings = runRule(rule, src);
+      const keyboardFindings = runRule(handlerMissingRule, src);
+      expect(dragFindings).toHaveLength(1);
+      expect(dragFindings[0]?.criteria).toContain("wcag22:2.5.7");
+      expect(keyboardFindings).toHaveLength(1);
+      expect(keyboardFindings[0]?.criteria).toContain("wcag22:2.1.1");
+      // Same element, same line.
+      expect(keyboardFindings[0]?.location.line).toBe(dragFindings[0]?.location.line);
+    });
+
+    it("HTML <div draggable='true'> with no keyboard wiring fires BOTH rules", () => {
+      const src = `<div draggable="true" ondragstart="s()">Item</div>`;
+      const dragFindings = runRule(rule, src, { filePath: "index.html" });
+      const keyboardFindings = runRule(handlerMissingRule, src, { filePath: "index.html" });
+      expect(dragFindings.length).toBeGreaterThan(0);
+      expect(keyboardFindings.length).toBeGreaterThan(0);
+      expect(dragFindings[0]?.criteria).toContain("wcag22:2.5.7");
+      expect(keyboardFindings[0]?.criteria).toContain("wcag22:2.1.1");
+    });
+
+    it("adding onKeyDown on the draggable element silences keyboard/handler-missing", () => {
+      // keyboard/handler-missing exempts any element that has onKeyDown
+      // or onKeyUp. drag-alternative treats onKeyDown as a file-level
+      // keyboard alternative too — so wiring arrow-key handling on the
+      // draggable satisfies both criteria simultaneously (arrow-key
+      // drag IS the canonical keyboard equivalent of pointer drag).
+      const src = `const X = <div draggable="true" onKeyDown={k}>Item</div>;`;
+      expect(runRule(handlerMissingRule, src)).toHaveLength(0);
+    });
+
+    it("sibling <button> click alternative silences drag-alternative but keyboard/handler-missing still fires for 2.1.1", () => {
+      // Inverse of the previous case: the file-level click alternative
+      // satisfies 2.5.7, but the draggable <li> itself is still not
+      // keyboard-reachable, so 2.1.1 still fails.
+      const src = `const X = (
+        <ul>
+          <li draggable="true">Item</li>
+          <button onClick={moveUp}>Move up</button>
+        </ul>
+      );`;
+      expect(runRule(rule, src)).toHaveLength(0);
+      const keyboardFindings = runRule(handlerMissingRule, src);
+      expect(keyboardFindings).toHaveLength(1);
+      expect(keyboardFindings[0]?.message).toContain("draggable");
+    });
   });
 });

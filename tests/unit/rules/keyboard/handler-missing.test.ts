@@ -61,6 +61,82 @@ describe("rule keyboard/handler-missing", () => {
     });
   });
 
+  // `draggable="true"` declares an interactive drag operation; keyboard
+  // users can't perform drag gestures. This rule covers SC 2.1.1 (the
+  // keyboard-reachability failure); `pointer/drag-alternative` covers
+  // SC 2.5.7 (the single-pointer-without-drag-alternative failure) on
+  // the SAME element — agents see both findings with distinct fix paths.
+  describe("JSX: drag grammar fires when", () => {
+    it('<div draggable="true"> has no onKeyDown', () => {
+      const v = runRule(rule, `const X = <div draggable="true">Item</div>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("draggable");
+    });
+
+    it('<span draggable="true"> with onDragStart still fires (drag handler is not a keyboard handler)', () => {
+      const v = runRule(rule, `const X = <span draggable="true" onDragStart={s}>Item</span>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("draggable");
+    });
+  });
+
+  describe("JSX: drag grammar does NOT fire when", () => {
+    it('<div draggable="true"> has onKeyDown', () => {
+      const v = runRule(rule, `const X = <div draggable="true" onKeyDown={k}>Item</div>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it('<button draggable="true"> is natively interactive', () => {
+      const v = runRule(rule, `const X = <button draggable="true">Drag me</button>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it('draggable="false" is not an interactive signal', () => {
+      const v = runRule(rule, `const X = <div draggable="false">Item</div>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it("PascalCase wrapper with draggable is not flagged (custom component)", () => {
+      const v = runRule(rule, `const X = <DragHandle draggable="true">Item</DragHandle>;`);
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("HTML: drag grammar fires when", () => {
+    it('<div draggable="true"> has no onkeydown', () => {
+      const v = runRule(rule, `<div draggable="true">Item</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("draggable");
+    });
+  });
+
+  describe("HTML: drag grammar does NOT fire when", () => {
+    it('<div draggable="true"> has onkeydown', () => {
+      const v = runRule(rule, `<div draggable="true" onkeydown="k()">Item</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("drag grammar: suggestion quality", () => {
+    it("cites SC 2.1.1 and cross-refs pointer/drag-alternative for SC 2.5.7", () => {
+      const v = runRule(rule, `const X = <div draggable="true">Item</div>;`);
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      expect(suggestion).toContain("tabIndex");
+      expect(suggestion).toContain("onKeyDown");
+      // The suggestion should cross-reference the companion 2.5.7 rule
+      // so the agent understands why two findings may fire on one el.
+      expect(suggestion).toContain("2.5.7");
+      expect(suggestion).toContain("drag-alternative");
+    });
+  });
+
   describe("HTML: does NOT fire when", () => {
     it("button has onclick", () => {
       const v = runRule(rule, `<button onclick="doThing()">Save</button>`, {

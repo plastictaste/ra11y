@@ -38,6 +38,16 @@
  *    line can trace the selector across files faster than an
  *    in-process cross-file resolver could, and a silent wrong
  *    cross-file guess is worse than pointing honestly.
+ * 4. Drag grammar — `draggable="true"` on a bare `<div>`/`<span>`
+ *    declares a drag operation at the attribute level. Mouse users
+ *    can grab and drop; keyboard users can't. Composes with
+ *    `pointer/drag-alternative` (SC 2.5.7): a draggable element
+ *    without keyboard wiring violates BOTH 2.1.1 (no keyboard way to
+ *    activate) AND 2.5.7 (no single-pointer-without-drag
+ *    alternative). Each rule emits its own finding with its own fix
+ *    path — tabIndex+onKeyDown for 2.1.1, a sibling button or click
+ *    handler for 2.5.7 — per the AI-first doctrine that two honest
+ *    findings are better than silent suppression.
  *
  * Non-interactive means: any element that isn't a native interactive
  * element (a[href], button, input, select, textarea, summary) and
@@ -181,7 +191,8 @@ function checkOneHtmlElement(el: import("../../types/ast.ts").HtmlElement): {
   const tag = el.tagName.toLowerCase();
   const hasClick = hasHtmlAttribute(el, "onclick");
   const interactiveAttr = findInteractiveHtmlAttribute(el);
-  if (!hasClick && interactiveAttr === null) return null;
+  const hasDraggable = getHtmlAttribute(el, "draggable") === "true";
+  if (!hasClick && interactiveAttr === null && !hasDraggable) return null;
   if (isNativelyInteractive(tag)) return null;
   // role="button"/etc. does NOT exempt — see module doc comment.
   if (hasHtmlAttribute(el, "onkeydown") || hasHtmlAttribute(el, "onkeyup")) return null;
@@ -194,15 +205,22 @@ function checkOneHtmlElement(el: import("../../types/ast.ts").HtmlElement): {
       suggestion: buildSuggestion(el.tagName, role),
     };
   }
-  // Attribute-interaction grammar (Bootstrap `data-bs-toggle`, etc.).
-  // Unreachable without interactiveAttr being non-null — the early
-  // return above guarantees at least one signal is present.
-  const attr = interactiveAttr as NonNullable<typeof interactiveAttr>;
+  if (interactiveAttr !== null) {
+    // Attribute-interaction grammar (Bootstrap `data-bs-toggle`, etc.).
+    const attr = interactiveAttr;
+    return {
+      severity: "error",
+      location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
+      message: `<${el.tagName}> declares interactive behavior via ${attr.name}="${attr.value}" but is not keyboard-focusable — keyboard users can't reach or activate it.`,
+      suggestion: buildAttributeSuggestion(el.tagName, attr.name, attr.value, role),
+    };
+  }
+  // Drag grammar — `draggable="true"` with no keyboard pathway.
   return {
     severity: "error",
     location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-    message: `<${el.tagName}> declares interactive behavior via ${attr.name}="${attr.value}" but is not keyboard-focusable — keyboard users can't reach or activate it.`,
-    suggestion: buildAttributeSuggestion(el.tagName, attr.name, attr.value, role),
+    message: `<${el.tagName}> has draggable="true" but no keyboard handler — keyboard users can't perform the drag operation.`,
+    suggestion: buildDraggableSuggestion(el.tagName, role),
   };
 }
 
@@ -261,7 +279,8 @@ function checkOneJsxElement(el: import("../../types/ast.ts").JsxElement): {
 } | null {
   const hasClick = hasJsxAttribute(el, "onClick");
   const interactiveAttr = findInteractiveJsxAttribute(el);
-  if (!hasClick && interactiveAttr === null) return null;
+  const hasDraggable = getJsxAttributeString(el, "draggable") === "true";
+  if (!hasClick && interactiveAttr === null && !hasDraggable) return null;
   if (isNativelyInteractive(el.tagName.toLowerCase())) return null;
   if (hasJsxAttribute(el, "onKeyDown") || hasJsxAttribute(el, "onKeyUp")) return null;
   // Backdrop pattern: a div/span with onClick but no text content, no
@@ -285,12 +304,21 @@ function checkOneJsxElement(el: import("../../types/ast.ts").JsxElement): {
       suggestion: buildSuggestion(el.tagName, role),
     };
   }
-  const attr = interactiveAttr as NonNullable<typeof interactiveAttr>;
+  if (interactiveAttr !== null) {
+    const attr = interactiveAttr;
+    return {
+      severity: "error",
+      location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
+      message: `<${el.tagName}> declares interactive behavior via ${attr.name}${attr.value === null ? "" : `="${attr.value}"`} but is not keyboard-focusable — keyboard users can't reach or activate it.`,
+      suggestion: buildAttributeSuggestion(el.tagName, attr.name, attr.value, role),
+    };
+  }
+  // Drag grammar — `draggable="true"` with no keyboard pathway.
   return {
     severity: "error",
     location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-    message: `<${el.tagName}> declares interactive behavior via ${attr.name}${attr.value === null ? "" : `="${attr.value}"`} but is not keyboard-focusable — keyboard users can't reach or activate it.`,
-    suggestion: buildAttributeSuggestion(el.tagName, attr.name, attr.value, role),
+    message: `<${el.tagName}> has draggable="true" but no keyboard handler — keyboard users can't perform the drag operation.`,
+    suggestion: buildDraggableSuggestion(el.tagName, role),
   };
 }
 
@@ -398,6 +426,15 @@ function buildAttributeSuggestion(
     return `Two shapes: if the whole paragraph is the control, replace <p> with <button type="button"> and keep ${attrName}${valueClause} on the button. If only part of the paragraph is interactive, wrap that inline content in a child <button type="button"> and move ${attrName}${valueClause} onto it — Bootstrap and similar libraries wire the behavior off the attribute wherever it lives.`;
   }
   return `The simplest fix is to change <${tagName}> to <button type="button"> and keep the ${attrName} attribute — Bootstrap and similar libraries wire the toggle/dismiss/ride behavior off the attribute, so the interaction still works and keyboard users get native focus + Enter/Space activation.`;
+}
+
+function buildDraggableSuggestion(tagName: string, role: string | null): string {
+  const roleClause = role ? ` with role="${role}"` : "";
+  return (
+    `This <${tagName}>${roleClause} has draggable="true" but no keyboard pathway. ` +
+    `Add tabIndex={0} so the element is focusable, plus onKeyDown handling Enter/Space or arrow keys to trigger the same operation the drag performs. ` +
+    `This rule addresses SC 2.1.1 (keyboard operability); the companion rule pointer/drag-alternative addresses SC 2.5.7 (single-pointer alternative) — both criteria need to be satisfied, typically by a sibling "Move up/down" <button type="button"> that shares the same handler the keyboard path invokes.`
+  );
 }
 
 /**
