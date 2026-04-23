@@ -1,0 +1,14 @@
+/* V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION: control case — `:root` tokens
+   resolve to a pair that clears 4.5:1. The silence here is honest
+   (ran, resolved, passed) rather than the pre-resolver silent-miss
+   ("ran, couldn't resolve, skipped"). */
+:root {
+  --fg: #111111;
+  --bg: #ffffff;
+}
+
+.body-text {
+  color: var(--fg);
+  background-color: var(--bg);
+  font-size: 16px;
+}

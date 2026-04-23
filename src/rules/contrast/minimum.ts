@@ -91,6 +91,18 @@ export const rule = defineRule({
   appliesTo: {
     fileExtensions: [".css", ".html", ".htm"],
   },
+  // SC 1.4.3's spec measures the *rendered* color pair; design-system
+  // CSS routinely hosts that pair across files — a `tokens.css` with
+  // `:root { --fg: #111 }` feeds `components.css`'s `color: var(--fg)`.
+  // The pair extractor resolves `:root` custom properties same-file
+  // only (V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION) — a cross-file token
+  // file keeps the consumer's `var(--fg)` unresolved, and a clean
+  // tally on that substrate would silently read as "confidently
+  // clean." Declaring `crossFileCapable: false` downgrades the row to
+  // `coverageConfidence: "medium"` with the structured reason code
+  // wired in `src/engine/per-rule-coverage.ts` per ADR 0026 — honest
+  // "ran but evidence was bounded" rather than silent-miss `"high"`.
+  crossFileCapable: false,
   docs: {
     description:
       "Text must have a contrast ratio of at least 4.5:1 against its background (3:1 for large text).",

@@ -10,6 +10,26 @@
  * rule files short and ensures any extraction bug gets fixed in
  * one place.
  *
+ * `:root` custom-property resolution (V1-CSS-CONTRAST-VAR-ROOT-
+ * RESOLUTION): design-system CSS routinely declares tokens on `:root`
+ * (`:root { --fg: #111; --bg: #fff }`) and consumes them via `var()`
+ * (`.card { color: var(--fg); background: var(--bg) }`). The pair
+ * path used to silently skip these — `parseColor("var(--fg)")`
+ * returns `null`, so the rule saw no resolvable color and emitted no
+ * finding, even when the literal pair failed 1:1. The extraction
+ * helpers now run a single-pass same-file substitution: pass 1
+ * collects `:root { --name: <value> }` declarations, pass 2
+ * substitutes one level when a declaration value is a bare
+ * `var(--name)` (no fallback, no nested lookup). Explicitly
+ * unsupported: nested `var(--x)` inside the resolved value (a
+ * follow-up), `var(--x, #000)` fallback values (a follow-up),
+ * `--name` declared on a different file (the cascade can override).
+ * Per ADR 0026 + Q5 coverage-confidence doctrine, any rule whose
+ * spec now spans cross-file token files but whose implementation is
+ * same-file declares `crossFileCapable: false` so the clean tally
+ * downgrades to `coverageConfidence: "medium"` — honest "ran but
+ * evidence was bounded" in place of silent-miss `"high"`.
+ *
  * Cross-file Tailwind cross-reference (`couldBeWrongBecause` opt-in):
  *   `collectTailwindOverrideClasses` walks every JSX / HTML element
  *   in the scan and returns the set of plain class names that co-occur
@@ -124,14 +144,23 @@ const PX_PER_EM = 16;
  * Walk every CSS rule in `stylesheet` and yield a finding for each
  * rule that declares a resolvable color pair whose contrast ratio
  * falls below the supplied threshold.
+ *
+ * Same-file `:root` custom-property substitution runs before the pair
+ * extractor so design-system stylesheets that declare `:root { --fg:
+ * #111 }` and consume `var(--fg)` resolve to live colors. Explicitly
+ * unsupported: cross-file tokens, nested var references, and
+ * `var(--x, #fff)` fallback values — those remain unresolved (the
+ * pair path gives up) and the rule's `crossFileCapable: false`
+ * metadata surfaces the limitation at the coverage layer.
  */
 export function findContrastFailures(
   stylesheet: CssStylesheet,
   opts: ContrastCheckOptions,
 ): ContrastFinding[] {
   const out: ContrastFinding[] = [];
+  const rootVars = collectRootCustomProperties(stylesheet);
   for (const cssRule of walkCssRules(stylesheet)) {
-    const pair = extractColorPair(cssRule);
+    const pair = extractColorPair(cssRule, rootVars);
     if (!pair) continue;
     const ratio = contrast(pair.fg, pair.bg);
     const isLarge = isLargeText(cssRule);
@@ -162,13 +191,16 @@ export function buildContrastSuggestion(finding: ContrastFinding): string {
   return `Darken the foreground (\`color: ${finding.fgSource}\`) or lighten the background (\`background: ${finding.bgSource}\`). The current ratio is ${finding.ratio.toFixed(2)}:1; you need ${finding.minimum}:1 for ${size} (${gap}× more contrast). Try a foreground color ~${Math.ceil(((finding.minimum - finding.ratio) / finding.minimum) * 100)}% darker, or use the WebAIM Contrast Checker to tune the pair.`;
 }
 
-function extractColorPair(cssRule: CssCssRule): ColorPair | null {
+function extractColorPair(
+  cssRule: CssCssRule,
+  rootVars: ReadonlyMap<string, string>,
+): ColorPair | null {
   const fgDecl = findDeclaration(cssRule, "color");
   const bgDecl =
     findDeclaration(cssRule, "background-color") ?? findDeclaration(cssRule, "background");
   if (!(fgDecl && bgDecl)) return null;
-  const fg = parseColor(extractColorToken(fgDecl.value));
-  const bg = parseColor(extractColorToken(bgDecl.value));
+  const fg = parseColor(extractColorToken(fgDecl.value, rootVars));
+  const bg = parseColor(extractColorToken(bgDecl.value, rootVars));
   if (!(fg && bg)) return null;
   if (bg.a === 0) return null;
   return { fg, bg, fgSource: fgDecl.value, bgSource: bgDecl.value };
@@ -179,12 +211,26 @@ function findDeclaration(cssRule: CssCssRule, property: string): CssDeclaration 
   return cssRule.declarations.find((d) => d.property.toLowerCase() === target);
 }
 
-function extractColorToken(rawValue: string): string {
+/**
+ * Extracts the first parseable color token from a declaration value.
+ * Consults `rootVars` when the trimmed value or a tokenized part is a
+ * bare `var(--name)` reference — substitutes the `:root`-declared
+ * literal one level, then attempts `parseColor` on the result.
+ * Explicitly bounded: nested `var(...)` inside the resolved value is
+ * not recursively expanded (the substitution returns the first-pass
+ * literal verbatim), and `var(--x, #fff)` fallback syntax is not yet
+ * understood — both paths fall through to "unresolvable" and the
+ * caller skips the pair. Rule metadata (`crossFileCapable: false`)
+ * names the limitation at the per-rule coverage layer.
+ */
+function extractColorToken(rawValue: string, rootVars: ReadonlyMap<string, string>): string {
   const trimmed = rawValue.trim();
-  if (parseColor(trimmed)) return trimmed;
+  const resolvedWhole = resolveVarReference(trimmed, rootVars);
+  if (parseColor(resolvedWhole)) return resolvedWhole;
   const tokens = tokenizeValue(trimmed);
   for (const token of tokens) {
-    if (parseColor(token)) return token;
+    const resolvedTok = resolveVarReference(token, rootVars);
+    if (parseColor(resolvedTok)) return resolvedTok;
   }
   return trimmed;
 }
@@ -240,6 +286,95 @@ function isBold(value: string): boolean {
   if (trimmed === "bolder") return true;
   const n = Number.parseInt(trimmed, 10);
   return Number.isFinite(n) && n >= 700;
+}
+
+// ---------------------------------------------------------------------------
+// `:root` custom-property resolution (V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION)
+// ---------------------------------------------------------------------------
+
+/**
+ * Matches a bare `var(--name)` reference — no whitespace outside the
+ * parens, no fallback comma, and no additional trailing/leading
+ * tokens. `var(--fg, #000)` (fallback) and `1px solid var(--border)`
+ * (embedded in a shorthand) don't match; the token walker in
+ * {@link extractColorToken} feeds individual whitespace tokens so an
+ * embedded reference only resolves when it arrived as its own token.
+ *
+ * The name capture is deliberately permissive (anything but `)`) so
+ * CSS's full custom-property naming grammar stays in-scope — the
+ * downstream map lookup fails closed if the author did something
+ * exotic, and failed-closed on a bogus name is the same as "unresolved,
+ * skip the pair" which is already the honest behavior.
+ */
+const BARE_VAR_REFERENCE_PATTERN = /^var\(\s*(--[^,)\s]+)\s*\)$/;
+
+/**
+ * Walks the stylesheet once and returns the map of `--name → value`
+ * declarations authored on a `:root` selector. Selectors that include
+ * `:root` as one of a comma-separated list (e.g. `:root, [data-theme]`)
+ * also contribute; any selector without a `:root` segment is ignored.
+ *
+ * Same-file only by construction — the stylesheet this call is
+ * invoked against is the only substrate considered. Cross-file token
+ * stylesheets (`tokens.css` ⇒ `components.css`) are outside the scope
+ * the consumer rule's `crossFileCapable: false` metadata names, so a
+ * clean tally downgrades to `coverageConfidence: "medium"` per ADR
+ * 0026.
+ */
+export function collectRootCustomProperties(
+  stylesheet: CssStylesheet,
+): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  for (const cssRule of walkCssRules(stylesheet)) {
+    if (!isRootSelector(cssRule.selector)) continue;
+    for (const decl of cssRule.declarations) {
+      if (!decl.property.startsWith("--")) continue;
+      const value = decl.value.trim();
+      if (value.length === 0) continue;
+      // Later declaration wins on duplicate name — mirrors the CSS
+      // cascade's intra-rule behavior; the author's last write for a
+      // given `:root { --name: ... }` is the one a consumer sees.
+      out.set(decl.property, value);
+    }
+  }
+  return out;
+}
+
+function isRootSelector(selector: string): boolean {
+  return selector.split(",").some((part) => part.trim().toLowerCase() === ":root");
+}
+
+/**
+ * Resolves a single `var(--name)` token via one same-file substitution
+ * lookup. Returns the resolved literal when:
+ *
+ *   - `token` matches `BARE_VAR_REFERENCE_PATTERN` (no fallback, no
+ *     embedded context),
+ *   - `--name` is present in `rootVars`, AND
+ *   - the resolved literal itself contains no `var(` call (a nested
+ *     reference — explicit unsupported; returning the original token
+ *     keeps the downstream `parseColor` honest — `parseColor("var(...)")`
+ *     returns `null` and the caller treats the pair as unresolved).
+ *
+ * Any other shape (fallback-style `var(--x, #000)`, unknown `--name`,
+ * nested references in the resolved value) returns `token` unchanged
+ * so `parseColor` sees the original expression and fails closed.
+ */
+function resolveVarReference(token: string, rootVars: ReadonlyMap<string, string>): string {
+  const match = BARE_VAR_REFERENCE_PATTERN.exec(token);
+  if (!match) return token;
+  const name = match[1];
+  if (name === undefined) return token;
+  const resolved = rootVars.get(name);
+  if (resolved === undefined) return token;
+  // Nested var(...) references stay unresolved — a second-pass
+  // expansion would need to guard against cycles and doesn't buy
+  // much on real CSS (token files rarely chain). Returning the
+  // original token here lets `parseColor` fail naturally and the
+  // caller treats the pair as "can't evaluate statically" — honest
+  // surfacing per CLAUDE.md §1.
+  if (/\bvar\s*\(/.test(resolved)) return token;
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -307,13 +442,14 @@ export function collectBgImageUnresolvable(
   foregroundProperties: readonly string[] = TEXT_FOREGROUND_PROPERTIES,
 ): BgImageUnresolvableFinding[] {
   const out: BgImageUnresolvableFinding[] = [];
+  const rootVars = collectRootCustomProperties(stylesheet);
   for (const cssRule of walkCssRules(stylesheet)) {
     const bg = findImageBackedBackground(cssRule);
     if (!bg) continue;
     for (const fgProperty of foregroundProperties) {
       const fgDecl = findDeclaration(cssRule, fgProperty);
       if (!fgDecl) continue;
-      const fg = parseColor(extractColorToken(fgDecl.value));
+      const fg = parseColor(extractColorToken(fgDecl.value, rootVars));
       if (!fg) continue;
       out.push({
         selector: cssRule.selector,

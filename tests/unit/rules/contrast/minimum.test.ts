@@ -120,6 +120,155 @@ describe("rule contrast/minimum", () => {
     });
   });
 
+  // V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION: same-file `:root` custom-
+  // property resolution. Design-system CSS routinely declares tokens
+  // once on `:root` and consumes them via `var(--name)` on descendants
+  // — before this resolver landed, the pair path silently skipped
+  // every consumer because `parseColor("var(--fg)")` returned `null`.
+  // The resolver is single-pass, same-file, and deliberately narrow:
+  // no fallback syntax, no nested references. Cross-file `tokens.css`
+  // and nested references both fall through to "unresolved" and the
+  // rule stays silent on that pair; the rule-level `crossFileCapable:
+  // false` metadata downgrades the coverage row to `"medium"` so an
+  // agent reading a clean tally doesn't over-trust it.
+  describe(":root custom-property resolution", () => {
+    it("resolves a same-file :root pair where both tokens are literals — fires when the resolved pair fails", () => {
+      // Canonical backlog repro: `:root { --fg: #fff; --bg: #fff }`
+      // feeds `body { color: var(--fg); background: var(--bg) }`. The
+      // literal pair is 1.00:1 and must surface as a contrast failure —
+      // this was the silent-miss before the resolver landed.
+      const v = runRule(
+        rule,
+        `:root { --fg: #ffffff; --bg: #ffffff; }
+         body { color: var(--fg); background-color: var(--bg); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      // The message cites the consumer selector, not `:root` — the
+      // failing rule is `body`.
+      expect(v[0]?.message).toContain("body");
+      expect(v[0]?.message).toContain("1.00:1");
+      // Suggestion quotes the raw declaration text so the agent sees
+      // the original `var(--fg)` — the fix target is the token file,
+      // not the consumer.
+      expect(v[0]?.suggestion).toContain("var(--fg)");
+      expect(v[0]?.suggestion).toContain("var(--bg)");
+    });
+
+    it("resolves a same-file :root pair where the resolved pair passes — stays silent", () => {
+      // Control case — the resolver kicks in but the resolved pair
+      // clears 4.5:1, so no finding fires. Important: without the
+      // resolver, we'd silently skip the same consumer; with it, the
+      // silence is now honest ("ran, resolved, passed") rather than
+      // dishonest ("ran, couldn't resolve, skipped").
+      const v = runRule(
+        rule,
+        `:root { --fg: #111111; --bg: #ffffff; }
+         .card { color: var(--fg); background-color: var(--bg); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT resolve when the consumer references a --name not declared on :root", () => {
+      // Unsupported (and honest): an author who writes `var(--unset)`
+      // without declaring it anywhere sees no finding. The pair path
+      // gives up because `rootVars.get("--unset")` is undefined; the
+      // clean tally would over-trust on its own, but
+      // `crossFileCapable: false` downgrades the coverage row so the
+      // agent reads "ran but evidence bounded" at the rule layer.
+      const v = runRule(
+        rule,
+        `:root { --fg: #111111; }
+         .card { color: var(--fg); background: var(--unset); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT resolve nested var references (explicit unsupported — bounded scope)", () => {
+      // Nested expansion is deliberately out of scope for the first
+      // pass — the backlog item promises "single-pass expansion; no
+      // nested var references" and the `crossFileCapable: false`
+      // downgrade is how the agent is told about the limit. Verify the
+      // chain `var(--alias) -> var(--primary) -> #fff` stays
+      // unresolved: the resolver bails out when the first lookup
+      // produces a value that itself contains `var(...)`. With a clean
+      // tally here the agent sees `coverageConfidence: "medium"` —
+      // honest "ran but evidence bounded" in place of silent-miss.
+      const v = runRule(
+        rule,
+        `:root { --primary: #ffffff; --alias: var(--primary); --bg: #ffffff; }
+         .card { color: var(--alias); background: var(--bg); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT resolve `var(--name, fallback)` fallback syntax (explicit unsupported)", () => {
+      // The BARE_VAR_REFERENCE_PATTERN excludes anything with a comma
+      // inside the `var(...)` call, so `var(--fg, #000)` falls through
+      // as an unparseable token. Out of scope for this pass — a later
+      // backlog item handles fallback syntax. Same mitigation: the
+      // rule's `crossFileCapable: false` flag downgrades the coverage
+      // row so the agent is not over-trusting a clean tally.
+      const v = runRule(
+        rule,
+        `:root { --fg: #ffffff; }
+         .card { color: var(--fg, #000); background: var(--bg, #ffffff); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("later :root declaration wins (intra-file cascade)", () => {
+      // Two `:root` rules in the same file — the last write for
+      // `--fg` is the one the resolver hands back, mirroring the CSS
+      // cascade's intra-rule shape. The pair `#ffffff on #ffffff` is
+      // the failing one.
+      const v = runRule(
+        rule,
+        `:root { --fg: #111111; --bg: #ffffff; }
+         :root { --fg: #ffffff; }
+         .card { color: var(--fg); background: var(--bg); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain(".card");
+    });
+
+    it("comma-list selector `:root, [data-theme]` contributes to the root-var map", () => {
+      // Theming idiom: `:root, [data-theme=light] { --fg: #111 }`.
+      // The selector has `:root` as one comma-separated segment, so
+      // its declarations should populate the resolver map.
+      const v = runRule(
+        rule,
+        `:root, [data-theme="light"] { --fg: #ffffff; --bg: #ffffff; }
+         .card { color: var(--fg); background: var(--bg); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+    });
+
+    it("resolves :root vars that appear inside image-backed background paths too", () => {
+      // The `collectBgImageUnresolvable` collector threads the same
+      // rootVars — a `color: var(--text)` over an `image/gradient`
+      // background should still surface the info-severity
+      // bg-image-unresolvable finding (the resolved text color is
+      // used as evidence that a foreground was declared).
+      const v = runRule(
+        rule,
+        `:root { --text: #111111; }
+         .hero { color: var(--text); background-image: url('/bg.png'); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toContain("background_image_unresolvable");
+    });
+  });
+
   describe("inside at-rules", () => {
     it("fires on rules nested in @media", () => {
       const src = `@media (max-width: 600px) { .x { color: #aaa; background: #fff; } }`;

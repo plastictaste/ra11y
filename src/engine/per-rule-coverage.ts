@@ -76,6 +76,14 @@ const CROSS_FILE_BOUND_REASONS: Readonly<Record<string, string>> = {
   "navigation/skip-link": "cross_file_idref_resolution_limited_on_this_input",
   "forms/error-message-not-associated": "cross_file_idref_resolution_limited_on_this_input",
   "pointer/drag-alternative": "cross_file_click_alternative_resolution_limited_on_this_input",
+  // `contrast/minimum` resolves `:root { --name }` custom properties
+  // same-file only; design-system CSS routinely declares tokens in a
+  // separate `tokens.css` stylesheet, so a clean tally on any single-
+  // file CSS substrate is bounded. Named explicitly so the agent's
+  // next-read triage routes to "check for a tokens.css the consumer
+  // stylesheet `var(--fg)`s against" rather than a generic "ran but
+  // bounded" message (V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION).
+  "contrast/minimum": "cross_file_custom_property_resolution_limited_on_this_input",
 };
 
 const CROSS_FILE_BOUND_REASON_FALLBACK = "cross_file_evidence_bounded_on_this_input";
