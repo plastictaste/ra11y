@@ -11,10 +11,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ParsedFile } from "../../../src/engine/scanner.ts";
-import {
-  buildFileLimitation,
-  buildFileLimitations,
-} from "../../../src/mcp/file-limitations.ts";
+import { buildFileLimitation, buildFileLimitations } from "../../../src/mcp/file-limitations.ts";
 
 function htmlFile(path: string, errorMessages: readonly string[]): ParsedFile {
   return {
@@ -33,11 +30,8 @@ function htmlFile(path: string, errorMessages: readonly string[]): ParsedFile {
       },
       errors: errorMessages.map((message) => ({
         message,
-        range: { start: 0, end: 0 },
-        loc: {
-          start: { line: 1, column: 1, offset: 0 },
-          end: { line: 1, column: 1, offset: 0 },
-        },
+        position: { line: 1, column: 1, offset: 0 },
+        recoverable: true,
       })),
     },
   };

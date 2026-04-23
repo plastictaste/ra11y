@@ -110,10 +110,7 @@ describe("scan_project: per-file limitations on mixed scans", () => {
     await writeFile(join(dir, "clean.html"), CLEAN_WITH_FINDINGS);
     // Parse-errored file that ALSO has a missing-alt finding the
     // recovery path still sees. Unbalanced root + img-no-alt.
-    await writeFile(
-      join(dir, "broken.html"),
-      '<div><img src="x.png"></div></section>\n',
-    );
+    await writeFile(join(dir, "broken.html"), '<div><img src="x.png"></div></section>\n');
 
     const tool = findTool("scan_project");
     const session = new McpSession();
