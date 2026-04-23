@@ -54,12 +54,49 @@ import type { Violation } from "../types/violation.ts";
 export const VENDOR_DEDUPE_MIN_DISTINCT_PATHS = 2;
 
 /**
+ * File extensions the dedupe is scoped to — the cross-directory vendor-copy
+ * pattern the dedupe was designed for (100+ copies of `bootstrap.css` /
+ * `animate.css` / `font-awesome.css` inside a website-template catalog) is
+ * a CSS-family phenomenon. Authored code — `.astro`, `.tsx`, `.jsx`,
+ * `.html`, `.vue`, `.svelte`, `.md` — is NOT copied byte-for-byte across
+ * sibling directories; same-basename hits across those extensions
+ * (canonical case: multiple Astro projects each defining their own
+ * `BaseLayout.astro` / `DocsLayout.astro`) are independent authored files
+ * that happen to share a framework-idiomatic name. Collapsing them
+ * silently attributed every finding in the non-canonical copies to the
+ * lex-smallest path's row in `files[]`, making the non-canonical source
+ * file disappear from the response entirely — the exact silent-drop
+ * failure mode CLAUDE.md §1 "Zero-output success is ambiguous failure"
+ * warns against, surfaced at the per-file level. (V1-SCAN-PROJECT-LAYOUT-
+ * FILES-DROPPED: scan_file on `site/src/layouts/BaseLayout.astro` returned
+ * 4 findings; scan_project returned 0 for that path because the dedupe
+ * collapsed into a same-basename Astro file elsewhere in the repo.)
+ *
+ * The set covers the extensions where cross-directory byte-identical
+ * vendor drops are the dominant real-world pattern: plain CSS, SCSS /
+ * Sass, LESS. Compiled-CSS-family outputs from these preprocessors end up
+ * back as `.css` in the build tree, which this set already covers.
+ */
+const VENDOR_DEDUPE_ELIGIBLE_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".css",
+  ".scss",
+  ".sass",
+  ".less",
+]);
+
+/**
  * Collapses findings that repeat across sibling files sharing a basename
  * into one canonical finding per `(basename, ruleId, patternId ?? message)`
  * bucket, stamping `vendorOccurrences: [{ path, line }, …]` on the
  * canonical copy. Returns the deduped violation list in the same order as
  * the input for violations that survive (canonical copies and singletons
  * alike); silently dropped duplicates do not reappear.
+ *
+ * Extension-scoped to CSS-family (see
+ * {@link VENDOR_DEDUPE_ELIGIBLE_EXTENSIONS}) — authored code like
+ * `BaseLayout.astro` across independent Astro projects is not a
+ * vendor-copy pattern, and collapsing it silently drops the non-canonical
+ * source file from the scan response.
  *
  * Pure function — never mutates input. No I/O.
  */
@@ -71,14 +108,35 @@ export function collapseVendorCssFindings(violations: readonly Violation[]): rea
 }
 
 /**
+ * True when the violation's source file has an extension the dedupe is
+ * scoped to (see {@link VENDOR_DEDUPE_ELIGIBLE_EXTENSIONS}). Non-CSS-family
+ * violations are excluded from bucketing outright so authored files
+ * sharing a basename (`BaseLayout.astro`, `Header.tsx`) never collapse.
+ */
+function isEligibleForDedupe(v: Violation): boolean {
+  const path = v.location.filePath;
+  const lastDot = path.lastIndexOf(".");
+  if (lastDot === -1) return false;
+  const ext = path.slice(lastDot).toLowerCase();
+  return VENDOR_DEDUPE_ELIGIBLE_EXTENSIONS.has(ext);
+}
+
+/**
  * Groups findings into buckets keyed by `(basename, ruleId, dedupeValue)`.
  * Insertion order on the returned Map reflects first-appearance order in
  * the input stream — downstream passes depend on this for deterministic
  * output.
+ *
+ * Ineligible violations (see {@link isEligibleForDedupe}) skip bucketing
+ * entirely so {@link emitDeduped}'s `plan.get(key) === undefined` branch
+ * passes them through untouched. The `bucketKey` it would produce would
+ * not be consulted, but we avoid computing it at all so the hot path stays
+ * allocation-free for the authored-code mainstream.
  */
 function bucketByKey(violations: readonly Violation[]): Map<string, Violation[]> {
   const buckets = new Map<string, Violation[]>();
   for (const v of violations) {
+    if (!isEligibleForDedupe(v)) continue;
     const key = bucketKey(v);
     const existing = buckets.get(key);
     if (existing === undefined) {

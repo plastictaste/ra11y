@@ -133,17 +133,18 @@ describe("collapseVendorCssFindings — singletons + different basenames pass th
 
 describe("collapseVendorCssFindings — patternId vs message fallback", () => {
   it("uses patternId when present, collapsing across sibling files with matching patternId", () => {
-    // Two findings in sibling dirs sharing a basename. The rule emitted a
-    // snippet so the engine stamped `patternId`. Messages differ (e.g. line
-    // numbers embedded in prose) but patternId matches — collapse.
+    // Two findings in sibling dirs sharing a CSS-family basename. The rule
+    // emitted a snippet so the engine stamped `patternId`. Messages differ
+    // (e.g. line numbers embedded in prose) but patternId matches —
+    // collapse.
     const input: readonly Violation[] = [
       contrastViolation({
-        filePath: "templates/site-a/navbar.tsx",
+        filePath: "templates/site-a/styles/theme.scss",
         message: "contrast 2.30:1 at line 4",
         patternId: "pid-abc123",
       }),
       contrastViolation({
-        filePath: "templates/site-b/navbar.tsx",
+        filePath: "templates/site-b/styles/theme.scss",
         message: "contrast 2.30:1 at line 6",
         patternId: "pid-abc123",
       }),
@@ -156,16 +157,106 @@ describe("collapseVendorCssFindings — patternId vs message fallback", () => {
   it("keeps distinct patternIds separate even with identical basename+ruleId", () => {
     const input: readonly Violation[] = [
       contrastViolation({
-        filePath: "templates/site-a/navbar.tsx",
+        filePath: "templates/site-a/styles/theme.scss",
         patternId: "pid-aaa",
       }),
       contrastViolation({
-        filePath: "templates/site-b/navbar.tsx",
+        filePath: "templates/site-b/styles/theme.scss",
         patternId: "pid-bbb",
       }),
     ];
     const out = collapseVendorCssFindings(input);
     expect(out).toHaveLength(2);
+  });
+});
+
+describe("collapseVendorCssFindings — extension scope", () => {
+  // V1-SCAN-PROJECT-LAYOUT-FILES-DROPPED: the dedupe is scoped to CSS-family
+  // extensions so authored files (Astro layouts, TSX components, HTML
+  // partials, etc.) that happen to share a framework-idiomatic basename
+  // across sibling directories do not collapse. Collapsing them would drop
+  // the non-canonical source files from `scan_project`'s `files[]` entirely
+  // — a silent per-file zero-output failure CLAUDE.md §1 warns against.
+  it("does NOT collapse same-basename Astro layout files across sibling projects", () => {
+    // Canonical repro from the backlog entry: one Astro site defines
+    // `BaseLayout.astro` at `site/src/layouts/`, a sibling example site also
+    // defines `BaseLayout.astro`. Same basename + same ruleId + (coincidentally)
+    // same patternId — the old dedupe would collapse and silently drop the
+    // site-a/src/layouts version from the response.
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "site/src/layouts/BaseLayout.astro",
+        ruleId: "parsing/html-has-lang",
+        patternId: "pid-base",
+      }),
+      contrastViolation({
+        filePath: "examples/starter/src/layouts/BaseLayout.astro",
+        ruleId: "parsing/html-has-lang",
+        patternId: "pid-base",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(2);
+    for (const v of out) {
+      expect(v.vendorOccurrences).toBeUndefined();
+    }
+    const paths = out.map((v) => v.location.filePath).sort();
+    expect(paths).toEqual([
+      "examples/starter/src/layouts/BaseLayout.astro",
+      "site/src/layouts/BaseLayout.astro",
+    ]);
+  });
+
+  it("does NOT collapse authored HTML partials with the same basename", () => {
+    // Jekyll-style: multiple projects each with their own `default.html`
+    // layout partial. Not a vendor drop; do not collapse.
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "project-a/_layouts/default.html",
+        ruleId: "parsing/html-has-lang",
+        patternId: "pid-xyz",
+      }),
+      contrastViolation({
+        filePath: "project-b/_layouts/default.html",
+        ruleId: "parsing/html-has-lang",
+        patternId: "pid-xyz",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(2);
+  });
+
+  it("does NOT collapse same-basename TSX component files across sibling directories", () => {
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "packages/app-a/src/Header.tsx",
+        ruleId: "aria/labelledby-target-exists",
+        patternId: "pid-header",
+      }),
+      contrastViolation({
+        filePath: "packages/app-b/src/Header.tsx",
+        ruleId: "aria/labelledby-target-exists",
+        patternId: "pid-header",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(2);
+  });
+
+  it("still collapses CSS-family extensions (.scss, .less, .sass) alongside .css", () => {
+    // The preprocessor extensions land in the same vendor-copy regime as
+    // `.css` — bootstrap's `_buttons.scss`, etc., get vendored into
+    // template catalogs just as often as the compiled output. Ensure the
+    // scope includes all four.
+    for (const ext of [".css", ".scss", ".sass", ".less"]) {
+      const input: readonly Violation[] = [
+        contrastViolation({ filePath: `templates/site-a/styles/bootstrap${ext}`, line: 100 }),
+        contrastViolation({ filePath: `templates/site-b/styles/bootstrap${ext}`, line: 100 }),
+      ];
+      const out = collapseVendorCssFindings(input);
+      expect(out).toHaveLength(1);
+      expect((out[0] as Violation).vendorOccurrences).toHaveLength(2);
+    }
   });
 });
 
