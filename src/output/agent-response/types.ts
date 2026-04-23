@@ -188,6 +188,28 @@ export interface AgentFinding {
     readonly line: number;
     readonly column?: number;
   };
+  /**
+   * Cross-file occurrence list when the MCP assembly layer identified
+   * this finding as a canonical copy across ≥2 sibling files sharing a
+   * basename (e.g. 100+ copies of `bootstrap.css` in a
+   * website-template catalog all emitting the same
+   * `contrast/minimum` selector+ratio finding). The list always
+   * includes this finding's own `(path, line)` as the first entry so
+   * consumers can iterate without a second lookup.
+   *
+   * Surface-don't-suppress: collapsed siblings are fully enumerable via
+   * this list; the headline count drops by `occurrences.length - 1` per
+   * canonical finding. Present-when-meaningful — omitted entirely
+   * (never `[]`) for singleton findings, per CLAUDE.md §1 "Ambiguous
+   * field shapes are dishonest." See
+   * `src/mcp/vendor-dedupe.ts` for the dedupe recipe and
+   * {@link import("../../types/violation.ts").Violation#vendorOccurrences}
+   * for the upstream source of truth.
+   */
+  readonly vendorOccurrences?: readonly {
+    readonly path: string;
+    readonly line: number;
+  }[];
 }
 
 export interface AgentFile {

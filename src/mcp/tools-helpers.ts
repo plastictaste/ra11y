@@ -30,6 +30,7 @@ import { applyRuleSettings } from "./rules-evaluated.ts";
 import { buildScanMeta, buildScanPlan } from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
+import { collapseVendorCssFindings } from "./vendor-dedupe.ts";
 import { nameMatchesAnyWrapper } from "./wrapper-matcher.ts";
 import {
   buildRunScanOptions,
@@ -597,7 +598,19 @@ export async function runScanAndFormat(
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);
   const unusedWrappers = await resolveUnusedWrappers(wrappers, files, cwd);
   const severityFiltered = filterBySeverity(withoutWrapperNoise, minSeverity);
-  const filtered = applyCriterionSkip(severityFiltered, skipCriteria);
+  // Q6-CONTRAST-VENDOR-CSS-CROSS-FILE-DEDUPE: collapse identical findings
+  // that repeat across sibling files sharing a basename (canonical case:
+  // `bootstrap.css` / `animate.css` copied into 100+ template
+  // subdirectories of a website-template catalog) into one canonical
+  // finding per (basename, ruleId, patternId ?? message) bucket, with a
+  // `vendorOccurrences: [{ path, line }, …]` sibling list on the
+  // canonical finding. Surface-don't-suppress: every collapsed copy is
+  // fully enumerable via the occurrences list, so the headline drop is
+  // honest (agent sees one canonical finding naming N paths instead of N
+  // rows of the same bug). Runs BEFORE the criterion-skip filter so
+  // skip-by-criterion semantics operate on the post-dedupe stream.
+  const deduped = collapseVendorCssFindings(severityFiltered);
+  const filtered = applyCriterionSkip(deduped, skipCriteria);
   const grouped = groupViolationsByFile(filtered);
   const fileEntries = [...grouped.entries()]
     .sort(([a], [b]) => a.localeCompare(b))

@@ -166,5 +166,8 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
         ...(v.sourceOfFinding.column !== undefined && { column: v.sourceOfFinding.column }),
       },
     }),
+    ...(v.vendorOccurrences !== undefined && v.vendorOccurrences.length > 0
+      ? { vendorOccurrences: v.vendorOccurrences.map((o) => ({ path: o.path, line: o.line })) }
+      : {}),
   };
 }

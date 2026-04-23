@@ -258,6 +258,41 @@ export interface Violation {
    * the wire per CLAUDE.md §1 "Ambiguous field shapes are dishonest."
    */
   readonly classEvidence?: string;
+  /**
+   * Cross-file occurrence list for findings the MCP assembly layer
+   * identified as identical copies of the same (ruleId, `patternId` or
+   * canonicalized message) across sibling files sharing a basename.
+   *
+   * Canonical acute case (Q6-CONTRAST-VENDOR-CSS-CROSS-FILE-DEDUPE):
+   * website-template catalogs ship one `bootstrap.css` / `animate.css`
+   * per template directory, so `contrast/minimum` emits the same
+   * `(selector, ratio, colors)` finding 100+ times across sibling copies
+   * of the vendor bundle. Without this field, each copy shows up as an
+   * independent finding and the agent has no affordance for "one fix
+   * propagates to N siblings." With it, one canonical finding ships
+   * with `vendorOccurrences: [{ path, line }, …]` naming every copy —
+   * agents bulk-route the fix once.
+   *
+   * Surface-don't-suppress: the collapsed siblings are fully enumerable
+   * via the occurrences list. This is the dedupe analogue of the review
+   * layer's {@link import("./review.ts").ReviewCandidateSibling}
+   * rollup — same shape polarity (one canonical + occurrences list) on
+   * the finding side.
+   *
+   * Stamped by the MCP assembly layer (`src/mcp/vendor-dedupe.ts`), not
+   * by rules — rules stay pure. Present-when-meaningful: omitted on
+   * singleton findings (never `[]`). When present, the list always
+   * includes the canonical finding's own `(filePath, line)` as the
+   * first entry so consumers can iterate without a second lookup.
+   *
+   * Per CLAUDE.md §1 "Ambiguous field shapes are dishonest": omit
+   * `vendorOccurrences` entirely when no dedupe happened; never emit
+   * `vendorOccurrences: []` as a sentinel.
+   */
+  readonly vendorOccurrences?: readonly {
+    readonly path: string;
+    readonly line: number;
+  }[];
 }
 
 /**

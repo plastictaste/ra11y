@@ -1,0 +1,193 @@
+/**
+ * Cross-file vendor-CSS dedupe for Q6-CONTRAST-VENDOR-CSS-CROSS-FILE-DEDUPE.
+ *
+ * Collapses identical findings that repeat across sibling files sharing a
+ * basename (e.g. 100+ copies of `bootstrap.css` / `animate.css` inside a
+ * website-template catalog) into a single canonical finding with a
+ * `vendorOccurrences: [{ path, line }, …]` sibling list naming every copy.
+ *
+ * Motivation. A catalog of 174 website templates ships one `bootstrap.css`
+ * per sibling directory. `contrast/minimum` fires on each copy
+ * independently — same selector, same ratio, same colors — so one canonical
+ * finding explodes into 174 indistinguishable rows. Agents have no
+ * affordance for "dismiss this across every sibling copy"; each finding
+ * carries a distinct `findingId`. This helper keys off the basename so
+ * cross-directory same-basename duplicates collapse to one, while
+ * legitimately distinct files (e.g. two different projects each with
+ * `styles.css`) remain separate because they have different *contents*
+ * (different messages / patternIds).
+ *
+ * Surface-don't-suppress (CLAUDE.md §1, docs/kb/architecture/ai-first-consumer.md):
+ * the collapsed siblings are fully enumerable via `vendorOccurrences`. The
+ * headline violation count drops — honestly, because the agent now sees
+ * one canonical finding naming N paths instead of N distinct findings
+ * that were the same bug — but zero information is lost. Agents that want
+ * per-copy granularity iterate `vendorOccurrences`; agents that want the
+ * pattern see the canonical finding once.
+ *
+ * Dedupe key: `(basename(path), ruleId, patternId ?? message)`. When the
+ * rule stamped a `patternId` (snippet-emitting rules — JSX/HTML), that's
+ * the strongest dedupe signal. When it didn't (CSS rules like
+ * `contrast/minimum` emit no snippet, so `patternId` is absent), the
+ * `message` string is stable per (selector, ratio, colors) — two
+ * `bootstrap.css` files with the same `.btn-primary` declaration emit
+ * byte-identical messages. Using `message` as the fallback keys off a
+ * deterministic, rule-produced string, not a heuristic.
+ *
+ * Threshold: a bucket qualifies for collapse only when it contains
+ * findings from ≥2 distinct file paths (different directories sharing the
+ * basename). A single-file bucket is left untouched — no
+ * `vendorOccurrences` stamp, no collapse. The canonical finding is picked
+ * lexicographically (smallest path), keeping output deterministic across
+ * runs.
+ */
+
+import type { Violation } from "../types/violation.ts";
+
+/**
+ * Threshold: a same-basename bucket collapses only when findings come from
+ * ≥ this many distinct file paths. Set at 2 so the dedupe fires as soon as
+ * a genuine cross-file duplicate exists; a single-file bucket is an
+ * independent finding, not a vendor-copy pattern. Exported so tests can
+ * pin the constant against an explicit worked example.
+ */
+export const VENDOR_DEDUPE_MIN_DISTINCT_PATHS = 2;
+
+/**
+ * Collapses findings that repeat across sibling files sharing a basename
+ * into one canonical finding per `(basename, ruleId, patternId ?? message)`
+ * bucket, stamping `vendorOccurrences: [{ path, line }, …]` on the
+ * canonical copy. Returns the deduped violation list in the same order as
+ * the input for violations that survive (canonical copies and singletons
+ * alike); silently dropped duplicates do not reappear.
+ *
+ * Pure function — never mutates input. No I/O.
+ */
+export function collapseVendorCssFindings(
+  violations: readonly Violation[],
+): readonly Violation[] {
+  // Pass 1: bucket by (basename, ruleId, dedupeValue). Insertion order on
+  // the Map reflects first-appearance order in the input stream, which
+  // Pass 3 preserves when emitting canonical entries.
+  const buckets = new Map<string, Violation[]>();
+  for (const v of violations) {
+    const key = bucketKey(v);
+    const existing = buckets.get(key);
+    if (existing === undefined) {
+      buckets.set(key, [v]);
+    } else {
+      existing.push(v);
+    }
+  }
+
+  // Pass 2: identify buckets that qualify for collapse. A bucket qualifies
+  // when it contains findings from ≥ VENDOR_DEDUPE_MIN_DISTINCT_PATHS
+  // distinct file paths. Same-basename findings sitting in one file (e.g.
+  // the same rule firing on two rules in one bootstrap.css) never collapse
+  // — that's a per-file rollup lane, not a cross-file dedupe lane.
+  const collapsedKeys = new Set<string>();
+  const canonicalByKey = new Map<string, Violation>();
+  const occurrencesByKey = new Map<string, { path: string; line: number }[]>();
+  for (const [key, bucket] of buckets) {
+    const distinctPaths = new Set(bucket.map((v) => v.location.filePath));
+    if (distinctPaths.size < VENDOR_DEDUPE_MIN_DISTINCT_PATHS) continue;
+    collapsedKeys.add(key);
+    // Canonical = lexicographically smallest (path, line) so output is
+    // stable across runs regardless of discovery order. The violation we
+    // surface is the one that lives in the canonical file at the canonical
+    // line; the rest ride inside `vendorOccurrences` on that same finding.
+    const sorted = [...bucket].sort(
+      (a, b) =>
+        a.location.filePath.localeCompare(b.location.filePath) ||
+        a.location.line - b.location.line,
+    );
+    const canonical = sorted[0] as Violation;
+    canonicalByKey.set(key, canonical);
+    // `vendorOccurrences` includes the canonical finding's own
+    // `(path, line)` as the first entry — consumers iterating the list
+    // see every copy at a glance without cross-referencing the outer
+    // finding's `location`.
+    occurrencesByKey.set(
+      key,
+      sorted.map((v) => ({ path: v.location.filePath, line: v.location.line })),
+    );
+  }
+
+  if (collapsedKeys.size === 0) return violations;
+
+  // Pass 3: emit the deduped list. For each collapsed bucket, emit the
+  // canonical finding once with `vendorOccurrences` stamped on; drop the
+  // rest. For non-collapsed buckets, pass the findings through unchanged.
+  const emittedCanonicalKeys = new Set<string>();
+  const out: Violation[] = [];
+  for (const v of violations) {
+    const key = bucketKey(v);
+    if (!collapsedKeys.has(key)) {
+      out.push(v);
+      continue;
+    }
+    const canonical = canonicalByKey.get(key);
+    if (canonical === undefined) continue;
+    // Emit the canonical exactly once, at the position of the bucket's
+    // first appearance in the input. Subsequent duplicates in the input
+    // stream are silently dropped.
+    if (v !== canonical) continue;
+    if (emittedCanonicalKeys.has(key)) continue;
+    emittedCanonicalKeys.add(key);
+    const vendorOccurrences = occurrencesByKey.get(key);
+    if (vendorOccurrences === undefined) {
+      out.push(v);
+      continue;
+    }
+    out.push({ ...v, vendorOccurrences });
+  }
+
+  // Safety net: canonical violations whose input-order first-appearance
+  // landed on a NON-canonical duplicate wouldn't get emitted in Pass 3's
+  // main loop (the canonical never appears at that earlier index).
+  // Iterate any collapsed buckets whose canonical was never emitted and
+  // append them at the end. Preserves determinism while guaranteeing
+  // every collapsed bucket surfaces its canonical on the wire.
+  for (const key of collapsedKeys) {
+    if (emittedCanonicalKeys.has(key)) continue;
+    const canonical = canonicalByKey.get(key);
+    const vendorOccurrences = occurrencesByKey.get(key);
+    if (canonical === undefined || vendorOccurrences === undefined) continue;
+    out.push({ ...canonical, vendorOccurrences });
+    emittedCanonicalKeys.add(key);
+  }
+
+  return out;
+}
+
+/**
+ * Canonical bucket key: `basename(filePath) + "\0" + ruleId + "\0" +
+ * (patternId ?? message)`. The three-slot form keeps each component
+ * separable without a regex split — the NUL byte is never present in any
+ * of the inputs (validated implicitly: basenames reject NUL on every real
+ * filesystem, ruleIds are slash-separated ASCII, and rule messages are
+ * human-readable prose).
+ *
+ * Dedupe-value fallback (`patternId ?? message`) rationale: rules that
+ * emit a `snippet` get a `patternId` stamped by the engine (see
+ * `src/utils/pattern-id.ts`). Rules that don't emit a snippet (canonical
+ * case: CSS-keyed rules like `contrast/minimum`) have a stable `message`
+ * byte-identical across sibling copies of the same source file — the
+ * `selector`, `ratio`, and color tokens all live in the message. So both
+ * paths produce a deterministic bucket key without heuristics.
+ */
+function bucketKey(v: Violation): string {
+  const dedupeValue = v.patternId ?? v.message;
+  return `${basename(v.location.filePath)}\0${v.ruleId}\0${dedupeValue}`;
+}
+
+/**
+ * POSIX/Win-agnostic basename: everything after the last `/` or `\`. Kept
+ * local so the helper has zero external imports beyond its type
+ * dependency — consistent with `src/mcp/` neighbors that run pure string
+ * math over paths.
+ */
+function basename(filePath: string): string {
+  const lastSep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  return lastSep === -1 ? filePath : filePath.slice(lastSep + 1);
+}
