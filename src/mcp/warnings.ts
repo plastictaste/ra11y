@@ -473,8 +473,16 @@ export interface ScanWarningDetails {
    *   pagination primitive).
    * - `effectiveLimit` is the file count the density cap settled on
    *   after trimming trailing entries to fit under the char budget.
+   * - `reason` names the clip regime. Always `"token_density"` today
+   *   — the warning code only fires when the density cap trimmed —
+   *   but the field is a `PageClipReason`-aligned enum so future clip
+   *   axes (per-criterion, etc.) can share the `warningsDetails`
+   *   channel without re-shaping existing consumers. Q-SHARED-LIMIT-
+   *   REQUEST-VS-EFFECTIVE: the shape mirrors the top-level
+   *   `pageClipReason` on the paginated-response surface so an agent
+   *   reading either field gets the same vocabulary.
    *
-   * Both fields are raw counts, not parameters — the `limit` kwarg on
+   * Both counts are raw, not parameters — the `limit` kwarg on
    * `scan_project` is clamped and resolved before the guard sees it,
    * and `scan` / `scan_diff` have no `limit` axis at all. Emitted only
    * when `response_token_budget_truncated` fires; omitted otherwise
@@ -483,6 +491,7 @@ export interface ScanWarningDetails {
   readonly response_token_budget_truncated?: {
     readonly requestedLimit: number;
     readonly effectiveLimit: number;
+    readonly reason: "token_density";
   };
   /**
    * Payload for `content_files_skipped`. Carries the aggregate
@@ -1165,6 +1174,13 @@ export function tokenBudgetTruncatedDetailsField(args: {
       response_token_budget_truncated: {
         requestedLimit: args.requestedLimit,
         effectiveLimit: args.effectiveLimit,
+        // `response_token_budget_truncated` fires only when the density
+        // cap trimmed, so the reason is always `"token_density"` — but
+        // the field is always present so a consumer pattern-matching on
+        // the reason enum (alongside the top-level `pageClipReason`) can
+        // use the same vocabulary on either surface. Q-SHARED-LIMIT-
+        // REQUEST-VS-EFFECTIVE.
+        reason: "token_density" as const,
       },
     },
   };

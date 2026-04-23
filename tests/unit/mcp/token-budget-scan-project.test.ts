@@ -152,6 +152,7 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
           response_token_budget_truncated?: {
             requestedLimit: number;
             effectiveLimit: number;
+            reason?: string;
           };
         };
       };
@@ -187,6 +188,11 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
       expect(details?.requestedLimit).toBe(50);
       expect(details?.effectiveLimit).toBe(body.files.length);
       expect(details?.effectiveLimit).toBeLessThan(details?.requestedLimit ?? 0);
+      // Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE: the `reason` field in the
+      // warningsDetails payload mirrors the top-level `pageClipReason`
+      // vocabulary so consumers branching on either surface read the
+      // same enum.
+      expect(details?.reason).toBe("token_density");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

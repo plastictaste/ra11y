@@ -58,6 +58,17 @@ export function applyScanDiffTokenBudget<TFile>(
     [filesKey]: budgeted.files,
     truncated: true as const,
     totalFilesWithFindings: files.length,
+    // Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE: promote the density-cap
+    // settlement to the same surface as `truncated` / `nextOffset`
+    // on the paginated surfaces. scan_diff has no `limit` axis, so
+    // `requestedLimit` is the files-with-findings count the cap saw
+    // entering and `effectiveLimit` is what survived the trim. A
+    // caller seeing `truncated: true` + `files.length: N` gets the
+    // aggressive-vs-marginal trim distinction in one read without
+    // cracking open `warningsDetails`.
+    requestedLimit: files.length,
+    effectiveLimit: budgeted.files.length,
+    pageClipReason: "token_density" as const,
     warnings,
     ...detailsField,
   };

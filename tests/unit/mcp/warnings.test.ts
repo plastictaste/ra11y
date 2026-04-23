@@ -940,9 +940,16 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       requestedLimit: 50,
       effectiveLimit: 10,
     });
+    // Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE: the payload carries
+    // `reason: "token_density"` as a constant — the warning code only
+    // fires on the density cap, so the reason is determinate, but the
+    // field is always present so consumers branching on either the
+    // top-level `pageClipReason` or this `warningsDetails` reason use
+    // the same enum.
     expect(out.warningsDetails.response_token_budget_truncated).toEqual({
       requestedLimit: 50,
       effectiveLimit: 10,
+      reason: "token_density",
     });
     // Shape: `warningsDetails` is the only top-level key — the
     // fragment is designed to spread directly into a response body

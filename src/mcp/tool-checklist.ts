@@ -747,11 +747,23 @@ export interface PaginatedChecklist {
    * `perCriterionClipped: true` appears iff at least one criterion
    * was clipped by `maxCandidatesPerCriterion`. Orthogonal signals —
    * either, both, or neither may be present.
+   *
+   * When pagination is active (any page after the first, or any page
+   * where `truncated` fires), the response carries `requestedLimit` +
+   * `effectiveLimit` + `pageClipReason` on the SAME surface as
+   * `truncated` / `nextOffset` so a caller seeing "returned < limit"
+   * can distinguish the clip regimes without descending into
+   * `warningsDetails`. Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE: same shape
+   * and vocabulary as scan_project's paginateFiles, so cross-surface
+   * consumers read the same fields on both tools.
    */
   readonly paginationFields: {
     readonly truncated?: true;
     readonly nextOffset?: number;
     readonly perCriterionClipped?: true;
+    readonly requestedLimit?: number;
+    readonly effectiveLimit?: number;
+    readonly pageClipReason?: "end_of_results" | "per_criterion_cap";
   };
 }
 
@@ -811,12 +823,47 @@ export function paginateChecklistItems(
     });
   }
   const truncated = rangeEnd < postClipTotal;
+  // Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE: count the candidates that
+  // actually shipped in this page so `effectiveLimit` is honest about
+  // what reached the wire. Summing `pageItems[].candidates.length`
+  // captures both the global slice AND the per-criterion clip — the
+  // same post-clip value the caller sees.
+  let pageCandidateCount = 0;
+  for (const item of pageItems) pageCandidateCount += item.candidates.length;
+  // Pagination is active when the response carries any non-trivial
+  // paging state: truncated, resumed from a non-zero offset, or at
+  // least one criterion was clipped by the per-criterion cap. On
+  // "whole inventory fit, nothing clipped" the honest shape is to
+  // omit the limit echo entirely — there's no ambiguity to resolve.
+  const paginationActive = truncated || offset > 0 || perCriterionClipped;
+  // `pageClipReason` fires when the returned candidate count is below
+  // the caller's requested limit AND that clip is an honest
+  // single-axis regime:
+  //   - `per_criterion_cap` when per-criterion clipping was the
+  //     proximate cause of the short page (per-criterion clipping
+  //     happened AND no further truncation).
+  //   - `end_of_results` when the tail simply ran out (no truncation,
+  //     no per-criterion involvement).
+  // Mid-page full pages (effective === requested) carry no reason —
+  // nothing clipped below the ask. Same three-regime shape as
+  // scan_project's paginateFiles, so cross-surface consumers read the
+  // same vocabulary on both tools.
+  const pageIsShort = pageCandidateCount < limit;
+  const clippedByPerCriterion = pageIsShort && perCriterionClipped && !truncated;
+  const clippedByEnd = pageIsShort && !truncated && !clippedByPerCriterion;
+  const pageClipReason: "end_of_results" | "per_criterion_cap" | undefined = clippedByPerCriterion
+    ? "per_criterion_cap"
+    : clippedByEnd
+      ? "end_of_results"
+      : undefined;
   return {
     items: pageItems,
     totalCandidates,
     paginationFields: {
       ...(truncated ? { truncated: true as const, nextOffset: rangeEnd } : {}),
       ...(perCriterionClipped ? { perCriterionClipped: true as const } : {}),
+      ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
+      ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
     },
   };
 }

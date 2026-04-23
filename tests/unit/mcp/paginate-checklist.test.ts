@@ -245,6 +245,71 @@ describe("paginateChecklistItems — maxCandidatesPerCriterion axis", () => {
   });
 });
 
+describe("paginateChecklistItems — Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE effective-limit surface", () => {
+  it("omits requestedLimit / effectiveLimit / pageClipReason when the whole inventory fits on page 1", () => {
+    // Page 1, offset 0, whole thing fits → pagination is NOT active and
+    // the honest shape omits the limit echo entirely. Cross-surface with
+    // scan_project's paginateFiles (paginate-files.test.ts) where the
+    // same invariant holds on the "one-page, no offset" branch.
+    const items = singleCandidateItems(5);
+    const page = paginateChecklistItems(items, fullParams({ limit: 200 }));
+    expect(page.paginationFields.truncated).toBeUndefined();
+    expect(page.paginationFields.requestedLimit).toBeUndefined();
+    expect(page.paginationFields.effectiveLimit).toBeUndefined();
+    expect(page.paginationFields.pageClipReason).toBeUndefined();
+  });
+
+  it("emits requestedLimit + effectiveLimit on a full mid-page without pageClipReason", () => {
+    // limit 10, offset 0, 50 items × 1 candidate → page 1 returns 10,
+    // truncated: true, pagination active. The full page carries
+    // requestedLimit=10 + effectiveLimit=10 so consumers read one
+    // shape on every paginated response; pageClipReason is omitted
+    // because nothing clipped below the ask.
+    const items = singleCandidateItems(50);
+    const page = paginateChecklistItems(items, fullParams({ limit: 10 }));
+    expect(page.paginationFields.truncated).toBe(true);
+    expect(page.paginationFields.requestedLimit).toBe(10);
+    expect(page.paginationFields.effectiveLimit).toBe(10);
+    expect(page.paginationFields.pageClipReason).toBeUndefined();
+  });
+
+  it("emits pageClipReason: 'end_of_results' on the last page when the tail ran out", () => {
+    // offset 40, limit 20, 50 items × 1 candidate → 10 candidates
+    // returned. No more pages (not truncated) but effective (10) <
+    // requested (20), so pageClipReason names the regime. Same
+    // vocabulary as scan_project paginateFiles.
+    const items = singleCandidateItems(50);
+    const page = paginateChecklistItems(items, fullParams({ limit: 20, offset: 40 }));
+    expect(page.items.length).toBe(10);
+    expect(page.paginationFields.truncated).toBeUndefined();
+    expect(page.paginationFields.requestedLimit).toBe(20);
+    expect(page.paginationFields.effectiveLimit).toBe(10);
+    expect(page.paginationFields.pageClipReason).toBe("end_of_results");
+  });
+
+  it("emits pageClipReason: 'per_criterion_cap' when per-criterion clipping brought the page below the ask", () => {
+    // 1 criterion × 30 candidates, cap 5 (post-clip total = 5),
+    // limit 10, offset 0 → returned 5, not truncated (5 < 10 fits),
+    // perCriterionClipped true. `effectiveLimit: 5 < requestedLimit:
+    // 10`, so pageClipReason fires as `per_criterion_cap` — the
+    // proximate cause is the per-criterion cap, not the end of the
+    // inventory (the inventory has 30 total). Same three-regime
+    // vocabulary as scan_project.
+    const items = [makeItem("wcag22:2.4.5", 30)];
+    const page = paginateChecklistItems(
+      items,
+      fullParams({ limit: 10, maxCandidatesPerCriterion: 5 }),
+    );
+    expect(page.items.length).toBe(1);
+    expect(page.items[0].candidates.length).toBe(5);
+    expect(page.paginationFields.truncated).toBeUndefined();
+    expect(page.paginationFields.perCriterionClipped).toBe(true);
+    expect(page.paginationFields.requestedLimit).toBe(10);
+    expect(page.paginationFields.effectiveLimit).toBe(5);
+    expect(page.paginationFields.pageClipReason).toBe("per_criterion_cap");
+  });
+});
+
 describe("paginateChecklistItems — end-to-end via readChecklistPageParams", () => {
   it("clamped inputs flow through: limit:0 → 1-item truncated page; limit:3000 clamps to 2000", () => {
     const items = singleCandidateItems(50);
