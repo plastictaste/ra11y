@@ -296,7 +296,12 @@ async function handleBaselineMode(
 }
 
 function parseFor(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm")) {
+  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".erb")) {
+    // `.erb` — Ruby embedded-template (Rails views, Middleman,
+    // Jekyll `*.md.erb`). Routes straight to parseHtml; the HTML
+    // parser's stripTemplateDirectives pass removes `<%= … %>` /
+    // `<% … %>` / `<%# … %>` from text nodes so rules see the
+    // rendered-text shape.
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }

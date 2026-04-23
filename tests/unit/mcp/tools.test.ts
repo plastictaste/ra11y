@@ -1146,8 +1146,10 @@ describe("MCP tool: scan_file", () => {
       ".htm",
       ".css",
       ".scss",
+      ".less",
       ".mdx",
       ".astro",
+      ".erb",
     ]) {
       expect(remediation).toContain(ext);
     }
@@ -1216,6 +1218,83 @@ describe("MCP tool: scan_file", () => {
     const contrastFindings = data.findings.filter((f) => f.ruleId === "contrast/minimum");
     expect(contrastFindings.length).toBe(1);
     expect(contrastFindings[0]?.criteria).toContain("wcag22:1.4.3");
+  });
+
+  it("parses .erb end-to-end and routes through parseHtml so HTML-shaped rules fire", async () => {
+    // Invariant: `.erb` files (Rails views, Middleman templates,
+    // Jekyll `*.md.erb` scaffolds) reach the scanner through the
+    // same path as `.html` — discovery accepts them
+    // (PARSEABLE_EXTENSIONS), the dispatcher routes to `parseHtml`
+    // which strips ERB directive spans from text nodes, and every
+    // HTML-scoped rule runs against the resulting AST. Regression
+    // guard for V1-PARSER-ERB: the Jekyll field report observed
+    // `file-unsupported` on a `.erb` file whose content would parse
+    // cleanly as `.html`; the asymmetric allow-list was the bug, not
+    // any parser capability gap.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-erb-scan-file-"));
+    const erbPath = joinPath(dir, "index.html.erb");
+    // `<img>` with a missing `alt` attribute — the HTML parser must
+    // see the element after the ERB directive is stripped from the
+    // surrounding text. `<%= @page.author %>` is the ERB shape the
+    // field report cited; keeping it in the fixture documents that
+    // the strip pass runs on ERB-dispatched `.erb` files.
+    await writeFile(
+      erbPath,
+      "<!doctype html>\n<html><body><p>by <%= @page.author %></p>\n<img src='x.png'></body></html>\n",
+    );
+
+    const tool = findTool("scan_file");
+    const session = new McpSession();
+    const result = await tool.handler({ path: erbPath }, session);
+
+    // Not file-unsupported, which was the old Jekyll-field-report
+    // failure mode.
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      findings: Array<{ ruleId: string }>;
+      meta: { filesByExtension: Readonly<Record<string, number>> };
+    };
+    // Discovery + parser dispatch: `.erb` surfaces as a scanned ext.
+    expect(data.meta.filesByExtension[".erb"]).toBe(1);
+    // HTML-scoped rules run on the ERB-dispatched AST — the alt-text
+    // rule fires on `<img src='x.png'>`.
+    const altFindings = data.findings.filter((f) => f.ruleId === "media/alt-text-missing");
+    expect(altFindings.length).toBeGreaterThan(0);
+  });
+
+  it("discovers .erb files and does not report them as skipped by extension", async () => {
+    // Sibling to the scan_file test above at the scan-project entry:
+    // walk a tree with `.erb` + `.html` and assert every `.erb` is
+    // accepted. Regression tripwire for V1-PARSER-ERB — if discovery
+    // drops `.erb` again this test is where it lands.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-erb-scan-project-"));
+    await writeFile(joinPath(dir, "a.html.erb"), "<img src='a.png'>\n");
+    await writeFile(joinPath(dir, "b.erb"), "<img src='b.png'>\n");
+    await writeFile(joinPath(dir, "c.html"), "<img src='c.png'>\n");
+
+    const tool = findTool("scan_project");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      meta: {
+        filesScanned: number;
+        filesByExtension: Readonly<Record<string, number>>;
+        analysisCoverage?: { skippedByExtension?: Readonly<Record<string, number>> };
+      };
+    };
+    expect(data.meta.filesScanned).toBe(3);
+    expect(data.meta.filesByExtension[".erb"]).toBe(2);
+    expect(data.meta.filesByExtension[".html"]).toBe(1);
+    // `.erb` must NOT appear in skippedByExtension — the whole point.
+    expect(data.meta.analysisCoverage?.skippedByExtension ?? {}).not.toHaveProperty(".erb");
   });
 
   it("discovers .scss files and does not report them as skipped by extension", async () => {

@@ -372,7 +372,13 @@ const CONTENT_FILES_SKIPPED_THRESHOLD = 50;
 const UNSUPPORTED_LANGUAGE_EXTENSIONS: Readonly<
   Record<"ruby" | "python" | "go" | "php", readonly string[]>
 > = {
-  ruby: [".rb", ".erb", ".haml", ".slim"],
+  // `.erb` used to live in this list but moved into
+  // `PARSEABLE_EXTENSIONS` (V1-PARSER-ERB) once the HTML parser's
+  // `stripTemplateDirectives` pass was wired as its dispatcher —
+  // keeping it here would double-flag a Rails/Jekyll repo where the
+  // template layer is now being scanned. `.rb` (pure Ruby), `.haml`,
+  // and `.slim` remain ecosystem-foreign.
+  ruby: [".rb", ".haml", ".slim"],
   python: [".py"],
   go: [".go", ".tmpl", ".gohtml"],
   php: [".php", ".phtml"],

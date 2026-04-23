@@ -764,7 +764,8 @@ function describeTemplateDirectiveHandling(engines: ReadonlySet<string>): string
  * explain) or the AST-language tag an alias routes through
  * (`"css"`, `"html"`, `"tsx"`). Canonical mappings: `.scss → "css"`,
  * `.less → "css"`, `.mdx → "tsx"`, `.astro → "html"`,
- * `.md`/`.markdown → "html"`, `.js`/`.ts → "tsx"`. Native pairs:
+ * `.md`/`.markdown → "html"`, `.erb → "html"`, `.js`/`.ts → "tsx"`.
+ * Native pairs:
  * `.css`, `.html`, `.htm`, `.tsx`, `.jsx`. Values mirror the AST
  * `language` alphabet so cross-
  * referencing against `parseErrorFiles[].parser` is unambiguous.

@@ -447,7 +447,14 @@ function fileUriToPath(uri: string): string | null {
   return null;
 }
 function parseForExtension(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm")) {
+  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".erb")) {
+    // `.erb` — Ruby embedded-template (Rails views, Middleman
+    // templates, Jekyll `*.md.erb` scaffolds). The HTML parser's
+    // `stripTemplateDirectives` pass already removes `<%= … %>` /
+    // `<% … %>` / `<%# … %>` spans from text nodes, so rules see the
+    // rendered-text shape the same way a mixed ERB+Liquid `.html`
+    // file already does. Aliased to `.html`/`.htm` in
+    // PARSEABLE_EXTENSIONS so every `.html`-scoped rule applies.
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }

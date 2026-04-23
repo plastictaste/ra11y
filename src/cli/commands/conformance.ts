@@ -375,7 +375,11 @@ async function parseScanInputs(
 }
 
 function parseFor(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm")) {
+  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".erb")) {
+    // `.erb` — Ruby embedded-template routed through parseHtml (the
+    // parser strips `<%= … %>` / `<% … %>` / `<%# … %>` from text
+    // nodes). See `src/utils/path.ts::EXTENSION_ALIASES` for the
+    // alias rationale.
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }

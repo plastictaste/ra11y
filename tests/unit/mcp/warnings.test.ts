@@ -492,18 +492,45 @@ describe("computeScanWarnings", () => {
   // so the code points at template-layer-dominant repos (Rails,
   // Django, Go html/template, Laravel) rather than incidentally-
   // present scripts.
-  it("fires `source_language_unsupported` with language=ruby on a Rails-shaped repo (.erb + .rb dominance)", () => {
+  it("fires `source_language_unsupported` with language=ruby on a Rails-shaped repo (.rb + .haml dominance)", () => {
+    // `.erb` used to count toward this signal but is now parseable
+    // (V1-PARSER-ERB) — the HTML parser routes `.erb` via the
+    // `stripTemplateDirectives` pass, so an ERB-heavy repo no longer
+    // surfaces in `skippedByExtension`. `.rb` (pure Ruby) + `.haml`
+    // (Ruby template) remain ecosystem-foreign.
     const codes = computeScanWarnings({
       filesScanned: 12,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        // Rails: 80 erb templates + 120 rb files, plus incidental css/md.
-        skippedByExtension: { ".erb": 80, ".rb": 120, ".md": 5 },
+        // Rails: 80 haml templates + 120 rb files, plus incidental md.
+        skippedByExtension: { ".haml": 80, ".rb": 120, ".md": 5 },
       },
       filesByExtension: { ".html": 12 },
     });
     expect(codes).toContain("source_language_unsupported");
+  });
+
+  it("does NOT fire `source_language_unsupported` with language=ruby on a Jekyll-shaped repo where only `.erb` + `.md` appear in skippedByExtension", () => {
+    // V1-PARSER-ERB regression guard: `.erb` is now parseable, so an
+    // `.erb`-heavy skippedByExtension entry is itself an upstream
+    // bug (the files should have been parsed). Here we simulate the
+    // pre-parser case — 200 `.erb` files mock-classified as skipped
+    // — and assert the ruby signal does NOT fire, because `.erb`
+    // should not count toward ecosystem-foreign dominance anymore.
+    // If this test starts failing, someone has re-added `.erb` to
+    // `UNSUPPORTED_LANGUAGE_EXTENSIONS.ruby` without considering
+    // that the parser now handles the format.
+    const codes = computeScanWarnings({
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".erb": 200, ".md": 5 },
+      },
+      filesByExtension: { ".html": 12 },
+    });
+    expect(codes).not.toContain("source_language_unsupported");
   });
 
   it("fires `source_language_unsupported` with language=python (Django template layer)", () => {
@@ -842,8 +869,11 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        // Rails: 80 erb + 120 rb = 200 ruby; 5 md; total 205.
-        skippedByExtension: { ".erb": 80, ".rb": 120, ".md": 5 },
+        // Rails: 80 haml + 120 rb = 200 ruby; 5 md; total 205.
+        // (`.erb` used to be in the ruby tally but is now parseable;
+        // see V1-PARSER-ERB — `.haml` stands in as the skipped Ruby
+        // template layer.)
+        skippedByExtension: { ".haml": 80, ".rb": 120, ".md": 5 },
       },
       filesByExtension: { ".html": 12 },
     });

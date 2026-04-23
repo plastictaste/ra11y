@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { extensionMatches, isStorybookStoryFile } from "../../../src/utils/path.ts";
+import {
+  extensionMatches,
+  hasParseableExtension,
+  isStorybookStoryFile,
+} from "../../../src/utils/path.ts";
 
 describe("extensionMatches", () => {
   test("empty allowList matches any extension", () => {
@@ -35,6 +39,47 @@ describe("extensionMatches", () => {
   test("non-JSX extensions don't alias", () => {
     expect(extensionMatches(".css", [".tsx", ".jsx"])).toBe(false);
     expect(extensionMatches(".html", [".tsx", ".jsx"])).toBe(false);
+  });
+
+  test(".erb aliases into .html/.htm — ERB templates route through parseHtml", () => {
+    // ERB (`.html.erb`, `.erb`) is Ruby's embedded-template syntax;
+    // the HTML parser's `stripTemplateDirectives` pass already handles
+    // `<%= … %>` / `<% … %>` / `<%# … %>`, so aliasing to `.html`
+    // makes every HTML-scoped rule apply. Mirrors the `.astro →
+    // .html/.htm` + `.svg → .html/.htm` alias rows.
+    expect(extensionMatches(".erb", [".html", ".htm"])).toBe(true);
+    expect(extensionMatches(".erb", [".html"])).toBe(true);
+    expect(extensionMatches(".erb", [".htm"])).toBe(true);
+    // `.erb` does NOT alias into CSS or TSX — rules scoped to those
+    // extensions must not mis-fire on ERB templates.
+    expect(extensionMatches(".erb", [".css"])).toBe(false);
+    expect(extensionMatches(".erb", [".tsx", ".jsx"])).toBe(false);
+  });
+});
+
+describe("hasParseableExtension", () => {
+  test(".erb is parseable — Rails views, Middleman, Jekyll *.md.erb scaffolds", () => {
+    expect(hasParseableExtension("app/views/layouts/application.html.erb")).toBe(true);
+    expect(hasParseableExtension("partial.erb")).toBe(true);
+    expect(hasParseableExtension("lib/theme_template/index.html.erb")).toBe(true);
+  });
+
+  test("the known-parseable extensions still return true alongside .erb", () => {
+    // Spot-check the alias-table extensions to keep this test honest
+    // about .erb joining the set rather than replacing anything.
+    expect(hasParseableExtension("x.html")).toBe(true);
+    expect(hasParseableExtension("x.tsx")).toBe(true);
+    expect(hasParseableExtension("x.css")).toBe(true);
+    expect(hasParseableExtension("x.scss")).toBe(true);
+    expect(hasParseableExtension("x.less")).toBe(true);
+    expect(hasParseableExtension("x.md")).toBe(true);
+    expect(hasParseableExtension("x.svg")).toBe(true);
+  });
+
+  test("unknown extensions are still rejected", () => {
+    expect(hasParseableExtension("x.rb")).toBe(false);
+    expect(hasParseableExtension("x.svelte")).toBe(false);
+    expect(hasParseableExtension("x.vue")).toBe(false);
   });
 });
 

@@ -44,7 +44,17 @@ export interface ResolvedEdit {
   readonly newText: string;
 }
 
-export type Ext = "tsx" | "html" | "css" | "scss" | "less" | "mdx" | "astro" | "markdown" | "svg";
+export type Ext =
+  | "tsx"
+  | "html"
+  | "css"
+  | "scss"
+  | "less"
+  | "mdx"
+  | "astro"
+  | "markdown"
+  | "svg"
+  | "erb";
 
 export interface SingleFileScan {
   readonly violations: readonly Violation[];
@@ -339,6 +349,7 @@ function extensionOf(filePath: string): Ext | null {
   if (lower.endsWith(".astro")) return "astro";
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
   if (lower.endsWith(".svg")) return "svg";
+  if (lower.endsWith(".erb")) return "erb";
   return null;
 }
 
@@ -373,6 +384,13 @@ export function parseFor(ext: Ext, source: string): Ast {
   }
   if (ext === "svg") {
     const r = parseSvg(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (ext === "erb") {
+    // ERB files route through parseHtml — the HTML parser's
+    // stripTemplateDirectives pass strips `<%= … %>` / `<% … %>` /
+    // `<%# … %>` from text nodes.
+    const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   const r = parseTsx(source);

@@ -41,6 +41,7 @@ export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".md",
   ".markdown",
   ".svg",
+  ".erb",
 ]);
 
 /**
@@ -95,6 +96,13 @@ const STORY_BASENAME_RE = /^[^.]+\.(?:stories|story)\.(?:tsx|jsx|ts|js)$/;
  *     preserves `<title>` as raw-text), so every `.html`/`.htm`-scoped
  *     rule that inspects `<svg>` / `<title>` / `role="img"` /
  *     `aria-label` / `aria-hidden` applies.
+ *   - `.erb` aliases into HTML-family: ERB (`.html.erb`, `.erb`) is
+ *     the Ruby embedded-template syntax (Rails views, Middleman
+ *     templates, Jekyll `*.md.erb` scaffolds). We route straight to
+ *     parseHtml — the HTML parser's `stripTemplateDirectives` pass
+ *     already removes `<%= … %>` / `<% … %>` / `<%# … %>` spans from
+ *     text nodes, so rules see the rendered-text shape. Every
+ *     `.html`/`.htm`-scoped rule applies.
  */
 const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly string[] }[] = [
   { from: ".js", to: [".jsx"] },
@@ -106,6 +114,7 @@ const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly
   { from: ".md", to: [".html", ".htm"] },
   { from: ".markdown", to: [".html", ".htm"] },
   { from: ".svg", to: [".html", ".htm"] },
+  { from: ".erb", to: [".html", ".htm"] },
 ];
 
 /**
