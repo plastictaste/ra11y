@@ -19,12 +19,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { mergeScanTokenBudget } from "../../../src/mcp/scan-budget.ts";
+import { applyScanDiffTokenBudget } from "../../../src/mcp/scan-diff-budget.ts";
 import {
   type ChecklistPageParams,
   paginateChecklistItems,
 } from "../../../src/mcp/tool-checklist.ts";
-import { mergeScanTokenBudget } from "../../../src/mcp/scan-budget.ts";
-import { applyScanDiffTokenBudget } from "../../../src/mcp/scan-diff-budget.ts";
 import { tokenBudgetTruncatedDetailsField } from "../../../src/mcp/warnings.ts";
 
 /** Synthetic budgeted result shape so we don't need real scan plumbing. */
@@ -33,7 +33,6 @@ function fakeBudgeted<TFile>(files: readonly TFile[], dropped: number) {
     files,
     truncated: dropped > 0,
     droppedCount: dropped,
-    nextOffset: undefined as number | undefined,
     bytesMeasured: 1000,
   };
 }
@@ -110,13 +109,15 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
     expect(typeof out["requestedLimit"]).toBe("number");
     expect(typeof out["effectiveLimit"]).toBe("number");
     expect(out["pageClipReason"]).toBe("token_density");
-    expect((out["effectiveLimit"] as number) < (out["requestedLimit"] as number)).toBe(true);
+    const requestedLimit = out["requestedLimit"] as number;
+    const effectiveLimit = out["effectiveLimit"] as number;
+    expect(effectiveLimit < requestedLimit).toBe(true);
     const details = (out["warningsDetails"] as Record<string, unknown>)[
       "response_token_budget_truncated"
     ] as { requestedLimit: number; effectiveLimit: number; reason: string };
     expect(details.reason).toBe("token_density");
-    expect(details.requestedLimit).toBe(out["requestedLimit"]);
-    expect(details.effectiveLimit).toBe(out["effectiveLimit"]);
+    expect(details.requestedLimit).toBe(requestedLimit);
+    expect(details.effectiveLimit).toBe(effectiveLimit);
   });
 
   it("checklist: paginateChecklistItems carries requestedLimit + effectiveLimit when per-criterion clipping brings the page below the ask", () => {
