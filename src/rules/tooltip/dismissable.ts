@@ -62,6 +62,8 @@ import {
   getHtmlAttribute,
   getJsxAttribute,
   getJsxAttributeString,
+  htmlTextContent,
+  jsxTextContent,
   truncateForEcho,
   walkHtmlElements,
   walkJsxElements,
@@ -172,7 +174,8 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (title.trim().length === 0) continue;
     if (!isInteractiveHtml(el)) continue;
     const enhancer = detectHtmlEnhancer(el);
-    emit(buildViolation(el.tagName.toLowerCase(), title, el.loc.start, enhancer));
+    const textEqualsTitle = isTextEquivalentToTitle(htmlTextContent(el), title);
+    emit(buildViolation(el.tagName.toLowerCase(), title, el.loc.start, enhancer, textEqualsTitle));
   }
 }
 
@@ -205,7 +208,12 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (!isInteractiveJsx(el)) continue;
     const displayTitle = titleString ?? "<expression>";
     const enhancer = detectJsxEnhancer(el);
-    emit(buildViolation(el.tagName, displayTitle, el.loc.start, enhancer));
+    // Equivalence check only meaningful for string-literal titles —
+    // an expression-valued title's runtime value is unknown to static
+    // analysis, so we keep the full three-alternative suggestion.
+    const textEqualsTitle =
+      titleString !== null && isTextEquivalentToTitle(jsxTextContent(el), titleString);
+    emit(buildViolation(el.tagName, displayTitle, el.loc.start, enhancer, textEqualsTitle));
   }
 }
 
@@ -231,6 +239,7 @@ function buildViolation(
   title: string,
   loc: { line: number; column: number },
   enhancer: EnhancerSignal | null,
+  textEqualsTitle: boolean,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
@@ -239,7 +248,7 @@ function buildViolation(
   couldBeWrongBecause?: readonly string[];
 } {
   // Tighter cap (40) than the helper default because `display` is
-  // echoed three times in the suggestion below and the tooltip label
+  // echoed multiple times in the suggestion below and the tooltip label
   // itself is usually short; a long value is almost certainly a bug.
   const display = truncateForEcho(title, 40);
   const baseMessage = `<${tag}> has title="${display}" — native browser tooltips are not dismissable with the keyboard, disappear on pointer approach, and are invisible to touch and many assistive-technology users, failing WCAG 1.4.13 (Content on Hover or Focus).`;
@@ -251,11 +260,45 @@ function buildViolation(
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `${baseMessage}${enrichmentClause}`,
-    suggestion: `Replace title="${display}" on this <${tag}> with one of: (a) a visible text label inside the element, (b) aria-label="${display}" if a visible label is impractical, or (c) a custom tooltip component that supports Escape-to-dismiss, hover-bridging, and stays visible until the trigger loses focus. The native title attribute remains acceptable on non-interactive elements like <abbr> for term expansion.`,
+    suggestion: buildSuggestion(tag, display, textEqualsTitle),
     // Conditional spread — `couldBeWrongBecause: []` would be a dishonest
     // empty-vs-unpopulated sentinel per CLAUDE.md §1.
     ...(enhancer === null ? {} : { couldBeWrongBecause: [TOOLTIP_JS_ENHANCER_PRESENT] }),
   };
+}
+
+/**
+ * Visible-text vs. title equivalence: trimmed, case-insensitive
+ * comparison. When equal, the element already has the accessible name
+ * the "visible text label" and "aria-label" alternatives recommend —
+ * suggesting them again would re-state the existing DOM state. The rule
+ * still fires (the underlying issue is keyboard-dismiss, not the
+ * accessible name), but the suggestion drops the redundant alternatives
+ * and offers only the tooltip-library upgrade path.
+ *
+ * Empty `text` → false: a present visible label is a precondition; an
+ * empty body means there is no visible text to *be* equivalent.
+ */
+function isTextEquivalentToTitle(text: string, title: string): boolean {
+  const t = text.trim();
+  if (t.length === 0) return false;
+  return t.toLowerCase() === title.trim().toLowerCase();
+}
+
+/**
+ * Compose the fix suggestion. When the visible text already equals the
+ * `title` value, the "visible text label" and "aria-label" alternatives
+ * are no-ops on the existing DOM, so we emit only the
+ * tooltip-library/keyboard-dismiss upgrade path. Otherwise we keep the
+ * full three-alternative menu — the agent picks whichever fits the call
+ * site. Per `docs/kb/architecture/ai-first-consumer.md` "the tool must
+ * not suggest alternatives that re-state the existing state of the DOM."
+ */
+function buildSuggestion(tag: string, display: string, textEqualsTitle: boolean): string {
+  if (textEqualsTitle) {
+    return `The visible text on this <${tag}> already matches title="${display}", so the accessible name is fine — the WCAG 1.4.13 failure is the title-only tooltip behavior (no keyboard dismiss, vanishes on pointer approach, no touch/AT support). Either remove the redundant title attribute (the visible label already conveys the same string) or replace the native tooltip with a custom tooltip component that supports Escape-to-dismiss, hover-bridging, and stays visible until the trigger loses focus.`;
+  }
+  return `Replace title="${display}" on this <${tag}> with one of: (a) a visible text label inside the element, (b) aria-label="${display}" if a visible label is impractical, or (c) a custom tooltip component that supports Escape-to-dismiss, hover-bridging, and stays visible until the trigger loses focus. The native title attribute remains acceptable on non-interactive elements like <abbr> for term expansion.`;
 }
 
 /**

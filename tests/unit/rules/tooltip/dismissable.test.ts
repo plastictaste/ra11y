@@ -328,4 +328,82 @@ describe("rule tooltip/dismissable", () => {
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
     });
   });
+
+  // When the flagged element's visible text already equals the title
+  // value (trimmed, case-insensitive), the "replace with visible text"
+  // and "use aria-label" alternatives just re-state the existing DOM —
+  // the accessible name is already there, the WCAG 1.4.13 failure is
+  // the keyboard-dismiss behavior. The rule still fires; only the
+  // suggestion drops the redundant alternatives. Per
+  // docs/kb/architecture/ai-first-consumer.md "the tool must not
+  // suggest alternatives that re-state the existing state of the DOM."
+  describe("suggestion: visible text equals title", () => {
+    it("HTML: button text == title — suggestion omits visible-text and aria-label alternatives", () => {
+      const violations = runRule(rule, `<button title="Tooltip on top">Tooltip on top</button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      // Rule still fires at the same severity — this is reason-text
+      // adjustment, not suppression or downgrade.
+      expect(violations[0]?.severity).toBe("warning");
+      // Redundant alternatives must NOT appear when text already matches.
+      expect(suggestion).not.toMatch(/aria-label="Tooltip on top"/);
+      expect(suggestion).not.toMatch(/visible text label inside the element/);
+      // The remaining guidance is the keyboard-dismiss / library upgrade path.
+      expect(suggestion).toMatch(/Escape-to-dismiss/);
+      expect(suggestion).toMatch(/custom tooltip component/);
+    });
+
+    it("HTML: text == title differs only in case/whitespace — same suppression of redundant alternatives", () => {
+      const violations = runRule(
+        rule,
+        `<button title="Tooltip on top">  TOOLTIP on TOP  </button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).not.toMatch(/aria-label=/);
+      expect(suggestion).not.toMatch(/visible text label inside the element/);
+    });
+
+    it("HTML: text != title — full three-alternative suggestion preserved", () => {
+      const violations = runRule(rule, `<button title="Hover info">Help</button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      // All three alternatives must remain when the visible text does
+      // not already convey the title content.
+      expect(suggestion).toMatch(/visible text label inside the element/);
+      expect(suggestion).toMatch(/aria-label="Hover info"/);
+      expect(suggestion).toMatch(/custom tooltip component/);
+    });
+
+    it("JSX: text == title (string-literal title) drops redundant alternatives", () => {
+      const violations = runRule(
+        rule,
+        `const x = <button title="Tooltip on top">Tooltip on top</button>;`,
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).not.toMatch(/aria-label="Tooltip on top"/);
+      expect(suggestion).not.toMatch(/visible text label inside the element/);
+    });
+
+    it("JSX: expression-valued title keeps the full three-alternative suggestion (text not statically known)", () => {
+      // For title={expr}, static analysis cannot determine whether the
+      // runtime value equals the visible text, so we keep the full menu
+      // — agent reads the file and decides. Surfacing the full set is
+      // the correct conservative move.
+      const violations = runRule(
+        rule,
+        `const label = "Tooltip on top"; const x = <button title={label}>Tooltip on top</button>;`,
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toMatch(/visible text label inside the element/);
+      expect(suggestion).toMatch(/custom tooltip component/);
+    });
+  });
 });
