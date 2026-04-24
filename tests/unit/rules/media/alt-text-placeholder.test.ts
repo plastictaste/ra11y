@@ -90,6 +90,59 @@ describe("rule media/alt-text-placeholder", () => {
       });
       expect(violations).toHaveLength(1);
     });
+
+    it("alt is a sequential carousel-slide label ('First slide')", () => {
+      const violations = runRule(rule, `<img src="s1.png" alt="First slide">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/sequential positional label/);
+      expect(violations[0]?.suggestion).toMatch(/THIS slide/);
+    });
+
+    it("alt is a numeric carousel-slide label ('Slide 1')", () => {
+      const violations = runRule(rule, `<img src="s1.png" alt="Slide 1">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/sequential positional label/);
+    });
+
+    it("alt is a numbered-image label ('Image 3')", () => {
+      const violations = runRule(rule, `<img src="i3.png" alt="Image 3">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/sequential positional label/);
+    });
+
+    it("alt is a numbered-photo label ('Photo 7')", () => {
+      const violations = runRule(rule, `<img src="p7.png" alt="Photo 7">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("alt is an ordinal slide later in the sequence ('Third slide')", () => {
+      const violations = runRule(rule, `<img src="s3.png" alt="Third slide">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("alt is a navigation slide label ('Next slide')", () => {
+      const violations = runRule(rule, `<img src="n.png" alt="Next slide">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("alt is a multi-digit slide number ('Slide 12')", () => {
+      const violations = runRule(rule, `<img src="s12.png" alt="Slide 12">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
   });
 
   describe("HTML: does not fire when", () => {
@@ -157,6 +210,31 @@ describe("rule media/alt-text-placeholder", () => {
       });
       expect(violations).toHaveLength(0);
     });
+
+    it("alt is a real slide description ('Lake Tahoe at sunset') does not match the carousel pattern", () => {
+      const violations = runRule(rule, `<img src="s1.png" alt="Lake Tahoe at sunset">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("alt that contains 'slide' but is descriptive ('Slide deck cover with company logo') does not match", () => {
+      const violations = runRule(
+        rule,
+        `<img src="s.png" alt="Slide deck cover with company logo">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("alt that mentions an image number in a real description does not match", () => {
+      const violations = runRule(
+        rule,
+        `<img src="i3.png" alt="Image 3 of 5: revenue trends 2024-2026">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires a violation when", () => {
@@ -196,6 +274,17 @@ describe("rule media/alt-text-placeholder", () => {
 
     it("alt prop is 'image of dog'", () => {
       const violations = runRule(rule, `const X = <img src="d.png" alt="image of dog" />;`);
+      expect(violations).toHaveLength(1);
+    });
+
+    it("alt prop is a carousel-slide label ('First slide')", () => {
+      const violations = runRule(rule, `const X = <img src="s1.png" alt="First slide" />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/sequential positional label/);
+    });
+
+    it("alt prop is a numbered-image label ('Image 3')", () => {
+      const violations = runRule(rule, `const X = <img src="i3.png" alt="Image 3" />;`);
       expect(violations).toHaveLength(1);
     });
   });

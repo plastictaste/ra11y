@@ -45,6 +45,15 @@
  *      descriptions and pass. The phrase must START with the role
  *      noun — `alt="Acme Corp logo"` (proper-name-plus-role) is fine
  *      because the description carries the brand identity.
+ *   6. Sequential positional labels — carousel-slide / numbered-image
+ *      shapes such as `alt="First slide"`, `alt="Slide 1"`,
+ *      `alt="Image 3"`, `alt="Photo 7"`. These are the canonical
+ *      "I'll describe this later" placeholder that ships in design-
+ *      system carousel docs, template kits, and starter themes; the
+ *      author's intent is positional, not descriptive, and screen-
+ *      reader users hear "first slide" instead of what the slide
+ *      shows. Matched as whole-alt by the patterns in
+ *      `SEQUENTIAL_LABEL_PATTERNS`.
  *
  * Matching is whole-alt-only outside of the bounded phrase form
  * above. `alt="Aerial image of Paris"` passes because the medium
@@ -195,7 +204,41 @@ const META_WORDS: ReadonlySet<string> = new Set([
   "describe this",
 ]);
 
-type PlaceholderKind = "medium" | "authoring" | "meta" | "repetition" | "rolePhrase";
+/**
+ * Sequential positional labels — `First slide`, `Slide 1`, `Image 3`,
+ * `Photo 7`, `Picture 12`. The author has typed a positional/numeric
+ * placeholder (the carousel-slide antipattern from countless template
+ * themes) instead of describing what the image shows. Matched as
+ * whole-alt, case-insensitive, on the collapsed (single-spaced) form.
+ *
+ * - `^(first|second|third|fourth|fifth|next|previous|prev|last)\s+slide$`
+ *   covers ordinal-word slide labels — the design-system carousel-doc
+ *   default.
+ * - `^slide\s+\d+$` covers `Slide 1`, `Slide 12`, etc. — the
+ *   template-kit numeric variant.
+ * - `^(image|photo|picture)\s+\d+$` covers `Image 3`, `Photo 1`,
+ *   `Picture 7` — the same author-intent in starter themes that don't
+ *   use a carousel idiom but still ship numbered placeholders.
+ *
+ * `picture` of "Picture 7" overlaps with `MEDIUM_WORDS` lexically but
+ * the failure mode is identical (no information about the image), so
+ * either category would be honest; we report it as `sequentialLabel`
+ * because the numeric tail is the diagnostic the agent should see in
+ * the message.
+ */
+const SEQUENTIAL_LABEL_PATTERNS: readonly RegExp[] = [
+  /^(first|second|third|fourth|fifth|next|previous|prev|last)\s+slide$/i,
+  /^slide\s+\d+$/i,
+  /^(image|photo|picture)\s+\d+$/i,
+];
+
+type PlaceholderKind =
+  | "medium"
+  | "authoring"
+  | "meta"
+  | "repetition"
+  | "rolePhrase"
+  | "sequentialLabel";
 
 interface PlaceholderMatch {
   readonly kind: PlaceholderKind;
@@ -225,6 +268,14 @@ function classifyAlt(alt: string): PlaceholderMatch | null {
     const first = tokens[0];
     if (first !== undefined && first.length > 0 && tokens.every((t) => t === first)) {
       return { kind: "repetition", normalized: collapsed };
+    }
+  }
+  // Sequential positional label: carousel-slide / numbered-image
+  // shapes (`First slide`, `Slide 1`, `Image 3`). Whole-alt, case-
+  // insensitive. See SEQUENTIAL_LABEL_PATTERNS for rationale.
+  for (const pattern of SEQUENTIAL_LABEL_PATTERNS) {
+    if (pattern.test(lower)) {
+      return { kind: "sequentialLabel", normalized: collapsed };
     }
   }
   // Role-noun-led phrase: short alt that begins with a role noun
@@ -341,7 +392,9 @@ function buildMessage(tag: string, match: PlaceholderMatch): string {
           ? "names the attribute instead of describing the content"
           : match.kind === "rolePhrase"
             ? "wraps the subject in a role-noun phrase that adds no information beyond what the medium already implies"
-            : "repeats a single word instead of describing the content";
+            : match.kind === "sequentialLabel"
+              ? "is a sequential positional label (carousel-slide / numbered-image antipattern) — author intent is 'describe later' but it ships as production alt text"
+              : "repeats a single word instead of describing the content";
   return `<${tag}> has alt="${match.normalized}" which ${reason}; screen readers announce this boilerplate verbatim and users learn nothing about the image.`;
 }
 
@@ -349,6 +402,8 @@ function buildSuggestion(tag: string, match: PlaceholderMatch): string {
   const hint =
     match.kind === "authoring"
       ? `Replace the placeholder alt="${match.normalized}" with a description of what the image conveys in this context.`
-      : `Replace alt="${match.normalized}" with a description of what the image communicates — not the fact that it is an image.`;
+      : match.kind === "sequentialLabel"
+        ? `Replace alt="${match.normalized}" with a description of what THIS slide / image actually shows (its subject, headline, or caption text). Positional labels like "First slide" or "Image 3" are the carousel-doc default but ship as production placeholder; the slide's content is what the screen-reader user needs.`
+        : `Replace alt="${match.normalized}" with a description of what the image communicates — not the fact that it is an image.`;
   return `${hint} If the image is purely decorative and the surrounding text already carries the same information, set alt="" so assistive tech skips it. If the <${tag}> is inside a link or button, the alt should describe the destination or action, not the picture.`;
 }
