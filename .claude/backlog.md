@@ -1295,6 +1295,13 @@ These items already exist in Track V and reproduce on the 2026-04-23 tenth-pass 
 - **V1-LIVE-REGION-RUNTIME-MUTATION-CANDIDATE** reproduces on 50p50d-pass2 (dad-jokes, event-keycodes, simple-timer, theme-clock, incrementing-counter, quiz-app — pervasive across the corpus; finder still absent).
 - **Q3-MDX-EXAMPLE-TEMPLATE-LITERAL-SUBSTRATE** (closed) reproduces on bootstrap-pass1 — TSX parser dies on inline-code `<body>` mentions in MDX prose; closure may not cover all backtick/fenced-code patterns.
 
+### v1.0.0 — eleventh-pass orchestrator observations (2026-04-23)
+
+Items surfaced during the /continue orchestrator run that landed the tenth-pass batch. Not user-surfaced drift — engineering follow-ups.
+
+- [ ] **V1-SILENT-DROP-TYPEOF-BOOLEAN-AUDIT** — the V1-SESSION-CONFIGURE-ALLOWWRITE-SILENT-DROP fix (commits 7fd25c08, ded4616e) revealed a `typeof x === "boolean"` guard that silently discarded non-boolean inputs. Audit other MCP tool-input parsers for the same pattern — any `typeof` guard that quietly drops mismatched inputs instead of emitting a structured `invalid-param` error. Candidates: `sessionConfigure.autoDetectWrappers`, `scan_project.additionalPaths` shape, `suggest_fix.maxCandidates`, `checklist.maxCandidatesPerCriterion`, any other input shape assertions in src/mcp/*.ts. Fix with the discriminated `{ok, opts} | {ok:false, error}` pattern established in src/mcp/configure-opts.ts. Per AI-first doctrine, silent drops are dishonest — the agent thinks it configured a setting that never took effect.
+- [ ] **V1-ANALYSIS-COVERAGE-FILE-LIMIT-APPROACHING** — `src/mcp/analysis-coverage.ts` hit 503 effective lines during the V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER + V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE integration (turn 5 of the 2026-04-23 run); integrator self-refactored to drop back under 500. The file is absorbing markdown + frontmatter + code-span + template-engine classification all at once. Split into `markdown-classifier.ts` + `frontmatter-classifier.ts` + a thinner `analysis-coverage.ts` orchestrator before the next markdown-classifier item lands, or the next addition will bounce off the limits guard again.
+
 ---
 
 
