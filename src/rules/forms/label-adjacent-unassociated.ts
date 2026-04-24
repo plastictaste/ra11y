@@ -269,11 +269,24 @@ function isExcludedHtmlControl(el: HtmlElement): boolean {
 }
 
 function isHtmlAssociatedSomeOtherWay(el: HtmlElement): boolean {
+  // `aria-label` and `aria-labelledby` are explicit author-intent
+  // signals — the developer reached for an ARIA attribute precisely
+  // to override the default name source, so honoring that intent here
+  // suppresses what would otherwise be noise. `title=` is NOT in the
+  // same class: per the ARIA accessible-name algorithm `title` is the
+  // last-resort fallback (step 5+), and in Bootstrap-derived templates
+  // it is overwhelmingly authored as an inline validation tooltip
+  // ("Please enter a valid email"), not as a deliberate accessible
+  // name. When an adjacent <label> sits next to a control with only
+  // `title=`, the author drew a visible label and intended IT to be
+  // the label — the for/id pair is still missing, sighted users still
+  // expect click-to-focus on the visible label, and the screen-reader
+  // experience announces the tooltip text instead of the visible
+  // label, which is its own confusion. Surface the orphan-shape
+  // finding regardless of `title=`.
   const ariaLabel = getHtmlAttribute(el, "aria-label");
   if (ariaLabel && ariaLabel.trim().length > 0) return true;
   if (hasHtmlAttribute(el, "aria-labelledby")) return true;
-  const title = getHtmlAttribute(el, "title");
-  if (title && title.trim().length > 0) return true;
   return false;
 }
 
@@ -500,13 +513,17 @@ function isExcludedJsxControl(el: JsxElement): boolean {
 }
 
 function isJsxAssociatedSomeOtherWay(el: JsxElement): boolean {
+  // `title=` intentionally NOT included here — see the rationale in
+  // `isHtmlAssociatedSomeOtherWay`. Bootstrap-style templates routinely
+  // ship `title=` as a validation tooltip on inputs that are otherwise
+  // visually labeled by an adjacent <label>; treating that as a
+  // sufficient accessible name silently hides the orphan-label finding
+  // on every contact-page derived from those templates.
   const ariaLabel = getJsxAttributeString(el, "aria-label");
   if (ariaLabel && ariaLabel.trim().length > 0) return true;
   const ariaLabelAttr = getJsxAttribute(el, "aria-label");
   if (ariaLabelAttr?.value?.kind === "Expression") return true;
   if (hasJsxAttribute(el, "aria-labelledby")) return true;
-  const title = getJsxAttributeString(el, "title");
-  if (title && title.trim().length > 0) return true;
   // A spread may carry an aria-label / id-that-resolves-externally. We
   // can't see into it, so we skip — consistent with how `labels-required`
   // treats spread-bearing controls.

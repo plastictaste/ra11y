@@ -142,6 +142,39 @@ describe("rule forms/label-adjacent-unassociated", () => {
       expect(violations[1]?.message).toMatch(/for="name-2"/);
     });
 
+    it("fires when the input has title= (a tooltip is not the same as a deliberate accessible name)", () => {
+      // Bootstrap-template contact forms routinely ship `title=` on each
+      // input as an inline validation tooltip ("Please enter a valid
+      // email"). The author still drew an adjacent <label> intending IT
+      // to be the label, and the for/id pair is still missing — the
+      // orphan shape must surface regardless of `title=`. Earlier the
+      // predicate treated `title=` as "already labeled" and silently
+      // hid these (the highest-volume FN on real contact pages).
+      const html = `<!DOCTYPE html>
+<html><body>
+  <label>Email</label>
+  <input type="email" class="form-control" title="Please enter a valid email">
+</body></html>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/for="email"/);
+      expect(violations[0]?.message).toMatch(/id="email"/);
+    });
+
+    it("fires on JSX when the input has title= (mirror of the HTML invariant above)", () => {
+      const jsx = `function Form() {
+  return (
+    <form>
+      <label>Email</label>
+      <input type="email" className="form-control" title="Please enter a valid email" />
+    </form>
+  );
+}`;
+      const violations = runRule(rule, jsx, { filePath: "Form.tsx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/htmlFor="email"/);
+    });
+
     it("fires on JSX with no id — synthesizes id and emits both edits", () => {
       const jsx = `function Form() {
   return (
