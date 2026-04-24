@@ -183,10 +183,6 @@ interface CoverageBlock {
  */
 const FRONTMATTER_FENCE_RE = /^---\r?\n[\s\S]*?\r?\n---\r?(?:\n|$)/;
 
-function hasFrontmatterFence(source: string): boolean {
-  return FRONTMATTER_FENCE_RE.test(source);
-}
-
 interface CoverageAccumulator {
   /**
    * Map of PascalCase tag name → call-site count + interactive flag.
@@ -690,117 +686,42 @@ function isMarkdownFile(filePath: string): boolean {
  * V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE: elides the
  * contents of triple-backtick fenced code blocks and single-backtick
  * inline-code spans from a markdown source so downstream template-
- * directive detection doesn't fire on prose examples.
+ * directive detection doesn't fire on prose examples that QUOTE
+ * template syntax (a Jekyll docs page showing `<%= Time.now %>` as
+ * an ERB example, a release-note embedding `{% assign %}`).
  *
- * Two code-region shapes participate:
- *
- *   - Fenced code blocks opened by three-or-more backticks at the
- *     start of a line, optionally followed by an info string
- *     (` ```ruby `, ` ``` `), and closed by a matching fence of the
- *     same length on its own line. The block body — where quoted
- *     `<%= ... %>` examples live — is replaced with a blank line
- *     placeholder so the stripped source preserves line numbers
- *     (downstream callers may correlate directives with source
- *     positions, and line preservation keeps that honest even though
- *     this helper doesn't need it today).
- *   - Inline-code spans opened by a backtick and closed by the next
- *     backtick on the same line. Replaced with a single-space
- *     placeholder to preserve column alignment without leaving behind
- *     a directive-looking token.
- *
- * The helper is intentionally narrow: it runs only on markdown files
- * (`.md` / `.markdown`) where the code regions are documentation
- * examples quoting template syntax. HTML files routed through the
- * HTML parser can also contain `<pre><code>` sections, but those
- * require AST-level stripping and are a different concern (see the
- * V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE backlog entry
- * for scope).
- *
- * Fenced-block detection is conservative: the opening fence must be
- * three backticks or more at the start of a line (after optional
- * leading whitespace), and the closing fence must match the opening
- * length. This matches the CommonMark and GitHub-flavored-markdown
- * fence rules precisely enough that Jekyll / Hugo / Eleventy prose
- * classifies correctly without importing a markdown AST.
+ * CommonMark fence semantics: opener is 3+ backticks after ≤3 spaces
+ * of leading whitespace; closer is a matching fence (≥ opener length,
+ * backticks only, optional trailing whitespace) on its own line.
+ * Block body is elided to blank lines so line numbers stay stable for
+ * any downstream positional analysis. Inline-code spans (single
+ * backtick pairs on a line) are replaced with equivalent-length
+ * whitespace so column positions stay roughly aligned. Unmatched
+ * backticks are left alone — CommonMark treats those as literal, and
+ * retaining them is safer than greedily swallowing template-looking
+ * text past the end of a real span. HTML `<pre><code>` sections are
+ * out of scope (require AST-level stripping, different concern).
  */
+const FENCE_OPEN_RE = /^ {0,3}(`{3,})/;
+const FENCE_CLOSE_RE = /^ {0,3}(`{3,})\s*$/;
+const INLINE_CODE_RE = /`[^`\n]+`/g;
+
 function stripMarkdownCodeRegions(source: string): string {
   const lines = source.split("\n");
-  const out: string[] = [];
-  let fenceLen = 0; // 0 = outside a fenced block; >0 = inside, expecting a fence of this length
-  for (const line of lines) {
+  let fenceLen = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
     if (fenceLen === 0) {
-      const opening = matchFenceOpening(line);
-      if (opening !== null) {
-        fenceLen = opening;
-        // Keep the fence line itself — stripping it would shift every
-        // line number downstream. Template-directive regex doesn't
-        // match a bare backtick run, so retaining the fence line is
-        // safe.
-        out.push(line);
-        continue;
-      }
-      // Inline-code spans only matter outside a fenced block; inside
-      // a block the whole line is already being elided.
-      out.push(stripInlineCodeSpans(line));
+      const open = FENCE_OPEN_RE.exec(line);
+      if (open === null) lines[i] = line.replace(INLINE_CODE_RE, (m) => " ".repeat(m.length));
+      else fenceLen = open[1]?.length ?? 0;
       continue;
     }
-    // Inside a fenced block — look for the closing fence of matching
-    // length.
-    if (matchFenceClosing(line, fenceLen)) {
-      fenceLen = 0;
-      out.push(line);
-      continue;
-    }
-    // Body of the fenced block — elide to an empty line so line
-    // numbers remain stable for any downstream positional analysis.
-    out.push("");
+    const close = FENCE_CLOSE_RE.exec(line);
+    if (close !== null && (close[1]?.length ?? 0) >= fenceLen) fenceLen = 0;
+    else lines[i] = "";
   }
-  return out.join("\n");
-}
-
-/**
- * Returns the backtick length of an opening fence (≥ 3) when `line`
- * begins a fenced code block, or `null` when it does not. CommonMark
- * allows up to three spaces of leading whitespace before the fence;
- * we accept zero-to-three for compatibility with typical Jekyll /
- * Hugo / Eleventy prose without over-matching on indented code blocks
- * (four-plus spaces of leading whitespace indicates a four-space
- * indented code block, a separate construct — those are an HTML
- * parser concern and out of scope here).
- */
-function matchFenceOpening(line: string): number | null {
-  const match = /^ {0,3}(`{3,})/.exec(line);
-  return match === null ? null : match[1]?.length ?? null;
-}
-
-/**
- * True when `line` is a valid closing fence for an opening fence of
- * `openerLen` backticks. CommonMark requires the closing fence to be
- * at least as long as the opening fence and contain nothing but
- * backticks and optional trailing whitespace.
- */
-function matchFenceClosing(line: string, openerLen: number): boolean {
-  const match = /^ {0,3}(`{3,})\s*$/.exec(line);
-  if (match === null) return false;
-  const closer = match[1];
-  return closer !== undefined && closer.length >= openerLen;
-}
-
-/**
- * Replaces every `` `...` `` inline-code span on a single line with a
- * single space of equivalent length so column positions stay roughly
- * aligned. Unmatched backticks (an opener with no closer before the
- * newline) are left untouched — CommonMark treats those as literal
- * backticks, and retaining them is safer than greedily swallowing
- * template-looking text past the end of a real span.
- */
-function stripInlineCodeSpans(line: string): string {
-  // Non-greedy match between two single backticks on the same line.
-  // Double-backtick code spans (used to embed a literal backtick in
-  // the rendered output) fall out of scope for the template-directive
-  // classifier — their rarity in Jekyll/Hugo prose doesn't justify
-  // the complexity of a multi-backtick aware matcher here.
-  return line.replace(/`[^`\n]+`/g, (match) => " ".repeat(match.length));
+  return lines.join("\n");
 }
 
 /**
@@ -998,6 +919,33 @@ function rulesByExtension(
   return out;
 }
 
+/**
+ * HTML-family branch of {@link accumulateCoverageForFile}. Extracted so
+ * the enclosing function stays under the cognitive-complexity cap as
+ * the template-substrate detectors accrete. Three independent signals
+ * flow from a single source pass:
+ *
+ *   1. Template-directive family classification — markdown files route
+ *      through the HTML parser per ADR 0025, but their prose routinely
+ *      QUOTES template directives in fenced code blocks / inline-code
+ *      spans; those regions are stripped before classification
+ *      (V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE).
+ *   2. YAML frontmatter fence presence — a top-of-file `---\n…\n---\n`
+ *      header is parser-level template substrate the HTML parser sees
+ *      as literal text. Flagging presence lets the warnings layer fire
+ *      `template_files_parsed_as_literal` on files whose only substrate
+ *      is the header (V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER).
+ *   3. Fragment-vs-document classification — files without `<html>` or
+ *      `<body>` are excluded from page-scope rules; the coverage block
+ *      surfaces the list so the exclusion is honest.
+ */
+function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulator): void {
+  const src = isMarkdownFile(file.filePath) ? stripMarkdownCodeRegions(file.source) : file.source;
+  detectTemplateEngines(src, acc.templateEngines);
+  acc.hasFrontmatterFence ||= FRONTMATTER_FENCE_RE.test(file.source);
+  if (isHtmlFragment(file.ast.root as HtmlDocument)) acc.fragmentFiles.push(file.filePath);
+}
+
 function accumulateCoverageForFile(
   file: ParsedFile,
   wrapperSet: ReadonlySet<string>,
@@ -1025,42 +973,7 @@ function accumulateCoverageForFile(
     });
   }
   if (file.ast.language === "html") {
-    // V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE: markdown
-    // files route through the HTML parser (ADR 0025) but their prose
-    // routinely QUOTES template directives inside fenced code blocks
-    // and inline-code spans — a Jekyll release-note that shows
-    // `<%= Time.now %>` as an example of ERB usage is documentation,
-    // not live ERB the scanner mis-parsed. Strip markdown code regions
-    // before classification so prose examples don't stamp
-    // `erb-or-ejs` / `jinja-or-liquid` on a docs site with zero
-    // parseable `.erb` / `.html` template files.
-    const classifierSource = isMarkdownFile(file.filePath)
-      ? stripMarkdownCodeRegions(file.source)
-      : file.source;
-    detectTemplateEngines(classifierSource, acc.templateEngines);
-    // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: the HTML parser
-    // treats a top-of-file `---\n…\n---\n` YAML fence as literal text
-    // rather than structured metadata — a Jekyll / Hugo / Eleventy /
-    // Astro post header is invisible as frontmatter and surfaces in
-    // the parse as stray horizontal-rule-looking text. Flagging the
-    // presence lets the warnings layer fire
-    // `template_files_parsed_as_literal` on files whose only template
-    // substrate is the header, closing the zero-output-success gap on
-    // 1-line-body posts where no `{{ }}` / `{% %}` / `<% %>` tokens
-    // exist to trip the existing detector.
-    if (!acc.hasFrontmatterFence && hasFrontmatterFence(file.source)) {
-      acc.hasFrontmatterFence = true;
-    }
-    // Record HTML files that parsed as fragments so the coverage
-    // block can surface which files were
-    // skipped for page-level rules (skip-link primary-nav gating,
-    // landmark-main, section-accessible-name-missing). Telemetry only
-    // — the per-rule scope guards remain the source of truth for
-    // whether a given rule evaluates a given file. Matches the
-    // predicate the rules themselves use (`isHtmlFragment`), so the
-    // list is consistent with what those rules actually skipped.
-    const root = file.ast.root as HtmlDocument;
-    if (isHtmlFragment(root)) acc.fragmentFiles.push(file.filePath);
+    accumulateHtmlCoverageForFile(file, acc);
     return;
   }
   if (file.ast.language === "css") return;

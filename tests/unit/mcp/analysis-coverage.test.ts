@@ -897,12 +897,7 @@ describe("buildAnalysisCoverage — hints", () => {
         "article.html",
         "<h1>Intro</h1>\n---\nnot frontmatter\n---\n<p>body</p>",
       );
-      const { analysisCoverage } = buildAnalysisCoverage(
-        [midDocumentRule],
-        [],
-        NO_RULES,
-        false,
-      );
+      const { analysisCoverage } = buildAnalysisCoverage([midDocumentRule], [], NO_RULES, false);
       expect(analysisCoverage?.["hasFrontmatterFence"]).toBeUndefined();
     });
 
@@ -949,24 +944,16 @@ describe("buildAnalysisCoverage — hints", () => {
       // Jekyll release-notes prose — `History.markdown` style.
       const releaseNotes = htmlFile(
         "History.markdown",
-        [
-          "## Release 4.0",
-          "",
-          "```liquid",
-          "{% assign foo = 'bar' %}",
-          "{{ foo }}",
-          "```",
-        ].join("\n"),
+        ["## Release 4.0", "", "```liquid", "{% assign foo = 'bar' %}", "{{ foo }}", "```"].join(
+          "\n",
+        ),
       );
       const { analysisCoverage } = buildAnalysisCoverage([releaseNotes], [], NO_RULES, false);
       expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
     });
 
     it("does not tag `erb-or-ejs` when `<% ... %>` lives in an inline-code span in a .md file", () => {
-      const mdInline = htmlFile(
-        "docs/tutorial.md",
-        "Use the `<% end %>` tag to close a block.",
-      );
+      const mdInline = htmlFile("docs/tutorial.md", "Use the `<% end %>` tag to close a block.");
       const { analysisCoverage } = buildAnalysisCoverage([mdInline], [], NO_RULES, false);
       expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
     });
@@ -1010,10 +997,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // `<%= %>` inside a `<pre><code>` block still surfaces as
       // `erb-or-ejs` because stripping `<pre><code>` requires AST
       // analysis, out of scope for this fix.
-      const htmlWithPre = htmlFile(
-        "example.html",
-        "<pre><code><%= Time.now %></code></pre>",
-      );
+      const htmlWithPre = htmlFile("example.html", "<pre><code><%= Time.now %></code></pre>");
       const { analysisCoverage } = buildAnalysisCoverage([htmlWithPre], [], NO_RULES, false);
       expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["erb-or-ejs"]);
     });
