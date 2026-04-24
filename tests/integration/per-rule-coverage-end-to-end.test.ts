@@ -344,4 +344,102 @@ describe("per-rule coverage end-to-end", () => {
     expect(rulesEvaluated.withEligibleInputs).toBe(eligibleFromRows);
     expect(rulesEvaluated.fired).toBe(firedFromRows);
   });
+
+  // V1-MOTION-PAUSE-STOP-FILES-EVALUATED-OFF-BY-ONE: rules sharing the
+  // same `appliesTo.fileExtensions` set must report the same
+  // `filesEvaluated` count on a given scan. The eligibility pass is
+  // purely a function of `(rule.appliesTo, file.extension)` — it's the
+  // same `applies()` predicate over the same file pool — so any drift
+  // between two such rules signals an off-by-one in the tracker
+  // (double-bump on one rule, missed bump on another, or duplicate rule
+  // registration). Surfaced through the field-report shape "rule X
+  // reports 105 evaluated where every other rule with the same gate
+  // reports 104"; root cause was confirmed to be filesEvaluated honestly
+  // counting all files matching the rule's gate (the user under-counted
+  // CSS files when comparing against HTML+JS+MD-targeted siblings — see
+  // backlog note). Test pins the engine invariant so a real off-by-one
+  // can't slip in silently.
+  //
+  // Pool is intentionally heterogeneous (HTML + JS + MD + CSS + SCSS)
+  // so multiple `appliesTo` shapes share the same evaluated-count
+  // bucket — the parity check is meaningful only when ≥2 rules share an
+  // appliesTo set, and a mixed pool maximizes coincident gates.
+  it("rules with identical appliesTo.fileExtensions report identical filesEvaluated", () => {
+    const files = buildHeterogeneousPool();
+    const { perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      level: "AAA",
+      files,
+    });
+
+    const groupsWithSiblings = assertAppliesToSiblingsAgree(perRuleCoverage);
+    // Sanity: at least one multi-member group must exist for the
+    // assertion above to have run — otherwise the test is vacuous.
+    expect(groupsWithSiblings).toBeGreaterThan(0);
+  });
 });
+
+/**
+ * Builds the heterogeneous file pool used by the appliesTo-parity
+ * invariant test. Mixes HTML, JSX, and CSS so multiple rule gates fire
+ * over the same scan — the parity check is meaningful only when ≥2
+ * rules share an `appliesTo` set.
+ */
+function buildHeterogeneousPool(): ParsedFile[] {
+  const files: ParsedFile[] = [];
+  for (let i = 0; i < 4; i++) {
+    files.push(
+      htmlFile(
+        `site/page-${i}.html`,
+        `<!doctype html><html lang="en"><body><h1>p${i}</h1></body></html>`,
+      ),
+    );
+    files.push(tsxFile(`src/comp-${i}.jsx`, `export const C${i} = () => <div>${i}</div>;`));
+    files.push(cssFile(`src/style-${i}.css`, `.c${i} { color: #000; }`));
+  }
+  return files;
+}
+
+/**
+ * Groups active rules by their normalized `appliesTo.fileExtensions`
+ * key and asserts that every multi-member group reports the same
+ * `filesEvaluated`. Returns the count of multi-member groups so the
+ * caller can sanity-check that the assertion actually ran. Throws on
+ * disagreement with a diagnostic that names the offending rule IDs.
+ */
+function assertAppliesToSiblingsAgree(
+  perRuleCoverage: ReturnType<typeof runScan>["perRuleCoverage"],
+): number {
+  const byRuleId = new Map(perRuleCoverage.map((r) => [r.ruleId, r]));
+  const groups = new Map<string, string[]>();
+  for (const rule of BUILTIN_RULES) {
+    const exts = rule.appliesTo?.fileExtensions;
+    if (!exts || exts.length === 0) continue;
+    // Only rules that ended up with a coverage row are in scope —
+    // rules filtered by `isRuleActive` (e.g. AAA-only rules at AA)
+    // don't appear and would skew the parity check.
+    if (!byRuleId.has(rule.id)) continue;
+    const key = [...exts].sort().join(",");
+    const list = groups.get(key) ?? [];
+    list.push(rule.id);
+    groups.set(key, list);
+  }
+  let groupsWithSiblings = 0;
+  for (const [key, ruleIds] of groups.entries()) {
+    if (ruleIds.length < 2) continue;
+    groupsWithSiblings += 1;
+    const counts = ruleIds.map((id) => ({ id, n: byRuleId.get(id)!.filesEvaluated }));
+    const distinct = new Set(counts.map((c) => c.n));
+    if (distinct.size !== 1) {
+      const detail = counts.map((c) => `${c.id}=${c.n}`).join(", ");
+      throw new Error(
+        `appliesTo=[${key}] siblings disagree on filesEvaluated: ${detail}. ` +
+          `Eligibility is a pure function of (appliesTo, file.extension); ` +
+          `disagreement implies a tracker bug (double-bump, missed bump, or duplicate rule registration).`,
+      );
+    }
+  }
+  return groupsWithSiblings;
+}
