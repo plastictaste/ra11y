@@ -23,7 +23,19 @@ The orchestrator passes:
 { "maxTurns": 10, "picksPerTurn": 3 }
 ```
 
-`maxTurns` is bounded by the `/continue` hard cap (10); `picksPerTurn` is bounded by the fanout cap (3). Default both if unspecified.
+`maxTurns` is bounded by the `/continue` hard cap (10). `picksPerTurn` is the per-turn default (typically 3); the planner may emit `picksPerTurn: 4` on individual turns that qualify as pure V-track (see rule below). Default both if unspecified.
+
+## Per-turn `picksPerTurn: 4` exception
+
+The fanout cap is **3** by default, but the planner may raise a specific turn's cap to **4** when all three conditions hold:
+
+- Every pick in the turn is classified as a V-track specialist — `rule-implementer`, `fixture-curator`, `test-author`, `formatter-author`, `parser-author`, `standard-builder`, `type-smith`, `doc-writer`, `spec-researcher`. No `main-session` picks (scripts / `docs/adr/` / release).
+- Every pick's `inferredFiles` set is disjoint from every other pick's set in the same turn. Shared files, even one, drop the cap back to 3.
+- No pick is annotated with `collisionWith` against commits landed earlier in this `/continue` invocation. Collision-annotated picks carry extra coordination cost that shouldn't compound with doubled concurrency.
+
+Emit `picksPerTurn: 4` only when all three hold. Otherwise keep the turn at `picksPerTurn: 3`. If you're uncertain about any condition, default to 3 — the 4th-pick upside is small (~25% more throughput on that turn), and misclassifying a main-session pick as V-track forces a serial fallback at dispatch time anyway.
+
+The orchestrator still enforces the fanout rules at dispatch: if you emit 4 picks but one turns out to share a file with another, the orchestrator will drop the 4th and re-schedule it to a later turn. Don't rely on the orchestrator to catch your mistakes — the planner is the pre-audit layer.
 
 # Workflow
 
@@ -57,7 +69,7 @@ The orchestrator passes:
    ```
    The orchestrator surfaces this in the dispatch prompt so the specialist combines edits rather than overwriting. Intra-plan collisions (turn-K pick changes a file that turn-(K+1) pick also targets) also populate `collisionWith` with `"turn-<K>/<item>"`.
 
-5. **Budget to `maxTurns × picksPerTurn`.** Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. Remaining items go in `deferred`.
+5. **Budget to `maxTurns × picksPerTurn`** (or `maxTurns × 4` when you expect multiple qualifying turns). Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. Remaining items go in `deferred`. For each turn, evaluate the pure-V-track-4 conditions above and set the turn's `picksPerTurn` to 4 or 3 accordingly.
 
 # Return shape
 
@@ -70,6 +82,7 @@ Single JSON block, no prose. Ceiling: ~80 lines for a full 10×3 plan.
   "turns": [
     {
       "n": 1,
+      "picksPerTurn": 3,
       "picks": [
         {
           "item": "D/demo-record",
@@ -107,6 +120,7 @@ Field contracts:
 
 - **`activeTracks` / `stagedTracks`**: from the Dispatch model line; both always present.
 - **`turns[].n`**: 1-indexed turn number.
+- **`turns[].picksPerTurn`**: 3 by default; 4 only when the turn passes all three pure-V-track conditions above. Must equal `turns[].picks.length`.
 - **`turns[].picks[].backlogLine`**: the 1-indexed line in `.claude/backlog.md` where the `- [ ]` item lives. Fallback pointer for the rare case where the slice is ambiguous or the specialist needs surrounding context.
 - **`turns[].picks[].backlogSlice`**: the verbatim backlog text for this pick — the `- [ ]` bullet plus any immediately adjacent continuation lines (indented sub-bullets, inline notes). Target 3–5 lines; hard cap 10 lines. The orchestrator embeds this verbatim in the dispatch prompt so the specialist can skip the `.claude/backlog.md` re-read in the common case. The specialist is told to trust the slice as authoritative for scope; they may still re-read the backlog file if the slice seems incomplete (edge case: items that reference a sibling item 20 lines down). Required field — never omit, never empty.
 - **`turns[].picks[].inferredFiles`**: best-guess file set from item text. `[]` when genuinely unknowable — do not invent.

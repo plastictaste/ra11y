@@ -18,7 +18,7 @@ The old `/continue` walked `## Phase N` sections in order, one item at a time. T
 
 ## Arguments
 
-- `$1` (optional): maximum number of **turns** to run. Default `10`. Each turn fans out up to 3 agents. Hard cap `10` turns.
+- `$1` (optional): maximum number of **turns** to run. Default `10`. Each turn fans out up to 3 agents (up to 4 on pure V-track turns — see "Dispatch — parallel, worktree-isolated" § fanout limits). Hard cap `10` turns.
 
 ## Preconditions
 
@@ -133,7 +133,8 @@ Why: without isolation, every agent shares the main-session working tree. When a
 
 Fanout limits — non-negotiable:
 
-- Never more than **3 concurrent** Agent calls in one turn. Keeps the audit log readable and sidesteps rate-limit edge cases.
+- **Default: max 3 concurrent** Agent calls in one turn. Keeps the audit log readable and sidesteps rate-limit edge cases.
+- **Exception: max 4 concurrent on pure V-track turns.** When every pick in the turn is classified as V-track (narrow, file-scoped fixes — typically `rule-implementer`, `fixture-curator`, `test-author`, `formatter-author`, `parser-author`) AND every pick's `inferredFiles` is non-overlapping with every other pick in the turn AND no pick is classified as `main-session`, the planner may emit `picksPerTurn: 4` for that turn and the orchestrator dispatches 4 in parallel. The extra concurrency earns its keep only when all three conditions hold; even one `main-session` or shared-file pick in the turn drops the cap back to 3. This is a soft rule in the skill, not enforced by tooling — if the heuristic produces bad turns in the field, tighten the conditions rather than ripping the exception out.
 - Never **two agents on the same track** in the same turn. Within a track, items may touch overlapping files; serializing inside a track avoids merge conflicts.
 - Never **two agents touching the same file** in the same turn, regardless of track. Inspect the backlog item's file:line anchor and serialize across turns if file-sets overlap.
 
