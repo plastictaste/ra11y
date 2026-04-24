@@ -115,11 +115,15 @@ describe("review/flashing-content — legacy <marquee> / <blink>", () => {
 });
 
 describe("review/flashing-content — requestAnimationFrame", () => {
-  it("flags a requestAnimationFrame() call and notes no reduced-motion check is seen", () => {
+  it("flags a requestAnimationFrame() loop that mutates canvas fillStyle and notes no reduced-motion check is seen", () => {
+    // rAF + luminance-cycling evidence (canvas fillStyle rotation) is the
+    // shape 2.3.1 is actually about. Reason text includes the evidence
+    // pattern so the agent sees WHY it fired without re-grepping.
     const source = `
       function draw() {
-        requestAnimationFrame(draw);
+        ctx.fillStyle = Math.random() < 0.5 ? "#fff" : "#000";
         ctx.fillRect(0, 0, 100, 100);
+        requestAnimationFrame(draw);
       }
       draw();
     `;
@@ -130,12 +134,18 @@ describe("review/flashing-content — requestAnimationFrame", () => {
     expect(rafCandidates[0]?.reason).toContain(
       "no matchMedia('prefers-reduced-motion: reduce') check seen",
     );
+    expect(rafCandidates[0]?.reason).toContain("luminance-mutating pattern seen");
+    expect(rafCandidates[0]?.reason).toContain(".fillStyle =");
     expect(rafCandidates[0]?.confidence).toBe("medium");
   });
 
   it("still flags rAF when matchMedia('prefers-reduced-motion') appears — just changes the reason note", () => {
     const source = `
       const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      function paint() {
+        el.style.opacity = String(Math.sin(Date.now() / 100));
+        requestAnimationFrame(paint);
+      }
       if (!reduce) requestAnimationFrame(paint);
     `;
     const out = runFinder(finder, source);
@@ -148,10 +158,45 @@ describe("review/flashing-content — requestAnimationFrame", () => {
       "matchMedia('prefers-reduced-motion: reduce') check appears",
     );
     expect(rafCandidates[0]?.reason).toContain("confirm the animation loop actually honours it");
+    expect(rafCandidates[0]?.reason).toContain(".style.opacity");
   });
 
-  it("deduplicates offsets when the same rAF call appears once", () => {
+  it("does NOT flag a bare requestAnimationFrame with no luminance-cycling evidence in the file", () => {
+    // Field-report regression: vendor scroll/motion libraries (wow.js,
+    // headroom.min.js, scrolltofixed) use rAF to batch transform/position
+    // updates. WCAG 2.3.1 is about colour/luminance cycling — bare rAF is
+    // not evidence of that, and firing on it crowds real candidates out.
     const source = `requestAnimationFrame(step);`;
+    const out = runFinder(finder, source, { filePath: "input.js" });
+    const rafCandidates = out.filter((c) => c.reason.includes("requestAnimationFrame"));
+    expect(rafCandidates).toEqual([]);
+  });
+
+  it("does NOT flag a scroll-animation rAF loop that only mutates transform/translate (wow.js / headroom shape)", () => {
+    // Canonical false-positive from the templates corpus. The rAF loop
+    // moves elements via transform — no colour, opacity, or filter
+    // mutation anywhere in the file. Finder must stay silent.
+    const source = `
+      function tick() {
+        const y = window.scrollY;
+        document.querySelector(".header").style.transform = "translateY(" + y + "px)";
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    `;
+    const out = runFinder(finder, source, { filePath: "headroom.js" });
+    const rafCandidates = out.filter((c) => c.reason.includes("requestAnimationFrame"));
+    expect(rafCandidates).toEqual([]);
+  });
+
+  it("deduplicates offsets when the same rAF call appears once (with luminance evidence in file)", () => {
+    // With the evidence gate in place, a file must contain some luminance-
+    // mutating pattern for rAF to fire. Dedup behaviour is otherwise
+    // unchanged.
+    const source = `
+      el.style.opacity = "0.5";
+      requestAnimationFrame(step);
+    `;
     const out = runFinder(finder, source, { filePath: "input.js" });
     const rafCandidates = out.filter((c) => c.reason.includes("requestAnimationFrame"));
     expect(rafCandidates.length).toBe(2); // one location × two criteria
