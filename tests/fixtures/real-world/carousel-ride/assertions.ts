@@ -37,10 +37,10 @@ import type { FixtureAssertions } from "../runner.ts";
 
 export const assertions: FixtureAssertions = {
   description:
-    "Bootstrap 5 `<div data-bs-ride=\"carousel\">` (and `data-bs-ride=\"true\"`) auto-init " +
+    'Bootstrap 5 `<div data-bs-ride="carousel">` (and `data-bs-ride="true"`) auto-init ' +
     "containers must NOT fire keyboard/handler-missing — `data-bs-ride` is an initialization " +
     "signal to Bootstrap's JS, not a click trigger; the host is never interactive (the carousel's " +
-    "keyboard controls are child <button class=\"carousel-control-prev\"|\"carousel-control-next\"> " +
+    'keyboard controls are child <button class="carousel-control-prev"|"carousel-control-next"> ' +
     "elements).",
   origin: {
     notes:

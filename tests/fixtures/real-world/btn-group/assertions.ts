@@ -45,14 +45,14 @@ import type { FixtureAssertions } from "../runner.ts";
 
 export const assertions: FixtureAssertions = {
   description:
-    "Bootstrap 5 `<div class=\"btn-group\" data-bs-toggle=\"buttons\">` containers must NOT fire " +
+    'Bootstrap 5 `<div class="btn-group" data-bs-toggle="buttons">` containers must NOT fire ' +
     "keyboard/handler-missing — `buttons` is a group-container value, not a trigger value, and the " +
     "container is never interactive (interactive behavior is wired on the child <input> controls).",
   origin: {
     notes:
       "Sanitized from twelfth-pass field-test observations on Bootstrap-derived pages. The " +
-      "container `data-bs-toggle=\"buttons\"` value tells Bootstrap's JS to wire toggle behavior on " +
-      "the child <input type=\"checkbox\"|\"radio\"> controls — the <div> itself is not focusable and " +
+      'container `data-bs-toggle="buttons"` value tells Bootstrap\'s JS to wire toggle behavior on ' +
+      'the child <input type="checkbox"|"radio"> controls — the <div> itself is not focusable and ' +
       "has no click handler. Before the fix the rule treated all `data-bs-toggle` values uniformly " +
       "and `suggest_fix` recommended wrapping the container in <button>, which would nest <input> " +
       "interactive descendants inside a <button> — invalid HTML and a broken keyboard model.",

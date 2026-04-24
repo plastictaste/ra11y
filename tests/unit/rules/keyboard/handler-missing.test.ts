@@ -300,14 +300,6 @@ describe("rule keyboard/handler-missing", () => {
       expect(v[0]?.message).toContain("data-bs-dismiss");
     });
 
-    it("div has data-bs-ride (Bootstrap carousel on non-focusable root)", () => {
-      const v = runRule(rule, `<div data-bs-ride="carousel">...</div>`, {
-        filePath: "index.html",
-      });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.message).toContain("data-bs-ride");
-    });
-
     it("flags Bootstrap 4 legacy data-toggle attribute", () => {
       const v = runRule(rule, `<div data-toggle="modal">Open</div>`, {
         filePath: "index.html",
@@ -330,6 +322,35 @@ describe("rule keyboard/handler-missing", () => {
       });
       expect(v[0]?.suggestion).toContain("<button");
       expect(v[0]?.suggestion).toContain("data-bs-toggle");
+    });
+
+    // Cross-check from V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER: a real
+    // disclosure trigger that ALSO carries `data-bs-target` (the
+    // canonical Bootstrap modal-open shape) must still fire on a bare
+    // <div>. Locks in that the FP fix did not also disable the true
+    // positive — the disclosure-value allowlist is the only gate.
+    it('div has data-bs-toggle="modal" + data-bs-target (real interactive trigger)', () => {
+      const v = runRule(rule, `<div data-bs-toggle="modal" data-bs-target="#mymodal">Open</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("data-bs-toggle");
+      expect(v[0]?.message).toContain("modal");
+    });
+
+    it('div has data-bs-toggle="tab" (BS5 nav-tabs, disclosure value)', () => {
+      const v = runRule(rule, `<div data-bs-toggle="tab">Profile</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("data-bs-toggle");
+    });
+
+    it('div has data-bs-toggle="offcanvas" (BS5 offcanvas, disclosure value)', () => {
+      const v = runRule(rule, `<div data-bs-toggle="offcanvas">Open menu</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
     });
   });
 
@@ -369,6 +390,72 @@ describe("rule keyboard/handler-missing", () => {
 
     it("input hosts data-bs-toggle (natively interactive)", () => {
       const v = runRule(rule, `<input type="button" data-bs-toggle="modal" value="Open" />`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    // V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER: `data-bs-toggle="buttons"`
+    // is a *container* value — Bootstrap wires toggle behavior on the
+    // child <input> controls, not on the host. Flagging the container
+    // would push the agent toward <button> wrappers that nest interactive
+    // descendants. See tests/fixtures/real-world/btn-group/.
+    it('div has data-bs-toggle="buttons" (group container, not a trigger)', () => {
+      const v = runRule(
+        rule,
+        `<div class="btn-group" data-bs-toggle="buttons">
+          <input type="checkbox" id="c1" />
+          <label class="btn" for="c1">A</label>
+        </div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    // V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER: `data-bs-ride` is an
+    // auto-init signal to Bootstrap's JS, not a click trigger. The host
+    // <div class="carousel"> never receives focus; the keyboard
+    // controls are child <button class="carousel-control-*"> elements.
+    // See tests/fixtures/real-world/carousel-ride/.
+    it('div has data-bs-ride="carousel" (auto-init, not a trigger)', () => {
+      const v = runRule(rule, `<div class="carousel" data-bs-ride="carousel">...</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it('div has data-bs-ride="true" (auto-init variant, no auto-cycle)', () => {
+      const v = runRule(rule, `<div class="carousel" data-bs-ride="true">...</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("div has BS4 legacy data-ride (auto-init, not a trigger)", () => {
+      const v = runRule(rule, `<div class="carousel" data-ride="carousel">...</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    // `data-bs-target` is a reference attribute — points at the
+    // controlled widget but doesn't itself wire a click handler. The
+    // trigger comes from a sibling `data-bs-toggle`. Standalone
+    // `data-bs-target` should not fire.
+    it("div has data-bs-target alone (reference, not a trigger)", () => {
+      const v = runRule(rule, `<div data-bs-target="#mymodal">...</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    // Unknown `data-bs-toggle` values (typos, custom plugins) should
+    // not fire — we don't speculate. The agent reading the file will
+    // see the value and decide; per AI-first doctrine, value-based
+    // grammar is honest exactly because it lists what we know is a
+    // disclosure value.
+    it("div has data-bs-toggle with unknown value (not in disclosure allowlist)", () => {
+      const v = runRule(rule, `<div data-bs-toggle="custom-widget">...</div>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(0);

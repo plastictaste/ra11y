@@ -17,14 +17,27 @@
  *    in JSX on a bare `<div>`/`<span>` with no `onkeydown`/`onkeyup`.
  *    Mouse users can click it; keyboard users can't reach it or
  *    press Enter to activate it.
- * 2. Attribute-interaction grammar — Bootstrap's `data-bs-toggle`,
- *    `data-bs-dismiss`, `data-bs-ride` (and the BS4 `data-toggle` /
- *    `data-dismiss` / `data-ride` predecessors) declare interactive
- *    behavior at the attribute level. Bootstrap's JS wires up the
- *    click handler, but on a bare `<div>`/`<span>` the element is
- *    never focusable and Enter/Space never activate it. Putting
- *    these attributes on a `<button>` or `<a href>` is fine — both
- *    are focusable and keyboard-activate natively.
+ * 2. Attribute-interaction grammar — Bootstrap's `data-bs-dismiss`
+ *    (always a click trigger) and `data-bs-toggle` with a disclosure
+ *    value (`modal`, `tooltip`, `popover`, `collapse`, `offcanvas`,
+ *    `dropdown`, `tab`, `pill`) declare interactive behavior at the
+ *    attribute level. Bootstrap's JS wires up the click handler, but
+ *    on a bare `<div>`/`<span>` the element is never focusable and
+ *    Enter/Space never activate it. Putting these attributes on a
+ *    `<button>` or `<a href>` is fine — both are focusable and
+ *    keyboard-activate natively. Two BS attribute shapes are
+ *    deliberately exempt from this grammar:
+ *      - `data-bs-toggle="buttons"` — the value is a *container*
+ *        signal that wires toggle behavior on child <input> controls,
+ *        not on the host. Flagging the container would push the agent
+ *        toward `<button>` wrappers that nest interactive descendants.
+ *      - `data-bs-ride="carousel"` (and `data-bs-ride="true"`, plus
+ *        the BS4 `data-ride` predecessor) — auto-init signal to
+ *        Bootstrap's JS that instantiates the Carousel component on
+ *        the host. The host never becomes focusable; the keyboard
+ *        triggers are child <button> control elements.
+ *    Both exemptions are guarded by real-world fixtures
+ *    (`btn-group/`, `carousel-ride/`).
  * 3. External-JS handler grammar — vanilla-JS apps attach click
  *    handlers in a standalone `.js`/`.ts` file via
  *    `el.addEventListener('click', fn)` or `el.onclick = fn` after
@@ -82,23 +95,66 @@ const NATIVELY_INTERACTIVE_TAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Attributes that declare interactive behavior on their host element.
- * Bootstrap 5 uses the `data-bs-*` prefix; Bootstrap 4 and earlier
- * used `data-*` without the `bs-` segment. When any of these appears
- * on a non-interactive host, the host is effectively a button in UX
- * terms but not in accessibility terms — no focus, no Enter/Space.
+ * Disclosure values for `data-bs-toggle` (Bootstrap 5) /
+ * `data-toggle` (Bootstrap 4) — when one of these appears as the
+ * attribute value, the host element IS the click trigger (Bootstrap's
+ * JS wires a click handler on the host that opens/dismisses the named
+ * widget). On a bare `<div>`/`<span>` with no keyboard wiring, the
+ * widget is invisible to keyboard users — that's the SC 2.1.1
+ * failure this rule targets.
+ *
+ * Container values like `buttons` are NOT in this set: the host is a
+ * group container whose interactive behavior is wired on child
+ * `<input type="checkbox"|"radio">` controls, never on the container
+ * itself. Flagging the container would push the agent toward
+ * `<button>` wrappers that nest interactive descendants — a worse
+ * a11y bug than the false positive that motivated the reading. See
+ * the FP locked in by tests/fixtures/real-world/btn-group/.
+ *
+ * The allowlist is intentional: heuristic-suppression is the wrong
+ * move (false-positive on a misnamed value), but explicit
+ * value-based grammar is correct here — every entry below is a
+ * proven Bootstrap disclosure idiom whose host element is the
+ * trigger by design.
+ */
+const DISCLOSURE_TOGGLE_VALUES: ReadonlySet<string> = new Set([
+  "modal",
+  "tooltip",
+  "popover",
+  "collapse",
+  "offcanvas",
+  "dropdown",
+  "tab",
+  "pill", // Bootstrap nav-pills uses `data-bs-toggle="pill"` — same trigger semantics as "tab".
+]);
+
+/**
+ * Attributes that ALWAYS declare a click trigger on the host element,
+ * regardless of value. `data-bs-dismiss="modal"` and the BS4
+ * `data-dismiss` predecessor wire a click-to-close handler on the host
+ * that closes the named widget — putting them on a bare <div>/<span>
+ * leaves the dismiss invisible to keyboard users.
+ *
+ * Attributes excluded from this list and handled separately:
+ *   - `data-bs-toggle` / `data-toggle` — value-dependent (only
+ *     disclosure values trigger; container values like `buttons`
+ *     exempt the host).
+ *   - `data-bs-ride` / `data-ride` — auto-init signals to Bootstrap's
+ *     JS, NOT click triggers. The host (e.g. a carousel <div>) never
+ *     receives focus and Enter/Space on it does nothing; the
+ *     keyboard-operable controls are child <button>s. See the FP
+ *     locked in by tests/fixtures/real-world/carousel-ride/.
+ *   - `data-bs-target` / `data-target` — reference attributes (point
+ *     at the controlled widget); they do not by themselves wire a
+ *     click handler. The trigger comes from the sibling `data-bs-toggle`.
  *
  * Attributes are lowercased; HTML attribute comparison is already
  * case-insensitive via `getHtmlAttribute`.
  */
-const INTERACTIVE_ATTRIBUTES: readonly string[] = [
-  "data-bs-toggle",
-  "data-bs-dismiss",
-  "data-bs-ride",
-  "data-toggle",
-  "data-dismiss",
-  "data-ride",
-];
+const ALWAYS_INTERACTIVE_ATTRIBUTES: readonly string[] = ["data-bs-dismiss", "data-dismiss"];
+
+/** Attributes whose value determines whether the host is a click trigger. */
+const VALUE_DEPENDENT_TOGGLE_ATTRIBUTES: readonly string[] = ["data-bs-toggle", "data-toggle"];
 
 export const rule = defineRule({
   id: "keyboard/handler-missing",
@@ -125,7 +181,7 @@ export const rule = defineRule({
     description:
       "Elements that declare click or toggle behavior (onClick, data-bs-toggle, etc.) must be reachable by keyboard: use a native button/link or add tabIndex plus an onKeyDown/onKeyUp that handles Enter and Space.",
     rationale:
-      "Mouse users can click anywhere; keyboard users can't. An onClick on a bare <div>, or a Bootstrap-style data-bs-toggle/data-bs-dismiss/data-bs-ride on a <div> or <span>, means the functionality is invisible to people who navigate with the keyboard — blind users, motor-impaired users, and anyone without a mouse. The attribute-based grammar is especially dangerous because the interaction still works for mouse users (Bootstrap's JS listens for click), so the bug is silent during sighted testing. The fix is almost always to host the attribute on a <button> instead.",
+      "Mouse users can click anywhere; keyboard users can't. An onClick on a bare <div>, or a Bootstrap-style data-bs-dismiss / data-bs-toggle (with a disclosure value like modal/dropdown/collapse/tab/tooltip/popover/offcanvas/pill) on a <div> or <span>, means the functionality is invisible to people who navigate with the keyboard — blind users, motor-impaired users, and anyone without a mouse. The attribute-based grammar is especially dangerous because the interaction still works for mouse users (Bootstrap's JS listens for click), so the bug is silent during sighted testing. The fix is almost always to host the attribute on a <button> instead. Two BS attribute shapes are exempt from this grammar: `data-bs-toggle=\"buttons\"` (a group-container value that wires interactivity on child <input> controls, not the host) and `data-bs-ride` of any value (auto-init signal that instantiates the Carousel component on the host but never makes the host itself a click trigger). Pause/stop concerns for `data-bs-ride` carousels live in motion/pause-stop-hide (SC 2.2.2), not here.",
     goodExample: `<button type="button" data-bs-toggle="modal" data-bs-target="#my-modal">Open</button>`,
     badExample: `<div data-bs-toggle="modal" data-bs-target="#my-modal">Open</div>`,
     normativeQuote: "All functionality of the content is operable through a keyboard interface.",
@@ -451,14 +507,34 @@ function buildDraggableSuggestion(tagName: string, role: string | null): string 
 
 /**
  * Returns the first interactive-behavior attribute on an HTML element,
- * or null if none is present. Uses a case-insensitive lookup.
+ * or null if none is present. Two grammars are checked:
+ *   1. ALWAYS-interactive attributes (`data-bs-dismiss`,
+ *      `data-dismiss`) — present at any value → trigger.
+ *   2. Value-dependent toggle attributes (`data-bs-toggle`,
+ *      `data-toggle`) — only the disclosure values in
+ *      {@link DISCLOSURE_TOGGLE_VALUES} make the host a trigger.
+ *      Container values like `buttons` and unknown/empty values are
+ *      treated as not-a-trigger; explicit grammar guards against the
+ *      btn-group FP without inviting heuristic-suppression for
+ *      misnamed values.
+ *
+ * Uses a case-insensitive lookup for the attribute name (HTML
+ * attribute matching) and a case-sensitive lookup for the value
+ * (Bootstrap's documented values are all lowercase).
  */
 function findInteractiveHtmlAttribute(
   el: import("../../types/ast.ts").HtmlElement,
 ): { readonly name: string; readonly value: string | null } | null {
-  for (const name of INTERACTIVE_ATTRIBUTES) {
+  for (const name of ALWAYS_INTERACTIVE_ATTRIBUTES) {
     if (hasHtmlAttribute(el, name)) {
       return { name, value: getHtmlAttribute(el, name) };
+    }
+  }
+  for (const name of VALUE_DEPENDENT_TOGGLE_ATTRIBUTES) {
+    if (!hasHtmlAttribute(el, name)) continue;
+    const value = getHtmlAttribute(el, name);
+    if (value !== null && DISCLOSURE_TOGGLE_VALUES.has(value.toLowerCase())) {
+      return { name, value };
     }
   }
   return null;
@@ -466,16 +542,27 @@ function findInteractiveHtmlAttribute(
 
 /**
  * Returns the first interactive-behavior attribute on a JSX element,
- * or null if none is present. JSX preserves the original attribute
+ * or null if none is present. Mirrors {@link findInteractiveHtmlAttribute}
+ * — see that function for the two-grammar split (always-interactive
+ * vs value-dependent toggles). JSX preserves the original attribute
  * casing — `data-bs-toggle="modal"` in source stays that way in the
- * AST — so the lookup is case-sensitive against the lower-case list.
+ * AST — so the attribute-name lookup is case-sensitive against the
+ * lower-case lists; the value comparison case-folds before checking
+ * the disclosure set.
  */
 function findInteractiveJsxAttribute(
   el: import("../../types/ast.ts").JsxElement,
 ): { readonly name: string; readonly value: string | null } | null {
-  for (const name of INTERACTIVE_ATTRIBUTES) {
+  for (const name of ALWAYS_INTERACTIVE_ATTRIBUTES) {
     if (hasJsxAttribute(el, name)) {
       return { name, value: getJsxAttributeString(el, name) };
+    }
+  }
+  for (const name of VALUE_DEPENDENT_TOGGLE_ATTRIBUTES) {
+    if (!hasJsxAttribute(el, name)) continue;
+    const value = getJsxAttributeString(el, name);
+    if (value !== null && DISCLOSURE_TOGGLE_VALUES.has(value.toLowerCase())) {
+      return { name, value };
     }
   }
   return null;
