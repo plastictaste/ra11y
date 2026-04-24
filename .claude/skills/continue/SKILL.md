@@ -138,6 +138,28 @@ Fanout limits — non-negotiable:
 - Never **two agents on the same track** in the same turn. Within a track, items may touch overlapping files; serializing inside a track avoids merge conflicts.
 - Never **two agents touching the same file** in the same turn, regardless of track. Inspect the backlog item's file:line anchor and serialize across turns if file-sets overlap.
 
+### 3a. Stall handling (new — 2026-04-23)
+
+The 2026-04-23 five-turn run lost two agents to silent stalls (specialist returned without structured JSON; another returned with empty `filesChanged` after unexpectedly long wall time). Neither stall was cleanly detectable from the Agent tool's return shape alone — they required per-turn recognition and a one-shot redispatch.
+
+Full automated stall polling needs a harness-level capability outside the Agent tool and is deferred to a future ADR. In the meantime, the orchestrator applies this in-skill heuristic **after** step 3's parallel dispatch returns, **before** invoking the integrator in step 4:
+
+For each returned agent, treat the pick as a suspected stall if ANY of these cues fire:
+
+- `changed: false` AND the agent's wall time exceeded ~5 minutes (stalls usually burn budget before returning empty)
+- Return lacked structured JSON (free-form prose, truncated output, missing `sha`/`item`/`blocked` top-level keys)
+- Return surfaced `internal-error` / tool-result error from the harness rather than an agent-authored payload
+- Evidence of worktree-escape recovery in the agent's output (e.g. the agent mentioned restoring a tracked file on main, or `git status` dirt the dispatch prompt couldn't explain)
+
+Action when any cue fires:
+
+1. Treat the pick as NOT integrated this turn. Do NOT pass it to the integrator with `changed: true` — that would cherry-pick phantom work.
+2. Offer to **redispatch the pick once** in a fresh worktree. Redispatch uses the same prompt template, same specialist, same `backlogSlice`. The fresh worktree gets a new branch name; the stalled one's branch and worktree are cleaned up as part of the integrator's step-3 worktree-removal pass.
+3. Cap redispatches at **1 per pick per `/continue` invocation.** If the redispatch also stalls, record the pick under `blocked` in the turn summary with reason `"stall: redispatch also failed"` and move on. Do not loop.
+4. The redispatched agent runs in parallel with the surviving picks' integrator call, NOT with the current turn's other specialists — the dispatch order is: original parallel batch → stall detection → integrator(survivors) + redispatched-pick. On the next turn boundary, the redispatched pick's return is treated as a normal pick in turn N+1's integration.
+
+Recognition cues are deliberately manual — the orchestrator reads each returned payload and decides. Don't try to encode the cues as regex or schema checks here; the false-positive cost (redispatching a clean `blocked` return) is worse than the current-turn skip. Full automated polling is tracked as a future ADR candidate.
+
 ### 4. Integrate via the `integrator` subagent
 
 Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`, but **the orchestrator does not do the integration inline**. Cherry-pick + `bun run verify` + worktree cleanup + backlog tickoff all go through the `integrator` subagent, which swallows 30–50k tokens of tsc/biome/test output per turn and returns a ~6–10 line structured summary (tight shape; with-note and error shapes stay under ~20 lines).
