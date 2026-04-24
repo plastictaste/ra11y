@@ -124,11 +124,6 @@ describe("MCP list_suppressions tool: end-to-end JSON-RPC round-trip", () => {
           cwd: string;
           configSource: string | null;
           filesScanned: number;
-          rulesEvaluated: {
-            loaded: number;
-            withEligibleInputs?: number;
-            fired?: number;
-          };
         };
         nextStep: string;
       };
@@ -158,10 +153,13 @@ describe("MCP list_suppressions tool: end-to-end JSON-RPC round-trip", () => {
       expect(body.suppressions[2]?.wildcard).toBe(true);
       expect("reason" in body.suppressions[2]).toBe(false);
 
-      // Meta carries scan-confidence telemetry.
+      // Meta carries scan-confidence telemetry. `rulesEvaluated` is
+      // intentionally absent — pragma enumeration runs no rules, and
+      // a `loaded` counter under that name would lie about what the
+      // tool did (V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT).
       expect(body.meta.cwd).toBe(dir);
       expect(body.meta.filesScanned).toBe(2);
-      expect(body.meta.rulesEvaluated.loaded).toBeGreaterThan(0);
+      expect("rulesEvaluated" in body.meta).toBe(false);
 
       // Two bare pragmas → nextStep routes to review_candidates.
       expect(body.nextStep).toContain("missing a reason");

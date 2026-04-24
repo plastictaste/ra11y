@@ -248,9 +248,12 @@ export const checklistTool: McpTool = {
 
     // Q-SHARED-RULES-EVALUATED-SSOT: load project config and route
     // through the single resolveActiveRules helper so `meta.rulesEvaluated`
-    // agrees with scan_project / propose_config / list_suppressions on
-    // the same cwd. Previously used `session.config.rules` alone, silently
-    // ignoring any rule overrides in the user's `ra11y.config.ts`.
+    // agrees with scan_project / propose_config on the same cwd.
+    // Previously used `session.config.rules` alone, silently ignoring
+    // any rule overrides in the user's `ra11y.config.ts`.
+    // (`list_suppressions` no longer emits `rulesEvaluated` — that tool
+    // runs zero rules, so the field would lie; see
+    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT.)
     const activeRules = resolveActiveRules(session, projectConfig);
     const { result, report, perRuleCoverage } = runScan({
       standards: session.registry.standards,

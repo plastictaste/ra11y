@@ -29,9 +29,14 @@
  *     keeps the shape flat and auditable. Deterministic order: file
  *     ascending, then line ascending, then token ascending.
  *   - `meta` carries scan-confidence telemetry (`cwd`, `configSource`,
- *     `filesScanned`, `activeNativeWrappers`, `rulesEvaluated`) so the
- *     agent can tell whether the enumeration had teeth without a
- *     separate `scan_project` round-trip.
+ *     `filesScanned`, `activeNativeWrappers`) so the agent can tell
+ *     whether the enumeration had teeth without a separate
+ *     `scan_project` round-trip. NOTE: `rulesEvaluated` is intentionally
+ *     omitted — this tool runs no rules, so a `loaded` counter under
+ *     that name would lie about what happened (V1-LIST-SUPPRESSIONS-
+ *     RULES-EVALUATED-DRIFT). Cross-tool field semantics must be honest:
+ *     the field name describes work the tool did, and pragma enumeration
+ *     is rule-free by design.
  *   - `nextStep` prose points at the follow-up call: if any entry has
  *     no `reason`, route to `review_candidates` where the bare pragmas
  *     surface under `suppression/no-reason`; otherwise confirm nothing
@@ -46,15 +51,7 @@
 import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
 import { gitRoot } from "../utils/git.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
-import { buildRulesEvaluated } from "./rules-evaluated.ts";
-import {
-  applyRuleSettings,
-  type McpTool,
-  parseFiles,
-  strArrayParam,
-  strParam,
-  textResult,
-} from "./tools-helpers.ts";
+import { type McpTool, parseFiles, strArrayParam, strParam, textResult } from "./tools-helpers.ts";
 import { type ActiveNativeWrapper, resolveWrapperSources } from "./wrappers-meta.ts";
 
 /**
@@ -109,18 +106,13 @@ export const listSuppressionsTool: McpTool = {
     const files = await parseFiles([root, ...additionalPaths], session, root);
 
     const entries = collectSuppressions(files);
-    // Rule count parity with scan_project.meta.rulesEvaluated: applies
-    // the same on/off filtering the scanner would. Lets an agent
-    // cross-check that the enumeration ran under the same effective
-    // ruleset without a second tool call. `list_suppressions` does not
-    // run the scanner, so the `withEligibleInputs` / `fired` sub-
-    // counters are omitted via conditional spread — emitting `0`
-    // would read as "zero rules had inputs" instead of "this tool
-    // doesn't know" (CLAUDE.md §1 "Ambiguous field shapes are
-    // dishonest").
-    const effective = session.effectiveRules(projectConfig);
-    const loadedCount = applyRuleSettings(session.registry.rules, effective).length;
-    const rulesEvaluated = buildRulesEvaluated({ loadedCount });
+    // No `rulesEvaluated` field on this tool's meta: pragma enumeration
+    // runs zero rules, and a `loaded`-only counter under that name reads
+    // to the agent as "rules ran" — exactly the cross-tool dishonesty
+    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT called out. The agent
+    // can call `list_rules` (or any scan-family tool) for the loaded-rule
+    // count when it actually needs one; this tool's job is to enumerate
+    // pragmas, not to mirror unrelated scan telemetry.
 
     // Unified tagged list (Q2R2-WRAPPER-SOURCES). `list_suppressions`
     // doesn't run the auto-detect pass, so fromAutoDetect stays empty
@@ -137,7 +129,6 @@ export const listSuppressionsTool: McpTool = {
       cwd: root,
       configSource: projectConfig.sourcePath,
       filesScanned: files.length,
-      rulesEvaluated,
       ...(activeNativeWrappers.length > 0 ? { activeNativeWrappers } : {}),
     };
     // Surface cross-cwd session-wrapper drift honestly so an agent that

@@ -34,11 +34,6 @@ interface SuppressionResponse {
     readonly cwd: string;
     readonly configSource: string | null;
     readonly filesScanned: number;
-    readonly rulesEvaluated: {
-      readonly loaded: number;
-      readonly withEligibleInputs?: number;
-      readonly fired?: number;
-    };
     readonly activeNativeWrappers?: ReadonlyArray<{
       readonly name: string;
       readonly source: "config" | "autoDetect" | "session";
@@ -80,12 +75,14 @@ describe("list_suppressions: empty tree", () => {
       expect(body.nextStep).toContain("No ra11y-disable pragmas");
       expect(body.meta.cwd).toBe(dir);
       expect(body.meta.filesScanned).toBe(1);
-      expect(body.meta.rulesEvaluated.loaded).toBeGreaterThan(0);
-      // `list_suppressions` doesn't scan, so the derived sub-counters
-      // are omitted (conditional-spread). Agents read this as "we
-      // loaded N rules but this tool doesn't track per-rule coverage."
-      expect("withEligibleInputs" in body.meta.rulesEvaluated).toBe(false);
-      expect("fired" in body.meta.rulesEvaluated).toBe(false);
+      // `list_suppressions` runs zero rules — the meta block must NOT
+      // carry `rulesEvaluated`. Cross-tool field semantics need to be
+      // honest (V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT): a tool
+      // that never invokes the rule engine cannot report the count of
+      // rules it evaluated. An agent reading `rulesEvaluated.loaded: N`
+      // here would conclude N rules ran against the tree, which is the
+      // exact silent miss the doctrine warns against.
+      expect("rulesEvaluated" in body.meta).toBe(false);
     });
   });
 });

@@ -22,9 +22,13 @@
  *   - `withEligibleInputs` (optional): rules whose input-filter matched
  *     at least one scanned file — `perRuleCoverage.filter(r =>
  *     r.filesEligible > 0).length`. Omitted when the caller has no
- *     `perRuleCoverage` to derive from (e.g. `list_suppressions`,
- *     `propose_config` — tools that don't scan or do scans the tool
- *     doesn't retain coverage for).
+ *     `perRuleCoverage` to derive from (e.g. `propose_config` — tools
+ *     that do scans the tool doesn't retain coverage for). Tools that
+ *     run no rules at all (e.g. `list_suppressions`) omit the entire
+ *     `rulesEvaluated` field rather than emit `{ loaded: N }` alone —
+ *     a counter named "evaluated" must describe work the tool did, not
+ *     the size of the rule registry; see
+ *     V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT.
  *   - `fired` (optional): rules that emitted at least one finding —
  *     `perRuleCoverage.filter(r => r.findingsEmitted > 0).length`.
  *     Same conditional-spread rule as `withEligibleInputs`.
@@ -59,9 +63,12 @@ export interface RulesEvaluated {
  *
  * Tools that ran the scanner and carry the per-rule coverage array pass
  * it in so the helper can derive the `withEligibleInputs` / `fired`
- * sub-counters; tools that don't (e.g. `list_suppressions`,
- * `propose_config` top-level meta, `apply_fix` when threading is out
- * of scope) omit it and get back a single-field `{ loaded }` object.
+ * sub-counters; tools that don't (e.g. `propose_config` top-level meta,
+ * `apply_fix` when threading is out of scope) omit it and get back a
+ * single-field `{ loaded }` object. Tools that don't run any rules
+ * (e.g. `list_suppressions`) skip this helper entirely and omit
+ * `rulesEvaluated` from their meta — see V1-LIST-SUPPRESSIONS-RULES-
+ * EVALUATED-DRIFT.
  *
  * `withEligibleInputs` counts per-rule coverage rows where
  * `filesEligible > 0` — the "this rule had something to look at" signal.

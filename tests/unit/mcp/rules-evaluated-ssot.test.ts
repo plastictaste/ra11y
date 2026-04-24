@@ -41,6 +41,10 @@ import { scanProjectTool } from "../../../src/mcp/tool-scan-project.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
 import type { McpTool } from "../../../src/mcp/tools-helpers.ts";
 
+interface ListSuppressionsMetaShape {
+  readonly meta: Record<string, unknown>;
+}
+
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
   if (!tool) throw new Error(`Tool ${name} not found`);
@@ -109,9 +113,15 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   // SAME `meta.rulesEvaluated.loaded` count on the same session + cwd.
   // Before the SSOT, `tool-checklist` / `tool-coverage` used
   // `session.config.rules` alone while `tool-scan-project` /
-  // `tool-propose-config` / `tool-list-suppressions` merged project
-  // config — producing different `loaded` counts on any cwd whose
-  // `ra11y.config.ts` silenced a rule.
+  // `tool-propose-config` merged project config — producing different
+  // `loaded` counts on any cwd whose `ra11y.config.ts` silenced a rule.
+  //
+  // `list_suppressions` is intentionally OUTSIDE this invariant: that
+  // tool runs zero rules, so it omits `rulesEvaluated` entirely
+  // (V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT). Including it under a
+  // counter named "evaluated" would be cross-tool dishonest. The
+  // companion absence-check below pins the omission so a future
+  // re-introduction trips the test.
   //
   // The scratch dir has no config file, so the session-only and
   // session+project-config code paths produce the same answer — the
@@ -119,7 +129,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   // a new tool derives `activeRules` from `session.config.rules` alone),
   // this test stays green against an empty-config scratch but a future
   // config-aware variant catches the bug.
-  it("scan_project, checklist, coverage, propose_config, list_suppressions agree on rulesEvaluated.loaded", async () => {
+  it("scan_project, checklist, coverage, propose_config agree on rulesEvaluated.loaded", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
@@ -142,14 +152,21 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
         session,
       );
       const propose = await callJson<ScanMetaShape>(proposeConfigTool, { cwd: dir }, session);
-      const listSupp = await callJson<ScanMetaShape>(listSuppressionsTool, { cwd: dir }, session);
+      const listSupp = await callJson<ListSuppressionsMetaShape>(
+        listSuppressionsTool,
+        { cwd: dir },
+        session,
+      );
 
       const loaded = scan.meta.rulesEvaluated.loaded;
       expect(loaded).toBeGreaterThan(0);
       expect(checklist.meta.rulesEvaluated.loaded).toBe(loaded);
       expect(coverage.meta.rulesEvaluated.loaded).toBe(loaded);
       expect(propose.meta.rulesEvaluated.loaded).toBe(loaded);
-      expect(listSupp.meta.rulesEvaluated.loaded).toBe(loaded);
+      // `list_suppressions` runs zero rules — `rulesEvaluated` must be
+      // absent from its meta. Pinning here keeps the cross-tool drift
+      // protection one regression-test wide.
+      expect("rulesEvaluated" in listSupp.meta).toBe(false);
     });
   });
 
@@ -200,15 +217,22 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
         session2,
       );
       const propose = await callJson<ScanMetaShape>(proposeConfigTool, { cwd: dir }, session2);
-      const listSupp = await callJson<ScanMetaShape>(listSuppressionsTool, { cwd: dir }, session2);
+      const listSupp = await callJson<ListSuppressionsMetaShape>(
+        listSuppressionsTool,
+        { cwd: dir },
+        session2,
+      );
 
       const loadedWithOff = scan.meta.rulesEvaluated.loaded;
       expect(loadedWithOff).toBeGreaterThan(0);
-      // All surfaces agree on the same post-off count.
+      // All scan-family surfaces agree on the same post-off count.
+      // `list_suppressions` is excluded — it omits `rulesEvaluated`
+      // entirely, so there's nothing to compare; we still pin the
+      // omission to catch a regression that re-adds the field.
       expect(checklist.meta.rulesEvaluated.loaded).toBe(loadedWithOff);
       expect(coverage.meta.rulesEvaluated.loaded).toBe(loadedWithOff);
       expect(propose.meta.rulesEvaluated.loaded).toBe(loadedWithOff);
-      expect(listSupp.meta.rulesEvaluated.loaded).toBe(loadedWithOff);
+      expect("rulesEvaluated" in listSupp.meta).toBe(false);
 
       // The off directive must have actually removed one rule from the
       // post-settings count — `list_rules` (raw registry) stays one

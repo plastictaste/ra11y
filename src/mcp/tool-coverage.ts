@@ -87,8 +87,10 @@ export const coverageTool: McpTool = {
 
     // Q-SHARED-RULES-EVALUATED-SSOT: load project config and route
     // through resolveActiveRules so the `meta.rulesEvaluated.loaded`
-    // count agrees with scan_project / propose_config / list_suppressions
-    // on the same cwd.
+    // count agrees with scan_project / propose_config on the same cwd.
+    // (`list_suppressions` no longer emits `rulesEvaluated` — the tool
+    // runs zero rules, so the field would lie; see
+    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT.)
     const activeRules = resolveActiveRules(session, projectConfig);
     const { result, report, perRuleCoverage } = runScan({
       standards: session.registry.standards,

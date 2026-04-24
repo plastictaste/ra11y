@@ -214,14 +214,11 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
     expect(typeof firstMeta["sessionRef"]).toBe("string");
     expect(firstMeta["sessionRef"] as string).toMatch(/^list_suppressions-[0-9a-f]{8}$/);
     expect(typeof firstMeta["filesScanned"]).toBe("number");
-    // Q4-RULES-EVALUATED-COMPOSITE: the meta field is an object with
-    // `loaded` + the derived sub-counters, not a bare number.
-    const rulesEvaluated = firstMeta["rulesEvaluated"] as {
-      readonly loaded: number;
-      readonly withEligibleInputs?: number;
-      readonly fired?: number;
-    };
-    expect(typeof rulesEvaluated.loaded).toBe("number");
+    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT: this tool runs no
+    // rules, so `rulesEvaluated` must not appear in meta (full or
+    // delta). Pinning here catches regressions that would re-add the
+    // field as scan-confidence telemetry borrowed from scan_project.
+    expect("rulesEvaluated" in firstMeta).toBe(false);
     const firstRef = firstMeta["sessionRef"] as string;
 
     const second = bodyOf(responses.find((r) => r.id === 4)!);
