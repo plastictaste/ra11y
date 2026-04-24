@@ -881,10 +881,12 @@ describe("buildAnalysisCoverage — hints", () => {
     // `{{ x }}` tokens. The pipe is the discriminator: Handlebars and
     // Mustache use sub-expression helper invocation, never a postfix
     // `|`. A single qualifying pipe forces jinja-or-liquid.
-    it("tags `{{ x | default: \"en\" }}` Liquid filter pipe as jinja-or-liquid", () => {
+    it('tags `{{ x | default: "en" }}` Liquid filter pipe as jinja-or-liquid', () => {
       const liquidInclude = htmlFile(
         "_includes/top.html",
-        '<html lang="{{ page.lang | default: "en" }}">\n<body>{{ content }}</body>\n</html>',
+        // Use single-quoted attribute so the `default: "en"` literal can stay
+        // double-quoted (Jekyll's idiomatic shape) without escaping.
+        "<html lang='{{ page.lang | default: \"en\" }}'>\n<body>{{ content }}</body>\n</html>",
       );
       const { analysisCoverage } = buildAnalysisCoverage([liquidInclude], [], NO_RULES, false);
       expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);

@@ -1223,16 +1223,27 @@ function containsLiquidFilterPipe(body: string): boolean {
       i += 1; // skip the second char of the pair, don't re-match '|' on next iter
       continue;
     }
-    // Find the first non-whitespace character after the pipe; require
-    // it to start an identifier (Liquid filters are ASCII identifiers
-    // like `default`, `escape`, `upcase`, plugin-authored names).
-    let j = i + 1;
-    while (j < body.length && (body[j] === " " || body[j] === "\t")) j += 1;
-    const rhs = body.charCodeAt(j);
-    if (Number.isNaN(rhs)) continue;
-    const isAlpha = (rhs >= 0x41 && rhs <= 0x5a) || (rhs >= 0x61 && rhs <= 0x7a);
-    const isUnderscore = rhs === 0x5f;
-    if (isAlpha || isUnderscore) return true;
+    if (filterIdentifierFollows(body, i + 1)) return true;
   }
   return false;
+}
+
+/**
+ * True when the first non-whitespace character at or after `start` in
+ * `body` begins an ASCII identifier (Liquid filter names — `default`,
+ * `escape`, `upcase`, plugin-authored). Extracted from
+ * {@link containsLiquidFilterPipe} so the per-pipe scanner stays under
+ * the cognitive-complexity cap while keeping the RHS shape requirement
+ * explicit (the Liquid filter form is always `value | name[: arg]`,
+ * never a trailing `|` with no identifier).
+ */
+function filterIdentifierFollows(body: string, start: number): boolean {
+  let j = start;
+  while (j < body.length && (body[j] === " " || body[j] === "\t")) j += 1;
+  if (j >= body.length) return false;
+  const rhs = body.charCodeAt(j);
+  const isUpper = rhs >= 0x41 && rhs <= 0x5a;
+  const isLower = rhs >= 0x61 && rhs <= 0x7a;
+  const isUnderscore = rhs === 0x5f;
+  return isUpper || isLower || isUnderscore;
 }
