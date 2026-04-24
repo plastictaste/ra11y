@@ -162,7 +162,7 @@ function stampViolation(
 ): Violation {
   // `variantKey` disambiguates sub-variant emits from the same rule at
   // the same `(filePath, line)` (e.g. navigation/link-descriptive-text
-  // firing both "generic-phrase" and "duplicate-href" on one anchor).
+  // firing both "generic-phrase" and "duplicate-name" on one anchor).
   // Conditional spread per exactOptionalPropertyTypes: finding-id.ts
   // folds the key into the hash only when present + non-empty, so
   // rules that don't opt in preserve their existing `findingId`s.

@@ -6,8 +6,9 @@
  * line)` tuple — the canonical case is
  * `navigation/link-descriptive-text`, which satisfies SC 2.4.4 for
  * descriptiveness AND SC 2.4.9 for duplicate names. Two `<a
- * href="/x">Read more</a>` siblings on adjacent lines each trigger
- * BOTH the "generic phrase" path and the "duplicate same-href" path.
+ * href="/postN">Read more</a>` siblings on adjacent lines each trigger
+ * BOTH the "generic phrase" path and the "duplicate-name-different-
+ * href" path.
  *
  * Without a sub-variant discriminator in the `findingId` hash, the two
  * findings collide on the same token (same ruleId, same filePath, same
@@ -34,13 +35,13 @@ function htmlFile(path: string, source: string): ParsedFile {
 
 describe("Violation.findingId — sub-variant uniqueness invariant", () => {
   it("distinct sub-variants at the same (file, line) get distinct findingIds", () => {
-    // Two anchors with identical text and href produce:
+    // Two anchors with identical text but distinct hrefs produce:
     //   - generic-phrase findings (SC 2.4.4): one per anchor, keyed by
     //     `variantKey: "generic-phrase"` + per-anchor line-context hash.
-    //   - duplicate-href findings (SC 2.4.4 + 2.4.9): one per anchor,
-    //     keyed by `variantKey: "duplicate-href"` + same line-context.
+    //   - duplicate-name findings (SC 2.4.4 + 2.4.9): one per anchor,
+    //     keyed by `variantKey: "duplicate-name"` + same line-context.
     //
-    // Before the fix, the generic-phrase and duplicate-href findings at
+    // Before the fix, the generic-phrase and duplicate-name findings at
     // the SAME line collapsed to the same `findingId` because the hash
     // input excluded the sub-variant discriminator. The agent's
     // suppress + dedup flows, which treat `findingId` as a primary key,
@@ -48,13 +49,13 @@ describe("Violation.findingId — sub-variant uniqueness invariant", () => {
     // failure mode Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE reported.
     //
     // Invariant under test: at each line, the "generic-phrase" finding
-    // and the "duplicate-href" finding have distinct `findingId`s.
+    // and the "duplicate-name" finding have distinct `findingId`s.
     // (Same-sub-variant findings across two identical anchors on
     // different lines can still share an id when the line-context
     // windows overlap — that's the existing dedup behavior.)
     const source = `<!doctype html><html lang="en"><body>
-<a href="/x">Read more</a>
-<a href="/x">Read more</a>
+<a href="/post1">Read more</a>
+<a href="/post2">Read more</a>
 </body></html>`;
     const file = htmlFile("index.html", source);
     const { result } = runScan({
@@ -84,8 +85,8 @@ describe("Violation.findingId — sub-variant uniqueness invariant", () => {
       expect(new Set(ids).size).toBe(ids.length);
       // Belt-and-braces: the message-carrying kinds are genuinely
       // different — one is a generic-phrase notice, one is a
-      // duplicate-name notice — so the caller sees two findings to
-      // triage, not one.
+      // duplicate-name-different-href notice — so the caller sees two
+      // findings to triage, not one.
       expect(ids.length).toBe(2);
       expect(line).toBeGreaterThan(0);
     }

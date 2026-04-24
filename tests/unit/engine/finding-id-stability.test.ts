@@ -225,7 +225,7 @@ describe("computeFindingId — recipe inputs", () => {
       line: 2,
     };
     const generic = computeFindingId({ ...base, variantKey: "generic-phrase" });
-    const duplicate = computeFindingId({ ...base, variantKey: "duplicate-href" });
+    const duplicate = computeFindingId({ ...base, variantKey: "duplicate-name" });
     expect(generic).not.toBe(duplicate);
   });
 

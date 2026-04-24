@@ -40,32 +40,36 @@
  *        - any element with `aria-hidden="true"` or `role="presentation"
  *          | "none"`.
  *
- *   3. DUPLICATE SAME-HREF PATH — two or more anchors in the same file
- *      share the same normalized accessible name AND the same `href`.
- *      A screen-reader user navigating by link list (VoiceOver rotor,
- *      JAWS links dialog) sees two identical-looking entries and cannot
- *      tell them apart; the `href` being the same means only one of
- *      the two destinations is reachable from the links list. The
- *      strictly-worse variant of the "same name, different href"
- *      pattern (which is legitimate when paired with unique aria-label
- *      or surrounding context — e.g. three "Read more" links under
- *      three blog cards) — so that looser variant stays silent here
- *      and the agent decides via the file content. Fires SC 2.4.4
- *      (programmatically determined context cannot distinguish) and
- *      SC 2.4.9 AAA (link text alone must identify purpose). Anchors
- *      without an `href` attribute are excluded from grouping because
- *      they are not activatable controls.
+ *   3. DUPLICATE-NAME-DIFFERENT-HREF PATH — two or more anchors in the
+ *      same file share the same normalized accessible name BUT point at
+ *      different destinations. A screen-reader user navigating by link
+ *      list (VoiceOver rotor, JAWS links dialog) hears the same name
+ *      for each entry but lands somewhere different — exactly the
+ *      "purpose cannot be determined from link text" failure WCAG 2.4.4
+ *      describes. WCAG's spec rationale explicitly permits the looser
+ *      variant where two links share a name AND a destination (they're
+ *      the same link; AT announces "visited" state on re-encounter and
+ *      the user is not deceived) — so same-name + same-href stays
+ *      silent here. Fires SC 2.4.4 (link text + context cannot
+ *      distinguish) and SC 2.4.9 AAA (link text alone must identify
+ *      purpose). Anchors without an `href` attribute are excluded from
+ *      grouping because they are not activatable controls. Templated
+ *      hrefs (`href="{{ item.url }}"`) are skipped — at static time
+ *      they look identical but expand to N URLs at runtime, and the
+ *      static view cannot distinguish "all the same destination" from
+ *      "all distinct destinations." The agent reading the surrounding
+ *      template loop is the right arbiter.
  *
  * Pairs with `aria/icon-font-hidden`: that rule fires when the link IS
  * labeled AND an icon child is unannotated (double-announce risk); this
  * rule fires when the link has NO label AND only presentational
- * children (silent link). Icon-only and duplicate-href paths cannot
+ * children (silent link). Icon-only and duplicate-name paths cannot
  * both fire on the same anchor (icon-only has an empty accessible name,
- * which is excluded from the duplicate-href grouping step). The
- * generic-phrase path CAN co-fire with the duplicate-href path on the
+ * which is excluded from the duplicate-name grouping step). The
+ * generic-phrase path CAN co-fire with the duplicate-name path on the
  * same anchor — both are real concerns (the text is generic AND the
- * links are indistinguishable in context) and surfacing both keeps the
- * agent's triage honest.
+ * links lead to different destinations under the same name) and
+ * surfacing both keeps the agent's triage honest.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -93,7 +97,7 @@ import type {
 import {
   checkDuplicateHrefHtml as checkDuplicateHrefHtmlImpl,
   checkDuplicateHrefJsx as checkDuplicateHrefJsxImpl,
-} from "./link-duplicate-href.ts";
+} from "./link-duplicate-name.ts";
 
 /**
  * Phrases that are never acceptable as link text on their own. Matched
@@ -196,14 +200,15 @@ export const rule = defineRule({
   },
   afterFile(ctx) {
     // Same-page pass: when two or more anchors in the SAME file share
-    // the same normalized accessible name AND the same `href`, every
-    // occurrence is reported. This complements `check()` — the node-
-    // scoped pass fires on generic-phrase and icon-only failures per
-    // anchor, while `afterFile` sees whole-file state and catches the
-    // "indistinguishable-duplicate" failure mode that only manifests
-    // when ≥2 anchors share identity. See rule header (path 3) for
-    // rationale and scope boundaries (same-name-different-href is
-    // intentionally silent here).
+    // the same normalized accessible name BUT point at different hrefs,
+    // every occurrence is reported. This complements `check()` — the
+    // node-scoped pass fires on generic-phrase and icon-only failures
+    // per anchor, while `afterFile` sees whole-file state and catches
+    // the "ambiguous-destination" failure mode that only manifests
+    // when ≥2 anchors share a name across distinct destinations. See
+    // rule header (path 3) for rationale and scope boundaries (same-
+    // name + same-href is intentionally silent — the spec rationale
+    // permits it).
     if (ctx.language === "html") {
       checkDuplicateHrefHtmlImpl(
         ctx.ast as HtmlDocument,
@@ -236,7 +241,7 @@ type Emit = (v: {
    * Sub-variant discriminator folded into the `findingId` hash. This
    * rule satisfies three distinct concerns that can legitimately
    * co-fire on the same anchor (SC 2.4.4 generic-phrase / SC 2.4.4 +
-   * 4.1.2 icon-only / SC 2.4.4 + 2.4.9 duplicate-href). Without a
+   * 4.1.2 icon-only / SC 2.4.4 + 2.4.9 duplicate-name). Without a
    * variant key the co-fires collide on `findingId` and the agent's
    * suppress + dedup flows silently merge them. See
    * Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE and the `variantKey`
@@ -697,7 +702,8 @@ function buildIconOnlySuggestion(href: string | null, evidence: readonly string[
   );
 }
 
-// Duplicate same-href detection (SC 2.4.4 + 2.4.9) is implemented in
-// `link-duplicate-href.ts` and invoked from `afterFile()` above. The
-// helper is private to this rule (no other rule imports it); splitting
-// the module keeps this file under the 500-effective-line file budget.
+// Duplicate-name-different-href detection (SC 2.4.4 + 2.4.9) is
+// implemented in `link-duplicate-name.ts` and invoked from
+// `afterFile()` above. The helper is private to this rule (no other
+// rule imports it); splitting the module keeps this file under the
+// 500-effective-line file budget.

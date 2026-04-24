@@ -41,7 +41,7 @@ import type { Ast } from "../../src/types/ast.ts";
  *   - `<h2>{% if a < b %}Alpha{% else %}Beta{% endif %}</h2>` — same
  *     shape at heading text level.
  *   - `<a href="{{ item.url }}">Read more</a>` — templated href;
- *     link-duplicate-href must not group by the raw `{{ item.url }}`.
+ *     link-duplicate-name must not group by the raw `{{ item.url }}`.
  *   - `<a href="#{{ section.slug }}" class="skip-link">Skip</a>` —
  *     templated fragment target; skip-link must not echo raw Liquid
  *     as the "missing id."
