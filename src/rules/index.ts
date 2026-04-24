@@ -15,6 +15,7 @@ import { rule as invalidRole } from "./aria/invalid-role.ts";
 import { rule as labelledbyTargetExists } from "./aria/labelledby-target-exists.ts";
 import { rule as liveRegionValid } from "./aria/live-region-valid.ts";
 import { rule as progressbarValueRange } from "./aria/progressbar-value-range.ts";
+import { rule as redundantRoleOnHostElement } from "./aria/redundant-role-on-host-element.ts";
 import { rule as requiredAttrs } from "./aria/required-attrs.ts";
 import { rule as roleFromClassOnly } from "./aria/role-from-class-only.ts";
 import { rule as validAttr } from "./aria/valid-attr.ts";
@@ -143,6 +144,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   placeholderAsLabel,
   progressbarValueRange,
   radioGroupWithoutFieldset,
+  redundantRoleOnHostElement,
   reflowHardcodedWidth,
   requiredAttrs,
   requiredIndicatorMissing,
@@ -223,6 +225,7 @@ export {
   placeholderAsLabel,
   progressbarValueRange,
   radioGroupWithoutFieldset,
+  redundantRoleOnHostElement,
   reflowHardcodedWidth,
   requiredAttrs,
   requiredIndicatorMissing,
