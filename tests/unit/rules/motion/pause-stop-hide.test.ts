@@ -32,27 +32,45 @@ describe("rule motion/pause-stop-hide", () => {
   });
 
   describe("CSS animation: fires when", () => {
-    it("animation property without reduced-motion guard", () => {
+    it("animation property with infinite iteration (any duration)", () => {
       const v = runRule(rule, `.spinner { animation: spin 1s infinite; }`, {
         filePath: "styles.css",
       });
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("warning");
       expect(v[0]?.message).toContain("prefers-reduced-motion");
+      // Additive context: parsed duration + iteration-count flow into
+      // the message so the agent doesn't have to re-parse the value.
+      expect(v[0]?.message).toContain("infinite");
     });
 
-    it("transition property without reduced-motion guard", () => {
-      const v = runRule(rule, `.fade { transition: opacity 0.3s ease; }`, {
+    it("transition with duration > 5s without reduced-motion guard", () => {
+      const v = runRule(rule, `.fade { transition: opacity 8s ease; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("transition-duration");
+    });
+
+    it("animation-duration > 5s with default iteration-count fires", () => {
+      const v = runRule(rule, `.crawl { animation-name: crawl; animation-duration: 8s; }`, {
         filePath: "styles.css",
       });
       expect(v).toHaveLength(1);
     });
 
-    it("animation-name without reduced-motion guard", () => {
-      const v = runRule(rule, `.pulse { animation-name: pulse; animation-duration: 2s; }`, {
-        filePath: "styles.css",
-      });
-      // One violation per rule (first matching property)
+    it("animation-iteration-count > 3 (literal integer) fires even with short duration", () => {
+      const v = runRule(
+        rule,
+        `.pulse { animation-name: pulse; animation-duration: 2s; animation-iteration-count: 5; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("iteration-count 5");
+    });
+
+    it("animation shorthand carries iteration-count > 3", () => {
+      const v = runRule(rule, `.pulse { animation: pulse 2s 5; }`, { filePath: "styles.css" });
       expect(v).toHaveLength(1);
     });
   });
@@ -80,6 +98,73 @@ describe("rule motion/pause-stop-hide", () => {
     });
   });
 
+  describe("WCAG 2.2.2 5-second / repetition gate (spec-exempt cases)", () => {
+    // 2.2.2 only mandates pause/stop/hide for motion that "starts
+    // automatically, lasts more than five seconds, and is presented in
+    // parallel with other content." A one-shot 0.2s reveal cannot
+    // exceed five seconds of total runtime; flagging it would be a
+    // false positive contradicting the normative threshold.
+    it("one-shot short animation (default iteration-count = 1) does NOT fire", () => {
+      const v = runRule(rule, `.hide { animation: hide 0.2s ease-out; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("animation with `forwards` fill mode but no infinite/long-duration does NOT fire", () => {
+      const v = runRule(rule, `.reveal { animation: reveal 0.4s ease-out forwards; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("short transition (< 5s) does NOT fire", () => {
+      const v = runRule(rule, `.fade { transition: opacity 0.15s; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("animation with explicit iteration-count: 1 does NOT fire (one-shot)", () => {
+      const v = runRule(
+        rule,
+        `.x { animation-name: spin; animation-duration: 1s; animation-iteration-count: 1; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("animation-iteration-count of exactly 3 does NOT fire (threshold is > 3)", () => {
+      const v = runRule(
+        rule,
+        `.x { animation-name: pulse; animation-duration: 1s; animation-iteration-count: 3; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("transition-duration of exactly 5s does NOT fire (threshold is > 5s)", () => {
+      const v = runRule(rule, `.fade { transition-duration: 5s; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("animation with separate longhands and infinite iteration fires", () => {
+      const v = runRule(
+        rule,
+        `.spin { animation-name: spin; animation-duration: 1s; animation-iteration-count: infinite; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("infinite");
+    });
+
+    it("transition-duration shorthand list flags when ANY value exceeds 5s", () => {
+      const v = runRule(rule, `.x { transition-duration: 0.2s, 8s, 0.3s; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("8s");
+    });
+  });
+
   describe("edge cases", () => {
     it("animation outside reduced-motion query fires even when query exists elsewhere", () => {
       const src = [
@@ -98,7 +183,9 @@ describe("rule motion/pause-stop-hide", () => {
     });
 
     it("suggestion includes the selector and property", () => {
-      const v = runRule(rule, `.card { transition: transform 0.2s; }`, {
+      // Use a >5s transition so the spec gate fires; pre-gate version
+      // used 0.2s, which is now spec-exempt.
+      const v = runRule(rule, `.card { transition: transform 8s; }`, {
         filePath: "styles.css",
       });
       expect(v[0]?.suggestion).toContain(".card");
@@ -139,15 +226,16 @@ describe("rule motion/pause-stop-hide", () => {
     it("non-universal rule inside prefers-reduced-motion does not act as global guard", () => {
       const src = [
         `.spinner { animation: spin 1s infinite; }`,
-        `.other { animation: bounce 2s; }`,
+        `.other { animation: bounce 8s; }`,
         `@media (prefers-reduced-motion: reduce) {`,
         `  .spinner { animation: none; }`,
         `}`,
       ].join("\n");
       const v = runRule(rule, src, { filePath: "styles.css" });
-      // Both .spinner (outside-query copy) and .other still fire — a specific
-      // per-selector guard doesn't cover the whole stylesheet. Only a universal
-      // *, *::before, *::after override does.
+      // Both .spinner (outside-query copy, infinite) and .other (>5s)
+      // still fire — a specific per-selector guard doesn't cover the
+      // whole stylesheet. Only a universal *, *::before, *::after
+      // override does.
       expect(v.length).toBe(2);
     });
   });
@@ -196,8 +284,11 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("mixed list (one gated part, one bare) STILL fires under 2.2.2 — the bare part animates without interaction", () => {
-      const v = runRule(rule, `.btn, .btn:hover { transition: transform 0.2s; }`, {
+    it("mixed list (one gated part, one bare) STILL fires under 2.2.2 when the duration crosses the spec gate", () => {
+      // Use 8s so the bare `.btn` part crosses the 5-second threshold.
+      // The mixed-list note is a 2.2.2-vs-2.3.3 lane discrimination
+      // signal, independent of the spec-gate question.
+      const v = runRule(rule, `.btn, .btn:hover { transition: transform 8s; }`, {
         filePath: "styles.css",
       });
       expect(v).toHaveLength(1);
@@ -215,8 +306,8 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain(".spinner");
     });
 
-    it("inline style= transition still fires under 2.2.2 (not pseudo-class-gated)", () => {
-      const v = runRule(rule, `<div style="transition: opacity 0.3s"></div>`, {
+    it("inline style= transition still fires under 2.2.2 when duration exceeds 5s", () => {
+      const v = runRule(rule, `<div style="transition: opacity 8s"></div>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(1);
@@ -239,11 +330,11 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain(".spinner");
     });
 
-    it("transition-duration inside <style> without guard", () => {
+    it("transition-duration > 5s inside <style> without guard", () => {
       const src = [
         `<!doctype html><html><head>`,
         `<style>`,
-        `  .carousel-item { transition-duration: 600ms; }`,
+        `  .carousel-item { transition-duration: 8s; }`,
         `</style>`,
         `</head><body></body></html>`,
       ].join("\n");
@@ -252,11 +343,11 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain("transition-duration");
     });
 
-    it("multiple <style> blocks each contribute findings", () => {
+    it("multiple <style> blocks each contribute findings (qualifying durations)", () => {
       const src = [
         `<!doctype html><html><head>`,
-        `<style>.a { animation: a 1s; }</style>`,
-        `<style>.b { transition: opacity 0.3s; }</style>`,
+        `<style>.a { animation: a 1s infinite; }</style>`,
+        `<style>.b { transition: opacity 8s; }</style>`,
         `</head></html>`,
       ].join("\n");
       const v = runRule(rule, src, { filePath: "multi.html" });
@@ -287,8 +378,8 @@ describe("rule motion/pause-stop-hide", () => {
   });
 
   describe("inline style= attribute: fires when", () => {
-    it("transition-duration literal is non-zero", () => {
-      const v = runRule(rule, `<div style="transition-duration: 2s"></div>`, {
+    it("transition-duration crosses the 5-second gate", () => {
+      const v = runRule(rule, `<div style="transition-duration: 8s"></div>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(1);
@@ -297,18 +388,29 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.suggestion).toContain("prefers-reduced-motion");
     });
 
-    it("animation shorthand on inline style", () => {
+    it("animation shorthand declares infinite iteration", () => {
       const v = runRule(rule, `<span style="animation: pulse 2s infinite">!</span>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(1);
       expect(v[0]?.message).toContain("animation");
+      expect(v[0]?.message).toContain("infinite");
+    });
+
+    it("animation shorthand with iteration-count > 3 fires", () => {
+      const v = runRule(rule, `<span style="animation: pulse 1s 5">!</span>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("iteration-count 5");
     });
 
     it("multiple offending properties on one element emit one finding", () => {
-      const v = runRule(rule, `<div style="animation: a 1s; transition: opacity 0.3s"></div>`, {
-        filePath: "index.html",
-      });
+      const v = runRule(
+        rule,
+        `<div style="animation: a 1s infinite; transition: opacity 8s"></div>`,
+        { filePath: "index.html" },
+      );
       // One-per-element — the element, not the declaration, is the unit.
       expect(v).toHaveLength(1);
     });
@@ -338,6 +440,39 @@ describe("rule motion/pause-stop-hide", () => {
       const v = runRule(rule, `<div style="animation-duration: 0.01ms"></div>`, {
         filePath: "index.html",
       });
+      expect(v).toHaveLength(0);
+    });
+
+    // Spec gate: a one-shot 0.2s animation cannot exceed 5s of total
+    // runtime — the canonical real-world false-positive shape that
+    // triggered V1-RULE-MOTION-PAUSE-STOP-HIDE-IGNORES-ITERATION-COUNT.
+    it("one-shot short inline animation (default iteration-count = 1) does NOT fire", () => {
+      const v = runRule(rule, `<div style="animation: hide 0.2s ease-out"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("inline animation with `forwards` fill mode but short one-shot does NOT fire", () => {
+      const v = runRule(rule, `<div style="animation: reveal 0.4s ease-out forwards"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("inline transition < 5s does NOT fire", () => {
+      const v = runRule(rule, `<div style="transition: opacity 0.3s"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("inline animation with explicit iteration-count: 1 longhand does NOT fire", () => {
+      const v = runRule(
+        rule,
+        `<div style="animation-name: spin; animation-duration: 2s; animation-iteration-count: 1"></div>`,
+        { filePath: "index.html" },
+      );
       expect(v).toHaveLength(0);
     });
   });
@@ -422,6 +557,26 @@ describe("rule motion/pause-stop-hide", () => {
       const v = runRule(rule, src, { filePath: "styled.html" });
       expect(v).toHaveLength(1);
       expect(v[0]?.location.line).toBe(3);
+    });
+  });
+
+  describe("real-world false-positive regressions (V1-RULE-MOTION-PAUSE-STOP-HIDE-IGNORES-ITERATION-COUNT)", () => {
+    // Encodes the failure modes from the corpus report: a one-shot
+    // 0.2s `animation: hide` and a `forwards` fill-mode animation on
+    // animated-countdown / good-cheap-fast each fired pre-gate. The
+    // spec is explicit (Understanding 2.2.2): pause/stop/hide is only
+    // mandated when motion lasts more than five seconds. Both shapes
+    // are spec-exempt and the rule must stay quiet.
+    it("animated-countdown shape: `animation: hide 0.2s ease-out` does not fire", () => {
+      const src = `.countdown.hidden { animation: hide 0.2s ease-out; }`;
+      const v = runRule(rule, src, { filePath: "style.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("good-cheap-fast shape: `forwards` fill-mode without infinite/long-duration does not fire", () => {
+      const src = `.toast { animation: slide-in 0.3s ease-out forwards; }`;
+      const v = runRule(rule, src, { filePath: "style.css" });
+      expect(v).toHaveLength(0);
     });
   });
 });
