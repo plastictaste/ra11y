@@ -44,6 +44,7 @@ import { rule as nonEmptyLabel } from "./forms/non-empty-label.ts";
 import { rule as placeholderAsLabel } from "./forms/placeholder-as-label.ts";
 import { rule as radioGroupWithoutFieldset } from "./forms/radio-group-without-fieldset.ts";
 import { rule as requiredIndicatorMissing } from "./forms/required-indicator-missing.ts";
+import { rule as requiredMarkerWithoutRequiredAttr } from "./forms/required-marker-without-required-attr.ts";
 import { rule as submitNotButtonOrInput } from "./forms/submit-not-button-or-input.ts";
 import { rule as accesskeyDuplicate } from "./keyboard/accesskey-duplicate.ts";
 import { rule as characterShortcuts } from "./keyboard/character-shortcuts.ts";
@@ -149,6 +150,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   reflowHardcodedWidth,
   requiredAttrs,
   requiredIndicatorMissing,
+  requiredMarkerWithoutRequiredAttr,
   roleFromClassOnly,
   sectionAccessibleNameMissing,
   skipLink,
@@ -231,6 +233,7 @@ export {
   reflowHardcodedWidth,
   requiredAttrs,
   requiredIndicatorMissing,
+  requiredMarkerWithoutRequiredAttr,
   roleFromClassOnly,
   sectionAccessibleNameMissing,
   skipLink,
