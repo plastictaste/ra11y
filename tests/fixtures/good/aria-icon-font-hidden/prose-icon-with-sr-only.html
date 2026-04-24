@@ -1,0 +1,19 @@
+<!--
+  Good: Font Awesome star glyph inside an <h3>, paired with an inline
+  sr-only sibling that carries the meaning to assistive tech. Sighted
+  users see "[star] Title"; SR users hear "star Title". The icon may
+  remain visible (no aria-hidden required) because the sibling
+  unambiguously names what the glyph means.
+
+  Note: the more conservative variant adds aria-hidden="true" to the
+  icon AND keeps the sr-only sibling — see prose-icon-aria-hidden.html
+  for that pattern.
+
+  Expect: zero findings from aria/icon-font-hidden.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <h3><i class="fa fa-star"></i> <span class="sr-only">star</span> Title</h3>
+  </body>
+</html>

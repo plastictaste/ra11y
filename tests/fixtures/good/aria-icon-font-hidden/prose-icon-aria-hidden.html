@@ -1,0 +1,14 @@
+<!--
+  Good: Font Awesome heart glyph in <h3> prose, explicitly hidden from
+  the accessibility tree. The surrounding text "Double click on the
+  image to like it" is self-sufficient — the icon is decorative.
+  Author swapped the original "[heart]" verb-icon for the spelled-out
+  word, and kept the icon as visual decoration with aria-hidden.
+  Expect: zero findings from aria/icon-font-hidden.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <h3>Double click on the image to like <i class="fas fa-heart" aria-hidden="true"></i> it</h3>
+  </body>
+</html>

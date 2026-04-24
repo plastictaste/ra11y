@@ -289,4 +289,186 @@ describe("rule aria/icon-font-hidden", () => {
       expect(ids.size).toBe(2);
     });
   });
+
+  // Non-interactive prose context: an icon-font glyph dropped into
+  // running text (h1..h6, p, li, etc.) carries meaning the surrounding
+  // text doesn't always name. Sighted users see the glyph; SR users
+  // hear silence (the empty <i>) or the private-use-area codepoint.
+  // The rule fires unless the icon is aria-hidden, is itself named, or
+  // sits next to an sr-only sibling that carries the meaning.
+  describe("non-interactive prose context", () => {
+    it("fires for the canonical heart-in-h3 case (verb-icon in prose)", () => {
+      const violations = runRule(
+        rule,
+        `<h3>Double click on the image to <i class="fas fa-heart"></i> it</h3>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/Font Awesome/);
+      expect(violations[0]?.message).toMatch(/non-interactive prose <h3>/);
+      expect(violations[0]?.suggestion).toMatch(/aria-hidden="true"/);
+      expect(violations[0]?.suggestion).toMatch(/sr-only/);
+    });
+
+    it("fires for icon inside a <p> with no aria-hidden / no sr-only", () => {
+      const violations = runRule(rule, `<p>See <i class="fa fa-arrow-right"></i> for next</p>`, {
+        filePath: "input.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/non-interactive prose <p>/);
+    });
+
+    it("fires for icon inside a list item", () => {
+      const violations = runRule(rule, `<ul><li>Status <i class="fa fa-check"></i></li></ul>`, {
+        filePath: "input.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/non-interactive prose <li>/);
+    });
+
+    it("does NOT fire when icon already carries aria-hidden", () => {
+      const violations = runRule(
+        rule,
+        `<h3><i class="fa fa-star" aria-hidden="true"></i> Title</h3>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT fire when an sr-only sibling carries the name", () => {
+      const violations = runRule(
+        rule,
+        `<h3><i class="fa fa-star"></i> <span class="sr-only">star</span> Title</h3>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT fire when a visually-hidden sibling carries the name (Bootstrap variant)", () => {
+      const violations = runRule(
+        rule,
+        `<p>Status: <i class="fa fa-check"></i><span class="visually-hidden">complete</span></p>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT fire when the icon itself carries aria-label", () => {
+      const violations = runRule(
+        rule,
+        `<h3>Click <i class="fa fa-heart" aria-label="like"></i> to like</h3>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT fire when the direct parent of the icon carries aria-label", () => {
+      const violations = runRule(
+        rule,
+        `<p>Click <span aria-label="like"><i class="fa fa-heart"></i></span> to like</p>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT fire on icons inside a labeled-interactive nested in prose (labeled-interactive pass owns it)", () => {
+      // The <button> labeled-interactive pass already emits one
+      // double-announce finding for this icon. The prose-context pass
+      // must NOT also emit on the same icon.
+      const violations = runRule(
+        rule,
+        `<p>Click <button aria-label="Close"><i class="fa fa-times"></i></button> to dismiss</p>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/double-announce/);
+    });
+
+    it("fires once (not twice) on an icon inside nested prose containers", () => {
+      // Both the <li> and the <p> are prose containers. The walker
+      // should not double-emit — we stop at nested prose containers
+      // during descent, and the outer per-prose-ancestor walk owns
+      // the icons inside its closest prose ancestor.
+      const violations = runRule(rule, `<li><p>Status <i class="fa fa-check"></i></p></li>`, {
+        filePath: "input.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("fires for Bootstrap <span class='text-danger'> prose container", () => {
+      const violations = runRule(
+        rule,
+        `<span class="text-danger">Error <i class="fa fa-exclamation"></i></span>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/non-interactive prose <span>/);
+    });
+
+    it("does NOT fire for plain <span> without a text-* class (too broad)", () => {
+      const violations = runRule(rule, `<span><i class="fa fa-star"></i></span>`, {
+        filePath: "input.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("fires for table cells (<td> is in the prose-container set)", () => {
+      const violations = runRule(
+        rule,
+        `<table><tr><td>Status <i class="fa fa-check"></i></td></tr></table>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/non-interactive prose <td>/);
+    });
+
+    it("fires for JSX <h3> verb-icon prose case", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => (
+          <h3>Double click on the image to <i className="fas fa-heart" /> it</h3>
+        );`,
+        { filePath: "input.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/non-interactive prose <h3>/);
+    });
+
+    it("does NOT fire in JSX when icon has aria-label", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => (
+          <p>Click <i className="fa fa-heart" aria-label="like" /> to like</p>
+        );`,
+        { filePath: "input.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT fire in JSX when sr-only sibling carries the name", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => (
+          <h3><i className="fa fa-star" /> <span className="sr-only">star</span> Title</h3>
+        );`,
+        { filePath: "input.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("prose-context finding has a distinct findingId from the double-announce finding", () => {
+      // One prose-context icon, one labeled-interactive icon — the
+      // variantKey "prose-context" must keep the engine's findingId
+      // hash separable from the unannotated/double-announce kind.
+      const violations = runRule(
+        rule,
+        `<h3>Click <i class="fa fa-heart"></i> to like</h3>
+         <button aria-label="Close"><i class="fa fa-times"></i></button>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(2);
+      const ids = new Set(violations.map((v) => v.findingId));
+      expect(ids.size).toBe(2);
+    });
+  });
 });

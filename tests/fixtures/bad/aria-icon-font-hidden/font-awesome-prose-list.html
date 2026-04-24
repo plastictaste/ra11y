@@ -1,0 +1,15 @@
+<!--
+  Bad: Font Awesome check glyph in a <li> list item with no aria-hidden
+  and no sr-only sibling. The list reads "Status [check]" to sighted
+  users; SR users hear "Status" with no signal that the row is complete.
+  Expect: rule aria/icon-font-hidden fires once at severity "info"
+  with variantKey "prose-context".
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <ul>
+      <li>Build <i class="fa fa-check"></i></li>
+    </ul>
+  </body>
+</html>

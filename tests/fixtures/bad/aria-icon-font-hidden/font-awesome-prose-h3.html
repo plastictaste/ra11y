@@ -1,0 +1,16 @@
+<!--
+  Bad: Font Awesome heart glyph dropped into the prose of an <h3>. The
+  surrounding text says "Double click on the image to [heart] it" — the
+  glyph IS the verb. Sighted users see the heart and read the verb;
+  screen-reader users hear "Double click on the image to it" because
+  the empty <i> contributes nothing to the accessible name. The
+  meaning is lost.
+  Expect: rule aria/icon-font-hidden fires once at severity "info"
+  with variantKey "prose-context".
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <h3>Double click on the image to <i class="fas fa-heart"></i> it</h3>
+  </body>
+</html>
