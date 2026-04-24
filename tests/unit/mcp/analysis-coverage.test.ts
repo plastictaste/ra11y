@@ -917,6 +917,108 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
+  // V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE: prose in
+  // `.md` / `.markdown` files routinely QUOTES template directives
+  // inside fenced code blocks and inline-code spans. A Jekyll docs
+  // page that shows `<%= Time.now %>` as an ERB usage example stamped
+  // `erb-or-ejs` on the whole scan's telemetry — despite zero `.erb`
+  // files reaching the parser. Strip markdown code regions before
+  // classification so prose examples stop tripping the detector.
+  describe("markdown code-region stripping for template classifier", () => {
+    it("does not tag `erb-or-ejs` when `<%= x %>` lives in a fenced code block in a .md file", () => {
+      // Jekyll `docs/_docs/troubleshooting.md:261` — canonical repro.
+      const mdDocs = htmlFile(
+        "docs/troubleshooting.md",
+        [
+          "# Troubleshooting",
+          "",
+          "Here is an ERB example:",
+          "",
+          "```ruby",
+          "<%= Time.now %>",
+          "```",
+          "",
+          "End of section.",
+        ].join("\n"),
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mdDocs], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
+
+    it("does not tag `jinja-or-liquid` when `{% tag %}` lives in a fenced code block in a .markdown file", () => {
+      // Jekyll release-notes prose — `History.markdown` style.
+      const releaseNotes = htmlFile(
+        "History.markdown",
+        [
+          "## Release 4.0",
+          "",
+          "```liquid",
+          "{% assign foo = 'bar' %}",
+          "{{ foo }}",
+          "```",
+        ].join("\n"),
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([releaseNotes], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
+
+    it("does not tag `erb-or-ejs` when `<% ... %>` lives in an inline-code span in a .md file", () => {
+      const mdInline = htmlFile(
+        "docs/tutorial.md",
+        "Use the `<% end %>` tag to close a block.",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mdInline], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
+
+    it("does not tag `handlebars-or-mustache` when `{{ x }}` lives in an inline-code span in a .md file", () => {
+      const mdInline = htmlFile(
+        "docs/tutorial.md",
+        "The `{{ page.title }}` expression renders the page title.",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mdInline], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
+
+    it("still tags directives that appear OUTSIDE a fenced block in the same .md file", () => {
+      // Mixed: a real directive in body prose (rare but possible — a
+      // Hugo theme README that literally renders `{{ .Title }}`) plus
+      // a quoted example in a fence. The fence is stripped; the live
+      // directive stays. Over-stripping would silently drop honest
+      // template evidence.
+      const mixed = htmlFile(
+        "README.md",
+        [
+          "# Title",
+          "",
+          "{% assign user = 'alice' %}",
+          "",
+          "```text",
+          "<% old example %>",
+          "```",
+        ].join("\n"),
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mixed], [], NO_RULES, false);
+      // Real `{% assign %}` outside the fence is decisive Liquid.
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
+
+    it("does not strip code regions in non-markdown HTML files — prose + fences are an .md concern only", () => {
+      // A plain `.html` file with literal backticks does not go
+      // through the markdown stripper (backticks are not HTML
+      // code-block syntax). The classifier sees the full source; a
+      // `<%= %>` inside a `<pre><code>` block still surfaces as
+      // `erb-or-ejs` because stripping `<pre><code>` requires AST
+      // analysis, out of scope for this fix.
+      const htmlWithPre = htmlFile(
+        "example.html",
+        "<pre><code><%= Time.now %></code></pre>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([htmlWithPre], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["erb-or-ejs"]);
+    });
+  });
+
   describe("preset: 'storybook'", () => {
     it("counts Storybook primitives as opaque when preset is not active", () => {
       // Story file scanned as plain TSX: every primitive inflates the
