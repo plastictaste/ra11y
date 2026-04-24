@@ -250,6 +250,98 @@ describe("review/flashing-content — CSS @keyframes short cycle", () => {
     expect(out).toEqual([]);
   });
 
+  it("does NOT quote cycles/s for a one-shot animation with no iteration-count (e.g. `animation: fade-in 0.15s`)", () => {
+    // A 150ms entrance animation with no `animation-iteration-count`
+    // declaration runs once (CSS default = 1). Quoting "~6.7 cycles/s"
+    // claims a 6.7Hz flash that the math does not support — a single
+    // 150ms fade does not cycle at any frequency. The reason must drop
+    // the cycles/s arithmetic and instead frame the question as
+    // "flashing only if iteration-count turns this into a repeating
+    // animation," matching how the agent should investigate.
+    const source = `
+      @keyframes fade-in {
+        0% { opacity: 0; }
+        100% { opacity: 1; }
+      }
+      .entry { animation: fade-in 0.15s linear; }
+    `;
+    const out = runFinder(finder, source, { filePath: "styles.css" });
+    expect(out.length).toBeGreaterThan(0);
+    const reason = out[0]?.reason ?? "";
+    expect(reason).toContain("150ms");
+    expect(reason).toContain("single");
+    expect(reason).toContain("iteration-count");
+    expect(reason).not.toContain("cycles/s");
+    expect(reason).not.toContain("Hz");
+  });
+
+  it("does NOT quote cycles/s when `animation-iteration-count: 1` is explicit (sibling longhand)", () => {
+    // Equivalent shape via split longhands: when iteration-count is
+    // explicitly 1, the cycles-per-second math is still dishonest.
+    const source = `
+      @keyframes fade-in { 0% { opacity: 0; } 100% { opacity: 1; } }
+      .entry {
+        animation-name: fade-in;
+        animation-duration: 200ms;
+        animation-iteration-count: 1;
+      }
+    `;
+    const out = runFinder(finder, source, { filePath: "styles.css" });
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.reason ?? "").not.toContain("cycles/s");
+    expect(out[0]?.reason ?? "").toContain("single 200ms");
+  });
+
+  it("DOES quote cycles/s when shorthand carries `infinite` (`animation: spin 0.15s infinite linear`)", () => {
+    // Repeating animations: the cycles-per-second figure IS meaningful
+    // — at 150ms × infinite the agent should verify the on-screen
+    // result against the 3-flashes/s threshold. Reason text retains the
+    // arithmetic so the agent doesn't have to recompute.
+    const source = `
+      @keyframes spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
+      .loader { animation: spin 0.15s infinite linear; }
+    `;
+    const out = runFinder(finder, source, { filePath: "styles.css" });
+    expect(out.length).toBeGreaterThan(0);
+    const reason = out[0]?.reason ?? "";
+    expect(reason).toContain("150ms");
+    expect(reason).toContain("cycles/s");
+    expect(reason).toContain("iteration-count: infinite");
+  });
+
+  it("DOES quote cycles/s when `animation-iteration-count` is an integer ≥2 (sibling longhand)", () => {
+    // Integer counts ≥2 still mean the animation repeats; cycles/s is
+    // meaningful. The reason carries the actual count so the agent can
+    // multiply (count × duration) against the >3-flashes/s threshold.
+    const source = `
+      @keyframes pulse { 0% { opacity: 1; } 100% { opacity: 0; } }
+      .blink {
+        animation-name: pulse;
+        animation-duration: 200ms;
+        animation-iteration-count: 5;
+      }
+    `;
+    const out = runFinder(finder, source, { filePath: "styles.css" });
+    expect(out.length).toBeGreaterThan(0);
+    const reason = out[0]?.reason ?? "";
+    expect(reason).toContain("cycles/s");
+    expect(reason).toContain("iteration-count: 5×");
+  });
+
+  it("does NOT fire on `transition: opacity 0.15s` (transitions are not animations and the finder skips them)", () => {
+    // `transition` triggers on state change and runs once per change,
+    // so it cannot generate a sustained flash on its own. The finder
+    // intentionally does not parse the `transition` shorthand — adding
+    // it would re-create the cycles/s-math bug on a property where
+    // iteration-count is not even meaningful.
+    const source = `
+      .button { transition: opacity 0.15s ease-in; }
+      .button:hover { opacity: 0; }
+    `;
+    const out = runFinder(finder, source, { filePath: "styles.css" });
+    expect(out).toEqual([]);
+  });
+
   it("surfaces an animation whose keyframes are not in this file (unknown-name edge case)", () => {
     const source = loadFixture("edge", "unknown-keyframe-name.css");
     const out = runFinder(finder, source, { filePath: "styles.css" });

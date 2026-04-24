@@ -61,9 +61,22 @@ interface FlashInfo {
   readonly reason: string;
 }
 
+/**
+ * `iterationCount` is `"infinite"`, a positive integer count, or
+ * `undefined` (unspecified — CSS default of 1). The reason-text builder
+ * uses this to decide whether the cycles-per-second arithmetic is
+ * meaningful: a one-shot animation cannot cycle at any frequency, so
+ * quoting "~6.7Hz" for `animation: fade-in 0.15s` is mathematically
+ * dishonest. See V1-MOTION-2.3.1-CYCLES-PER-SECOND-MATH and
+ * tests/fixtures/real-world/jekyll-docsearch-scss-line-drift for the
+ * field-report repro.
+ */
+type IterationCount = "infinite" | number | undefined;
+
 interface ParsedAnimation {
   readonly durationMs: number;
   readonly name: string | undefined;
+  readonly iterationCount: IterationCount;
 }
 
 interface KeyframesSummary {
@@ -93,44 +106,94 @@ function extractShortCycleFlashInfo(
   cssRule: CssRule,
   keyframesIndex: ReadonlyMap<string, KeyframesSummary>,
 ): FlashInfo | undefined {
+  // Scan every declaration once before deciding — `animation-iteration-count`
+  // is frequently a sibling longhand of `animation-duration`, and missing
+  // it because we returned early on the first duration sighting is the
+  // V1-MOTION-2.3.1-CYCLES-PER-SECOND-MATH bug. Shorthand `animation:`
+  // can also carry the count inline (e.g. `animation: spin 0.15s infinite`).
+  let durationMs: number | undefined;
+  let name: string | undefined;
+  let iterationCount: IterationCount;
   for (const decl of cssRule.declarations) {
     const prop = decl.property.toLowerCase();
     const parsed = parseAnimationDeclaration(prop, decl.value);
-    if (!parsed) continue;
-    const { durationMs, name } = parsed;
-    if (durationMs > SHORT_CYCLE_MS) continue;
-    const summary = name ? keyframesIndex.get(name) : undefined;
-    if (summary && !summary.mutatesFlashProperties) continue;
-    const reason = buildCssFlashReason(cssRule.selector, durationMs, name, summary);
-    // Anchor on the ruleset opener (the selector line), not on the
-    // `animation:` declaration line. A multi-line ruleset like
-    // `:valid ~ .searchbox__reset { ...; animation: fade-in 0.3s ...; }`
-    // carries its declaration ten-plus rows past the selector; pointing
-    // at the declaration sends the agent reading from the wrong block
-    // entirely when adjacent rulesets share leading tokens. The selector
-    // is the structural anchor — it identifies which DOM context the
-    // animation runs in. See tests/fixtures/real-world/
-    // jekyll-docsearch-scss-line-drift for the regression guard.
-    return {
-      anchorLine: cssRule.loc.start.line,
-      anchorColumn: cssRule.loc.start.column,
-      reason,
-    };
+    if (parsed) {
+      // First duration wins — multiple `animation:` declarations would
+      // be unusual; the cascade keeps the last one but we surface either.
+      if (durationMs === undefined) durationMs = parsed.durationMs;
+      if (name === undefined) name = parsed.name;
+      if (iterationCount === undefined && parsed.iterationCount !== undefined) {
+        iterationCount = parsed.iterationCount;
+      }
+      continue;
+    }
+    if (prop === "animation-iteration-count" && iterationCount === undefined) {
+      iterationCount = parseIterationCount(decl.value);
+    }
   }
-  return undefined;
+  if (durationMs === undefined || durationMs > SHORT_CYCLE_MS) return undefined;
+  const summary = name ? keyframesIndex.get(name) : undefined;
+  if (summary && !summary.mutatesFlashProperties) return undefined;
+  const reason = buildCssFlashReason(cssRule.selector, durationMs, name, iterationCount, summary);
+  // Anchor on the ruleset opener (the selector line), not on the
+  // `animation:` declaration line. A multi-line ruleset like
+  // `:valid ~ .searchbox__reset { ...; animation: fade-in 0.3s ...; }`
+  // carries its declaration ten-plus rows past the selector; pointing
+  // at the declaration sends the agent reading from the wrong block
+  // entirely when adjacent rulesets share leading tokens. The selector
+  // is the structural anchor — it identifies which DOM context the
+  // animation runs in. See tests/fixtures/real-world/
+  // jekyll-docsearch-scss-line-drift for the regression guard.
+  return {
+    anchorLine: cssRule.loc.start.line,
+    anchorColumn: cssRule.loc.start.column,
+    reason,
+  };
 }
 
 function parseAnimationDeclaration(property: string, value: string): ParsedAnimation | undefined {
   const cleaned = value.replace(/!important$/i, "").trim();
   if (property === "animation-duration") {
     const durationMs = parseFirstDurationMs(cleaned);
-    return durationMs === undefined ? undefined : { durationMs, name: undefined };
+    return durationMs === undefined
+      ? undefined
+      : { durationMs, name: undefined, iterationCount: undefined };
   }
   if (property === "animation") {
     const durationMs = parseFirstDurationMs(cleaned);
     if (durationMs === undefined) return undefined;
     const name = extractAnimationName(cleaned);
-    return { durationMs, name };
+    const iterationCount = extractIterationCountFromShorthand(cleaned);
+    return { durationMs, name, iterationCount };
+  }
+  return undefined;
+}
+
+function parseIterationCount(value: string): IterationCount {
+  const cleaned = value.replace(/!important$/i, "").trim().toLowerCase();
+  if (cleaned === "infinite") return "infinite";
+  // CSS spec accepts fractional counts (`2.5`) but anything ≥2 still
+  // means the animation repeats, so the cycles-per-second math is
+  // meaningful. Anything ≤1 (including the default unspecified) is a
+  // one-shot from a flash-perception standpoint.
+  const n = Number.parseFloat(cleaned);
+  if (Number.isFinite(n) && n > 0) return n;
+  return undefined;
+}
+
+function extractIterationCountFromShorthand(value: string): IterationCount {
+  const withoutFns = value.replace(/\b(?:cubic-bezier|steps)\s*\([^)]*\)/gi, "");
+  const tokens = withoutFns.split(/\s+/).filter((t) => t.length > 0);
+  for (const token of tokens) {
+    const lowered = token.toLowerCase();
+    if (lowered === "infinite") return "infinite";
+    // Bare positive number (no s/ms suffix) in the shorthand position is
+    // the iteration count. A duration token (`0.15s`, `200ms`) carries
+    // its unit and is rejected here.
+    if (/^\d+(?:\.\d+)?$/.test(token)) {
+      const n = Number.parseFloat(token);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
   }
   return undefined;
 }
@@ -194,16 +257,37 @@ function buildCssFlashReason(
   selector: string,
   durationMs: number,
   name: string | undefined,
+  iterationCount: IterationCount,
   summary: KeyframesSummary | undefined,
 ): string {
   const durationText = formatDuration(durationMs);
-  const frequency = durationMs > 0 ? (1000 / durationMs).toFixed(1) : "∞";
   const target = name ? `animation '${name}'` : "animation";
   const propsNote =
     summary && summary.observedProperties.length > 0
       ? ` mutating ${summary.observedProperties.join(", ")}`
       : "";
-  return `'${selector}' ${target}${propsNote} runs one cycle every ${durationText} (~${frequency} cycles/s) with no prefers-reduced-motion guard — verify the animation does not flash more than 3 times per second over an area larger than the WCAG 2.3.1 general-flash threshold`;
+  if (isRepeating(iterationCount)) {
+    // Cycles-per-second is well-defined only when the animation actually
+    // repeats. `infinite` and integer counts ≥2 both qualify; the agent
+    // verifies whether the count × duration crosses the >3-flashes/s
+    // threshold from the surrounding code.
+    const frequency = durationMs > 0 ? (1000 / durationMs).toFixed(1) : "∞";
+    const countText = iterationCount === "infinite" ? "infinite" : `${iterationCount}×`;
+    return `'${selector}' ${target}${propsNote} runs one cycle every ${durationText} (~${frequency} cycles/s, iteration-count: ${countText}) with no prefers-reduced-motion guard — verify the animation does not flash more than 3 times per second over an area larger than the WCAG 2.3.1 general-flash threshold`;
+  }
+  // One-shot: the cycles/s number would be mathematically dishonest
+  // (a single 150ms entrance animation cannot cycle at 6.7Hz). Surface
+  // the duration and prompt the agent to verify whether iteration-count
+  // turns the animation into a repeating flash. Per the AI-first
+  // consumer model: keep the candidate (don't suppress), enrich the
+  // reason instead.
+  return `'${selector}' ${target}${propsNote} runs a single ${durationText} animation with no prefers-reduced-motion guard — flashing only if iteration-count is set to 'infinite' or a value >3; verify the surrounding code does not turn this into a repeating flash`;
+}
+
+function isRepeating(iterationCount: IterationCount): boolean {
+  if (iterationCount === undefined) return false;
+  if (iterationCount === "infinite") return true;
+  return iterationCount >= 2;
 }
 
 function formatDuration(ms: number): string {

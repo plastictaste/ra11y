@@ -65,5 +65,19 @@ export const assertions: FixtureAssertions = {
       line: 22,
       reasonIncludes: ":valid ~ .searchbox__reset",
     },
+
+    // Reason-text math honesty: `animation: fade-in 0.3s linear forwards`
+    // has no `animation-iteration-count`, so the CSS default of `1`
+    // applies — the entrance animation runs once. A "cycles per second"
+    // figure is mathematically meaningless for a one-shot transition
+    // (a single 300ms fade-in does not flash at 3.3Hz), so the reason
+    // must NOT quote a "~Xhz" / "cycles/s" figure for this candidate.
+    // It should instead frame the question as "flashing only if
+    // iteration-count is set to infinite or a value >3."
+    {
+      kind: "candidate-present-without",
+      criterionId: "wcag22:2.3.1",
+      reasonExcludes: "cycles/s",
+    },
   ],
 };
