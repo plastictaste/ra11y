@@ -1908,6 +1908,98 @@ describe("MCP tool: sessionConfigure", () => {
     // TrulyGhost present nowhere → still unused.
     expect(data.meta.unusedNativeWrappers).toEqual(["TrulyGhost"]);
   });
+
+  it("allowWrite: true persists without cwd and echoes the effective gate", async () => {
+    // Regression guard: prior behavior silently dropped `allowWrite:
+    // true` in some envs and returned `active.allowWrite:false` as if
+    // the gate had never been asked to flip. AI-first doctrine rejects
+    // that silent-success shape — the echoed `active` must match the
+    // session's post-call state, and a boolean opt-in with no other
+    // params must land.
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler({ allowWrite: true }, session);
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      active: { allowWrite: boolean };
+    };
+    expect(data.active.allowWrite).toBe(true);
+    expect(session.config.allowWrite).toBe(true);
+  });
+
+  it("allowWrite: false re-gates a previously opened session", async () => {
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    await tool.handler({ allowWrite: true }, session);
+    expect(session.config.allowWrite).toBe(true);
+    const result = await tool.handler({ allowWrite: false }, session);
+    const data = JSON.parse(result.content[0].text) as {
+      active: { allowWrite: boolean };
+    };
+    expect(data.active.allowWrite).toBe(false);
+    expect(session.config.allowWrite).toBe(false);
+  });
+
+  it("rejects non-boolean allowWrite instead of silently dropping it", async () => {
+    // Silent drop shape: caller sends `allowWrite: "true"` (string) or
+    // `allowWrite: 1` (number), the typeof guard skips the assignment,
+    // and the response echoes `active.allowWrite:false`. Indistinguishable
+    // from "I never asked" — the AI-first doctrine's canonical
+    // ambiguous-success failure mode. Reject with a structured error so
+    // the agent knows to resend a real boolean.
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler({ allowWrite: "true" }, session);
+    expect(result.isError).toBe(true);
+    const structured = result.structuredContent as { code: string; details?: { param: string } };
+    expect(structured.code).toBe("invalid-param");
+    expect(structured.details?.param).toBe("allowWrite");
+    // Session state must not have been mutated on a rejected call.
+    expect(session.config.allowWrite).toBe(false);
+  });
+
+  it("omitting allowWrite leaves the existing session setting untouched", async () => {
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    await tool.handler({ allowWrite: true }, session);
+    // Follow-up call that changes `standard` only must not collapse
+    // allowWrite back to its default — "absent" is not "false".
+    const result = await tool.handler({ standard: "wcag21" }, session);
+    const data = JSON.parse(result.content[0].text) as {
+      active: { allowWrite: boolean; standard: string };
+    };
+    expect(data.active.allowWrite).toBe(true);
+    expect(data.active.standard).toBe("wcag21");
+    expect(session.config.allowWrite).toBe(true);
+  });
+
+  it("mutating-tool gate honors the post-configure state", async () => {
+    // End-to-end check: after sessionConfigure({allowWrite:true}),
+    // apply_fix's `allow-write-disabled` gate must no longer trip.
+    // This is what the backlog item's "gate doesn't actually apply"
+    // variant is asking for — the echoed effective state in
+    // `active.allowWrite` must line up with what the enforcement
+    // sites read.
+    const tool = findTool("sessionConfigure");
+    const applyFixTool = findTool("apply_fix");
+    const session = new McpSession();
+
+    // Before: gate engaged, a missing-args call should still rebound
+    // off `allow-write-disabled` specifically, not some other error.
+    const blocked = await applyFixTool.handler({}, session);
+    expect(blocked.isError).toBe(true);
+    const blockedCode = (blocked.structuredContent as { code: string }).code;
+    expect(blockedCode).toBe("allow-write-disabled");
+
+    // Flip the gate and re-call: the same bare-args call should now
+    // fail on a DIFFERENT code (missing `file`), proving allowWrite
+    // actually applied downstream.
+    await tool.handler({ allowWrite: true }, session);
+    const afterGate = await applyFixTool.handler({}, session);
+    expect(afterGate.isError).toBe(true);
+    const afterCode = (afterGate.structuredContent as { code: string }).code;
+    expect(afterCode).not.toBe("allow-write-disabled");
+  });
 });
 
 describe("MCP tool: coverage", () => {

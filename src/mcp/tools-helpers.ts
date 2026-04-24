@@ -378,7 +378,26 @@ function readNativeWrappersParam(params: Record<string, unknown>): {
   return {};
 }
 
-export function buildConfigureOpts(params: Record<string, unknown>): ConfigureOpts {
+/**
+ * Discriminated result from `buildConfigureOpts`: either the validated
+ * options (on success) or a {@link StructuredError} ready for
+ * `errorResult` (on a type mismatch the caller can still fix from the
+ * response alone). The security-load-bearing case today is
+ * `allowWrite` — a string `"true"` or a number `1` used to silently
+ * fall through to the typeof-boolean guard and leave the gate at its
+ * prior value, so the caller saw `allowWrite:false` in the echoed
+ * active config and had no way to distinguish "I was dropped" from
+ * "the setting was already off". See AI-first doctrine: silent drops
+ * are dishonest at the field level. Other string-typed params already
+ * surface naturally (an unknown `level` falls through to the session's
+ * current `AA`, which the handler re-echoes) — the discriminated shape
+ * is here so future validation has a shared home.
+ */
+export type ConfigureOptsResult =
+  | { readonly ok: true; readonly opts: ConfigureOpts }
+  | { readonly ok: false; readonly error: StructuredError };
+
+export function buildConfigureOpts(params: Record<string, unknown>): ConfigureOptsResult {
   const opts: ConfigureOpts = {};
   const standard = strParam(params, "standard");
   const level = strParam(params, "level") as "A" | "AA" | "AAA" | undefined;
@@ -387,7 +406,28 @@ export function buildConfigureOpts(params: Record<string, unknown>): ConfigureOp
   const { names: nativeWrappers, elements: nativeWrapperElements } =
     readNativeWrappersParam(params);
   const cwd = strParam(params, "cwd");
-  const allowWrite = params["allowWrite"];
+  // `allowWrite` — surface a structured error when the caller sent the
+  // key but with the wrong JSON type (e.g. `"true"` or `1`). Silently
+  // dropping would return `active.allowWrite:false` as if the gate had
+  // never been flipped, which is indistinguishable from "I never asked
+  // to flip it" on the response side — the canonical ambiguous-success
+  // failure mode the AI-first doctrine warns against. Absent key stays
+  // absent (no coercion of missing-to-false).
+  const hasAllowWrite = Object.hasOwn(params, "allowWrite");
+  const allowWriteRaw = params["allowWrite"];
+  if (hasAllowWrite && typeof allowWriteRaw !== "boolean") {
+    return {
+      ok: false,
+      error: {
+        code: "invalid-param",
+        message:
+          "`allowWrite` must be a boolean (`true` or `false`). Non-boolean values are rejected rather than silently dropped so the session's write gate reflects what the host asked for.",
+        details: { param: "allowWrite", received: typeof allowWriteRaw },
+        remediation:
+          "Send `allowWrite: true` (JSON boolean) to unlock `apply_fix` / `suppress` / `attest`, or omit the field to leave the current setting untouched.",
+      },
+    };
+  }
   if (standard !== undefined) opts.standard = standard;
   if (level !== undefined) opts.level = level;
   if (exclude !== undefined) opts.exclude = exclude;
@@ -395,8 +435,8 @@ export function buildConfigureOpts(params: Record<string, unknown>): ConfigureOp
   if (nativeWrappers !== undefined) opts.nativeWrappers = nativeWrappers;
   if (nativeWrapperElements !== undefined) opts.nativeWrapperElements = nativeWrapperElements;
   if (cwd !== undefined) opts.cwd = cwd;
-  if (typeof allowWrite === "boolean") opts.allowWrite = allowWrite;
-  return opts;
+  if (typeof allowWriteRaw === "boolean") opts.allowWrite = allowWriteRaw;
+  return { ok: true, opts };
 }
 
 /** Millisecond elapsed since a performance.now() timestamp, formatted. */

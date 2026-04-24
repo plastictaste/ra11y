@@ -263,7 +263,9 @@ const sessionConfigureTool: McpTool = {
     annotations: { idempotentHint: true },
   },
   handler(params, session) {
-    const config = session.configure(buildConfigureOpts(params));
+    const parsed = buildConfigureOpts(params);
+    if (!parsed.ok) return errorResult(parsed.error);
+    const config = session.configure(parsed.opts);
     const ruleCount = session.registry.rules.filter((r) =>
       r.satisfies.some((s) => s.startsWith(`${config.standard}:`)),
     ).length;
