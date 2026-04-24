@@ -132,6 +132,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [forms/placeholder-as-label](./rules/forms__placeholder-as-label.md)
 - [forms/radio-group-without-fieldset](./rules/forms__radio-group-without-fieldset.md)
 - [forms/required-indicator-missing](./rules/forms__required-indicator-missing.md)
+- [forms/required-marker-without-required-attr](./rules/forms__required-marker-without-required-attr.md)
 - [keyboard/accesskey-duplicate](./rules/keyboard__accesskey-duplicate.md)
 - [keyboard/character-shortcuts](./rules/keyboard__character-shortcuts.md)
 - [keyboard/handler-missing](./rules/keyboard__handler-missing.md)
