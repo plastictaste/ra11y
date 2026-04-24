@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Contact</title>
+  </head>
+  <body>
+    <!--
+      Canonical real-world failure shape: Bootstrap-derived form with a
+      red `*` next to the label text. Sighted users see "Username/Email
+      required" by colour. Screen-reader users hear "Username/Email star
+      edit text" — the colour-only marker is flagged by
+      color/meaning-by-color-only, but the input itself sets neither
+      `required` nor `aria-required="true"`, so the requirement is also
+      not in the accessibility tree at all. This rule fires on the input.
+    -->
+    <form>
+      <label for="email">Username/Email <span class="text-danger">*</span></label>
+      <input id="email" type="text" class="form-control" />
+    </form>
+  </body>
+</html>

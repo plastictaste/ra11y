@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Contact</title>
+  </head>
+  <body>
+    <!--
+      Compliant: the visible marker remains, but the input also carries
+      the boolean `required` attribute. The browser exposes the required
+      state to assistive tech and blocks form submission when empty.
+    -->
+    <form>
+      <label for="email">Email <span class="text-danger">*</span></label>
+      <input id="email" type="email" required />
+    </form>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Feedback</title>
+  </head>
+  <body>
+    <!--
+      `<abbr title="required">*</abbr>` is the more accessible asterisk
+      pattern — but it only addresses the *visible* marker. The textarea
+      itself still must expose required state (via `required` or
+      `aria-required="true"`) for assistive tech. This fixture is the
+      failure: no required, no aria-required.
+    -->
+    <form>
+      <label for="bio">Bio <abbr title="required">*</abbr></label>
+      <textarea id="bio" rows="4"></textarea>
+    </form>
+  </body>
+</html>

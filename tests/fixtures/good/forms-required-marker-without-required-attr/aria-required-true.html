@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Search</title>
+  </head>
+  <body>
+    <!--
+      Compliant: setting `aria-required="true"` is sufficient when the
+      author wants to announce the required state without engaging the
+      browser's native submission-blocking validation (e.g. server-side
+      validation handles the empty case).
+    -->
+    <form>
+      <label for="q">Query <span class="text-danger">*</span></label>
+      <input id="q" type="search" aria-required="true" />
+    </form>
+  </body>
+</html>
