@@ -392,6 +392,120 @@ describe("rule navigation/link-descriptive-text", () => {
     });
   });
 
+  describe("title / aria-label that duplicates visible text is NOT an override", () => {
+    // `title` and `aria-label` normally short-circuit this rule by
+    // supplying a different accessible name than the body text. When
+    // the override value is an exact (case-insensitive, trimmed)
+    // duplicate of the visible text, it contributes nothing new — AT
+    // announces the single name — so the generic-phrase path continues
+    // to fire. See rule header comments on `hasAccessibleNameOverride*`.
+
+    it("HTML: flags when title equals the visible generic text", () => {
+      const v = runRule(rule, `<a href="/foo" title="Click here"><span>Click here</span></a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("click here");
+    });
+
+    it("HTML: flags when title equals visible text (no wrapper span)", () => {
+      const v = runRule(rule, `<a href="/x" title="read more">read more</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("read more");
+    });
+
+    it("HTML: case-insensitive + whitespace-trimmed duplicate still flags", () => {
+      const v = runRule(rule, `<a href="/x" title="  CLICK HERE  ">click here</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("HTML: body with trailing arrow vs plain title normalizes to match", () => {
+      const v = runRule(rule, `<a href="/x" title="Click here">Click here →</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("HTML: flags when aria-label equals visible generic text", () => {
+      const v = runRule(rule, `<a href="/x" aria-label="read more">read more</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("HTML: does NOT flag when title adds context (different from body)", () => {
+      // Title carries real additional info ("opens in new window") — the
+      // override genuinely supplies name content the body doesn't, so
+      // the generic-phrase path stays silent and lets the agent judge.
+      const v = runRule(
+        rule,
+        `<a href="/api-docs.pdf" title="API reference (PDF, opens in new tab)">click here</a>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: does NOT flag when aria-label adds context", () => {
+      const v = runRule(
+        rule,
+        `<a href="/settings" aria-label="Open account settings">click here</a>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: descriptive body text with duplicating title stays silent (not a generic phrase)", () => {
+      // The duplicate-title-is-not-an-override behavior only affects
+      // whether we fall through to the generic-phrase check — if the
+      // body text isn't a generic phrase, nothing fires. The
+      // `aria/duplicate-title-on-interactive` style of complaint is
+      // out of scope for this rule.
+      const v = runRule(rule, `<a href="/docs" title="Read the docs">Read the docs</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: empty-body icon-only link with non-matching title still silenced (existing contract)", () => {
+      // Regression guard: visible text is empty (icon-only), title is
+      // different → override returns true → icon-only path doesn't
+      // fire. This preserves the pre-existing
+      // `"the anchor has a title attribute"` behavior for icon-only
+      // anchors.
+      const v = runRule(
+        rule,
+        `<a href="/twitter" title="Twitter"><i class="fa fa-twitter"></i></a>`,
+        {
+          filePath: "index.html",
+        },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("JSX: flags when title equals visible generic text", () => {
+      const v = runRule(rule, `const X = <a href="/x" title="read more">read more</a>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("read more");
+    });
+
+    it("JSX: flags when aria-label equals visible generic text on <Link>", () => {
+      const v = runRule(rule, `const X = <Link to="/x" aria-label="click here">click here</Link>;`);
+      expect(v).toHaveLength(1);
+    });
+
+    it("JSX: does NOT flag when aria-label adds context (different from body)", () => {
+      const v = runRule(
+        rule,
+        `const X = <Link to="/x" aria-label="Open settings">click here</Link>;`,
+      );
+      expect(v).toHaveLength(0);
+    });
+  });
+
   describe("nativeWrapperElements mapping (Q2-WRAPMAP-RULES)", () => {
     it("opts in to the native `a` tag so mapped wrappers fire", () => {
       expect(rule.wrapperTreatsAsElement).toBe("a");

@@ -221,7 +221,6 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const a of findHtmlElementsByTag(doc, "a")) {
     if (!hasHtmlAttribute(a, "href")) continue;
-    if (hasAccessibleNameOverrideHtml(a)) continue;
 
     // Compute visible text stripped of presentational descendants
     // (icon-font glyphs, decorative <img>, any aria-hidden subtree).
@@ -235,6 +234,14 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     //   - matches a generic phrase → 2.4.4 generic-phrase path
     //   - otherwise → clean.
     const strippedText = visibleTextExcludingPresentationalHtml(a);
+
+    // `title` / `aria-label` normally override the body text for a11y
+    // name purposes. Treat them as non-overrides when they are exact
+    // (case-insensitive, trimmed) duplicates of the visible text —
+    // `<a title="click here">click here</a>` reads "click here" once
+    // to AT, not twice, so the body text still carries the generic-
+    // phrase signal.
+    if (hasAccessibleNameOverrideHtml(a, strippedText)) continue;
 
     if (strippedText.trim().length === 0) {
       emitIconOnlyHtml(a, emit);
@@ -293,10 +300,12 @@ function checkJsx(module: TsxModule, wrappersForA: ReadonlySet<string>, emit: Em
   const emitEl = (el: JsxElement): void => {
     if (seen.has(el)) return;
     seen.add(el);
-    if (hasAccessibleNameOverrideJsx(el)) return;
     if (!(hasJsxAttribute(el, "href") || hasJsxAttribute(el, "to"))) return;
 
     const strippedText = visibleTextExcludingPresentationalJsx(el);
+    // See `checkHtml` — title/aria-label duplicates of the visible
+    // text don't count as overrides.
+    if (hasAccessibleNameOverrideJsx(el, strippedText)) return;
     // Runtime JSX expression children (`<a>{label}</a>`) may carry a
     // name we can't see statically — avoid a false-positive icon-only
     // report on those. The generic-phrase path only fires on exact
@@ -350,22 +359,61 @@ function emitIconOnlyJsx(el: JsxElement, emit: Emit): void {
   });
 }
 
-function hasAccessibleNameOverrideHtml(el: HtmlElement): boolean {
+/**
+ * Returns true when the element carries an accessible-name override
+ * (`aria-label`, `aria-labelledby`, or `title`) that genuinely supplies
+ * a different name than the visible body text. When the override value
+ * is an exact (case-insensitive, whitespace-trimmed) duplicate of the
+ * visible text, it contributes nothing new — AT still announces the
+ * single name — so it is NOT treated as an override, and the generic-
+ * phrase path continues. Only `title` and `aria-label` are compared;
+ * `aria-labelledby` references a separate DOM node whose text this rule
+ * does not chase cross-element.
+ */
+function hasAccessibleNameOverrideHtml(el: HtmlElement, visibleText: string): boolean {
+  const normVisible = normalizeOverride(visibleText);
   const ariaLabel = getHtmlAttribute(el, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) {
+    if (normalizeOverride(ariaLabel) !== normVisible) return true;
+  }
   if (hasHtmlAttribute(el, "aria-labelledby")) return true;
   const title = getHtmlAttribute(el, "title");
-  if (title !== null && title.trim().length > 0) return true;
+  if (title !== null && title.trim().length > 0) {
+    if (normalizeOverride(title) !== normVisible) return true;
+  }
   return false;
 }
 
-function hasAccessibleNameOverrideJsx(el: JsxElement): boolean {
+function hasAccessibleNameOverrideJsx(el: JsxElement, visibleText: string): boolean {
+  const normVisible = normalizeOverride(visibleText);
   const ariaLabel = getJsxAttributeString(el, "aria-label");
-  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) {
+    if (normalizeOverride(ariaLabel) !== normVisible) return true;
+  }
   if (hasJsxAttribute(el, "aria-labelledby")) return true;
   const title = getJsxAttributeString(el, "title");
-  if (title !== null && title.trim().length > 0) return true;
+  if (title !== null && title.trim().length > 0) {
+    if (normalizeOverride(title) !== normVisible) return true;
+  }
   return false;
+}
+
+/**
+ * Canonicalize for exact-duplicate comparison: lowercase, collapse
+ * internal whitespace, strip leading/trailing whitespace, drop trailing
+ * decorative punctuation/arrows (`.!?→>»…`). The same trailing-glyph
+ * rule that `matchesGenericPhrase` uses — keeps the comparison strict
+ * on wording while tolerating typographic cues a `title`/`aria-label`
+ * attribute rarely carries (the common authoring pattern is a plain
+ * `title="Click here"` paired with a body `"Click here →"`).
+ */
+function normalizeOverride(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/gu, " ")
+    .replace(/[.!?→>»…]+$/u, "")
+    .trim();
 }
 
 function matchesGenericPhrase(text: string): string | null {
