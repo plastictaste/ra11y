@@ -67,14 +67,19 @@ interface FlashInfo {
  * uses this to decide whether the cycles-per-second arithmetic is
  * meaningful: a one-shot animation cannot cycle at any frequency, so
  * quoting "~6.7Hz" for `animation: fade-in 0.15s` is mathematically
- * dishonest. See V1-MOTION-2.3.1-CYCLES-PER-SECOND-MATH and
- * tests/fixtures/real-world/jekyll-docsearch-scss-line-drift for the
- * field-report repro.
+ * dishonest. See `tests/fixtures/real-world/jekyll-docsearch-scss-line-drift`
+ * for the sanitized field-report repro.
  */
 type IterationCount = "infinite" | number | undefined;
 
 interface ParsedAnimation {
   readonly durationMs: number;
+  readonly name: string | undefined;
+  readonly iterationCount: IterationCount;
+}
+
+interface AnimationFacts {
+  readonly durationMs: number | undefined;
   readonly name: string | undefined;
   readonly iterationCount: IterationCount;
 }
@@ -106,35 +111,17 @@ function extractShortCycleFlashInfo(
   cssRule: CssRule,
   keyframesIndex: ReadonlyMap<string, KeyframesSummary>,
 ): FlashInfo | undefined {
-  // Scan every declaration once before deciding — `animation-iteration-count`
-  // is frequently a sibling longhand of `animation-duration`, and missing
-  // it because we returned early on the first duration sighting is the
-  // V1-MOTION-2.3.1-CYCLES-PER-SECOND-MATH bug. Shorthand `animation:`
-  // can also carry the count inline (e.g. `animation: spin 0.15s infinite`).
-  let durationMs: number | undefined;
-  let name: string | undefined;
-  let iterationCount: IterationCount;
-  for (const decl of cssRule.declarations) {
-    const prop = decl.property.toLowerCase();
-    const parsed = parseAnimationDeclaration(prop, decl.value);
-    if (parsed) {
-      // First duration wins — multiple `animation:` declarations would
-      // be unusual; the cascade keeps the last one but we surface either.
-      if (durationMs === undefined) durationMs = parsed.durationMs;
-      if (name === undefined) name = parsed.name;
-      if (iterationCount === undefined && parsed.iterationCount !== undefined) {
-        iterationCount = parsed.iterationCount;
-      }
-      continue;
-    }
-    if (prop === "animation-iteration-count" && iterationCount === undefined) {
-      iterationCount = parseIterationCount(decl.value);
-    }
-  }
-  if (durationMs === undefined || durationMs > SHORT_CYCLE_MS) return undefined;
-  const summary = name ? keyframesIndex.get(name) : undefined;
+  const facts = collectAnimationFacts(cssRule);
+  if (facts.durationMs === undefined || facts.durationMs > SHORT_CYCLE_MS) return undefined;
+  const summary = facts.name ? keyframesIndex.get(facts.name) : undefined;
   if (summary && !summary.mutatesFlashProperties) return undefined;
-  const reason = buildCssFlashReason(cssRule.selector, durationMs, name, iterationCount, summary);
+  const reason = buildCssFlashReason(
+    cssRule.selector,
+    facts.durationMs,
+    facts.name,
+    facts.iterationCount,
+    summary,
+  );
   // Anchor on the ruleset opener (the selector line), not on the
   // `animation:` declaration line. A multi-line ruleset like
   // `:valid ~ .searchbox__reset { ...; animation: fade-in 0.3s ...; }`
@@ -149,6 +136,47 @@ function extractShortCycleFlashInfo(
     anchorColumn: cssRule.loc.start.column,
     reason,
   };
+}
+
+/**
+ * Walk every declaration on the rule once, picking up
+ * `animation` / `animation-duration` / `animation-name` /
+ * `animation-iteration-count` regardless of declaration order.
+ *
+ * The single-pass shape exists because iteration-count is frequently a
+ * sibling longhand of `animation-duration` — returning early on the
+ * first duration sighting (the prior shape) silently dropped the
+ * iteration-count signal and produced a one-shot animation reason that
+ * still claimed a "~Xhz" flash. The cycles-per-second arithmetic is
+ * meaningful only when the animation actually repeats.
+ */
+function collectAnimationFacts(cssRule: CssRule): AnimationFacts {
+  let facts: AnimationFacts = { durationMs: undefined, name: undefined, iterationCount: undefined };
+  for (const decl of cssRule.declarations) {
+    facts = mergeDeclarationIntoFacts(facts, decl.property.toLowerCase(), decl.value);
+  }
+  return facts;
+}
+
+function mergeDeclarationIntoFacts(
+  facts: AnimationFacts,
+  prop: string,
+  value: string,
+): AnimationFacts {
+  const parsed = parseAnimationDeclaration(prop, value);
+  if (parsed) {
+    // First duration wins — multiple `animation:` declarations would be
+    // unusual; the cascade keeps the last one but we surface either.
+    return {
+      durationMs: facts.durationMs ?? parsed.durationMs,
+      name: facts.name ?? parsed.name,
+      iterationCount: facts.iterationCount ?? parsed.iterationCount,
+    };
+  }
+  if (prop === "animation-iteration-count" && facts.iterationCount === undefined) {
+    return { ...facts, iterationCount: parseIterationCount(value) };
+  }
+  return facts;
 }
 
 function parseAnimationDeclaration(property: string, value: string): ParsedAnimation | undefined {
@@ -170,7 +198,10 @@ function parseAnimationDeclaration(property: string, value: string): ParsedAnima
 }
 
 function parseIterationCount(value: string): IterationCount {
-  const cleaned = value.replace(/!important$/i, "").trim().toLowerCase();
+  const cleaned = value
+    .replace(/!important$/i, "")
+    .trim()
+    .toLowerCase();
   if (cleaned === "infinite") return "infinite";
   // CSS spec accepts fractional counts (`2.5`) but anything ≥2 still
   // means the animation repeats, so the cycles-per-second math is
