@@ -23,6 +23,7 @@ import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts"
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
+import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
 import { runScanAndCollect } from "./scan-collect.ts";
 import { scannedFile } from "./scanned-envelope.ts";
@@ -108,6 +109,22 @@ export const scanFileTool: McpTool = {
     // fix, pick a different file on extension mismatch, re-check the
     // path on not-found) stays deterministic.
     const scanFileCwd = strParam(params, "cwd");
+    // V1-SCAN-FILE-CWD-CONTAINMENT: reject paths that escape the
+    // declared `cwd` sandbox before any fs access. Mirrors the guard
+    // apply_fix and suppress already enforce on their (cwd, file)
+    // inputs — every read-or-write tool accepting a explicit
+    // `(cwd, path)` pair must check the same boundary so agents form
+    // a single mental model of the escape envelope. The guard only
+    // fires when `cwd` is explicitly set: without a declared
+    // sandbox, the read-only `scan_file` / `suggest_fix` call is a
+    // "scan this absolute path" request with no containment claim,
+    // so there is nothing to enforce. The write tools (apply_fix,
+    // suppress) default cwd to process.cwd() and enforce
+    // unconditionally because an implicit sandbox is still a
+    // sandbox when a write is about to happen.
+    if (scanFileCwd !== undefined && (await resolveInsideCwd(filePath, scanFileCwd)) === null) {
+      return pathEscapesCwdResult(filePath, scanFileCwd);
+    }
     if (!(await pathExists(filePath, scanFileCwd))) {
       return fileNotFoundResult(filePath);
     }
@@ -189,6 +206,22 @@ export const scanFileTool: McpTool = {
     );
   },
 };
+
+/**
+ * Structured error for a path that resolves outside its declared
+ * `cwd`. Shared code (`path-escapes-cwd`) with `apply_fix` and
+ * `suppress` so agents branch once on the escape-boundary failure
+ * mode regardless of which tool detected it. V1-SCAN-FILE-CWD-
+ * CONTAINMENT — the asymmetry (suppress rejecting, scan_file
+ * accepting) was the mental-model break the fix closes.
+ */
+function pathEscapesCwdResult(filePath: string, cwd: string): McpToolResult {
+  return errorResult({
+    code: "path-escapes-cwd",
+    message: `path '${filePath}' escapes cwd '${cwd}'. Every scanned path must resolve inside the declared cwd.`,
+    details: { file: filePath, cwd },
+  });
+}
 
 /**
  * Structured error for a file path that does not exist on disk. Split

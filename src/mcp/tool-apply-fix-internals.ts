@@ -16,7 +16,6 @@
  * because the integration tests grep for it.
  */
 
-import { isAbsolute, relative, resolve } from "node:path";
 import { fingerprintOf } from "../engine/baseline.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
@@ -36,6 +35,7 @@ import type { Ast, ParseError } from "../types/ast.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
+import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import type { McpSession } from "./session.ts";
 import { errorResult, type McpToolResult, strParam } from "./tools-helpers.ts";
 
@@ -111,7 +111,7 @@ export async function preflightValidate(
     };
   }
   const cwd = strParam(params, "cwd") ?? process.cwd();
-  const resolved = resolveInsideCwd(filePathParam, cwd);
+  const resolved = await resolveInsideCwd(filePathParam, cwd);
   if (resolved === null) {
     return {
       error: errorResult({
@@ -291,22 +291,6 @@ export function parseErrorEnvelope(
     },
     remediation: "Revise the edit so the post-edit source parses cleanly, then retry.",
   });
-}
-
-/**
- * Resolves `filePath` against `cwd` and returns the absolute path only
- * when it stays inside the scan root. Returns null for any traversal
- * attempt: absolute paths outside cwd, or relative paths that climb out
- * via `..`. node:path.relative followed by the `../` prefix check is
- * the honest guard — the `..` check catches the symlink-free common
- * case without pretending to prove anti-symlink safety we can't prove.
- */
-function resolveInsideCwd(filePath: string, cwd: string): string | null {
-  const absCwd = isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
-  const abs = isAbsolute(filePath) ? filePath : resolve(absCwd, filePath);
-  const rel = relative(absCwd, abs);
-  if (rel.startsWith("..") || isAbsolute(rel)) return null;
-  return abs;
 }
 
 function readEdit(params: Record<string, unknown>): ResolvedEdit | null {

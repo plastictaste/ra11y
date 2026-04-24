@@ -5,6 +5,7 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
+import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
@@ -71,8 +72,26 @@ export const suggestFixTool: McpTool = {
       });
     }
 
+    // V1-SCAN-FILE-CWD-CONTAINMENT: reject paths that escape the
+    // declared `cwd` sandbox before any parse or fs access. Mirrors
+    // the guard apply_fix / suppress / scan_file already enforce —
+    // every tool accepting a caller-supplied `(cwd, file|path)` pair
+    // must check the same boundary so agents form a single mental
+    // model of the escape envelope. The guard only fires when `cwd`
+    // is explicitly set: without a declared sandbox, the read-only
+    // call is a "look up this absolute path" request with no
+    // containment claim. See the matching comment in tool-scan-file.ts.
+    const suggestFixCwd = strParam(params, "cwd");
+    if (suggestFixCwd !== undefined && (await resolveInsideCwd(filePath, suggestFixCwd)) === null) {
+      return errorResult({
+        code: "path-escapes-cwd",
+        message: `file '${filePath}' escapes cwd '${suggestFixCwd}'. Every suggested-fix target must resolve inside the declared cwd.`,
+        details: { file: filePath, cwd: suggestFixCwd },
+      });
+    }
+
     // Parse the file to find the specific violation and its suggestion.
-    const parsed = await session.parseFile(filePath, strParam(params, "cwd"));
+    const parsed = await session.parseFile(filePath, suggestFixCwd);
     if (!parsed) {
       return errorResult({
         code: "file-unsupported",

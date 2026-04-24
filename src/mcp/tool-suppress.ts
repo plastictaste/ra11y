@@ -19,7 +19,8 @@
  */
 
 import { readFile, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { relative } from "node:path";
+import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import type { McpSession } from "./session.ts";
 import {
   errorResult,
@@ -258,7 +259,7 @@ async function preflight(
     };
   }
   const cwd = strParam(params, "cwd") ?? process.cwd();
-  const resolved = resolveInsideCwd(file, cwd);
+  const resolved = await resolveInsideCwd(file, cwd);
   if (resolved === null) {
     return {
       error: errorResult({
@@ -360,20 +361,6 @@ function readRequiredStringParams(
     };
   }
   return { file, ruleId, reason };
-}
-
-/**
- * Resolves `file` against `cwd` and returns the absolute path only
- * when it stays inside the scan root. Null on any traversal attempt:
- * absolute paths outside cwd, or relative paths that climb out via
- * `..`. Mirrors the guard in `tool-apply-fix-internals.ts`.
- */
-function resolveInsideCwd(file: string, cwd: string): string | null {
-  const absCwd = isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
-  const abs = isAbsolute(file) ? file : resolve(absCwd, file);
-  const rel = relative(absCwd, abs);
-  if (rel.startsWith("..") || isAbsolute(rel)) return null;
-  return abs;
 }
 
 /**
