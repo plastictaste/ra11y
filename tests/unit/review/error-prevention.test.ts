@@ -38,7 +38,9 @@ describe("review/error-prevention", () => {
   });
 
   it("does not flag when onSubmit invokes confirm()", () => {
-    const source = `const x = <form name="subscribe" onSubmit={(e) => { if (!confirm('Sure?')) e.preventDefault(); }}><button type="submit">Subscribe</button></form>;`;
+    // name="checkout" is in-scope for 3.3.4; the confirm-handler branch
+    // of the file-level suppression should still silence the candidate.
+    const source = `const x = <form name="checkout" onSubmit={(e) => { if (!confirm('Sure?')) e.preventDefault(); }}><button type="submit">Pay</button></form>;`;
     const out = runFinder(finder, source);
     expect(out).toEqual([]);
   });
@@ -63,5 +65,68 @@ describe("review/error-prevention", () => {
     expect(ids.has("wcag21:3.3.4")).toBe(true);
     expect(ids.has("section508:3.3.4")).toBe(true);
     expect(ids.has("en301549:9.3.3.4")).toBe(true);
+  });
+
+  // Scope gate: WCAG 3.3.4 normative scope is "legal commitments,
+  // financial transactions, modify/delete user data, test responses."
+  // Newsletter / subscribe / signup / signin / contact forms are
+  // explicitly outside scope and must not fire — a finder that fires
+  // when the criterion provably doesn't apply duplicates capability the
+  // consuming agent has.
+
+  it("does NOT flag a newsletter subscribe form (class='subscribe-form')", () => {
+    const source = `<form class="form subscribe-form" action="/newsletter"><input name="email" /><button type="submit">Subscribe</button></form>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out).toEqual([]);
+  });
+
+  it("does NOT flag a bare signup form", () => {
+    const source = `const x = <form id="signup" action="/signup"><input name="email" /><button type="submit">Sign up</button></form>;`;
+    const out = runFinder(finder, source);
+    expect(out).toEqual([]);
+  });
+
+  it("does NOT flag a signin form", () => {
+    const source = `const x = <form id="signin"><input name="password" /><button type="submit">Sign in</button></form>;`;
+    const out = runFinder(finder, source);
+    expect(out).toEqual([]);
+  });
+
+  it("does NOT flag a form with a generic 'cancel' button name", () => {
+    // Bare `cancel` used to fire via the old GENERIC_RISK_KEYWORDS set.
+    // In-scope is `cancel-subscription`; a generic cancel button is not.
+    const source = `const x = <form name="cancel"><button type="submit">Cancel</button></form>;`;
+    const out = runFinder(finder, source);
+    expect(out).toEqual([]);
+  });
+
+  it("does NOT flag a form with a generic 'delete' class (not delete-account)", () => {
+    const source = `const x = <form className="delete-row-form"><button type="submit">Delete row</button></form>;`;
+    const out = runFinder(finder, source);
+    expect(out).toEqual([]);
+  });
+
+  it("flags a cancel-subscription form", () => {
+    const source = `const x = <form id="cancel-subscription" action="/billing/cancel"><button type="submit">Cancel plan</button></form>;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  it("flags a billing form", () => {
+    const source = `const x = <form className="billing-form"><button type="submit">Update</button></form>;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  it("flags a form whose action URL contains /checkout", () => {
+    const source = `<form action="/shop/checkout/submit"><button type="submit">Pay</button></form>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  it("flags a form whose action URL contains /legal", () => {
+    const source = `const x = <form action="/legal/accept"><button type="submit">Accept</button></form>;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
   });
 });

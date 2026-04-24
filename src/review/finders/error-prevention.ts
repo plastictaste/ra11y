@@ -3,13 +3,24 @@
  * Criteria: wcag22:3.3.4, wcag21:3.3.4, section508:3.3.4, en301549:9.3.3.4
  * Spec: https://www.w3.org/TR/WCAG22/#error-prevention-legal-financial-data
  *
- * Flags native `<form>` elements that look like high-impact submissions
- * (checkout, payment, transfer, delete, etc.) when the same file shows
- * no static confirmation or review signal.
+ * Flags native `<form>` elements whose `action|class|className|id|name`
+ * show affirmative evidence the form is in WCAG 3.3.4 normative scope
+ * (legal commitments, financial transactions, user-data modify/delete,
+ * test responses) when the same file shows no static confirmation or
+ * review signal.
  *
- * Signal is intentionally narrow:
+ * The eligibility gate is deliberately narrow. Bare tokens like
+ * `subscribe`, `cancel`, and `delete` do not fire: they equally name
+ * out-of-scope forms (newsletter signup, generic cancel button,
+ * delete-row UI) that WCAG 3.3.4 explicitly does not cover. In-scope
+ * variants surface as the multi-word phrases `cancel-subscription` and
+ * `delete-account`, plus the scope-precise tokens `payment`, `checkout`,
+ * `legal`, `terms`, `transfer`, `purchase`, `invoice`, `billing` (and
+ * `order` with a surrounding checkout/review context).
+ *
+ * Signal shape:
  *   - Only native `<form>` elements, not wrapper components.
- *   - Form intent must be visible in `action|class|className|id|name`.
+ *   - Scope evidence must be visible in `action|class|className|id|name`.
  *   - The file is suppressed if it already contains any obvious review
  *     affordance: a confirm/consent checkbox, a confirm/review submit
  *     button, an alert dialog or `Confirm*`/`AreYouSure*`/`Modal*`
@@ -52,8 +63,18 @@ const JSX_FORM_SIGNAL_ATTRS = ["action", "class", "className", "id", "name"] as 
 const CONSENT_SIGNAL_ATTRS = ["aria-label", "id", "name"] as const;
 const DIALOG_COMPONENT_PREFIXES = ["areyousure", "confirm", "modal"] as const;
 
-const GENERIC_RISK_KEYWORDS =
-  /\b(?:billing|cancel|checkout|delete|payment|purchase|subscribe|transfer)\b/i;
+// WCAG 3.3.4 normative scope is narrow: forms causing legal commitments,
+// financial transactions, modifications/deletions of user data, or test
+// responses. Newsletter signups, contact forms, signin forms, and generic
+// subscribe forms are explicitly outside scope. Token list reflects
+// attribute/URL patterns that show affirmative evidence the form is in-
+// scope — bare `subscribe`, `cancel`, `delete` are not sufficient because
+// they equally name out-of-scope UI (newsletter, generic cancel button,
+// delete-row). In-scope variants show up as `cancel-subscription`,
+// `delete-account`, etc., which normalize to multi-word phrases.
+const SCOPE_SINGLE_TOKENS =
+  /\b(?:billing|checkout|invoice|legal|payment|purchase|terms|transfer)\b/i;
+const SCOPE_PHRASE_TOKENS = /\b(?:cancel\s+subscription|delete\s+account)\b/i;
 
 const CONSENT_KEYWORDS = /\b(?:accept|agree|confirm|consent|terms)\b/i;
 const ORDER_CONTEXT_KEYWORDS =
@@ -389,7 +410,8 @@ function matchesNormalizedPattern(value: string | null, pattern: RegExp): boolea
 function matchesRiskAttribute(attribute: string, value: string | null): boolean {
   if (!value) return false;
   const normalized = normalizeWords(value);
-  if (GENERIC_RISK_KEYWORDS.test(normalized)) return true;
+  if (SCOPE_SINGLE_TOKENS.test(normalized)) return true;
+  if (SCOPE_PHRASE_TOKENS.test(normalized)) return true;
   if (!/\border\b/.test(normalized)) return false;
   if (attribute === "class" || attribute === "className") {
     return ORDER_CONTEXT_KEYWORDS.test(normalized);
