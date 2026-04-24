@@ -116,6 +116,67 @@ describe("rule aria/role-from-class-only", () => {
       });
       expect(v).toHaveLength(0);
     });
+
+    it("the SSG admonition pattern places an h5 as the first element child", () => {
+      // <div class="note info"><h5>Topic</h5><p>…</p></div> — the heading
+      // carries the structural severity signal (AT announces "heading
+      // level 5: Topic"), so the role-from-class premise does not hold.
+      const v = runRule(
+        rule,
+        `<div class="note info">
+  <h5>Topic</h5>
+  <p>Body content describing the note.</p>
+</div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("the warning admonition wraps an h3 as the first element child", () => {
+      const v = runRule(
+        rule,
+        `<div class="warning"><h3>Breaking change</h3><p>Migration steps below.</p></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("HTML: heading-first-child exception", () => {
+    it("still fires when the wrapper has only prose (no heading first child)", () => {
+      const v = runRule(rule, `<div class="note info"><p>just prose, no heading.</p></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("still fires when leading text precedes the heading (heading is no longer the announced label)", () => {
+      // Non-whitespace text before the heading defeats the pattern — AT
+      // hears the prose first, so the heading is not functioning as the
+      // block's announced label.
+      const v = runRule(
+        rule,
+        `<div class="warning">Heads up: <h3>Important</h3><p>Body.</p></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+    });
+
+    it("still fires when the first element child is a non-heading (p, div, span)", () => {
+      const v = runRule(rule, `<div class="alert"><span>just a span</span><h3>X</h3></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("skips when whitespace-only text precedes the heading first child", () => {
+      const v = runRule(
+        rule,
+        `<div class="caution">\n    <h4>Performance note</h4>\n    <p>Body.</p>\n  </div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -160,6 +221,19 @@ describe("rule aria/role-from-class-only", () => {
       const v = runRule(
         rule,
         `export const X = () => <Callout className="warning">Body.</Callout>;`,
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("the JSX admonition's first element child is an h5", () => {
+      const v = runRule(
+        rule,
+        `export const X = () => (
+  <div className="note info">
+    <h5>Topic</h5>
+    <p>Body.</p>
+  </div>
+);`,
       );
       expect(v).toHaveLength(0);
     });
