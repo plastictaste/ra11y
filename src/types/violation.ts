@@ -155,12 +155,15 @@ export interface Violation {
    * re-runs of the same scan, so an agent can verify "did my edit
    * close finding X?" by exact identity rather than fuzzy `(file,
    * line, ruleId)` matching. Survives line-number drift inside the
-   * file when unrelated code is inserted above the violation.
+   * file when unrelated code is inserted above the violation, and
+   * survives edits to ANY line other than the violation's own
+   * (V1-FINDING-ID-STABILITY).
    *
-   * Computed as `sha256(ruleId, relativeFilePath, lineContextHash)`
-   * truncated to 12 hex chars. See `src/utils/finding-id.ts` for the
-   * exact recipe. Required on every Violation — if a call site needs
-   * to synthesize one, use `computeFindingId`.
+   * Computed as `sha256(ruleId, relativeFilePath, normalizedLineText,
+   * variantKey?)` truncated to 12 hex chars. See
+   * `src/utils/finding-id.ts` for the exact recipe. Required on
+   * every Violation — if a call site needs to synthesize one, use
+   * `computeFindingId`.
    */
   readonly findingId: string;
   /**

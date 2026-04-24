@@ -317,7 +317,8 @@ function invokeOneProjectRule(
   } catch (err) {
     // Project crashes don't have a specific file — use an empty
     // source so the findingId still carries (ruleId, "") but the
-    // context-hash is stable regardless of which file triggered.
+    // normalized-line-text component is stable regardless of which
+    // file triggered.
     out.push(projectRuleCrashViolation(rule.id, err));
     return;
   }

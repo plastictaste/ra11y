@@ -28,7 +28,8 @@ export function withFindingId(v: Omit<Violation, "findingId" | "groupKey">): Vio
   const findingId = computeFindingId({
     ruleId: v.ruleId,
     filePath: v.location.filePath,
-    // Empty source is fine for test fixtures — the context-hash is
+    // Empty source is fine for test fixtures — the normalized-line-
+    // text component collapses to the empty string, so the hash is
     // stable for the (ruleId, path) pair, which is all these tests
     // need.
     source: "",

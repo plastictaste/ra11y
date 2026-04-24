@@ -237,13 +237,13 @@ export interface ProjectContext {
  * What a rule returns via `ctx.emit()`. The engine owns `ruleId`,
  * `criteria`, `findingId`, `groupKey`, and `fixClass` — rules don't
  * know those. `findingId` is derived from the stamped ruleId + relative
- * filePath + source-context window, so it can only be computed after
- * the engine has attached the filePath to the emitted location.
- * `groupKey` is derived from the stamped ruleId + the normalized AST
- * shape the engine resolves from the emitted location (see
- * docs/adr/0008-violation-group-key.md). `fixClass` is a Rule-level
- * property (see docs/adr/0007-violation-fix-class-metadata.md), stamped
- * onto every Violation at emit time.
+ * filePath + the normalized text of the violation line, so it can only
+ * be computed after the engine has attached the filePath to the
+ * emitted location. `groupKey` is derived from the stamped ruleId +
+ * the normalized AST shape the engine resolves from the emitted
+ * location (see docs/adr/0008-violation-group-key.md). `fixClass` is
+ * a Rule-level property (see docs/adr/0007-violation-fix-class-metadata.md),
+ * stamped onto every Violation at emit time.
  *
  * `variantKey` is an engine-internal hash-disambiguator for rules that
  * emit more than one kind of finding against the same file:line. It is
@@ -255,7 +255,7 @@ export interface ProjectContext {
  * collapse to the same `findingId` and the agent's suppress + dedup
  * flows silently merge them (Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE).
  * Rules that only emit one kind of finding per site leave the field
- * unset — the hash recipe is identical to before (back-compat).
+ * unset.
  */
 export type EmittedViolation = Omit<
   Violation,

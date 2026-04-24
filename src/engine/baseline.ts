@@ -19,9 +19,10 @@
  * Cross-run identity: baselines are matched by `Violation.findingId`
  * — the same opaque token the scanner stamps on every finding. The
  * findingId is computed from `(ruleId, relativeFilePath,
- * lineContextHash)` and is resilient to line-number drift within the
- * file, so unrelated edits above a violation don't invalidate its
- * baseline entry. See `src/utils/finding-id.ts` for the recipe.
+ * normalizedLineText, variantKey?)` and is resilient to line-number
+ * drift within the file, so edits to any line other than the
+ * violation's own don't invalidate its baseline entry. See
+ * `src/utils/finding-id.ts` for the recipe.
  *
  * Legacy note: baseline files generated before v0.2.0 used a
  * `sha1(ruleId + filePath + message)` fingerprint. The `fingerprintOf`

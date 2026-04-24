@@ -200,9 +200,9 @@ function violationToSarifResult(violation: Violation): SarifResult {
       // Reuse the Violation's stable findingId — GitHub code scanning
       // uses this to deduplicate the same violation across runs. The
       // findingId is line-number-drift resilient by design (hashes the
-      // ±3-line source-context window, not the line number itself), so
-      // an unrelated edit above the violation won't invalidate
-      // GitHub's dedup key.
+      // normalized text of the violation line, not the line number
+      // itself), so an unrelated edit above the violation won't
+      // invalidate GitHub's dedup key.
       primary: violation.findingId,
       // Secondary key groups findings that share a rule + AST shape
       // across files (docs/adr/0008-violation-group-key.md). GitHub
