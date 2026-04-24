@@ -37,6 +37,7 @@ import { rule as ariaInvalidMissing } from "./forms/aria-invalid-missing.ts";
 import { rule as autocompleteMissing } from "./forms/autocomplete-missing.ts";
 import { rule as errorMessageNotAssociated } from "./forms/error-message-not-associated.ts";
 import { rule as fieldsetLegend } from "./forms/fieldset-legend.ts";
+import { rule as labelAdjacentMismatch } from "./forms/label-adjacent-mismatch.ts";
 import { rule as labelAdjacentUnassociated } from "./forms/label-adjacent-unassociated.ts";
 import { rule as labelForIdMismatch } from "./forms/label-for-id-mismatch.ts";
 import { rule as labelsRequired } from "./forms/labels-required.ts";
@@ -121,6 +122,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   iframeTitle,
   invalidIdShape,
   invalidRole,
+  labelAdjacentMismatch,
   labelAdjacentUnassociated,
   labelForIdMismatch,
   labelInName,
@@ -204,6 +206,7 @@ export {
   iframeTitle,
   invalidIdShape,
   invalidRole,
+  labelAdjacentMismatch,
   labelAdjacentUnassociated,
   labelForIdMismatch,
   labelInName,
