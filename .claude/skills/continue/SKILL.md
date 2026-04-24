@@ -67,24 +67,25 @@ Pull `plan.turns[n]` — the picks are already selected, classified, sequencing-
 
 If a pick's `collisionWith` is populated, note it for step 2's dispatch prompt.
 
-### 2. Build dispatch prompts (template-referenced + inline §0 reminder)
+### 2. Build dispatch prompts (rule-file auto-load + one-sentence fallback)
 
 Every worktree-isolated dispatch prompt has the same shape:
 
 ```
 You are handling a /continue pick. Read .claude/skills/continue/dispatch-template.md
-in full and follow every rule it declares (scope-lock, worktree discipline,
-commit discipline, precommit-verify-before-return, structured JSON return).
+in full and follow every rule it declares (scope-lock, commit discipline,
+precommit-verify-before-return, structured JSON return).
 
-CRITICAL worktree-discipline reminder (load-bearing — do not skip): every
-Edit/Write/Read/Bash call must use paths RELATIVE to your $PWD (your worktree
-root). Never pass absolute /Users/, /tmp/, /private/, /Volumes/, /home/ paths —
-those bypass the worktree wall and silently corrupt MAIN. Never `cd` out of the
-worktree. Never `git stash`/`git clean`/`git checkout --`/`git reset --hard`. If
-your tree is unexpectedly dirty at boot, return blocked.
+Worktree-discipline rules auto-load from .claude/rules/worktree-discipline.md
+(relative paths only; no stash/reset/checkout --; no `cd` out; rebase onto main
+first). If that rule file does not auto-load in your environment, read it
+explicitly before any tool call.
 
-Backlog item: <pick.item> (line <pick.backlogLine> of .claude/backlog.md — re-read
-for full description).
+Backlog item: <pick.item> (line <pick.backlogLine> of .claude/backlog.md — slice
+attached below; re-read the file only if the slice seems incomplete).
+
+Backlog slice:
+<pick.backlogSlice verbatim>
 
 Inferred file scope: <pick.inferredFiles joined>.
 
@@ -99,14 +100,21 @@ govern this decision space>.
 </if>
 ```
 
-The inline §0 reminder is intentional duplication. Field-tested 2026-04-22:
-turn 1 of a 5-turn run dispatched without the inline reminder and the
-parser-author agent escaped its worktree (absolute paths to Edit), corrupting
-MAIN's `src/input/parsers/html.ts`. Turns 2–5 added the inline reminder and saw
-zero escapes across 12 dispatches. Don't trust agents to read the template's §0
-on their own — duplicate the load-bearing rules into the prompt.
+The worktree-discipline rules live in `.claude/rules/worktree-discipline.md` and
+are frontmatter-scoped to auto-attach for any agent spawned with
+`isolation: "worktree"`. That keeps the dispatch prompt slim without sacrificing
+the load-bearing rules that field tests (2026-04-22 parser-author escape via
+absolute paths into `src/input/parsers/html.ts`; 2026-04-23 two stalled agents)
+proved are non-optional.
 
-The rest of the anti-stash / scope-lock / JSON-return boilerplate lives in
+The one-sentence fallback inside the prompt body is intentional: rule-file
+auto-loading depends on the harness honoring the frontmatter scope, and if the
+orchestrator runs in an older harness or an edge config, the fallback is what
+keeps the agent from defaulting back to absolute paths. If you see evidence an
+agent ignored the rule file, broaden the fallback back to a multi-line reminder
+for the next dispatch.
+
+The rest of the scope-lock / JSON-return boilerplate lives in
 `dispatch-template.md` — the orchestrator does not re-embed it per dispatch.
 Main-session picks (classified as `main-session`) are handled inline by the
 orchestrator and do not use this template.
