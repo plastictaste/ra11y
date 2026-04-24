@@ -872,6 +872,95 @@ describe("buildAnalysisCoverage — hints", () => {
       const { analysisCoverage } = buildAnalysisCoverage([mixed], [], NO_RULES, false);
       expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
     });
+
+    // V1-TEMPLATE-CLASSIFIER-LIQUID-PIPE-FILTER-EVIDENCE: a Liquid
+    // filter pipe inside `{{ ... }}` is decisive Liquid syntax.
+    // Jekyll `_includes/top.html` was tagged handlebars-or-mustache
+    // because per-file majority-vote treated `{{ page.lang | default:
+    // "en" }}` as ambiguous interpolation alongside other bare
+    // `{{ x }}` tokens. The pipe is the discriminator: Handlebars and
+    // Mustache use sub-expression helper invocation, never a postfix
+    // `|`. A single qualifying pipe forces jinja-or-liquid.
+    it("tags `{{ x | default: \"en\" }}` Liquid filter pipe as jinja-or-liquid", () => {
+      const liquidInclude = htmlFile(
+        "_includes/top.html",
+        '<html lang="{{ page.lang | default: "en" }}">\n<body>{{ content }}</body>\n</html>',
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([liquidInclude], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
+
+    // Bare-filter form (`{{ y | escape }}` — no argument) is the
+    // shorthand Jekyll authors use most often. Same Liquid-only shape
+    // as the colon-arg form, so the same classification.
+    it("tags `{{ y | escape }}` bare-filter form as jinja-or-liquid", () => {
+      const liquidLayout = htmlFile(
+        "_layouts/post.html",
+        "<title>{{ page.title | escape }}</title>\n<p>{{ body }}</p>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([liquidLayout], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
+
+    // Negative: `{{ a || b }}` is JS or-expression (can appear inside
+    // a JSX attribute-spread object literal `prop={{ a: x || y }}`),
+    // NOT a Liquid filter. Must not flip the classification.
+    it("does not tag JS or-expression `{{ a || b }}` as jinja-or-liquid", () => {
+      const jsOr = htmlFile("plain.html", "<h1>{{ a || b }}</h1>\n<p>{{ title }}</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([jsOr], [], NO_RULES, false);
+      // Falls to the existing Handlebars-or-Mustache classifier on the
+      // strength of the bare `{{ title }}` interpolation; the `||`
+      // does NOT add Liquid evidence on top.
+      const tags = analysisCoverage?.["templateDirectivesFound"] as string[] | undefined;
+      expect(tags).toEqual(["handlebars-or-mustache"]);
+    });
+
+    // Negative: `{{ x |> y }}` is the Stage-2 pipeline operator,
+    // not a Liquid filter separator. Liquid filters are `|`
+    // immediately followed by an identifier — never `|>`.
+    it("does not tag pipeline-operator `{{ x |> y }}` as jinja-or-liquid", () => {
+      const pipeline = htmlFile("plain.html", "<h1>{{ x |> y }}</h1>\n<p>{{ title }}</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([pipeline], [], NO_RULES, false);
+      const tags = analysisCoverage?.["templateDirectivesFound"] as string[] | undefined;
+      expect(tags).toEqual(["handlebars-or-mustache"]);
+    });
+
+    // Negative: a file whose only interpolations are bare `{{ x }}`
+    // / `{{ y }}` (no pipes anywhere) preserves the existing
+    // handlebars-or-mustache tag. This is the regression check that
+    // the pipe-axis evidence didn't accidentally widen the Liquid
+    // signal to non-pipe shapes.
+    it("preserves handlebars-or-mustache for bare `{{ x }}{{ y }}` files (no pipe)", () => {
+      const mustache = htmlFile("template.mustache", "<h1>{{title}}</h1>\n<p>{{body}}</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([mustache], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
+    });
+
+    // Mixed-evidence: a single Liquid pipe outweighs co-occurring
+    // bare `{{ x }}` tokens in the same file. Per-file majority-vote
+    // (the historical bug) would have stamped handlebars-or-mustache
+    // here; the pipe-axis high-confidence override forces
+    // jinja-or-liquid regardless of the bare-token count.
+    it("forces jinja-or-liquid when a Liquid pipe coexists with multiple bare `{{ x }}` tokens", () => {
+      const mixed = htmlFile(
+        "_includes/header.html",
+        "<h1>{{ title }}</h1>\n<h2>{{ subtitle }}</h2>\n<p>{{ body | escape }}</p>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mixed], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    });
+
+    // Negative: a JSX attribute spread `={{ a | b }}` is decisively
+    // non-Liquid evidence (real Liquid is never preceded by `=` —
+    // the attribute would be quoted). Same pre-match exclusion as
+    // {@link hasNonJsxInterpolation}. Without the exclusion this file
+    // would be mis-tagged jinja-or-liquid even though there's no
+    // actual template directive present.
+    it("does not tag JSX attribute spread `={{ a | b }}` as jinja-or-liquid", () => {
+      const jsxSpread = htmlFile("page.astro.html", "<Component overrides={{ a | b }} />");
+      const { analysisCoverage } = buildAnalysisCoverage([jsxSpread], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
   });
 
   // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: the HTML parser sees

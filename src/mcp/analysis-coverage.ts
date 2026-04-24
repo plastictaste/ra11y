@@ -1056,6 +1056,19 @@ function recordOpaqueSighting(
  * in interpolation. Treating that form as equivalent to a control
  * block for classification purposes restores the honest family label
  * so downstream rules reach for the correct strip helpers.
+ *
+ * A second axis of the same misclassification (V1-TEMPLATE-CLASSIFIER-
+ * LIQUID-PIPE-FILTER-EVIDENCE): Jekyll `_includes/top.html` and
+ * similar SSG partials use Liquid filter pipes inside interpolation —
+ * `{{ page.lang | default: "en" }}`, `{{ title | escape }}`,
+ * `{{ items | first }}`. The pipe inside a `{{ ... }}` expression is
+ * Liquid-exclusive syntax — Handlebars and Mustache use sub-expression
+ * helper invocation (`{{helper foo}}`) rather than postfix pipes.
+ * `{{ x | filter }}` (with a real filter pipe) is therefore decisive
+ * Liquid evidence and outweighs any co-occurring bare `{{ plain }}`
+ * tokens in the same file. Two non-Liquid look-alikes are excluded:
+ * `||` (JS or-expression in a JSX attribute spread) and `|>` (pipeline
+ * operator) — neither is a Liquid filter separator.
  */
 function detectTemplateEngines(source: string, into: Set<string>): void {
   // `\{%-?\s*` accepts both the plain `{%` opener and Liquid/Jinja's
@@ -1077,8 +1090,16 @@ function detectTemplateEngines(source: string, into: Set<string>): void {
   // parenthesized together by convention, but one side is sufficient
   // evidence for the classifier.
   const hasLiquidWhitespaceInterp = /\{\{-|-\}\}/.test(source);
+  // V1-TEMPLATE-CLASSIFIER-LIQUID-PIPE-FILTER-EVIDENCE: a `|` inside
+  // `{{ ... }}` that is NOT `||` (JS or) or `|>` (pipeline) is a
+  // Liquid filter separator. Jekyll `docs/_includes/top.html` was
+  // tagged handlebars-or-mustache because per-file majority-vote
+  // didn't credit the pipe as Liquid-only evidence — `{{ page.lang |
+  // default: "en" }}` is decisive Liquid syntax that no Handlebars or
+  // Mustache template would carry.
+  const hasLiquidFilterPipe = hasLiquidFilterPipeEvidence(source);
   const hasInterpolation = hasNonJsxInterpolation(source);
-  if (hasControlBlock || hasLiquidWhitespaceInterp) {
+  if (hasControlBlock || hasLiquidWhitespaceInterp || hasLiquidFilterPipe) {
     into.add("jinja-or-liquid");
   } else if (hasInterpolation) {
     // `{{ }}`-only shape — handlebars/mustache's syntactic signature.
@@ -1138,6 +1159,80 @@ function hasNonJsxInterpolation(source: string): boolean {
     // `${{...}}` → GitHub Actions / template-literal expression.
     if (prevChar === "=" || prevChar === "$") continue;
     return true;
+  }
+  return false;
+}
+
+/**
+ * V1-TEMPLATE-CLASSIFIER-LIQUID-PIPE-FILTER-EVIDENCE: true when any
+ * `{{ … | … }}` interpolation in `source` carries a pipe that is a
+ * Liquid filter separator rather than a JS look-alike operator.
+ *
+ * A pipe inside `{{ ... }}` is Liquid-exclusive syntax — Handlebars
+ * and Mustache express transforms via sub-expression helper invocation
+ * (`{{helper foo}}`), never a postfix `|`. One pipe is enough evidence
+ * to force the file's classification to `jinja-or-liquid`, outweighing
+ * any bare `{{ x }}` tokens that co-occur (per-file majority-vote
+ * would otherwise mis-tag a layout that has one `{{ lang | default }}`
+ * alongside several `{{ plain }}` spans — the canonical Jekyll
+ * `_includes/top.html` shape).
+ *
+ * Two JS look-alikes are excluded because they collapse to the same
+ * shape without being Liquid evidence:
+ *
+ *   - `||` → JS or-expression (`{{ a || b }}` — can appear inside a
+ *     JSX attribute-spread object literal). Liquid does not use `||`.
+ *   - `|>` → pipeline operator (Stage-2 proposal, Elixir-style).
+ *     Liquid filters are `|` followed by an identifier, not `|>`.
+ *
+ * Same pre-match exclusions as {@link hasNonJsxInterpolation}:
+ * `={{ … }}` (JSX attribute spread) and `${{ … }}` (GitHub Actions
+ * workflow expression) are filtered from the evidence corpus before
+ * pipe detection. A real Liquid filter interpolation is never
+ * prefixed by `=` (the attribute would be quoted) or `$` (not a
+ * Liquid shape).
+ */
+function hasLiquidFilterPipeEvidence(source: string): boolean {
+  const pattern = /\{\{([^}]+)\}\}/g;
+  for (const match of source.matchAll(pattern)) {
+    const start = match.index;
+    if (start === undefined) continue;
+    const prevChar = start > 0 ? source[start - 1] : "";
+    if (prevChar === "=" || prevChar === "$") continue;
+    const body = match[1] ?? "";
+    if (containsLiquidFilterPipe(body)) return true;
+  }
+  return false;
+}
+
+/**
+ * Scans the interior of a `{{ … }}` interpolation for a pipe that is
+ * a Liquid filter separator. A bare `|` qualifies; `||` (JS or) and
+ * `|>` (pipeline operator) do not. Bare `|` with no right-hand
+ * identifier (trailing whitespace only) is not credited as evidence —
+ * the Liquid shape is always `value | filterName` or
+ * `value | filterName: arg`. Keeping the right-hand identifier
+ * requirement avoids false positives on malformed templates whose
+ * trailing `|` carries no filter at all.
+ */
+function containsLiquidFilterPipe(body: string): boolean {
+  for (let i = 0; i < body.length; i++) {
+    if (body.charCodeAt(i) !== 0x7c) continue; // '|'
+    const next = body[i + 1] ?? "";
+    if (next === "|" || next === ">") {
+      i += 1; // skip the second char of the pair, don't re-match '|' on next iter
+      continue;
+    }
+    // Find the first non-whitespace character after the pipe; require
+    // it to start an identifier (Liquid filters are ASCII identifiers
+    // like `default`, `escape`, `upcase`, plugin-authored names).
+    let j = i + 1;
+    while (j < body.length && (body[j] === " " || body[j] === "\t")) j += 1;
+    const rhs = body.charCodeAt(j);
+    if (Number.isNaN(rhs)) continue;
+    const isAlpha = (rhs >= 0x41 && rhs <= 0x5a) || (rhs >= 0x61 && rhs <= 0x7a);
+    const isUnderscore = rhs === 0x5f;
+    if (isAlpha || isUnderscore) return true;
   }
   return false;
 }
