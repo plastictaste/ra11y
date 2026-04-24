@@ -33,6 +33,114 @@ describe("rule navigation/link-descriptive-text", () => {
     });
   });
 
+  describe("HTML: fires on generic-pronoun shapes (V1-RULE-LINK-DESCRIPTIVE-TEXT-MISSES-GENERIC-PRONOUNS)", () => {
+    // Real-world repro: Bootstrap-tooltip pattern from a field report —
+    // two adjacent `<a href="#" data-bs-toggle="tooltip">` inline links
+    // labelled "This link" and "that link" stayed silent because the
+    // GENERIC_PHRASES set covered "click here" / "read more" but not
+    // the semantic generic-pronoun shape WCAG 2.4.4 calls out.
+    it("'This link' (bare pronoun + noun, capitalized)", () => {
+      const v = runRule(rule, `<a href="#" data-bs-toggle="tooltip">This link</a>`, {
+        filePath: "modal.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("this link");
+    });
+
+    it("'that link' (lowercase pronoun + noun)", () => {
+      const v = runRule(rule, `<a href="#" data-bs-toggle="tooltip">that link</a>`, {
+        filePath: "modal.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("that link");
+    });
+
+    it("'the link'", () => {
+      const v = runRule(rule, `<a href="/x">the link</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("'this page'", () => {
+      const v = runRule(rule, `<a href="/x">This page</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("'that page'", () => {
+      const v = runRule(rule, `<a href="/x">that page</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("'there' (bare adverb)", () => {
+      const v = runRule(rule, `<a href="/x">there</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("'that' (bare pronoun)", () => {
+      const v = runRule(rule, `<a href="/x">That</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("'the' (bare determiner)", () => {
+      const v = runRule(rule, `<a href="/x">The</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("'info' (bare noun)", () => {
+      const v = runRule(rule, `<a href="/x">Info</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("'more details'", () => {
+      const v = runRule(rule, `<a href="/x">More details</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+    });
+  });
+
+  describe("HTML: pronoun-shape does NOT over-fire on legitimate text", () => {
+    // The phrase set is exact-match (after normalization) — surrounding
+    // descriptive words break the match, leaving the agent to judge
+    // contextualized cases via Read.
+    it("'This link opens the dashboard' is descriptive enough", () => {
+      const v = runRule(rule, `<a href="/dashboard">This link opens the dashboard</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("'that page about WCAG' is descriptive enough", () => {
+      const v = runRule(rule, `<a href="/wcag">that page about WCAG</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("'Theme settings' is not a bare 'the'", () => {
+      const v = runRule(rule, `<a href="/theme">Theme settings</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("'Information about pricing' is not a bare 'info'", () => {
+      const v = runRule(rule, `<a href="/pricing">Information about pricing</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("JSX: generic-pronoun shapes also fire", () => {
+    it("fires on <a href='#'>This link</a>", () => {
+      const v = runRule(rule, `const X = <a href="#">This link</a>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("this link");
+    });
+
+    it("fires on <Link to='/x'>that page</Link>", () => {
+      const v = runRule(rule, `const X = <Link to="/x">that page</Link>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("that page");
+    });
+  });
+
   describe("HTML: does NOT fire when", () => {
     it("the link text is descriptive", () => {
       const v = runRule(rule, `<a href="/docs/api">Read the API reference</a>`, {

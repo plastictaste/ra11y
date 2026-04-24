@@ -99,20 +99,47 @@ import {
  * Phrases that are never acceptable as link text on their own. Matched
  * case-insensitively after trimming trailing punctuation. Curated list
  * — overzealous matching here burns user trust, so we keep it tight.
+ *
+ * The set covers four shapes of generic-pronoun / placeholder text that
+ * AT users hear out of context (links list, VoiceOver rotor, Tab):
+ *   1. bare pronouns/determiners — "this", "that", "the", "here", "there"
+ *   2. pronoun + noun ("link"/"page") — "this link", "that link",
+ *      "the link", "this page", "that page"
+ *   3. "click"/"more"/"info"/"details" family — "click", "click here",
+ *      "more", "more info", "more information", "more details", "details",
+ *      "info", "read more", "learn more"
+ *   4. literal noun on its own — "link"
+ *
+ * Surface-don't-suppress doctrine applies: a flagged candidate the agent
+ * decides is contextualized (e.g. inside a heading) is one file read away
+ * from dismissal; a missed silent-link-text generic stays silent.
  */
 const GENERIC_PHRASES: ReadonlySet<string> = new Set([
-  "click here",
-  "click",
-  "here",
-  "read more",
-  "more",
-  "link",
-  "this link",
+  // Bare pronouns / determiners.
   "this",
+  "that",
+  "the",
+  "here",
+  "there",
+  // Pronoun + noun.
+  "this link",
+  "that link",
+  "the link",
+  "this page",
+  "that page",
+  // Click / more / info / details family.
+  "click",
+  "click here",
+  "more",
   "more info",
   "more information",
+  "more details",
   "details",
+  "info",
+  "read more",
   "learn more",
+  // Literal noun.
+  "link",
 ]);
 
 /** JSX tags that represent a link. Covers the common React router libs. */
