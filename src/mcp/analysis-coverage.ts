@@ -678,8 +678,7 @@ function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): rea
  * the parser dispatch in `src/mcp/session.ts`.
  */
 function isMarkdownFile(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".markdown");
+  return filePath.toLowerCase().endsWith(".md") || filePath.toLowerCase().endsWith(".markdown");
 }
 
 /**
@@ -798,16 +797,10 @@ function looksLikeTailwindClassString(classString: string): boolean {
 
 const TAILWIND_TOKEN_RE = /^(?:[a-z]+:)*-?[a-z]+(?:-[a-z0-9/.%]+)+(?:\[[^\]]*\])?$/i;
 
-interface ParsedFileCounts {
-  readonly jsx: number;
-  readonly html: number;
-  readonly css: number;
-}
-
-function countByCategory(files: readonly ParsedFile[]): ParsedFileCounts {
-  let jsx = 0;
-  let html = 0;
-  let css = 0;
+function countByCategory(files: readonly ParsedFile[]): { jsx: number; html: number; css: number } {
+  let jsx = 0,
+    html = 0,
+    css = 0;
   for (const f of files) {
     if (f.ast.language === "tsx" || f.ast.language === "jsx") jsx += 1;
     else if (f.ast.language === "html") html += 1;
