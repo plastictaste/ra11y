@@ -44,6 +44,17 @@
  *   - `<th>` elements with a recognized `scope` value (col, row,
  *     colgroup, rowgroup — case-insensitive). An unrecognized or
  *     empty `scope` value is treated as missing.
+ *   - `<th>` elements that sit as direct children of `<thead> > <tr>`
+ *     in a table that also has a `<tbody>` sibling. HTML5 specifies an
+ *     implicit `scope="col"` for this canonical structure (per the
+ *     forming-relationships algorithm in the WHATWG HTML spec), and
+ *     JAWS / NVDA / VoiceOver all honor that implicit association.
+ *     Skipping is spec-correctness, not heuristic suppression: the
+ *     `<thead> > <tr> > <th>` + sibling `<tbody>` shape is a determinate
+ *     W3C/HTML5 rule, not a guess from weaker evidence. The rule still
+ *     fires for `<th>` cells in `<tbody>` rows (where scope IS required)
+ *     and for tables that lack `<thead>` (where the implicit-col rule
+ *     does not apply).
  *
  * Nested tables: each table is evaluated independently. Descent
  * through the outer table stops at a nested `<table>` element so the
@@ -91,7 +102,7 @@ export const rule = defineRule({
     goodExample:
       '<table>\n  <thead><tr><th scope="col">Product</th><th scope="col">Price</th></tr></thead>\n  <tbody>\n    <tr><th scope="row">Widget</th><td>$50</td></tr>\n    <tr><th scope="row">Gadget</th><td>$75</td></tr>\n  </tbody>\n</table>',
     badExample:
-      "<table>\n  <thead><tr><th>Product</th><th>Price</th></tr></thead>\n  <tbody>\n    <tr><td>Widget</td><td>$50</td></tr>\n    <tr><td>Gadget</td><td>$75</td></tr>\n  </tbody>\n</table>",
+      "<table>\n  <tr><th>Product</th><th>Price</th></tr>\n  <tr><td>Widget</td><td>$50</td></tr>\n  <tr><td>Gadget</td><td>$75</td></tr>\n</table>",
     normativeQuote:
       "Information, structure, and relationships conveyed through presentation can be programmatically determined or are available in text.",
     references: [
@@ -201,13 +212,24 @@ function checkHtmlTable(table: HtmlElement, emit: Emit): void {
   const dims = computeHtmlDimensions(rows);
   if (dims.rows < 2 || dims.cols < 2) return;
   if (htmlHasCompleteHeadersAssociation(rows)) return;
-  emitHtmlRowViolations(rows, dims, emit);
+  const hasTbody = htmlTableHasTbody(table);
+  emitHtmlRowViolations(rows, dims, hasTbody, emit);
 }
 
-function emitHtmlRowViolations(rows: readonly HtmlRow[], dims: TableDimensions, emit: Emit): void {
+function emitHtmlRowViolations(
+  rows: readonly HtmlRow[],
+  dims: TableDimensions,
+  hasTbody: boolean,
+  emit: Emit,
+): void {
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
     const row = rows[rowIdx];
     if (!row) continue;
+    // HTML5 implicit scope="col": when a <th> sits directly inside
+    // <thead> > <tr> AND the table has a <tbody> sibling, the column
+    // association is determinate per spec — every screen reader honors
+    // it. Skip these <th>s; explicit scope is belt-and-braces only.
+    if (hasTbody && row.section === "thead") continue;
     for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
       const cell = row.cells[cellIdx];
       if (!cell || cell.tag !== "th") continue;
@@ -216,6 +238,19 @@ function emitHtmlRowViolations(rows: readonly HtmlRow[], dims: TableDimensions, 
       emit(buildHtmlViolation(cell.element, position, dims));
     }
   }
+}
+
+/**
+ * True when the `<table>` element has at least one direct `<tbody>`
+ * child. Direct-child only — a `<tbody>` nested inside another
+ * element (or in a nested `<table>`) does not count.
+ */
+function htmlTableHasTbody(table: HtmlElement): boolean {
+  for (const child of table.children) {
+    if (child.kind !== "HtmlElement") continue;
+    if (child.tagName.toLowerCase() === "tbody") return true;
+  }
+  return false;
 }
 
 function isLayoutHtmlTable(table: HtmlElement): boolean {
@@ -237,8 +272,18 @@ interface HtmlCell {
   readonly colspan: number;
 }
 
+/**
+ * Which row-group section the row sits in. Drives the implicit-scope
+ * carve-out: rows in `<thead>` get implicit `scope="col"` when the
+ * table also has a `<tbody>` sibling. Rows that are direct children
+ * of `<table>` (no row-group wrapper) are tagged `none` — the
+ * implicit-col rule does not apply.
+ */
+type RowSection = "thead" | "tbody" | "tfoot" | "none";
+
 interface HtmlRow {
   readonly cells: readonly HtmlCell[];
+  readonly section: RowSection;
 }
 
 /**
@@ -247,25 +292,36 @@ interface HtmlRow {
  * children in source order. Rows with zero cells are skipped —
  * an empty `<tr>` is usually a templating artifact, not a
  * structural row.
+ *
+ * Each row carries the row-group section it appeared in (`thead` /
+ * `tbody` / `tfoot` / `none`); this lets the emitter apply the HTML5
+ * implicit `scope="col"` carve-out for `<thead>` rows when the table
+ * also has a `<tbody>`.
  */
 function collectHtmlRows(table: HtmlElement): readonly HtmlRow[] {
-  const rowElements: HtmlElement[] = [];
-  const visit = (node: HtmlNode): void => {
+  interface RowEntry {
+    readonly element: HtmlElement;
+    readonly section: RowSection;
+  }
+  const rowEntries: RowEntry[] = [];
+  const visit = (node: HtmlNode, section: RowSection): void => {
     if (node.kind !== "HtmlElement") return;
     const tag = node.tagName.toLowerCase();
     if (tag === "table") return; // do not descend into nested tables
     if (tag === "tr") {
-      rowElements.push(node);
+      rowEntries.push({ element: node, section });
       return;
     }
-    for (const child of node.children) visit(child);
+    const nextSection: RowSection =
+      tag === "thead" || tag === "tbody" || tag === "tfoot" ? tag : section;
+    for (const child of node.children) visit(child, nextSection);
   };
-  for (const child of table.children) visit(child);
+  for (const child of table.children) visit(child, "none");
 
   const rows: HtmlRow[] = [];
-  for (const tr of rowElements) {
+  for (const entry of rowEntries) {
     const cells: HtmlCell[] = [];
-    for (const child of tr.children) {
+    for (const child of entry.element.children) {
       if (child.kind !== "HtmlElement") continue;
       const childTag = child.tagName.toLowerCase();
       if (childTag !== "th" && childTag !== "td") continue;
@@ -275,7 +331,7 @@ function collectHtmlRows(table: HtmlElement): readonly HtmlRow[] {
         colspan: parseSpan(getHtmlAttribute(child, "colspan")),
       });
     }
-    if (cells.length > 0) rows.push({ cells });
+    if (cells.length > 0) rows.push({ cells, section: entry.section });
   }
   return rows;
 }
@@ -398,13 +454,21 @@ function checkJsxTable(table: JsxElement, emit: Emit): void {
   const dims = computeJsxDimensions(rows);
   if (dims.rows < 2 || dims.cols < 2) return;
   if (jsxHasCompleteHeadersAssociation(rows)) return;
-  emitJsxRowViolations(rows, dims, emit);
+  const hasTbody = jsxTableHasTbody(table);
+  emitJsxRowViolations(rows, dims, hasTbody, emit);
 }
 
-function emitJsxRowViolations(rows: readonly JsxRow[], dims: TableDimensions, emit: Emit): void {
+function emitJsxRowViolations(
+  rows: readonly JsxRow[],
+  dims: TableDimensions,
+  hasTbody: boolean,
+  emit: Emit,
+): void {
   for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
     const row = rows[rowIdx];
     if (!row) continue;
+    // HTML5 implicit scope="col" carve-out — see HTML branch comment.
+    if (hasTbody && row.section === "thead") continue;
     for (let cellIdx = 0; cellIdx < row.cells.length; cellIdx++) {
       const cell = row.cells[cellIdx];
       if (!cell || cell.tag !== "th") continue;
@@ -413,6 +477,14 @@ function emitJsxRowViolations(rows: readonly JsxRow[], dims: TableDimensions, em
       emit(buildJsxViolation(cell.element, position, dims));
     }
   }
+}
+
+function jsxTableHasTbody(table: JsxElement): boolean {
+  for (const child of table.children) {
+    if (child.kind !== "JsxElement") continue;
+    if (child.tagName === "tbody") return true;
+  }
+  return false;
 }
 
 function isLayoutJsxTable(table: JsxElement): boolean {
@@ -444,25 +516,34 @@ interface JsxCell {
 
 interface JsxRow {
   readonly cells: readonly JsxCell[];
+  readonly section: RowSection;
 }
 
 function collectJsxRows(table: JsxElement): readonly JsxRow[] {
-  const rowElements: JsxElement[] = [];
-  const visit = (node: JsxNode): void => {
+  interface JsxRowEntry {
+    readonly element: JsxElement;
+    readonly section: RowSection;
+  }
+  const rowEntries: JsxRowEntry[] = [];
+  const visit = (node: JsxNode, section: RowSection): void => {
     if (node.kind !== "JsxElement") return;
     if (node.tagName === "table") return;
     if (node.tagName === "tr") {
-      rowElements.push(node);
+      rowEntries.push({ element: node, section });
       return;
     }
-    for (const child of node.children) visit(child);
+    const nextSection: RowSection =
+      node.tagName === "thead" || node.tagName === "tbody" || node.tagName === "tfoot"
+        ? node.tagName
+        : section;
+    for (const child of node.children) visit(child, nextSection);
   };
-  for (const child of table.children) visit(child);
+  for (const child of table.children) visit(child, "none");
 
   const rows: JsxRow[] = [];
-  for (const tr of rowElements) {
+  for (const entry of rowEntries) {
     const cells: JsxCell[] = [];
-    for (const child of tr.children) {
+    for (const child of entry.element.children) {
       if (child.kind !== "JsxElement") continue;
       if (child.tagName !== "th" && child.tagName !== "td") continue;
       cells.push({
@@ -473,7 +554,7 @@ function collectJsxRows(table: JsxElement): readonly JsxRow[] {
         ),
       });
     }
-    if (cells.length > 0) rows.push({ cells });
+    if (cells.length > 0) rows.push({ cells, section: entry.section });
   }
   return rows;
 }

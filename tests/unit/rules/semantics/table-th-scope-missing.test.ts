@@ -4,15 +4,16 @@ import { runRule } from "../../../helpers/run-rule.ts";
 
 describe("rule semantics/table-th-scope-missing", () => {
   describe("HTML: fires when", () => {
-    it("a multi-row × multi-column table has <th> cells with no scope", () => {
+    it("a multi-row × multi-column table without <thead> has <th> cells with no scope", () => {
+      // No <thead>/<tbody> wrappers — the HTML5 implicit scope="col"
+      // carve-out does not apply, so the bare <th>s in the first row
+      // still need an explicit scope.
       const violations = runRule(
         rule,
         `<table>
-          <thead><tr><th>Product</th><th>Price</th></tr></thead>
-          <tbody>
-            <tr><td>Widget</td><td>$50</td></tr>
-            <tr><td>Gadget</td><td>$75</td></tr>
-          </tbody>
+          <tr><th>Product</th><th>Price</th></tr>
+          <tr><td>Widget</td><td>$50</td></tr>
+          <tr><td>Gadget</td><td>$75</td></tr>
         </table>`,
         { filePath: "index.html" },
       );
@@ -99,6 +100,29 @@ describe("rule semantics/table-th-scope-missing", () => {
         { filePath: "index.html" },
       );
       expect(violations).toHaveLength(2);
+    });
+
+    it("flags <th> scattered in <tbody> rows even when <thead> is present", () => {
+      // The implicit-col carve-out only covers <thead> > <tr> > <th>.
+      // A <th> sitting in a <tbody> row is acting as a row header and
+      // still needs scope="row" — implicit association doesn't apply.
+      const violations = runRule(
+        rule,
+        `<table>
+          <thead><tr><th>Category</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><th>Width</th><td>1024</td></tr>
+            <tr><th>Height</th><td>768</td></tr>
+          </tbody>
+        </table>`,
+        { filePath: "index.html" },
+      );
+      // <thead> headers are skipped (implicit scope="col"); the two
+      // <tbody> row-header <th>s still fire.
+      expect(violations).toHaveLength(2);
+      for (const v of violations) {
+        expect(v.suggestion).toContain('scope="row"');
+      }
     });
 
     it("flags partial headers= wiring (some <td>s use it, others don't)", () => {
@@ -219,19 +243,55 @@ describe("rule semantics/table-th-scope-missing", () => {
       );
       expect(violations).toHaveLength(0);
     });
+
+    it("<th> sits in <thead> > <tr> with sibling <tbody> (HTML5 implicit scope=col)", () => {
+      // Canonical structure that browsers and AT (JAWS / NVDA /
+      // VoiceOver) all resolve via the HTML5 forming-relationships
+      // algorithm — implicit scope="col" applies, so the bare <th>s
+      // are spec-correct without an explicit scope attribute.
+      const violations = runRule(
+        rule,
+        `<table>
+          <thead><tr><th>Setting</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>theme</td><td>Color theme</td></tr>
+            <tr><td>locale</td><td>Display language</td></tr>
+          </tbody>
+        </table>`,
+        { filePath: "options.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("implicit-scope carve-out tolerates whitespace text inside <thead>/<tbody>", () => {
+      // Real-world markup carries newlines/indentation between row-group
+      // and <tr>; the section detection must walk past text nodes.
+      const violations = runRule(
+        rule,
+        `<table>
+          <thead>
+            <tr><th>Setting</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>theme</td><td>Color theme</td></tr>
+            <tr><td>locale</td><td>Display language</td></tr>
+          </tbody>
+        </table>`,
+        { filePath: "options.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires when", () => {
-    it("a multi-row × multi-column JSX table has <th> cells with no scope", () => {
+    it("a multi-row × multi-column JSX table without <thead> has <th>s with no scope", () => {
       const violations = runRule(
         rule,
         `const X = (
           <table>
-            <thead><tr><th>Product</th><th>Price</th></tr></thead>
-            <tbody>
-              <tr><td>Widget</td><td>$50</td></tr>
-              <tr><td>Gadget</td><td>$75</td></tr>
-            </tbody>
+            <tr><th>Product</th><th>Price</th></tr>
+            <tr><td>Widget</td><td>$50</td></tr>
+            <tr><td>Gadget</td><td>$75</td></tr>
           </table>
         );`,
       );
@@ -307,6 +367,22 @@ describe("rule semantics/table-th-scope-missing", () => {
             <tr><th scope={kind}>Product</th><th scope={kind}>Price</th></tr>
             <tr><td>Widget</td><td>$50</td></tr>
             <tr><td>Gadget</td><td>$75</td></tr>
+          </table>
+        );`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX <thead> > <tr> > <th> with sibling <tbody> is implicit scope=col", () => {
+      const violations = runRule(
+        rule,
+        `const X = (
+          <table>
+            <thead><tr><th>Setting</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>theme</td><td>Color theme</td></tr>
+              <tr><td>locale</td><td>Display language</td></tr>
+            </tbody>
           </table>
         );`,
       );
