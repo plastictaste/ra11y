@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bootstrap btn-group buttons toggle - sanitized template</title>
+</head>
+<body>
+    <main>
+        <!--
+            Sanitized Bootstrap 5 button-group "toggle of buttons" pattern.
+            The container <div> carries `data-bs-toggle="buttons"`, which
+            tells Bootstrap's JS to wire toggle behavior on the *child*
+            <input type="checkbox"|"radio"> controls inside the labels.
+
+            The container itself is not a trigger — it has no click
+            handler, never receives focus, and Enter/Space on the
+            container does nothing. The interactive elements are the
+            <input>s wrapped in <label class="btn">. Each <input> is
+            natively focusable; sighted users see the visual button via
+            CSS, screen-reader and keyboard users get the radio/checkbox
+            semantics.
+
+            Bug being guarded: before the fix, keyboard/handler-missing
+            saw `data-bs-toggle` on a non-interactive <div> and fired —
+            and `suggest_fix` recommended converting the container to
+            `<button type="button">`, which would NEST the <input>
+            children inside a button (interactive descendants of an
+            interactive element — invalid HTML and broken keyboard
+            semantics). The proposed fix actively teaches an
+            anti-pattern. After the fix, `data-bs-toggle="buttons"` is
+            an explicit container value that exempts the host element.
+        -->
+        <div class="btn-group" role="group" aria-label="Basic checkbox toggle button group" data-bs-toggle="buttons">
+            <input type="checkbox" class="btn-check" id="btncheck1" autocomplete="off">
+            <label class="btn btn-outline-primary" for="btncheck1">Checkbox 1</label>
+
+            <input type="checkbox" class="btn-check" id="btncheck2" autocomplete="off">
+            <label class="btn btn-outline-primary" for="btncheck2">Checkbox 2</label>
+
+            <input type="checkbox" class="btn-check" id="btncheck3" autocomplete="off">
+            <label class="btn btn-outline-primary" for="btncheck3">Checkbox 3</label>
+        </div>
+
+        <div class="btn-group" role="group" aria-label="Basic radio toggle button group" data-bs-toggle="buttons">
+            <input type="radio" class="btn-check" name="btnradio" id="btnradio1" autocomplete="off" checked>
+            <label class="btn btn-outline-primary" for="btnradio1">Radio 1</label>
+
+            <input type="radio" class="btn-check" name="btnradio" id="btnradio2" autocomplete="off">
+            <label class="btn btn-outline-primary" for="btnradio2">Radio 2</label>
+
+            <input type="radio" class="btn-check" name="btnradio" id="btnradio3" autocomplete="off">
+            <label class="btn btn-outline-primary" for="btnradio3">Radio 3</label>
+        </div>
+    </main>
+</body>
+</html>

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bootstrap carousel auto-init - sanitized template</title>
+</head>
+<body>
+    <main>
+        <!--
+            Sanitized Bootstrap 5 carousel pattern using the auto-init
+            attribute `data-bs-ride="carousel"` (or "true"). This is an
+            initialization signal to Bootstrap's JS — when present, BS
+            instantiates the Carousel component on the host element and
+            starts the auto-rotation.
+
+            The carousel container `<div class="carousel">` itself is
+            not interactive. The keyboard-operable triggers are the
+            child <button class="carousel-control-prev"> and
+            <button class="carousel-control-next"> elements (and the
+            pagination indicator <button>s). The container hosts the
+            slides and the auto-init attribute; it never receives focus
+            and has no Enter/Space activation.
+
+            Bug being guarded: before the fix, keyboard/handler-missing
+            saw `data-bs-ride="carousel"` on a bare <div> and flagged
+            it as a missing keyboard handler — and `suggest_fix`
+            recommended converting the container to <button>, which
+            would nest the <button class="carousel-control-prev">
+            children inside a <button> (nested interactive). After the
+            fix, every `data-bs-ride` value (the auto-init attribute)
+            exempts the host from this rule's attribute-interaction
+            grammar.
+        -->
+        <div id="carouselExampleAutoplaying" class="carousel slide" data-bs-ride="carousel">
+            <div class="carousel-inner">
+                <div class="carousel-item active">
+                    <img src="slide1.jpg" class="d-block w-100" alt="First slide">
+                </div>
+                <div class="carousel-item">
+                    <img src="slide2.jpg" class="d-block w-100" alt="Second slide">
+                </div>
+                <div class="carousel-item">
+                    <img src="slide3.jpg" class="d-block w-100" alt="Third slide">
+                </div>
+            </div>
+            <button class="carousel-control-prev" type="button" data-bs-target="#carouselExampleAutoplaying" data-bs-slide="prev">
+                <span class="carousel-control-prev-icon" aria-hidden="true"></span>
+                <span class="visually-hidden">Previous</span>
+            </button>
+            <button class="carousel-control-next" type="button" data-bs-target="#carouselExampleAutoplaying" data-bs-slide="next">
+                <span class="carousel-control-next-icon" aria-hidden="true"></span>
+                <span class="visually-hidden">Next</span>
+            </button>
+        </div>
+
+        <!-- Variant: data-bs-ride="true" (auto-init without auto-cycling) -->
+        <div id="carouselExampleManual" class="carousel slide" data-bs-ride="true">
+            <div class="carousel-inner">
+                <div class="carousel-item active">
+                    <img src="manual1.jpg" class="d-block w-100" alt="Manual slide one">
+                </div>
+                <div class="carousel-item">
+                    <img src="manual2.jpg" class="d-block w-100" alt="Manual slide two">
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>
