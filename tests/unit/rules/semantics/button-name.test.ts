@@ -462,14 +462,84 @@ describe("rule semantics/button-name", () => {
       expect(v[0]?.suggestion).toContain('aria-hidden="true"');
     });
 
-    it('JSX: button wrapping <i className="fa-bars"> is not (yet) detected (existing heuristic)', () => {
-      // The JSX path's jsxHasContentChildren heuristic treats any
-      // JsxElement child as evidence the button has a name — so this
-      // doesn't fire today. Pinning this gap here documents that the
-      // icon-glyph fix-text change is HTML-only for now; widening JSX
-      // detection is a separate backlog change.
-      const v = runRule(rule, `const X = <button><i className="fa-bars"></i></button>;`);
+    // V1-RULE-BUTTON-NAME-FA-ICON-ONLY-STATIC: the JSX detector previously
+    // treated ANY <JsxElement> child as evidence of a name — the field
+    // report (faq-collapse, 5 `<button class="faq-toggle">` with two
+    // `<i class="fa-…">` glyphs apiece) flagged the gap. The cases below
+    // pin the corrected JSX behavior so the gap can't silently re-open.
+    it("JSX: button with two presentational <i> glyph children fires (multi-icon shape)", () => {
+      const v = runRule(
+        rule,
+        `const X = <button className="faq-toggle"><i className="fas fa-chevron-down" /><i className="fas fa-times" /></button>;`,
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.ruleId).toBe("semantics/button-name");
+      expect(v[0]?.severity).toBe("error");
+      // First scanned child glyph drives the suggestion; fa-times maps
+      // to "Close" in FA_GLYPH_LABELS so the agent gets a concrete label.
+      expect(v[0]?.suggestion).toContain('aria-label="Close"');
+    });
+
+    it("JSX: button with icon + visible text does NOT fire (text wins)", () => {
+      const v = runRule(rule, `const X = <button><i className="fa fa-search" /> Search</button>;`);
       expect(v).toHaveLength(0);
+    });
+
+    it("JSX: button with aria-label + presentational icon does NOT fire", () => {
+      const v = runRule(
+        rule,
+        `const X = <button aria-label="Search"><i className="fa fa-search" /></button>;`,
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("JSX: button with sr-only span label + aria-hidden icon does NOT fire (text descendant wins)", () => {
+      const v = runRule(
+        rule,
+        `const X = <button><i className="fa fa-search" aria-hidden="true" /><span className="sr-only">Search</span></button>;`,
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("JSX: button with runtime-text expression child does NOT fire", () => {
+      // `<button>{label}</button>` shape — the JsxExpression child is
+      // the runtime-text signal that survives even when nested under a
+      // wrapper element (`<span>{label}</span>`).
+      const v = runRule(rule, `const X = <button><i className="fa fa-x" />{label}</button>;`);
+      expect(v).toHaveLength(0);
+      const v2 = runRule(rule, `const X = <button><span>{label}</span></button>;`);
+      expect(v2).toHaveLength(0);
+    });
+
+    it("JSX: button wrapping bare <svg/> (no <title>) fires (presentational shell)", () => {
+      // Mirror the HTML test on line 117. Previously the blanket
+      // JsxElement-child heuristic let a name-less SVG through.
+      const v = runRule(rule, `const X = <button><svg /></button>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("<title>");
+    });
+
+    it("JSX: <Icon /> PascalCase child still suppresses (presumed labeled by component)", () => {
+      // The PascalCase escape hatch in `hasJsxChildNameSource` is the
+      // honest place to express "the component supplies its own name."
+      // Keep this distinct from intrinsic icon shells, which the
+      // refined rule treats as presentational by elimination.
+      const v = runRule(rule, `const X = <button><Icon /></button>;`);
+      expect(v).toHaveLength(0);
+    });
+
+    it('JSX: button wrapping <i className="fa-bars"> fires with glyph-derived fix', () => {
+      // V1-RULE-BUTTON-NAME-FA-ICON-ONLY-STATIC: previously the JSX
+      // path's blanket "any JsxElement child = has-content" heuristic
+      // suppressed icon-only buttons. Now the JSX detector mirrors the
+      // HTML detector — a presentational `<i class="fa-…">` child
+      // alone does NOT silence the rule, and the same glyph-derived
+      // fix text the HTML path emits is reused.
+      const v = runRule(rule, `const X = <button><i className="fa-bars"></i></button>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.suggestion).toContain('aria-label="Menu"');
+      expect(v[0]?.suggestion).toContain("fa-bars");
     });
   });
 

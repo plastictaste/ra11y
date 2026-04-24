@@ -37,7 +37,6 @@ import {
   hasHtmlAttribute,
   hasJsxAttribute,
   htmlTextContent,
-  jsxHasContentChildren,
   jsxTextContent,
   truncateForEcho,
   walkHtmlElements,
@@ -314,11 +313,36 @@ function hasAccessibleNameJsx(element: JsxElement): boolean {
   // wins — the two are compatible but the explicit path expresses
   // intent for code-review.
   if (hasSvgNameDescendantJsx(element)) return true;
-  // Expression children like {label} likely produce text at runtime.
-  // Flagging <button>{label}</button> as "no name" is a false positive.
-  if (jsxHasContentChildren(element)) return true;
+  // Expression descendants like {label} likely produce text at runtime
+  // — including when nested under a presentational wrapper (e.g.
+  // `<button><span>{label}</span></button>`). Walk recursively so a
+  // wrapper element doesn't hide the runtime-text signal. Flagging
+  // `<button>{label}</button>` as "no name" would be a false positive.
+  // (We deliberately do NOT short-circuit on bare JsxElement children:
+  // before V1-RULE-BUTTON-NAME-FA-ICON-ONLY-STATIC, any child element
+  // — including a presentational `<i class="fa-…">` icon — silenced
+  // the rule. Now the only structural signals that count as "likely
+  // has a name" are literal text, a JSX expression descendant, an
+  // SVG `<title>`/`<text>`, an `<img alt>`, or a PascalCase child.)
+  if (hasJsxExpressionDescendant(element)) return true;
   if (hasJsxAriaName(element)) return true;
   if (hasJsxChildNameSource(element)) return true;
+  return false;
+}
+
+/**
+ * True when any descendant child node is a `JsxExpression` (`{label}`,
+ * `{t('save')}`, etc.). Walks through `JsxElement` wrappers because the
+ * expression often sits inside a styling span — `<button><span class=
+ * "label">{label}</span></button>`. Used as the runtime-text signal for
+ * accessible-name detection: literal text is caught by `jsxTextContent`,
+ * runtime-text is caught here.
+ */
+function hasJsxExpressionDescendant(element: JsxElement): boolean {
+  for (const child of element.children) {
+    if (child.kind === "JsxExpression") return true;
+    if (child.kind === "JsxElement" && hasJsxExpressionDescendant(child)) return true;
+  }
   return false;
 }
 
