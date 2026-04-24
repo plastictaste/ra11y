@@ -42,6 +42,20 @@
  * `icon-font-hidden.title-relies.ts`; shared helpers used by both
  * passes live in `icon-font-hidden.shared.ts`.
  *
+ * A third sibling kind (variantKey `prose-context`) fires when an
+ * icon-font glyph sits inside a non-interactive prose container
+ * (`h1..h6`, `p`, `li`, `dt`, `dd`, `em`, `strong`, `blockquote`,
+ * `figcaption`, `caption`, `td`, `th`, or `<span class="text-…">`) and
+ * has neither `aria-hidden="true"`, an `aria-label`, nor an adjacent
+ * sr-only sibling carrying the meaning to assistive tech. The
+ * canonical case is `<h3>Double click on the image to <i class="fas
+ * fa-heart"></i> it</h3>` — sighted users see the heart and read
+ * "Double click on the image to [heart] it"; screen readers either go
+ * silent on the empty `<i>` or announce a private-use-area codepoint.
+ * The previous gate ("requires accessibly-named interactive ancestor")
+ * dropped this case entirely. The pass lives in
+ * `icon-font-hidden.prose-context.ts`.
+ *
  * Scope of "labeled interactive ancestor":
  *   - `<button>` with a computable accessible name (text content,
  *     `aria-label`, or `aria-labelledby` — `title` is excluded; see
@@ -75,6 +89,10 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
+import {
+  checkHtmlProseContextIcon,
+  checkJsxProseContextIcon,
+} from "./icon-font-hidden.prose-context.ts";
 import {
   accessibleNameHtml,
   accessibleNameJsx,
@@ -168,11 +186,17 @@ function isJsxLabeledInteractive(el: JsxElement): boolean {
 // ---------------------------------------------------------------------------
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
+  // Track which icon nodes the labeled-interactive pass already
+  // claimed so the prose-context pass (run later in the same walk)
+  // doesn't double-emit on icons that nest inside a labeled
+  // interactive AND a prose container (e.g. `<button aria-label="X">
+  // <h3><i .../></h3></button>`).
+  const claimedHtmlIcons: Set<HtmlElement> = new Set();
   for (const ancestor of walkHtmlElements(doc)) {
     if (isHtmlLabeledInteractive(ancestor)) {
       const ancestorName = accessibleNameHtml(ancestor) ?? "";
       for (const child of ancestor.children) {
-        visitHtmlForIcon(child, ancestor.tagName, ancestorName, emit);
+        visitHtmlForIcon(child, ancestor.tagName, ancestorName, emit, claimedHtmlIcons);
       }
       continue;
     }
@@ -185,6 +209,11 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     // to the icon" guidance, which would regress the link to no
     // reliable accessible name on iOS.
     checkHtmlTitleOnlyIconRow(ancestor, emit);
+    // Third pass: icon-font glyph sitting in non-interactive prose
+    // (h1..h6, p, li, …) without aria-hidden / aria-label / sr-only
+    // sibling. Emitted with variantKey "prose-context" so the engine's
+    // findingId hash keeps it separable from the other two kinds.
+    checkHtmlProseContextIcon(ancestor, emit, claimedHtmlIcons);
   }
 }
 
@@ -193,6 +222,7 @@ function visitHtmlForIcon(
   ancestorTag: string,
   ancestorName: string,
   emit: Emit,
+  claimed: Set<HtmlElement>,
 ): void {
   if (node.kind !== "HtmlElement") return;
   // Descending into a nested labeled interactive would double-report:
@@ -202,9 +232,12 @@ function visitHtmlForIcon(
   const classValue = getHtmlAttribute(node, "class");
   const match = detectIconFont(node.tagName, classValue);
   if (match !== null && !isHtmlIconHidden(node)) {
+    claimed.add(node);
     emit(buildHtmlViolation(node, match, ancestorTag, ancestorName, classValue));
   }
-  for (const child of node.children) visitHtmlForIcon(child, ancestorTag, ancestorName, emit);
+  for (const child of node.children) {
+    visitHtmlForIcon(child, ancestorTag, ancestorName, emit, claimed);
+  }
 }
 
 function buildHtmlViolation(
@@ -239,17 +272,22 @@ function buildHtmlViolation(
 // ---------------------------------------------------------------------------
 
 function checkJsx(module: TsxModule, emit: Emit): void {
+  // See `claimedHtmlIcons` in checkHtml — same dedup mechanism.
+  const claimedJsxIcons: Set<JsxElement> = new Set();
   for (const ancestor of walkJsxElements(module)) {
     if (isJsxLabeledInteractive(ancestor)) {
       const ancestorName = accessibleNameJsx(ancestor) ?? "";
       for (const child of ancestor.children) {
-        visitJsxForIcon(child, ancestor.tagName, ancestorName, emit);
+        visitJsxForIcon(child, ancestor.tagName, ancestorName, emit, claimedJsxIcons);
       }
       continue;
     }
     // Mirrors `checkHtmlTitleOnlyIconRow` — see that function for
     // rationale.
     checkJsxTitleOnlyIconRow(ancestor, emit);
+    // Mirrors `checkHtmlProseContextIcon` — see that function for
+    // rationale.
+    checkJsxProseContextIcon(ancestor, emit, claimedJsxIcons);
   }
 }
 
@@ -258,6 +296,7 @@ function visitJsxForIcon(
   ancestorTag: string,
   ancestorName: string,
   emit: Emit,
+  claimed: Set<JsxElement>,
 ): void {
   if (node.kind !== "JsxElement") return;
   if (isJsxLabeledInteractive(node)) return;
@@ -265,9 +304,12 @@ function visitJsxForIcon(
     getJsxAttributeString(node, "className") ?? getJsxAttributeString(node, "class");
   const match = detectIconFont(node.tagName, classValue);
   if (match !== null && !isJsxIconHidden(node)) {
+    claimed.add(node);
     emit(buildJsxViolation(node, match, ancestorTag, ancestorName, classValue));
   }
-  for (const child of node.children) visitJsxForIcon(child, ancestorTag, ancestorName, emit);
+  for (const child of node.children) {
+    visitJsxForIcon(child, ancestorTag, ancestorName, emit, claimed);
+  }
 }
 
 function buildJsxViolation(
