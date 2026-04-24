@@ -102,6 +102,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/labelledby-target-exists](./rules/aria__labelledby-target-exists.md)
 - [aria/live-region-valid](./rules/aria__live-region-valid.md)
 - [aria/progressbar-value-range](./rules/aria__progressbar-value-range.md)
+- [aria/redundant-role-on-host-element](./rules/aria__redundant-role-on-host-element.md)
 - [aria/required-attrs](./rules/aria__required-attrs.md)
 - [aria/role-from-class-only](./rules/aria__role-from-class-only.md)
 - [aria/valid-attr](./rules/aria__valid-attr.md)
