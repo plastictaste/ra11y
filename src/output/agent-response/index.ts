@@ -30,5 +30,4 @@ export type {
   Effort,
   FileLimitation,
   FixesByClass,
-  Safety,
 } from "./types.ts";

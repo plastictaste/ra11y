@@ -475,14 +475,28 @@ function rewriteFinding<T extends AgentFinding>(finding: T, hoistedKeys: Readonl
   const hash = hashFixDescription(description);
   if (!hoistedKeys.has(compositeKey(finding.ruleId, hash))) return finding;
   // Strip `description` from the emitted AgentFix; keep every other
-  // field (safety, oldText, newText when present). Never emit BOTH the
-  // pointer and the inline description — doctrine in
+  // field (oldText, newText when present). Never emit BOTH the pointer
+  // and the inline description — doctrine in
   // `docs/kb/architecture/ai-first-consumer.md` under "Ambiguous field
   // shapes are dishonest."
+  //
+  // Post V1-FIX-SAFETY-CONSTANT-FIELD: if the stripped fix has no
+  // sibling payload (guidance-only case — no oldText/newText), drop
+  // the entire `fix` object. `fixDescriptionRef` now carries the
+  // prose pointer; an empty `fix: {}` alongside it is ambiguous
+  // dead-weight per the same doctrine rule.
   const { description: _omitted, ...fixRest } = finding.fix;
+  const fixHasPayload = Object.keys(fixRest).length > 0;
+  if (fixHasPayload) {
+    return {
+      ...finding,
+      fix: fixRest,
+      fixDescriptionRef: { hash },
+    };
+  }
+  const { fix: _droppedFix, ...findingRest } = finding;
   return {
-    ...finding,
-    fix: fixRest,
+    ...(findingRest as T),
     fixDescriptionRef: { hash },
   };
 }

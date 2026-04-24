@@ -7,8 +7,15 @@
  * Hollow-fix rule: `AgentFix.oldText` / `newText` are emitted only when the
  * violation carries a mechanical edit via `fixPaths?.primary.edit`. For
  * guidance-only findings (prose `suggestion` but no edit), `fix` carries only
- * `description`, `confidence`, and `safety` — no empty-string sentinels. Per
- * CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+ * `description` — no empty-string sentinels. Per CLAUDE.md §1 "Ambiguous
+ * field shapes are dishonest."
+ *
+ * `safety` used to ride on every emitted fix as a constant `"safe"`, regardless
+ * of `fixClass` — a field that never varies conveys no signal, and claiming
+ * "safe" on a runtime-only or guidance fix is arguably wrong (static analysis
+ * cannot prove safety without runtime context). Dropped per
+ * V1-FIX-SAFETY-CONSTANT-FIELD — `fixClass` already distinguishes the
+ * remediation lane; a sibling constant is noise.
  */
 
 import type { Violation } from "../../types/violation.ts";
@@ -43,7 +50,6 @@ function buildFix(v: Violation): AgentFix | undefined {
       return {
         oldText: edit.oldText,
         newText: edit.newText,
-        safety: "safe",
         description: v.suggestion ?? v.fixPaths.primary.label,
       };
     }
@@ -52,7 +58,6 @@ function buildFix(v: Violation): AgentFix | undefined {
   if (hasGuidance && typeof v.suggestion === "string") {
     // Prose guidance only — no hollow oldText/newText sentinels.
     return {
-      safety: "safe",
       description: v.suggestion,
     };
   }

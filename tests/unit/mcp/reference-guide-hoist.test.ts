@@ -70,12 +70,12 @@ describe("hoistAndBuildReferenceGuide", () => {
           finding({
             ruleId: "forms/autocomplete-missing",
             groupKey: "group-one",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
           finding({
             ruleId: "forms/autocomplete-missing",
             groupKey: "group-two",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
         ],
       },
@@ -105,7 +105,7 @@ describe("hoistAndBuildReferenceGuide", () => {
         findings: [
           finding({
             ruleId: "contrast/minimum",
-            fix: { safety: "safe", description: "Raise contrast ratio to 4.5:1" },
+            fix: { description: "Raise contrast ratio to 4.5:1" },
           }),
         ],
       },
@@ -135,22 +135,22 @@ describe("hoistAndBuildReferenceGuide", () => {
           finding({
             ruleId: "semantics/label-in-name",
             groupKey: "g-A-1",
-            fix: { safety: "safe", description: descA },
+            fix: { description: descA },
           }),
           finding({
             ruleId: "semantics/label-in-name",
             groupKey: "g-A-2",
-            fix: { safety: "safe", description: descA },
+            fix: { description: descA },
           }),
           finding({
             ruleId: "semantics/label-in-name",
             groupKey: "g-B-1",
-            fix: { safety: "safe", description: descB },
+            fix: { description: descB },
           }),
           finding({
             ruleId: "semantics/label-in-name",
             groupKey: "g-B-2",
-            fix: { safety: "safe", description: descB },
+            fix: { description: descB },
           }),
         ],
       },
@@ -179,8 +179,8 @@ describe("hoistAndBuildReferenceGuide", () => {
       {
         path: "a.tsx",
         findings: [
-          finding({ ruleId: "a/b", fix: { safety: "safe", description: desc } }),
-          finding({ ruleId: "a/b", fix: { safety: "safe", description: desc } }),
+          finding({ ruleId: "a/b", fix: { description: desc } }),
+          finding({ ruleId: "a/b", fix: { description: desc } }),
         ],
       },
     ];
@@ -192,7 +192,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     }
   });
 
-  it("preserves mechanical edit fields (oldText/newText/safety) when stripping description", () => {
+  it("preserves mechanical edit fields (oldText/newText) when stripping description", () => {
     const desc = "Replace role=button with <button>";
     const files = [
       {
@@ -201,7 +201,6 @@ describe("hoistAndBuildReferenceGuide", () => {
           finding({
             ruleId: "a/b",
             fix: {
-              safety: "safe",
               oldText: "<div>",
               newText: "<button>",
               description: desc,
@@ -210,7 +209,6 @@ describe("hoistAndBuildReferenceGuide", () => {
           finding({
             ruleId: "a/b",
             fix: {
-              safety: "safe",
               oldText: "<div>",
               newText: "<button>",
               description: desc,
@@ -223,7 +221,9 @@ describe("hoistAndBuildReferenceGuide", () => {
     for (const f of result.files[0]?.findings ?? []) {
       expect(f.fix?.oldText).toBe("<div>");
       expect(f.fix?.newText).toBe("<button>");
-      expect(f.fix?.safety).toBe("safe");
+      // V1-FIX-SAFETY-CONSTANT-FIELD: the constant `safety: "safe"`
+      // was dropped — the key must not reach the wire.
+      expect((f.fix as Record<string, unknown>)?.safety).toBeUndefined();
       expect(f.fix?.description).toBeUndefined();
     }
   });
@@ -234,7 +234,7 @@ describe("hoistAndBuildReferenceGuide", () => {
         path: "a.tsx",
         findings: [
           finding({ ruleId: "a/b" }), // no fix at all
-          finding({ ruleId: "a/b", fix: { safety: "safe" } }), // fix without description
+          finding({ ruleId: "a/b", fix: {} }), // fix without description or any payload
         ],
       },
     ];
@@ -251,8 +251,8 @@ describe("hoistAndBuildReferenceGuide", () => {
       {
         path: "a.tsx",
         findings: [
-          finding({ ruleId: "a/b", fix: { safety: "safe", description: "unique1" } }),
-          finding({ ruleId: "a/b", fix: { safety: "safe", description: "unique2" } }),
+          finding({ ruleId: "a/b", fix: { description: "unique1" } }),
+          finding({ ruleId: "a/b", fix: { description: "unique2" } }),
         ],
       },
     ];
@@ -271,11 +271,11 @@ describe("hoistAndBuildReferenceGuide", () => {
     const files = [
       {
         path: "a.tsx",
-        findings: [finding({ ruleId: "a/b", fix: { safety: "safe", description: desc } })],
+        findings: [finding({ ruleId: "a/b", fix: { description: desc } })],
       },
       {
         path: "b.tsx",
-        findings: [finding({ ruleId: "a/b", fix: { safety: "safe", description: desc } })],
+        findings: [finding({ ruleId: "a/b", fix: { description: desc } })],
       },
     ];
     const result = hoistAndBuildReferenceGuide(files, { suppressPlacement: { tsx: "place" } });
@@ -290,16 +290,20 @@ describe("hoistAndBuildReferenceGuide", () => {
     // Regression guard for Q3-FIX-PAYLOAD-EMPTY — the shape invariant
     // spelled out in docs/kb/architecture/ai-first-consumer.md under
     // "Ambiguous field shapes are dishonest." After any hoist pass,
-    // every finding with a `fix` must either carry more than
-    // `{ safety }` (oldText/newText or description inline) OR sit
-    // alongside a `fixDescriptionRef` that resolves in the returned
-    // reference guide OR (per Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-
-    // DEDUPE) share a `groupKey` with a file-level
-    // `groupFixDescriptionRefs` entry that resolves. A bare
-    // `fix: { safety }` with no inline ref AND no group-level ref is
-    // silent-miss territory: a downstream consumer can't distinguish
-    // "no guidance available" from "guidance was eaten by the
-    // pipeline."
+    // every finding with a `fix` must carry a non-empty key set
+    // (oldText/newText or description inline) OR sit alongside a
+    // `fixDescriptionRef` that resolves in the returned reference
+    // guide OR (per Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE) share
+    // a `groupKey` with a file-level `groupFixDescriptionRefs` entry
+    // that resolves. An empty `fix: {}` with no inline ref AND no
+    // group-level ref is silent-miss territory: a downstream consumer
+    // can't distinguish "no guidance available" from "guidance was
+    // eaten by the pipeline."
+    //
+    // V1-FIX-SAFETY-CONSTANT-FIELD: before the fix, the canonical
+    // dishonest shape was `fix: { safety }` — a bare constant with no
+    // informational payload. The field is now dropped entirely, so the
+    // dishonest shape reduces to `fix: {}`.
     //
     // Give each duplicated-description finding a unique groupKey so
     // the per-finding ref stays inline (exercise the invariant's
@@ -311,23 +315,22 @@ describe("hoistAndBuildReferenceGuide", () => {
       {
         path: "a.tsx",
         findings: [
-          // Duplicated guidance — will hoist (fix → { safety } + ref).
+          // Duplicated guidance — will hoist (fix dropped, ref set).
           finding({
             ruleId: "aria/label",
             groupKey: "aria-g1",
-            fix: { safety: "safe", description: dupDesc },
+            fix: { description: dupDesc },
           }),
           finding({
             ruleId: "aria/label",
             groupKey: "aria-g2",
-            fix: { safety: "safe", description: dupDesc },
+            fix: { description: dupDesc },
           }),
           // Mechanical duplicate — will hoist, oldText/newText kept.
           finding({
             ruleId: "semantics/prefer-native",
             groupKey: "sem-g1",
             fix: {
-              safety: "safe",
               oldText: "<div>",
               newText: "<button>",
               description: "Prefer native <button> over role=button.",
@@ -337,7 +340,6 @@ describe("hoistAndBuildReferenceGuide", () => {
             ruleId: "semantics/prefer-native",
             groupKey: "sem-g2",
             fix: {
-              safety: "safe",
               oldText: "<div>",
               newText: "<button>",
               description: "Prefer native <button> over role=button.",
@@ -347,7 +349,7 @@ describe("hoistAndBuildReferenceGuide", () => {
           finding({
             ruleId: "contrast/minimum",
             groupKey: "contrast-g1",
-            fix: { safety: "safe", description: uniqueDesc },
+            fix: { description: uniqueDesc },
           }),
           // No fix at all.
           finding({ ruleId: "other/rule", groupKey: "other-g1" }),
@@ -362,9 +364,10 @@ describe("hoistAndBuildReferenceGuide", () => {
       if (f.fix === undefined) continue;
       const keyCount = Object.keys(f.fix).length;
       const hasRef = f.fixDescriptionRef !== undefined;
-      // The AgentFix is honest when it carries more than safety alone,
-      // or sits next to a ref. Never bare `{ safety }` without a ref.
-      expect(keyCount > 1 || hasRef).toBe(true);
+      // The AgentFix is honest when it carries at least one payload
+      // key (oldText/newText/description) or sits next to a ref.
+      // Never an empty `{}` without a ref.
+      expect(keyCount > 0 || hasRef).toBe(true);
       // When a ref is present, it must resolve in the reference guide.
       if (hasRef) {
         const resolved = fixDescs?.[f.ruleId]?.[f.fixDescriptionRef?.hash ?? ""];
@@ -399,7 +402,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
             groupKey: "grp-labels",
             line: i + 1,
             findingId: `id-${i}`,
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
         ),
       },
@@ -439,7 +442,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
             groupKey: "k-shared",
             findingId: `f-${i}`,
             line: i + 1,
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
         ),
       },
@@ -472,13 +475,13 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
             ruleId: "r/x",
             groupKey: "g1",
             findingId: "f-0",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
           finding({
             ruleId: "r/x",
             groupKey: "g2",
             findingId: "f-1",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
         ],
       },
@@ -507,25 +510,25 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
             ruleId: "r/x",
             groupKey: "alpha",
             findingId: "a1",
-            fix: { safety: "safe", description: descA },
+            fix: { description: descA },
           }),
           finding({
             ruleId: "r/x",
             groupKey: "alpha",
             findingId: "a2",
-            fix: { safety: "safe", description: descA },
+            fix: { description: descA },
           }),
           finding({
             ruleId: "r/x",
             groupKey: "beta",
             findingId: "b1",
-            fix: { safety: "safe", description: descB },
+            fix: { description: descB },
           }),
           finding({
             ruleId: "r/x",
             groupKey: "beta",
             findingId: "b2",
-            fix: { safety: "safe", description: descB },
+            fix: { description: descB },
           }),
         ],
       },
@@ -560,7 +563,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
             ruleId: "r/x",
             groupKey: "shared",
             findingId: "a",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
         ],
       },
@@ -571,7 +574,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
             ruleId: "r/x",
             groupKey: "shared",
             findingId: "b",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
         ],
       },
@@ -599,19 +602,19 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
             ruleId: "r/x",
             groupKey: "g",
             findingId: "1",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
           finding({
             ruleId: "r/x",
             groupKey: "g",
             findingId: "2",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
           finding({
             ruleId: "r/x",
             groupKey: "g",
             findingId: "3",
-            fix: { safety: "safe", description: desc },
+            fix: { description: desc },
           }),
         ],
       },

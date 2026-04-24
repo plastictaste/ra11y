@@ -121,7 +121,6 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
         fix?: {
           oldText?: string;
           newText?: string;
-          safety: string;
           description: string;
         };
         effort: string;
@@ -433,7 +432,11 @@ describe("formatter: agent — files", () => {
     expect(firstFinding?.fix).toBeDefined();
     expect(firstFinding?.fix?.description).toBe("Add onKeyDown or onKeyUp alongside onClick.");
     expect(firstFinding?.confidence).toBe("high");
-    expect(firstFinding?.fix?.safety).toBe("safe");
+    // V1-FIX-SAFETY-CONSTANT-FIELD: `safety` was dropped — it rode as
+    // a constant `"safe"` on every emitted fix regardless of
+    // `fixClass`, which conveyed no signal. Parent `finding.fixClass`
+    // already distinguishes the remediation lane. Guard the shape.
+    expect((firstFinding?.fix as Record<string, unknown>)?.safety).toBeUndefined();
   });
 
   it("finding.confidence is medium for warning severity", () => {

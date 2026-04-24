@@ -27,7 +27,6 @@ export type Category = "auto-fix" | "review" | "manual";
  * is not a suppression axis — every inherited finding is surfaced.
  */
 export type Confidence = "high" | "medium" | "low" | "inherited";
-export type Safety = "safe" | "unsafe";
 
 /**
  * A structured fix suggestion attached to a single finding.
@@ -52,11 +51,20 @@ export type Safety = "safe" | "unsafe";
  * Confidence lives on the parent {@link AgentFinding} — one confidence
  * per finding, derived from severity. A separate per-fix confidence
  * was redundant.
+ *
+ * `safety` used to live here as a constant `"safe"` on every emitted fix,
+ * regardless of `fixClass`. Dropped per V1-FIX-SAFETY-CONSTANT-FIELD — a
+ * field that never varies conveys no signal, and claiming "safe" on a
+ * runtime-only or guidance fix is arguably wrong (static analysis cannot
+ * prove safety without runtime context). The parent finding's `fixClass`
+ * already distinguishes the remediation lane (`mechanical` vs `guidance`
+ * vs `runtime-only` vs `verify-in-source`); a sibling constant is noise.
+ * See `docs/kb/architecture/ai-first-consumer.md` under "Ambiguous field
+ * shapes are dishonest."
  */
 export interface AgentFix {
   readonly oldText?: string;
   readonly newText?: string;
-  readonly safety: Safety;
   readonly description?: string;
 }
 
