@@ -26,6 +26,10 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
+import {
+  htmlSubtreeHasStrippedDirective,
+  TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
+} from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
 const HEADING_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
@@ -96,7 +100,15 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (el === null) continue;
     if (hasAccessibleContentHtml(el)) continue;
     const preceding = findPrecedingNonEmpty(headings, i);
-    emitViolation(heading, preceding, emit);
+    // Per docs/kb/architecture/ai-first-consumer.md §"Surface, don't
+    // suppress": when the only rendered content was a Liquid/Jinja/ERB
+    // expression stripped by the parser (`<h1>{{ page.title }}</h1>`),
+    // the finding still emits at severity `error` — static analysis
+    // can't see whether the expression resolves non-empty — but the
+    // reason text carries the template_directive_stripped signal so
+    // the agent routes to "verify rendered output" in one read.
+    const templateStripped = htmlSubtreeHasStrippedDirective(el);
+    emitViolation(heading, preceding, templateStripped, emit);
   }
 }
 
@@ -177,7 +189,10 @@ function checkJsx(module: TsxModule, emit: Emit): void {
       continue;
     }
     const preceding = findPrecedingNonEmpty(headings, i);
-    emitViolation(heading, preceding, emit);
+    // JSX branch: expression-child guard in `hasAccessibleContentJsx`
+    // already exempts `<h1>{label}</h1>`, so no template-stripped
+    // enrichment is needed on this path.
+    emitViolation(heading, preceding, false, emit);
   }
 }
 
@@ -267,11 +282,17 @@ function findPrecedingNonEmpty(headings: readonly HeadingEntry[], i: number): He
   return null;
 }
 
-function emitViolation(entry: HeadingEntry, preceding: HeadingEntry | null, emit: Emit): void {
+function emitViolation(
+  entry: HeadingEntry,
+  preceding: HeadingEntry | null,
+  templateStripped: boolean,
+  emit: Emit,
+): void {
+  const base = `<${entry.tagName}> is empty — it appears in the heading outline but describes no topic or purpose.`;
   emit({
     severity: "error",
     location: { filePath: "", line: entry.line, column: entry.column },
-    message: `<${entry.tagName}> is empty — it appears in the heading outline but describes no topic or purpose.`,
+    message: templateStripped ? `${base}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : base,
     suggestion: buildEmptyHeadingSuggestion(entry, preceding),
   });
 }

@@ -142,6 +142,35 @@ describe("rule semantics/empty-heading", () => {
     });
   });
 
+  // V1-LIQUID-TEMPLATE-EXPRESSION-AS-SOLE-CHILD-REASON-ENRICHMENT:
+  // when the only child was a Liquid/Jinja/ERB expression stripped by
+  // the parser, the finding still emits at severity `error` (surface-
+  // don't-suppress) but the reason text carries the
+  // `template_directive_stripped` signal so the agent verifies the
+  // rendered output instead of looping through apply_fix on a
+  // template-directive false positive.
+  describe("HTML: template-directive enrichment", () => {
+    it("enriches reason when sole child is a Liquid interpolation", () => {
+      const v = runRule(rule, `<h1>{{ page.title }}</h1>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("template expression");
+      expect(v[0]?.message).toContain("ra11y-disable");
+    });
+
+    it("enriches reason when sole child is an ERB expression", () => {
+      const v = runRule(rule, `<h2><%= @post.title %></h2>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("template expression");
+    });
+
+    it("does NOT enrich reason when heading is plainly empty", () => {
+      const v = runRule(rule, `<h1></h1>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).not.toContain("template expression");
+    });
+  });
+
   describe("context-aware fix: preceding heading", () => {
     it("empty h3 after h2 inlines the h2's text and level", () => {
       const source = `<h2>Contact Information</h2>\n<h3></h3>`;

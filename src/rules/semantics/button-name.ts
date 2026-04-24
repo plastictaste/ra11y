@@ -43,6 +43,10 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
+import {
+  htmlSubtreeHasStrippedDirective,
+  TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
+} from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
 export const rule = defineRule({
@@ -108,7 +112,19 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
 function checkHtmlNativeButtons(doc: HtmlDocument, emit: Emit): void {
   for (const button of findHtmlElementsByTag(doc, "button")) {
     if (hasAccessibleNameHtml(button)) continue;
-    emit(buildViolation("button", button.loc.start, describeIconChildHtml(button)));
+    // Per docs/kb/architecture/ai-first-consumer.md §"Surface, don't
+    // suppress": `<button>{{ t.submit }}</button>` has its only child
+    // stripped by the parser, so the accessible-name check fails with
+    // no static evidence of a name. Finding still emits at `error`;
+    // the reason text carries the template_directive_stripped signal.
+    emit(
+      buildViolation(
+        "button",
+        button.loc.start,
+        describeIconChildHtml(button),
+        htmlSubtreeHasStrippedDirective(button),
+      ),
+    );
   }
 }
 
@@ -119,7 +135,11 @@ function checkHtmlInputButtons(doc: HtmlDocument, emit: Emit): void {
     const type = (getHtmlAttribute(input, "type") ?? "").toLowerCase();
     const iconCtx =
       type === "image" ? describeImageInputHtml(input) : ({ kind: "empty" } satisfies IconContext);
-    emit(buildViolation(`input type="${type}"`, input.loc.start, iconCtx));
+    // <input> is void — no element children, so no template-stripped
+    // signal to propagate. A value="{{ t.submit }}" interpolation is
+    // already handled: attribute values aren't subject to the parser's
+    // text-node stripping and surface unchanged.
+    emit(buildViolation(`input type="${type}"`, input.loc.start, iconCtx, false));
   }
 }
 
@@ -129,7 +149,14 @@ function checkHtmlRoleButtons(doc: HtmlDocument, emit: Emit): void {
     if (lowered === "button" || lowered === "input") continue;
     if (getHtmlAttribute(el, "role")?.toLowerCase() !== "button") continue;
     if (hasAccessibleNameHtml(el)) continue;
-    emit(buildViolation(`${el.tagName} role="button"`, el.loc.start, describeIconChildHtml(el)));
+    emit(
+      buildViolation(
+        `${el.tagName} role="button"`,
+        el.loc.start,
+        describeIconChildHtml(el),
+        htmlSubtreeHasStrippedDirective(el),
+      ),
+    );
   }
 }
 
@@ -374,16 +401,18 @@ function buildViolation(
   subject: string,
   loc: { line: number; column: number },
   icon: IconContext,
+  templateStripped: boolean,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
 } {
+  const base = `<${subject}> has no accessible name — screen readers will announce it as "button" with no action.`;
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${subject}> has no accessible name — screen readers will announce it as "button" with no action.`,
+    message: templateStripped ? `${base}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : base,
     suggestion: buildIconAwareSuggestion(subject, icon),
   };
 }

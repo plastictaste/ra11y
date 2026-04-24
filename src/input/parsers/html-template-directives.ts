@@ -127,6 +127,18 @@ export function readTemplateTagName(source: string, openPos: number): string {
  * this to append the `template_directive_stripped` signal so the
  * agent knows the check ran against the rendered-text shape.
  */
+/**
+ * Stable reason-text suffix for visible-text rules when the parser
+ * stripped a Liquid/Jinja/ERB directive from the flagged subtree.
+ * Severity is unchanged — finding still surfaces (see AI-first consumer
+ * doctrine §"Surface, don't suppress"); the suffix just lets the agent
+ * triage a template-directive false positive in one read rather than
+ * looping through `suggest_fix`/`apply_fix` on a template expression
+ * whose rendered value is only knowable at render time.
+ */
+// biome-ignore format: single-line keeps parser bundle compact.
+export const TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX = " note: the only rendered content was a template expression (Liquid/Jinja/ERB) stripped by the parser — verify the expression resolves to non-empty text at render time, or if the interpolation is trusted suppress at source with `<!-- ra11y-disable <rule-id> -->`.";
+
 export function htmlSubtreeHasStrippedDirective(element: HtmlElement): boolean {
   const visit = (node: HtmlNode): boolean => {
     if (node.kind === "HtmlText") return node.containsTemplateDirective === true;

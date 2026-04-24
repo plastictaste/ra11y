@@ -291,4 +291,27 @@ describe("rule forms/non-empty-label", () => {
     expect(rule.satisfies).toContain("wcag22:3.3.2");
     expect(rule.satisfies).toContain("wcag21:3.3.2");
   });
+
+  // V1-LIQUID-TEMPLATE-EXPRESSION-AS-SOLE-CHILD-REASON-ENRICHMENT:
+  // `<label>{{ form.email }}</label>` has its only child stripped by
+  // the HTML parser — rendered text depends on runtime interpolation.
+  // Surface-don't-suppress: finding still emits at `error`; reason
+  // text carries the template_directive_stripped signal.
+  describe("HTML: template-directive enrichment", () => {
+    it("enriches reason when sole child is a Liquid interpolation", () => {
+      const v = runRule(rule, `<label for="email">{{ form.email }}</label>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("template expression");
+      expect(v[0]?.message).toContain("ra11y-disable");
+    });
+
+    it("does NOT enrich reason when label is plainly empty", () => {
+      const v = runRule(rule, `<label for="email"></label>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).not.toContain("template expression");
+    });
+  });
 });

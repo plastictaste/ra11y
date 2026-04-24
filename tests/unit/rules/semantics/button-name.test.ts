@@ -480,6 +480,36 @@ describe("rule semantics/button-name", () => {
     });
   });
 
+  // V1-LIQUID-TEMPLATE-EXPRESSION-AS-SOLE-CHILD-REASON-ENRICHMENT:
+  // a `<button>{{ t.submit }}</button>` has its only child stripped by
+  // the HTML parser — static analysis sees "no accessible name," but
+  // the rendered output is whatever the Liquid expression evaluates
+  // to. Surface-don't-suppress: finding still emits at `error`; reason
+  // text carries the template_directive_stripped signal.
+  describe("HTML: template-directive enrichment", () => {
+    it("enriches reason when <button> sole child is a Liquid interpolation", () => {
+      const v = runRule(rule, `<button>{{ t.submit }}</button>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("template expression");
+      expect(v[0]?.message).toContain("ra11y-disable");
+    });
+
+    it("enriches reason when role=button sole child is a Liquid tag", () => {
+      const v = runRule(rule, `<div role="button">{% t "submit" %}</div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("template expression");
+    });
+
+    it("does NOT enrich reason when <button> is plainly empty", () => {
+      const v = runRule(rule, `<button></button>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).not.toContain("template expression");
+    });
+  });
+
   describe("nativeWrapperElements mapping (Q2-WRAPMAP-RULES)", () => {
     it("opts in to the native `button` tag so mapped wrappers fire", () => {
       expect(rule.wrapperTreatsAsElement).toBe("button");

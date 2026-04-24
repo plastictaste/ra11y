@@ -47,6 +47,10 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
+import {
+  htmlSubtreeHasStrippedDirective,
+  TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
+} from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
 export const rule = defineRule({
@@ -101,7 +105,13 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const label of findHtmlElementsByTag(doc, "label")) {
     const text = htmlTextContent(label).trim();
     if (text.length === 0) {
-      emit(emitHtml(label, controls));
+      // Per docs/kb/architecture/ai-first-consumer.md §"Surface, don't
+      // suppress": `<label>{{ form.email }}</label>` has its only child
+      // stripped by the parser — finding still emits at `error`; the
+      // reason text carries the template_directive_stripped signal so
+      // the agent verifies the rendered output in one read rather than
+      // looping through apply_fix on a template-directive false positive.
+      emit(emitHtml(label, controls, htmlSubtreeHasStrippedDirective(label)));
       continue;
     }
     if (looksLikeValue(text)) emit(emitValueShapeHtml(label, text, controls));
@@ -210,8 +220,13 @@ function nonEmpty(value: string | null): string | null {
 // Emitters
 // ---------------------------------------------------------------------------
 
-function emitHtml(label: HtmlElement, controls: ReadonlyMap<string, ControlSummary>) {
+function emitHtml(
+  label: HtmlElement,
+  controls: ReadonlyMap<string, ControlSummary>,
+  templateStripped: boolean,
+) {
   const target = getHtmlAttribute(label, "for");
+  const base = "<label> is empty — add visible text that describes the control it labels.";
   return {
     severity: "error" as const,
     location: {
@@ -219,7 +234,7 @@ function emitHtml(label: HtmlElement, controls: ReadonlyMap<string, ControlSumma
       line: label.loc.start.line,
       column: label.loc.start.column,
     },
-    message: "<label> is empty — add visible text that describes the control it labels.",
+    message: templateStripped ? `${base}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : base,
     suggestion: buildSuggestion(target, controls, "html"),
   };
 }
