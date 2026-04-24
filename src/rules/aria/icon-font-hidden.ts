@@ -28,9 +28,24 @@
  * (via visible text, `aria-label`, or `aria-labelledby`) AND the icon
  * child is unannotated — the double-announce risk.
  *
+ * The rule emits a second, sibling kind of finding (variantKey
+ * `relies-on-title`) when an interactive ancestor's only "name" candidate
+ * is the `title` attribute and it has an icon-font descendant — the
+ * `<a href title="Facebook"><i class="fa fa-facebook"></i></a>`
+ * social-icon row. Crediting `title` as a real accessible name was
+ * teaching an anti-pattern: VoiceOver iOS does not announce `title` for
+ * links, several SR/browser pairs surface it only as a tooltip, and the
+ * WAI-ARIA APG warns against `title` as a sole name source. The fix
+ * (drop `title` from name computation, surface the case as its own
+ * finding pointing at `aria-label`) catches the regression instead of
+ * propagating it. The second pass lives in
+ * `icon-font-hidden.title-relies.ts`; shared helpers used by both
+ * passes live in `icon-font-hidden.shared.ts`.
+ *
  * Scope of "labeled interactive ancestor":
  *   - `<button>` with a computable accessible name (text content,
- *     `aria-label`, `aria-labelledby`, `title`)
+ *     `aria-label`, or `aria-labelledby` — `title` is excluded; see
+ *     the second pass for why)
  *   - `<a href>` with a computable accessible name
  *   - `<summary>` with a computable accessible name
  *   - elements carrying `role="button" | "link" | "menuitem" | "tab"`
@@ -60,65 +75,22 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
-
-/**
- * Icon-font family signals. Each entry is a predicate over the class-
- * token list (and, for `ion-icon`, tag name). A token matches when it
- * either equals a family marker exactly (e.g. `material-icons`) or is
- * a namespaced glyph slug (e.g. `fa-arrow-left`, `bi-search`,
- * `material-symbols-rounded`). We match token-by-token against the
- * whitespace-split class attribute to avoid substring collisions
- * (e.g. `.favorite` must not match `fa-`).
- */
-
-type IconFontFamily =
-  | "font-awesome"
-  | "material-icons"
-  | "bootstrap-icons"
-  | "ionicons"
-  | "glyphicons"
-  | "icofont";
-
-interface IconFontMatch {
-  readonly family: IconFontFamily;
-  /** The specific token that triggered detection — echoed in messages. */
-  readonly token: string;
-}
-
-/** Font Awesome style tokens (v4/v5/v6 weights + pro variants). */
-const FA_STYLE_TOKENS: ReadonlySet<string> = new Set([
-  "fa",
-  "fas",
-  "far",
-  "fab",
-  "fal",
-  "fad",
-  "fat",
-  "fass",
-]);
-
-/** Material Icons base class tokens (v1 + Material Symbols family). */
-const MATERIAL_EXACT_TOKENS: ReadonlySet<string> = new Set([
-  "material-icons",
-  "material-icons-outlined",
-  "material-icons-round",
-  "material-icons-rounded",
-  "material-icons-sharp",
-  "material-icons-two-tone",
-]);
-
-/** Roles on the ancestor that mean "this is an interactive control." */
-const INTERACTIVE_ROLES: ReadonlySet<string> = new Set([
-  "button",
-  "link",
-  "menuitem",
-  "menuitemcheckbox",
-  "menuitemradio",
-  "tab",
-]);
-
-/** Native tag names that are always interactive and take an accessible name. */
-const INTERACTIVE_TAGS: ReadonlySet<string> = new Set(["button", "summary"]);
+import {
+  accessibleNameHtml,
+  accessibleNameJsx,
+  detectIconFont,
+  type Emit,
+  familyName,
+  type IconFontMatch,
+  INTERACTIVE_ROLES,
+  INTERACTIVE_TAGS,
+  isHtmlIconHidden,
+  isJsxIconHidden,
+} from "./icon-font-hidden.shared.ts";
+import {
+  checkHtmlTitleOnlyIconRow,
+  checkJsxTitleOnlyIconRow,
+} from "./icon-font-hidden.title-relies.ts";
 
 export const rule = defineRule({
   id: "aria/icon-font-hidden",
@@ -160,164 +132,6 @@ export const rule = defineRule({
   },
 });
 
-type Emit = (v: {
-  severity: "info";
-  location: { filePath: string; line: number; column: number };
-  message: string;
-  suggestion: string;
-  /**
-   * Raw `class` attribute value from the icon host element. Omitted
-   * when the icon host has no `class` attribute (the Ionicons
-   * `<ion-icon>` custom-element case carries identity via tag name
-   * alone). Fuels the per-file-per-class-pattern rollup in
-   * {@link PerRuleCoverage.classPatternConcentration} — the
-   * aggregator derives the canonical pattern (`fa fa-*`,
-   * `material-icons`, `bi bi-*`) from this value.
-   */
-  classEvidence?: string;
-}) => void;
-
-// ---------------------------------------------------------------------------
-// Icon-font detection
-// ---------------------------------------------------------------------------
-
-/**
- * Classifies the given tag + class-attribute pair as an icon-font host
- * or not. Returns the matching family plus the token that drove the
- * detection so downstream messages can echo concrete evidence instead
- * of generic "icon font" phrasing. Null when the element is not an
- * icon-font host.
- *
- * The caller is responsible for hoisting this check behind the "is
- * the element inside a labeled interactive ancestor?" gate — this
- * function has no opinion on ancestry.
- */
-function detectIconFont(tagName: string, classValue: string | null): IconFontMatch | null {
-  const tagLower = tagName.toLowerCase();
-  // Ionicons `<ion-icon>` custom element needs no class to identify.
-  if (tagLower === "ion-icon") return { family: "ionicons", token: "ion-icon" };
-  if (classValue === null) return null;
-  const tokens = classValue.split(/\s+/u).filter((t) => t.length > 0);
-  return matchIconFontTokens(tagLower, tokens);
-}
-
-function matchIconFontTokens(tagLower: string, tokens: readonly string[]): IconFontMatch | null {
-  for (const raw of tokens) {
-    const hit = matchIconFontToken(tagLower, raw);
-    if (hit !== null) return hit;
-  }
-  return null;
-}
-
-/**
- * Classifies a single class token against each known icon-font family.
- * Split out from the token loop to keep per-function cyclomatic
- * complexity under Biome's `noExcessiveCognitiveComplexity` ceiling —
- * the family list is growing and one long switch ran afoul of the
- * limit. Returns null when the token matches nothing.
- */
-function matchIconFontToken(tagLower: string, raw: string): IconFontMatch | null {
-  const tok = raw.toLowerCase();
-  if (FA_STYLE_TOKENS.has(tok) || tok.startsWith("fa-")) {
-    return { family: "font-awesome", token: raw };
-  }
-  if (MATERIAL_EXACT_TOKENS.has(tok) || tok.startsWith("material-symbols-")) {
-    return { family: "material-icons", token: raw };
-  }
-  // `bi-*` glyph tokens ride alongside the `bi` base class in Bootstrap
-  // Icons v1 — the `bi-*` slug is the surer signal (bare `bi` can collide
-  // with unrelated class names like `bi` for "business intelligence").
-  if (tok.startsWith("bi-") && (tagLower === "i" || tagLower === "span")) {
-    return { family: "bootstrap-icons", token: raw };
-  }
-  if (tok === "glyphicon" || tok.startsWith("glyphicon-")) {
-    return { family: "glyphicons", token: raw };
-  }
-  if (tok === "icofont" || tok.startsWith("icofont-")) {
-    return { family: "icofont", token: raw };
-  }
-  if (tok === "ionicon") return { family: "ionicons", token: raw };
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Accessible-name computation (scoped to what the rule needs)
-// ---------------------------------------------------------------------------
-
-/**
- * Returns the HTML element's accessible name (best-effort, scoped to
- * the authoring inputs this rule cares about). Order of precedence
- * mirrors the simplified WAI name-computation algorithm:
- *   1. `aria-labelledby` (treated as "named" when attribute is present
- *      — we don't dereference the target here; the rule's gate is "is
- *      the ancestor labeled?", and the author opting into labelledby
- *      counts as an explicit name declaration).
- *   2. `aria-label` with non-empty trimmed value.
- *   3. `title` with non-empty trimmed value.
- *   4. Visible text content. We deliberately subtract text contributed
- *      by icon-font children — a `<button><i class="fa-search"></i></button>`
- *      should NOT count as labeled because it has no real text.
- */
-function accessibleNameHtml(el: HtmlElement): string | null {
-  if (hasHtmlAttribute(el, "aria-labelledby")) return "aria-labelledby";
-  const label = getHtmlAttribute(el, "aria-label");
-  if (label !== null && label.trim().length > 0) return label.trim();
-  const title = getHtmlAttribute(el, "title");
-  if (title !== null && title.trim().length > 0) return title.trim();
-  const visible = visibleTextExcludingIconsHtml(el);
-  if (visible.trim().length > 0) return visible.trim();
-  return null;
-}
-
-function visibleTextExcludingIconsHtml(root: HtmlElement): string {
-  let out = "";
-  for (const child of root.children) {
-    out += visibleTextNodeHtml(child);
-  }
-  return out;
-}
-
-function visibleTextNodeHtml(node: HtmlNode): string {
-  if (node.kind === "HtmlText") return node.value;
-  if (node.kind !== "HtmlElement") return "";
-  if (detectIconFont(node.tagName, getHtmlAttribute(node, "class")) !== null) return "";
-  return visibleTextExcludingIconsHtml(node);
-}
-
-function accessibleNameJsx(el: JsxElement): string | null {
-  if (hasJsxAttribute(el, "aria-labelledby")) return "aria-labelledby";
-  const label = getJsxAttributeString(el, "aria-label");
-  if (label !== null && label.trim().length > 0) return label.trim();
-  const title = getJsxAttributeString(el, "title");
-  if (title !== null && title.trim().length > 0) return title.trim();
-  const visible = visibleTextExcludingIconsJsx(el);
-  if (visible.trim().length > 0) return visible.trim();
-  // Runtime-valued children (`<button>{label}</button>`) likely carry a
-  // name we can't see statically. Treat as labeled — false-positive
-  // avoidance dominates false-negatives for the icon-font case.
-  for (const child of el.children) {
-    if (child.kind === "JsxExpression") return "expression-child";
-  }
-  return null;
-}
-
-function visibleTextExcludingIconsJsx(root: JsxElement): string {
-  let out = "";
-  for (const child of root.children) {
-    out += visibleTextNodeJsx(child);
-  }
-  return out;
-}
-
-function visibleTextNodeJsx(node: JsxNode): string {
-  if (node.kind === "JsxText") return node.value;
-  if (node.kind !== "JsxElement") return "";
-  const classValue =
-    getJsxAttributeString(node, "className") ?? getJsxAttributeString(node, "class");
-  if (detectIconFont(node.tagName, classValue) !== null) return "";
-  return visibleTextExcludingIconsJsx(node);
-}
-
 // ---------------------------------------------------------------------------
 // Interactive-ancestor predicate
 // ---------------------------------------------------------------------------
@@ -355,11 +169,22 @@ function isJsxLabeledInteractive(el: JsxElement): boolean {
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const ancestor of walkHtmlElements(doc)) {
-    if (!isHtmlLabeledInteractive(ancestor)) continue;
-    const ancestorName = accessibleNameHtml(ancestor) ?? "";
-    for (const child of ancestor.children) {
-      visitHtmlForIcon(child, ancestor.tagName, ancestorName, emit);
+    if (isHtmlLabeledInteractive(ancestor)) {
+      const ancestorName = accessibleNameHtml(ancestor) ?? "";
+      for (const child of ancestor.children) {
+        visitHtmlForIcon(child, ancestor.tagName, ancestorName, emit);
+      }
+      continue;
     }
+    // Second pass: interactive ancestor that is NOT labeled by a real
+    // accessible-name source but DOES carry a `title` attribute and an
+    // icon-font descendant — the social-icon row anti-pattern. Emitted
+    // as a separate finding kind (variantKey "relies-on-title") so the
+    // suggestion text can name the real fix (promote `title` →
+    // `aria-label`) instead of teaching the original "add aria-hidden
+    // to the icon" guidance, which would regress the link to no
+    // reliable accessible name on iOS.
+    checkHtmlTitleOnlyIconRow(ancestor, emit);
   }
 }
 
@@ -380,12 +205,6 @@ function visitHtmlForIcon(
     emit(buildHtmlViolation(node, match, ancestorTag, ancestorName, classValue));
   }
   for (const child of node.children) visitHtmlForIcon(child, ancestorTag, ancestorName, emit);
-}
-
-function isHtmlIconHidden(el: HtmlElement): boolean {
-  if (getHtmlAttribute(el, "aria-hidden") === "true") return true;
-  const role = (getHtmlAttribute(el, "role") ?? "").toLowerCase();
-  return role === "presentation" || role === "none";
 }
 
 function buildHtmlViolation(
@@ -421,11 +240,16 @@ function buildHtmlViolation(
 
 function checkJsx(module: TsxModule, emit: Emit): void {
   for (const ancestor of walkJsxElements(module)) {
-    if (!isJsxLabeledInteractive(ancestor)) continue;
-    const ancestorName = accessibleNameJsx(ancestor) ?? "";
-    for (const child of ancestor.children) {
-      visitJsxForIcon(child, ancestor.tagName, ancestorName, emit);
+    if (isJsxLabeledInteractive(ancestor)) {
+      const ancestorName = accessibleNameJsx(ancestor) ?? "";
+      for (const child of ancestor.children) {
+        visitJsxForIcon(child, ancestor.tagName, ancestorName, emit);
+      }
+      continue;
     }
+    // Mirrors `checkHtmlTitleOnlyIconRow` — see that function for
+    // rationale.
+    checkJsxTitleOnlyIconRow(ancestor, emit);
   }
 }
 
@@ -444,12 +268,6 @@ function visitJsxForIcon(
     emit(buildJsxViolation(node, match, ancestorTag, ancestorName, classValue));
   }
   for (const child of node.children) visitJsxForIcon(child, ancestorTag, ancestorName, emit);
-}
-
-function isJsxIconHidden(el: JsxElement): boolean {
-  if (getJsxAttributeString(el, "aria-hidden") === "true") return true;
-  const role = (getJsxAttributeString(el, "role") ?? "").toLowerCase();
-  return role === "presentation" || role === "none";
 }
 
 function buildJsxViolation(
@@ -478,23 +296,6 @@ function buildJsxViolation(
 // ---------------------------------------------------------------------------
 // Message / suggestion construction
 // ---------------------------------------------------------------------------
-
-function familyName(family: IconFontFamily): string {
-  switch (family) {
-    case "font-awesome":
-      return "Font Awesome";
-    case "material-icons":
-      return "Material Icons";
-    case "bootstrap-icons":
-      return "Bootstrap Icons";
-    case "ionicons":
-      return "Ionicons";
-    case "glyphicons":
-      return "Glyphicons";
-    case "icofont":
-      return "Icofont";
-  }
-}
 
 /**
  * Echoes the host ancestor's accessible name back to the agent, capped
