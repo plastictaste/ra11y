@@ -24,6 +24,18 @@
  * typical author would use (en, en-US, zh-Hans, es-419, de-CH-1901,
  * sr-Latn-RS) without trying to mirror the registry itself.
  *
+ * The rule also flags the *underspecified* BCP 47 codes — `zxx` (no
+ * linguistic content), `und` (undetermined), `mul` (multiple), and
+ * `mis` (uncoded) — when the bearing element actually contains visible
+ * prose. These codes are syntactically valid but semantically assert
+ * "no single language applies"; declaring them on a page that has UI
+ * copy contradicts the content and causes screen readers to skip
+ * pronunciation or fall back to the default voice on text the user
+ * will actually hear. The motivating real-world case was a Bootstrap
+ * floating-label demo whose `<html lang="zxx">` shipped alongside an
+ * English UI. The check is binary: any visible body text triggers it,
+ * with the character count surfaced in the reason for agent triage.
+ *
  * Document-scoped. Runs on .html/.htm files only; JSX support can be
  * added later once jsx ast-helpers surface attribute walks as cleanly.
  */
@@ -40,6 +52,35 @@ import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
  */
 const BCP47_BASIC = /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{1,8})*$/;
 
+/**
+ * BCP 47 / ISO 639-2 codes that explicitly disclaim a language:
+ *   - `zxx`: no linguistic content; not applicable
+ *   - `und`: undetermined
+ *   - `mul`: multiple languages (no single primary)
+ *   - `mis`: uncoded languages (no ISO code exists)
+ *
+ * Each is a syntactically valid BCP 47 primary subtag (3 letters, passes
+ * `BCP47_BASIC`), but each asserts that the element has no single
+ * identifiable language. When the bearing element nonetheless contains
+ * substantial visible prose, the declaration contradicts the content —
+ * a screen reader trusting `lang="zxx"` will skip pronunciation entirely
+ * or fall back to the default voice on text the user will actually hear.
+ *
+ * Reference: https://www.loc.gov/standards/iso639-2/php/code_list.php
+ */
+const UNDERSPECIFIED_LANG_CODES = new Set(["zxx", "und", "mul", "mis"]);
+
+/**
+ * Tags whose text content is not surfaced as prose to the user — script
+ * source, stylesheet declarations, off-screen `<template>` content, head
+ * metadata, and `<noscript>` fallbacks. The visible-text collector for
+ * the underspecified-lang check skips these subtrees so a page with
+ * `<script>console.log("hi")</script>` and no body text does not trip
+ * the contradiction check on `lang="zxx"`. (The doctype + html
+ * scaffolding contributes no text either way.)
+ */
+const NON_VISIBLE_TEXT_TAGS = new Set(["script", "style", "noscript", "template", "head"]);
+
 export const rule = defineRule({
   id: "parsing/html-has-lang",
   satisfies: ["wcag22:3.1.1", "wcag21:3.1.1", "wcag22:3.1.2", "wcag21:3.1.2"],
@@ -51,11 +92,11 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "Every element that declares a lang attribute must use a syntactically valid, non-empty BCP 47 language tag.",
+      "Every element that declares a lang attribute must use a syntactically valid, non-empty BCP 47 language tag — and underspecified codes (zxx, und, mul, mis) must not appear on elements that contain visible prose.",
     rationale:
-      'Screen readers switch pronunciation dictionaries based on lang. An empty or malformed value (lang="", lang="english", lang="en_US") is treated as unknown — the assistive technology falls back to the default voice and mispronounces the content, which is indistinguishable from no lang attribute at all.',
+      'Screen readers switch pronunciation dictionaries based on lang. An empty or malformed value (lang="", lang="english", lang="en_US") is treated as unknown — the assistive technology falls back to the default voice and mispronounces the content, which is indistinguishable from no lang attribute at all. Underspecified codes like zxx ("no linguistic content") are syntactically valid but semantically wrong on a page with real UI copy: the screen reader trusts the declaration and either skips pronunciation or falls back to the default voice on text the user will actually hear.',
     goodExample: `<html lang="en-US"><body><p lang="fr">Bonjour</p></body></html>`,
-    badExample: `<html lang="english"><body><p lang="">Some text</p></body></html>`,
+    badExample: `<html lang="zxx"><body><p>Email address</p><button>Sign in</button></body></html>`,
     normativeQuote:
       "The human language of each passage or phrase in the content can be programmatically determined except for proper names, technical terms, words of indeterminate language, and words or phrases that have become part of the vernacular of the immediately surrounding text.",
     references: [
@@ -117,7 +158,61 @@ function classifyLang(element: HtmlElement): LangProblem | null {
       suggestion: buildInvalidSuggestion(raw, trimmed, element.tagName),
     };
   }
+  // The tag passes BCP 47 syntax, but the underspecified codes (zxx,
+  // und, mul, mis) only make sense on elements without visible prose.
+  // A page that ships real UI copy under `lang="zxx"` is contradictory
+  // — agent doctrine: surface the count and let the consumer decide.
+  const primarySubtag = trimmed.split("-", 1)[0]?.toLowerCase() ?? "";
+  if (UNDERSPECIFIED_LANG_CODES.has(primarySubtag)) {
+    const visibleChars = collectVisibleTextLength(element);
+    if (visibleChars > 0) {
+      return {
+        message: `${tag} declares lang="${truncateForEcho(raw)}" (${describeUnderspecifiedCode(primarySubtag)}) but the element contains ${visibleChars} character(s) of visible text — screen readers will trust the declaration and either skip pronunciation or fall back to the default voice on text the user will actually hear.`,
+        suggestion: `Replace lang="${truncateForEcho(raw)}" on ${tag} with the BCP 47 tag for the language the visible text is actually written in (e.g. lang="en" or lang="en-US"). Reserve lang="zxx" for elements that genuinely contain no linguistic content (pure decorative imagery, code blocks, or symbol-only UI).`,
+      };
+    }
+  }
   return null;
+}
+
+/**
+ * Concatenated visible-text length under `element`, with non-visible
+ * subtrees (`<script>`, `<style>`, `<noscript>`, `<template>`,
+ * `<head>`) excluded. Returns the trimmed-character count rather than
+ * the string itself — callers only need the magnitude for the reason
+ * text and avoiding the allocation matters on large documents.
+ *
+ * Template-directive-bearing text (`{{ … }}`, `{% … %}` survivors) is
+ * intentionally counted: the rendered output is the user-visible
+ * surface, and a Liquid `{{ message }}` interpolation on a `lang="zxx"`
+ * page is exactly the contradiction worth flagging.
+ */
+function collectVisibleTextLength(element: HtmlElement): number {
+  let total = 0;
+  const visit = (node: HtmlElement): void => {
+    if (NON_VISIBLE_TEXT_TAGS.has(node.tagName.toLowerCase())) return;
+    for (const child of node.children) {
+      if (child.kind === "HtmlText") total += child.value.trim().length;
+      else if (child.kind === "HtmlElement") visit(child);
+    }
+  };
+  visit(element);
+  return total;
+}
+
+function describeUnderspecifiedCode(code: string): string {
+  switch (code) {
+    case "zxx":
+      return "no linguistic content";
+    case "und":
+      return "undetermined language";
+    case "mul":
+      return "multiple languages";
+    case "mis":
+      return "uncoded language";
+    default:
+      return "underspecified language";
+  }
 }
 
 function findLangAttribute(element: HtmlElement): string | null {

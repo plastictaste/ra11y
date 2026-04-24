@@ -120,4 +120,103 @@ describe("rule parsing/html-has-lang", () => {
     expect(v).toHaveLength(1);
     expect(v[0]?.location.line).toBe(3);
   });
+
+  // ---------------------------------------------------------------------
+  // Underspecified BCP 47 codes (zxx / und / mul / mis) on prose pages.
+  // The motivating real-world case was a Bootstrap floating-label demo
+  // shipping `<html lang="zxx">` over an English UI ("Email address",
+  // "Open this select menu"); the BCP 47 syntax check passes but the
+  // declaration contradicts the visible content.
+  // ---------------------------------------------------------------------
+
+  it('flags lang="zxx" on <html> when the body contains visible prose', () => {
+    const v = runRule(
+      rule,
+      `<html lang="zxx"><body><label>Email address</label><button>Open this select menu</button><p>Lorem ipsum dolor sit amet.</p></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.message).toContain("zxx");
+    expect(v[0]?.message).toContain("no linguistic content");
+    expect(v[0]?.message).toMatch(/\d+ character\(s\) of visible text/);
+    expect(v[0]?.suggestion).toContain('lang="en"');
+  });
+
+  it('flags lang="und" / "mul" / "mis" the same way as zxx', () => {
+    for (const code of ["und", "mul", "mis"] as const) {
+      const v = runRule(
+        rule,
+        `<html lang="${code}"><body><p>Hello world from the contact form.</p></body></html>`,
+        { filePath: "index.html" },
+      );
+      expect(v, `expected ${code} to fire on prose page`).toHaveLength(1);
+      expect(v[0]?.message).toContain(code);
+    }
+  });
+
+  it('does not flag lang="zxx" when the body has no visible text', () => {
+    // Pure decorative imagery — symbols only, no prose. zxx is the
+    // appropriate declaration here per BCP 47 / ISO 639-2.
+    const v = runRule(
+      rule,
+      `<html lang="zxx"><body><img src="logo.svg" alt=""><svg></svg></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('does not flag lang="zxx" when the body is empty', () => {
+    const v = runRule(rule, `<html lang="zxx"><body></body></html>`, {
+      filePath: "index.html",
+    });
+    expect(v).toHaveLength(0);
+  });
+
+  it('does not flag lang="en" on a prose page (correct tag)', () => {
+    const v = runRule(
+      rule,
+      `<html lang="en"><body><p>Email address</p><button>Sign in</button></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('does not count <script>/<style>/<head> text toward the visible-text check', () => {
+    // Page has no body prose — script source and stylesheet declarations
+    // are not user-visible text. zxx remains valid here.
+    const v = runRule(
+      rule,
+      `<html lang="zxx"><head><title>icon page</title><style>body{color:red}</style></head><body><script>console.log("hello world from a long script body")</script></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it("flags an underspecified primary subtag even when carrying region/script suffixes", () => {
+    // `zxx-Latn` is rare but syntactically valid; the underspecified
+    // primary subtag still asserts "no linguistic content" so the
+    // contradiction-with-prose check should still fire.
+    const v = runRule(
+      rule,
+      `<html lang="zxx-Latn"><body><p>Hello world from a contact form.</p></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("zxx-Latn");
+  });
+
+  it('flags lang="zxx" on a non-html element with prose under it', () => {
+    // The underspecified-code check is element-scoped, not just
+    // document-scoped — `<section lang="zxx">` over real text is the
+    // same contradiction as on <html>.
+    const v = runRule(
+      rule,
+      `<html lang="en"><body><section lang="zxx"><p>This section has actual English prose.</p></section></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("<section>");
+    expect(v[0]?.message).toContain("zxx");
+  });
 });
