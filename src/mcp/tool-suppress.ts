@@ -66,7 +66,7 @@ export const suppressTool: McpTool = {
   def: {
     name: "suppress",
     description:
-      "Insert a source-level `ra11y-disable-next-line` pragma above a target line so a specific finding stops firing on subsequent scans. Writes to disk — requires session `allowWrite: true` (same gate as `apply_fix`). Reason text is REQUIRED; a bare suppression is rejected with `reason-required` because an un-justified silence is the failure mode source pragmas exist to prevent.\n\nPragma shape is chosen from the file extension:\n  - .tsx/.jsx → `{/* ra11y-disable-next-line <ruleId>: <reason> */}`\n  - .ts/.js → `// ra11y-disable-next-line <ruleId>: <reason>`\n  - .html/.htm → `<!-- ra11y-disable-next-line <ruleId>: <reason> -->`\n  - .css → `/* ra11y-disable-next-line <ruleId>: <reason> */`\n\nIndentation matches the target line so the inserted comment stays visually aligned with the code it suppresses. The tool uses the `-disable-next-line` variant (not the region-opening bare `-disable`) because the input is a single line number — a bare region pragma without a matching `-enable` would silence every following line.\n\n`ruleId` accepts either a rule ID (e.g. `keyboard/handler-missing`) or a criterion ID (e.g. `wcag22:2.4.5`); the pragma parser honors both.",
+      "Insert a source-level `ra11y-disable-next-line` pragma above a target line so a specific finding stops firing on subsequent scans. Requires session `allowWrite: true` (same gate as `apply_fix`). Reason text is REQUIRED; a bare suppression is rejected with `reason-required` because an un-justified silence is the failure mode source pragmas exist to prevent.\n\nDefault behavior is NON-destructive: `dryRun: true` (default, mirroring `apply_fix`) computes the pragma + insertion line in memory, returns the preview envelope, and never touches disk. Flip `dryRun: false` to actually write. Both modes return the same `pragma`, `insertedLine`, and `commentKind`; the write-mode response additionally sets `applied: true` and includes a `revertHint` with the `git checkout --` command that restores the file.\n\nPragma shape is chosen from the file extension:\n  - .tsx/.jsx → `{/* ra11y-disable-next-line <ruleId>: <reason> */}`\n  - .ts/.js → `// ra11y-disable-next-line <ruleId>: <reason>`\n  - .html/.htm → `<!-- ra11y-disable-next-line <ruleId>: <reason> -->`\n  - .css → `/* ra11y-disable-next-line <ruleId>: <reason> */`\n\nIndentation matches the target line so the inserted comment stays visually aligned with the code it suppresses. The tool uses the `-disable-next-line` variant (not the region-opening bare `-disable`) because the input is a single line number — a bare region pragma without a matching `-enable` would silence every following line.\n\n`ruleId` accepts either a rule ID (e.g. `keyboard/handler-missing`) or a criterion ID (e.g. `wcag22:2.4.5`); the pragma parser honors both.",
     inputSchema: {
       type: "object",
       properties: {
@@ -88,24 +88,30 @@ export const suppressTool: McpTool = {
         reason: {
           type: "string",
           description:
-            "REQUIRED free-form justification for the suppression. Embedded in the pragma after `: <reason>` and surfaced in the scan's suppression audit. A bare suppression is rejected with `reason-required` — per Q2-REASON, a suppression without a stated reason is a silent promise the agent can't honor.",
+            "REQUIRED free-form justification for the suppression. Embedded in the pragma after `: <reason>` and surfaced in the scan's suppression audit. A bare suppression is rejected with `reason-required` — a suppression without a stated reason is a silent promise the agent can't honor.",
         },
         cwd: {
           type: "string",
           description:
             "Base directory for resolving `file` and enforcing the no-escape guard. Defaults to the MCP server's spawn directory; pass your project root explicitly when the server's cwd differs from the project root.",
         },
+        dryRun: {
+          type: "boolean",
+          description:
+            "When true (default), compute the pragma and insertion line in memory, return the preview envelope, and never write to disk. Flip to false to actually insert the pragma. Default `true` is safe-by-default — match `apply_fix`'s shape — so an agent can see exactly what would land before committing.",
+        },
       },
       required: ["file", "line", "ruleId", "reason"],
     },
-    // Mutates source; no readOnlyHint. Not idempotent — calling twice
-    // inserts two pragmas — so explicitly flag it.
+    // Mutates source when `dryRun: false`; no readOnlyHint. Not
+    // idempotent when writing — calling twice inserts two pragmas —
+    // so explicitly flag it.
     annotations: { idempotentHint: false },
   },
   async handler(params, session): Promise<McpToolResult> {
     const pre = await preflight(params, session);
     if ("error" in pre) return pre.error;
-    const { resolved, cwd, line, ruleId, reason, shape, source } = pre;
+    const { resolved, cwd, line, ruleId, reason, shape, source, dryRun } = pre;
     const lines = source.split("\n");
     // `line > lines.length` rejects lines past EOF. Exact equality
     // (`line === lines.length`) is allowed and points at the last
@@ -132,34 +138,73 @@ export const suppressTool: McpTool = {
     lines.splice(line - 1, 0, inserted);
     const newSource = lines.join("\n");
 
-    try {
-      await writeFile(resolved, newSource, "utf8");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return errorResult({
-        code: "file-write-failed",
-        message: `Failed to write ${resolved}: ${message}`,
-        details: { filePath: resolved, cause: message },
-      });
+    let applied = false;
+    if (!dryRun) {
+      try {
+        await writeFile(resolved, newSource, "utf8");
+        applied = true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return errorResult({
+          code: "file-write-failed",
+          message: `Failed to write ${resolved}: ${message}`,
+          details: { filePath: resolved, cause: message },
+        });
+      }
     }
 
     return textResult({
-      applied: true,
+      applied,
+      dryRun,
       file: resolved,
       line,
       pragma: pragmaText,
       insertedLine: line,
       commentKind: shape.kind,
+      // `revertHint` is present only on an actual write — a dry run
+      // has nothing to revert, so an echoed hint would read as
+      // "here's how to undo something that didn't happen" (the same
+      // ambiguous-field failure mode ai-first-consumer.md warns
+      // against). Conditional spread keeps the field present-when-
+      // meaningful.
+      ...(applied ? { revertHint: `git checkout -- ${relative(cwd, resolved) || resolved}` } : {}),
       meta: {
         cwd,
         relativeFilePath: relative(cwd, resolved),
         ruleId,
         reason,
       },
-      nextStep: `Pragma written above line ${line} in ${resolved}. Re-run \`scan_file\` on ${resolved} to confirm the finding no longer fires, then commit the change with the reason captured in the commit message as well for durable audit.`,
+      nextStep: buildNextStep({ applied, dryRun, line, resolved }),
     });
   },
 };
+
+/**
+ * Shapes the single `nextStep` string consumers read after the tool
+ * returns. Two branches: preview (tell the agent how to actually
+ * write) and applied (tell them what to verify + how to undo). Kept
+ * outside the handler so the branching logic is testable and the
+ * handler stays focused on the mutation pipeline.
+ */
+function buildNextStep(args: {
+  readonly applied: boolean;
+  readonly dryRun: boolean;
+  readonly line: number;
+  readonly resolved: string;
+}): string {
+  const { applied, dryRun, line, resolved } = args;
+  if (dryRun) {
+    return `Dry run — pragma would be inserted above line ${line} in ${resolved}. No file written. Re-call \`suppress\` with \`dryRun: false\` to actually apply it, or widen the scope by reading ${resolved} around line ${line} to confirm the pragma text is correct.`;
+  }
+  if (applied) {
+    return `Pragma written above line ${line} in ${resolved}. Re-run \`scan_file\` on ${resolved} to confirm the finding no longer fires, then commit the change with the reason captured in the commit message as well for durable audit. Revert with the \`revertHint\` command if the suppression was wrong.`;
+  }
+  // Unreachable — `!dryRun && !applied` would have returned a
+  // file-write-failed envelope above. Surface a generic hint rather
+  // than throw so a future refactor doesn't silently lose the
+  // envelope.
+  return `suppress completed for ${resolved} line ${line}.`;
+}
 
 interface PreflightOk {
   readonly resolved: string;
@@ -169,6 +214,7 @@ interface PreflightOk {
   readonly reason: string;
   readonly shape: PragmaShape;
   readonly source: string;
+  readonly dryRun: boolean;
 }
 
 type PreflightResult = PreflightOk | { readonly error: McpToolResult };
@@ -256,7 +302,11 @@ async function preflight(
       }),
     };
   }
-  return { resolved, cwd, line: lineRaw, ruleId, reason, shape, source };
+  // `dryRun: true` is the safe default so a mis-pasted line or
+  // ruleId can be caught without touching disk — mirrors apply_fix.
+  // Strict check: the parameter must be explicit `false` to write.
+  const dryRun = params["dryRun"] !== false;
+  return { resolved, cwd, line: lineRaw, ruleId, reason, shape, source, dryRun };
 }
 
 interface ReadParamsOk {

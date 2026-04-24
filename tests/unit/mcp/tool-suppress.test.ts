@@ -16,10 +16,13 @@ import { suppressTool } from "../../../src/mcp/tool-suppress.ts";
 
 interface SuccessBody {
   readonly applied: boolean;
+  readonly dryRun: boolean;
   readonly file: string;
   readonly line: number;
   readonly pragma: string;
+  readonly insertedLine: number;
   readonly commentKind: "jsx" | "line" | "html" | "block";
+  readonly revertHint?: string;
   readonly meta: {
     readonly cwd: string;
     readonly relativeFilePath: string;
@@ -80,14 +83,18 @@ describe("suppress: TSX inserts JSX-comment pragma with indentation", () => {
         ruleId: "keyboard/handler-missing",
         reason: "wrapper provides keyboard handling via onKeyDown",
         cwd: dir,
+        dryRun: false,
       });
 
       expect(isError).toBe(false);
       const success = body as SuccessBody;
+      expect(success.applied).toBe(true);
+      expect(success.dryRun).toBe(false);
       expect(success.commentKind).toBe("jsx");
       expect(success.pragma).toBe(
         "{/* ra11y-disable-next-line keyboard/handler-missing: wrapper provides keyboard handling via onKeyDown */}",
       );
+      expect(success.revertHint).toBe(`git checkout -- ${"Button.tsx"}`);
       const updated = await readFile(filePath, "utf8");
       const lines = updated.split("\n");
       expect(lines[2]).toBe(`    ${success.pragma}`);
@@ -109,6 +116,7 @@ describe("suppress: TS emits line-comment pragma", () => {
         ruleId: "wcag22:2.4.5",
         reason: "helper is internal-only; not navigable surface",
         cwd: dir,
+        dryRun: false,
       });
 
       expect(isError).toBe(false);
@@ -147,6 +155,7 @@ describe("suppress: HTML emits block-comment pragma", () => {
         ruleId: "media/alt-text-missing",
         reason: "decorative hero image; empty alt intended",
         cwd: dir,
+        dryRun: false,
       });
 
       expect(isError).toBe(false);
@@ -179,6 +188,7 @@ describe("suppress: CSS emits CSS-comment pragma", () => {
         ruleId: "contrast/minimum",
         reason: "gradient-backed banner; contrast verified against image",
         cwd: dir,
+        dryRun: false,
       });
 
       expect(isError).toBe(false);
@@ -367,6 +377,7 @@ describe("suppress: round-trip through the pragma parser", () => {
         ruleId: "keyboard/handler-missing",
         reason: "design-system wrapper",
         cwd: dir,
+        dryRun: false,
       });
       const updated = await readFile(filePath, "utf8");
       const { declarations, disableMap } = parseInlineDisablesDetailed(updated);
@@ -378,6 +389,156 @@ describe("suppress: round-trip through the pragma parser", () => {
       expect(decl.reason).toBe("design-system wrapper");
       const targeted = disableMap.get(3);
       expect(targeted?.has("keyboard/handler-missing")).toBe(true);
+    });
+  });
+});
+
+describe("suppress: dry-run mode", () => {
+  it("defaults dryRun:true and returns the would-insert pragma without touching the file", async () => {
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "Button.tsx");
+      const original = [
+        "export function Button() {",
+        "  return (",
+        "    <div onClick={go}>click</div>",
+        "  );",
+        "}",
+        "",
+      ].join("\n");
+      await writeFile(filePath, original);
+
+      const session = allowWriteSession();
+      // NO `dryRun` param → defaults to true per the safe-by-default
+      // contract documented in the tool description.
+      const { isError, body } = await call(session, {
+        file: filePath,
+        line: 3,
+        ruleId: "keyboard/handler-missing",
+        reason: "wrapper provides keyboard handling via onKeyDown",
+        cwd: dir,
+      });
+
+      expect(isError).toBe(false);
+      const success = body as SuccessBody;
+      expect(success.dryRun).toBe(true);
+      expect(success.applied).toBe(false);
+      // Pragma + placement match what the write-mode test produces —
+      // preview and write share the same shape.
+      expect(success.commentKind).toBe("jsx");
+      expect(success.pragma).toBe(
+        "{/* ra11y-disable-next-line keyboard/handler-missing: wrapper provides keyboard handling via onKeyDown */}",
+      );
+      expect(success.insertedLine).toBe(3);
+      // File is untouched — byte-for-byte equal to the pre-call state.
+      expect(await readFile(filePath, "utf8")).toBe(original);
+      // nextStep tells the agent how to escalate from preview to write.
+      expect(success.nextStep).toContain("dryRun: false");
+      // revertHint is omitted in dry-run — nothing to revert, so
+      // echoing it would be the ambiguous-empty-field failure mode.
+      expect(success.revertHint).toBeUndefined();
+    });
+  });
+
+  it("explicit dryRun:true is the same envelope as the default", async () => {
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "style.css");
+      const original = [".banner {", "  color: #ccc;", "}", ""].join("\n");
+      await writeFile(filePath, original);
+
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        file: filePath,
+        line: 2,
+        ruleId: "contrast/minimum",
+        reason: "gradient background verified against image",
+        cwd: dir,
+        dryRun: true,
+      });
+
+      expect(isError).toBe(false);
+      const success = body as SuccessBody;
+      expect(success.dryRun).toBe(true);
+      expect(success.applied).toBe(false);
+      expect(success.pragma).toBe(
+        "/* ra11y-disable-next-line contrast/minimum: gradient background verified against image */",
+      );
+      expect(await readFile(filePath, "utf8")).toBe(original);
+    });
+  });
+
+  it("dryRun:true still enforces the allowWrite gate so preview stays session-opt-in", async () => {
+    // Mirrors apply_fix: preview requires the same session flag as
+    // write. This keeps the onboarding story uniform — one toggle
+    // unlocks both modes — and avoids a split-brain where agents
+    // learn to probe writes behind a gate that suddenly relaxes for
+    // dry-run.
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "Button.tsx");
+      const original = "export const Button = () => <div onClick={go}/>;\n";
+      await writeFile(filePath, original);
+
+      const session = new McpSession(); // allowWrite defaults to false
+      const { isError, body } = await call(session, {
+        file: filePath,
+        line: 1,
+        ruleId: "keyboard/handler-missing",
+        reason: "design-system wrapper",
+        cwd: dir,
+        dryRun: true,
+      });
+
+      expect(isError).toBe(true);
+      const err = body as ErrorBody;
+      expect(err.code).toBe("allow-write-disabled");
+      expect(await readFile(filePath, "utf8")).toBe(original);
+    });
+  });
+
+  it("dryRun:true still rejects missing reason — reason-required fires before the dry-run short-circuit", async () => {
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "Button.tsx");
+      const original = "export const Button = () => <div onClick={go}/>;\n";
+      await writeFile(filePath, original);
+
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        file: filePath,
+        line: 1,
+        ruleId: "keyboard/handler-missing",
+        cwd: dir,
+        dryRun: true,
+      });
+
+      expect(isError).toBe(true);
+      const err = body as ErrorBody;
+      expect(err.code).toBe("reason-required");
+    });
+  });
+});
+
+describe("suppress: write mode revertHint", () => {
+  it("includes `git checkout -- <relative>` on dryRun:false success", async () => {
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "helpers.ts");
+      await writeFile(filePath, ["const x = 1;", ""].join("\n"));
+
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        file: filePath,
+        line: 1,
+        ruleId: "wcag22:2.4.5",
+        reason: "internal-only helper",
+        cwd: dir,
+        dryRun: false,
+      });
+
+      expect(isError).toBe(false);
+      const success = body as SuccessBody;
+      expect(success.applied).toBe(true);
+      // Relative path from cwd is what the agent uses from a shell
+      // anchored at the project root — the exact hint the agent can
+      // paste without edits.
+      expect(success.revertHint).toBe("git checkout -- helpers.ts");
     });
   });
 });
