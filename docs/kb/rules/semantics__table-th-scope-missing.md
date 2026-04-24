@@ -28,11 +28,9 @@ In a 2-D data table, a <th> in the top-left corner could be a column header, a r
 ## Bad example
 ```tsx
 <table>
-  <thead><tr><th>Product</th><th>Price</th></tr></thead>
-  <tbody>
-    <tr><td>Widget</td><td>$50</td></tr>
-    <tr><td>Gadget</td><td>$75</td></tr>
-  </tbody>
+  <tr><th>Product</th><th>Price</th></tr>
+  <tr><td>Widget</td><td>$50</td></tr>
+  <tr><td>Gadget</td><td>$75</td></tr>
 </table>
 ```
 ## References
