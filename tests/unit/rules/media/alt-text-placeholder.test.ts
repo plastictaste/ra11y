@@ -67,6 +67,29 @@ describe("rule media/alt-text-placeholder", () => {
       });
       expect(violations).toHaveLength(1);
     });
+
+    it("alt is 'logo' (role-as-alt antipattern on a brand mark)", () => {
+      const violations = runRule(rule, `<img src="img/logo.png" alt="logo">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/restates the medium/);
+    });
+
+    it("alt is a role-noun phrase ('image of mountain')", () => {
+      const violations = runRule(rule, `<img src="m.png" alt="image of mountain">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/role-noun phrase/);
+    });
+
+    it("alt is a role-noun phrase ('photo of dog')", () => {
+      const violations = runRule(rule, `<img src="d.png" alt="photo of dog">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
   });
 
   describe("HTML: does not fire when", () => {
@@ -111,6 +134,29 @@ describe("rule media/alt-text-placeholder", () => {
       );
       expect(violations).toHaveLength(0);
     });
+
+    it("alt is 'Acme Corp logo' (proper-name-plus-role identifies the brand)", () => {
+      const violations = runRule(rule, `<img src="img/logo.png" alt="Acme Corp logo">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("alt is a long descriptive 'image of …' sentence (>4 tokens)", () => {
+      const violations = runRule(
+        rule,
+        `<img src="t.png" alt="An image of Lake Tahoe at sunset reflecting the mountains">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("alt that ends with role noun ('Acme Corp icon') does not match (phrase must START with role noun)", () => {
+      const violations = runRule(rule, `<img src="i.png" alt="Acme Corp icon">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires a violation when", () => {
@@ -140,6 +186,16 @@ describe("rule media/alt-text-placeholder", () => {
       const violations = runRule(rule, `const X = <Avatar src="me.png" alt="photo" />;`, {
         nativeWrapperElements: { Avatar: "img" },
       });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("alt prop is 'logo' (role-as-alt antipattern)", () => {
+      const violations = runRule(rule, `const X = <img src="logo.png" alt="logo" />;`);
+      expect(violations).toHaveLength(1);
+    });
+
+    it("alt prop is 'image of dog'", () => {
+      const violations = runRule(rule, `const X = <img src="d.png" alt="image of dog" />;`);
       expect(violations).toHaveLength(1);
     });
   });
@@ -193,6 +249,28 @@ describe("rule media/alt-text-placeholder", () => {
 
     it("alt='home icon' does not flag (descriptive use of 'icon')", () => {
       const violations = runRule(rule, `<img src="x.png" alt="home icon">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("role-noun phrase at the 4-token boundary ('image of Lake Tahoe') still flags", () => {
+      // PHRASE_MAX_TOKENS = 4. "image of Lake Tahoe" is exactly 4
+      // tokens — within the cap, starts with a role noun followed
+      // by `of`, so it matches. The 5+ token form is the long-prose
+      // escape hatch.
+      const violations = runRule(rule, `<img src="t.png" alt="image of Lake Tahoe">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("'screenshot of …' is intentionally not in the phrase-lead set (conventional usage)", () => {
+      // `screenshot of` is canonical descriptive prose ("screenshot
+      // of the dashboard") — flagging it would over-fire on real
+      // descriptions, so it stays out of PHRASE_LEAD_ROLE_WORDS even
+      // though `screenshot` is in MEDIUM_WORDS.
+      const violations = runRule(rule, `<img src="s.png" alt="screenshot of dashboard">`, {
         filePath: "index.html",
       });
       expect(violations).toHaveLength(0);
