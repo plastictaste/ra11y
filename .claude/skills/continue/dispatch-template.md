@@ -41,6 +41,8 @@ Follow `CLAUDE.md` §9 commit discipline:
 - Conventional commit subject: `feat(...)`, `fix(...)`, `test(...)`, `chore(kb):`, etc.
 - Never `--amend` a pushed commit. Never `--no-verify`.
 
+**Cross-cutting exemption.** If your dispatch prompt flags the pick with `crossCutting: true` (the planner sets this for type-shape cascades, interface widening across a producer-consumer graph, ≥8-file mechanical renames, and similar items where splitting would leave verify red in the middle of the range), the 400-LOC guideline is relaxed to: **split only if splitting keeps verify green at every commit; otherwise one commit is fine.** When you land a single cross-cutting commit above 400 LOC, the commit message body must note the justification — e.g. `"cross-cutting type-shape change; splitting would leave verify red between the types/-change commit and the callers-update commit"`. Don't use the exemption as a license to bundle unrelated changes; the planner's `crossCutting: true` is a scoped permission for this pick only.
+
 Stage files by explicit path (`git add src/rules/foo.ts tests/rules/foo.test.ts`). **Never `git add .` or `git add -A`** — other parallel agents' uncommitted debris may be sitting next to yours on the tree, and bulk-add sweeps it into your commit.
 
 ## 4. Precommit verify before returning

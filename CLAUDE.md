@@ -151,7 +151,7 @@ Never circumvent hooks. If a hook blocks you, fix the underlying problem.
 Every commit — whether you author it or a subagent does — follows these rules. They exist because autonomous runs must be debuggable, reviewable, and interruptible.
 
 1. **One logical change per commit.** One new rule, one new standard criterion batch (≤20 criteria), one formatter, one concept doc, one hook script.
-2. **≤400 lines net diff per commit.** Auto-generated files (kb regeneration) go in their own `chore(kb): regenerate …` commit. If a single logical unit legitimately exceeds 400 LOC, split it by concern (skeleton / logic / tests / fixtures) not by ritual.
+2. **≤400 lines net diff per commit.** Auto-generated files (kb regeneration) go in their own `chore(kb): regenerate …` commit. If a single logical unit legitimately exceeds 400 LOC, split it by concern (skeleton / logic / tests / fixtures) not by ritual. (Cross-cutting type-shape changes flagged by the `/continue` planner with `crossCutting: true` are exempt when splitting would leave verify red; the commit message must note the justification.)
 3. **Commit before every verification.** Run `/verify` on committed state.
 4. **Commit before delegating.** When `/add-rule` hands off from generator to reviewer, the generator commits first so the reviewer reviews real git state.
 5. **Never amend a pushed commit.** Never `--no-verify`.

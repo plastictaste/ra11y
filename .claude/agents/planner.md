@@ -58,18 +58,26 @@ The orchestrator still enforces the fanout rules at dispatch: if you emit 4 pick
      - `docs/kb/**` → `spec-researcher` or `/fix-drift`
      - anything else → `main-session` with a `classificationNote`
 
-3. **Audit file-set overlap inside each prospective turn.** Two picks in the same turn cannot touch the same file, and two picks in the same *track* cannot share a turn (SKILL.md step 3 fanout rules). When pairing picks into turns:
+3. **Flag cross-cutting picks.** Before pairing picks into turns, mark each pick's `crossCutting: true` when ANY of these signals fire:
+   - `inferredFiles.length >= 8` — mechanical cascades (type-shape rename, interface widening, field-addition across a producer-consumer graph) almost always blow the 400-LOC soft cap, and splitting them leaves some commits verify-red in the middle of the range.
+   - The backlog text contains "cross-cutting", "type-shape change", "interface widening", "cascade", "rename across", or similar phrasing.
+   - The pick targets `src/types/**` plus at least 3 non-test files elsewhere — type-shape changes are the canonical cross-cutting cascade.
+   - The pick targets `src/engine/scanner.ts` or a root-level registry alongside call sites — engine signature changes propagate to every caller.
+
+   Emit `crossCutting: true` when any signal fires; omit the field otherwise (treat missing as `false`). The heuristic exists so specialists dispatched on a crossCutting pick have explicit permission to exceed the 400-LOC soft cap when splitting would leave verify red. Future planners should extend the signal list as new classes of cross-cutting change surface in the field.
+
+4. **Audit file-set overlap inside each prospective turn.** Two picks in the same turn cannot touch the same file, and two picks in the same *track* cannot share a turn (SKILL.md step 3 fanout rules). When pairing picks into turns:
    - Never pair two picks that resolve to the same specialist-AND-track (e.g. two Track R rule-implementer items).
    - Never pair two picks whose inferable file sets intersect. Infer file sets from the item text — a rule item targets `src/rules/<domain>/<ruleId>.ts` + `tests/rules/<domain>/<ruleId>.test.ts`; a parser item targets `src/input/parsers/<name>.ts`. If the inference is uncertain, err on the side of not pairing them.
    - A turn carrying a `main-session` pick cannot also carry a worktree-isolated pick (SKILL.md step 3 — shared tree vs worktree semantics).
 
-4. **Cross-turn collision annotation.** Run `git log --oneline -30` on the main branch. For each turn-N pick, inspect its inferred file set — if any file was touched by a commit on `main` newer than the `/continue` loop started (approximate: last ~30 commits), add:
+5. **Cross-turn collision annotation.** Run `git log --oneline -30` on the main branch. For each turn-N pick, inspect its inferred file set — if any file was touched by a commit on `main` newer than the `/continue` loop started (approximate: last ~30 commits), add:
    ```
    "collisionWith": "<commit sha>: <one-line subject>"
    ```
    The orchestrator surfaces this in the dispatch prompt so the specialist combines edits rather than overwriting. Intra-plan collisions (turn-K pick changes a file that turn-(K+1) pick also targets) also populate `collisionWith` with `"turn-<K>/<item>"`.
 
-5. **Budget to `maxTurns × picksPerTurn`** (or `maxTurns × 4` when you expect multiple qualifying turns). Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. Remaining items go in `deferred`. For each turn, evaluate the pure-V-track-4 conditions above and set the turn's `picksPerTurn` to 4 or 3 accordingly.
+6. **Budget to `maxTurns × picksPerTurn`** (or `maxTurns × 4` when you expect multiple qualifying turns). Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. Remaining items go in `deferred`. For each turn, evaluate the pure-V-track-4 conditions above and set the turn's `picksPerTurn` to 4 or 3 accordingly.
 
 # Return shape
 
@@ -103,6 +111,17 @@ Single JSON block, no prose. Ceiling: ~80 lines for a full 10×3 plan.
           "inferredFiles": ["src/rules/navigation/consistent.ts", "tests/rules/navigation/consistent.test.ts"],
           "collisionWith": "a827068: chore(backlog) touched this file",
           "classificationNote": null
+        },
+        {
+          "item": "V1-HINTS-STRUCTURED",
+          "track": "V",
+          "specialist": "type-smith",
+          "backlogLine": 614,
+          "backlogSlice": "- [ ] V1-HINTS-STRUCTURED — widen Violation.hint from string to { text, criterionId, kind }; update every rule emission site and every consumer to the new shape.",
+          "inferredFiles": ["src/types/violation.ts", "src/engine/scanner.ts", "src/rules/forms/autocomplete-missing.ts", "src/rules/forms/required-indicator.ts", "src/output/formatters/terminal.ts", "src/output/formatters/json.ts", "src/mcp/tools/scan-project.ts", "src/mcp/tools/suggest-fix.ts"],
+          "collisionWith": null,
+          "classificationNote": null,
+          "crossCutting": true
         }
       ]
     }
@@ -126,6 +145,7 @@ Field contracts:
 - **`turns[].picks[].inferredFiles`**: best-guess file set from item text. `[]` when genuinely unknowable — do not invent.
 - **`turns[].picks[].collisionWith`**: `null` when clean; one-line string when a commit or earlier turn touched an overlapping file. Single string (not array) — if multiple collisions exist, pick the most recent and mention the count (`"3 prior commits; most recent a827068: …"`).
 - **`turns[].picks[].classificationNote`**: `null` unless the specialist assignment is non-obvious, in which case one sentence explaining.
+- **`turns[].picks[].crossCutting`**: `true` when the pick triggered any of the cross-cutting signals in workflow step 3 (≥8 inferred files, type-shape phrasing, `src/types/**` plus ≥3 non-test files, engine-signature changes). Omit the field when no signal fires — treat missing as `false`. Specialists dispatched on a `crossCutting: true` pick receive permission to exceed the 400-LOC soft cap when splitting would leave verify red (see `dispatch-template.md` §3).
 - **`deferred`**: items skipped for sequencing constraints or budget overflow. Always present, `[]` when empty.
 - **`blocked`**: items with `[!]` user-blocked tags. Always present, `[]` when empty.
 
