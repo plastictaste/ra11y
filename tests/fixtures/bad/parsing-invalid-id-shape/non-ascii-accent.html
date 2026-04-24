@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr">
+  <body>
+    <nav>
+      <!--
+        Real-world failure: id and href fragment look identical in source
+        but break on the wire the moment a copy-paste step normalizes the
+        accent on one side and not the other ('e' vs 'é'). The conservative
+        ASCII-safe set [A-Za-z0-9_-] sidesteps the mismatch entirely.
+      -->
+      <a href="#présentation">Aller à la présentation</a>
+    </nav>
+    <main>
+      <section id="présentation">
+        <h1>Présentation</h1>
+      </section>
+    </main>
+  </body>
+</html>

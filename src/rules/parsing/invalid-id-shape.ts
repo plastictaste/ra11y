@@ -17,7 +17,7 @@
  * 1.3.1 because a duplicate id literally breaks ARIA name resolution,
  * whereas a malformed id is a parsing-only concern.
  *
- * Catches three clearly-broken id shapes the HTML spec disallows:
+ * Catches four clearly-broken id shapes:
  *   1. `id="#something"` — author confused id syntax with the CSS
  *      selector / URL fragment prefix. Canonical real-world case.
  *   2. `id="has whitespace"` — HTML ids must contain at least one
@@ -27,6 +27,14 @@
  *      least one character; an empty value can never match a
  *      getElementById lookup, an aria-labelledby reference, or a
  *      label[for] association.
+ *   4. `id="présentation"` / `id="emoji-🎉"` — characters outside the
+ *      ASCII-safe set `[A-Za-z0-9_-]`. HTML5 technically allows any
+ *      character except whitespace, but URL-fragment routing in older
+ *      browsers, AT keyboard shortcut tables, and many CSS selectors /
+ *      `getElementById` polyfills break on non-ASCII or punctuation
+ *      characters. The canonical failure is the `e` vs `é` mismatch
+ *      between `id="présentation"` and `href="#présentation"` once a
+ *      caller copy-pastes through a tool that normalizes the accent.
  *
  * Intentionally does NOT flag ids that start with a digit — HTML5
  * permits them, many CSS frameworks use them deliberately, and the
@@ -54,11 +62,11 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "id attribute values must be non-empty, must not contain whitespace, and must not start with '#' (URL fragment syntax).",
+      "id attribute values must be non-empty, must not contain whitespace, must not start with '#' (URL fragment syntax), and must use only ASCII-safe characters [A-Za-z0-9_-].",
     rationale:
-      "The HTML spec requires id to contain at least one character and forbids ASCII whitespace. An empty id never matches getElementById, so ARIA references, label[for] associations, and anchor links silently fail. A whitespace-bearing id tokenizes as multiple ids under the spec's space-separated parsing — CSS selectors, getElementById, and aria-labelledby all mis-resolve. A leading '#' (id=\"#top\") is the author confusing id syntax with CSS selector / URL fragment syntax; the '#' becomes part of the id literal, so href=\"#top\" cannot find the target.",
+      "The HTML spec requires id to contain at least one character and forbids ASCII whitespace. An empty id never matches getElementById, so ARIA references, label[for] associations, and anchor links silently fail. A whitespace-bearing id tokenizes as multiple ids under the spec's space-separated parsing — CSS selectors, getElementById, and aria-labelledby all mis-resolve. A leading '#' (id=\"#top\") is the author confusing id syntax with CSS selector / URL fragment syntax; the '#' becomes part of the id literal, so href=\"#top\" cannot find the target. Non-ASCII characters (id=\"présentation\", id=\"emoji-🎉\") are technically legal HTML5 but break URL-fragment routing in older browsers, AT keyboard-shortcut tables, and many CSS selector / getElementById polyfills — the canonical failure mode is an `e` vs `é` mismatch between the id and a copy-pasted href fragment that lost the accent.",
     goodExample: `<section id="main-content">…</section>`,
-    badExample: `<section id="#main-content">…</section>\n<section id="">…</section>\n<section id="main content">…</section>`,
+    badExample: `<section id="#main-content">…</section>\n<section id="">…</section>\n<section id="main content">…</section>\n<section id="présentation">…</section>`,
     normativeQuote:
       "In content implemented using markup languages, elements have complete start and end tags, elements are nested according to their specifications, elements do not contain duplicate attributes, and any IDs are unique, except where the specifications allow these features.",
     references: [
@@ -127,7 +135,64 @@ function classifyIdValue(raw: string, tagName: string): IdProblem | null {
       suggestion: `HTML ids cannot contain spaces, tabs, or newlines — the parser would split "${echo}" into multiple tokens. Replace the whitespace with a hyphen or switch to camelCase on ${tag}: change id="${echo}" to id="${dashed}" (or id="${camelCase(raw)}").`,
     };
   }
+  // Non-ASCII or punctuation outside [A-Za-z0-9_-]. HTML5 technically
+  // permits these, but URL-fragment routing in older browsers, AT
+  // keyboard-shortcut tables, and many CSS selectors / getElementById
+  // polyfills break on them. The conservative ASCII-safe set is what
+  // every consumer can handle. Keep this branch last — the earlier
+  // shapes (empty, whitespace, leading '#') deserve their bespoke
+  // messages.
+  if (!/^[A-Za-z0-9_-]+$/.test(raw)) {
+    const echo = truncateForEcho(raw);
+    const offending = listOffendingChars(raw);
+    const safe = truncateForEcho(asciiSafeAlternative(raw));
+    return {
+      message: `${tag} has id="${echo}" containing ${offending} outside the ASCII-safe set [A-Za-z0-9_-] — URL-fragment routing in older browsers, AT keyboard-shortcut tables, and many CSS selector / getElementById polyfills break on non-ASCII or punctuation characters in ids.`,
+      suggestion: `Replace the non-ASCII / punctuation character(s) in id="${echo}" on ${tag} with an ASCII-safe equivalent (e.g. id="${safe}"). The canonical failure is an \`e\` vs \`é\` mismatch between the id and a copy-pasted href="#…" fragment that lost the accent — anchor jumps and aria references then silently fail. Stick to [A-Za-z0-9_-] for portability.`,
+    };
+  }
   return null;
+}
+
+/**
+ * Builds a human-readable enumeration of the characters that knock the
+ * value out of [A-Za-z0-9_-]. Dedupes, preserves first-seen order, caps
+ * at three so the message stays terse, and quotes each char so the agent
+ * can spot whitespace-adjacent characters reliably (e.g. zero-width
+ * joiners that would otherwise render invisibly).
+ */
+function listOffendingChars(value: string): string {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const ch of value) {
+    if (/[A-Za-z0-9_-]/.test(ch)) continue;
+    if (seen.has(ch)) continue;
+    seen.add(ch);
+    ordered.push(ch);
+    if (ordered.length === 3) break;
+  }
+  if (ordered.length === 0) return "non-ASCII characters";
+  const quoted = ordered.map((c) => `'${c}'`);
+  const more = seen.size < new Set(value).size ? " and more" : "";
+  if (quoted.length === 1) return `the character ${quoted[0]}`;
+  return `the characters ${quoted.join(", ")}${more}`;
+}
+
+/**
+ * Best-effort ASCII-safe transliteration: NFD-normalize to split
+ * accented letters into base + combining mark, drop the marks, then
+ * strip anything still outside [A-Za-z0-9_-]. `"présentation"` →
+ * `"presentation"`, `"emoji-🎉"` → `"emoji-"`. Returns the original
+ * truncated form when the result would be empty so the agent always
+ * sees a concrete proposal vs. an empty string.
+ */
+function asciiSafeAlternative(value: string): string {
+  const stripped = value
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^A-Za-z0-9_-]/g, "");
+  if (stripped.length === 0) return value;
+  return stripped;
 }
 
 /**

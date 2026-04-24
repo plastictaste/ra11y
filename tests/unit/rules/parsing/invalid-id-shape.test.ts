@@ -71,6 +71,47 @@ describe("rule parsing/invalid-id-shape", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.suggestion).toMatch(/id="hero-banner"/);
     });
+
+    it("an HTML id contains a non-ASCII accented character (é)", () => {
+      // Real-world failure mode: id="présentation" + href="#présentation"
+      // pair break the moment a copy-paste step normalizes the accent
+      // away on one side but not the other. The conservative ASCII-safe
+      // set sidesteps that mismatch entirely.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><section id="présentation">Hello</section></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/outside the ASCII-safe set/);
+      // Suggestion proposes a transliterated ASCII alternative.
+      expect(violations[0]?.suggestion).toMatch(/id="presentation"/);
+      // Message names the offending character so the agent can spot it.
+      expect(violations[0]?.message).toMatch(/'é'/);
+    });
+
+    it("an HTML id contains an emoji", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><section id="emoji-🎉">Hello</section></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/outside the ASCII-safe set/);
+      // Stripping the non-ASCII character leaves "emoji-".
+      expect(violations[0]?.suggestion).toMatch(/id="emoji-"/);
+    });
+
+    it("a JSX id literal contains a non-ASCII character", () => {
+      const violations = runRule(
+        rule,
+        `export const Page = () => <section id="café">Hello</section>;`,
+        { filePath: "input.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/outside the ASCII-safe set/);
+      expect(violations[0]?.suggestion).toMatch(/id="cafe"/);
+    });
   });
 
   describe("does not fire when", () => {
@@ -105,6 +146,18 @@ describe("rule parsing/invalid-id-shape", () => {
       const violations = runRule(
         rule,
         `<!doctype html><html><body><section id="{{ page.slug }}">Hello</section></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("an id mixes underscores, hyphens, digits, and ASCII letters", () => {
+      // The four characters in the conservative ASCII-safe set
+      // [A-Za-z0-9_-] all coexist; the non-ASCII branch must not
+      // over-fire on these legitimate ids.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><section id="my_id-1">Hello</section></body></html>`,
         { filePath: "input.html" },
       );
       expect(violations).toHaveLength(0);
