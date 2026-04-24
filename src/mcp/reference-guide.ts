@@ -37,12 +37,30 @@ const PLACEMENT_HTML =
 const PLACEMENT_DEFAULT = "Place on the line immediately above the flagged statement.";
 
 /**
- * Minimum number of times a given `(ruleId, description)` pair must
- * appear in a response before it becomes eligible for hoisting. At the
- * singleton threshold (1), indirecting through a lookup table is pure
- * overhead — no savings. At 2 or more, the hoist starts paying.
+ * Minimum number of findings WITH A DESCRIPTION that a rule must have in
+ * a response before that rule's entire description set becomes eligible
+ * for hoisting.
+ *
+ * Originally keyed per `(ruleId, hash)` — a specific hash had to repeat
+ * twice to hoist. That produced V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY:
+ * within one ruleId, two findings with description-A (same hash) would
+ * hoist + strip inline; a sibling finding with description-B (singleton
+ * hash) would stay inline. The agent saw two shapes for the same rule in
+ * one response and had to re-learn the join convention per finding.
+ *
+ * The threshold now counts findings-with-description PER RULE, not per
+ * `(ruleId, hash)` bucket. A rule with ≥2 findings carrying descriptions
+ * hoists ALL of them — each distinct description still earns its own
+ * hash entry in `fixDescriptions[ruleId]`, but every finding under that
+ * rule is guaranteed to ship as `fix: {safety} + fixDescriptionRef`
+ * rather than inline. A rule with exactly one finding carrying a
+ * description leaves it inline (singleton indirection is pure overhead).
+ *
+ * Result: for any given ruleId in a response, every finding uses the
+ * same shape. The agent learns the join once per rule, not once per
+ * finding.
  */
-const FIX_DESCRIPTION_HOIST_THRESHOLD = 2;
+const FIX_DESCRIPTION_PER_RULE_HOIST_THRESHOLD = 2;
 
 /**
  * Length of the truncated SHA-256 digest used to key the fixDescriptions
@@ -75,12 +93,14 @@ export interface ReferenceGuide {
   readonly suppressPlacement: Readonly<Record<string, string>>;
   /**
    * Present-when-meaningful (CLAUDE.md §1): omitted entirely when no
-   * `(ruleId, description)` pair repeats ≥
-   * {@link FIX_DESCRIPTION_HOIST_THRESHOLD} times in the response. When
-   * present, findings whose description was hoisted carry
-   * `fixDescriptionRef: { hash }` and omit `fix.description`; findings
-   * whose description was unique in the response keep `fix.description`
-   * inline.
+   * rule in the response has ≥
+   * {@link FIX_DESCRIPTION_PER_RULE_HOIST_THRESHOLD} findings carrying a
+   * description. When present, EVERY finding under a hoisted rule carries
+   * `fixDescriptionRef: { hash }` and omits `fix.description` — the shape
+   * is deterministic per-rule so the agent learns the join convention
+   * once per rule instead of once per finding (V1-FIX-DESCRIPTION-
+   * PRESENCE-INCONSISTENCY). Findings under rules whose total description
+   * count is 1 keep the inline `fix.description`.
    */
   readonly fixDescriptions?: FixDescriptions;
 }
@@ -174,26 +194,38 @@ function compositeKey(ruleId: string, hash: string): string {
 }
 
 /**
- * First pass of the hoist: scan every finding, count
- * `(ruleId, description)` occurrences, and emit:
+ * First pass of the hoist: scan every finding, count descriptions PER
+ * RULE, and emit:
  *
  *   - `fixDescriptions` — nested `{ [ruleId]: { [hash]: description } }`
- *     for every pair that appeared ≥ {@link FIX_DESCRIPTION_HOIST_THRESHOLD}
- *     times.
- *   - `hoistedKeys` — the same pairs, encoded as composite keys so the
- *     second pass can branch in O(1).
+ *     for every rule whose total count of findings-with-description met
+ *     {@link FIX_DESCRIPTION_PER_RULE_HOIST_THRESHOLD}. Every distinct
+ *     description under that rule is preserved as its own hash entry.
+ *   - `hoistedKeys` — the flat `(ruleId, hash)` set, encoded as composite
+ *     keys, so the rewrite pass can branch in O(1) per finding.
+ *
+ * Per-rule aggregation (not per-`(ruleId, hash)`) is the fix for
+ * V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY: under the old counting, a
+ * rule with two findings carrying DIFFERENT descriptions had two
+ * singleton-hash buckets and nothing hoisted, so both stayed inline;
+ * but a rule with two findings carrying the SAME description hoisted.
+ * Add a third finding with yet another distinct description and the
+ * response shipped one ruleId with MIXED shapes — some findings inline,
+ * some carrying refs. The agent had to disambiguate per-finding. Now
+ * the decision is made once per rule from the rule's total
+ * finding-with-description count, so every finding under a hoisted rule
+ * has the same shape.
  *
  * Pure function — no I/O, no side effects. Safe to call on the
  * post-`buildAgentFinding` `fileEntries` even though `AgentFinding`
  * objects are `readonly`: we don't mutate them here.
  *
- * `semantics/label-in-name` is the motivating case: it emits two
- * distinct verdicts (a 466-char and a 1970-char description) that each
- * repeat multiple times in a single scan. Keying by
- * `(ruleId, hash-of-desc)` keeps both; keying by ruleId alone would
- * drop one silently and replace every second-verdict finding with a
- * first-verdict pointer — a dishonest shape per
- * `docs/kb/architecture/ai-first-consumer.md`.
+ * `semantics/label-in-name` is the motivating multi-verdict case: it
+ * emits two distinct verdicts (a 466-char and a 1970-char description)
+ * across its findings. Hashing each description keeps both in the
+ * response-level map; per-rule aggregation then guarantees every
+ * finding under that ruleId uses the hoisted shape regardless of which
+ * verdict applies.
  */
 export function hoistFixDescriptions(
   fileEntries: readonly {
@@ -248,21 +280,26 @@ function tallyOne(byRule: Map<string, Map<string, TallyEntry>>, f: AgentFinding)
 }
 
 /**
- * Walks the tally and keeps only `(ruleId, hash)` pairs that crossed
- * {@link FIX_DESCRIPTION_HOIST_THRESHOLD} — those become the hoisted
- * map + the set of composite keys the rewrite pass branches on.
+ * Walks the tally and — for every rule whose SUM of finding-with-
+ * description counts meets {@link FIX_DESCRIPTION_PER_RULE_HOIST_THRESHOLD}
+ * — hoists EVERY distinct description under that rule. Each distinct
+ * description still earns its own hash entry (so two verdicts under
+ * `semantics/label-in-name` both survive per the module header), but
+ * the threshold test is against the per-rule total, not per-hash.
+ *
+ * A rule that has exactly one finding carrying a description leaves
+ * that description inline — singleton indirection is pure overhead.
  */
 function buildHoistResult(byRule: Map<string, Map<string, TallyEntry>>): HoistResult {
   const fixDescriptions: Record<string, Record<string, string>> = {};
   const hoistedKeys = new Set<string>();
   for (const [ruleId, perRule] of byRule) {
+    let perRuleTotal = 0;
+    for (const entry of perRule.values()) perRuleTotal += entry.count;
+    if (perRuleTotal < FIX_DESCRIPTION_PER_RULE_HOIST_THRESHOLD) continue;
+    const bucket: Record<string, string> = {};
+    fixDescriptions[ruleId] = bucket;
     for (const [hash, entry] of perRule) {
-      if (entry.count < FIX_DESCRIPTION_HOIST_THRESHOLD) continue;
-      let bucket = fixDescriptions[ruleId];
-      if (bucket === undefined) {
-        bucket = {};
-        fixDescriptions[ruleId] = bucket;
-      }
       bucket[hash] = entry.description;
       hoistedKeys.add(compositeKey(ruleId, hash));
     }
@@ -286,8 +323,8 @@ export interface GroupFixDescriptionRef {
  * ref stays inline on the finding — no savings. At 2+, every additional
  * sibling would re-inline the same 12-hex-char pointer, so lifting it
  * to the group level pays. Same threshold as the response-wide
- * description hoist ({@link FIX_DESCRIPTION_HOIST_THRESHOLD}) — a
- * single finding doesn't earn indirection at either level.
+ * description hoist ({@link FIX_DESCRIPTION_PER_RULE_HOIST_THRESHOLD}) —
+ * a single finding doesn't earn indirection at either level.
  */
 const GROUP_FIX_DESC_REF_HOIST_THRESHOLD = 2;
 

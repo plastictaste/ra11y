@@ -245,14 +245,14 @@ describe("hoistAndBuildReferenceGuide", () => {
     }
   });
 
-  it("returns the source guide unchanged when no duplicates cross the threshold", () => {
+  it("returns the source guide unchanged when no rule has ≥2 findings with descriptions", () => {
     const sourceGuide = { suppressPlacement: { tsx: "place" } };
     const files = [
       {
         path: "a.tsx",
         findings: [
-          finding({ ruleId: "a/b", fix: { description: "unique1" } }),
-          finding({ ruleId: "a/b", fix: { description: "unique2" } }),
+          finding({ ruleId: "a/b", fix: { description: "only-for-a-b" } }),
+          finding({ ruleId: "c/d", fix: { description: "only-for-c-d" } }),
         ],
       },
     ];
@@ -373,6 +373,190 @@ describe("hoistAndBuildReferenceGuide", () => {
         const resolved = fixDescs?.[f.ruleId]?.[f.fixDescriptionRef?.hash ?? ""];
         expect(resolved).toBeDefined();
       }
+    }
+  });
+});
+
+/**
+ * V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY — every finding under the
+ * same ruleId in one response must use the same description-shape.
+ * Either ALL inline, or ALL hoisted-with-ref. The agent reads the
+ * response once per rule; mixed shapes force per-finding
+ * disambiguation. The repro that put this on the backlog:
+ * `motion/pause-stop-hide` fired twice in a bootstrap scan — one
+ * finding shipped an inline `fix.description`, the other shipped
+ * `fix: {safety}` with only a `fixDescriptionRef.hash`, because the
+ * two findings carried DIFFERENT descriptions and the old threshold
+ * was keyed per `(ruleId, hash)`.
+ */
+describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY)", () => {
+  it("INVARIANT: when a rule has ≥2 findings with descriptions, ALL hoist — no mixed inline+ref within one ruleId", () => {
+    // Two findings under the same rule with DIFFERENT descriptions
+    // (two distinct hashes, each a singleton). Old behavior: neither
+    // crossed the per-(ruleId, hash) threshold, both stayed inline —
+    // but the moment a third finding of the same rule matched one of
+    // those hashes, that hash would hoist and the OTHER finding stayed
+    // inline, producing mixed shapes per the backlog repro. New
+    // behavior: per-rule aggregation hoists every distinct description
+    // under the rule.
+    const descA = "Long-form verdict A explaining a specific sub-case.";
+    const descB = "Long-form verdict B explaining the other sub-case.";
+    const files = [
+      {
+        path: "a.tsx",
+        findings: [
+          finding({
+            ruleId: "motion/pause-stop-hide",
+            groupKey: "motion-g1",
+            fix: { safety: "safe", description: descA },
+          }),
+          finding({
+            ruleId: "motion/pause-stop-hide",
+            groupKey: "motion-g2",
+            fix: { safety: "safe", description: descB },
+          }),
+        ],
+      },
+    ];
+    const result = hoistAndBuildReferenceGuide(files, {
+      suppressPlacement: { tsx: "Place above the JSX." },
+    });
+    const hashA = hashFixDescription(descA);
+    const hashB = hashFixDescription(descB);
+    const bucket = result.referenceGuide?.fixDescriptions?.["motion/pause-stop-hide"];
+    expect(bucket?.[hashA]).toBe(descA);
+    expect(bucket?.[hashB]).toBe(descB);
+    // Every finding under the rule carries a ref and no inline description.
+    for (const f of result.files[0]?.findings ?? []) {
+      expect(f.fix?.description).toBeUndefined();
+      expect(f.fixDescriptionRef).toBeDefined();
+    }
+    // Each finding's ref resolves to its OWN description (no
+    // cross-contamination).
+    expect(result.files[0]?.findings[0]?.fixDescriptionRef?.hash).toBe(hashA);
+    expect(result.files[0]?.findings[1]?.fixDescriptionRef?.hash).toBe(hashB);
+  });
+
+  it("INVARIANT: rules with exactly one description-carrying finding stay inline — singleton indirection is overhead", () => {
+    // One finding under "contrast/minimum" with a description + two
+    // findings under "motion/pause-stop-hide" with descriptions. Only
+    // the two-finding rule should hoist; the singleton stays inline.
+    const singletonDesc = "Raise contrast ratio to 4.5:1.";
+    const dupDescA = "Provide pause/stop/hide for moving content.";
+    const dupDescB = "Provide a mechanism to stop auto-updating content.";
+    const files = [
+      {
+        path: "a.tsx",
+        findings: [
+          finding({
+            ruleId: "contrast/minimum",
+            groupKey: "c-g1",
+            fix: { safety: "safe", description: singletonDesc },
+          }),
+          finding({
+            ruleId: "motion/pause-stop-hide",
+            groupKey: "m-g1",
+            fix: { safety: "safe", description: dupDescA },
+          }),
+          finding({
+            ruleId: "motion/pause-stop-hide",
+            groupKey: "m-g2",
+            fix: { safety: "safe", description: dupDescB },
+          }),
+        ],
+      },
+    ];
+    const result = hoistAndBuildReferenceGuide(files, {
+      suppressPlacement: { tsx: "place" },
+    });
+    const rg = result.referenceGuide?.fixDescriptions;
+    // motion/pause-stop-hide is hoisted; contrast/minimum is not.
+    expect(rg?.["motion/pause-stop-hide"]).toBeDefined();
+    expect(rg?.["contrast/minimum"]).toBeUndefined();
+    const findings = result.files[0]?.findings ?? [];
+    // Singleton rule keeps inline.
+    expect(findings[0]?.fix?.description).toBe(singletonDesc);
+    expect(findings[0]?.fixDescriptionRef).toBeUndefined();
+    // Duplicate rule uses refs.
+    expect(findings[1]?.fix?.description).toBeUndefined();
+    expect(findings[1]?.fixDescriptionRef?.hash).toBe(hashFixDescription(dupDescA));
+    expect(findings[2]?.fix?.description).toBeUndefined();
+    expect(findings[2]?.fixDescriptionRef?.hash).toBe(hashFixDescription(dupDescB));
+  });
+
+  it("INVARIANT: shape is uniform per ruleId — no response emits both inline-desc and ref-only under one ruleId", () => {
+    // Generative-style invariant across a response with mixed rule
+    // counts: every ruleId's findings must be all-inline or all-ref,
+    // never a mix. This is the exact property the field report named.
+    const descMotionA = "motion A";
+    const descMotionB = "motion B";
+    const descMotionC = "motion C";
+    const descContrast = "contrast singleton";
+    const descLabelA = "label verdict A";
+    const descLabelB = "label verdict B";
+    const files = [
+      {
+        path: "a.tsx",
+        findings: [
+          finding({
+            ruleId: "motion/pause-stop-hide",
+            groupKey: "m1",
+            fix: { safety: "safe", description: descMotionA },
+          }),
+          finding({
+            ruleId: "motion/pause-stop-hide",
+            groupKey: "m2",
+            fix: { safety: "safe", description: descMotionB },
+          }),
+          finding({
+            ruleId: "motion/pause-stop-hide",
+            groupKey: "m3",
+            fix: { safety: "safe", description: descMotionC },
+          }),
+          finding({
+            ruleId: "contrast/minimum",
+            groupKey: "c1",
+            fix: { safety: "safe", description: descContrast },
+          }),
+          finding({
+            ruleId: "semantics/label-in-name",
+            groupKey: "l1",
+            fix: { safety: "safe", description: descLabelA },
+          }),
+          finding({
+            ruleId: "semantics/label-in-name",
+            groupKey: "l2",
+            fix: { safety: "safe", description: descLabelB },
+          }),
+          // A finding with no description at all — should never
+          // interfere with the per-rule shape.
+          finding({ ruleId: "other/rule", groupKey: "o1" }),
+        ],
+      },
+    ];
+    const result = hoistAndBuildReferenceGuide(files, {
+      suppressPlacement: { tsx: "place" },
+    });
+    // Group findings by ruleId and assert each rule is all-inline or
+    // all-ref among the findings that actually carry a description.
+    const byRule = new Map<string, { inline: number; ref: number }>();
+    for (const f of result.files[0]?.findings ?? []) {
+      const hasInline = typeof f.fix?.description === "string" && f.fix.description.length > 0;
+      const hasRef = f.fixDescriptionRef !== undefined;
+      // No finding may carry both inline + ref (pre-existing invariant).
+      expect(hasInline && hasRef).toBe(false);
+      if (!hasInline && !hasRef) continue; // no description at all
+      const stats = byRule.get(f.ruleId) ?? { inline: 0, ref: 0 };
+      if (hasInline) stats.inline += 1;
+      else stats.ref += 1;
+      byRule.set(f.ruleId, stats);
+    }
+    for (const [ruleId, stats] of byRule) {
+      // Per-rule shape consistency: one of the two counts must be zero.
+      expect(
+        stats.inline === 0 || stats.ref === 0,
+        `ruleId ${ruleId} has mixed shape: ${stats.inline} inline + ${stats.ref} ref`,
+      ).toBe(true);
     }
   });
 });
