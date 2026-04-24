@@ -266,7 +266,6 @@ export const scanProjectTool: McpTool = {
       // set is a no-op.
       vendorPaths,
     });
-    const nextStepStructuredField = structuredField(nextStep);
     // P2-BASE: probe the canonical baseline path so agents see whether
     // a baseline is in play alongside the scan result — prevents
     // re-proposing fixes for grandfathered violations without the
@@ -354,8 +353,11 @@ export const scanProjectTool: McpTool = {
         root,
         excludes: session.config.exclude,
       }),
-      nextStep: nextStep.prose,
-      ...nextStepStructuredField,
+      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+      // `nextStepStructured` ship at the top level of the response, not
+      // inside `meta`. They reach the assembler below via explicit
+      // fields so the one-pointer-one-place discipline is visible at the
+      // call site.
     };
     // Q-SHARED-SCAN-PROJECT-INLINE-REVIEW-CANDIDATES: when the scan
     // produced zero automated findings (`formatted.files.length === 0`)
@@ -386,6 +388,8 @@ export const scanProjectTool: McpTool = {
         page,
         pageOffset: pageParams.offset,
         fullMeta,
+        nextStep: nextStep.prose,
+        ...(nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured }),
         ...inlineReviewCandidatesField,
         ...buildBaseWarningsForScanProject({
           formatted,
@@ -1067,19 +1071,6 @@ function checkCwdExists(explicitCwd: string | undefined): ReturnType<typeof erro
     remediation:
       "Pass `cwd` as a path to an existing directory. Relative paths resolve against the MCP server's spawn directory.",
   });
-}
-
-/**
- * Conditional-spread the structured form of `nextStep` — omitted when
- * the prose degrades to generic advice (no concrete first finding), per
- * CLAUDE.md §1 "Ambiguous field shapes are dishonest." Lets the
- * handler spread unconditionally.
- */
-function structuredField(nextStep: { readonly structured?: unknown }): {
-  readonly nextStepStructured?: unknown;
-} {
-  if (nextStep.structured === undefined) return {};
-  return { nextStepStructured: nextStep.structured };
 }
 
 /**

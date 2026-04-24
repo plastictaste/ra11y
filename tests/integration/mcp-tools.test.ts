@@ -477,32 +477,35 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // drift). The test accepts either the structured-present parity
     // case or the paired-trim case, and asserts the pair stays in
     // lockstep.
+    //
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: both fields live at the
+    // top level of the response, not nested under `meta`. The
+    // invariant test in tests/unit/mcp/next-step.test.ts asserts they
+    // appear exactly once; here we just read them where they live.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
     const body = bodyOf(responses[1]) as {
-      meta: {
-        nextStep: string;
-        nextStepStructured?: { tool: string; args: Record<string, unknown> };
-      };
+      nextStep: string;
+      nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    expect(typeof body.meta.nextStep).toBe("string");
-    const structured = body.meta.nextStepStructured;
+    expect(typeof body.nextStep).toBe("string");
+    const structured = body.nextStepStructured;
     if (structured === undefined) {
       // Q2R2-FIX-DEDUPE trim: prose must name the inline mechanical
       // fix path rather than still nudging at `suggest_fix` /
       // `explain_rule` (that would be the old pre-trim shape leaking
       // through).
-      expect(body.meta.nextStep).toContain("primary.edit");
-      expect(body.meta.nextStep).not.toContain("suggest_fix");
+      expect(body.nextStep).toContain("primary.edit");
+      expect(body.nextStep).not.toContain("suggest_fix");
     } else {
       // Fixture has violations — first hop is either suggest_fix
       // (when the rule emits a fix suggestion) or explain_rule (when
       // it doesn't). Both are concrete, canonical recommendations
       // the prose also names.
       expect(["suggest_fix", "explain_rule"]).toContain(structured.tool);
-      expect(body.meta.nextStep).toContain(structured.tool);
+      expect(body.nextStep).toContain(structured.tool);
       expect(typeof structured.args.ruleId).toBe("string");
       if (structured.tool === "suggest_fix") {
         expect(typeof structured.args.file).toBe("string");
@@ -514,47 +517,45 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("scan_file also emits nextStepStructured alongside prose (P1-K)", async () => {
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_file", { path: BAD_ALT_FILE }),
     ]);
     const body = bodyOf(responses[1]) as {
-      meta: {
-        nextStep: string;
-        nextStepStructured?: { tool: string; args: Record<string, unknown> };
-      };
+      nextStep: string;
+      nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    expect(typeof body.meta.nextStep).toBe("string");
-    const structured = body.meta.nextStepStructured;
+    expect(typeof body.nextStep).toBe("string");
+    const structured = body.nextStepStructured;
     if (structured === undefined) {
       // Q2R2-FIX-DEDUPE trim — see scan_project test above for the
       // paired-emission rationale. BAD_ALT fixture is all-mechanical.
-      expect(body.meta.nextStep).toContain("primary.edit");
-      expect(body.meta.nextStep).not.toContain("suggest_fix");
+      expect(body.nextStep).toContain("primary.edit");
+      expect(body.nextStep).not.toContain("suggest_fix");
     } else {
       expect(structured.tool).toMatch(/^(suggest_fix|explain_rule|scan_file)$/);
     }
   });
 
   it("scan (directory mode) emits nextStep + nextStepStructured at parity with scan_project and scan_file", async () => {
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [BAD_ALT_DIR] })]);
     const body = bodyOf(responses[1]) as {
-      meta: {
-        nextStep: string;
-        nextStepStructured?: { tool: string; args: Record<string, unknown> };
-      };
+      nextStep: string;
+      nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    expect(typeof body.meta.nextStep).toBe("string");
-    const structured = body.meta.nextStepStructured;
+    expect(typeof body.nextStep).toBe("string");
+    const structured = body.nextStepStructured;
     if (structured === undefined) {
       // Q2R2-FIX-DEDUPE trim: prose carries the inline-mechanical
       // wording; structured is omitted (paired emission) rather than
       // still naming `suggest_fix`.
-      expect(body.meta.nextStep).toContain("primary.edit");
-      expect(body.meta.nextStep).not.toContain("suggest_fix");
+      expect(body.nextStep).toContain("primary.edit");
+      expect(body.nextStep).not.toContain("suggest_fix");
     } else {
       expect(["suggest_fix", "explain_rule"]).toContain(structured.tool);
-      expect(body.meta.nextStep).toContain(structured.tool);
+      expect(body.nextStep).toContain(structured.tool);
       expect(typeof structured.args.ruleId).toBe("string");
       if (structured.tool === "suggest_fix") {
         expect(typeof structured.args.file).toBe("string");
@@ -565,18 +566,17 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("clean scan (directory mode) points at checklist via the structured pair", async () => {
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: { violations: number };
-      meta: {
-        nextStep: string;
-        nextStepStructured?: { tool: string; args: Record<string, unknown> };
-      };
+      nextStep: string;
+      nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
     expect(body.plan.violations).toBe(0);
-    expect(body.meta.nextStepStructured?.tool).toBe("checklist");
-    expect(body.meta.nextStep).toContain("checklist");
+    expect(body.nextStepStructured?.tool).toBe("checklist");
+    expect(body.nextStep).toContain("checklist");
   });
 
   it("clean scan_project response emits matching pair pointing at checklist (P1-K)", async () => {
@@ -585,18 +585,17 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // The "omit both" case (fallback branch where no concrete first
     // finding can be named) is covered by the unit test; end-to-end
     // scans don't reach it via the public surface.
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
       plan: { violations: number };
-      meta: {
-        nextStep: string;
-        nextStepStructured?: { tool: string; args: Record<string, unknown> };
-      };
+      nextStep: string;
+      nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
     expect(body.plan.violations).toBe(0);
-    expect(body.meta.nextStepStructured?.tool).toBe("checklist");
-    expect(body.meta.nextStep).toContain("checklist");
+    expect(body.nextStepStructured?.tool).toBe("checklist");
+    expect(body.nextStep).toContain("checklist");
   });
 
   it("scan findings no longer inline suppressPlacement; top-level referenceGuide carries the prose", async () => {

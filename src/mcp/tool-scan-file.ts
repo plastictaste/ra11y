@@ -334,12 +334,11 @@ function buildScanFileResponse(args: {
     // entirely per `.claude/rules/mcp-response-shapes.md`
     // "present-when-meaningful; never sentinel-empty."
     ...(scanFileCwd === configSearchBase ? {} : { configSearchedFrom: configSearchBase }),
-    nextStep: nextStep.prose,
-    // P1-K: structured twin of the prose nextStep. Conditional-spread
-    // per CLAUDE.md §1 "Ambiguous field shapes are dishonest": omit
-    // `nextStepStructured` when the prose falls back to generic
-    // advice rather than ship a sentinel value.
-    ...(nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured }),
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+    // `nextStepStructured` moved to the top level of the response.
+    // One pointer, one place — the load-bearing agent-direction field
+    // stays discoverable next to `plan` and `findings` rather than
+    // buried inside scan-confidence telemetry.
   };
   return {
     findings: flatFindings,
@@ -360,6 +359,12 @@ function buildScanFileResponse(args: {
     ...(assembled.warningsDetails === undefined
       ? {}
       : { warningsDetails: assembled.warningsDetails }),
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level agent direction.
+    // P1-K: structured twin — conditional-spread per CLAUDE.md §1
+    // "Ambiguous field shapes are dishonest" so the fallback multi-
+    // option prose doesn't ship a sentinel machine hint.
+    nextStep: nextStep.prose,
+    ...(nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured }),
     meta: applyMetaCacheMode({ toolName: "scan_file", params, fullMeta, session }),
   };
 }

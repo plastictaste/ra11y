@@ -9,6 +9,7 @@
  */
 
 import { applyMetaCacheMode } from "./meta-cache.ts";
+import type { NextStepStructured } from "./next-step.ts";
 import type { ReferenceGuide } from "./reference-guide.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
@@ -72,6 +73,19 @@ interface AssembleArgs {
   readonly pageOffset: number;
   readonly fullMeta: Record<string, unknown>;
   /**
+   * V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: the English next-call hint and
+   * its machine-parseable twin ship at the TOP level of the response,
+   * not inside `meta`. `nextStep` is load-bearing agent direction —
+   * hoisting to the top level keeps it discoverable next to `plan` and
+   * `files`, and removes the "appears in both places" dedup risk the
+   * doctrine warns against (one pointer, one place per Q6 de-duplication).
+   * `nextStepStructured` stays present-when-meaningful: omitted when
+   * the builder fell back to generic prose with no concrete first
+   * finding to name.
+   */
+  readonly nextStep: string;
+  readonly nextStepStructured?: NextStepStructured;
+  /**
    * Top-level `warnings[]` codes that the scan-meta pass produced.
    * Optional so the caller can conditional-spread — present-when-
    * meaningful applies to the *wire* shape; internally a caller
@@ -121,6 +135,8 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     baseWarnings,
     baseWarningsDetails,
     reviewCandidates,
+    nextStep,
+    nextStepStructured,
   } = args;
   const hasBaseCodes = baseWarnings !== undefined && baseWarnings.length > 0;
   const hasBaseDetails =
@@ -140,6 +156,16 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     ...(hasInlineReview ? { reviewCandidates } : {}),
     ...(hasBaseCodes ? { warnings: baseWarnings } : {}),
     ...(hasBaseDetails ? { warningsDetails: baseWarningsDetails } : {}),
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: one pointer, one place —
+    // `nextStep` + `nextStepStructured` ship at the top level only.
+    // Pre-change they rode in `meta` next to scan-confidence telemetry,
+    // which crowded the load-bearing agent-direction signal into a
+    // field the doctrine labels "verbose scan-confidence telemetry"
+    // and forced the agent to hop into meta to read the canonical
+    // next call. Top-level is the discoverability default per
+    // `.claude/rules/mcp-response-shapes.md` Q6 de-duplication doctrine.
+    nextStep,
+    ...(nextStepStructured === undefined ? {} : { nextStepStructured }),
     meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta, session }),
   };
   const budgeted = applyTokenBudget({

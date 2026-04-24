@@ -196,8 +196,12 @@ export const scanTool: McpTool = {
       // of information violated the "present-when-meaningful" rule
       // in `.claude/rules/mcp-response-shapes.md`; the warning channel
       // is the canonical "no config was loaded" signal.
-      nextStep: nextStep.prose,
-      ...nextStepStructuredField,
+      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+      // `nextStepStructured` moved to the top level of the response
+      // (see `tentative` below). One pointer, one place — the
+      // load-bearing agent-direction field stays discoverable next
+      // to `plan` and `files` rather than buried in scan-confidence
+      // telemetry.
     };
     // Hold onto the pre-overlay warnings channel so the
     // `mergeScanTokenBudget` merge can re-emit them alongside the
@@ -222,6 +226,13 @@ export const scanTool: McpTool = {
       ...ruleCatalogField(params, session.registry.rules, assembled.files),
       ...(baseWarnings.length > 0 ? { warnings: baseWarnings } : {}),
       ...(baseWarningsDetails === undefined ? {} : { warningsDetails: baseWarningsDetails }),
+      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level agent direction.
+      // Paired with `nextStepStructured` (conditional-spread so the
+      // fallback multi-option prose doesn't ship a sentinel machine
+      // hint). One pointer, one place — pre-change `nextStep` sat in
+      // `meta` next to scan-confidence telemetry.
+      nextStep: nextStep.prose,
+      ...nextStepStructuredField,
       meta: applyMetaCacheMode({ toolName: "scan", params, fullMeta, session }),
     };
     const budgeted = applyTokenBudget({

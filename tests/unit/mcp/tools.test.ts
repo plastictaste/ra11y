@@ -365,7 +365,7 @@ describe("MCP tool: scan_project", () => {
             verifyInSource?: number;
           };
         };
-        meta: { nextStep: string };
+        nextStep: string;
       };
       // The fixture at tests/fixtures/bad/alt-text-missing/ has violations.
       expect(data.plan.violations).toBeGreaterThan(0);
@@ -379,10 +379,11 @@ describe("MCP tool: scan_project", () => {
       // the stricter file:line assertion; when the dedupe trims it, the
       // inline-fix prose doesn't name a file:line (the agent reads the
       // finding instead).
-      if (/suggest_fix|explain_rule/.test(data.meta.nextStep)) {
-        expect(data.meta.nextStep).toMatch(/\.html:\d+|\.tsx:\d+|\.jsx:\d+/);
+      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+      if (/suggest_fix|explain_rule/.test(data.nextStep)) {
+        expect(data.nextStep).toMatch(/\.html:\d+|\.tsx:\d+|\.jsx:\d+/);
       } else {
-        expect(data.meta.nextStep).toContain("primary.edit");
+        expect(data.nextStep).toContain("primary.edit");
       }
     });
 
@@ -397,8 +398,48 @@ describe("MCP tool: scan_project", () => {
       const tool = findTool("scan_project");
       const session = new McpSession();
       const result = await tool.handler({ cwd: dir }, session);
-      const data = JSON.parse(result.content[0].text) as { meta: { nextStep: string } };
-      expect(data.meta.nextStep).toContain("checklist");
+      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+      const data = JSON.parse(result.content[0].text) as { nextStep: string };
+      expect(data.nextStep).toContain("checklist");
+    });
+
+    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+    // `nextStepStructured` ship at the top level of the scan-family
+    // response — never nested inside `meta`. The doctrine is "one
+    // pointer, one place": a load-bearing agent-direction field
+    // appearing in two locations forces the agent to disambiguate which
+    // copy is canonical and opens a drift surface when the two copies
+    // disagree. The invariant runs across every scan-family tool
+    // (`scan_project`, `scan`, `scan_file`) so a future refactor that
+    // re-introduces the meta-nested copy on any one tool trips this
+    // guard instead of shipping silently.
+    it("V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: nextStep lives at the top level only, never under meta", async () => {
+      const scanProjectTool = findTool("scan_project");
+      const scanTool = findTool("scan");
+      const scanFileTool = findTool("scan_file");
+      const session = new McpSession();
+      const fixtureDir = BAD_ALT.replace(/\/[^/]+$/, "");
+      const bodies = [
+        JSON.parse(
+          (await scanProjectTool.handler({ cwd: fixtureDir }, session)).content[0].text,
+        ) as Record<string, unknown>,
+        JSON.parse(
+          (await scanTool.handler({ paths: [fixtureDir] }, session)).content[0].text,
+        ) as Record<string, unknown>,
+        JSON.parse(
+          (await scanFileTool.handler({ path: BAD_ALT }, session)).content[0].text,
+        ) as Record<string, unknown>,
+      ];
+      for (const body of bodies) {
+        // Top-level presence — the canonical location.
+        expect(typeof body["nextStep"]).toBe("string");
+        // Never nested — meta carries scan-confidence telemetry, not
+        // agent direction.
+        const meta = body["meta"] as Record<string, unknown> | undefined;
+        expect(meta).toBeDefined();
+        expect(meta).not.toHaveProperty("nextStep");
+        expect(meta).not.toHaveProperty("nextStepStructured");
+      }
     });
   });
 
