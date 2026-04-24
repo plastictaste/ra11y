@@ -353,15 +353,29 @@ export const checklistTool: McpTool = {
     // Single-standard path flattens to an object; multi-standard keeps
     // the array shape so `Array.isArray(automatedCoverage)` still
     // discriminates.
+    //
+    // V1-ZERO-SCAN-PASS-RATE-SENTINEL: on a zero-file scan, the pass-
+    // rate denominator has no meaningful population — the legacy
+    // `passing / automatable` formula returns 100, the
+    // `clean / evaluated` formula returns 0, and neither is an honest
+    // answer. Omit `automatedCriteriaPassRate` entirely in that case
+    // (present-when-meaningful per `ai-first-consumer.md` §"Ambiguous
+    // field shapes are dishonest") so an agent summing dashboards
+    // doesn't score the call as clean conformance. The
+    // `scanned_zero_files` warning already communicates the honest
+    // reason at the response-envelope layer.
+    const passRateMeaningful = files.length > 0;
     const automatedCoverage =
       coverage.length === 1
         ? {
             standardId: coverage[0]?.standardId,
-            automatedCriteriaPassRate: coverage[0]?.automatedPassRate,
+            ...(passRateMeaningful
+              ? { automatedCriteriaPassRate: coverage[0]?.automatedPassRate }
+              : {}),
           }
         : coverage.map((c) => ({
             standardId: c.standardId,
-            automatedCriteriaPassRate: c.automatedPassRate,
+            ...(passRateMeaningful ? { automatedCriteriaPassRate: c.automatedPassRate } : {}),
           }));
     // Field order is load-bearing — the agent reads top-to-bottom and
     // uses the leading fields as the headline. Actionable-first puts

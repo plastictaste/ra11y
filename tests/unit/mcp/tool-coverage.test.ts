@@ -49,6 +49,9 @@ interface CoverageEnvelope {
       readonly totalSkipped: number;
     };
   };
+  readonly automatedCriteriaPassRate?: number;
+  readonly criteriaTotal?: number;
+  readonly summary?: string;
 }
 
 function parseEnvelope(text: string): CoverageEnvelope {
@@ -158,6 +161,46 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
     expect(data.warnings).toContain("scanned_zero_files");
+  });
+
+  it("omits `automatedCriteriaPassRate` on a zero-file scan (V1-ZERO-SCAN-PASS-RATE-SENTINEL)", async () => {
+    // Doctrine (ai-first-consumer.md §"Ambiguous field shapes are
+    // dishonest"): on a zero-file scan there is no meaningful
+    // denominator for an automated pass rate. The legacy formula
+    // (`passing / automatable`) returns 100 and the split formula
+    // returns 0 — neither is honest. Present-when-meaningful: omit
+    // the field entirely and rely on `warnings: ["scanned_zero_files"]`
+    // to carry the reason. Also guard the summary string so it doesn't
+    // claim "(0%)" as a precise readout.
+    const tool = findTool("coverage");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = parseEnvelope(result.content[0].text);
+    expect(data.warnings).toContain("scanned_zero_files");
+    expect(data).not.toHaveProperty("automatedCriteriaPassRate");
+    expect(typeof data.summary).toBe("string");
+    expect(data.summary).not.toMatch(/\(\d+%\)/);
+    // Structural signal the agent can still read — criteriaTotal
+    // stays populated so the shape of what *would* have been evaluated
+    // is visible (V1-ZERO-SCAN-PASS-RATE-SENTINEL clamps only the
+    // dishonest scalar, not the per-criterion split).
+    expect(typeof data.criteriaTotal).toBe("number");
+  });
+
+  it("preserves `automatedCriteriaPassRate` on a populated scan", async () => {
+    // Counterpart guard: the zero-file omission must not regress the
+    // normal happy path. A file-bearing scan still ships the rate so
+    // an agent dashboard can trend it.
+    write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+    const tool = findTool("coverage");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = parseEnvelope(result.content[0].text);
+    expect(typeof data.automatedCriteriaPassRate).toBe("number");
   });
 
   it("mirrors scan_project's analysisCoverage + warnings on the same cwd (cross-tool parity)", async () => {

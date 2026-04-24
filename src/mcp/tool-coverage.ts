@@ -120,6 +120,20 @@ export const coverageTool: McpTool = {
       testableCriteria,
     });
     const showUntargeted = params["showUntargeted"] === true;
+    // V1-ZERO-SCAN-PASS-RATE-SENTINEL: on a zero-file scan, the pass-
+    // rate denominator (`evaluated` or `automatable` depending on the
+    // `testableCriteria` path) collapses to "no meaningful denominator"
+    // — the `buildCoverageReport` helper returns `0` on one path and
+    // `100` on the legacy path. Either number is dishonest: an agent
+    // summing pass-rate dashboards counts the call as clean conformance
+    // (or spurious failure) when the reality is "the scan never had
+    // anything to evaluate." Omit `automatedCriteriaPassRate` entirely
+    // in that case (present-when-meaningful per `ai-first-consumer.md`
+    // §"Ambiguous field shapes are dishonest") — the
+    // `scanned_zero_files` warning code already fires on this path and
+    // communicates why. The per-criterion split counters stay populated
+    // so the agent still sees the shape of the attempted evaluation.
+    const passRateMeaningful = files.length > 0;
     const entries = coverage.map((c) => {
       // Split by applicability first so the counts align with scan_project
       // and checklist — media-only criteria move to likelyIrrelevant
@@ -142,7 +156,7 @@ export const coverageTool: McpTool = {
         // Tailwind-pre-build shape). Q-SHARED-PASS-RATE-COMPOSITE split
         // the denominator so the headline names one concept: "of the
         // criteria we actually evaluated, how many were clean?"
-        automatedCriteriaPassRate: c.automatedPassRate,
+        ...(passRateMeaningful ? { automatedCriteriaPassRate: c.automatedPassRate } : {}),
         criteriaTotal: c.total,
         criteriaAutomatable: c.automatable,
         criteriaAutomatablePassing: c.passing,
@@ -189,13 +203,22 @@ export const coverageTool: McpTool = {
         // that as "criteria automation can't cover" when it actually
         // listed automated criteria that are currently failing.
         failingAutomatedCriteria: withTitles(c.failingCriteria, session),
-        summary:
-          `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +
-          `${c.untestable > 0 ? `; ${c.untestable} untestable (no applicable input in this scan)` : ""}. ` +
-          `${applicable.length} of ${c.total} criteria in ${c.standardId} need manual review ` +
-          `(${withCandidates.length} with concrete candidates, ${untargeted.length} untargeted` +
-          `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}). ` +
-          `Run the 'checklist' tool for evaluation prompts.`,
+        // V1-ZERO-SCAN-PASS-RATE-SENTINEL: drop the `(N%)` tail when
+        // the scan evaluated zero files — the `%` is cosmetically
+        // precise but materially meaningless. Pair with the
+        // `automatedCriteriaPassRate` omission above so the summary
+        // and the structured field agree; the `scanned_zero_files`
+        // warning code still fires at the response level.
+        summary: passRateMeaningful
+          ? `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +
+            `${c.untestable > 0 ? `; ${c.untestable} untestable (no applicable input in this scan)` : ""}. ` +
+            `${applicable.length} of ${c.total} criteria in ${c.standardId} need manual review ` +
+            `(${withCandidates.length} with concrete candidates, ${untargeted.length} untargeted` +
+            `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}). ` +
+            `Run the 'checklist' tool for evaluation prompts.`
+          : `No files scanned — automated pass rate is not meaningful. ` +
+            `${applicable.length} of ${c.total} criteria in ${c.standardId} would need manual review once sources are present. ` +
+            `See the \`scanned_zero_files\` warning for why the scan root matched no parseable files.`,
       };
     });
 
