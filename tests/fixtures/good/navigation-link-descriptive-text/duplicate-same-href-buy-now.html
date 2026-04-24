@@ -1,0 +1,25 @@
+<!--
+  Good: two anchors share the same accessible name ("Buy Now") AND the
+  same href ("/checkout/basic"). WCAG 2.4.4's spec rationale explicitly
+  permits this — both pointers lead to the same destination, and AT
+  announces "visited" state on re-encounter so the user is not deceived.
+  This is a common pricing-card pattern (the same Basic-plan checkout
+  link surfaced once in the card and once in a body callout).
+  Expect: rule navigation/link-descriptive-text does NOT fire the
+  duplicate-name-different-href path on these anchors.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <section class="pricing">
+      <div class="card">
+        <h2>Basic</h2>
+        <a href="/checkout/basic">Buy Now</a>
+      </div>
+      <div class="card">
+        <p>Reminder CTA repeating the Basic-plan link.</p>
+        <a href="/checkout/basic">Buy Now</a>
+      </div>
+    </section>
+  </body>
+</html>

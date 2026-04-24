@@ -1,9 +1,9 @@
 <!--
   Good: two anchors share the same href ("#") but each carries a
   distinct aria-label, so the accessible names differ — AT announces
-  "Buy Now — Basic Plan" vs "Buy Now — Pro Plan". The duplicate-href
-  pass groups by (normalizedName, href); distinct aria-labels mean
-  distinct names, so no grouping fires.
+  "Buy Now — Basic Plan" vs "Buy Now — Pro Plan". The duplicate-name
+  pass groups by normalized accessible name; distinct aria-labels mean
+  distinct names, so no group of size ≥2 forms.
   Expect: rule navigation/link-descriptive-text does not fire.
 -->
 <!doctype html>

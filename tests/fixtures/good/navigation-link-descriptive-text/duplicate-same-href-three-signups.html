@@ -1,0 +1,18 @@
+<!--
+  Good: three anchors all named "Sign up" all pointing at the same
+  destination. WCAG 2.4.4's rationale permits this — same name + same
+  href is just three pointers at one destination, AT announces visited
+  on re-encounter, and no user is deceived. The canonical SSG-docs case
+  is a header CTA, an inline body link, and a footer CTA all linking to
+  /signup; the rule must stay silent.
+  Expect: rule navigation/link-descriptive-text does NOT fire the
+  duplicate-name-different-href path on these anchors.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/signup">Sign up</a>
+    <a href="/signup">Sign up</a>
+    <a href="/signup">Sign up</a>
+  </body>
+</html>
