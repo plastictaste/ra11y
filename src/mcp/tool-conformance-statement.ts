@@ -43,6 +43,7 @@ import {
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
+  numParam,
   parseFiles,
   resolveLevel,
   resolveStandards,
@@ -51,6 +52,15 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+
+/**
+ * Default cap on `scope.files[]` entries when `verboseScope` is false.
+ * Chosen to accommodate a small service repo's full manifest while
+ * keeping a 10k-file monorepo's response under typical MCP host token
+ * ceilings (V1-CONFORMANCE-SCOPE-FILES-CAP). Callers override via the
+ * tool's `scopeFilesCap` input.
+ */
+export const DEFAULT_SCOPE_FILES_CAP = 100;
 
 export const conformanceStatementTool: McpTool = {
   def: {
@@ -97,6 +107,16 @@ export const conformanceStatementTool: McpTool = {
           items: { type: "string" },
           description:
             "Technologies explicitly excluded from the claim — useful for e.g. no-JS fallback claims. Defaults to `[]`.",
+        },
+        verboseScope: {
+          type: "boolean",
+          description:
+            "When true, `scope.files[]` enumerates every scanned file path regardless of count. Off by default: responses cap the enumerated list at `scopeFilesCap` (default 100) and emit `warnings: [scope_files_truncated_count_exceeded]` plus `warningsDetails.scope_files_truncated_count_exceeded: { totalCount, cap }` when the manifest exceeds the cap. `scope.filesCount` always reflects the real count so a reader can tell success-with-truncation from success-complete. Enable when auditing a large repo and the full manifest is load-bearing.",
+        },
+        scopeFilesCap: {
+          type: "number",
+          description:
+            "Maximum entries retained in `scope.files[]` when `verboseScope` is false. Defaults to 100 — enough for a small service repo's full manifest, small enough that a 10k-file monorepo's response stays under typical MCP host token ceilings. Raise for domain-specific audits, or flip `verboseScope: true` to bypass the cap entirely.",
         },
       },
     },
@@ -167,11 +187,17 @@ export const conformanceStatementTool: McpTool = {
     });
 
     const stalenessProbe = createGitStalenessProbe(cwd);
+    const scopeFilesView = resolveScopeFilesView({
+      filePaths: files.map((f) => f.filePath),
+      verboseScope: params["verboseScope"] === true,
+      cap: numParam(params, "scopeFilesCap") ?? DEFAULT_SCOPE_FILES_CAP,
+    });
     const statement = buildConformanceStatement(
       assembleBuilderInputs({
         ledger,
         profile,
         files,
+        scopeFilesView,
         params,
         session,
         namedProfile,
@@ -181,47 +207,19 @@ export const conformanceStatementTool: McpTool = {
       }),
     );
 
-    // Merge the tool-level signing warning with the builder's own
-    // warnings (e.g. `stale_probe_unavailable`) and the shared
-    // scan-confidence codes emitted by `buildDerivativeScanWarnings`
-    // (ADR 0024 stage 4) so the agent reads one deduplicated set.
-    // Order is alphabetical for determinism.
-    //
-    // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
-    // a `conformance_statement` response on a real-but-empty scan root
-    // would otherwise read as a conformance verdict over "the whole
-    // project" when the scanner saw zero parseable files — the
-    // `scanned_zero_files` code surfaces that honestly. `rootSource:
-    // null` mirrors `checklist` / `coverage`: this tool takes `paths`
-    // directly, defaulting to `[cwd]`, so `root_source_defaulted` has
-    // no meaning here. `configSource: undefined` suppresses
-    // `no_config_found` for parity with those sibling tools —
-    // conformance uses the loaded config for signing-fingerprint
-    // inputs, not as a scan gating signal, and emitting the code here
-    // would diverge from the derivative-tool contract. `analysisCoverage`
-    // / `filesByExtension` aren't computed in this handler, so
-    // extension-skip / Tailwind-undercount codes simply don't fire
-    // until those signals are plumbed through.
-    const derivativeWarnings = buildDerivativeScanWarnings({
+    const { warnings: mergedWarnings, warningsDetails: mergedWarningsDetails } = mergeToolWarnings({
+      statement,
       filesScanned: files.length,
-      rootSource: null,
-      configSource: undefined,
-      analysisCoverage: undefined,
-      filesByExtension: undefined,
+      signingPresent: signingContext.signing !== undefined,
+      scopeFilesView,
     });
-    const toolWarnings = new Set<string>(statement.warnings ?? []);
-    for (const code of derivativeWarnings.warnings ?? []) toolWarnings.add(code);
-    if (signingContext.signing === undefined) toolWarnings.add("non_git_repo_signature_omitted");
-    const mergedWarnings = [...toolWarnings].sort();
 
     return textResult({
       ...statement,
       markdown: renderConformanceMarkdown(statement),
       nextStep: buildNextStep(statement),
       ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
-      ...(derivativeWarnings.warningsDetails === undefined
-        ? {}
-        : { warningsDetails: derivativeWarnings.warningsDetails }),
+      ...(mergedWarningsDetails === undefined ? {} : { warningsDetails: mergedWarningsDetails }),
     });
   },
 };
@@ -265,6 +263,69 @@ function buildNextStep(statement: ReturnType<typeof buildConformanceStatement>):
 }
 
 /**
+ * Merges every warning channel the handler produces into one
+ * deduplicated + alphabetized list, and composes the matching
+ * `warningsDetails` payload. Split out to keep the handler's cognitive
+ * complexity under the project budget — the work is mechanical union
+ * across three sources: the builder's own `warnings[]` (e.g.
+ * `stale_probe_unavailable`), the shared derivative-scan codes emitted
+ * by `buildDerivativeScanWarnings` (ADR 0024 stage 4), and the
+ * tool-local codes `non_git_repo_signature_omitted` /
+ * `scope_files_truncated_count_exceeded`.
+ *
+ * Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
+ * a `conformance_statement` response on a real-but-empty scan root
+ * would otherwise read as a conformance verdict over "the whole
+ * project" when the scanner saw zero parseable files — the
+ * `scanned_zero_files` code surfaces that honestly. `rootSource: null`
+ * mirrors `checklist` / `coverage`: this tool takes `paths` directly,
+ * defaulting to `[cwd]`, so `root_source_defaulted` has no meaning
+ * here. `configSource: undefined` suppresses `no_config_found` for
+ * parity with those sibling tools — conformance uses the loaded config
+ * for signing-fingerprint inputs, not as a scan gating signal, and
+ * emitting the code here would diverge from the derivative-tool
+ * contract. `analysisCoverage` / `filesByExtension` aren't computed in
+ * this handler, so extension-skip / Tailwind-undercount codes simply
+ * don't fire until those signals are plumbed through.
+ */
+function mergeToolWarnings(args: {
+  readonly statement: ReturnType<typeof buildConformanceStatement>;
+  readonly filesScanned: number;
+  readonly signingPresent: boolean;
+  readonly scopeFilesView: ScopeFilesView;
+}): {
+  readonly warnings: readonly string[];
+  readonly warningsDetails: Record<string, unknown> | undefined;
+} {
+  const derivativeWarnings = buildDerivativeScanWarnings({
+    filesScanned: args.filesScanned,
+    rootSource: null,
+    configSource: undefined,
+    analysisCoverage: undefined,
+    filesByExtension: undefined,
+  });
+  const toolWarnings = new Set<string>(args.statement.warnings ?? []);
+  for (const code of derivativeWarnings.warnings ?? []) toolWarnings.add(code);
+  if (!args.signingPresent) toolWarnings.add("non_git_repo_signature_omitted");
+  if (args.scopeFilesView.truncated) toolWarnings.add("scope_files_truncated_count_exceeded");
+  // Compose `warningsDetails`: start from the derivative-scan payload,
+  // then layer the scope-files truncation payload on top. Conditional
+  // spread so the field is omitted entirely when no code fires — per
+  // the present-when-meaningful rule.
+  const details: Record<string, unknown> = { ...(derivativeWarnings.warningsDetails ?? {}) };
+  if (args.scopeFilesView.truncated) {
+    details["scope_files_truncated_count_exceeded"] = {
+      totalCount: args.scopeFilesView.totalCount,
+      cap: args.scopeFilesView.cap,
+    };
+  }
+  return {
+    warnings: [...toolWarnings].sort(),
+    warningsDetails: Object.keys(details).length > 0 ? details : undefined,
+  };
+}
+
+/**
  * Assembles the builder inputs from the tool's request context. Split
  * from the handler body to keep the handler under the project's
  * complexity budget; the work done here is mechanical forwarding —
@@ -275,6 +336,7 @@ function assembleBuilderInputs(ctx: {
   readonly ledger: Parameters<typeof buildConformanceStatement>[0]["ledger"];
   readonly profile: ConformanceProfile;
   readonly files: ReadonlyArray<{ readonly filePath: string }>;
+  readonly scopeFilesView: ScopeFilesView;
   readonly params: Record<string, unknown>;
   readonly session: Parameters<typeof conformanceStatementTool.handler>[1];
   readonly namedProfile: NamedConformanceProfile | undefined;
@@ -301,7 +363,8 @@ function assembleBuilderInputs(ctx: {
     standards: ctx.session.registry.standards,
     rulesForCriterion: (criterionId: string) =>
       satisfyingRulesForCriterion(criterionId, ctx.session),
-    files: ctx.files.map((f) => f.filePath),
+    filesCount: ctx.scopeFilesView.totalCount,
+    ...(ctx.scopeFilesView.files !== undefined && { files: ctx.scopeFilesView.files }),
     ...(ctx.signing !== undefined && { commitHash: ctx.signing.commitHash }),
     configSnapshot,
     ...(technologiesReliedUpon !== undefined && { technologiesReliedUpon }),
@@ -310,6 +373,53 @@ function assembleBuilderInputs(ctx: {
     ...(ctx.signing !== undefined && { signing: ctx.signing }),
     ...(ctx.stalenessProbe !== undefined && { stalenessProbe: ctx.stalenessProbe }),
     ...(processes !== undefined && processes.length > 0 && { processes }),
+  };
+}
+
+/**
+ * View over the scanned file manifest after the scope-files cap is
+ * applied. `totalCount` is the ground truth (always the real count,
+ * even when the list is truncated). `files` is the (possibly elided)
+ * manifest passed to the builder — `undefined` when truncation happened
+ * under `verboseScope: false`. `truncated` flips the
+ * `scope_files_truncated_count_exceeded` warning at the handler layer;
+ * `cap` mirrors what was used so the warning payload can name it.
+ */
+interface ScopeFilesView {
+  readonly totalCount: number;
+  readonly cap: number;
+  readonly truncated: boolean;
+  readonly files: readonly string[] | undefined;
+}
+
+/**
+ * Resolves the scope-files view from the parsed manifest + the caller's
+ * `verboseScope` / `scopeFilesCap` params. When the caller explicitly
+ * flips `verboseScope: true`, the full list flows through regardless of
+ * size. Otherwise the cap gates: under → full list ships inline; at/over
+ * → files elided, truncation warning fires at the handler layer.
+ * `scope.filesCount` in the response always reflects `totalCount` so an
+ * agent can tell success-with-truncation from success-complete.
+ */
+function resolveScopeFilesView(args: {
+  readonly filePaths: readonly string[];
+  readonly verboseScope: boolean;
+  readonly cap: number;
+}): ScopeFilesView {
+  const totalCount = args.filePaths.length;
+  if (args.verboseScope || totalCount <= args.cap) {
+    return {
+      totalCount,
+      cap: args.cap,
+      truncated: false,
+      files: args.filePaths,
+    };
+  }
+  return {
+    totalCount,
+    cap: args.cap,
+    truncated: true,
+    files: undefined,
   };
 }
 

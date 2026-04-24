@@ -376,3 +376,85 @@ describe("conformance_statement: signing flow", () => {
     });
   });
 });
+
+describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-CAP)", () => {
+  it("returns the full file manifest inline with no truncation warning when the scope fits under the cap", async () => {
+    await withScratch(async (cwd) => {
+      // Three TSX files — well under the default 100 cap. Expect the
+      // full list to ship inline and no truncation warning.
+      await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
+      await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
+      await writeFile(join(cwd, "c.tsx"), "export const C = () => null;\n");
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
+      const scope = body["scope"] as { readonly filesCount: number; readonly files?: string[] };
+      expect(scope.filesCount).toBe(3);
+      expect(Array.isArray(scope.files)).toBe(true);
+      expect(scope.files?.length).toBe(3);
+      const warnings = (body["warnings"] as string[] | undefined) ?? [];
+      expect(warnings).not.toContain("scope_files_truncated_count_exceeded");
+      expect(body["warningsDetails"]).toBeUndefined();
+    });
+  });
+
+  it("elides scope.files with a warning + warningsDetails payload when the count exceeds the configured cap", async () => {
+    await withScratch(async (cwd) => {
+      // A tiny cap (2) exercises the truncation branch without needing
+      // hundreds of fixture files. Three files > cap of 2 → `files`
+      // omitted, `filesCount` still names the real count, warning fires.
+      await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
+      await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
+      await writeFile(join(cwd, "c.tsx"), "export const C = () => null;\n");
+      const session = new McpSession();
+      const { body } = await call(session, {
+        standard: "wcag22",
+        level: "AA",
+        cwd,
+        scopeFilesCap: 2,
+      });
+      const scope = body["scope"] as { readonly filesCount: number; readonly files?: string[] };
+      // Real count stays honest; the list is gone.
+      expect(scope.filesCount).toBe(3);
+      expect(scope.files).toBeUndefined();
+      const warnings = (body["warnings"] as string[] | undefined) ?? [];
+      expect(warnings).toContain("scope_files_truncated_count_exceeded");
+      const details = body["warningsDetails"] as
+        | { readonly scope_files_truncated_count_exceeded?: { totalCount: number; cap: number } }
+        | undefined;
+      expect(details?.scope_files_truncated_count_exceeded).toEqual({ totalCount: 3, cap: 2 });
+    });
+  });
+
+  it("verboseScope: true bypasses the cap and returns the full manifest with no truncation warning", async () => {
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
+      await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
+      await writeFile(join(cwd, "c.tsx"), "export const C = () => null;\n");
+      const session = new McpSession();
+      const { body } = await call(session, {
+        standard: "wcag22",
+        level: "AA",
+        cwd,
+        scopeFilesCap: 2,
+        verboseScope: true,
+      });
+      const scope = body["scope"] as { readonly filesCount: number; readonly files?: string[] };
+      expect(scope.filesCount).toBe(3);
+      expect(scope.files?.length).toBe(3);
+      const warnings = (body["warnings"] as string[] | undefined) ?? [];
+      expect(warnings).not.toContain("scope_files_truncated_count_exceeded");
+    });
+  });
+
+  it("documents the default cap (100) via the conformance_statement tool schema", () => {
+    const schema = conformanceStatementTool.def.inputSchema as {
+      readonly properties: Record<string, { readonly description?: string }>;
+    };
+    expect(schema.properties["verboseScope"]).toBeDefined();
+    expect(schema.properties["scopeFilesCap"]).toBeDefined();
+    // The schema description names the default so callers don't have to
+    // read source to pick a sensible override.
+    expect(schema.properties["scopeFilesCap"]?.description).toContain("100");
+    expect(schema.properties["verboseScope"]?.description).toContain("scope_files_truncated");
+  });
+});

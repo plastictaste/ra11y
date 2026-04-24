@@ -87,7 +87,7 @@ function renderMarkdownHeader(statement: ConformanceStatement): readonly string[
 
 /** `## Scope` — file count, optional commit hash, optional config snapshot. */
 function renderMarkdownScope(scope: ConformanceStatementScope): readonly string[] {
-  const lines: string[] = ["## Scope", "", `- Files scanned: ${scope.files.length}`];
+  const lines: string[] = ["## Scope", "", `- Files scanned: ${scope.filesCount}`];
   if (scope.commitHash !== undefined) lines.push(`- Commit: \`${scope.commitHash}\``);
   if (scope.configSnapshot !== undefined) {
     lines.push(

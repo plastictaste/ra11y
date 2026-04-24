@@ -167,12 +167,22 @@ export interface ConformanceBlocker {
  */
 export interface ConformanceStatementScope {
   /**
-   * File paths included in the scan — the manifest the claim stands on.
-   * Paths are mirrored verbatim from the caller; the builder does not
-   * normalize. Always populated; an empty array means nothing was
-   * scanned.
+   * Total count of files included in the scan — the load-bearing
+   * manifest size the claim stands on. Always present (including `0`
+   * when nothing was scanned) so a reader can distinguish "not
+   * truncated" from "field absent", and so the count stays honest even
+   * when {@link files} is capped or elided for response-size reasons.
    */
-  readonly files: readonly string[];
+  readonly filesCount: number;
+  /**
+   * File paths included in the scan. Paths are mirrored verbatim from
+   * the caller; the builder does not normalize. Present-when-meaningful:
+   * the tool layer elides this array when it would exceed its configured
+   * cap (emitting the `scope_files_truncated_count_exceeded` warning in
+   * its stead). Callers wanting the full list flip `verboseScope: true`
+   * on the MCP tool. When absent, rely on {@link filesCount} for size.
+   */
+  readonly files?: readonly string[];
   /**
    * Git commit hash at scan time. Omitted when the caller did not
    * supply one (e.g., scan outside a git repo, or the signing flow is
@@ -337,11 +347,22 @@ export interface BuildConformanceStatementInputs {
   readonly standards: readonly Standard[];
   /**
    * Scanned file manifest — the set of paths the claim stands on.
-   * Mirrored into `statement.scope.files`. Pass an empty array when no
-   * files were scanned; downstream consumers can distinguish that case
-   * from "field absent" (the field is always present on the scope).
+   * Mirrored verbatim into `statement.scope.files`; the tool layer is
+   * responsible for capping the array (and raising a truncation
+   * warning) before passing it to the builder. When `undefined`, the
+   * statement's `scope.files` is omitted; `scope.filesCount` is taken
+   * from {@link filesCount} in that case.
    */
   readonly files?: readonly string[];
+  /**
+   * Total count of files in scope — mirrored verbatim into
+   * `statement.scope.filesCount` when supplied. Required when {@link files}
+   * is absent (tool-level truncation path) so the statement still names
+   * the real count. When both are supplied and disagree, the caller wins
+   * ({@link filesCount} is source of truth); the builder does not
+   * reconcile.
+   */
+  readonly filesCount?: number;
   /**
    * Web content technologies the claim relies upon (WCAG §5.3.1(5)).
    * When omitted, {@link DEFAULT_TECHNOLOGIES_RELIED_UPON} is used so
@@ -821,17 +842,22 @@ function buildStaleBlocker(
 
 /**
  * Assembles the statement's {@link ConformanceStatementScope} from the
- * builder inputs. `files` is always present (defaults to `[]`); the
- * commit hash and config snapshot are present-when-meaningful — empty
- * strings and empty objects map to field omission, not sentinel
+ * builder inputs. `filesCount` is always present (load-bearing: agents
+ * reading a truncated response still need the real count); `files` is
+ * present-when-meaningful (elided by the tool layer when it would blow
+ * the response budget, per the `scope_files_truncated_count_exceeded`
+ * warning). Commit hash and config snapshot are present-when-meaningful —
+ * empty strings and empty objects map to field omission, not sentinel
  * values, per the AI-first consumer model's absent-vs-empty rule.
  */
 function buildStatementScope(inputs: BuildConformanceStatementInputs): ConformanceStatementScope {
   const hasCommit = inputs.commitHash !== undefined && inputs.commitHash.length > 0;
   const hasSnapshot =
     inputs.configSnapshot !== undefined && Object.keys(inputs.configSnapshot).length > 0;
+  const filesCount = inputs.filesCount ?? inputs.files?.length ?? 0;
   return {
-    files: inputs.files ?? [],
+    filesCount,
+    ...(inputs.files !== undefined && { files: inputs.files }),
     ...(hasCommit && { commitHash: inputs.commitHash }),
     ...(hasSnapshot && { configSnapshot: inputs.configSnapshot }),
   };

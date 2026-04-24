@@ -537,6 +537,7 @@ describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {
       technologiesNotReliedUpon: ["JavaScript"],
     });
     expect(statement.scope.files).toEqual(["src/a.tsx", "src/b.tsx"]);
+    expect(statement.scope.filesCount).toBe(2);
     expect(statement.technologiesReliedUpon).toEqual(["HTML"]);
     expect(statement.technologiesNotReliedUpon).toEqual(["JavaScript"]);
   });
@@ -550,7 +551,11 @@ describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {
     });
     expect(statement.scope.commitHash).toBeUndefined();
     expect(statement.scope.configSnapshot).toBeUndefined();
-    expect(statement.scope.files).toEqual([]);
+    // `filesCount` is load-bearing (always present, including 0); `files`
+    // is present-when-meaningful and omitted when the caller supplies no
+    // manifest, per the scope-files-cap shape (V1-CONFORMANCE-SCOPE-FILES-CAP).
+    expect(statement.scope.filesCount).toBe(0);
+    expect(statement.scope.files).toBeUndefined();
   });
 
   it("populates scope.commitHash and scope.configSnapshot when provided", () => {
