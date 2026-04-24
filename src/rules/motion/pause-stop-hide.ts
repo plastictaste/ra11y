@@ -264,6 +264,7 @@ function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
     pause === null
       ? "no data-bs-pause attribute present"
       : `data-bs-pause="${truncateForEcho(pause)}"`;
+  const controlsNote = describeDescendantControls(element);
   emit({
     severity: "warning",
     location: {
@@ -271,10 +272,45 @@ function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
       line: element.loc.start.line,
       column: element.loc.start.column,
     },
-    message: `<${element.tagName.toLowerCase()} data-bs-ride="${rideTrimmed}"> auto-advances on page load (Bootstrap's default cycle is 5 seconds) — WCAG 2.2.2 requires a user-operable pause/stop/hide mechanism; ${pauseNote}.`,
+    message: `<${element.tagName.toLowerCase()} data-bs-ride="${rideTrimmed}"> auto-advances on page load (Bootstrap's default cycle is 5 seconds) — WCAG 2.2.2 requires a user-operable pause/stop/hide mechanism; ${pauseNote}${controlsNote}.`,
     suggestion:
       "Verify that the carousel ships visible prev/next and pause/play buttons (not just pause-on-hover, which is incidental), or remove data-bs-ride so the carousel does not auto-advance until the user activates it.",
   });
+}
+
+/**
+ * Walks descendants of the carousel root looking for Bootstrap's
+ * documented prev/next control classes (`carousel-control-prev` /
+ * `carousel-control-next`). When at least one is present, append an
+ * additive note to the reason text listing the line numbers — the
+ * presence of these controls is a *signal* that a user-operable stop
+ * mechanism may exist, but the scanner cannot prove the controls are
+ * keyboard-focusable or that AT users can perceive their pause
+ * semantics. Per AI-first doctrine: surface honest "please verify"
+ * context rather than suppress the finding.
+ *
+ * Returns the empty string when no matching descendants are found, so
+ * the call site can interpolate unconditionally.
+ */
+function describeDescendantControls(root: HtmlElement): string {
+  const lines: number[] = [];
+  for (const descendant of walkHtmlElements(root)) {
+    if (hasCarouselControlClass(descendant)) {
+      lines.push(descendant.loc.start.line);
+    }
+  }
+  if (lines.length === 0) return "";
+  const sortedUnique = [...new Set(lines)].sort((a, b) => a - b);
+  return `; note: descendant controls \`.carousel-control-prev|next\` detected at lines ${sortedUnique.join(",")} — verify keyboard focus + announcement carry pause semantics before dismissing`;
+}
+
+function hasCarouselControlClass(el: HtmlElement): boolean {
+  const klass = getHtmlAttribute(el, "class");
+  if (klass === null) return false;
+  for (const token of klass.split(/\s+/)) {
+    if (token === "carousel-control-prev" || token === "carousel-control-next") return true;
+  }
+  return false;
 }
 
 /**

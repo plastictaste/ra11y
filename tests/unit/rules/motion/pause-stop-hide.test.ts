@@ -510,6 +510,56 @@ describe("rule motion/pause-stop-hide", () => {
       });
       expect(v[0]?.message).toContain(`data-bs-pause="hover"`);
     });
+
+    it("reason notes descendant prev/next controls with their line numbers", () => {
+      const src = [
+        `<!doctype html><html><body>`, // line 1
+        `<div data-bs-ride="carousel">`, // line 2
+        `  <div class="carousel-inner">`, // line 3
+        `    <div class="carousel-item active">…</div>`, // line 4
+        `  </div>`, // line 5
+        `  <button class="carousel-control-prev" type="button">prev</button>`, // line 6
+        `  <button class="carousel-control-next" type="button">next</button>`, // line 7
+        `</div>`, // line 8
+        `</body></html>`, // line 9
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "c.html" });
+      // Surface-don't-suppress: rule still fires.
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(".carousel-control-prev|next");
+      expect(v[0]?.message).toContain("lines 6,7");
+      expect(v[0]?.message).toContain(
+        "verify keyboard focus + announcement carry pause semantics before dismissing",
+      );
+    });
+
+    it("reason omits the descendant-controls note when no prev/next controls are present", () => {
+      const src = [
+        `<!doctype html><html><body>`,
+        `<div data-bs-ride="carousel">`,
+        `  <div class="carousel-inner"><div class="carousel-item active">…</div></div>`,
+        `</div>`,
+        `</body></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "c.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).not.toContain("carousel-control-prev|next");
+      expect(v[0]?.message).not.toContain("verify keyboard focus");
+    });
+
+    it("descendant-controls note dedupes and sorts when only one control class is present", () => {
+      const src = [
+        `<!doctype html><html><body>`, // line 1
+        `<div data-bs-ride="carousel">`, // line 2
+        `  <button class="carousel-control-next btn">next</button>`, // line 3
+        `</div>`, // line 4
+        `</body></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "c.html" });
+      expect(v[0]?.message).toContain("lines 3");
+      expect(v[0]?.message).toContain(".carousel-control-prev|next");
+    });
   });
 
   describe("Bootstrap data-bs-ride='carousel': does NOT fire when", () => {
