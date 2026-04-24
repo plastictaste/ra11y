@@ -1,0 +1,18 @@
+/* V1-CSS-CONTRAST-CASCADE-INHERITED: control case. Same body/descendant
+   shape as the fail fixture, but the inherited pair clears 4.5:1
+   (black text on white background). Silence is honest — the fallback
+   ran, resolved, and confirmed the pair passes — no finding fires. */
+body {
+  color: #111111;
+  background-color: #ffffff;
+}
+
+.lede {
+  /* No overrides — descendant inherits body defaults exactly. */
+  font-size: 16px;
+}
+
+article {
+  /* Override the foreground only; background still inherits from body. */
+  color: #222222;
+}

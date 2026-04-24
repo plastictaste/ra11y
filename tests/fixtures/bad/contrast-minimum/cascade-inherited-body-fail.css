@@ -1,0 +1,14 @@
+/* V1-CSS-CONTRAST-CASCADE-INHERITED: canonical repro. `body` sets the
+   document-default foreground; a descendant rule overrides only the
+   background. Pair resolves via the cascade to white on light-blue
+   (~1.53:1) and must fire — before the cascade-inherited fallback
+   landed, contrast/minimum required both halves on the same rule and
+   silently missed this pattern. Sanitized from the form-input-wave
+   50projects50days sample. */
+body {
+  color: #ffffff;
+}
+
+.btn {
+  background-color: #add8e6;
+}

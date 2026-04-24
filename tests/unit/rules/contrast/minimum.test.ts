@@ -269,6 +269,185 @@ describe("rule contrast/minimum", () => {
     });
   });
 
+  // V1-CSS-CONTRAST-CASCADE-INHERITED: cross-selector cascade fallback
+  // for document defaults. Real-world CSS routinely declares one half
+  // of the contrast pair on `body` / `html` / `:root` and overrides the
+  // other half on descendants — before the fallback landed, the pair
+  // extractor required both halves on the same rule and silently
+  // missed the failing combination. The fallback is deliberately
+  // narrow (plain `:root` / `html` / `body` only, same-file only, no
+  // compound variants); findings resolved via it carry
+  // `couldBeWrongBecause: [cascade_inherited_context]` so the agent
+  // knows the descendant relationship was assumed from the canonical
+  // idiom rather than proved by the scanner.
+  describe("cross-selector cascade fallback (document defaults)", () => {
+    it("inherits background from body when a descendant overrides only the foreground", () => {
+      // Canonical backlog repro: `body { color: #fff }` + `.btn
+      // { background: lightblue }` — pair resolves to ~1.53:1 and must
+      // fire. Before the fallback existed, zero contrast findings
+      // surfaced on this exact idiom across every 50projects50days
+      // form-input sample.
+      const v = runRule(
+        rule,
+        `body { color: #ffffff; }
+         .btn { background-color: #add8e6; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      // The message cites the consumer selector (`.btn`), not `body`.
+      expect(v[0]?.message).toContain(".btn");
+      // And it names the cascade source so the agent knows the pair
+      // was assembled across selectors.
+      expect(v[0]?.message).toContain("inherited from 'body'");
+      expect(v[0]?.couldBeWrongBecause).toContain("cascade_inherited_context");
+    });
+
+    it("inherits foreground from html when a descendant overrides only the background", () => {
+      // Mirror case: the document default lives on `html` and supplies
+      // the missing color half. Same cascade idiom, opposite direction.
+      const v = runRule(
+        rule,
+        `html { background-color: #ffffff; }
+         article { color: #bababa; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("article");
+      expect(v[0]?.message).toContain("inherited from 'html'");
+      expect(v[0]?.couldBeWrongBecause).toContain("cascade_inherited_context");
+    });
+
+    it("resolves :root-declared defaults too", () => {
+      // `:root` is another canonical ancestor for document defaults
+      // (especially on sites that treat `:root` as the universal
+      // default container). Pair resolves to white on light-blue.
+      const v = runRule(
+        rule,
+        `:root { color: #ffffff; }
+         .chip { background-color: #add8e6; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("inherited from ':root'");
+    });
+
+    it("stays silent when the cascaded pair clears the threshold", () => {
+      // Control case — `body { color: #111 }` + `article { background:
+      // #fff }` resolves to ~18:1 and passes. The fallback ran and
+      // confirmed the pair; silence here is honest.
+      const v = runRule(
+        rule,
+        `body { color: #111111; }
+         article { background-color: #ffffff; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT inherit from compound variant selectors (`body.dark`)", () => {
+      // Condition-gated ancestor — the rule only applies when the
+      // `.dark` class is present on body, and the scanner has no
+      // evidence that condition holds. Fallback declines; silence is
+      // honest at the rule level, and the rule's `crossFileCapable:
+      // false` flag downgrades the coverage row to "medium" with a
+      // structured reason so the agent does not over-trust the clean
+      // tally (pinned by the "unresolvable via cascade" fixture).
+      const v = runRule(
+        rule,
+        `body.dark { background-color: #ffffff; }
+         article { color: #bababa; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fabricate a pair when the document default is image-backed", () => {
+      // `body { background: url(...) }` cannot be paired against a
+      // descendant `color` — the scanner has no luminance for the
+      // image. Fallback stays silent; the existing bg-image-
+      // unresolvable info path is scoped to same-rule pairs.
+      const v = runRule(
+        rule,
+        `body { background-image: url('/bg.png'); }
+         .notice { color: #ffffff; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fabricate a pair when the document default is transparent", () => {
+      // `body { background: transparent }` has alpha 0 — pairing a
+      // descendant color against it would invent a nonsense ratio.
+      // Same mitigation the same-rule path uses via the `bg.a === 0`
+      // check.
+      const v = runRule(
+        rule,
+        `body { background-color: transparent; }
+         .notice { color: #bababa; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("same-rule findings do NOT carry the cascade_inherited_context code", () => {
+      // Regression guard — the cascade code must only stamp when the
+      // fallback actually resolved a half. A pair fully declared on
+      // one rule takes the same-rule path.
+      const v = runRule(rule, `.muted { color: #aaaaaa; background-color: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("last :root / body declaration wins for the cascade default", () => {
+      // Mirrors the existing `:root` custom-property resolver's
+      // last-write-wins behavior — the most recent declaration for a
+      // given default is the one a consumer would see at runtime.
+      // Here the second `body` redeclares color to white, producing
+      // the failing 1:1 pair against the descendant's white bg.
+      const v = runRule(
+        rule,
+        `body { color: #111111; }
+         body { color: #ffffff; }
+         article { background-color: #ffffff; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("article");
+    });
+
+    it("resolves :root custom-property tokens used on the body default", () => {
+      // Layered resolution: `body` reads the token, the token resolver
+      // produces the literal, and the cascade fallback pairs that
+      // literal against the descendant's background. Covers the realistic
+      // design-system pattern where tokens feed document defaults.
+      const v = runRule(
+        rule,
+        `:root { --fg: #ffffff; }
+         body { color: var(--fg); }
+         .chip { background-color: #add8e6; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toContain("cascade_inherited_context");
+    });
+
+    it("suggestion names the inherited half so the agent knows where to edit", () => {
+      const v = runRule(
+        rule,
+        `body { color: #ffffff; }
+         .btn { background-color: #add8e6; }`,
+        { filePath: "styles.css" },
+      );
+      // Suggestion points at both the .btn override opportunity and
+      // the body default so the agent can pick which level to change.
+      expect(v[0]?.suggestion).toContain("inherited from 'body'");
+      expect(v[0]?.suggestion).toContain(".btn");
+    });
+  });
+
   describe("inside at-rules", () => {
     it("fires on rules nested in @media", () => {
       const src = `@media (max-width: 600px) { .x { color: #aaa; background: #fff; } }`;

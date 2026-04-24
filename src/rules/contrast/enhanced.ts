@@ -31,6 +31,7 @@ import {
   buildBgImageUnresolvableSuggestion,
   buildContrastMessage,
   buildContrastSuggestion,
+  CASCADE_INHERITED_CONTEXT,
   type ContrastCheckOptions,
   collectBgImageUnresolvable,
   collectTailwindOverrideClasses,
@@ -181,6 +182,15 @@ function emitFinding(
 ): void {
   const primaryClass = extractPrimarySelectorClass(finding.selector);
   const tailwindOverride = primaryClass !== null && overrideClasses.has(primaryClass);
+  // Mirror `contrast/minimum`'s reason-code accumulation — the shared
+  // pair extractor now emits `cascadeSource` when one half of the pair
+  // came from a document-default selector (`:root` / `html` / `body`),
+  // and the AAA rule honors the same honest surfacing: finding still
+  // fires, `couldBeWrongBecause` names the cross-selector inference
+  // per V1-CSS-CONTRAST-CASCADE-INHERITED.
+  const reasons: string[] = [];
+  if (finding.cascadeSource) reasons.push(CASCADE_INHERITED_CONTEXT);
+  if (tailwindOverride) reasons.push(TAILWIND_CLASS_ON_CONSUMER);
   const emitted: EmittedViolation = {
     severity: "warning",
     location: { filePath, line: finding.line, column: finding.column },
@@ -188,7 +198,7 @@ function emitFinding(
     suggestion: buildContrastSuggestion(finding),
     // Conditional spread — `couldBeWrongBecause: []` would be a
     // dishonest empty-vs-unpopulated sentinel per CLAUDE.md §1.
-    ...(tailwindOverride ? { couldBeWrongBecause: [TAILWIND_CLASS_ON_CONSUMER] } : {}),
+    ...(reasons.length > 0 ? { couldBeWrongBecause: reasons } : {}),
   };
   ctx.emit(emitted);
 }

@@ -1,0 +1,18 @@
+/* V1-CSS-CONTRAST-CASCADE-INHERITED: "unresolvable via cascade" case.
+   The document default lives on a compound selector (`body.dark`) —
+   condition-gated, not a plain ancestor — so the fallback declines to
+   walk up. The child rule declares only `color`; no `background`
+   reachable. Silence here is honest (the scanner cannot prove
+   `body.dark` applies on load) — the rule's `crossFileCapable: false`
+   flag downgrades the coverage row to "medium" with a structured
+   reason, so an agent reading a clean tally on this substrate does
+   not over-trust it. Included as a fixture to pin the current
+   boundary: expanding the fallback to variant selectors is a
+   deliberate future-scope decision. */
+body.dark {
+  background-color: #ffffff;
+}
+
+article {
+  color: #bababa;
+}

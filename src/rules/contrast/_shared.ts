@@ -73,6 +73,22 @@ export interface ContrastFinding {
   readonly isLarge: boolean;
   readonly fgSource: string;
   readonly bgSource: string;
+  /**
+   * Populated when one half of the color pair (fg or bg) was resolved
+   * by walking up to a document-default selector (`:root` / `html` /
+   * `body`) rather than read directly off the failing rule. The string
+   * names which side was inherited and from which ancestor selector,
+   * so the consumer rule's message + `couldBeWrongBecause` code carry
+   * enough context for the agent to verify the descendant relationship
+   * (the scanner cannot prove `.btn` is actually rendered inside
+   * `<body>` — the idiom is dominant, but the evidence is heuristic).
+   * Omitted on same-rule pairs where both halves are declared locally
+   * (V1-CSS-CONTRAST-CASCADE-INHERITED).
+   */
+  readonly cascadeSource?: {
+    readonly side: "foreground" | "background";
+    readonly ancestorSelector: string;
+  };
 }
 
 /**
@@ -134,6 +150,32 @@ interface ColorPair {
   readonly bg: Rgb;
   readonly fgSource: string;
   readonly bgSource: string;
+  readonly cascadeSource?: {
+    readonly side: "foreground" | "background";
+    readonly ancestorSelector: string;
+  };
+}
+
+/**
+ * Document-default color declarations walked off `:root` / `html` /
+ * `body` selectors, fueling the cross-selector cascade fallback
+ * (V1-CSS-CONTRAST-CASCADE-INHERITED). When a child rule declares one
+ * half of the contrast pair (e.g. `article { color: #999 }`) and the
+ * other half lives on a document-default selector
+ * (`body { background: #fff }`), the pair extractor walks up and
+ * produces a live pair — the canonical real-world idiom that silently
+ * missed contrast failures before the fallback existed.
+ *
+ * Same-file only, mirrors the `:root` custom-property resolver's scope
+ * — cross-file document defaults (layout partials declaring `body
+ * { color }` in a separate stylesheet) stay unresolved and the rule's
+ * `crossFileCapable: false` metadata surfaces the limit at the coverage
+ * layer per ADR 0026. Last-write-wins on duplicate declarations across
+ * ancestor rules, matching CSS intra-file cascade semantics.
+ */
+interface CascadeDefaults {
+  readonly color?: { readonly value: string; readonly selector: string };
+  readonly background?: { readonly value: string; readonly selector: string };
 }
 
 const PT_PER_PX = 72 / 96;
@@ -159,8 +201,9 @@ export function findContrastFailures(
 ): ContrastFinding[] {
   const out: ContrastFinding[] = [];
   const rootVars = collectRootCustomProperties(stylesheet);
+  const cascadeDefaults = collectCascadeDefaults(stylesheet, rootVars);
   for (const cssRule of walkCssRules(stylesheet)) {
-    const pair = extractColorPair(cssRule, rootVars);
+    const pair = extractColorPair(cssRule, rootVars, cascadeDefaults);
     if (!pair) continue;
     const ratio = contrast(pair.fg, pair.bg);
     const isLarge = isLargeText(cssRule);
@@ -175,6 +218,7 @@ export function findContrastFailures(
       isLarge,
       fgSource: pair.fgSource,
       bgSource: pair.bgSource,
+      ...(pair.cascadeSource ? { cascadeSource: pair.cascadeSource } : {}),
     });
   }
   return out;
@@ -182,28 +226,107 @@ export function findContrastFailures(
 
 export function buildContrastMessage(finding: ContrastFinding, scLabel: string): string {
   const size = finding.isLarge ? "large text" : "normal text";
+  if (finding.cascadeSource) {
+    const side = finding.cascadeSource.side;
+    const ancestor = finding.cascadeSource.ancestorSelector;
+    const sourceNote =
+      side === "background"
+        ? `the background was inherited from '${ancestor}' (background: ${finding.bgSource})`
+        : `the foreground was inherited from '${ancestor}' (color: ${finding.fgSource})`;
+    return `'${finding.selector}' has color contrast ratio ${finding.ratio.toFixed(2)}:1 against its background — ${scLabel} requires ${finding.minimum}:1 for ${size}. Note: ${sourceNote}; verify this rule's element actually renders inside that ancestor.`;
+  }
   return `'${finding.selector}' has color contrast ratio ${finding.ratio.toFixed(2)}:1 against its background — ${scLabel} requires ${finding.minimum}:1 for ${size}.`;
 }
 
 export function buildContrastSuggestion(finding: ContrastFinding): string {
   const size = finding.isLarge ? "large text" : "normal text";
   const gap = (finding.minimum / finding.ratio).toFixed(2);
-  return `Darken the foreground (\`color: ${finding.fgSource}\`) or lighten the background (\`background: ${finding.bgSource}\`). The current ratio is ${finding.ratio.toFixed(2)}:1; you need ${finding.minimum}:1 for ${size} (${gap}× more contrast). Try a foreground color ~${Math.ceil(((finding.minimum - finding.ratio) / finding.minimum) * 100)}% darker, or use the WebAIM Contrast Checker to tune the pair.`;
+  const base = `Darken the foreground (\`color: ${finding.fgSource}\`) or lighten the background (\`background: ${finding.bgSource}\`). The current ratio is ${finding.ratio.toFixed(2)}:1; you need ${finding.minimum}:1 for ${size} (${gap}× more contrast). Try a foreground color ~${Math.ceil(((finding.minimum - finding.ratio) / finding.minimum) * 100)}% darker, or use the WebAIM Contrast Checker to tune the pair.`;
+  if (!finding.cascadeSource) return base;
+  const side = finding.cascadeSource.side;
+  const ancestor = finding.cascadeSource.ancestorSelector;
+  const inheritedNote =
+    side === "background"
+      ? `The missing \`background\` was inherited from '${ancestor}' — adding an explicit \`background-color\` on '${finding.selector}' (or adjusting the ancestor default) will override the cascade.`
+      : `The missing \`color\` was inherited from '${ancestor}' — adding an explicit \`color\` on '${finding.selector}' (or adjusting the ancestor default) will override the cascade.`;
+  return `${base} ${inheritedNote}`;
 }
 
 function extractColorPair(
   cssRule: CssCssRule,
   rootVars: ReadonlyMap<string, string>,
+  cascadeDefaults: CascadeDefaults,
 ): ColorPair | null {
   const fgDecl = findDeclaration(cssRule, "color");
   const bgDecl =
     findDeclaration(cssRule, "background-color") ?? findDeclaration(cssRule, "background");
-  if (!(fgDecl && bgDecl)) return null;
-  const fg = parseColor(extractColorToken(fgDecl.value, rootVars));
-  const bg = parseColor(extractColorToken(bgDecl.value, rootVars));
+  if (fgDecl && bgDecl) {
+    return buildSameRulePair(fgDecl.value, bgDecl.value, rootVars);
+  }
+  // Cross-selector cascade fallback (V1-CSS-CONTRAST-CASCADE-INHERITED):
+  // one half lives on the rule, the other on a document-default selector
+  // elsewhere in the file. Skip for ancestor-default selectors themselves
+  // (they ARE the source, no cascading into themselves), and keep the
+  // same-file-only scope mirroring `:root` custom-property resolution.
+  // Cross-file document defaults stay unresolved; the rule's
+  // `crossFileCapable: false` flag carries the limit at the coverage
+  // layer per ADR 0026.
+  if (isCascadeAncestorSelector(cssRule.selector)) return null;
+  if (fgDecl && !bgDecl && cascadeDefaults.background) {
+    return buildInheritedBackgroundPair(fgDecl.value, cascadeDefaults.background, rootVars);
+  }
+  if (bgDecl && !fgDecl && cascadeDefaults.color) {
+    return buildInheritedForegroundPair(bgDecl.value, cascadeDefaults.color, rootVars);
+  }
+  return null;
+}
+
+function buildSameRulePair(
+  fgValue: string,
+  bgValue: string,
+  rootVars: ReadonlyMap<string, string>,
+): ColorPair | null {
+  const fg = parseColor(extractColorToken(fgValue, rootVars));
+  const bg = parseColor(extractColorToken(bgValue, rootVars));
   if (!(fg && bg)) return null;
   if (bg.a === 0) return null;
-  return { fg, bg, fgSource: fgDecl.value, bgSource: bgDecl.value };
+  return { fg, bg, fgSource: fgValue, bgSource: bgValue };
+}
+
+function buildInheritedBackgroundPair(
+  fgValue: string,
+  bgDefault: { readonly value: string; readonly selector: string },
+  rootVars: ReadonlyMap<string, string>,
+): ColorPair | null {
+  const fg = parseColor(extractColorToken(fgValue, rootVars));
+  const bg = parseColor(extractColorToken(bgDefault.value, rootVars));
+  if (!(fg && bg)) return null;
+  if (bg.a === 0) return null;
+  return {
+    fg,
+    bg,
+    fgSource: fgValue,
+    bgSource: bgDefault.value,
+    cascadeSource: { side: "background", ancestorSelector: bgDefault.selector },
+  };
+}
+
+function buildInheritedForegroundPair(
+  bgValue: string,
+  fgDefault: { readonly value: string; readonly selector: string },
+  rootVars: ReadonlyMap<string, string>,
+): ColorPair | null {
+  const fg = parseColor(extractColorToken(fgDefault.value, rootVars));
+  const bg = parseColor(extractColorToken(bgValue, rootVars));
+  if (!(fg && bg)) return null;
+  if (bg.a === 0) return null;
+  return {
+    fg,
+    bg,
+    fgSource: fgDefault.value,
+    bgSource: bgValue,
+    cascadeSource: { side: "foreground", ancestorSelector: fgDefault.selector },
+  };
 }
 
 function findDeclaration(cssRule: CssCssRule, property: string): CssDeclaration | undefined {
@@ -375,6 +498,120 @@ function resolveVarReference(token: string, rootVars: ReadonlyMap<string, string
   // surfacing per CLAUDE.md §1.
   if (/\bvar\s*\(/.test(resolved)) return token;
   return resolved;
+}
+
+// ---------------------------------------------------------------------------
+// Cross-selector cascade fallback (V1-CSS-CONTRAST-CASCADE-INHERITED)
+// ---------------------------------------------------------------------------
+
+/**
+ * Selector segments treated as document-default ancestors for the
+ * cross-selector cascade fallback. Matches the three selectors an
+ * author would normally reach for to declare "the default for the
+ * whole page" — `:root`, `html`, `body`. Comparison is
+ * case-insensitive per CSS syntax; kept simple deliberately to avoid
+ * stretching into general-purpose CSS cascade resolution (specificity,
+ * pseudo-classes, `@media` scoping, descendant-combinator chains —
+ * all out of scope).
+ */
+const CASCADE_ANCESTOR_SEGMENTS: ReadonlySet<string> = new Set([":root", "html", "body"]);
+
+/**
+ * `couldBeWrongBecause` code surfaced on contrast findings whose
+ * foreground or background was resolved by walking up to a
+ * document-default selector (`:root` / `html` / `body`) rather than
+ * read off the failing rule. The scanner cannot prove the failing
+ * element is actually rendered inside that ancestor — the dominant
+ * idiom (document-wide defaults on `body`) makes the pairing
+ * overwhelmingly likely, but an element nested in a different
+ * container with its own `background` override would not inherit the
+ * cascaded default at all. Informational only per the AI-first
+ * consumer doctrine: the agent reads the cited file and decides. See
+ * docs/kb/architecture/ai-first-consumer.md §"No heuristic
+ * suppression" and docs/adr/0009-violation-could-be-wrong-because.md.
+ */
+export const CASCADE_INHERITED_CONTEXT = "cascade_inherited_context";
+
+/**
+ * Returns `true` when `selector` names a document-default ancestor
+ * (`:root`, `html`, `body`) — either standalone or as one of a
+ * comma-separated list (e.g. `html, body`). Comparison is
+ * case-insensitive; pseudo-class / attribute suffixes disqualify the
+ * segment (`body.dark` is not a plain ancestor for the fallback's
+ * purposes — it is a variant that only applies under a class-gated
+ * condition, and falling back to it would invent cascade context the
+ * scanner has no evidence for). Keeping the match strict preserves the
+ * "named idiom" contract the fallback is scoped to.
+ */
+function isCascadeAncestorSelector(selector: string): boolean {
+  return selector.split(",").some((part) => {
+    const trimmed = part.trim().toLowerCase();
+    return CASCADE_ANCESTOR_SEGMENTS.has(trimmed);
+  });
+}
+
+/**
+ * Walks the stylesheet once gathering `color` and `background(-color)`
+ * declarations authored on document-default ancestor selectors
+ * (`:root`, `html`, `body`). Last-write-wins on duplicates across
+ * ancestor rules, matching CSS intra-file cascade semantics — the
+ * author's most-recent declaration for a given default is the one a
+ * consumer element inherits in the absence of an explicit override.
+ *
+ * `:root` custom-property substitution runs against the declaration
+ * value before the map is populated, so a token-driven document
+ * default (`body { background: var(--bg) }`) resolves to its literal.
+ * Image-backed defaults (url() / gradient) are skipped — the scanner
+ * cannot compute their luminance, and falling back to an image would
+ * invent a color. Transparent backgrounds (`background: transparent` /
+ * `background-color: rgba(0,0,0,0)`) are also skipped so the fallback
+ * doesn't pair a real foreground against a zero-alpha background and
+ * emit a nonsense ratio — same mitigation the same-rule pair path uses
+ * via the `bg.a === 0` check in {@link extractColorPair}.
+ */
+function collectCascadeDefaults(
+  stylesheet: CssStylesheet,
+  rootVars: ReadonlyMap<string, string>,
+): CascadeDefaults {
+  let color: { value: string; selector: string } | undefined;
+  let background: { value: string; selector: string } | undefined;
+  for (const cssRule of walkCssRules(stylesheet)) {
+    if (!isCascadeAncestorSelector(cssRule.selector)) continue;
+    const colorDecl = findDeclaration(cssRule, "color");
+    if (colorDecl && parseColor(extractColorToken(colorDecl.value, rootVars))) {
+      color = { value: colorDecl.value, selector: cssRule.selector };
+    }
+    const bgDecl =
+      findDeclaration(cssRule, "background-color") ?? findDeclaration(cssRule, "background");
+    if (bgDecl && isUsableCascadeBackground(bgDecl.value, rootVars)) {
+      background = { value: bgDecl.value, selector: cssRule.selector };
+    }
+  }
+  return {
+    ...(color ? { color } : {}),
+    ...(background ? { background } : {}),
+  };
+}
+
+/**
+ * A cascade-default `background` / `background-color` declaration is
+ * "usable" only when it resolves to an opaque color literal — image-
+ * backed values (url(), gradient functions) cannot be scored against
+ * a consumer `color` and transparent values would fabricate a nonsense
+ * ratio. The bounded set of usable shapes keeps the fallback honest:
+ * if the document default is an image or transparent, the fallback
+ * stays silent on the descendant rule (the same-file `:root` var path
+ * also fails closed on unresolved halves).
+ */
+function isUsableCascadeBackground(
+  rawValue: string,
+  rootVars: ReadonlyMap<string, string>,
+): boolean {
+  if (IMAGE_BACKED_VALUE_PATTERN.test(rawValue)) return false;
+  const parsed = parseColor(extractColorToken(rawValue, rootVars));
+  if (!parsed) return false;
+  if (parsed.a === 0) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------

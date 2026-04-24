@@ -44,9 +44,39 @@
  * a ratio; honestly surfaces the unknown (CLAUDE.md §1 "Surface, don't
  * suppress").
  *
+ * Cross-selector cascade fallback (V1-CSS-CONTRAST-CASCADE-INHERITED):
+ * real-world CSS routinely declares one half of the contrast pair on
+ * a document-default selector (`body { color: #fff }`) and the other
+ * on a descendant (`.article { background: lightblue }`). Before this
+ * fallback existed, the pair extractor required both halves on the
+ * same rule and silently missed the failing pair. The shared extractor
+ * now walks the stylesheet once gathering `color` /
+ * `background(-color)` declarations authored on `:root` / `html` /
+ * `body`, and when a consumer rule declares only one half the
+ * extractor falls back to the cascade default for the missing half.
+ * Scope is deliberately narrow: plain `:root` / `html` / `body` only,
+ * same-file only, no compound or pseudo-class variants
+ * (`body.dark` does NOT contribute — the variant is condition-gated).
+ * Findings that resolved via the fallback carry
+ * `couldBeWrongBecause: [cascade_inherited_context]` so the agent
+ * knows the descendant relationship was assumed from the cascade idiom
+ * rather than proved — the scanner cannot prove '.btn' actually
+ * renders inside `<body>`, but the idiom is dominant enough to surface
+ * honestly (CLAUDE.md §1 "Surface, don't suppress"). Unresolvable cases
+ * (compound ancestor selector, cross-file document default, missing
+ * half of the pair) stay silent on the rule; the rule-level
+ * `crossFileCapable: false` flag downgrades the coverage row to
+ * `"medium"` with a structured reason per ADR 0026.
+ *
  * v0.0.x coverage: in-file CSS rules (standalone .css and <style>
- * blocks). Does NOT yet resolve inherited styles or CSS custom
- * properties — those land in Phase 5 polish with the theme resolver.
+ * blocks). Custom properties resolve one level same-file (V1-CSS-
+ * CONTRAST-VAR-ROOT-RESOLUTION); inherited document defaults resolve
+ * off plain `:root` / `html` / `body` selectors
+ * (V1-CSS-CONTRAST-CASCADE-INHERITED). Does NOT implement full CSS
+ * cascade resolution (specificity ordering, pseudo-class variants,
+ * nested-descendant combinators, `@media`-scoped overrides) — those
+ * remain follow-up items where the rule's `crossFileCapable: false`
+ * flag is the honest downgrade at the coverage layer.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -59,6 +89,7 @@ import {
   buildBgImageUnresolvableSuggestion,
   buildContrastMessage,
   buildContrastSuggestion,
+  CASCADE_INHERITED_CONTEXT,
   type ContrastCheckOptions,
   collectBgImageUnresolvable,
   collectTailwindOverrideClasses,
@@ -224,6 +255,14 @@ function emitFinding(
 ): void {
   const primaryClass = extractPrimarySelectorClass(finding.selector);
   const tailwindOverride = primaryClass !== null && overrideClasses.has(primaryClass);
+  // Accumulate the reason codes in declared order — scanner conventions
+  // treat `couldBeWrongBecause` as an unordered set, but keeping the
+  // cascade note before the Tailwind note produces stable fixtures
+  // when both apply (a `body`-inherited background on a class that
+  // happens to co-occur with `bg-*` Tailwind utilities).
+  const reasons: string[] = [];
+  if (finding.cascadeSource) reasons.push(CASCADE_INHERITED_CONTEXT);
+  if (tailwindOverride) reasons.push(TAILWIND_CLASS_ON_CONSUMER);
   const emitted: EmittedViolation = {
     severity: "error",
     location: { filePath, line: finding.line, column: finding.column },
@@ -231,7 +270,7 @@ function emitFinding(
     suggestion: buildContrastSuggestion(finding),
     // Conditional spread — `couldBeWrongBecause: []` would be a
     // dishonest empty-vs-unpopulated sentinel per CLAUDE.md §1.
-    ...(tailwindOverride ? { couldBeWrongBecause: [TAILWIND_CLASS_ON_CONSUMER] } : {}),
+    ...(reasons.length > 0 ? { couldBeWrongBecause: reasons } : {}),
   };
   ctx.emit(emitted);
 }
