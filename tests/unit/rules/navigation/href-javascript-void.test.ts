@@ -80,6 +80,33 @@ describe("rule navigation/href-javascript-void", () => {
     });
   });
 
+  describe("HTML: fires on empty href", () => {
+    // Per HTML spec, an empty href resolves to the current document URL —
+    // activating the link reloads the page rather than navigating. The
+    // anchor still announces as a link, so the role/behavior contradict
+    // the same way `href="#"` does. `link-no-href` only catches the
+    // empty-href case when an onClick is also present (its scope is the
+    // <a onClick> keyboard-trap pattern); the bare-text case below is
+    // common in legacy form pages ("Forgot password?", social-share
+    // rows wired up later) and was previously silent in both rules.
+
+    it('href="" (empty placeholder, no onClick — Forgot password? pattern)', () => {
+      const violations = runRule(rule, `<a href="">Forgot password?</a>`, {
+        filePath: "signin.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
+    });
+
+    it('href="   " (whitespace-only collapses to empty after trim)', () => {
+      const violations = runRule(rule, `<a href="   ">Click</a>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+    });
+  });
+
   describe("HTML: does not fire on navigating hrefs", () => {
     it("real URL path", () => {
       const violations = runRule(rule, `<a href="/dashboard">Dashboard</a>`, {
@@ -116,11 +143,6 @@ describe("rule navigation/href-javascript-void", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it('href="" (empty — navigation/link-no-href\'s territory, not ours)', () => {
-      const violations = runRule(rule, `<a href="">Click</a>`, { filePath: "index.html" });
-      expect(violations).toHaveLength(0);
-    });
-
     it("bare <a> with no href attribute (not this rule's concern)", () => {
       // A bare anchor without href is inert; link-no-href handles the
       // click-handler variant. This rule only classifies existing href
@@ -147,6 +169,14 @@ describe("rule navigation/href-javascript-void", () => {
     it('href="#"', () => {
       const violations = runRule(rule, `const X = <a href="#">Click</a>;`);
       expect(violations).toHaveLength(1);
+    });
+  });
+
+  describe("JSX: fires on empty href", () => {
+    it('href="" (empty placeholder, no onClick)', () => {
+      const violations = runRule(rule, `const X = <a href="">Forgot password?</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
     });
   });
 
@@ -194,6 +224,18 @@ describe("rule navigation/href-javascript-void", () => {
       expect(sugg).toContain("section-id");
     });
 
+    it("empty href → message names page-reload behavior; suggestion offers real path or <button>", () => {
+      const violations = runRule(rule, `<a href="">Forgot password?</a>`, {
+        filePath: "signin.html",
+      });
+      expect(violations).toHaveLength(1);
+      const message = violations[0]?.message ?? "";
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(message).toContain("reloads");
+      expect(sugg).toContain('href="/real/path"');
+      expect(sugg).toContain(`<button type="button"`);
+    });
+
     it("message echoes the offending href literal", () => {
       const violations = runRule(rule, `<a href="javascript:alert(1)">x</a>`, {
         filePath: "index.html",
@@ -203,18 +245,23 @@ describe("rule navigation/href-javascript-void", () => {
   });
 
   describe("edge cases", () => {
-    it("href with only whitespace — empty after trim, not our concern", () => {
-      const violations = runRule(rule, `<a href="   ">Click</a>`, { filePath: "index.html" });
-      expect(violations).toHaveLength(0);
-    });
-
     it("multiple offending anchors fire once each", () => {
       const violations = runRule(
         rule,
-        `<a href="javascript:void(0)">A</a><a href="#">B</a><a href="/real">C</a>`,
+        `<a href="javascript:void(0)">A</a><a href="#">B</a><a href="">C</a><a href="/real">D</a>`,
         { filePath: "index.html" },
       );
-      expect(violations).toHaveLength(2);
+      expect(violations).toHaveLength(3);
+    });
+
+    it("fragment-nav case `<a href=\"#non-empty-id\">` still does NOT fire", () => {
+      // Regression guard — extending coverage to empty href must not
+      // sweep up legitimate in-page fragment navigation. Real fragment
+      // ids land on a node and scroll/focus it; that's real navigation.
+      const violations = runRule(rule, `<a href="#non-empty-id">Skip to main</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
     });
   });
 

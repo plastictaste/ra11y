@@ -42,7 +42,7 @@ import {
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
 
-type PlaceholderKind = "javascript-scheme" | "bare-fragment";
+type PlaceholderKind = "javascript-scheme" | "bare-fragment" | "empty";
 
 /**
  * Classifies a raw href string as a non-navigating placeholder, or
@@ -55,12 +55,17 @@ type PlaceholderKind = "javascript-scheme" | "bare-fragment";
  * URL schemes are case-insensitive per RFC 3986 §3.1 and browsers treat
  * them that way.
  *
- * What this function does NOT flag (handled elsewhere or legitimately
- * navigating):
+ * `href=""` (and whitespace-only) is also a non-navigating placeholder:
+ * per HTML spec, an empty href resolves to the current document URL, so
+ * activating the link reloads the page. The anchor announces as a link
+ * but does not navigate anywhere meaningful — same broken affordance as
+ * `href="#"`. `link-no-href` only catches the empty/placeholder case
+ * when an onClick is also present (its scope is the `<a onClick>`
+ * keyboard-trap pattern); the bare `<a href="">Forgot password?</a>`
+ * case (common in legacy form pages) belongs here.
  *
- *   - `""` and whitespace-only — handled by `navigation/link-no-href`
- *     when combined with an onClick. A bare empty href without onClick
- *     is a separate concern (element is inert).
+ * What this function does NOT flag (legitimately navigating):
+ *
  *   - `"#fragment-id"` — real in-page navigation; browser scrolls to
  *     and focuses the matching id. Silent.
  *   - Any other scheme (`"mailto:"`, `"tel:"`, `"/path"`, `"https://…"`) —
@@ -69,7 +74,7 @@ type PlaceholderKind = "javascript-scheme" | "bare-fragment";
 function classifyPlaceholder(value: string | null): PlaceholderKind | null {
   if (value === null) return null;
   const trimmed = value.trim();
-  if (trimmed === "") return null; // link-no-href's domain, not ours.
+  if (trimmed === "") return "empty";
   if (trimmed === "#") return "bare-fragment";
   // Any `javascript:` scheme, regardless of what follows. Examples:
   //   javascript:void(0)   javascript:void 0   javascript:;
@@ -94,9 +99,9 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "<a> elements with href='javascript:…' or bare href='#' announce as links but do not navigate. Use <button type=\"button\"> for actions, or put a real URL in href for navigation.",
+      "<a> elements with href='javascript:…', bare href='#', or empty href='' announce as links but do not navigate (empty href reloads the current page). Use <button type=\"button\"> for actions, or put a real URL in href for navigation.",
     rationale:
-      "Assistive technology decides how to announce a control from its role: `<a>` with an href maps to the link role. When the href is `javascript:void(0)`, `javascript:;`, or bare `#`, the browser treats the element as a link but nothing navigates — the user hears 'link,' activates it, and nothing happens. The semantic role (link) contradicts the runtime behavior (button-like action or no-op), breaking WCAG 4.1.2 Name, Role, Value. Static detection is reliable because the href attribute's string value is the full signal.",
+      "Assistive technology decides how to announce a control from its role: `<a>` with an href maps to the link role. When the href is `javascript:void(0)`, `javascript:;`, bare `#`, or empty `\"\"` (which the HTML spec resolves to the current document URL — a page reload), the browser treats the element as a link but nothing meaningful navigates — the user hears 'link,' activates it, and nothing happens (or worse, loses form state from a surprise reload). The semantic role (link) contradicts the runtime behavior, breaking WCAG 4.1.2 Name, Role, Value. Static detection is reliable because the href attribute's string value is the full signal.",
     goodExample: `<button type="button" onClick={handleClick}>Toggle menu</button>`,
     badExample: `<a href="javascript:void(0)" onClick={handleClick}>Toggle menu</a>`,
     normativeQuote:
@@ -176,6 +181,9 @@ function buildMessage(kind: PlaceholderKind, rawHref: string): string {
   if (kind === "javascript-scheme") {
     return `<a href="${display}"> uses a javascript: scheme — the anchor announces as a link but does not navigate, contradicting its role.`;
   }
+  if (kind === "empty") {
+    return `<a href=""> has an empty href — per HTML spec it resolves to the current page URL, so activating the link reloads the page rather than navigating. The anchor announces as a link but its destination is broken.`;
+  }
   return `<a href="#"> has no fragment target — the anchor announces as a link but navigates nowhere.`;
 }
 
@@ -183,6 +191,9 @@ function buildSuggestion(kind: PlaceholderKind, rawHref: string): string {
   const display = rawHref.length > 60 ? `${rawHref.slice(0, 60)}…` : rawHref;
   if (kind === "javascript-scheme") {
     return `change \`<a href="${display}">\` to \`<button type="button">\` — this control does not navigate, so it should announce as a button, not a link. If you need anchor-style visuals, style the <button> with CSS instead of giving an anchor a non-URL href. If the handler actually navigates somewhere, put that URL directly in href and drop the javascript: wrapper.`;
+  }
+  if (kind === "empty") {
+    return `change \`<a href="">\` to either \`<a href="/real/path">\` (if it should navigate — empty href reloads the current page, almost never the author's intent) or \`<button type="button">\` (if the control triggers an action with a click handler attached elsewhere). Common case: "Forgot password?" links that the author meant to wire up later — supply the real route.`;
   }
   return `change \`<a href="#">\` to \`<button type="button">\` — a bare \`#\` href announces as a link but navigates nowhere. If the control triggers an action, a <button> is the correct role. If it should navigate to an in-page section, use \`href="#section-id"\` pointing at an actual id on the page.`;
 }
