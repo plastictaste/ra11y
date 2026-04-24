@@ -41,6 +41,31 @@ function finding(overrides: Partial<AgentFinding> & Pick<AgentFinding, "ruleId">
   };
 }
 
+/**
+ * Walks a file's post-hoist findings and tallies, per ruleId, how many
+ * findings ship an inline description vs. a `fixDescriptionRef`. Extracted
+ * so the V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY invariant test stays
+ * readable; also asserts the pre-existing invariant that no single
+ * finding carries both inline + ref.
+ */
+function tallyShapePerRule(
+  findings: readonly AgentFinding[],
+): Map<string, { inline: number; ref: number }> {
+  const byRule = new Map<string, { inline: number; ref: number }>();
+  for (const f of findings) {
+    const hasInline = typeof f.fix?.description === "string" && f.fix.description.length > 0;
+    const hasRef = f.fixDescriptionRef !== undefined;
+    // No finding may carry both inline + ref (pre-existing invariant).
+    expect(hasInline && hasRef).toBe(false);
+    if (!(hasInline || hasRef)) continue; // no description at all
+    const stats = byRule.get(f.ruleId) ?? { inline: 0, ref: 0 };
+    if (hasInline) stats.inline += 1;
+    else stats.ref += 1;
+    byRule.set(f.ruleId, stats);
+  }
+  return byRule;
+}
+
 describe("hashFixDescription", () => {
   it("emits a stable 12-hex-char digest for identical input", () => {
     const h1 = hashFixDescription("hello world");
@@ -537,20 +562,7 @@ describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DES
     const result = hoistAndBuildReferenceGuide(files, {
       suppressPlacement: { tsx: "place" },
     });
-    // Group findings by ruleId and assert each rule is all-inline or
-    // all-ref among the findings that actually carry a description.
-    const byRule = new Map<string, { inline: number; ref: number }>();
-    for (const f of result.files[0]?.findings ?? []) {
-      const hasInline = typeof f.fix?.description === "string" && f.fix.description.length > 0;
-      const hasRef = f.fixDescriptionRef !== undefined;
-      // No finding may carry both inline + ref (pre-existing invariant).
-      expect(hasInline && hasRef).toBe(false);
-      if (!hasInline && !hasRef) continue; // no description at all
-      const stats = byRule.get(f.ruleId) ?? { inline: 0, ref: 0 };
-      if (hasInline) stats.inline += 1;
-      else stats.ref += 1;
-      byRule.set(f.ruleId, stats);
-    }
+    const byRule = tallyShapePerRule(result.files[0]?.findings ?? []);
     for (const [ruleId, stats] of byRule) {
       // Per-rule shape consistency: one of the two counts must be zero.
       expect(
