@@ -474,4 +474,199 @@ describe("review/images-of-text", () => {
       expect(hit?.siblingOccurrences).toBeUndefined();
     });
   });
+
+  describe("markdown link syntax FP scope-tightening", () => {
+    // Captured case (jekyll README.markdown:58-67,78): rows of
+    // `[![Sponsor N](logo-N.png)](sponsor-N-url)` produced one
+    // candidate per criterion per row because each next-line URL
+    // slug (`/sponsor-N`) normalized to "sponsor N" and matched the
+    // adjacent `<img>`'s alt via the immediate-sibling text-node
+    // predicate. The fix drops that signal in markdown contexts when
+    // the adjacent text contains markdown link syntax (`](`).
+
+    it("drops sibling-text fire when adjacent text is a markdown link slug (.markdown)", () => {
+      // Between img-1 and img-2 the residue is "](href-1)\n[", which
+      // contains "](" — the marker. Sibling-text signal must drop.
+      const source = [
+        "[![Sponsor 1](logo1.png)](https://example.com/sponsor-1)",
+        "[![Sponsor 2](logo2.png)](https://example.com/sponsor-2)",
+      ].join("\n");
+      const out = runFinder(finder, source, { filePath: "README.markdown" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      // No sibling-text or parent-text match should fire — the only
+      // shared text is the URL slug, which the markdown carve-out
+      // discards. Imgs without a logo/banner/heading keyword in their
+      // src or class produce no candidate at all.
+      expect(aa).toEqual([]);
+    });
+
+    it("drops sibling-text fire when adjacent text is a markdown link slug (.md)", () => {
+      const source = [
+        "[![Acme](acme.png)](https://acme.example/acme-page)",
+        "[![Bravo](bravo.png)](https://bravo.example/bravo-page)",
+      ].join("\n");
+      const out = runFinder(finder, source, { filePath: "docs/README.md" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa).toEqual([]);
+    });
+
+    it("still fires on non-markdown adjacent text (unrelated prose) in markdown files", () => {
+      // Prose without markdown link syntax must still trigger the
+      // sibling-text signal — the carve-out is scoped to "](" markers,
+      // not to all markdown files. `<img>` here is HTML embedded
+      // inside `.markdown` (a common pattern); the trailing prose
+      // "Buy Now" repeats the alt and is not link syntax.
+      const source = `<img alt="Buy Now" src="/promo.png">Buy Now`;
+      const out = runFinder(finder, source, { filePath: "page.markdown" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+      expect(aa[0]?.reason).toContain("immediate sibling text node");
+    });
+
+    it('still fires in HTML files (.html) when adjacent text contains "]("', () => {
+      // The carve-out is markdown-only — `.html` files don't go through
+      // the markdown rewrite, so a literal `](` in HTML text is just
+      // text, and the signal must still fire.
+      const source = `<div><img alt="Sale" src="/p.png">Sale](nope)</div>`;
+      const out = runFinder(finder, source, { filePath: "page.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+    });
+
+    it("still fires in markdown when keyword signal is independent of sibling text", () => {
+      // Surface-don't-suppress floor: even when the markdown carve-out
+      // drops the sibling-text signal, an independent signal (logo
+      // keyword on the class) keeps the candidate alive. Aggregation
+      // still applies (≥4 same-shape, enumerated-token alt) so this
+      // collapses to one candidate per criterion.
+      const source = [
+        '<a href="/s1"><img class="sponsor-logo" src="/s1.png" alt="Sponsor 1"></a>',
+        '<a href="/s2"><img class="sponsor-logo" src="/s2.png" alt="Sponsor 2"></a>',
+        '<a href="/s3"><img class="sponsor-logo" src="/s3.png" alt="Sponsor 3"></a>',
+        '<a href="/s4"><img class="sponsor-logo" src="/s4.png" alt="Sponsor 4"></a>',
+      ].join("\n");
+      const out = runFinder(finder, source, { filePath: "README.markdown" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      // Aggregation still fires on the keyword-signal-bearing siblings.
+      expect(aa.length).toBe(1);
+      expect(aa[0]?.reason).toContain("aggregated from 4 adjacent sibling images");
+    });
+  });
+
+  describe("photo-with-block-level-label FP scope-tightening", () => {
+    // Captured case (insect-catch-game/index.html:21,27,36,45):
+    // `<button class="choose-insect-btn"><img alt="fly"><p>Fly</p></button>`
+    // groups produced one candidate per criterion per group because
+    // the `<p>` label's text matched the `<img>`'s alt via the
+    // parent-text-corpus path. 1.4.5 asks whether the image renders
+    // text as glyphs — an HTML label adjacent to a photo doesn't
+    // establish that. The fix partitions parent-text into live (direct
+    // text + inline descendants) and block-sibling (text inside a
+    // block-level direct child); a match limited to block-sibling
+    // drops the signal.
+
+    it("drops the fire when alt only matches block-level <p> sibling text (HTML)", () => {
+      const source = `<button class="choose-insect-btn"><img alt="fly" src="/fly.png"><p>Fly</p></button>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      // The only signal would have been parent-text-match against the
+      // <p> label, which the block-sibling partition now drops.
+      expect(aa).toEqual([]);
+    });
+
+    it("drops the fire when alt only matches block-level <h2> sibling text", () => {
+      const source = `<section><img alt="Pricing" src="/p.png"><h2>Pricing</h2></section>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa).toEqual([]);
+    });
+
+    it("drops the fire when alt only matches <figcaption> text", () => {
+      const source = `<figure><img alt="Mountains" src="/m.jpg"><figcaption>Mountains</figcaption></figure>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa).toEqual([]);
+    });
+
+    it("still fires when alt matches inline <span> sibling text (existing pattern preserved)", () => {
+      // <span> is inline — the existing `<a><img/><span>X</span></a>`
+      // pattern stays firing per surface-don't-suppress.
+      const source = `<a href="/sale"><img alt="Summer Sale" src="/promo.png"><span>Summer Sale</span></a>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+      expect(aa[0]?.reason).toContain("surrounding text");
+    });
+
+    it("still fires when alt matches direct text child of parent", () => {
+      // Direct text child is not block-sibling text — fire as before.
+      const source = `<div><img alt="Sale" src="/p.png"> Sale </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+    });
+
+    it("still fires when keyword signal is present alongside block-sibling label", () => {
+      // The block-sibling partition only suppresses the parent-text
+      // signal — keyword/sr-only/svg signals still surface
+      // independently. A logo keyword on class survives.
+      const source = `<button><img alt="Acme" class="site-logo" src="/l.svg"><p>Acme</p></button>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+      expect(aa[0]?.reason).toContain('class suggests "logo"');
+    });
+
+    it("still fires when alt matches immediate sibling text node alongside block-sibling label", () => {
+      // Immediate-sibling-text-node match is independent of the
+      // parent-text bucket — it fires regardless of the block-sibling
+      // partitioning.
+      const source = `<div><img alt="Sale" src="/p.png">Sale<p>Sale</p></div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+      expect(aa[0]?.reason).toContain("immediate sibling text node");
+    });
+
+    it("drops the fire when alt only matches block-level <p> sibling text (JSX)", () => {
+      const source = `
+        const x = (
+          <button className="choose-insect-btn">
+            <img alt="fly" src="/fly.png" />
+            <p>Fly</p>
+          </button>
+        );
+      `;
+      const out = runFinder(finder, source);
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa).toEqual([]);
+    });
+
+    it("still fires in JSX when alt matches inline <span> sibling text", () => {
+      const source = `
+        const x = (
+          <a href="/sale">
+            <img alt="Summer Sale" src="/promo.png" />
+            <span>Summer Sale</span>
+          </a>
+        );
+      `;
+      const out = runFinder(finder, source);
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+      expect(aa[0]?.reason).toContain("surrounding text");
+    });
+
+    it("treats nested block descendants as block-sibling text", () => {
+      // The first wrapping direct-child of the parent is what
+      // determines the bucket. Here the parent is <section> and its
+      // direct child is <div> (block-level). Text deeper inside <div>
+      // — even via an inline <span> — is still classified as
+      // block-sibling text.
+      const source = `<section><img alt="Hello" src="/h.png"><div><span>Hello</span></div></section>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa).toEqual([]);
+    });
+  });
 });

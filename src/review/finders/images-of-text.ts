@@ -77,8 +77,9 @@ export const finder = defineCandidateFinder({
   },
   find(ctx) {
     const candidates: ReviewCandidate[] = [];
+    const isMarkdown = isMarkdownFilePath(ctx.filePath);
     if (ctx.language === "html") {
-      findHtmlCandidates(ctx.ast as HtmlDocument, ctx.filePath, candidates);
+      findHtmlCandidates(ctx.ast as HtmlDocument, ctx.filePath, isMarkdown, candidates);
     } else if (ctx.language === "tsx" || ctx.language === "jsx") {
       findJsxCandidates(ctx.ast as TsxModule, ctx.filePath, candidates);
     }
@@ -86,13 +87,105 @@ export const finder = defineCandidateFinder({
   },
 });
 
+/**
+ * True when the file is routed through `parseMarkdown` (ADR 0025).
+ * `.mdx` files don't qualify — they go through the TSX pipeline and
+ * don't carry markdown link residue around `<img>` elements. See
+ * {@link containsMarkdownLinkSyntax} for the residue shape.
+ */
+function isMarkdownFilePath(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
+}
+
+/**
+ * After `parseMarkdown` rewrites `![alt](url)` to `<img>`, an outer
+ * markdown link wrapping the image — `[![alt](src)](href)` — leaves
+ * residue text `[<img>](href)` in the HTML stream. The marker `](`
+ * (close-bracket + open-paren) is unambiguous markdown link syntax
+ * and rare in plain prose; when an `<img>`'s adjacent sibling text
+ * carries that marker the text is link residue, not page copy.
+ * Captured case: jekyll README.markdown sponsor rows where each row's
+ * URL slug (`/sponsor-N`) normalized to "sponsor N" and matched the
+ * next `<img>`'s alt "Sponsor N+1" via the immediate-sibling
+ * predicate.
+ */
+function containsMarkdownLinkSyntax(text: string): boolean {
+  return text.includes("](");
+}
+
+/**
+ * HTML block-level tags whose descendant text the finder treats as
+ * "labeled-photo pattern" rather than as pixel-text evidence. See
+ * {@link ParentText} for the full rationale. Inline tags (`<span>`,
+ * `<a>`, `<em>`, `<strong>`, …) are deliberately NOT in this set: a
+ * span next to an img sharing alt text is ambiguous between
+ * "icon + label" and "image of text," and we keep the signal firing
+ * for that case (surface-don't-suppress floor).
+ */
+const HTML_BLOCK_LEVEL_TAGS: ReadonlySet<string> = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "caption",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hgroup",
+  "hr",
+  "legend",
+  "li",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+]);
+
+function isHtmlBlockLevelTag(tagName: string): boolean {
+  return HTML_BLOCK_LEVEL_TAGS.has(tagName.toLowerCase());
+}
+
+function isJsxBlockLevelTag(tagName: string): boolean {
+  // JSX preserves case; intrinsic HTML elements use lowercase tag
+  // names. Custom components (e.g. `<Section>`) aren't block-level
+  // for this predicate — component bodies are opaque to a static
+  // walker, so treating them as inline preserves the surface-don't-
+  // suppress floor.
+  return HTML_BLOCK_LEVEL_TAGS.has(tagName);
+}
+
 function findHtmlCandidates(
   root: HtmlDocument,
   filePath: string,
+  isMarkdown: boolean,
   candidates: ReviewCandidate[],
 ): void {
   const handled = new WeakSet<HtmlElement>();
-  scanHtmlChildren(root.children, null, null, filePath, candidates, handled);
+  scanHtmlChildren(root.children, null, null, filePath, isMarkdown, candidates, handled);
 }
 
 function scanHtmlChildren(
@@ -100,6 +193,7 @@ function scanHtmlChildren(
   parentText: ParentText | null,
   parentElement: HtmlElement | null,
   filePath: string,
+  isMarkdown: boolean,
   candidates: ReviewCandidate[],
   handled: WeakSet<HtmlElement>,
 ): void {
@@ -109,7 +203,7 @@ function scanHtmlChildren(
   // covered <img> element as "handled" so the normal walk below
   // skips its per-sibling emission. Non-aggregated children follow
   // the existing path unchanged.
-  emitHtmlAggregations(children, parentText, filePath, candidates, handled);
+  emitHtmlAggregations(children, parentText, filePath, isMarkdown, candidates, handled);
   for (let index = 0; index < children.length; index++) {
     const child = children[index];
     if (child?.kind !== "HtmlElement") continue;
@@ -120,6 +214,7 @@ function scanHtmlChildren(
       parentText,
       parentElement,
       filePath,
+      isMarkdown,
       candidates,
       handled,
     );
@@ -128,6 +223,7 @@ function scanHtmlChildren(
       splitHtmlTextContent(child),
       child,
       filePath,
+      isMarkdown,
       candidates,
       handled,
     );
@@ -141,6 +237,7 @@ function emitHtmlImageCandidate(
   parentText: ParentText | null,
   parentElement: HtmlElement | null,
   filePath: string,
+  isMarkdown: boolean,
   candidates: ReviewCandidate[],
   handled: WeakSet<HtmlElement>,
 ): void {
@@ -158,7 +255,7 @@ function emitHtmlImageCandidate(
   const signals = collectSignals(
     alt,
     parentText,
-    adjacentHtmlText(siblings, index),
+    adjacentHtmlText(siblings, index, isMarkdown),
     keywordHint(classVal, srcVal),
   );
   if (signals.length === 0) return;
@@ -187,12 +284,13 @@ function emitHtmlAggregations(
   children: readonly HtmlNode[],
   parentText: ParentText | null,
   filePath: string,
+  isMarkdown: boolean,
   candidates: ReviewCandidate[],
   handled: WeakSet<HtmlElement>,
 ): void {
   const probes: { summary: SiblingSummary; imgElement: HtmlElement }[] = [];
   for (let index = 0; index < children.length; index++) {
-    const probe = probeHtmlChildForAggregation(children, index, parentText);
+    const probe = probeHtmlChildForAggregation(children, index, parentText, isMarkdown);
     if (probe) probes.push(probe);
   }
   if (probes.length < 4) return;
@@ -267,12 +365,13 @@ function probeHtmlChildForAggregation(
   children: readonly HtmlNode[],
   index: number,
   parentText: ParentText | null,
+  isMarkdown: boolean,
 ): { summary: SiblingSummary; imgElement: HtmlElement } | null {
   const child = children[index];
   if (child?.kind !== "HtmlElement") return null;
   const tag = child.tagName.toLowerCase();
   if (tag === "img") {
-    if (!htmlImgWouldFire(child, children, index, parentText)) return null;
+    if (!htmlImgWouldFire(child, children, index, parentText, isMarkdown)) return null;
     return {
       imgElement: child,
       summary: buildHtmlSummary(child, "bare-img", null, index),
@@ -290,6 +389,7 @@ function probeHtmlChildForAggregation(
         child.children,
         indexOfHtmlNode(child.children, innerImg),
         wrapperText,
+        isMarkdown,
       )
     ) {
       return null;
@@ -348,6 +448,7 @@ function htmlImgWouldFire(
   siblings: readonly HtmlNode[],
   index: number,
   parentText: ParentText | null,
+  isMarkdown: boolean,
 ): boolean {
   const alt = shortImageText(getHtmlAttribute(img, "alt"));
   const classVal = getHtmlAttribute(img, "class");
@@ -355,7 +456,7 @@ function htmlImgWouldFire(
   const signals = collectSignals(
     alt,
     parentText,
-    adjacentHtmlText(siblings, index),
+    adjacentHtmlText(siblings, index, isMarkdown),
     keywordHint(classVal, srcVal),
   );
   return signals.length > 0;
@@ -590,16 +691,32 @@ function jsxImgWouldFire(
   return signals.length > 0;
 }
 
-function adjacentHtmlText(siblings: readonly HtmlNode[], index: number): readonly string[] {
+function adjacentHtmlText(
+  siblings: readonly HtmlNode[],
+  index: number,
+  isMarkdown: boolean,
+): readonly string[] {
   // `HtmlText.value` is already template-directive-stripped at parse
-  // time (see `src/input/parsers/html.ts`), so a defensive re-strip
-  // here is a no-op in production — we keep the call so the finder
-  // holds the invariant locally and survives future parser changes.
+  // time (see `src/input/parsers/html.ts`); the defensive re-strip
+  // keeps the invariant local in case the parser changes.
+  //
+  // Markdown carve-out: in `.md`/`.markdown` files (ADR 0025), an
+  // outer markdown link wrapping an image — `[![alt](src)](href)` —
+  // leaves residue text "[" / "](href)" adjacent to the synthesized
+  // `<img>`. The slug isn't page copy, so a match against the alt
+  // is not pixel-text evidence — drop sibling text carrying the `](`
+  // marker (see {@link containsMarkdownLinkSyntax}).
   const out: string[] = [];
   const previous = siblings[index - 1];
-  if (previous?.kind === "HtmlText") out.push(stripTemplateDirectives(previous.value).value);
+  if (previous?.kind === "HtmlText") {
+    const text = stripTemplateDirectives(previous.value).value;
+    if (!(isMarkdown && containsMarkdownLinkSyntax(text))) out.push(text);
+  }
   const next = siblings[index + 1];
-  if (next?.kind === "HtmlText") out.push(stripTemplateDirectives(next.value).value);
+  if (next?.kind === "HtmlText") {
+    const text = stripTemplateDirectives(next.value).value;
+    if (!(isMarkdown && containsMarkdownLinkSyntax(text))) out.push(text);
+  }
   return out;
 }
 
@@ -674,6 +791,14 @@ function repeatedTextSignal(
   if (containsWholePhrase(parentText.svgText, alt.normalized)) {
     return `short alt text "${alt.raw}" appears inside a sibling <svg> element's descendant text (\`<text>\`/\`<tspan>\`) — that SVG may itself be an image of text; the match is not equivalent live HTML text`;
   }
+  // A match limited to `blockSiblingText` is the labeled-photo /
+  // icon-with-block-label pattern, NOT pixel-text evidence — drop the
+  // signal. See {@link ParentText} for the full rationale and the
+  // captured case (`<button><img alt="fly"><p>Fly</p></button>`). 1.4.5
+  // asks whether the image renders text as glyphs; an HTML label
+  // adjacent to the image doesn't establish that. The duplicate
+  // alt+label is a 1.1.1 decorative-vs-informative concern, which a
+  // separate rule carries.
   return null;
 }
 
@@ -894,22 +1019,36 @@ interface ImageText {
 }
 
 /**
- * Partitioned view of a parent element's descendant text. `liveText`
- * is the concatenation of text nodes outside any descendant `<svg>`
- * subtree — this is what CSS styles and what a sighted user reads as
- * page copy. `svgText` is the concatenation of text nodes inside
- * descendant `<svg>` subtrees — glyphs painted by the SVG renderer,
- * which from a 1.4.5 perspective are closer to an image-of-text than
- * to the "equivalent styled text" remedy.
+ * Partitioned view of a parent element's descendant text:
+ *   - `liveText` — direct text children of the parent OR text inside
+ *     an inline (non-block-level) descendant. What CSS styles and a
+ *     sighted user reads as page copy adjacent to the `<img>`.
+ *   - `blockSiblingText` — text inside a descendant whose first
+ *     ancestor-element back to the parent is block-level (`<p>`,
+ *     `<h1-6>`, `<figcaption>`, `<div>`, `<section>`, …). This is the
+ *     labeled-photo / icon-with-block-label pattern, NOT pixel-text
+ *     evidence. Captured case:
+ *     `<button><img alt="fly"><p>Fly</p></button>` — the `<p>` label
+ *     doesn't establish the `<img>` paints "Fly" as glyphs; 1.4.5 is
+ *     about text rendered as pixels, and the duplicate-alt+label is a
+ *     1.1.1 decorative-vs-informative question carried by another rule.
+ *   - `svgText` — text inside descendant `<svg>` subtrees. Glyphs
+ *     painted by the SVG renderer — closer to an image-of-text than
+ *     to the "equivalent styled text" remedy.
  *
- * The split lets `repeatedTextSignal` emit a different reason variant
- * when an `<img>`'s short alt appears only in the `svgText` half — so
- * the agent isn't told live HTML text equivalence exists when it
- * doesn't. See docs/kb/architecture/ai-first-consumer.md ("Review
- * candidates, not assertions" + "Enrich reason with dismissal signal").
+ * `repeatedTextSignal` matches against each bucket with a different
+ * outcome: `liveText` fires the standard signal, `svgText` fires a
+ * scoped variant naming the SVG, and a `blockSiblingText`-only match
+ * drops the signal. Per the AI-first consumer model
+ * (docs/kb/architecture/ai-first-consumer.md), the partition is NOT
+ * heuristic suppression — the bucket is provable from the AST (block-
+ * level tag set is fixed; ancestry is deterministic) — and we only
+ * suppress the parent-text signal. Other signals (keyword hint,
+ * sibling text node, sr-only sibling) still fire independently.
  */
 interface ParentText {
   readonly liveText: string;
+  readonly blockSiblingText: string;
   readonly svgText: string;
 }
 
@@ -924,13 +1063,13 @@ function isSvgJsxElement(element: JsxElement): boolean {
 }
 
 /**
- * Walk the element's descendants concatenating text nodes into two
- * buckets. A text node's bucket is determined by whether any ancestor
- * between it and `element` (exclusive) is an `<svg>` — if yes, the
- * text is classified as `svgText`; otherwise `liveText`. Matches the
- * contract of {@link htmlTextContent} (trimmed concatenation of
- * descendant text) but with the partitioning needed by the
- * images-of-text finder.
+ * Walks descendants concatenating text into three buckets keyed off
+ * the first wrapping direct-child of `element`: `<svg>` → `svgText`;
+ * block-level → `blockSiblingText`; otherwise (inline element or
+ * direct text child) → `liveText`. Once a text node lands in a
+ * non-`liveText` bucket every descendant beneath stays in that bucket;
+ * the first wrapping child is the only step that matters. See
+ * {@link ParentText} for the rationale on each bucket.
  */
 function splitHtmlTextContent(element: HtmlElement): ParentText {
   // HtmlText.value is pre-stripped by the parser; the re-strip keeps
@@ -938,18 +1077,41 @@ function splitHtmlTextContent(element: HtmlElement): ParentText {
   // silently leak raw directive tokens into the "repeated in
   // surrounding text" match path.
   const live: string[] = [];
+  const block: string[] = [];
   const svg: string[] = [];
-  const visit = (node: HtmlNode, insideSvg: boolean): void => {
+  type Bucket = "live" | "block" | "svg";
+  const sink = (bucket: Bucket): string[] =>
+    bucket === "svg" ? svg : bucket === "block" ? block : live;
+  const visit = (node: HtmlNode, bucket: Bucket): void => {
     if (node.kind === "HtmlText") {
-      (insideSvg ? svg : live).push(stripTemplateDirectives(node.value).value);
+      sink(bucket).push(stripTemplateDirectives(node.value).value);
       return;
     }
     if (node.kind !== "HtmlElement") return;
-    const nextInsideSvg = insideSvg || isSvgHtmlElement(node);
-    for (const child of node.children) visit(child, nextInsideSvg);
+    // `<svg>` is sticky once seen; otherwise the bucket is fixed at
+    // the first wrapping direct-child of `element` (the loop below
+    // sets it before descending) and never re-promoted.
+    const nextBucket: Bucket = bucket === "svg" || isSvgHtmlElement(node) ? "svg" : bucket;
+    for (const child of node.children) visit(child, nextBucket);
   };
-  for (const child of element.children) visit(child, false);
-  return { liveText: live.join("").trim(), svgText: svg.join("").trim() };
+  for (const child of element.children) {
+    if (child.kind === "HtmlText") {
+      live.push(stripTemplateDirectives(child.value).value);
+      continue;
+    }
+    if (child.kind !== "HtmlElement") continue;
+    const startBucket: Bucket = isSvgHtmlElement(child)
+      ? "svg"
+      : isHtmlBlockLevelTag(child.tagName)
+        ? "block"
+        : "live";
+    for (const grand of child.children) visit(grand, startBucket);
+  }
+  return {
+    liveText: live.join("").trim(),
+    blockSiblingText: block.join("").trim(),
+    svgText: svg.join("").trim(),
+  };
 }
 
 /** JSX counterpart to {@link splitHtmlTextContent}. */
@@ -958,16 +1120,36 @@ function splitJsxTextContent(element: JsxElement): ParentText {
   // the rationale. Strip here too so parent-text match and any
   // future echo path sees the rendered-text shape, not raw ERB.
   const live: string[] = [];
+  const block: string[] = [];
   const svg: string[] = [];
-  const visit = (node: JsxNode, insideSvg: boolean): void => {
+  type Bucket = "live" | "block" | "svg";
+  const sink = (bucket: Bucket): string[] =>
+    bucket === "svg" ? svg : bucket === "block" ? block : live;
+  const visit = (node: JsxNode, bucket: Bucket): void => {
     if (node.kind === "JsxText") {
-      (insideSvg ? svg : live).push(stripTemplateDirectives(node.value).value);
+      sink(bucket).push(stripTemplateDirectives(node.value).value);
       return;
     }
     if (node.kind !== "JsxElement") return;
-    const nextInsideSvg = insideSvg || isSvgJsxElement(node);
-    for (const child of node.children) visit(child, nextInsideSvg);
+    const nextBucket: Bucket = bucket === "svg" || isSvgJsxElement(node) ? "svg" : bucket;
+    for (const child of node.children) visit(child, nextBucket);
   };
-  for (const child of element.children) visit(child, false);
-  return { liveText: live.join("").trim(), svgText: svg.join("").trim() };
+  for (const child of element.children) {
+    if (child.kind === "JsxText") {
+      live.push(stripTemplateDirectives(child.value).value);
+      continue;
+    }
+    if (child.kind !== "JsxElement") continue;
+    const startBucket: Bucket = isSvgJsxElement(child)
+      ? "svg"
+      : isJsxBlockLevelTag(child.tagName)
+        ? "block"
+        : "live";
+    for (const grand of child.children) visit(grand, startBucket);
+  }
+  return {
+    liveText: live.join("").trim(),
+    blockSiblingText: block.join("").trim(),
+    svgText: svg.join("").trim(),
+  };
 }
