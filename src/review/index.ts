@@ -18,6 +18,7 @@ import { finder as headingsAndLabels } from "./finders/headings-and-labels.ts";
 import { finder as identifyPurpose } from "./finders/identify-purpose.ts";
 import { finder as imagesOfText } from "./finders/images-of-text.ts";
 import { finder as liveRegionPreExistence } from "./finders/live-region-pre-existence.ts";
+import { finder as liveRegionRuntimeMutationMissing } from "./finders/live-region-runtime-mutation-missing.ts";
 import { finder as meaningfulSequence } from "./finders/meaningful-sequence.ts";
 import { finder as mediaAlternatives } from "./finders/media-alternatives.ts";
 import { finder as mediaVariants } from "./finders/media-variants.ts";
@@ -52,6 +53,7 @@ export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   identifyPurpose,
   imagesOfText,
   liveRegionPreExistence,
+  liveRegionRuntimeMutationMissing,
   meaningfulSequence,
   mediaAlternatives,
   mediaVariants,
