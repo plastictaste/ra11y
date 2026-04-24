@@ -371,6 +371,237 @@ describe("review/timing", () => {
     });
   });
 
+  describe("duration-class enrichment (non-literal durations)", () => {
+    // Field reports surface candidates whose duration is a member-
+    // access (`self.options.interval`), an identifier (`delay`), or a
+    // call expression (`getDelay()`) — values the agent cannot resolve
+    // from the call site alone. The base reason already echoes the
+    // expression verbatim; this enrichment names the *kind* so the
+    // agent's dismissal path is "follow the binding" rather than
+    // "guess from the verbatim slice." Per ai-first-consumer.md the
+    // hint is additive — confidence stays "medium," candidate stays
+    // in the primary list, no severity change.
+    // V1-FINDER-2.2.1-SETTIMEOUT-VENDOR-FILE-GATE.
+
+    it("flags member-access durations (this._config.delay)", () => {
+      const src = `
+        class Tooltip {
+          show() {
+            setTimeout(() => this._open(), this._config.delay);
+          }
+        }
+      `;
+      const out = runFinder(finder, src);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("duration `this._config.delay`");
+      expect(hit?.reason).toContain("member-access reference");
+      expect(hit?.reason).toContain("resolve the binding chain");
+    });
+
+    it("flags member-access durations through optional chaining", () => {
+      const src = `setInterval(() => tick(), opts?.timeout);`;
+      const out = runFinder(finder, src);
+      const hit = out.find((c) => c.reason.includes("setInterval"));
+      expect(hit?.reason).toContain("member-access reference");
+    });
+
+    it("flags member-access durations rooted at `self` (jQuery/Bootstrap shape)", () => {
+      // The canonical real-world shape from the field report:
+      //   setTimeout(self._show.bind(self), self.options.interval)
+      // — duration is a member access on the captured `self`. The
+      // agent must read the surrounding constructor or method to know
+      // what `self.options.interval` resolves to.
+      const src = `
+        function bootstrap() {
+          var self = this;
+          setTimeout(function() { self._tick(); }, self.options.interval);
+        }
+      `;
+      const out = runFinder(finder, src, { filePath: "vendor/bootstrap.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("duration `self.options.interval`");
+      expect(hit?.reason).toContain("member-access reference");
+    });
+
+    it("flags identifier durations (bare variable name)", () => {
+      const out = runFinder(finder, `setTimeout(cb, delay);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("identifier reference");
+      expect(hit?.reason).toContain("resolve the binding in scope");
+    });
+
+    it("flags call-expression durations", () => {
+      const out = runFinder(finder, `setTimeout(cb, getDelay());`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("call-expression reference");
+    });
+
+    it("flags computed-expression durations (binary, ternary, etc.)", () => {
+      const out = runFinder(finder, `setTimeout(cb, delay * 2);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("computed expression");
+    });
+
+    it("does NOT attach a duration-class clause to plain numeric literals", () => {
+      const out = runFinder(finder, `setTimeout(() => tick(), 300);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("duration `300`");
+      expect(hit?.reason).not.toContain("member-access reference");
+      expect(hit?.reason).not.toContain("identifier reference");
+      expect(hit?.reason).not.toContain("call-expression reference");
+      expect(hit?.reason).not.toContain("computed expression");
+    });
+
+    it("does NOT attach a duration-class clause to underscore-separated numeric literals", () => {
+      const out = runFinder(finder, `setTimeout(() => logout(), 60_000);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("duration `60_000`");
+      expect(hit?.reason).not.toContain("identifier reference");
+      expect(hit?.reason).not.toContain("computed expression");
+    });
+
+    it("does NOT attach a duration-class clause to hex / exponent / decimal literals", () => {
+      const cases = [
+        { src: `setTimeout(cb, 0x100);`, dur: "0x100" },
+        { src: `setTimeout(cb, 5e2);`, dur: "5e2" },
+        { src: `setTimeout(cb, 1.5);`, dur: "1.5" },
+      ];
+      for (const { src, dur } of cases) {
+        const out = runFinder(finder, src);
+        const hit = out.find((c) => c.reason.includes("setTimeout"));
+        expect(hit?.reason).toContain(`duration \`${dur}\``);
+        expect(hit?.reason).not.toContain("reference");
+      }
+    });
+
+    it("keeps the normative review prompt after the duration-class clause", () => {
+      const src = `setTimeout(cb, this._config.delay);`;
+      const out = runFinder(finder, src);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("member-access reference");
+      expect(hit?.reason).toContain("verify the user can pause, extend, or disable");
+    });
+  });
+
+  describe("vendor-bundle filename enrichment", () => {
+    // When the cited file's basename matches a canonical vendor
+    // library bundle name — `bootstrap.js`, `jquery-1.10.2.js`,
+    // `popper.js` — the call site is almost certainly library
+    // internals (e.g. Bootstrap's Tooltip._timeout, jQuery's
+    // setTimeout-driven deferred work) the page author does not
+    // control. The reason text annotates this so the agent's
+    // dismissal path is "library code" rather than "investigate as
+    // potential session timeout." Per ai-first-consumer.md the
+    // candidate is NEVER suppressed on filename signal — annotation,
+    // not silencing. The dedicated content-level vendor-banner
+    // detector (V1-VENDOR-LIBRARY-BANNER-DETECTION) is not yet
+    // shipped; this filename probe is a narrow stand-in until then.
+    // V1-FINDER-2.2.1-SETTIMEOUT-VENDOR-FILE-GATE.
+
+    it("annotates `bootstrap.js` with a vendor-bundle hint", () => {
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "vendor/bootstrap.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("vendor library bundle name");
+      expect(hit?.reason).toContain("`bootstrap`");
+      expect(hit?.reason).toContain("third-party library internals");
+    });
+
+    it("annotates version-suffixed jQuery (`jquery-1.10.2.js`)", () => {
+      const out = runFinder(finder, `setTimeout(function(){},5000);`, {
+        filePath: "static/vendor/jquery-1.10.2.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("vendor library bundle name");
+      expect(hit?.reason).toContain("`jquery`");
+    });
+
+    it("annotates several canonical vendor names", () => {
+      const cases: readonly { readonly file: string; readonly lib: string }[] = [
+        { file: "vendor/popper.js", lib: "popper" },
+        { file: "vendor/tether.js", lib: "tether" },
+        { file: "vendor/lodash.js", lib: "lodash" },
+        { file: "vendor/swiper-9.0.0.js", lib: "swiper" },
+        { file: "vendor/slick.js", lib: "slick" },
+        { file: "vendor/jquery-ui.js", lib: "jquery-ui" },
+      ];
+      for (const { file, lib } of cases) {
+        const out = runFinder(finder, `setTimeout(function(){},1000);`, { filePath: file });
+        const hit = out.find((c) => c.reason.includes("setTimeout"));
+        expect(hit?.reason).toContain(`\`${lib}\``);
+        expect(hit?.reason).toContain("vendor library bundle name");
+      }
+    });
+
+    it("matches case-insensitively (Windows-style downloads)", () => {
+      const out = runFinder(finder, `setTimeout(function(){},1000);`, {
+        filePath: "vendor/Bootstrap.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("vendor library bundle name");
+    });
+
+    it("does NOT annotate ordinary user files", () => {
+      const out = runFinder(finder, `setTimeout(() => tick(), 300);`, {
+        filePath: "src/components/Carousel.tsx",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit).toBeDefined();
+      expect(hit?.reason).not.toContain("vendor library bundle");
+    });
+
+    it("does NOT annotate files whose basename merely contains a library name", () => {
+      // `bootstrap-config.js` / `myJqueryHelpers.js` / `lodashy.js`
+      // are user files whose names start with or contain a library
+      // name but are not vendor drops. The pattern requires the
+      // basename to BE the library (with an optional version suffix
+      // separated by `.`/`-`/`_`) — substring matches don't trigger.
+      const cases: readonly string[] = [
+        "src/myJqueryHelpers.js",
+        "src/lodashy.js",
+        "src/popperWrapper.js",
+      ];
+      for (const file of cases) {
+        const out = runFinder(finder, `setTimeout(() => tick(), 300);`, { filePath: file });
+        const hit = out.find((c) => c.reason.includes("setTimeout"));
+        expect(hit?.reason).not.toContain("vendor library bundle");
+      }
+    });
+
+    it("the candidate is NOT suppressed or downgraded — confidence stays medium", () => {
+      // Doctrine pin: filename enrichment is annotation, not
+      // suppression. Even when the vendor clause fires, the candidate
+      // surfaces at the same confidence the call-site evidence earned
+      // (medium for setTimeout/setInterval), and every wcag22:2.2.1
+      // criterion remains attached.
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "vendor/bootstrap.js",
+      });
+      const hit = out.find(
+        (c) => c.criterionId === "wcag22:2.2.1" && c.reason.includes("setTimeout"),
+      );
+      expect(hit).toBeDefined();
+      expect(hit?.confidence).toBe("medium");
+    });
+
+    it("composes with the duration-class clause when both apply", () => {
+      // Real-world shape: the vendor bundle uses a member-access
+      // duration. Both clauses should fire so the agent has full
+      // dismissal vocabulary.
+      const src = `
+        function bootstrap() {
+          var self = this;
+          setTimeout(function() { self._tick(); }, self.options.interval);
+        }
+      `;
+      const out = runFinder(finder, src, { filePath: "vendor/bootstrap.js" });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.reason).toContain("member-access reference");
+      expect(hit?.reason).toContain("vendor library bundle name");
+    });
+  });
+
   describe("minified-file locator enrichment", () => {
     // When the cited file is a minified bundle (`.min.` infix OR a
     // single line > 1000 chars), the bare `line:column` pointer is

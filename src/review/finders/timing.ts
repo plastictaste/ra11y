@@ -25,6 +25,25 @@
  * wrong output the agent couldn't tell to mistrust (CLAUDE.md §1,
  * "don't duplicate capability the agent already has"), so the reason
  * text names the common dismissal categories generically instead.
+ *
+ * Two reason-text enrichments operate on this principle:
+ *
+ *   - Duration-class hint: when the second argument is not a numeric
+ *     literal (e.g. `self.options.interval`, `getDelay()`, `delay`),
+ *     the reason names the kind of expression so the agent knows it
+ *     must resolve a binding before deciding whether the duration is
+ *     long enough to need a user control. Critical for vendor bundles
+ *     where every duration is a member-access into a config object.
+ *   - Vendor-bundle filename hint: when the cited file's basename
+ *     matches a canonical vendor library bundle name (`bootstrap.js`,
+ *     `jquery-1.10.2.js`, `popper.js`, etc.), the reason notes that
+ *     the call site appears to be third-party library internals. The
+ *     candidate stays in the primary list at medium confidence; the
+ *     hint is additive context the agent uses to dismiss in one read.
+ *     Per ai-first-consumer.md we explicitly do NOT silence on this
+ *     signal — the dedicated content-level vendor-banner detector
+ *     (V1-VENDOR-LIBRARY-BANNER-DETECTION) is not yet shipped and the
+ *     filename match is a heuristic. Annotation, not suppression.
  */
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
@@ -49,6 +68,7 @@ import {
   flashClause,
 } from "./timing-dom-mutation.ts";
 import { minifiedLocatorClause } from "./timing-minified.ts";
+import { durationClassClause, vendorBundleClause } from "./timing-vendor.ts";
 
 const CRITERION_IDS = [
   "wcag22:2.2.1",
@@ -218,14 +238,16 @@ function emitJsCandidates(
   const { line, column } = offsetToLineColumn(ctx.source, offset);
   const openParen = offset + matchLength - 1;
   const duration = extractDurationArg(ctx.source, openParen);
-  const durationClause = duration ? ` with duration \`${duration}\`` : "";
+  const durationClassSuffix = duration ? durationClassClause(duration) : "";
+  const durationClause = duration ? ` with duration \`${duration}\`${durationClassSuffix}` : "";
   const enclosing = describeEnclosingFunction(ctx.source, offset);
   const enclosingClause = enclosing ? ` in \`${enclosing}\`` : "";
   const coreReason = `${label}${durationClause}${enclosingClause}${JS_REASON_PREFIX}`;
   const pauseStopHide = isInterval && callbackMutatesDom(ctx.source, openParen);
   const flash = isInterval ? evaluateFlashThreshold(ctx.source, openParen, duration) : null;
   const minifiedClause = minifiedLocatorClause(ctx.filePath, ctx.source, offset);
-  const reason = buildReason(coreReason, pauseStopHide, flash, minifiedClause);
+  const vendorClause = vendorBundleClause(ctx.filePath);
+  const reason = buildReason(coreReason, pauseStopHide, flash, minifiedClause, vendorClause);
   const criteriaForSite = buildCriteriaForSite(pauseStopHide, flash !== null);
   for (const criterionId of criteriaForSite) {
     // Confidence "medium": setTimeout/setInterval is concrete evidence
@@ -251,7 +273,11 @@ function emitJsCandidates(
  *
  *   1. Pause-Stop-Hide prefix (2.2.2) when it applies — this is the
  *      most general framing and sets context.
- *   2. The core reason (label + duration + enclosing + JS suffix).
+ *   2. The core reason (label + duration + duration-class + enclosing
+ *      + JS suffix). Duration-class enrichment (member-access /
+ *      identifier / call / expression) sits inside the core string
+ *      so the per-duration test assertions stay co-located with the
+ *      duration echo they describe.
  *   3. SC 2.3.1 clause suffixed when visual-flash evidence applies —
  *      "note: callback runs at ~N Hz…". Suffixed (not prefixed) so
  *      existing assertions on `coreReason`/`PAUSE_STOP_HIDE_PREFIX`
@@ -262,16 +288,23 @@ function emitJsCandidates(
  *      line file, so this clause adds the byte-column offset and a
  *      ~80-char context window so the agent can locate the specific
  *      call-site among N same-line matches.
+ *   5. Vendor-bundle filename clause suffixed when the cited file's
+ *      basename matches a canonical vendor library bundle name
+ *      (V1-FINDER-2.2.1-SETTIMEOUT-VENDOR-FILE-GATE). The clause
+ *      surfaces the dismissal hint inline so the agent can choose to
+ *      open the file or move on after one read; per ai-first-consumer
+ *      doctrine the candidate is NEVER suppressed on this signal.
  */
 function buildReason(
   coreReason: string,
   pauseStopHide: boolean,
   flash: FlashEvidence | null,
   minifiedClause: string,
+  vendorClause: string,
 ): string {
   const prefix = pauseStopHide ? PAUSE_STOP_HIDE_PREFIX : "";
   const flashSuffix = flash ? ` ${flashClause(flash)}` : "";
-  return `${prefix}${coreReason}${flashSuffix}${minifiedClause}`;
+  return `${prefix}${coreReason}${flashSuffix}${minifiedClause}${vendorClause}`;
 }
 
 /**
