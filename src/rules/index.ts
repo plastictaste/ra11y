@@ -44,6 +44,7 @@ import { rule as nonEmptyLabel } from "./forms/non-empty-label.ts";
 import { rule as placeholderAsLabel } from "./forms/placeholder-as-label.ts";
 import { rule as radioGroupWithoutFieldset } from "./forms/radio-group-without-fieldset.ts";
 import { rule as requiredIndicatorMissing } from "./forms/required-indicator-missing.ts";
+import { rule as submitNotButtonOrInput } from "./forms/submit-not-button-or-input.ts";
 import { rule as accesskeyDuplicate } from "./keyboard/accesskey-duplicate.ts";
 import { rule as characterShortcuts } from "./keyboard/character-shortcuts.ts";
 import { rule as handlerMissing } from "./keyboard/handler-missing.ts";
@@ -152,6 +153,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   sectionAccessibleNameMissing,
   skipLink,
   stretchedLinkMultipleInContainer,
+  submitNotButtonOrInput,
   svgTitleMissing,
   tabindexPositive,
   tableCaptionMissing,
@@ -233,6 +235,7 @@ export {
   sectionAccessibleNameMissing,
   skipLink,
   stretchedLinkMultipleInContainer,
+  submitNotButtonOrInput,
   svgTitleMissing,
   tabindexPositive,
   tableCaptionMissing,

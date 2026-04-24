@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Login</title>
+  </head>
+  <body>
+    <!-- Real-world pattern from sb-admin-2 / AdminLTE / Bootstrap-flavored
+         template kits: the author left an `<a class="btn">` as the
+         "submit" control with a literal HTML comment reminding the
+         next maintainer to swap it. The anchor never gets swapped, the
+         form's submit handler never fires for screen-reader users
+         activating it as a link. -->
+    <form action="/login" method="post">
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" />
+      <label for="password">Password</label>
+      <input id="password" type="password" name="password" />
+      <!-- Change this to a button or input when using this as a form -->
+      <a href="index.html" class="btn btn-lg btn-success btn-block">Login</a>
+    </form>
+  </body>
+</html>

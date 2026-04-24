@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Edit profile</title>
+  </head>
+  <body>
+    <!-- Compliant: the form has a real <button type="submit"> as the
+         primary action, AND a button-styled `<a>` for the secondary
+         "Cancel" navigation. The anchor is honestly a link (it
+         navigates), the button is honestly a button (it submits).
+         Roles and visual affordances agree. -->
+    <form action="/profile" method="post">
+      <label for="name">Name</label>
+      <input id="name" type="text" name="name" />
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a href="/profile" class="btn btn-secondary">Cancel</a>
+    </form>
+  </body>
+</html>
