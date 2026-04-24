@@ -13,12 +13,32 @@ import {
   errorResult,
   findRule,
   type McpTool,
+  type McpToolResult,
   numParam,
   resolveStandards,
   strParam,
   textResult,
 } from "./tools-helpers.ts";
 import { warningsField } from "./warnings.ts";
+
+/**
+ * V1-SCAN-FILE-CWD-CONTAINMENT preflight. Returns an error envelope
+ * when the (explicit) cwd and file escape each other, or null when
+ * the call is safe to proceed. Extracted to its own helper so the
+ * main handler stays under the cognitive-complexity cap.
+ */
+async function checkCwdContainment(
+  filePath: string,
+  suggestFixCwd: string | undefined,
+): Promise<McpToolResult | null> {
+  if (suggestFixCwd === undefined) return null;
+  if ((await resolveInsideCwd(filePath, suggestFixCwd)) !== null) return null;
+  return errorResult({
+    code: "path-escapes-cwd",
+    message: `file '${filePath}' escapes cwd '${suggestFixCwd}'. Every suggested-fix target must resolve inside the declared cwd.`,
+    details: { file: filePath, cwd: suggestFixCwd },
+  });
+}
 
 export const suggestFixTool: McpTool = {
   def: {
@@ -73,22 +93,12 @@ export const suggestFixTool: McpTool = {
     }
 
     // V1-SCAN-FILE-CWD-CONTAINMENT: reject paths that escape the
-    // declared `cwd` sandbox before any parse or fs access. Mirrors
-    // the guard apply_fix / suppress / scan_file already enforce —
-    // every tool accepting a caller-supplied `(cwd, file|path)` pair
-    // must check the same boundary so agents form a single mental
-    // model of the escape envelope. The guard only fires when `cwd`
-    // is explicitly set: without a declared sandbox, the read-only
-    // call is a "look up this absolute path" request with no
-    // containment claim. See the matching comment in tool-scan-file.ts.
+    // declared `cwd` sandbox before any parse or fs access. See the
+    // matching comment in tool-scan-file.ts for the read-only vs
+    // write-tool enforcement difference.
     const suggestFixCwd = strParam(params, "cwd");
-    if (suggestFixCwd !== undefined && (await resolveInsideCwd(filePath, suggestFixCwd)) === null) {
-      return errorResult({
-        code: "path-escapes-cwd",
-        message: `file '${filePath}' escapes cwd '${suggestFixCwd}'. Every suggested-fix target must resolve inside the declared cwd.`,
-        details: { file: filePath, cwd: suggestFixCwd },
-      });
-    }
+    const escapeError = await checkCwdContainment(filePath, suggestFixCwd);
+    if (escapeError !== null) return escapeError;
 
     // Parse the file to find the specific violation and its suggestion.
     const parsed = await session.parseFile(filePath, suggestFixCwd);
