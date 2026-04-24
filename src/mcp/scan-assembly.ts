@@ -338,6 +338,46 @@ export interface CountsBySurface {
 }
 
 /**
+ * Stamp {@link buildCountsBySurface}'s honest-shape output onto a meta
+ * block. Spreads an empty record when the three counts agree so the
+ * common case puts nothing on the wire; spreads
+ * `{ countsBySurface: { … } }` when any pair differs. Exported so every
+ * assembler seam that materializes its own response shape (the
+ * {@link assembleScanFamilyResponse} path, plus the
+ * `scan_project`/`scan_diff` paths that bypass it via
+ * {@link runScanAndFormat}) stamps through the same helper and the
+ * V1-META-COUNTS-BY-SURFACE-REGRESSION silent-miss never reopens.
+ *
+ * Caller passes a fresh `countsInput` each time because `filesSurface`
+ * can drift between the pre-trim emit path (before pagination /
+ * token-density truncation) and the post-trim emit path (after the
+ * wire shape settles).
+ */
+export function withCountsBySurface(
+  meta: Record<string, unknown>,
+  countsInput: Parameters<typeof buildCountsBySurface>[0],
+): Record<string, unknown> {
+  return { ...meta, ...buildCountsBySurface(countsInput) };
+}
+
+/**
+ * Sum of per-file finding counts across a list of file-bucket entries.
+ * Pulled out of `response-assembler.ts` and its shadow copy in
+ * `tools-helpers.ts` so every scan-family caller that reconciles the
+ * `filesSurface` total against the `plan` / `perRuleCoverage` totals
+ * runs the same reduction. Accepts the widest readonly shape that
+ * exposes `findings.length` so CLI / MCP / report callers can pass
+ * their own bucket types without an adapter.
+ */
+export function sumFindingsAcrossFiles(
+  files: readonly { readonly findings: readonly unknown[] }[],
+): number {
+  let total = 0;
+  for (const f of files) total += f.findings.length;
+  return total;
+}
+
+/**
  * Sum of `findingsEmitted` across a per-rule-coverage array. Pulled out
  * so consumers avoid re-implementing the reduction every time they
  * reconcile a surface total against the scanner-raw stream.

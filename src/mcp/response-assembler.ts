@@ -76,10 +76,11 @@ import {
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
 import {
-  buildCountsBySurface,
   buildScanMeta,
   buildScanPlan,
+  sumFindingsAcrossFiles,
   sumFindingsEmitted,
+  withCountsBySurface,
 } from "./scan-assembly.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
@@ -463,32 +464,6 @@ export function assembleScanFamilyResponse(
     truncated: true,
     ...(budgetResult.nextOffset === undefined ? {} : { nextOffset: budgetResult.nextOffset }),
   };
-}
-
-/**
- * Stamp {@link buildCountsBySurface}'s honest-shape output onto the meta
- * block. Spreads an empty record when all three counts agree so the
- * common case puts nothing on the wire; spreads
- * `{ countsBySurface: { … } }` when any pair differs. Caller passes a
- * fresh `countsInput` each time because `filesSurface` can drift between
- * the pre-trim and post-trim emit paths.
- */
-function withCountsBySurface(
-  meta: Record<string, unknown>,
-  countsInput: Parameters<typeof buildCountsBySurface>[0],
-): Record<string, unknown> {
-  return { ...meta, ...buildCountsBySurface(countsInput) };
-}
-
-/**
- * Sum of per-file finding counts across the assembled file buckets.
- * Fed to {@link buildCountsBySurface} as the `filesSurface` reconciling
- * figure for the three-totals tripwire.
- */
-function sumFindingsAcrossFiles(files: readonly AssembledFile[]): number {
-  let total = 0;
-  for (const f of files) total += f.findings.length;
-  return total;
 }
 
 /**

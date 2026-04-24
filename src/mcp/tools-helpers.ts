@@ -27,7 +27,13 @@ import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
-import { buildScanMeta, buildScanPlan } from "./scan-assembly.ts";
+import {
+  buildScanMeta,
+  buildScanPlan,
+  sumFindingsAcrossFiles,
+  sumFindingsEmitted,
+  withCountsBySurface,
+} from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
 import { collapseVendorCssFindings } from "./vendor-dedupe.ts";
@@ -699,6 +705,49 @@ export async function runScanAndFormat(
   // rule silenced by the session's minSeverity filter reads as "0
   // findings for this consumer" here too.
   const ruleCoverageDerivative = buildRuleCoverageDerivative(perRuleCoverage, filtered);
+  const scanMeta = buildScanMeta({
+    filesScanned: result.filesScanned,
+    files,
+    activeRules,
+    durationMs: result.durationMs,
+    enabledStandards: result.enabledStandards,
+    wrappers,
+    sessionOnly,
+    unusedWrappers,
+    wrapperProvenance,
+    wrapperElements,
+    verboseMeta,
+    preset,
+    suppressions,
+    perRuleCoverage,
+    // Derived from the post-filter violation set (same view the
+    // consumer sees on `files`/`plan`). Threads into the parse-error
+    // split so a file that emitted findings lands in
+    // `partialParseFiles` rather than the invisible `parseErrorFiles`
+    // bucket — otherwise a file like `modal.mdx` that produced 14
+    // findings with live line numbers would also appear in
+    // `parseErrorFiles`, reading to the agent as "invisible" and
+    // the findings are silently ignored.
+    findingFilePaths: new Set(filtered.map((v) => v.location.filePath)),
+    ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
+  });
+  // V1-META-COUNTS-BY-SURFACE-REGRESSION: every scan-family consumer
+  // of `runScanAndFormat` (scan_project, scan_diff, plus downstream
+  // CLI / derivative-report callers) must see the three-totals
+  // tripwire, not just the `assembleScanFamilyResponse` path that
+  // `scan` / `scan_file` flow through. The filters between
+  // `perRuleCoverage` (scanner-raw) and the `plan`/`files` surface
+  // (post wrapper-noise drop, severity, criterion-skip, vendor
+  // dedupe) eat findings the per-rule rows still count; stamp the
+  // triple here so the drift is always visible when present. The
+  // `filesSurface` figure reflects `fileEntries` pre-pagination /
+  // pre-token-density-trim — downstream response assemblers
+  // (`assembleScanProjectResponse`, `scan_diff`'s hoist path,
+  // `assembleScanFamilyResponse`'s own stamper) re-call
+  // {@link withCountsBySurface} with the post-trim filesSurface when
+  // truncation fires, so the final wire shape is always in sync with
+  // what actually ships. Idempotent on meta when the three totals
+  // agree (the helper spreads an empty record).
   const formatted: ScanFormatted = {
     plan: buildScanPlan({
       violations: violations.length,
@@ -710,31 +759,10 @@ export async function runScanAndFormat(
       fixesByClass,
     }),
     files: fileEntries,
-    meta: buildScanMeta({
-      filesScanned: result.filesScanned,
-      files,
-      activeRules,
-      durationMs: result.durationMs,
-      enabledStandards: result.enabledStandards,
-      wrappers,
-      sessionOnly,
-      unusedWrappers,
-      wrapperProvenance,
-      wrapperElements,
-      verboseMeta,
-      preset,
-      suppressions,
-      perRuleCoverage,
-      // Derived from the post-filter violation set (same view the
-      // consumer sees on `files`/`plan`). Threads into the parse-error
-      // split so a file that emitted findings lands in
-      // `partialParseFiles` rather than the invisible `parseErrorFiles`
-      // bucket — otherwise a file like `modal.mdx` that produced 14
-      // findings with live line numbers would also appear in
-      // `parseErrorFiles`, reading to the agent as "invisible" and
-      // the findings are silently ignored.
-      findingFilePaths: new Set(filtered.map((v) => v.location.filePath)),
-      ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
+    meta: withCountsBySurface(scanMeta, {
+      plan: violations.length + notes.length,
+      perRuleCoverage: sumFindingsEmitted(perRuleCoverage),
+      filesSurface: sumFindingsAcrossFiles(fileEntries),
     }),
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
     ...(ruleCoverageDerivative === null ? {} : { ruleCoverage: ruleCoverageDerivative }),
