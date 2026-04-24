@@ -165,6 +165,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [semantics/list-structure](./rules/semantics__list-structure.md)
 - [semantics/nested-interactive](./rules/semantics__nested-interactive.md)
 - [semantics/section-accessible-name-missing](./rules/semantics__section-accessible-name-missing.md)
+- [semantics/svg-title-missing](./rules/semantics__svg-title-missing.md)
 - [semantics/table-caption-missing](./rules/semantics__table-caption-missing.md)
 - [semantics/table-headers](./rules/semantics__table-headers.md)
 - [semantics/table-th-scope-missing](./rules/semantics__table-th-scope-missing.md)

@@ -10,9 +10,9 @@ satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.1.1", "wcag21:2.1.1"]
 - **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.1.1`, `wcag21:2.1.1`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
-<a> elements with href='javascript:…' or bare href='#' announce as links but do not navigate. Use <button type="button"> for actions, or put a real URL in href for navigation.
+<a> elements with href='javascript:…', bare href='#', or empty href='' announce as links but do not navigate (empty href reloads the current page). Use <button type="button"> for actions, or put a real URL in href for navigation.
 ## Why it matters
-Assistive technology decides how to announce a control from its role: `<a>` with an href maps to the link role. When the href is `javascript:void(0)`, `javascript:;`, or bare `#`, the browser treats the element as a link but nothing navigates — the user hears 'link,' activates it, and nothing happens. The semantic role (link) contradicts the runtime behavior (button-like action or no-op), breaking WCAG 4.1.2 Name, Role, Value. Static detection is reliable because the href attribute's string value is the full signal.
+Assistive technology decides how to announce a control from its role: `<a>` with an href maps to the link role. When the href is `javascript:void(0)`, `javascript:;`, bare `#`, or empty `""` (which the HTML spec resolves to the current document URL — a page reload), the browser treats the element as a link but nothing meaningful navigates — the user hears 'link,' activates it, and nothing happens (or worse, loses form state from a surprise reload). The semantic role (link) contradicts the runtime behavior, breaking WCAG 4.1.2 Name, Role, Value. Static detection is reliable because the href attribute's string value is the full signal.
 ## Normative quote
 > For all user interface components … the name and role can be programmatically determined.
 ## Good example
