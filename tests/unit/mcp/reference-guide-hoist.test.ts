@@ -433,12 +433,12 @@ describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DES
           finding({
             ruleId: "motion/pause-stop-hide",
             groupKey: "motion-g1",
-            fix: { safety: "safe", description: descA },
+            fix: { description: descA },
           }),
           finding({
             ruleId: "motion/pause-stop-hide",
             groupKey: "motion-g2",
-            fix: { safety: "safe", description: descB },
+            fix: { description: descB },
           }),
         ],
       },
@@ -476,17 +476,17 @@ describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DES
           finding({
             ruleId: "contrast/minimum",
             groupKey: "c-g1",
-            fix: { safety: "safe", description: singletonDesc },
+            fix: { description: singletonDesc },
           }),
           finding({
             ruleId: "motion/pause-stop-hide",
             groupKey: "m-g1",
-            fix: { safety: "safe", description: dupDescA },
+            fix: { description: dupDescA },
           }),
           finding({
             ruleId: "motion/pause-stop-hide",
             groupKey: "m-g2",
-            fix: { safety: "safe", description: dupDescB },
+            fix: { description: dupDescB },
           }),
         ],
       },
@@ -526,32 +526,32 @@ describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DES
           finding({
             ruleId: "motion/pause-stop-hide",
             groupKey: "m1",
-            fix: { safety: "safe", description: descMotionA },
+            fix: { description: descMotionA },
           }),
           finding({
             ruleId: "motion/pause-stop-hide",
             groupKey: "m2",
-            fix: { safety: "safe", description: descMotionB },
+            fix: { description: descMotionB },
           }),
           finding({
             ruleId: "motion/pause-stop-hide",
             groupKey: "m3",
-            fix: { safety: "safe", description: descMotionC },
+            fix: { description: descMotionC },
           }),
           finding({
             ruleId: "contrast/minimum",
             groupKey: "c1",
-            fix: { safety: "safe", description: descContrast },
+            fix: { description: descContrast },
           }),
           finding({
             ruleId: "semantics/label-in-name",
             groupKey: "l1",
-            fix: { safety: "safe", description: descLabelA },
+            fix: { description: descLabelA },
           }),
           finding({
             ruleId: "semantics/label-in-name",
             groupKey: "l2",
-            fix: { safety: "safe", description: descLabelB },
+            fix: { description: descLabelB },
           }),
           // A finding with no description at all — should never
           // interfere with the per-rule shape.
