@@ -8,10 +8,12 @@
     <!--
       Inline style= declarations cannot be scoped to a
       prefers-reduced-motion media query — there is no selector to wrap.
-      The 2s transition runs for every user regardless of their OS-level
-      reduced-motion preference.
+      Both declarations cross the WCAG 2.2.2 spec gate: the transition
+      runs for 8 seconds (more than the 5-second threshold the SC names
+      explicitly), and the animation is `infinite`. A user with reduced-
+      motion enabled at the OS level cannot opt out of either.
     -->
-    <button type="button" class="reveal" style="transition-duration: 2s; transition-property: transform">
+    <button type="button" class="reveal" style="transition-duration: 8s; transition-property: transform">
       Reveal
     </button>
     <div class="panel" style="animation: pulse 4s ease-in-out infinite">

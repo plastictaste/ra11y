@@ -26,16 +26,41 @@
  *      the HTML file.
  *   4. Inline style="animation: …" / style="transition-duration: …"
  *      attributes — a single element can't be meaningfully wrapped in
- *      a reduced-motion query, so any non-zero duration on one of
- *      these properties is flagged. Inline styles aren't gated by a
- *      pseudo-class, so they always live in the 2.2.2 lane.
+ *      a reduced-motion query, so a qualifying inline declaration is
+ *      flagged. Inline styles aren't gated by a pseudo-class, so they
+ *      always live in the 2.2.2 lane.
  *   5. Bootstrap data-bs-ride="carousel" — a static signal of auto-
  *      advancing content (5-second default cycle).
+ *
+ * Spec-mandated 5-second / repetition gate: WCAG 2.2.2 only mandates a
+ * pause/stop/hide mechanism when motion "starts automatically, lasts
+ * more than five seconds, and is presented in parallel with other
+ * content" (Understanding 2.2.2, "Auto-updating information"). A CSS
+ * animation or transition therefore qualifies under 2.2.2 only when at
+ * least one of:
+ *   - `animation-iteration-count: infinite` is set;
+ *   - `animation-iteration-count` is a literal integer > 3 (the
+ *     conformance threshold below which a finite repeat does not exceed
+ *     five seconds of total runtime for a typical sub-second loop);
+ *   - `animation-duration` exceeds 5s;
+ *   - `transition-duration` exceeds 5s.
+ * A one-shot `animation: hide 0.2s ease-out;` (default
+ * iteration-count = 1) cannot exceed 5s of runtime and is spec-exempt;
+ * a 0.15s transition is similarly out of scope. The 5s threshold is
+ * normative in the spec — this is a spec gate, not a heuristic
+ * suppression. The duration + iteration-count is encoded into the
+ * `message` text as additive context so the agent can confirm.
  */
 
 import { defineRule } from "../../api/plugin.ts";
 import { findHtmlElementsByTag, walkHtmlElements } from "../../engine/ast-helpers.ts";
-import type { CssStylesheet, HtmlDocument, HtmlElement } from "../../types/ast.ts";
+import type {
+  CssDeclaration,
+  CssRule,
+  CssStylesheet,
+  HtmlDocument,
+  HtmlElement,
+} from "../../types/ast.ts";
 import {
   ANIMATION_PROPERTIES,
   anyPartHasUserInteractionPseudoClass,
@@ -111,19 +136,27 @@ function checkHtmlMarquee(doc: HtmlDocument, emit: Emit): void {
 
 /**
  * Flags inline style="…" attributes that set animation or transition
- * properties to a non-zero duration. Inline styles can't be wrapped in
- * a prefers-reduced-motion query, so any non-zero value is a violation.
- * Inline styles are element-level and never gated by a pseudo-class,
- * so this always routes to the 2.2.2 lane.
+ * properties crossing the spec-mandated 5-second / repetition gate.
+ * Inline styles can't be wrapped in a prefers-reduced-motion query, so
+ * a qualifying declaration is always a violation. Inline styles are
+ * element-level and never gated by a pseudo-class, so this always
+ * routes to the 2.2.2 lane.
+ *
+ * The same threshold logic as the stylesheet path applies — short,
+ * one-shot animations and sub-5s transitions are spec-exempt.
  */
 function checkHtmlInlineStyles(doc: HtmlDocument, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
     const style = getHtmlAttribute(element, "style");
     if (style === null || style.trim().length === 0) continue;
-    const offending = findOffendingInlineDeclaration(style);
-    if (!offending) continue;
+    const inlineDecls = parseInlineStyleDecls(style);
+    if (inlineDecls.length === 0) continue;
+    const triggering = inlineDecls.find((d) => ANIMATION_PROPERTIES.has(d.property));
+    if (!triggering) continue;
+    const profile = describeInlineProfile(inlineDecls, triggering);
+    if (!profile.qualifies) continue;
     const echoTag = `<${element.tagName.toLowerCase()}>`;
-    const echoValue = truncateForEcho(`${offending.property}: ${offending.value}`);
+    const echoValue = truncateForEcho(`${triggering.property}: ${triggering.value}`);
     emit({
       severity: "warning",
       location: {
@@ -131,29 +164,80 @@ function checkHtmlInlineStyles(doc: HtmlDocument, emit: Emit): void {
         line: element.loc.start.line,
         column: element.loc.start.column,
       },
-      message: `${echoTag} inline style sets '${echoValue}' — inline declarations cannot be scoped to a prefers-reduced-motion media query, so users who prefer reduced motion cannot disable this motion.`,
-      suggestion: `Move the ${offending.property} declaration into a stylesheet rule wrapped in @media (prefers-reduced-motion: reduce) { … } with a reduced-motion alternative (animation: none or duration: 0.01ms), or remove the inline declaration if the motion is decorative.`,
+      message: `${echoTag} inline style sets '${echoValue}' (${profile.contextNote}) — inline declarations cannot be scoped to a prefers-reduced-motion media query, so users who prefer reduced motion cannot disable this motion.`,
+      suggestion: `Move the ${triggering.property} declaration into a stylesheet rule wrapped in @media (prefers-reduced-motion: reduce) { … } with a reduced-motion alternative (animation: none or duration: 0.01ms), or remove the inline declaration if the motion is decorative.`,
     });
   }
 }
 
-interface OffendingDeclaration {
+interface InlineDecl {
   readonly property: string;
   readonly value: string;
 }
 
-function findOffendingInlineDeclaration(style: string): OffendingDeclaration | null {
+function parseInlineStyleDecls(style: string): readonly InlineDecl[] {
+  const out: InlineDecl[] = [];
   for (const part of style.split(";")) {
     const colon = part.indexOf(":");
     if (colon === -1) continue;
     const property = part.slice(0, colon).trim().toLowerCase();
     const value = part.slice(colon + 1).trim();
-    if (!ANIMATION_PROPERTIES.has(property)) continue;
-    if (isNoneValue(value)) continue;
-    if (isNearZeroDuration(value)) continue;
-    return { property, value };
+    if (property.length === 0 || value.length === 0) continue;
+    out.push({ property, value });
   }
-  return null;
+  return out;
+}
+
+/**
+ * Inline-style analogue of `describeRuleProfile`. Treats the inline
+ * style attribute as a synthetic CSS rule and applies the same
+ * duration / iteration-count gate.
+ */
+function describeInlineProfile(
+  decls: readonly InlineDecl[],
+  triggering: InlineDecl,
+): QualificationProfile {
+  if (isNoneValue(triggering.value) || isNearZeroDuration(triggering.value)) {
+    return { qualifies: false, contextNote: "value is none/near-zero" };
+  }
+  const isTransition =
+    triggering.property === "transition" ||
+    triggering.property === "transition-property" ||
+    triggering.property === "transition-duration";
+  if (isTransition) {
+    const max = inlineMaxTransitionMs(decls);
+    return {
+      qualifies: max !== null && max > FIVE_SECONDS_MS,
+      contextNote:
+        max === null ? "transition-duration unparsed" : `transition-duration ~${formatMs(max)}`,
+    };
+  }
+  const summary = inlineAnimationSummary(decls);
+  return {
+    qualifies: animationQualifies(summary),
+    contextNote: animationContextNote(summary),
+  };
+}
+
+function inlineAnimationSummary(decls: readonly InlineDecl[]): AnimationSummary {
+  return summarizeAnimationDecls(decls);
+}
+
+function inlineMaxTransitionMs(decls: readonly InlineDecl[]): number | null {
+  let max: number | null = null;
+  for (const d of decls) {
+    let candidates: readonly (number | null)[] = [];
+    if (d.property === "transition-duration") {
+      candidates = d.value.split(",").map((part) => parseDurationMs(part));
+    } else if (d.property === "transition") {
+      candidates = d.value.split(",").map((part) => firstDurationInTokenList(part));
+    }
+    for (const ms of candidates) {
+      if (ms === null) continue;
+      if (max === null || ms > max) max = ms;
+    }
+  }
+  return max;
 }
 
 /**
@@ -200,10 +284,16 @@ function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
  * the sibling `motion/animation-from-interactions` rule. A mixed
  * selector list (`.foo, .foo:hover`) still fires under 2.2.2 because
  * the bare `.foo` part animates without interaction.
+ *
+ * Also gates on the spec-mandated 5-second / repetition threshold (see
+ * file header) — short, one-shot animations and sub-5s transitions are
+ * not in scope for 2.2.2.
  */
 function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: PositionOffset): void {
   for (const { rule: cssRule, decl } of walkCandidateRules(stylesheet)) {
     if (isUserInteractionGatedSelector(cssRule.selector)) continue;
+    const profile = describeRuleProfile(cssRule, decl);
+    if (!profile.qualifies) continue;
     const echoSelector = truncateForEcho(cssRule.selector);
     const mixedNote = anyPartHasUserInteractionPseudoClass(cssRule.selector)
       ? " (selector list mixes interaction-gated and always-on parts — the non-gated parts animate without user input)"
@@ -218,8 +308,271 @@ function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: Posit
             ? decl.loc.start.column + offset.colOffset
             : decl.loc.start.column,
       },
-      message: `'${echoSelector}' uses ${decl.property} without a prefers-reduced-motion media query guard${mixedNote} — users who prefer reduced motion cannot disable this animation.`,
+      message: `'${echoSelector}' uses ${decl.property} (${profile.contextNote}) without a prefers-reduced-motion media query guard${mixedNote} — users who prefer reduced motion cannot disable this animation.`,
       suggestion: `Wrap the animation in @media (prefers-reduced-motion: reduce) { ${echoSelector} { ${decl.property}: none; } } or move the entire rule inside a prefers-reduced-motion query.`,
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// 5-second / repetition gate (WCAG 2.2.2 spec threshold)
+// ---------------------------------------------------------------------------
+
+const FIVE_SECONDS_MS = 5000;
+const REPETITION_THRESHOLD = 3;
+
+interface QualificationProfile {
+  /** True when the declaration crosses the spec-mandated threshold. */
+  readonly qualifies: boolean;
+  /** Human-readable summary of the duration / iteration-count, used as
+   * additive context in the emitted message — even when qualifying, the
+   * agent benefits from seeing the parsed numbers. */
+  readonly contextNote: string;
+}
+
+/**
+ * Inspects every animation/transition declaration on the same CSS rule
+ * to decide whether the rule meets the 2.2.2 spec gate. The rule passes
+ * the gate if any of:
+ *   - animation-iteration-count: infinite
+ *   - animation-iteration-count: integer > 3
+ *   - animation-duration > 5s (parsed from longhand or shorthand)
+ *   - transition-duration > 5s (parsed from longhand or shorthand)
+ *
+ * The "trigger declaration" passed in (`decl`) is whichever the
+ * `walkCandidateRules` helper hit first; we look at its sibling
+ * declarations on the same rule to gather the full picture.
+ */
+function describeRuleProfile(cssRule: CssRule, decl: CssDeclaration): QualificationProfile {
+  const property = decl.property.toLowerCase();
+  const isTransition =
+    property === "transition" ||
+    property === "transition-property" ||
+    property === "transition-duration";
+  if (isTransition) {
+    const durationMs = transitionDurationMs(cssRule);
+    const note =
+      durationMs === null
+        ? "transition-duration unparsed"
+        : `transition-duration ~${formatMs(durationMs)}`;
+    return {
+      qualifies: durationMs !== null && durationMs > FIVE_SECONDS_MS,
+      contextNote: note,
+    };
+  }
+  const summary = animationSummary(cssRule);
+  return {
+    qualifies: animationQualifies(summary),
+    contextNote: animationContextNote(summary),
+  };
+}
+
+interface AnimationSummary {
+  readonly durationMs: number | null;
+  readonly iterationCount: number | null;
+  readonly hasInfinite: boolean;
+}
+
+function animationSummary(cssRule: CssRule): AnimationSummary {
+  return summarizeAnimationDecls(
+    cssRule.declarations.map((d) => ({ property: d.property.toLowerCase(), value: d.value })),
+  );
+}
+
+/**
+ * Shared kernel: walks a list of `{property, value}` pairs (from a CSS
+ * rule's declarations or a parsed inline `style=` attribute) and folds
+ * each animation-related declaration into a single `AnimationSummary`.
+ * Pulled out of `animationSummary` and `inlineAnimationSummary` to keep
+ * each below the cognitive-complexity ceiling — the actual fold logic
+ * lives here, the two callers just pre-normalize their inputs.
+ */
+function summarizeAnimationDecls(
+  decls: readonly { property: string; value: string }[],
+): AnimationSummary {
+  let durationMs: number | null = null;
+  let iterationCount: number | null = null;
+  let hasInfinite = false;
+  for (const d of decls) {
+    const update = readAnimationDecl(d.property, d.value);
+    if (update.durationMs !== null) durationMs = update.durationMs;
+    if (update.iterationCount !== null) iterationCount = update.iterationCount;
+    if (update.hasInfinite) hasInfinite = true;
+  }
+  return { durationMs, iterationCount, hasInfinite };
+}
+
+function readAnimationDecl(property: string, value: string): AnimationSummary {
+  if (property === "animation-iteration-count") {
+    const parsed = parseIterationCount(value);
+    if (parsed === "infinite") return { durationMs: null, iterationCount: null, hasInfinite: true };
+    if (parsed !== null) return { durationMs: null, iterationCount: parsed, hasInfinite: false };
+    return EMPTY_SUMMARY;
+  }
+  if (property === "animation-duration") {
+    const ms = parseDurationMs(value);
+    return { durationMs: ms, iterationCount: null, hasInfinite: false };
+  }
+  if (property === "animation") {
+    const s = parseAnimationShorthand(value);
+    return {
+      durationMs: s.durationMs,
+      iterationCount: s.iterationCount,
+      hasInfinite: s.hasInfinite,
+    };
+  }
+  return EMPTY_SUMMARY;
+}
+
+const EMPTY_SUMMARY: AnimationSummary = {
+  durationMs: null,
+  iterationCount: null,
+  hasInfinite: false,
+};
+
+function animationQualifies(s: AnimationSummary): boolean {
+  if (s.hasInfinite) return true;
+  if (s.iterationCount !== null && s.iterationCount > REPETITION_THRESHOLD) return true;
+  if (s.durationMs !== null && s.durationMs > FIVE_SECONDS_MS) return true;
+  return false;
+}
+
+function animationContextNote(s: AnimationSummary): string {
+  const parts: string[] = [];
+  if (s.durationMs !== null) parts.push(`duration ~${formatMs(s.durationMs)}`);
+  if (s.hasInfinite) parts.push("iteration-count infinite");
+  else if (s.iterationCount !== null) parts.push(`iteration-count ${s.iterationCount}`);
+  return parts.length === 0 ? "duration / iteration-count unparsed" : parts.join(", ");
+}
+
+/**
+ * Returns the longest transition-duration on the rule. The
+ * `transition` shorthand and the `transition-duration` longhand can
+ * both list multiple durations; if any one of them exceeds 5s the rule
+ * qualifies.
+ */
+function transitionDurationMs(cssRule: CssRule): number | null {
+  let max: number | null = null;
+  for (const d of cssRule.declarations) {
+    const prop = d.property.toLowerCase();
+    let candidates: readonly (number | null)[] = [];
+    if (prop === "transition-duration") {
+      candidates = d.value.split(",").map((part) => parseDurationMs(part));
+    } else if (prop === "transition") {
+      candidates = d.value.split(",").map((part) => firstDurationInTokenList(part));
+    }
+    for (const ms of candidates) {
+      if (ms === null) continue;
+      if (max === null || ms > max) max = ms;
+    }
+  }
+  return max;
+}
+
+interface ShorthandParse {
+  readonly durationMs: number | null;
+  readonly iterationCount: number | null;
+  readonly hasInfinite: boolean;
+}
+
+/**
+ * Parses an `animation` shorthand value. Per CSS spec the first time
+ * token is the duration and the second is the delay; the keyword
+ * `infinite` or a bare number (with no unit) is the iteration-count.
+ * Multi-animation lists (comma-separated) take the maximum duration so
+ * the strictest case wins.
+ */
+function parseAnimationShorthand(value: string): ShorthandParse {
+  let maxDuration: number | null = null;
+  let iterationCount: number | null = null;
+  let hasInfinite = false;
+  for (const segment of value.split(",")) {
+    const segParse = parseSingleAnimationShorthand(segment);
+    if (segParse.durationMs !== null) {
+      maxDuration =
+        maxDuration === null ? segParse.durationMs : Math.max(maxDuration, segParse.durationMs);
+    }
+    if (segParse.hasInfinite) hasInfinite = true;
+    if (segParse.iterationCount !== null) iterationCount = segParse.iterationCount;
+  }
+  return { durationMs: maxDuration, iterationCount, hasInfinite };
+}
+
+function parseSingleAnimationShorthand(segment: string): ShorthandParse {
+  const tokens = tokenize(segment);
+  let durationMs: number | null = null;
+  let iterationCount: number | null = null;
+  let hasInfinite = false;
+  let timeTokensSeen = 0;
+  for (const token of tokens) {
+    const lower = token.toLowerCase();
+    if (lower === "infinite") {
+      hasInfinite = true;
+      continue;
+    }
+    const asTime = parseDurationMs(token);
+    if (asTime !== null) {
+      if (timeTokensSeen === 0) durationMs = asTime;
+      timeTokensSeen += 1;
+      continue;
+    }
+    const asNumber = parseBareNumber(token);
+    if (asNumber !== null) {
+      iterationCount = asNumber;
+    }
+  }
+  return { durationMs, iterationCount, hasInfinite };
+}
+
+function firstDurationInTokenList(value: string): number | null {
+  for (const token of tokenize(value)) {
+    const ms = parseDurationMs(token);
+    if (ms !== null) return ms;
+  }
+  return null;
+}
+
+function tokenize(value: string): readonly string[] {
+  return value
+    .replace(/!important\b/i, "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length > 0);
+}
+
+function parseDurationMs(value: string): number | null {
+  const clean = value.trim().toLowerCase();
+  const match = /^(\d*\.?\d+)(ms|s)$/.exec(clean);
+  if (!match) return null;
+  const n = Number.parseFloat(match[1] ?? "0");
+  if (Number.isNaN(n)) return null;
+  return match[2] === "ms" ? n : n * 1000;
+}
+
+function parseBareNumber(token: string): number | null {
+  // CSS animation iteration-count is a <number>, not a <length> — it
+  // has no unit. Accept positive integers and decimals; reject if it
+  // carries any unit (which means it's a duration, length, etc.).
+  if (!/^\d*\.?\d+$/.test(token)) return null;
+  const n = Number.parseFloat(token);
+  if (Number.isNaN(n) || n < 0) return null;
+  return n;
+}
+
+function parseIterationCount(value: string): number | "infinite" | null {
+  const clean = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s*!important\s*$/, "")
+    .trim();
+  if (clean === "infinite") return "infinite";
+  return parseBareNumber(clean);
+}
+
+function formatMs(ms: number): string {
+  if (ms >= 1000) {
+    const s = ms / 1000;
+    return Number.isInteger(s) ? `${s}s` : `${s.toFixed(2).replace(/\.?0+$/, "")}s`;
+  }
+  return `${ms}ms`;
 }
