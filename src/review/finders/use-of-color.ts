@@ -17,12 +17,19 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
-  htmlTextContent,
-  jsxTextContent,
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlAttribute,
+  HtmlDocument,
+  HtmlElement,
+  HtmlNode,
+  JsxAttribute,
+  JsxElement,
+  JsxNode,
+  TsxModule,
+} from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 
 const CRITERION_IDS = [
@@ -61,6 +68,21 @@ const ICON_COMPONENT_TAG = /^(?:[A-Z]\w*)?(?:Icon|Glyph|Symbol|Svg|Image)$/;
  */
 const SHAPE_SIGNAL_GLYPH = /^(?:\*|\?|✓|✔|✗|✘|✖|×|⚠|→|←|↑|↓)$/;
 
+/**
+ * Tags whose contents are not visible to the user. When walking an
+ * element body to compute "visible text," skip into these subtrees so
+ * `<p class="text-danger"><script>alert(1)</script></p>` is treated as
+ * empty (script body is not a status indicator the user can perceive).
+ */
+const NON_VISIBLE_TAGS = new Set(["script", "style", "noscript", "template"]);
+
+/**
+ * Approximate cap on text echoed into the `reason` string. The full
+ * snippet lives at the file:line citation; the reason just needs enough
+ * to orient the agent. Matches `truncateForEcho`'s default budget.
+ */
+const REASON_TEXT_BUDGET = 60;
+
 export const finder = defineCandidateFinder({
   id: "review/use-of-color",
   criterionIds: [...CRITERION_IDS],
@@ -93,8 +115,16 @@ function findHtmlCandidates(
     const matched = className ? STATUS_COLOR_CLASS.exec(className)?.[0] : undefined;
     if (!matched) continue;
     if (htmlElementHasNonColorSignal(el)) continue;
-    const hasVisibleText = htmlTextContent(el).length > 0;
-    emit(filePath, el.loc.start, matched, hasVisibleText, candidates);
+    const visibleText = visibleHtmlText(el);
+    // Empty body, no presentational child, no other non-color signal —
+    // color cannot be the sole indicator of *nothing*. Drop the
+    // candidate per V1-FINDER-1.4.1-COLOR-EMPTY-BODY-FALSE-POSITIVE
+    // (validation-message placeholder pattern: <p class="help-block
+    // text-danger"></p>). The earlier non-color-signal check has
+    // already cleared elements with <svg>/<img>/<i> children, so an
+    // element reaching here with no visible text is genuinely empty.
+    if (visibleText.length === 0) continue;
+    emit(filePath, el.loc.start, matched, visibleText, candidates);
   }
 }
 
@@ -104,8 +134,9 @@ function findJsxCandidates(root: TsxModule, filePath: string, candidates: Review
     const matched = className ? STATUS_COLOR_CLASS.exec(className)?.[0] : undefined;
     if (!matched) continue;
     if (jsxElementHasNonColorSignal(el)) continue;
-    const hasVisibleText = jsxTextContent(el).length > 0;
-    emit(filePath, el.loc.start, matched, hasVisibleText, candidates);
+    const visibleText = visibleJsxText(el);
+    if (visibleText.length === 0) continue;
+    emit(filePath, el.loc.start, matched, visibleText, candidates);
   }
 }
 
@@ -119,7 +150,7 @@ function getHtmlClass(el: HtmlElement): string | null {
 function htmlElementHasNonColorSignal(el: HtmlElement): boolean {
   if (hasHtmlAttribute(el, "aria-label")) return true;
   if (hasHtmlAttribute(el, "title")) return true;
-  const text = collectHtmlText(el);
+  const text = visibleHtmlText(el);
   if (text && STATUS_WORD_TEXT.test(text)) return true;
   if (text && SHAPE_SIGNAL_GLYPH.test(text.trim())) return true;
   for (const child of el.children) {
@@ -134,7 +165,7 @@ function htmlElementHasNonColorSignal(el: HtmlElement): boolean {
 function jsxElementHasNonColorSignal(el: JsxElement): boolean {
   if (hasJsxAttribute(el, "aria-label")) return true;
   if (hasJsxAttribute(el, "title")) return true;
-  const text = jsxTextContent(el);
+  const text = visibleJsxText(el);
   if (text && STATUS_WORD_TEXT.test(text)) return true;
   if (text && SHAPE_SIGNAL_GLYPH.test(text.trim())) return true;
   for (const child of el.children) {
@@ -143,36 +174,106 @@ function jsxElementHasNonColorSignal(el: JsxElement): boolean {
   return false;
 }
 
-function collectHtmlText(el: HtmlElement): string {
-  let out = "";
-  for (const child of el.children) {
-    if (child.kind === "HtmlText") out += child.value;
+/**
+ * Concatenated visible text in an HTML element body, recursing into
+ * descendants. Skips entire subtrees that are not user-perceivable:
+ * <script>, <style>, <noscript>, <template>, and any element with
+ * `aria-hidden="true"`. Returns the trimmed concatenation.
+ *
+ * This is the body-content gate driving V1-FINDER-1.4.1-COLOR-EMPTY-
+ * BODY-FALSE-POSITIVE (zero-length body must not fire) and the body-
+ * read input to the reason text per V1-FINDER-1.4.1-COLOR-READ-
+ * ELEMENT-BODY (reason mentions the actual visible text).
+ */
+function visibleHtmlText(element: HtmlElement): string {
+  const chunks: string[] = [];
+  const visit = (node: HtmlNode): void => {
+    if (node.kind === "HtmlText") {
+      chunks.push(node.value);
+      return;
+    }
+    if (node.kind !== "HtmlElement") return;
+    if (NON_VISIBLE_TAGS.has(node.tagName.toLowerCase())) return;
+    if (htmlAttributeEquals(node.attributes, "aria-hidden", "true")) return;
+    for (const c of node.children) visit(c);
+  };
+  for (const child of element.children) visit(child);
+  return chunks.join("").trim();
+}
+
+/**
+ * Concatenated visible text in a JSX element body, recursing into
+ * descendants. Skips elements with `aria-hidden="true"` (string-literal
+ * form). Treats `JsxExpression` children as visible-content sentinels
+ * — the runtime value of `{label}` is text we can't read statically,
+ * so we substitute the raw expression so the reason text and the
+ * non-empty-body gate both see *something*. Without this, the very
+ * common `<small className="text-success">{version}</small>` pattern
+ * would be silently dropped as if it were an empty placeholder.
+ */
+function visibleJsxText(element: JsxElement): string {
+  const chunks: string[] = [];
+  const visit = (node: JsxNode): void => {
+    if (node.kind === "JsxText") {
+      chunks.push(node.value);
+      return;
+    }
+    if (node.kind === "JsxExpression") {
+      // Use the raw expression as a content placeholder so the body
+      // is treated as non-empty. Wrapping in braces preserves the
+      // hint that this is an interpolation, not literal source text.
+      chunks.push(`{${node.raw}}`);
+      return;
+    }
+    if (node.kind !== "JsxElement") return;
+    if (jsxAttributeEquals(node.attributes, "aria-hidden", "true")) return;
+    for (const c of node.children) visit(c);
+  };
+  for (const child of element.children) visit(child);
+  return chunks.join("").trim();
+}
+
+function htmlAttributeEquals(
+  attrs: readonly HtmlAttribute[],
+  name: string,
+  value: string,
+): boolean {
+  const lname = name.toLowerCase();
+  for (const attr of attrs) {
+    if (attr.name.toLowerCase() === lname) return (attr.value ?? "") === value;
   }
-  return out;
+  return false;
+}
+
+function jsxAttributeEquals(attrs: readonly JsxAttribute[], name: string, value: string): boolean {
+  for (const attr of attrs) {
+    if (attr.name !== name) continue;
+    const v = attr.value;
+    if (v && v.kind === "StringLiteral") return v.value === value;
+    return false;
+  }
+  return false;
 }
 
 function emit(
   filePath: string,
   loc: { line: number; column: number },
   matched: string,
-  hasVisibleText: boolean,
+  visibleText: string,
   candidates: ReviewCandidate[],
 ): void {
-  // Two reason variants. The element has already been filtered for
-  // aria-label, title, status-word text, shape-signal glyph, and
-  // icon-sibling at the call site — so at emit time the only remaining
-  // distinction is whether the element has any visible text at all.
+  // The element has already been filtered for aria-label, title,
+  // status-word text, shape-signal glyph, icon-sibling, and zero-length
+  // body. So at emit time we know there IS visible text in the body.
+  // Quote it back so the agent can see what color may be styling
+  // without re-reading the file just to triage the candidate.
   //
-  // Variant A (text present): the class might just style the text
-  // color; the question is whether the state would still be
-  // recoverable if the text were gray. Frame the check that way.
-  //
-  // Variant B (no text): the element is icon-only / empty; keep the
-  // original "no visible text, icon, or aria-label" framing because
-  // there is literally nothing else for a colorblind user to read.
-  const reason = hasVisibleText
-    ? `className uses status color "${matched}" on an element with visible text -- color-only indicator check: verify the state is not conveyed by "${matched}" alone; ensure a non-color affordance (icon, label, underline) is present`
-    : `className uses status color "${matched}" with no visible text, icon, or aria-label -- verify color is not the sole signal`;
+  // Per V1-FINDER-1.4.1-COLOR-READ-ELEMENT-BODY: the reason text must
+  // reflect the actual content, not claim "no visible text."
+  const echoed = collapseWhitespace(visibleText);
+  const trimmed =
+    echoed.length > REASON_TEXT_BUDGET ? `${echoed.slice(0, REASON_TEXT_BUDGET)}…` : echoed;
+  const reason = `className uses status color "${matched}" on an element with visible text "${trimmed}" -- color-only indicator check: verify the state is not conveyed by "${matched}" alone; ensure a non-color affordance (icon, label, underline) is present`;
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": className-regex on status-color utility
     // tokens (red/green/danger/success…) combined with an absence-
@@ -187,4 +288,8 @@ function emit(
       confidence: "low",
     });
   }
+}
+
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }

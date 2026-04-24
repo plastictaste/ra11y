@@ -7,21 +7,21 @@ import { finder } from "../../../src/review/finders/use-of-color.ts";
 import { runFinder } from "../../helpers/run-finder.ts";
 
 describe("review/use-of-color", () => {
-  it("flags a JSX element with a status-color class and no other signal", () => {
-    const source = `const x = <span className="text-red-600" />;`;
+  it("flags a JSX element with a status-color class and visible text", () => {
+    const source = `const x = <span className="text-red-600">3 unread</span>;`;
     const out = runFinder(finder, source);
     expect(out.length).toBeGreaterThan(0);
     expect(out[0]?.reason).toContain("text-red-600");
   });
 
-  it("flags bg-danger on a status badge with no text child", () => {
-    const source = `const x = <div className="bg-danger-500" />;`;
+  it("flags bg-danger on a status badge with non-status-word text", () => {
+    const source = `const x = <div className="bg-danger-500">3</div>;`;
     const out = runFinder(finder, source);
     expect(out.length).toBeGreaterThan(0);
   });
 
-  it("flags an HTML element with class attribute", () => {
-    const source = `<span class="text-red-500"></span>`;
+  it("flags an HTML element with class attribute and visible text", () => {
+    const source = `<span class="text-red-500">3</span>`;
     const out = runFinder(finder, source, { filePath: "input.html" });
     expect(out.length).toBeGreaterThan(0);
   });
@@ -83,7 +83,7 @@ describe("review/use-of-color", () => {
   });
 
   it("emits one candidate per matching criterion id", () => {
-    const source = `const x = <span className="text-red-600" />;`;
+    const source = `const x = <span className="text-red-600">3</span>;`;
     const out = runFinder(finder, source);
     const ids = new Set(out.map((c) => c.criterionId));
     expect(ids.has("wcag22:1.4.1")).toBe(true);
@@ -116,21 +116,19 @@ describe("review/use-of-color", () => {
     }
   });
 
-  it("emits the 'no visible text' variant when JSX element is empty", () => {
+  it("does not flag an empty-body JSX element (validation-placeholder pattern)", () => {
+    // Empty body → color cannot be the sole signal of *nothing*.
+    // V1-FINDER-1.4.1-COLOR-EMPTY-BODY-FALSE-POSITIVE: 10/10 sampled
+    // candidates from the templates corpus were empty-body
+    // placeholders.
     const source = `const x = <span className="text-red-600" />;`;
     const out = runFinder(finder, source);
-    expect(out.length).toBeGreaterThan(0);
-    for (const c of out) {
-      expect(c.reason).toContain("no visible text");
-    }
+    expect(out).toEqual([]);
   });
 
-  it("emits the 'no visible text' variant when HTML element is empty", () => {
-    const source = `<span class="text-red-600"></span>`;
+  it("does not flag an empty-body HTML element (validation-placeholder pattern)", () => {
+    const source = `<p class="help-block text-danger"></p>`;
     const out = runFinder(finder, source, { filePath: "input.html" });
-    expect(out.length).toBeGreaterThan(0);
-    for (const c of out) {
-      expect(c.reason).toContain("no visible text");
-    }
+    expect(out).toEqual([]);
   });
 });
