@@ -186,7 +186,23 @@ export const checklistTool: McpTool = {
         maxCandidatesPerCriterion: {
           type: "number",
           description:
-            "Caps candidates per criterion within the returned page — orthogonal to `limit`. Defaults to 10, clamped to [1, 100]. Prevents one noisy criterion from consuming the whole page without hiding it. When any criterion is clipped, the response carries `perCriterionClipped: true`; `totalCandidates` still reports the pre-clip tally so the agent can see what was elided.",
+            "Caps candidates per criterion within the returned page — orthogonal to `limit`. Defaults to 10, clamped to [1, 100]. Prevents one noisy criterion from consuming the whole page without hiding it. When any criterion is clipped, the response carries `perCriterionClipped: true`; `totalCandidates` still reports the pre-clip tally so the agent can see what was elided. The response also carries an opaque `nextCursor` the caller can pass back to fetch the elided per-criterion tail.",
+        },
+        cursor: {
+          type: "object",
+          description:
+            "Resume-token for per-criterion elision. When a previous call emitted `nextCursor`, pass it back verbatim to continue past the per-criterion cap on that criterion. Opaque shape (`{ afterCriterion: string, afterCandidateIndex: number }`) that MUST NOT be synthesized by the caller — the tool's ranker owns item ordering, so a hand-crafted cursor would silently skip or double-read candidates. When `cursor` is set, `offset` is ignored (cursor resumes at a named criterion's candidate index, which doesn't map to a flat-stream offset).",
+          properties: {
+            afterCriterion: {
+              type: "string",
+              description: "Criterion ID to resume inside (e.g. `wcag22:2.4.5`).",
+            },
+            afterCandidateIndex: {
+              type: "number",
+              description: "Zero-based index into that criterion's pre-clip candidates. Resume emits candidates starting at `afterCandidateIndex + 1`.",
+            },
+          },
+          required: ["afterCriterion", "afterCandidateIndex"],
         },
         skipCriterion: skipCriterionSchema,
         metaMode: metaModeSchema,
@@ -393,6 +409,7 @@ export const checklistTool: McpTool = {
       actionableLen: actionable.length,
       truncated: page.paginationFields.truncated === true,
       nextOffset: page.paginationFields.nextOffset,
+      nextCursor: page.paginationFields.nextCursor,
       cwd,
       standard: strParam(params, "standard"),
       level: strParam(params, "level"),
@@ -452,6 +469,45 @@ export const checklistTool: McpTool = {
       level,
       cwd,
     });
+    const derivativeWarnings = buildDerivativeScanWarnings({
+      filesScanned: files.length,
+      rootSource: null,
+      configSource: undefined,
+      analysisCoverage: analysisCoverageField.analysisCoverage,
+      filesByExtension,
+      // Q4-WARNING-DOWNGRADE-NOISE: gate
+      // `template_files_parsed_as_literal` on actual overlap between
+      // emitted findings and detected template-directive lines.
+      // `checklist` runs `runScan` over the same parsed-file set it
+      // discovered; cross-reference `result.violations` with the
+      // per-file source already in `files` so the code fires only
+      // when the literal-parse actually polluted a finding.
+      templateDirectivesOverlap: computeTemplateDirectiveOverlap({
+        findings: result.violations.map((v) => ({
+          filePath: v.location.filePath,
+          line: v.location.line,
+        })),
+        sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
+      }),
+      // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage
+      // helper's truncation bit so `response_meta_truncated`
+      // fires honestly when a parse-error dump was head-sliced.
+      ...(analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
+    });
+    // V1-CHECKLIST-PERCRITERION-CURSOR: honest-shape pairing for the
+    // cursor. When `nextCursor` is emitted, surface a structured
+    // warning code so the agent's `warnings[]` read-path matches the
+    // "zero-output success is ambiguous failure" doctrine — a
+    // perCriterionClipped response with a cursor is success-with-more-
+    // to-fetch, not success-complete. The code rides alongside any
+    // scan-derivative codes via the shared `warnings` array; the
+    // cursor itself lives in `paginationFields.nextCursor` where
+    // other paging signals already sit.
+    const toolWarnings = new Set<string>(derivativeWarnings.warnings ?? []);
+    if (page.paginationFields.nextCursor !== undefined) {
+      toolWarnings.add("results_truncated_use_nextcursor");
+    }
+    const mergedWarnings = [...toolWarnings].sort();
     return textResult({
       summary,
       items: page.items,
@@ -461,31 +517,10 @@ export const checklistTool: McpTool = {
       likelyIrrelevant: filteredIrrelevant,
       ...checklistNextStep,
       ...metaField,
-      ...buildDerivativeScanWarnings({
-        filesScanned: files.length,
-        rootSource: null,
-        configSource: undefined,
-        analysisCoverage: analysisCoverageField.analysisCoverage,
-        filesByExtension,
-        // Q4-WARNING-DOWNGRADE-NOISE: gate
-        // `template_files_parsed_as_literal` on actual overlap between
-        // emitted findings and detected template-directive lines.
-        // `checklist` runs `runScan` over the same parsed-file set it
-        // discovered; cross-reference `result.violations` with the
-        // per-file source already in `files` so the code fires only
-        // when the literal-parse actually polluted a finding.
-        templateDirectivesOverlap: computeTemplateDirectiveOverlap({
-          findings: result.violations.map((v) => ({
-            filePath: v.location.filePath,
-            line: v.location.line,
-          })),
-          sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
-        }),
-        // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage
-        // helper's truncation bit so `response_meta_truncated`
-        // fires honestly when a parse-error dump was head-sliced.
-        ...(analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
-      }),
+      ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
+      ...(derivativeWarnings.warningsDetails === undefined
+        ? {}
+        : { warningsDetails: derivativeWarnings.warningsDetails }),
     });
   },
 };
@@ -692,7 +727,27 @@ const CHECKLIST_MIN_MAX_PER_CRITERION = 1;
 const CHECKLIST_MAX_MAX_PER_CRITERION = 100;
 
 /**
- * Resolved pagination inputs for the `checklist` tool. All three
+ * Opaque resume-token emitted when the per-criterion cap elided
+ * candidates on at least one criterion AND the caller needs to fetch
+ * that elided tail. Keyed by the criterion ID (the ranker-ordered
+ * item) rather than a flat-stream offset so paging is stable across
+ * ranker-order changes within a single criterion's pre-clip candidate
+ * list. Callers pass the value back verbatim; they do not synthesize it.
+ */
+export interface ChecklistCursor {
+  /** Criterion ID to resume at (e.g. `wcag22:2.4.5`). */
+  readonly afterCriterion: string;
+  /**
+   * Zero-based index into the criterion's pre-clip candidates. Resume
+   * yields candidates starting at `afterCandidateIndex + 1`, so a caller
+   * whose previous page received candidates `[0..9]` passes
+   * `afterCandidateIndex: 9`.
+   */
+  readonly afterCandidateIndex: number;
+}
+
+/**
+ * Resolved pagination inputs for the `checklist` tool. All numeric
  * fields are clamped to their documented bounds; callers never see
  * un-clamped values.
  */
@@ -703,12 +758,24 @@ export interface ChecklistPageParams {
   readonly offset: number;
   /** Max candidates per criterion in the page, clamped to [1, 100]. */
   readonly maxCandidatesPerCriterion: number;
+  /**
+   * Resume-token from a previous truncated response. When set, the
+   * pager jumps to `afterCriterion` and begins its candidates at
+   * `afterCandidateIndex + 1` — the flat-stream `offset` is ignored
+   * because the cursor names a criterion, not a position in the
+   * flattened stream. Absent when the caller is starting fresh.
+   */
+  readonly cursor?: ChecklistCursor;
 }
 
 /**
- * Reads `limit` / `offset` / `maxCandidatesPerCriterion` from the MCP
- * params with silent clamping to documented bounds. Non-numeric /
- * missing values fall back to the named defaults.
+ * Reads `limit` / `offset` / `maxCandidatesPerCriterion` / `cursor`
+ * from the MCP params with silent clamping to documented bounds.
+ * Non-numeric / missing values fall back to the named defaults.
+ * Malformed cursor shapes are dropped silently — honest-shape: a
+ * cursor that can't be interpreted is indistinguishable from "no
+ * cursor," and fabricating partial resume state would silently skip
+ * candidates.
  */
 export function readChecklistPageParams(params: Record<string, unknown>): ChecklistPageParams {
   const rawLimit = typeof params["limit"] === "number" ? params["limit"] : CHECKLIST_DEFAULT_LIMIT;
@@ -723,7 +790,27 @@ export function readChecklistPageParams(params: Record<string, unknown>): Checkl
     CHECKLIST_MIN_MAX_PER_CRITERION,
     Math.min(CHECKLIST_MAX_MAX_PER_CRITERION, Math.floor(rawPerCriterion)),
   );
-  return { limit, offset, maxCandidatesPerCriterion };
+  const cursor = readCursor(params["cursor"]);
+  return { limit, offset, maxCandidatesPerCriterion, ...(cursor ? { cursor } : {}) };
+}
+
+/**
+ * Parses the opaque cursor param into a `ChecklistCursor`. Returns
+ * `undefined` when the shape is missing or malformed — callers then
+ * proceed as if no cursor were provided. We do not reject the call on
+ * a malformed cursor because the field is opaque-by-design: the token
+ * came from us, so invalid shapes indicate caller tampering, which
+ * the ranker cannot recover from (silently skipping candidates would
+ * be worse). Proceeding without resume state is the honest fallback.
+ */
+function readCursor(raw: unknown): ChecklistCursor | undefined {
+  if (raw === null || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const afterCriterion = record["afterCriterion"];
+  const afterCandidateIndex = record["afterCandidateIndex"];
+  if (typeof afterCriterion !== "string" || afterCriterion.length === 0) return undefined;
+  if (typeof afterCandidateIndex !== "number" || afterCandidateIndex < 0) return undefined;
+  return { afterCriterion, afterCandidateIndex: Math.floor(afterCandidateIndex) };
 }
 
 /**
@@ -764,6 +851,18 @@ export interface PaginatedChecklist {
     readonly requestedLimit?: number;
     readonly effectiveLimit?: number;
     readonly pageClipReason?: "end_of_results" | "per_criterion_cap";
+    /**
+     * Opaque resume-token emitted when at least one criterion was
+     * clipped by `maxCandidatesPerCriterion` AND the caller needs to
+     * fetch the elided tail. Naming the first clipped criterion is
+     * sufficient: callers walking forward re-page by passing
+     * `cursor: nextCursor`, at which point this pager jumps to that
+     * criterion and resumes its candidates at `afterCandidateIndex + 1`.
+     * Absent when nothing was clipped OR when the current page
+     * already consumed every elided criterion's tail (the agent has
+     * seen the full inventory).
+     */
+    readonly nextCursor?: ChecklistCursor;
   };
 }
 
@@ -778,20 +877,40 @@ export interface PaginatedChecklist {
  * clipping is an orthogonal signal (`perCriterionClipped: true`),
  * so a page can be truncated without any criterion being clipped,
  * clipped without being truncated, both, or neither.
+ *
+ * `cursor`-mode: when the caller passes a previously-issued
+ * `nextCursor`, the pager resumes INSIDE a single criterion — it
+ * discards items before `cursor.afterCriterion`, yields the tail
+ * `[afterCandidateIndex + 1 .. min(total, afterCandidateIndex + 1 +
+ * maxCandidatesPerCriterion))` of that criterion, and stops. `offset`
+ * is ignored in this mode. If the tail still overflows the per-
+ * criterion cap, a fresh `nextCursor` is emitted so the caller can
+ * re-page. This is the resume lane for the per-criterion elision —
+ * the flat-stream `limit`/`offset` lane is orthogonal and unaffected.
  */
 export function paginateChecklistItems(
   items: readonly ChecklistItemOut[],
-  { limit, offset, maxCandidatesPerCriterion }: ChecklistPageParams,
+  { limit, offset, maxCandidatesPerCriterion, cursor }: ChecklistPageParams,
 ): PaginatedChecklist {
+  if (cursor !== undefined) {
+    return paginateChecklistResume(items, cursor, maxCandidatesPerCriterion);
+  }
   let totalCandidates = 0;
-  let perCriterionClipped = false;
+  let firstClippedCursor: ChecklistCursor | undefined;
   // Phase 1 — per-criterion clip. Walk items in order; for each,
   // accumulate the raw total (pre-clip) and build a clipped copy.
+  // Capture the first clipped criterion so a nextCursor can point at
+  // its elided tail for a later resume call.
   const clipped: ChecklistItemOut[] = [];
   for (const item of items) {
     totalCandidates += item.candidates.length;
     if (item.candidates.length > maxCandidatesPerCriterion) {
-      perCriterionClipped = true;
+      if (firstClippedCursor === undefined) {
+        firstClippedCursor = {
+          afterCriterion: item.criterionId,
+          afterCandidateIndex: maxCandidatesPerCriterion - 1,
+        };
+      }
       clipped.push({
         ...item,
         candidates: item.candidates.slice(0, maxCandidatesPerCriterion),
@@ -832,8 +951,67 @@ export function paginateChecklistItems(
       pageItems,
       rangeEnd,
       truncated,
-      perCriterionClipped,
+      perCriterionClipped: firstClippedCursor !== undefined,
+      ...(firstClippedCursor ? { nextCursor: firstClippedCursor } : {}),
     }),
+  };
+}
+
+/**
+ * Resume mode for the per-criterion elision. The caller has a valid
+ * `nextCursor` from a previous truncated response; this pass:
+ *   1. Finds the named criterion in the ranker-ordered inventory.
+ *   2. Drops items ranked above it (already paged past).
+ *   3. Yields the elided tail of that criterion starting at
+ *      `afterCandidateIndex + 1`, capped by `maxCandidatesPerCriterion`.
+ *   4. Emits a fresh `nextCursor` iff the tail still overflows the
+ *      cap so the caller can re-page.
+ *
+ * `totalCandidates` still reports the full inventory's pre-clip tally
+ * (stable across pages) so the agent's headline count is consistent
+ * call-over-call. `truncated` / `nextOffset` / `perCriterionClipped`
+ * stay in the flat-stream semantics from the non-cursor branch — on a
+ * cursor call they're implicitly "this page is the tail of a single
+ * criterion," so we emit only `nextCursor` when more remains.
+ */
+function paginateChecklistResume(
+  items: readonly ChecklistItemOut[],
+  cursor: ChecklistCursor,
+  maxCandidatesPerCriterion: number,
+): PaginatedChecklist {
+  let totalCandidates = 0;
+  let target: ChecklistItemOut | undefined;
+  for (const item of items) {
+    totalCandidates += item.candidates.length;
+    if (item.criterionId === cursor.afterCriterion && target === undefined) {
+      target = item;
+    }
+  }
+  // Cursor points at a criterion we don't have (ranker-order changed,
+  // skipCriterion dropped it, etc.). Honest fallback: empty page, no
+  // nextCursor — the caller re-queries from scratch if they suspect
+  // drift. This matches the malformed-cursor branch in `readCursor`.
+  if (target === undefined) {
+    return {
+      items: [],
+      totalCandidates,
+      paginationFields: {},
+    };
+  }
+  const resumeStart = cursor.afterCandidateIndex + 1;
+  const resumeEnd = Math.min(target.candidates.length, resumeStart + maxCandidatesPerCriterion);
+  const tail = target.candidates.slice(resumeStart, resumeEnd);
+  const pageItems: ChecklistItemOut[] = tail.length === 0 ? [] : [{ ...target, candidates: tail }];
+  const moreRemaining = resumeEnd < target.candidates.length;
+  const nextCursor: ChecklistCursor | undefined = moreRemaining
+    ? { afterCriterion: target.criterionId, afterCandidateIndex: resumeEnd - 1 }
+    : undefined;
+  return {
+    items: pageItems,
+    totalCandidates,
+    paginationFields: {
+      ...(nextCursor ? { nextCursor } : {}),
+    },
   };
 }
 
@@ -858,8 +1036,9 @@ function buildChecklistPaginationFields(args: {
   readonly rangeEnd: number;
   readonly truncated: boolean;
   readonly perCriterionClipped: boolean;
+  readonly nextCursor?: ChecklistCursor;
 }): PaginatedChecklist["paginationFields"] {
-  const { limit, offset, pageItems, rangeEnd, truncated, perCriterionClipped } = args;
+  const { limit, offset, pageItems, rangeEnd, truncated, perCriterionClipped, nextCursor } = args;
   // Count the candidates that actually shipped so `effectiveLimit` is
   // honest about what reached the wire. Summing post-slice captures
   // both the global limit AND per-criterion clip.
@@ -879,6 +1058,7 @@ function buildChecklistPaginationFields(args: {
     ...(perCriterionClipped ? { perCriterionClipped: true as const } : {}),
     ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
     ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
+    ...(nextCursor ? { nextCursor } : {}),
   };
 }
 
@@ -905,6 +1085,7 @@ interface ChecklistNextStepInputs {
   readonly actionableLen: number;
   readonly truncated: boolean;
   readonly nextOffset: number | undefined;
+  readonly nextCursor: ChecklistCursor | undefined;
   readonly cwd: string;
   readonly standard: string | undefined;
   readonly level: string | undefined;
@@ -937,6 +1118,7 @@ function buildChecklistNextStep({
   actionableLen,
   truncated,
   nextOffset,
+  nextCursor,
   cwd,
   standard,
   level,
@@ -960,6 +1142,15 @@ function buildChecklistNextStep({
     if (level !== undefined) args["level"] = level;
     return {
       nextStep: `Page truncated. Call \`checklist\` again with \`offset: ${nextOffset}\` to continue; call \`coverage\` for the per-standard compliance dashboard.`,
+      nextStepStructured: { tool: "checklist", args },
+    };
+  }
+  if (nextCursor !== undefined) {
+    const args: Record<string, unknown> = { cwd, cursor: nextCursor };
+    if (standard !== undefined) args["standard"] = standard;
+    if (level !== undefined) args["level"] = level;
+    return {
+      nextStep: `At least one criterion's candidate list was clipped by \`maxCandidatesPerCriterion\`. Call \`checklist\` again with \`cursor: nextCursor\` (pass the token back verbatim) to fetch the elided tail of \`${nextCursor.afterCriterion}\`; repeat while a \`nextCursor\` is emitted. Raising \`maxCandidatesPerCriterion\` on the next call is the alternative when you want a deeper cut in one shot.`,
       nextStepStructured: { tool: "checklist", args },
     };
   }

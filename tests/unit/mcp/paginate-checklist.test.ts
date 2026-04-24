@@ -60,6 +60,7 @@ const fullParams = (partial: Partial<ChecklistPageParams> = {}): ChecklistPagePa
   limit: partial.limit ?? 200,
   offset: partial.offset ?? 0,
   maxCandidatesPerCriterion: partial.maxCandidatesPerCriterion ?? 10,
+  ...(partial.cursor ? { cursor: partial.cursor } : {}),
 });
 
 describe("readChecklistPageParams", () => {
@@ -322,5 +323,163 @@ describe("paginateChecklistItems — end-to-end via readChecklistPageParams", ()
     const pageHigh = paginateChecklistItems(items, readChecklistPageParams({ limit: 3000 }));
     expect(pageHigh.items.length).toBe(50);
     expect(pageHigh.paginationFields.truncated).toBeUndefined();
+  });
+});
+
+/**
+ * V1-CHECKLIST-PERCRITERION-CURSOR — the per-criterion elision
+ * resume-token contract. Orthogonal to the flat-stream `limit`/`offset`
+ * axis: when a criterion's candidate list is clipped by
+ * `maxCandidatesPerCriterion`, the response emits an opaque `nextCursor`
+ * (`{ afterCriterion, afterCandidateIndex }`) that, passed back verbatim,
+ * resumes INSIDE that criterion at the next candidate. Three branches:
+ *   (a) small response, nothing clipped → no cursor, no warning.
+ *   (b) per-criterion clip → cursor emitted; round-trip fetches the tail.
+ *   (c) cursor input honored → the pager resumes at the named criterion.
+ */
+describe("paginateChecklistItems — V1-CHECKLIST-PERCRITERION-CURSOR cursor resume", () => {
+  it("does not emit nextCursor when response fits (no per-criterion clip)", () => {
+    // 5 items × 3 candidates each, cap 10 → nothing clipped. The
+    // cursor rides on the per-criterion axis; it MUST stay absent
+    // when no elision happened so the agent doesn't re-page after a
+    // clean scan. Honest-shape: absent, not `nextCursor: null`.
+    const items = [
+      makeItem("wcag22:1.4.3", 3),
+      makeItem("wcag22:2.4.5", 3),
+      makeItem("wcag22:3.3.1", 3),
+    ];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 10 }));
+    expect(page.paginationFields.perCriterionClipped).toBeUndefined();
+    expect(page.paginationFields.nextCursor).toBeUndefined();
+    expect(page.items.length).toBe(3);
+  });
+
+  it("emits nextCursor pointing at the first clipped criterion when per-criterion cap fires", () => {
+    // 3 items × 30 candidates, cap 5 → each criterion clipped to 5.
+    // Cursor points at the FIRST clipped criterion's last served
+    // index (4, since cap=5 means candidates 0..4 shipped). A later
+    // resume will start at index 5.
+    const items = [
+      makeItem("wcag22:1.4.3", 30),
+      makeItem("wcag22:2.4.5", 30),
+      makeItem("wcag22:3.3.1", 30),
+    ];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    expect(page.paginationFields.perCriterionClipped).toBe(true);
+    expect(page.paginationFields.nextCursor).toEqual({
+      afterCriterion: "wcag22:1.4.3",
+      afterCandidateIndex: 4,
+    });
+  });
+
+  it("round-trip: page 1 nextCursor → page 2 cursor resumes the elided tail", () => {
+    // 30 candidates on one criterion, cap 5. Page 1 serves [0..4],
+    // emits nextCursor {afterCandidateIndex:4}. Page 2 with that
+    // cursor serves [5..9] — the next 5 of the pre-clip stream.
+    // Inventory-wide totalCandidates stays 30 on both pages; the
+    // agent's headline count is stable.
+    const items = [makeItem("wcag22:2.4.5", 30)];
+    const page1 = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    expect(page1.items[0].candidates.length).toBe(5);
+    expect(page1.items[0].candidates[0].path).toBe("wcag22:2.4.5-0.tsx");
+    expect(page1.items[0].candidates[4].path).toBe("wcag22:2.4.5-4.tsx");
+    const cursor = page1.paginationFields.nextCursor;
+    expect(cursor).toBeDefined();
+    const page2 = paginateChecklistItems(
+      items,
+      fullParams({
+        maxCandidatesPerCriterion: 5,
+        ...(cursor ? { cursor } : {}),
+      }),
+    );
+    expect(page2.items.length).toBe(1);
+    expect(page2.items[0].criterionId).toBe("wcag22:2.4.5");
+    expect(page2.items[0].candidates.length).toBe(5);
+    expect(page2.items[0].candidates[0].path).toBe("wcag22:2.4.5-5.tsx");
+    expect(page2.items[0].candidates[4].path).toBe("wcag22:2.4.5-9.tsx");
+    // Page 2 still has more tail (10..29) — the cursor threads forward.
+    expect(page2.paginationFields.nextCursor).toEqual({
+      afterCriterion: "wcag22:2.4.5",
+      afterCandidateIndex: 9,
+    });
+    expect(page2.totalCandidates).toBe(30);
+  });
+
+  it("round-trip terminates: last cursor call yields the tail without a further cursor", () => {
+    // 12 candidates, cap 5 → three pages: [0..4], [5..9], [10..11].
+    // The final page's resumeEnd equals total length, so no further
+    // nextCursor is emitted — the agent reads absence as "you have
+    // everything on this criterion." Honest-shape terminator.
+    const items = [makeItem("wcag22:2.4.5", 12)];
+    const page1 = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    const cursor1 = page1.paginationFields.nextCursor;
+    expect(cursor1).toEqual({ afterCriterion: "wcag22:2.4.5", afterCandidateIndex: 4 });
+    const page2 = paginateChecklistItems(
+      items,
+      fullParams({
+        maxCandidatesPerCriterion: 5,
+        ...(cursor1 ? { cursor: cursor1 } : {}),
+      }),
+    );
+    const cursor2 = page2.paginationFields.nextCursor;
+    expect(cursor2).toEqual({ afterCriterion: "wcag22:2.4.5", afterCandidateIndex: 9 });
+    const page3 = paginateChecklistItems(
+      items,
+      fullParams({
+        maxCandidatesPerCriterion: 5,
+        ...(cursor2 ? { cursor: cursor2 } : {}),
+      }),
+    );
+    expect(page3.items[0].candidates.length).toBe(2);
+    expect(page3.items[0].candidates[0].path).toBe("wcag22:2.4.5-10.tsx");
+    expect(page3.items[0].candidates[1].path).toBe("wcag22:2.4.5-11.tsx");
+    expect(page3.paginationFields.nextCursor).toBeUndefined();
+  });
+
+  it("cursor resume yields empty page with no nextCursor when the criterion no longer exists", () => {
+    // Ranker-order drift or skipCriterion can drop the criterion the
+    // cursor named. The honest fallback is empty page + no cursor —
+    // the caller re-queries from scratch. We don't error because the
+    // cursor is opaque to the caller and drift is a tool-side concern.
+    const items = [makeItem("wcag22:1.4.3", 5)];
+    const page = paginateChecklistItems(
+      items,
+      fullParams({
+        maxCandidatesPerCriterion: 5,
+        cursor: { afterCriterion: "wcag22:2.4.5", afterCandidateIndex: 4 },
+      }),
+    );
+    expect(page.items).toEqual([]);
+    expect(page.paginationFields.nextCursor).toBeUndefined();
+    // totalCandidates still reports the full inventory so the agent
+    // can detect that the criterion count drifted.
+    expect(page.totalCandidates).toBe(5);
+  });
+
+  it("readChecklistPageParams parses a valid cursor and drops malformed shapes", () => {
+    // Valid cursor threads through.
+    const got = readChecklistPageParams({
+      cursor: { afterCriterion: "wcag22:2.4.5", afterCandidateIndex: 9 },
+    });
+    expect(got.cursor).toEqual({ afterCriterion: "wcag22:2.4.5", afterCandidateIndex: 9 });
+    // Missing fields → dropped entirely (not partially applied). A
+    // partially-applied cursor would silently skip candidates, which
+    // the honest-shape rule treats as worse than "no cursor."
+    expect(readChecklistPageParams({ cursor: {} }).cursor).toBeUndefined();
+    expect(
+      readChecklistPageParams({ cursor: { afterCriterion: "wcag22:2.4.5" } }).cursor,
+    ).toBeUndefined();
+    // Negative index → dropped.
+    expect(
+      readChecklistPageParams({
+        cursor: { afterCriterion: "wcag22:2.4.5", afterCandidateIndex: -1 },
+      }).cursor,
+    ).toBeUndefined();
+    // Fractional index → floored (resume still works predictably).
+    expect(
+      readChecklistPageParams({
+        cursor: { afterCriterion: "wcag22:2.4.5", afterCandidateIndex: 4.9 },
+      }).cursor,
+    ).toEqual({ afterCriterion: "wcag22:2.4.5", afterCandidateIndex: 4 });
   });
 });
