@@ -227,6 +227,156 @@ describe("rule navigation/link-no-href", () => {
     });
   });
 
+  describe("HTML: fires on absent href + interactive class signal (no inline handler)", () => {
+    // Real-world pattern: carousel / dropdown / tab controls where the
+    // click handler is wired at runtime by a sibling <script>. The
+    // markup carries no `onclick` attribute, but the class is a strong
+    // signal the anchor is a control rather than a fragment target.
+
+    it("a.prev with no href, no onclick (carousel control)", () => {
+      const violations = runRule(
+        rule,
+        `<a class="prev"><i class="fa fa-chevron-circle-left"></i></a>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("navigation/link-no-href");
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.message).toContain("prev");
+      expect(violations[0]?.suggestion).toContain("prev");
+    });
+
+    it("a.next with no href (carousel pager)", () => {
+      const violations = runRule(rule, `<a class="next"><span>Next</span></a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("next");
+    });
+
+    it("a.btn with no href (Bootstrap button-as-anchor)", () => {
+      const violations = runRule(rule, `<a class="btn btn-primary">Submit</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("btn");
+    });
+
+    it("a.dropdown-toggle with no href (Bootstrap dropdown trigger)", () => {
+      const violations = runRule(rule, `<a class="dropdown-toggle">Menu</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("dropdown-toggle");
+    });
+
+    it("a.nav-link with no href (Bootstrap nav anchor)", () => {
+      const violations = runRule(rule, `<a class="nav-link">Home</a>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("a.tab with no href (tab-panel switcher)", () => {
+      const violations = runRule(rule, `<a class="tab">Details</a>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("a.slide with no href (carousel slide control)", () => {
+      const violations = runRule(rule, `<a class="slide">3</a>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("a.accordion-toggle with no href", () => {
+      const violations = runRule(rule, `<a class="accordion-toggle">Section 1</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("class signal with placeholder href='#' still fires", () => {
+      const violations = runRule(rule, `<a class="prev" href="#"><i class="fa-arrow"></i></a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("prev");
+    });
+
+    it("class signal with real href stays silent (link is keyboard-operable)", () => {
+      const violations = runRule(rule, `<a class="btn btn-primary" href="/checkout">Pay</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("token match is whole-word: a.user-tab-item does NOT match `tab`", () => {
+      const violations = runRule(rule, `<a class="user-tab-item">User</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("token match is whole-word: a.previous-month does NOT match `prev`", () => {
+      const violations = runRule(rule, `<a class="previous-month">January</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("HTML: stays silent on truly decorative anchors (no signals)", () => {
+    it("a#section1 (fragment target, no class, no handler)", () => {
+      // Legitimate in-page anchor target — not a control. Stays silent.
+      const violations = runRule(rule, `<a id="section1"></a>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a[name=legacy] (legacy named anchor, no class, no handler)", () => {
+      const violations = runRule(rule, `<a name="legacy">Legacy</a>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a with non-interactive class (e.g. text-muted) stays silent", () => {
+      const violations = runRule(rule, `<a class="text-muted">read-only badge</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("JSX: fires on absent href + interactive className signal", () => {
+    it("a.prev with no href, no onClick (string-literal className)", () => {
+      const violations = runRule(rule, `const X = <a className="prev"><Icon /></a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("prev");
+    });
+
+    it("a.btn with no href (string-literal className)", () => {
+      const violations = runRule(rule, `const X = <a className="btn btn-link">Action</a>;`);
+      expect(violations).toHaveLength(1);
+    });
+
+    it("expression-form className={...} is opaque — stays silent without a handler", () => {
+      // We don't try to resolve expression-form className at static-
+      // analysis time; the agent reading the file can. The handler-only
+      // check still covers the case where opaque className co-exists
+      // with onClick.
+      const violations = runRule(rule, `const X = <a className={cn("prev")}>Prev</a>;`);
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("class-signal context-aware suggestion", () => {
+    it("names the matched token in the suggestion (carousel prev)", () => {
+      const violations = runRule(rule, `<a class="prev"><i class="ico"></i></a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("prev");
+      expect(sugg).toContain(`<button type="button" class="prev">`);
+      expect(sugg).toContain("runtime");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:2.1.1, wcag21:2.1.1, wcag22:4.1.2, wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:2.1.1");

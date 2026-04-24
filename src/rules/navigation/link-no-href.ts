@@ -19,6 +19,16 @@
  * area elements must have a value that is a valid URL potentially
  * surrounded by spaces." (https://html.spec.whatwg.org/#the-a-element)
  *
+ * Some controls don't carry a click handler in the markup at all — the
+ * behaviour is wired at runtime by a sibling `<script>` (carousel
+ * `prev`/`next`, Bootstrap `dropdown-toggle`, plugin tabs/accordions,
+ * `btn`/`nav-link` styled anchors). The agent reading the file can see
+ * the intent the static handler-only check misses; we extend the rule
+ * to fire on absent / placeholder `href` plus an interactive *class*
+ * signal so those silent-miss cases reach the agent too. A bare
+ * `<a id="anchor">` with no class signal stays silent — that's a
+ * legitimate fragment target, not a control.
+ *
  * The fix depends on intent:
  *   - A link that navigates → add href
  *   - A control that toggles/submits → use <button type="button">
@@ -50,7 +60,47 @@ function isNonNavigatingHref(value: string | null): boolean {
   return trimmed === "" || trimmed === "#";
 }
 
+/**
+ * Class tokens that signal an `<a>` is being styled / wired as an
+ * interactive control rather than a passive link / fragment target.
+ * The list is conservative — every entry corresponds to a documented
+ * pattern from a widely-used library (Bootstrap, Foundation, AdminLTE,
+ * Owl Carousel, Slick, jQuery UI):
+ *
+ *   - `btn`, `nav-link`             → Bootstrap button / nav anchor
+ *   - `prev`, `next`                → carousel / pager controls
+ *   - `dropdown-toggle`             → Bootstrap dropdown
+ *   - `accordion-toggle`            → Bootstrap accordion
+ *   - `tab`                         → tab-panel switcher
+ *   - `slide`                       → carousel slide control
+ *
+ * A non-control `<a>` (fragment target, named anchor, in-flow link)
+ * does not carry these tokens, so matching them is not a false-positive
+ * source. Detection is whole-token (split on whitespace), so an
+ * `<a class="user-tab-item">` does not match `tab`.
+ */
+const INTERACTIVE_CLASS_TOKENS = new Set<string>([
+  "btn",
+  "nav-link",
+  "prev",
+  "next",
+  "dropdown-toggle",
+  "accordion-toggle",
+  "tab",
+  "slide",
+]);
+
+function hasInteractiveClassSignal(classValue: string | null): string | null {
+  if (classValue === null) return null;
+  for (const token of classValue.split(/\s+/)) {
+    if (token.length === 0) continue;
+    if (INTERACTIVE_CLASS_TOKENS.has(token)) return token;
+  }
+  return null;
+}
+
 type Intent = "navigation" | "mutation" | "unknown";
+type Trigger = "handler" | { kind: "class"; token: string };
 
 export const rule = defineRule({
   id: "navigation/link-no-href",
@@ -106,9 +156,12 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     ) {
       continue;
     }
-    if (!hasClickHandlerHtml(anchor)) continue;
+    const hasHandler = hasClickHandlerHtml(anchor);
+    const classToken = hasInteractiveClassSignal(getHtmlAttribute(anchor, "class"));
+    if (!hasHandler && classToken === null) continue;
+    const trigger: Trigger = hasHandler ? "handler" : { kind: "class", token: classToken ?? "" };
     const intent = describeJsxExpressionIntent(getHtmlAttribute(anchor, "onclick"));
-    emit(buildViolation(anchor.loc.start, intent));
+    emit(buildViolation(anchor.loc.start, intent, trigger));
   }
 }
 
@@ -120,10 +173,27 @@ function hasClickHandlerHtml(element: HtmlElement): boolean {
 function checkJsx(module: TsxModule, emit: Emit): void {
   for (const anchor of findJsxElementsByTag(module, "a")) {
     if (hasJsxAttribute(anchor, "href") && !hasNonNavigatingHrefJsx(anchor)) continue;
-    if (!hasClickHandlerJsx(anchor)) continue;
+    const hasHandler = hasClickHandlerJsx(anchor);
+    const classToken = hasInteractiveClassSignal(jsxClassNameLiteral(anchor));
+    if (!hasHandler && classToken === null) continue;
+    const trigger: Trigger = hasHandler ? "handler" : { kind: "class", token: classToken ?? "" };
     const intent = describeJsxExpressionIntent(jsxOnClickExpressionText(anchor));
-    emit(buildViolation(anchor.loc.start, intent));
+    emit(buildViolation(anchor.loc.start, intent, trigger));
   }
+}
+
+/**
+ * Returns the string-literal `className` of a JSX element, or null when
+ * the attribute is absent or its value is an expression. An expression
+ * `className={...}` is opaque — we don't try to resolve it; the agent
+ * reading the file will. (The handler-only check still covers the
+ * common case where an opaque `className` co-exists with `onClick`.)
+ */
+function jsxClassNameLiteral(element: JsxElement): string | null {
+  const attr = getJsxAttribute(element, "className");
+  if (!attr?.value) return null;
+  if (attr.value.kind !== "StringLiteral") return null;
+  return attr.value.value;
 }
 
 /**
@@ -161,21 +231,34 @@ function jsxOnClickExpressionText(element: JsxElement): string | null {
 function buildViolation(
   loc: { line: number; column: number },
   intent: Intent,
+  trigger: Trigger,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
 } {
+  const message =
+    trigger === "handler"
+      ? `<a> with a click handler but no href is not keyboard-operable — it's not in the tab order and Enter won't activate it.`
+      : `<a class="${trigger.token}"> with no href is styled or wired as an interactive control (likely with a runtime-attached click handler) but is not keyboard-operable — it's not in the tab order and Enter won't activate it.`;
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<a> with a click handler but no href is not keyboard-operable — it's not in the tab order and Enter won't activate it.`,
-    suggestion: buildSuggestion(intent),
+    message,
+    suggestion: buildSuggestion(intent, trigger),
   };
 }
 
-function buildSuggestion(intent: Intent): string {
+function buildSuggestion(intent: Intent, trigger: Trigger): string {
+  if (trigger !== "handler") {
+    // Class-signal trigger: there is no inline handler to read intent
+    // from, so we name the class we matched on and leave the choice
+    // to the agent / author. The token is meaningful context — `prev`
+    // and `dropdown-toggle` carry different intent affordances than a
+    // generic `btn`.
+    return `<a class="${trigger.token}"> has no href and no inline click handler — the control is almost certainly wired by a sibling <script> at runtime. If it activates an in-page widget (carousel, dropdown, tab, accordion), replace with <button type="button" class="${trigger.token}"> so it joins the tab order and responds to Enter / Space. If it should navigate, add a real href="...".`;
+  }
   if (intent === "navigation") {
     return `<a onClick={...}> appears to perform navigation (keywords: navigate/router/history). Replace with a real <a href="..."> so the browser and assistive tech treat it as a link — if you need to intercept the click, keep the href and use onClick={(e) => { e.preventDefault(); navigate(url); }}.`;
   }
