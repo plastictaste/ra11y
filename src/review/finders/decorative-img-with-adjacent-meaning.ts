@@ -3,35 +3,58 @@
  * Criteria: wcag22:1.1.1, wcag21:1.1.1
  * Spec: https://www.w3.org/TR/WCAG22/#non-text-content
  *
- * Surfaces `<img alt="">` elements whose parent holds a short
- * (≤3-word) adjacent text sibling naming an affect/status/value
- * term from a hand-curated dictionary. The image is marked decorative
- * (alt=""), but an adjacent sibling names the image's meaning —
- * suggesting the visual conveys semantic content that `alt=""`
- * erases.
+ * Surfaces `<img alt="">` elements whose surrounding markup suggests
+ * the image is actually content, not decoration. Two complementary
+ * detection paths:
  *
- * Example:
- *   <div><img alt="" src="unhappy.svg"><small>Unhappy</small></div>
+ *   1. **Adjacent-meaning-word path** — sole `<img alt="">` whose
+ *      parent holds a short (≤3-word) adjacent text sibling naming
+ *      an affect/status/value term from a hand-curated dictionary.
+ *      Example:
+ *        <div><img alt="" src="unhappy.svg"><small>Unhappy</small></div>
+ *      Here the `<small>` text names what the decorative image
+ *      depicts.
  *
- * Here the `<small>` text names what the decorative image depicts.
- * Either the image is genuinely redundant (the text already conveys
- * the meaning and the image is a presentation-layer duplicate — OK),
- * or the image carries the affect and `alt=""` hides it from AT
- * users. A reviewer confirms; the scanner cannot.
+ *   2. **Content-card-container path** — `<img alt="">` lives inside
+ *      a content-card-shaped container (`<li>`, `<figure>`, or
+ *      `<div>`/`<section>`/`<article>` with a class token containing
+ *      `slide`/`card`) whose descendants include a heading
+ *      (`<h1>`-`<h6>`) or `<p>` with substantive text (≥4 words OR
+ *      ≥20 chars). Example (hero-slider hero pattern):
+ *        <li>
+ *          <img alt="" src="img/slides/1.jpg" />
+ *          <strong>Online Education</strong>
+ *          <p>The best educational template</p>
+ *        </li>
+ *      The image is the visible content of the slide; marking it
+ *      decorative is almost certainly wrong.
+ *
+ * Either way the image is genuinely redundant (the text already
+ * conveys the meaning and the image is a presentation-layer
+ * duplicate — OK), or the image carries semantic content and
+ * `alt=""` hides it from AT users. A reviewer confirms; the scanner
+ * cannot.
  *
  * Distinct from 1.4.5 (Images of Text): that finder asks whether the
  * image is text-baked-in-raster. This one asks whether an `alt=""`
- * decorative image is actually semantic, with the adjacent text as
- * the dismissal/verification signal.
+ * decorative image is actually semantic, with the surrounding markup
+ * (adjacent dictionary text or content-card structure) as the
+ * dismissal/verification signal.
  *
  * Review finder — biased toward false positives. Output is a
  * checklist of places to verify, not a list of failures. Per the
- * AI-first consumer model, the matched dictionary word is echoed in
- * the `reason` so the agent can triage in one read.
+ * AI-first consumer model, the matched dictionary word OR
+ * container-shape signal is echoed in the `reason` so the agent can
+ * triage in one read.
  */
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
-import { getHtmlAttribute, getJsxAttribute, walkHtmlElements } from "../../engine/ast-helpers.ts";
+import {
+  getHtmlAttribute,
+  getJsxAttribute,
+  getJsxAttributeString,
+  walkHtmlElements,
+} from "../../engine/ast-helpers.ts";
 import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
 import type {
   HtmlDocument,
@@ -143,18 +166,45 @@ function findHtmlCandidates(
   filePath: string,
   candidates: ReviewCandidate[],
 ): void {
+  // Track image locations already surfaced so the dictionary path
+  // and the content-card path don't double-fire on the same <img>.
+  const seen = new Set<string>();
   for (const element of walkHtmlElements(root)) {
     const soleImg = soleEmptyAltImgHtml(element);
     if (!soleImg) continue;
     const matchedWord = matchAdjacentMeaningHtml(element, soleImg);
     if (!matchedWord) continue;
+    const key = locationKey(soleImg.loc.start.line, soleImg.loc.start.column);
+    if (seen.has(key)) continue;
+    seen.add(key);
     pushCandidates(
       candidates,
       filePath,
       soleImg.loc.start.line,
       soleImg.loc.start.column,
-      matchedWord,
+      reasonForDictionaryWord(matchedWord),
     );
+  }
+  // Content-card-container path: `<img alt="">` inside a content
+  // card with a heading or substantive paragraph descendant.
+  for (const container of walkHtmlElements(root)) {
+    if (!isContentCardContainerHtml(container)) continue;
+    const imgs = collectEmptyAltImgsHtml(container);
+    if (imgs.length === 0) continue;
+    const textSignal = substantiveTextSignalHtml(container);
+    if (!textSignal) continue;
+    for (const img of imgs) {
+      const key = locationKey(img.loc.start.line, img.loc.start.column);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pushCandidates(
+        candidates,
+        filePath,
+        img.loc.start.line,
+        img.loc.start.column,
+        reasonForContentCard(container.tagName.toLowerCase(), textSignal),
+      );
+    }
   }
 }
 
@@ -240,8 +290,12 @@ function htmlDescendantText(element: HtmlElement): string {
 // ---------------------------------------------------------------------------
 
 function findJsxCandidates(root: TsxModule, filePath: string, candidates: ReviewCandidate[]): void {
+  const seen = new Set<string>();
   for (const element of root.jsxElements) {
-    walkJsxParents(element, filePath, candidates);
+    walkJsxParents(element, filePath, candidates, seen);
+  }
+  for (const element of root.jsxElements) {
+    walkJsxContainers(element, filePath, candidates, seen);
   }
 }
 
@@ -249,22 +303,58 @@ function walkJsxParents(
   element: JsxElement,
   filePath: string,
   candidates: ReviewCandidate[],
+  seen: Set<string>,
 ): void {
   const soleImg = soleEmptyAltImgJsx(element);
   if (soleImg) {
     const matchedWord = matchAdjacentMeaningJsx(element, soleImg);
     if (matchedWord) {
-      pushCandidates(
-        candidates,
-        filePath,
-        soleImg.loc.start.line,
-        soleImg.loc.start.column,
-        matchedWord,
-      );
+      const key = locationKey(soleImg.loc.start.line, soleImg.loc.start.column);
+      if (!seen.has(key)) {
+        seen.add(key);
+        pushCandidates(
+          candidates,
+          filePath,
+          soleImg.loc.start.line,
+          soleImg.loc.start.column,
+          reasonForDictionaryWord(matchedWord),
+        );
+      }
     }
   }
   for (const child of element.children) {
-    if (child.kind === "JsxElement") walkJsxParents(child, filePath, candidates);
+    if (child.kind === "JsxElement") walkJsxParents(child, filePath, candidates, seen);
+  }
+}
+
+function walkJsxContainers(
+  element: JsxElement,
+  filePath: string,
+  candidates: ReviewCandidate[],
+  seen: Set<string>,
+): void {
+  if (isContentCardContainerJsx(element)) {
+    const imgs = collectEmptyAltImgsJsx(element);
+    if (imgs.length > 0) {
+      const textSignal = substantiveTextSignalJsx(element);
+      if (textSignal) {
+        for (const img of imgs) {
+          const key = locationKey(img.loc.start.line, img.loc.start.column);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          pushCandidates(
+            candidates,
+            filePath,
+            img.loc.start.line,
+            img.loc.start.column,
+            reasonForContentCard(element.tagName, textSignal),
+          );
+        }
+      }
+    }
+  }
+  for (const child of element.children) {
+    if (child.kind === "JsxElement") walkJsxContainers(child, filePath, candidates, seen);
   }
 }
 
@@ -386,16 +476,17 @@ function pushCandidates(
   filePath: string,
   line: number,
   column: number,
-  matchedWord: string,
+  reason: string,
 ): void {
-  const reason = `image marked decorative but an adjacent sibling names its meaning ('${matchedWord}'); verify the image is truly redundant or populate alt= with the affect/status.`;
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": narrow static signal (single-img parent +
-    // empty alt + short dictionary-matched sibling text). The
-    // agent's one file read confirms whether the image carries
-    // affect or is a presentation duplicate. Per AI-first: surface,
-    // don't suppress; the dictionary word is echoed so triage
-    // happens without opening the file.
+    // empty alt + short dictionary-matched sibling text, OR
+    // empty-alt img inside a content-card container with a
+    // substantive heading/paragraph descendant). The agent's one
+    // file read confirms whether the image carries affect/content
+    // or is a presentation duplicate. Per AI-first: surface, don't
+    // suppress; the matched word or container-shape signal is
+    // echoed so triage happens without opening the file.
     candidates.push({
       criterionId,
       location: { filePath, line, column },
@@ -403,6 +494,18 @@ function pushCandidates(
       confidence: "low",
     });
   }
+}
+
+function reasonForDictionaryWord(matchedWord: string): string {
+  return `image marked decorative but an adjacent sibling names its meaning ('${matchedWord}'); verify the image is truly redundant or populate alt= with the affect/status.`;
+}
+
+function reasonForContentCard(containerTag: string, textSignal: string): string {
+  return `image marked decorative but lives inside a content-card container (<${containerTag}>) with a heading/paragraph sibling ('${textSignal}'); the image likely IS the slide/card content — verify or populate alt= to describe the image.`;
+}
+
+function locationKey(line: number, column: number): string {
+  return `${line}:${column}`;
 }
 
 /**
@@ -430,4 +533,149 @@ function jsxLiteralString(value: JsxAttributeValue): string | null {
     return inner.slice(1, -1);
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Content-card-container helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Tags whose semantic role is "card-shaped content slot" by HTML
+ * convention (no class needed): `<li>` for slider/carousel slide
+ * lists, `<figure>` for figure-with-caption shapes. A `<figure>`
+ * with `<figcaption>` and a decorative-marked `<img>` is paradoxical
+ * — the figcaption captions an image that supposedly carries no
+ * meaning. WCAG 2.4.6 / authoring practice says the figure's image
+ * should have alt text describing the image; review-finder territory.
+ */
+const CARD_TAGS_BY_NAME: ReadonlySet<string> = new Set(["li", "figure"]);
+
+/**
+ * Tags that become "card-shaped content slots" when their class
+ * contains the word `slide` or `card`. Class-token convention is the
+ * de facto signal across template ecosystems (Bootstrap `card`,
+ * jQuery slider `slide`, Tailwind `card`/`slide-*`). Restricted to
+ * the structural division tags so we don't fire on `<a class="card">`
+ * or `<button class="slide">` where the parent semantics already
+ * differ.
+ */
+const CARD_TAGS_BY_CLASS: ReadonlySet<string> = new Set(["div", "section", "article"]);
+
+/** Heading/paragraph tags whose substantive text we treat as the card's content signal. */
+const CONTENT_TEXT_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "p"]);
+
+/** Substantive-text thresholds: "≥4 words OR ≥20 chars after collapsing whitespace." */
+const SUBSTANTIVE_MIN_WORDS = 4;
+const SUBSTANTIVE_MIN_CHARS = 20;
+
+/** Echo cap for the substantive-text snippet — keep `reason` agent-readable. */
+const SUBSTANTIVE_ECHO_MAX = 60;
+
+function isContentCardContainerHtml(element: HtmlElement): boolean {
+  const tag = element.tagName.toLowerCase();
+  if (CARD_TAGS_BY_NAME.has(tag)) return true;
+  if (!CARD_TAGS_BY_CLASS.has(tag)) return false;
+  const classAttr = getHtmlAttribute(element, "class");
+  return classHasCardOrSlideToken(classAttr);
+}
+
+function isContentCardContainerJsx(element: JsxElement): boolean {
+  const tag = element.tagName;
+  if (CARD_TAGS_BY_NAME.has(tag)) return true;
+  if (!CARD_TAGS_BY_CLASS.has(tag)) return false;
+  const classAttr = getJsxAttributeString(element, "className");
+  return classHasCardOrSlideToken(classAttr);
+}
+
+/**
+ * Token-substring match: the class string contains a whitespace-
+ * separated token whose lowercase form contains `slide` or `card`.
+ * Real templates use `card`, `card-body`, `slide`, `slide-item`,
+ * `carousel-slide` — substring on each token catches the family
+ * without overmatching identifiers like `placard` (which would only
+ * match if it appeared as its own token, an edge case the agent can
+ * dismiss in one read).
+ */
+function classHasCardOrSlideToken(classAttr: string | null): boolean {
+  if (!classAttr) return false;
+  const tokens = classAttr.toLowerCase().split(/\s+/);
+  for (const token of tokens) {
+    if (!token) continue;
+    if (token.includes("slide") || token.includes("card")) return true;
+  }
+  return false;
+}
+
+/** Collects every descendant `<img alt="">` (explicit empty string). */
+function collectEmptyAltImgsHtml(root: HtmlElement): readonly HtmlElement[] {
+  const imgs: HtmlElement[] = [];
+  for (const el of walkHtmlElements(root)) {
+    if (el === root) continue;
+    if (el.tagName.toLowerCase() !== "img") continue;
+    if (getHtmlAttribute(el, "alt") !== "") continue;
+    imgs.push(el);
+  }
+  return imgs;
+}
+
+function collectEmptyAltImgsJsx(root: JsxElement): readonly JsxElement[] {
+  const imgs: JsxElement[] = [];
+  const visit = (el: JsxElement): void => {
+    if (el !== root && el.tagName === "img") {
+      if (literalJsxAttribute(el, "alt") === "") imgs.push(el);
+    }
+    for (const child of el.children) {
+      if (child.kind === "JsxElement") visit(child);
+    }
+  };
+  visit(root);
+  return imgs;
+}
+
+/**
+ * Returns a short echo of the first descendant heading or `<p>`
+ * whose collapsed text meets the substantive threshold. Returns
+ * null if no such descendant exists. The echo is capped so the
+ * candidate `reason` stays terse for the agent.
+ */
+function substantiveTextSignalHtml(root: HtmlElement): string | null {
+  for (const el of walkHtmlElements(root)) {
+    if (el === root) continue;
+    if (!CONTENT_TEXT_TAGS.has(el.tagName.toLowerCase())) continue;
+    const aggregate = collapseWhitespace(htmlDescendantText(el));
+    if (!aggregate) continue;
+    if (!isSubstantive(aggregate)) continue;
+    return truncateEcho(aggregate);
+  }
+  return null;
+}
+
+function substantiveTextSignalJsx(root: JsxElement): string | null {
+  let result: string | null = null;
+  const visit = (el: JsxElement): boolean => {
+    if (el !== root && CONTENT_TEXT_TAGS.has(el.tagName)) {
+      const aggregate = collapseWhitespace(jsxDescendantText(el));
+      if (aggregate && isSubstantive(aggregate)) {
+        result = truncateEcho(aggregate);
+        return true;
+      }
+    }
+    for (const child of el.children) {
+      if (child.kind === "JsxElement" && visit(child)) return true;
+    }
+    return false;
+  };
+  visit(root);
+  return result;
+}
+
+function isSubstantive(text: string): boolean {
+  if (text.length >= SUBSTANTIVE_MIN_CHARS) return true;
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  return wordCount >= SUBSTANTIVE_MIN_WORDS;
+}
+
+function truncateEcho(text: string): string {
+  if (text.length <= SUBSTANTIVE_ECHO_MAX) return text;
+  return `${text.slice(0, SUBSTANTIVE_ECHO_MAX - 1).trimEnd()}…`;
 }
