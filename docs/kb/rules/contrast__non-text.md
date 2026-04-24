@@ -8,7 +8,7 @@ satisfies: ["wcag22:1.4.11", "wcag21:1.4.11"]
 - **Severity:** error
 - **Scope:** project
 - **Satisfies:** `wcag22:1.4.11`, `wcag21:1.4.11`
-- **Applies to:** .css, .html, .htm
+- **Applies to:** .css, .html, .htm, .scss, .less
 ## What it checks
 Borders, outlines, and graphical objects of user interface components must have at least 3:1 contrast against adjacent colors.
 ## Why it matters
