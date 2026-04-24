@@ -401,6 +401,48 @@ export interface PerRuleCoverage {
   readonly reason?: string;
   readonly remediation?: string;
   /**
+   * Structured code naming the substrate-level cause of a confidence
+   * downgrade, when the cause is parser-level rather than rule-level.
+   *
+   * Sibling of {@link reason}: `reason` is human-prose or rule-family
+   * structured codes (`"no files matching .css were scanned"`,
+   * `"cross_file_listener_resolution_limited_on_this_input"`); this
+   * field is a strict kebab-case enum that the response-assembly layer
+   * stamps when files in the scan failed to parse cleanly. Both can
+   * coexist on one row when a rule had a low-confidence cause AND a
+   * parse-error file matched its extension gate (e.g. zero eligible CSS
+   * files PLUS a `.css` file that failed to parse — both are honest
+   * signals the agent reads on different axes).
+   *
+   * Values:
+   *   - `"file-parse-error"` — at least one file matching this rule's
+   *     extension gate was in `meta.analysisCoverage.parseErrorFiles`
+   *     (total parse failure, file invisible to rules). The rule's
+   *     `filesEvaluated` excludes those files; the count an agent reads
+   *     is the *clean-parse* count, not the gate's match count. Pairs
+   *     naturally with the `parseErrorFiles` bucket for cross-reference.
+   *   - `"partial-parse"` — at least one file matching the gate was in
+   *     `meta.analysisCoverage.partialParseFiles` (parser emitted errors
+   *     but rules fired on the recovered slice). The file IS counted in
+   *     `filesEvaluated` because the rule did run on the recovered AST,
+   *     but the evidence horizon is degraded — confidence drops to
+   *     `"low"` so the agent reads the cited file rather than trusting
+   *     the clean tally.
+   *
+   * Stamped by the MCP assembly layer (`src/mcp/scan-assembly.ts`), not
+   * by the engine — rules and the per-rule-coverage builder stay pure
+   * over the scanner's evaluation tracker. Present-when-meaningful per
+   * CLAUDE.md §1 "Ambiguous field shapes are dishonest": absent when no
+   * parse-error / partial-parse files contributed to this rule's gate.
+   *
+   * Doctrine: zero-output success is ambiguous failure. Without this
+   * field, a rule whose only eligible files all failed to parse would
+   * surface as `findingsEmitted: 0, coverageConfidence: "high"` — the
+   * agent reads "ran clean" when the truth is "rules never saw the
+   * file" (V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS).
+   */
+  readonly coverageConfidenceReason?: "file-parse-error" | "partial-parse";
+  /**
    * Honest per-rule file-concentration hint: when a rule's findings
    * cluster on one file (total > {@link findingsEmitted} threshold AND
    * densest-file share strictly exceeds 50%), points at that file with

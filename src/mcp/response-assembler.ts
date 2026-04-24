@@ -76,6 +76,7 @@ import {
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
 import {
+  applyParseErrorAdjustment,
   buildScanMeta,
   buildScanPlan,
   sumFindingsAcrossFiles,
@@ -347,6 +348,18 @@ export function assembleScanFamilyResponse(
   // partial-parse bucket is to distinguish "rules ran" from "rules
   // couldn't see anything," not to filter by severity.
   const findingFilePaths = findingFilePathSet(violations);
+  // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS: route the rows
+  // through the parse-error adjustment once so the meta block and the
+  // top-level `ruleCoverage` derivative agree on which rules
+  // confidently cleaned (parse-error files no longer count toward
+  // `filesEvaluated`; partial-parse matches drop confidence to
+  // `"low"`). No-op fast path when the scan has no parse errors.
+  const adjustedPerRuleCoverage = applyParseErrorAdjustment(
+    perRuleCoverage,
+    parsedFiles,
+    activeRules,
+    findingFilePaths,
+  );
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     files: parsedFiles,
@@ -361,7 +374,7 @@ export function assembleScanFamilyResponse(
     verboseMeta,
     preset,
     suppressions,
-    perRuleCoverage,
+    perRuleCoverage: adjustedPerRuleCoverage,
     findingFilePaths,
     ...(discoveryDiagnostics !== undefined &&
     Object.keys(discoveryDiagnostics.skippedByExtension).length > 0
@@ -378,8 +391,11 @@ export function assembleScanFamilyResponse(
     referenceGuide = hoisted.referenceGuide;
   }
 
-  // (6) Rule-coverage derivative — only when non-null.
-  const ruleCoverage = buildRuleCoverageDerivative(perRuleCoverage, violations);
+  // (6) Rule-coverage derivative — only when non-null. Uses the
+  // adjusted rows so the derivative's `confidentlyClean` /
+  // `lowConfidenceClean` split matches what `meta.perRuleCoverage`
+  // surfaces.
+  const ruleCoverage = buildRuleCoverageDerivative(adjustedPerRuleCoverage, violations);
 
   // (7) Review candidates — opt-in dedupe at the single-file level.
   const includeReview = options.includeReviewCandidates === true;

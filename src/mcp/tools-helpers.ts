@@ -28,6 +28,7 @@ import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
 import {
+  applyParseErrorAdjustment,
   buildScanMeta,
   buildScanPlan,
   sumFindingsAcrossFiles,
@@ -603,6 +604,23 @@ export async function runScanAndFormat(
   // to repair pointers when duplicates drop below the threshold, which
   // is more moving parts than it's worth.
   const referenceGuide = buildReferenceGuide(fileEntries);
+  // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS: route the per-rule
+  // coverage rows through the parse-error adjustment once, then feed
+  // the same adjusted view to both the meta block and the top-level
+  // `ruleCoverage` derivative. Without this, a row downgraded to
+  // `"low"` in `meta.perRuleCoverage` would still surface in
+  // `ruleCoverage.confidentlyClean` (which branches on
+  // `coverageConfidence === "high"`) — the canonical cross-surface
+  // drift the AI-first doctrine warns against. The helper is a no-op
+  // fast path when the scan has no parse-error / partial-parse files,
+  // so the common case pays nothing.
+  const findingFilePaths = new Set(filtered.map((v) => v.location.filePath));
+  const adjustedPerRuleCoverage = applyParseErrorAdjustment(
+    perRuleCoverage,
+    files,
+    activeRules,
+    findingFilePaths,
+  );
   // Per-rule trust telemetry (Q2R2-RULE-COV). The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
   // splits the 0-findings rules into "trust the clean tally" vs "scan
@@ -612,7 +630,7 @@ export async function runScanAndFormat(
   // — matching the plan's split `violations` / `notes` counters so a
   // rule silenced by the session's minSeverity filter reads as "0
   // findings for this consumer" here too.
-  const ruleCoverageDerivative = buildRuleCoverageDerivative(perRuleCoverage, filtered);
+  const ruleCoverageDerivative = buildRuleCoverageDerivative(adjustedPerRuleCoverage, filtered);
   const scanMeta = buildScanMeta({
     filesScanned: result.filesScanned,
     files,
@@ -627,7 +645,7 @@ export async function runScanAndFormat(
     verboseMeta,
     preset,
     suppressions,
-    perRuleCoverage,
+    perRuleCoverage: adjustedPerRuleCoverage,
     // Derived from the post-filter violation set (same view the
     // consumer sees on `files`/`plan`). Threads into the parse-error
     // split so a file that emitted findings lands in
@@ -636,7 +654,7 @@ export async function runScanAndFormat(
     // findings with live line numbers would also appear in
     // `parseErrorFiles`, reading to the agent as "invisible" and
     // the findings are silently ignored.
-    findingFilePaths: new Set(filtered.map((v) => v.location.filePath)),
+    findingFilePaths,
     ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
   });
   // V1-META-COUNTS-BY-SURFACE-REGRESSION: every scan-family consumer

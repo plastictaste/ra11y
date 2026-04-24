@@ -13,6 +13,7 @@ import type { FixesByClass } from "../output/agent-response/index.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
+import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { buildPlanSummary, type FixClassCounts } from "./plan-summary.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
@@ -250,10 +251,142 @@ export function buildScanMeta(args: {
     // confidence rows carry a `reason` + `remediation` so an agent can
     // act on the gap (canonical case: Tailwind pre-build where
     // `contrast/minimum` runs on 0 eligible CSS files and the headline
-    // 0 findings is meaningless without this context). Omitted when
-    // the array is empty.
+    // 0 findings is meaningless without this context). The rows
+    // arriving here have already been routed through
+    // {@link applyParseErrorAdjustment} by the wiring layer when
+    // parse-error / partial-parse files exist, so the meta and the
+    // top-level `ruleCoverage` derivative agree on
+    // `coverageConfidence` for every row (no cross-surface drift).
+    // Omitted when the array is empty.
     ...(perRuleCoverage.length > 0 ? { perRuleCoverage } : {}),
   };
+}
+
+/**
+ * Adjusts {@link PerRuleCoverage} rows so files that failed to parse
+ * are honest about whether the rule actually evaluated their content
+ * (V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS).
+ *
+ * The engine's evaluation tracker bumps `eligible` and `evaluated` per
+ * (rule, file) pair purely on extension match — a file in
+ * `parseErrorFiles` (parser totally failed, AST is empty) still
+ * contributes the same +1 as a clean-parsing file, even though the
+ * rule never saw the content. Without correction, an extension-gated
+ * rule whose only matching files all failed to parse surfaces as
+ * `findingsEmitted: 0, coverageConfidence: "high"` — the canonical
+ * silent-miss the doctrine "zero-output success is ambiguous failure"
+ * names at per-rule granularity.
+ *
+ * Two adjustments fire:
+ *
+ *   - Parse-error files (errored AND zero findings): subtracted from
+ *     the row's `filesEvaluated`. When the resulting count is below
+ *     `MIN_FILES_FOR_HIGH_CONFIDENCE` (1), confidence drops to `"low"`
+ *     and `coverageConfidenceReason: "file-parse-error"` stamps the
+ *     structured cause. `filesEligible` is left intact — eligibility
+ *     is "matched the gate," which the parse-error file did; the
+ *     gap is at evaluation, not eligibility.
+ *   - Partial-parse files (errored AND at least one finding):
+ *     `filesEvaluated` stays — rules genuinely fired on the recovered
+ *     AST — but confidence drops to `"low"` and
+ *     `coverageConfidenceReason: "partial-parse"` stamps the cause.
+ *     The row's existing `reason` (if any) is preserved alongside,
+ *     since it names a different axis (e.g. extension-gate,
+ *     cross-file-bound) than the parse-state axis the new field
+ *     covers.
+ *
+ * Project-scoped rules use `filesScanned` as their evaluated count;
+ * the same subtraction applies for parse-error files since a project
+ * rule running over an empty AST cannot detect anything in that file
+ * either.
+ *
+ * No-op fast path: when no parse-error / partial-parse files matched
+ * any rule's gate, the function returns the input array unchanged so
+ * the common case stays cheap. Exported so the wiring layer (which
+ * also passes `perRuleCoverage` to {@link buildRuleCoverageDerivative})
+ * can adjust the rows once and feed both consumers, avoiding cross-
+ * surface drift between `meta.perRuleCoverage` and the top-level
+ * `ruleCoverage` headline.
+ */
+export function applyParseErrorAdjustment(
+  rows: readonly PerRuleCoverage[],
+  files: readonly ParsedFile[],
+  activeRules: readonly Rule[],
+  findingFilePaths: ReadonlySet<string> | undefined,
+): readonly PerRuleCoverage[] {
+  const erroredFiles = files.filter((f) => f.ast.errors.length > 0);
+  if (erroredFiles.length === 0) return rows;
+  const parseErrorFiles: ParsedFile[] = [];
+  const partialParseFiles: ParsedFile[] = [];
+  for (const f of erroredFiles) {
+    if (findingFilePaths?.has(f.filePath)) partialParseFiles.push(f);
+    else parseErrorFiles.push(f);
+  }
+  const ruleById = new Map<string, Rule>();
+  for (const r of activeRules) ruleById.set(r.id, r);
+  return rows.map((row) =>
+    adjustRowForParseErrors(row, ruleById.get(row.ruleId), parseErrorFiles, partialParseFiles),
+  );
+}
+
+/**
+ * Per-row adjustment helper for {@link applyParseErrorAdjustment}.
+ * Returns the input row unchanged when neither parse-error nor
+ * partial-parse files matched the rule's gate; otherwise returns a
+ * fresh row with `filesEvaluated` / `coverageConfidence` /
+ * `coverageConfidenceReason` updated. The original row's optional
+ * fields (`concentration`, `classPatternConcentration`, etc.) survive
+ * via the spread so the adjustment never strips additive telemetry.
+ */
+function adjustRowForParseErrors(
+  row: PerRuleCoverage,
+  rule: Rule | undefined,
+  parseErrorFiles: readonly ParsedFile[],
+  partialParseFiles: readonly ParsedFile[],
+): PerRuleCoverage {
+  const parseErrorMatches = countMatchingFiles(rule, parseErrorFiles);
+  const partialParseMatches = countMatchingFiles(rule, partialParseFiles);
+  if (parseErrorMatches === 0 && partialParseMatches === 0) return row;
+  // Subtract parse-error matches from `filesEvaluated`. Floor at 0 so
+  // an off-by-one in match counting never produces a negative count
+  // on the wire — defensive for callers that pre-trim rows.
+  const adjustedEvaluated = Math.max(0, row.filesEvaluated - parseErrorMatches);
+  // Partial-parse files still contributed to evaluation (rules fired
+  // on the recovered AST), so confidence drops without changing the
+  // count. Parse-error matches alone also drop confidence: the rule
+  // may have lost its only honest evidence horizon on this scan.
+  const reason = parseErrorMatches > 0 ? "file-parse-error" : "partial-parse";
+  return {
+    ...row,
+    filesEvaluated: adjustedEvaluated,
+    coverageConfidence: "low",
+    coverageConfidenceReason: reason,
+  };
+}
+
+/**
+ * Counts how many files in `pool` match the rule's
+ * `appliesTo.fileExtensions` gate. Project-scoped rules (no extension
+ * gate) match every file. Mirrors the engine's `applies()` predicate
+ * via the shared {@link extensionMatches} helper so the post-processing
+ * uses the same eligibility shape as the rule runner — including the
+ * `.jsx → .js` / `.tsx → .ts` alias expansion.
+ *
+ * Returns 0 when the rule is unknown to the active set; defensive for
+ * the rare path where a `perRuleCoverage` row references a rule that
+ * was filtered out between scanner-emit and meta-assembly.
+ */
+function countMatchingFiles(rule: Rule | undefined, pool: readonly ParsedFile[]): number {
+  if (rule === undefined) return 0;
+  const extensions = rule.appliesTo?.fileExtensions;
+  if (!extensions || extensions.length === 0) return pool.length;
+  let n = 0;
+  for (const f of pool) {
+    const dot = f.filePath.lastIndexOf(".");
+    const ext = dot === -1 ? "" : f.filePath.slice(dot);
+    if (extensionMatches(ext, extensions)) n += 1;
+  }
+  return n;
 }
 
 /** Tally parseable files by extension — surfaces coverage gaps at a glance. */
