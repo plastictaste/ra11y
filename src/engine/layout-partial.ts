@@ -255,12 +255,32 @@ function hasCompositionDirective(source: string): boolean {
 //      specifically) catches the shape without widening past the
 //      "author wrote content" baseline that branches B and C assume.
 //
+//   E. Empty-structural-shell — body has ≥3 visible (non-script,
+//      non-style) descendants AND zero headings AND zero landmarks.
+//      Pages shaped like `<body><div>…</div><div>…</div><div>…</div>
+//      </body>` (theme-clock, kinetic-loader, random-image-generator,
+//      hoverboard — vanilla JS demo projects whose visible UI is
+//      composed of decorative `<div>` and `<img>` containers) clear
+//      none of branches A-D because they have no heading and no
+//      landmark anywhere. The empty body is a *stronger* 1.3.1 signal
+//      than a page with the wrong heading level — there is nothing
+//      programmatically determinable about page structure at all — so
+//      treating it as a fragment under-surfaces the worst case.
+//      Branch E is intentionally narrow: ≥3 visible descendants
+//      ensures we don't false-positive on tiny snippets, and the
+//      "no heading AND no landmark" condition guarantees branches
+//      A-D don't fire for a different reason. A body with ONLY a
+//      `<script>` (vanilla JS demo whose DOM is generated at runtime)
+//      is a different shape — covered by V1-EMPTY-ROOT-DIV-SCRIPT-
+//      ONLY-WARNING and explicitly NOT by this branch (the visible-
+//      descendant tally excludes script + style nodes).
+//
 // Below the bar: minimal documents (alt-text snippets, attribute-rule
 // fixtures, email templates) that have no landmarks, no h1 + body
-// content, no heading + list + interactive trio, and no heading +
-// body-script pair. Treating those as fragments avoids noisy
-// "missing <main>" warnings on documents that genuinely have nothing
-// to wrap.
+// content, no heading + list + interactive trio, no heading + body-
+// script pair, and fewer than 3 visible body descendants. Treating
+// those as fragments avoids noisy "missing <main>" warnings on
+// documents that genuinely have nothing to wrap.
 //
 // Doctrine note (`docs/kb/architecture/ai-first-consumer.md`): the
 // thresholds here gate *whether the rule evaluates*, not whether a
@@ -299,6 +319,16 @@ interface BodyShape {
   readonly hasInteractive: boolean;
   readonly hasBodyScript: boolean;
   readonly descendantCount: number;
+  /**
+   * Body-scoped descendant count restricted to *visible* elements —
+   * excludes `<script>`, `<style>`, `<noscript>`, and `<template>`
+   * (HTML5 elements that contribute no rendered output to the page).
+   * Used by branch E (`looksLikeFullPage`) to gate the empty-shell
+   * detection so a body holding only a `<script>` does not cross the
+   * threshold; that script-only shape is a distinct case tracked by
+   * V1-EMPTY-ROOT-DIV-SCRIPT-ONLY-WARNING.
+   */
+  readonly visibleDescendantCount: number;
 }
 
 /**
@@ -328,9 +358,21 @@ function tallySignals(tag: string, signals: ContentSignals): void {
   if (tag === "script") signals.hasBodyScript = true;
 }
 
+/**
+ * Tags that contribute no rendered output to the page — body-scoped
+ * descendants in this set are excluded from `visibleDescendantCount`
+ * so branch E (empty-structural-shell) doesn't flag a body whose only
+ * children are `<script>` / `<style>` / `<noscript>` / `<template>`.
+ * The script-only body shape is a different case tracked by
+ * V1-EMPTY-ROOT-DIV-SCRIPT-ONLY-WARNING; keeping it out of branch E
+ * ensures the two cases route separately.
+ */
+const NON_VISIBLE_TAGS: ReadonlySet<string> = new Set(["script", "style", "noscript", "template"]);
+
 function inspectBody(body: HtmlElement, doc: HtmlDocument): BodyShape {
   let hasExplicitLandmark = false;
   let descendantCount = 0;
+  let visibleDescendantCount = 0;
   const signals: ContentSignals = {
     hasH1: false,
     hasHeading: false,
@@ -350,9 +392,10 @@ function inspectBody(body: HtmlElement, doc: HtmlDocument): BodyShape {
     if (LANDMARK_TAGS.has(tag)) hasExplicitLandmark = true;
     if (!isInsideBody(el, body)) continue;
     descendantCount += 1;
+    if (!NON_VISIBLE_TAGS.has(tag)) visibleDescendantCount += 1;
     tallySignals(tag, signals);
   }
-  return { hasExplicitLandmark, ...signals, descendantCount };
+  return { hasExplicitLandmark, ...signals, descendantCount, visibleDescendantCount };
 }
 
 /**
@@ -385,5 +428,19 @@ export function looksLikeFullPage(body: HtmlElement, doc: HtmlDocument): boolean
   // catches the h3-only expanding-cards / card-gallery shape that
   // branch B (h1-gated) and branch C (list+interactive-gated) miss.
   if (shape.hasHeading && shape.hasBodyScript) return true;
+  // Branch E: empty-structural-shell — body has visible content but
+  // zero headings AND zero landmarks. Pages composed entirely of
+  // decorative `<div>` / `<img>` (theme-clock, kinetic-loader,
+  // random-image-generator, hoverboard) clear none of branches A-D
+  // because they have no heading anywhere; the absence of any
+  // landmark + any heading is itself a *stronger* 1.3.1 signal than
+  // a page with the wrong heading level. The visible-descendant
+  // threshold (≥3, where visible excludes script/style/noscript/
+  // template) keeps the branch from firing on tiny fragments and
+  // explicitly routes the script-only body shape through V1-EMPTY-
+  // ROOT-DIV-SCRIPT-ONLY-WARNING instead of through here.
+  if (!(shape.hasExplicitLandmark || shape.hasHeading) && shape.visibleDescendantCount >= 3) {
+    return true;
+  }
   return false;
 }

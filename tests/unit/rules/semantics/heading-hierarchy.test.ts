@@ -428,4 +428,80 @@ describe("rule semantics/heading-hierarchy", () => {
       expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Branch E — empty-structural-shell (V1-RULE-LANDMARK-MAIN-AND-HEADING-
+  // HIERARCHY-DEFER-ON-EMPTY-PAGE).
+  //
+  // Pre-fix, a body composed entirely of decorative `<div>` / `<img>` with
+  // no headings AND no landmarks silently passed `looksLikeFullPage`, so
+  // the missing-h1-on-full-page variant didn't fire — the file slipped
+  // through both rules. Branch E now recognises this shape; the missing-
+  // h1 variant fires at the <body> tag with the "no headings at all"
+  // message branch.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("branch E (empty-structural-shell missing-h1 variant)", () => {
+    it("fires on a body of decorative <div>s with no headings and no landmarks", () => {
+      // theme-clock canonical shape — no heading anywhere, no landmark
+      // anywhere, body composed of nested decorative containers. The
+      // missing-h1-on-full-page variant fires at <body> with the "no
+      // headings at all" branch of the suggestion text.
+      const source = [
+        "<html>",
+        "  <body>",
+        '    <div class="container">',
+        '      <div class="needle hour"></div>',
+        '      <div class="needle minute"></div>',
+        '      <div class="needle second"></div>',
+        "    </div>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "clock.html" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeDefined();
+      // Anchored at the <body> line (line 2).
+      expect(variant?.location.line).toBe(2);
+      // "No headings at all" branch of the suggestion text — there are
+      // genuinely no <h1>-<h6> in the file, so the suggestion can't
+      // reference promoting an existing heading.
+      expect(variant?.message).toContain("no headings at all");
+    });
+
+    it("fires on an image-grid demo (no script, no heading, no landmark)", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        '    <div id="gallery">',
+        '      <img src="a.jpg" alt="A">',
+        '      <img src="b.jpg" alt="B">',
+        '      <img src="c.jpg" alt="C">',
+        "    </div>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const v = runRule(rule, source, { filePath: "gallery.html" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeDefined();
+      expect(variant?.location.line).toBe(2);
+    });
+
+    it("does NOT fire on a body holding only a <script> (script-only shape routes elsewhere)", () => {
+      // Pairs with the equivalent landmark-main test — a body of only a
+      // <script> stays silent because branch E's visible-descendant tally
+      // excludes <script>; the script-only shape is V1-EMPTY-ROOT-DIV-
+      // SCRIPT-ONLY-WARNING's responsibility, not this rule's.
+      const v = runRule(rule, '<html><body><script src="app.js"></script></body></html>', {
+        filePath: "spa.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on a body with only 1-2 visible descendants (below threshold)", () => {
+      const v = runRule(rule, "<html><body><div>One</div><div>Two</div></body></html>", {
+        filePath: "tiny.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+  });
 });

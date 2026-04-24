@@ -199,10 +199,16 @@ describe("rule semantics/landmark-main", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("does NOT fire when body has many descendants but no <h1>", () => {
-      // Demo snippet with multiple controls but no top-level page heading.
-      // Without an h1 and without explicit landmarks, the document reads
-      // as a fragment/widget rather than a full page.
+    it("fires when body has many descendants and no <h1> (branch E empty-shell)", () => {
+      // Demo snippet with multiple controls but no top-level page heading
+      // and no landmarks. Pre-fix this was treated as a fragment and
+      // silently passed; that under-surfaced the empty-structural-shell
+      // case (theme-clock / kinetic-loader / random-image-generator
+      // shape) which is itself a stronger 1.3.1 signal than a page with
+      // the wrong heading level. Branch E in `looksLikeFullPage` now
+      // recognises this shape: ≥3 visible body descendants AND zero
+      // headings AND zero landmarks → the page should carry both an
+      // <h1> and a <main>.
       const v = runRule(
         rule,
         [
@@ -218,7 +224,8 @@ describe("rule semantics/landmark-main", () => {
         ].join("\n"),
         { filePath: "a.html" },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no <main>");
     });
 
     it("counts descendants from inside a wrapping <div class='container'>", () => {
@@ -493,6 +500,112 @@ describe("rule semantics/landmark-main", () => {
       // Body contains only <h1> (1 descendant); branch B requires ≥5.
       // No list, no interactive — branch C fails. No landmarks — branch A
       // fails. Rule does not fire.
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Branch E — empty-structural-shell (V1-RULE-LANDMARK-MAIN-AND-HEADING-
+  // HIERARCHY-DEFER-ON-EMPTY-PAGE).
+  //
+  // Pre-fix, a body composed entirely of decorative `<div>` / `<img>` with
+  // no headings AND no landmarks silently passed `looksLikeFullPage` — the
+  // existing four branches all require either a heading or a landmark to
+  // be present, and theme-clock / kinetic-loader / random-image-generator
+  // / hoverboard demos have neither. The empty body is a *stronger* 1.3.1
+  // signal than a page with the wrong heading level (no programmatically
+  // determinable structure at all), so under-surfacing is the worst
+  // failure mode. Branch E recognises the shape: ≥3 visible (non-script,
+  // non-style) body descendants, zero headings, zero landmarks.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("heuristic branch E (empty-structural-shell)", () => {
+    it("fires on a body of decorative <div>s with no headings and no landmarks", () => {
+      // theme-clock canonical shape: a button toggle plus a clock widget
+      // built from nested <div> needles. No <h1>-<h6>, no header/nav/
+      // footer/aside/main, just visible content divs.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div class="container">',
+          '      <div class="needle hour"></div>',
+          '      <div class="needle minute"></div>',
+          '      <div class="needle second"></div>',
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "clock.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no <main>");
+    });
+
+    it("fires on an image-grid demo (no script, no heading, no landmark)", () => {
+      // random-image-generator canonical shape: an <img> grid inside a
+      // single wrapper. No script, no heading, no landmark.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div id="gallery">',
+          '      <img src="a.jpg" alt="A">',
+          '      <img src="b.jpg" alt="B">',
+          '      <img src="c.jpg" alt="C">',
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "gallery.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no <main>");
+    });
+
+    it("does NOT fire on a body holding only a <script> (script-only shape routes elsewhere)", () => {
+      // A body containing nothing but a <script> is a vanilla-JS demo
+      // whose DOM is generated at runtime — a different case tracked by
+      // V1-EMPTY-ROOT-DIV-SCRIPT-ONLY-WARNING. Branch E's visible-
+      // descendant tally excludes <script> (and <style>/<noscript>/
+      // <template>) so this body has 0 visible descendants and stays
+      // below the ≥3 threshold.
+      const v = runRule(rule, '<html><body><script src="app.js"></script></body></html>', {
+        filePath: "spa.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on a body with only 1-2 visible descendants (below threshold)", () => {
+      // Tiny snippet shape — below the ≥3 visible-descendants threshold.
+      // The threshold keeps branch E from false-positiving on minimal
+      // demonstration fixtures (alt-text snippets, attribute-rule
+      // probes) that genuinely have nothing to wrap in a landmark.
+      const v = runRule(rule, "<html><body><div>One</div><div>Two</div></body></html>", {
+        filePath: "tiny.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("script + style descendants do NOT count toward the visible threshold", () => {
+      // 1 visible <div> + 2 non-visible (<script>, <style>) = 1 visible
+      // descendant; below the ≥3 threshold. Pre-fix bug guard: counting
+      // <script>/<style> would have crossed the threshold and produced
+      // a noisy emit on the script-only shape this branch must avoid.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <div>One</div>",
+          "    <script>doStuff()</script>",
+          "    <style>.x { color: red }</style>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "mixed.html" },
+      );
       expect(v).toHaveLength(0);
     });
   });
