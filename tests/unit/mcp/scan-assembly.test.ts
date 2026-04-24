@@ -115,11 +115,7 @@ describe("sumFindingsEmitted + sumFindingsAcrossFiles reductions", () => {
   });
 
   it("sumFindingsAcrossFiles sums `findings.length` across file buckets", () => {
-    const files = [
-      { findings: [1, 2, 3] },
-      { findings: [] },
-      { findings: [1] },
-    ];
+    const files = [{ findings: [1, 2, 3] }, { findings: [] }, { findings: [1] }];
     expect(sumFindingsAcrossFiles(files)).toBe(4);
   });
 });
@@ -136,7 +132,7 @@ describe("runScanAndFormat — V1-META-COUNTS-BY-SURFACE-REGRESSION", () => {
     // finding across every surface.
     const file = htmlFile(
       "/fixtures/missing-alt.html",
-      "<html><body><img src=\"x.png\"></body></html>",
+      '<html><body><img src="x.png"></body></html>',
     );
     const session = new McpSession();
     const { formatted } = await runScanAndFormat(
@@ -156,12 +152,11 @@ describe("runScanAndFormat — V1-META-COUNTS-BY-SURFACE-REGRESSION", () => {
     expect(formatted.meta["countsBySurface"]).toBeUndefined();
     // Smoke-check the scan actually produced findings (otherwise the
     // "agree at zero" case would pass vacuously).
-    const findings =
-      (formatted.plan["violations"] as number) + (formatted.plan["notes"] as number);
+    const findings = (formatted.plan["violations"] as number) + (formatted.plan["notes"] as number);
     expect(findings).toBeGreaterThan(0);
   });
 
-  it("stamps countsBySurface on runScanAndFormat output when plan and perRuleCoverage disagree — drives the scan_project / scan_diff regression fix", async () => {
+  it("stamps countsBySurface on runScanAndFormat output when plan and perRuleCoverage disagree — drives the scan_project / scan_diff regression fix", () => {
     // The regression in field reports: every scan_project response
     // across four repos shipped without `meta.countsBySurface` even when
     // drift existed between the three totals. Root cause: the stamp
@@ -199,10 +194,7 @@ describe("runScanAndFormat — V1-META-COUNTS-BY-SURFACE-REGRESSION", () => {
     // ambiguous-field rule) or the consumers were mis-reading an
     // absent field. This test locks in the honest shape: present-
     // when-meaningful; never the literal `null`.
-    const file = htmlFile(
-      "/fixtures/clean.html",
-      "<html><body><h1>Hello</h1></body></html>",
-    );
+    const file = htmlFile("/fixtures/clean.html", "<html><body><h1>Hello</h1></body></html>");
     const session = new McpSession();
     const { formatted } = await runScanAndFormat(
       [file],
