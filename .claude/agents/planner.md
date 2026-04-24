@@ -31,6 +31,7 @@ The orchestrator passes:
 
 2. **Parse each active track section.** For each track `T`:
    - Collect every `- [ ]` item in order. Ignore `- [x]` (done) and items tagged `[!]` (user-blocked) — `[!]` items go to `blocked` with their note.
+   - For every selected item, capture `backlogSlice`: the verbatim `- [ ]` bullet plus adjacent continuation lines (indented sub-bullets, inline notes that belong to the same item). Target 3–5 lines; hard cap 10 lines. The orchestrator forwards this to specialists so they don't re-read the 800+ line backlog for a 3-line scope statement.
    - Honor sequencing constraints declared in the track (e.g. "ADR → harness prototype → fixtures" for Track F). Skip items whose prerequisites aren't yet `- [x]`; they stay in `deferred` for the next invocation.
    - For each selectable item, classify its specialist using SKILL.md's table:
      - `src/rules/**` → `rule-implementer`
@@ -75,6 +76,7 @@ Single JSON block, no prose. Ceiling: ~80 lines for a full 10×3 plan.
           "track": "D",
           "specialist": "main-session",
           "backlogLine": 42,
+          "backlogSlice": "- [ ] D/demo-record — record a 90-second asciinema cast of `bun ra11y scan` against the fixture project; commit under docs/demo.cast and link from README.",
           "inferredFiles": ["docs/demo.cast", "README.md"],
           "collisionWith": null,
           "classificationNote": null
@@ -84,6 +86,7 @@ Single JSON block, no prose. Ceiling: ~80 lines for a full 10×3 plan.
           "track": "R",
           "specialist": "rule-implementer",
           "backlogLine": 312,
+          "backlogSlice": "- [ ] R/nav-consistent — implement navigation/consistent for wcag22:3.2.3 (consistent navigation); compare order of link lists across pages; see docs/kb/wcag/3.2.3.md for normative text.",
           "inferredFiles": ["src/rules/navigation/consistent.ts", "tests/rules/navigation/consistent.test.ts"],
           "collisionWith": "a827068: chore(backlog) touched this file",
           "classificationNote": null
@@ -104,7 +107,8 @@ Field contracts:
 
 - **`activeTracks` / `stagedTracks`**: from the Dispatch model line; both always present.
 - **`turns[].n`**: 1-indexed turn number.
-- **`turns[].picks[].backlogLine`**: the 1-indexed line in `.claude/backlog.md` where the `- [ ]` item lives. The orchestrator uses this so the dispatch prompt can point the specialist at the exact line instead of re-reading the whole backlog.
+- **`turns[].picks[].backlogLine`**: the 1-indexed line in `.claude/backlog.md` where the `- [ ]` item lives. Fallback pointer for the rare case where the slice is ambiguous or the specialist needs surrounding context.
+- **`turns[].picks[].backlogSlice`**: the verbatim backlog text for this pick — the `- [ ]` bullet plus any immediately adjacent continuation lines (indented sub-bullets, inline notes). Target 3–5 lines; hard cap 10 lines. The orchestrator embeds this verbatim in the dispatch prompt so the specialist can skip the `.claude/backlog.md` re-read in the common case. The specialist is told to trust the slice as authoritative for scope; they may still re-read the backlog file if the slice seems incomplete (edge case: items that reference a sibling item 20 lines down). Required field — never omit, never empty.
 - **`turns[].picks[].inferredFiles`**: best-guess file set from item text. `[]` when genuinely unknowable — do not invent.
 - **`turns[].picks[].collisionWith`**: `null` when clean; one-line string when a commit or earlier turn touched an overlapping file. Single string (not array) — if multiple collisions exist, pick the most recent and mention the count (`"3 prior commits; most recent a827068: …"`).
 - **`turns[].picks[].classificationNote`**: `null` unless the specialist assignment is non-obvious, in which case one sentence explaining.
@@ -116,7 +120,7 @@ Field contracts:
 - **Do not edit the backlog.** You are read-only on `.claude/backlog.md`. Tickoff happens in the integrator after each turn.
 - **Do not dispatch anything.** You produce a plan; the orchestrator executes it.
 - **Do not re-read the backlog per turn.** The point of this agent is the single-pass read. If the orchestrator re-invokes you mid-run, treat it as a fresh plan — don't persist state.
-- **Do not exceed ~80 lines in your return.** If the full plan is longer, trim `inferredFiles` to the primary target file only and drop `classificationNote: null` / `collisionWith: null` entries (omit rather than populate with null). Missing fields default to null on the consumer side.
+- **Do not exceed ~100 lines in your return** (the added `backlogSlice` field widens each pick by 3–5 lines; the old ceiling was ~80 for the no-slice shape). If the full plan is longer, trim in this order: drop `classificationNote: null` / `collisionWith: null` entries (omit rather than populate with null); then trim `inferredFiles` to the primary target file only. **Never trim `backlogSlice`** — its whole purpose is avoiding the specialist re-read. Missing optional fields default to null on the consumer side.
 - **Never dispatch a staged track.** If the Dispatch model line marks S and E as staged, they go to `stagedTracks` and every item in them is invisible to `turns[]` and `deferred`.
 
 # Why this agent exists

@@ -14,6 +14,8 @@ Only after the discipline rules are fully internalized should you read §1 (scop
 
 ## 1. Scope-lock
 
+The dispatch prompt carries a `Backlog slice:` block (the verbatim 3–5 lines the planner extracted for this pick) and a `backlogLine: <N>` pointer. The slice is authoritative for scope in the common case — trust it and skip the `.claude/backlog.md` re-read. The pointer is a fallback: re-read `.claude/backlog.md` around the line only if the slice seems ambiguous, incomplete, or references a sibling item the slice didn't include. Don't re-read by default.
+
 Edit only files listed (or directly implied) by the backlog item:
 
 - the target source file(s) named in the item
