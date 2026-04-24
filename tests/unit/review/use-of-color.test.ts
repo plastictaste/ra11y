@@ -118,9 +118,8 @@ describe("review/use-of-color", () => {
 
   it("does not flag an empty-body JSX element (validation-placeholder pattern)", () => {
     // Empty body → color cannot be the sole signal of *nothing*.
-    // V1-FINDER-1.4.1-COLOR-EMPTY-BODY-FALSE-POSITIVE: 10/10 sampled
-    // candidates from the templates corpus were empty-body
-    // placeholders.
+    // Field-test: 10/10 sampled candidates from a templates corpus
+    // were empty-body placeholders awaiting JS-injected text.
     const source = `const x = <span className="text-red-600" />;`;
     const out = runFinder(finder, source);
     expect(out).toEqual([]);
@@ -130,5 +129,62 @@ describe("review/use-of-color", () => {
     const source = `<p class="help-block text-danger"></p>`;
     const out = runFinder(finder, source, { filePath: "input.html" });
     expect(out).toEqual([]);
+  });
+
+  it("does not flag an HTML element whose only body content is a <script>", () => {
+    // <script> is not user-perceivable, so the body is effectively
+    // empty — same case as the validation-placeholder pattern.
+    const source = `<p class="text-danger"><script>renderError()</script></p>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out).toEqual([]);
+  });
+
+  it("does not flag an HTML element whose body is only an aria-hidden subtree", () => {
+    // aria-hidden=true subtree is removed from the accessibility tree;
+    // a colorblind user gets no text signal from it.
+    const source = `<p class="text-danger"><span aria-hidden="true">●</span></p>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out).toEqual([]);
+  });
+
+  it("flags an HTML element whose visible text lives in a descendant", () => {
+    // Real-world repro: `<span class="badge bg-success">New</span>`
+    // ships in cheatsheet templates. The text is the element's text
+    // node child; the finder must walk the body to see it and quote
+    // the snippet back so the agent doesn't re-read just to triage.
+    const source = `<span class="badge bg-success"><strong>New</strong></span>`;
+    const out = runFinder(finder, source, { filePath: "cheatsheet.html" });
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).toContain("New");
+      expect(c.reason).toContain("color-only indicator check");
+    }
+  });
+
+  it("flags a JSX element whose body is an expression interpolation", () => {
+    // `<small className="text-success">{version}</small>` is the
+    // AddedIn.astro shape — the runtime text is unknown statically,
+    // but the body is non-empty and the candidate must not be
+    // silently dropped as if it were a placeholder.
+    const source = `const x = <small className="text-success">{version}</small>;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      // Reason quotes the expression as a content sentinel so the
+      // agent knows the body is interpolated rather than empty.
+      expect(c.reason).toContain("{version}");
+    }
+  });
+
+  it("collapses multi-line body whitespace before quoting it in the reason", () => {
+    // Reason text is a single-line snippet; raw newlines in the body
+    // would balloon the response without adding signal.
+    const source = `<p class="text-warning">No grid classes\n      were detected here.</p>`;
+    const out = runFinder(finder, source, { filePath: "grid.html" });
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).not.toContain("\n");
+      expect(c.reason).toContain("No grid classes");
+    }
   });
 });
