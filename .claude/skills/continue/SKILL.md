@@ -139,7 +139,7 @@ Fanout limits — non-negotiable:
 
 ### 4. Integrate via the `integrator` subagent
 
-Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`, but **the orchestrator does not do the integration inline**. Cherry-pick + `bun run verify` + worktree cleanup + backlog tickoff all go through the `integrator` subagent, which swallows 30–50k tokens of tsc/biome/test output per turn and returns a ~40-line structured summary.
+Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`, but **the orchestrator does not do the integration inline**. Cherry-pick + `bun run verify` + worktree cleanup + backlog tickoff all go through the `integrator` subagent, which swallows 30–50k tokens of tsc/biome/test output per turn and returns a ~6–10 line structured summary (tight shape; with-note and error shapes stay under ~20 lines).
 
 **Dispatch rules for the integrator:**
 
@@ -163,13 +163,17 @@ Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract 
 
 **Orchestrator handling of the integrator's return:**
 
+The integrator returns a tight `{ integrated, skipped, blocked, verifyOk, backlogCommitSha, note?, errors? }` shape. Per-entry payload is `{ item, sha }` — no per-entry `reason` field. Stops surface via top-level `errors[]` with grep-able prefix tokens.
+
 | Return | Orchestrator action |
 |---|---|
-| `verifyOk: true`, items in `integrated` | Log items + SHAs to the turn summary. Loop to next turn. |
-| `blocked: [...]` | Record for the final `/continue` report. Items stay unchecked in the backlog; the next `/continue` can retry. |
-| `error: "dirty_main"` | Stop the loop. Surface the detail. Do not attempt recovery blindly — investigate manually. |
-| `error: "cross_pick_interaction"` | Stop the loop. Report the integrated and remaining lists. The next `/continue` will retry the remaining picks in isolation. |
-| `error: "unknown_state"` | Stop the loop. Surface the detail. Never guess-revert — detached HEAD or mid-rebase states need human eyes. |
+| `verifyOk: true`, items in `integrated`, no `errors` | Log items + SHAs to the turn summary. Loop to next turn. |
+| `verifyOk: true`, `blocked: [...]` non-empty | Record the blocked items for the final `/continue` report. Items stay unchecked in the backlog; the next `/continue` can retry. |
+| `verifyOk: true`, `note: "..."` present | Log the note alongside the turn summary — it usually describes a resolved conflict or an unexpected-but-recoverable state worth carrying forward. |
+| `verifyOk: false`, `errors[]` starts with `"dirty_main:"` | Stop the loop. Surface the error text. Do not attempt recovery blindly — investigate manually. |
+| `verifyOk: false`, `errors[]` starts with `"cross_pick_interaction:"` | Stop the loop. Report the `integrated` and `blocked` lists. The next `/continue` will retry the remaining picks in isolation. |
+| `verifyOk: false`, `errors[]` starts with `"unknown_state:"` | Stop the loop. Surface the error text. Never guess-revert — detached HEAD or mid-rebase states need human eyes. |
+| `verifyOk: false`, `errors[]` starts with `"verify_red:"` or `"cherry_pick_conflict:"` | The integrator already reverted and recorded the offending pick under `blocked`. If other picks `integrated` cleanly, keep going. |
 
 **What the orchestrator must still do itself** (tiny, cheap, does not leak verify output):
 

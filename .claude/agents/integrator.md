@@ -30,17 +30,17 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
 # Workflow
 
-1. **Preflight.** Confirm `git status --porcelain` is empty on `main`. If dirty, abort and return `{ "error": "dirty_main", "detail": "<first 10 lines of git status>" }`. Do not `stash`, do not `clean`, do not `checkout --`.
+1. **Preflight.** Confirm `git status --porcelain` is empty on `main`. If dirty, abort and return an error-shape with `verifyOk: false` and a single `errors[]` entry: `"dirty_main: <first 10 lines of git status, joined by ' | '>"`. Do not `stash`, do not `clean`, do not `checkout --`.
 
    Dirty main at preflight is the signature of a worktree agent that escaped its isolation via absolute paths or `cd`. Surface the file list and stop — the orchestrator will recover (decide per-file whether to preserve or discard). Never attempt to clean up silently.
 
 2. **Cherry-pick loop** — in the order given, one pick at a time:
-   - Skip picks where `changed: false`. Record them under `skipped` with `reason: "no_changes"`.
+   - Skip picks where `changed: false`. Record them under `skipped` as `{ item, sha: null }`. (No per-entry reason field in the tight schema; if the skip is noteworthy — branch was already on main despite a `changed: true` claim, for example — surface it once at the top-level `note`.)
    - For picks with `changed: true`:
      - **Cherry-pick EVERY commit the specialist made, not just the branch tip.** Specialists often commit in 2+ logical chunks (fix + test, source + KB regen, feat + refactor). Use `git cherry-pick main..<branch>` to pick the whole range since the fork-point. Never use `git cherry-pick <branch>` alone — that only picks HEAD and silently drops the earlier commits, which is how silent test-only lands that fail verify happen.
      - Before cherry-picking, confirm the commit count: `git log --oneline main..<branch>` should show the specialist's commits in order. If it shows zero commits, the branch is already on main (no-op); record under `skipped`. If it shows more commits than expected (>5), inspect — the specialist may have rebased or the worktree base is stale.
      - Prefer `git merge --ff-only <branch>` only when this is the FIRST pick of the turn AND the branch is a direct descendant of current HEAD — fast-forward is cleaner when it works but breaks as soon as an earlier cherry-pick moves HEAD.
-     - If the cherry-pick hits a conflict, attempt to resolve by combining edits (per the cross-turn gotcha). Never discard the older side. If you cannot resolve, `git cherry-pick --abort`, record `{ item, reason: "cherry_pick_conflict: <paths>" }` under `blocked`, continue with remaining picks.
+     - If the cherry-pick hits a conflict, attempt to resolve by combining edits (per the cross-turn gotcha). Never discard the older side. If you cannot resolve, `git cherry-pick --abort`, record `{ item, sha: null }` under `blocked`, append `"cherry_pick_conflict: <item> collided on <paths>"` to top-level `errors[]`, continue with remaining picks.
      - If final verify fails with a "feature not implemented" / "fixture doesn't fire" / "source missing" signature, before concluding the specialist skipped the fix: check `git log --oneline <branch>` again — if the fix commit IS on the branch but NOT on main, you dropped commits at cherry-pick time. Cherry-pick the missing commits, re-verify, don't blame the specialist.
 
 3. **Remove worktrees BEFORE final verify.** This is the biome nested-root trap — leftover `.claude/worktrees/*/biome.json` files register as nested root configs and fail lint even though the worktree code is fine. For each pick (changed or not):
@@ -50,8 +50,8 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
 4. **Final verify.** Run `bun run verify` on clean `main`.
    - If green: proceed to step 5.
-   - If red AND attributable to the most recent pick: `git reset --hard HEAD~1`, move that pick from `integrated` to `blocked` with `reason: "<first 20 lines of verify output, compacted>"`, re-run verify. If still red after the revert, surface `{ "error": "cross_pick_interaction", "integrated": [...], "blocked": [...] }` and stop — the orchestrator will investigate.
-   - If red AND not obviously attributable: do not guess-revert. Return `{ "error": "unknown_state", "detail": "<first 20 lines>" }` and stop.
+   - If red AND attributable to the most recent pick: `git reset --hard HEAD~1`, move that pick from `integrated` to `blocked` as `{ item, sha: null }`, append `"verify_red: <item> — <first failing line>"` to top-level `errors[]`, re-run verify. If still red after the revert, set `verifyOk: false`, append `"cross_pick_interaction: verify still red after reverting <item>"` to `errors[]`, and stop — the orchestrator will investigate.
+   - If red AND not obviously attributable: do not guess-revert. Set `verifyOk: false`, append `"unknown_state: <first failing line>"` to `errors[]`, and stop.
 
 5. **Tick off the backlog.** Edit `.claude/backlog.md` and flip `- [ ]` to `- [x]` for every item in `integrated`. Commit with:
 
@@ -63,23 +63,56 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
    Record the commit SHA as `backlogCommitSha`.
 
-6. **Return the summary** as a single JSON block, no prose before or after:
+6. **Return the summary** as a single JSON block, no prose before or after.
+
+   **Default (tight) shape — the common happy path, ~6–10 lines:**
 
        {
-         "integrated":  [ { "item": "D/demo-record", "sha": "a1b2c3d" }, ... ],
-         "blocked":     [ { "item": "R/nav", "reason": "<≤2 lines>" }, ... ],
-         "skipped":     [ { "item": "F/stub", "reason": "no_changes" }, ... ],
-         "verifyOk":    true,
-         "worktreesRemoved": 3,
+         "integrated": [ { "item": "D/demo-record", "sha": "a1b2c3d" }, { "item": "M/tool-baseline", "sha": "b2c3d4e" } ],
+         "skipped":    [ { "item": "R/nav", "sha": null } ],
+         "blocked":    [],
+         "verifyOk":   true,
          "backlogCommitSha": "e4f5g6h"
        }
 
+   Each entry in `integrated` / `skipped` / `blocked` is `{ item, sha }` — no `reason`, no `note`, no per-entry prose. `sha` is the cherry-picked commit in `integrated`, `null` in `skipped`. `worktreesRemoved` is omitted in the tight shape — the orchestrator doesn't need the count when everything went clean.
+
+   **With-note shape — only when something worth a future orchestrator read happened:**
+
+       {
+         "integrated": [ { "item": "D/demo-record", "sha": "a1b2c3d" } ],
+         "skipped":    [],
+         "blocked":    [],
+         "verifyOk":   true,
+         "backlogCommitSha": "e4f5g6h",
+         "note": "D/demo-record cherry-pick hit a conflict on README.md; resolved by combining turn-2's README edit with this item's new demo link."
+       }
+
+   When to emit `note`: conflict resolution that merged instead of overwrote, a skipped pick with a non-obvious reason (branch already on main, unexpected commit-count mismatch the pre-check surfaced), detected-but-recoverable drift. Keep `note` to ≤2 sentences; if more is needed, use `errors[]` instead.
+
+   **Error shape — for stops that leave main in a partial state:**
+
+       {
+         "integrated": [ { "item": "D/demo-record", "sha": "a1b2c3d" } ],
+         "skipped":    [],
+         "blocked":    [ { "item": "M/tool-baseline", "sha": null } ],
+         "verifyOk":   false,
+         "errors":     [
+           "cherry_pick_conflict: M/tool-baseline collided with src/mcp/index.ts and could not be resolved mechanically"
+         ]
+       }
+
+   `errors[]` replaces the old per-entry `reason` field. One string per blocked item or stop condition. Keep each entry ≤2 lines, grep-able prefix token first (`cherry_pick_conflict:`, `verify_red:`, `dirty_main:`, `cross_pick_interaction:`, `unknown_state:`). `backlogCommitSha` is omitted when no tickoff commit was made.
+
 # Return shape contract
 
-- **Absolute ceiling: ~40 lines in your return.** No verify logs, no diff dumps, no prose narration. If verify failed, include only the first 1–2 lines of the failure. The orchestrator can re-run verify or `git log` if it needs more detail.
+- **Default return is ~6–10 lines; with-note is ~12 lines; error is ~15 lines. Absolute ceiling: ~20 lines.** No verify logs, no diff dumps, no prose narration. The orchestrator can re-run verify or `git log` if it needs more detail.
 - All three of `integrated`, `blocked`, `skipped` are always present — use `[]` when empty, never omit the key. Consumers read this structurally; missing keys force re-inspection.
+- Per-entry shape is `{ item, sha }`. Do NOT add `reason`, `note`, `detail`, or any other per-entry prose field. Details go in the top-level `errors[]` (for stops) or the top-level optional `note` (for recoverable-but-noteworthy events).
+- `note` is **optional — omit when empty**. Present-when-meaningful per the AI-first field-shape rule: emit only when there is signal an orchestrator should read. The default happy path has no `note`.
+- `errors[]` is **optional — omit when empty**. Present only when `verifyOk: false` or a stop condition fired. Never emit `errors: []` as an empty sentinel.
 - `verifyOk` is `true` only if the final post-integration verify passed. Partial progress with a revert is still `true` — the reverted item lives in `blocked`, and main is green.
-- On any `error` field, the three result arrays may be partial; include whatever you have.
+- `worktreesRemoved` and `backlogCommitSha` are optional — include `backlogCommitSha` when a tickoff commit was made; omit `worktreesRemoved` unless the orchestrator explicitly asked for the count.
 
 # Hard constraints
 
