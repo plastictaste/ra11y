@@ -170,11 +170,15 @@ describe("buildAnalysisCoverage — hints", () => {
       const tags = Array.from({ length: 10 }, (_, i) => `Comp${i}`);
       const files = [tsxFile("a.tsx", tags, { interactive: true })];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
-      const hints = analysisCoverage?.["hints"] as string[] | undefined;
+      const hints = analysisCoverage?.["hints"] as
+        | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+        | undefined;
       expect(hints).toBeDefined();
-      expect(hints?.[0]).toContain("nativeWrappers");
-      expect(hints?.[0]).toContain("detect_native_wrappers");
-      expect(hints?.[0]).toContain("Comp0");
+      expect(hints?.[0]?.code).toBe("opaque_components_present");
+      expect(hints?.[0]?.text).toContain("nativeWrappers");
+      expect(hints?.[0]?.text).toContain("detect_native_wrappers");
+      expect(hints?.[0]?.text).toContain("Comp0");
+      expect(hints?.[0]?.detail?.["opaqueCount"]).toBe(10);
     });
 
     it("excludes wrappers already registered from the opaque set", () => {
@@ -343,11 +347,18 @@ describe("buildAnalysisCoverage — hints", () => {
       const nonInteractive = Array.from({ length: 20 }, (_, i) => `Route${i}`);
       const files = [tsxFile("a.tsx", nonInteractive, { interactive: false })];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
-      const hints = analysisCoverage?.["hints"] as string[] | undefined;
-      const opaqueHint = hints?.find((h) => h.includes("PascalCase components are opaque"));
+      const hints = analysisCoverage?.["hints"] as
+        | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+        | undefined;
+      const opaqueHint = hints?.find((h) => h.code === "opaque_components_present");
       expect(opaqueHint).toBeDefined();
-      expect(opaqueHint).not.toContain("(top: )");
-      expect(opaqueHint).not.toContain("(top:");
+      expect(opaqueHint?.text).not.toContain("(top: )");
+      expect(opaqueHint?.text).not.toContain("(top:");
+      // When no component is interactive the topInteractive detail is
+      // omitted per conditional-spread — the empty array would be a
+      // dishonest sentinel.
+      expect(opaqueHint?.detail?.["topInteractive"]).toBeUndefined();
+      expect(opaqueHint?.detail?.["opaqueCount"]).toBe(20);
     });
 
     // P2-P: when the opaque inventory is small enough to inline (≤50
@@ -619,9 +630,16 @@ describe("buildAnalysisCoverage — hints", () => {
     it("hints when CSS is absent from a React-sized codebase", () => {
       const files = Array.from({ length: 60 }, (_, i) => tsxFile(`c${i}.tsx`, []));
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
-      const hints = (analysisCoverage?.["hints"] as string[] | undefined) ?? [];
-      expect(hints.some((h) => h.includes("CSS"))).toBe(true);
-      expect(hints.some((h) => h.includes("Tailwind") || h.includes("post-compile"))).toBe(true);
+      const hints =
+        (analysisCoverage?.["hints"] as
+          | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+          | undefined) ?? [];
+      const cssHint = hints.find((h) => h.code === "css_coverage_thin");
+      expect(cssHint).toBeDefined();
+      expect(cssHint?.text).toContain("CSS");
+      expect(cssHint?.text.includes("Tailwind") || cssHint?.text.includes("post-compile")).toBe(
+        true,
+      );
     });
 
     it("does not hint when CSS coverage is proportionate", () => {
@@ -629,8 +647,11 @@ describe("buildAnalysisCoverage — hints", () => {
       const css = Array.from({ length: 10 }, (_, i) => cssFile(`c${i}.css`));
       const files = [...jsx, ...css];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
-      const hints = (analysisCoverage?.["hints"] as string[] | undefined) ?? [];
-      expect(hints.some((h) => h.includes("CSS"))).toBe(false);
+      const hints =
+        (analysisCoverage?.["hints"] as
+          | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+          | undefined) ?? [];
+      expect(hints.some((h) => h.code === "css_coverage_thin")).toBe(false);
     });
 
     it("strengthens the hint with additionalPaths when Tailwind usage is detected", () => {
@@ -640,11 +661,20 @@ describe("buildAnalysisCoverage — hints", () => {
         tsxFileWithClassName(`c${i}.tsx`, "flex items-center bg-red-500 text-white"),
       );
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
-      const hints = (analysisCoverage?.["hints"] as string[] | undefined) ?? [];
-      const cssHint = hints.find((h) => h.includes("CSS file(s)"));
+      const hints =
+        (analysisCoverage?.["hints"] as
+          | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+          | undefined) ?? [];
+      const cssHint = hints.find((h) => h.code === "css_coverage_thin");
       expect(cssHint).toBeDefined();
-      expect(cssHint).toContain("Tailwind usage detected");
-      expect(cssHint).toContain('additionalPaths: ["dist/assets"]');
+      expect(cssHint?.text).toContain("Tailwind usage detected");
+      expect(cssHint?.text).toContain('additionalPaths: ["dist/assets"]');
+      // Structured detail drives downstream branching — warnings.ts
+      // dispatches on `detail.tailwindDetected` rather than matching
+      // `text`.
+      expect(cssHint?.detail?.["tailwindDetected"]).toBe(true);
+      expect(cssHint?.detail?.["cssFiles"]).toBe(0);
+      expect(cssHint?.detail?.["markupFiles"]).toBe(60);
     });
 
     it("does not flip to the Tailwind variant when class names aren't utility-shaped", () => {
@@ -652,10 +682,14 @@ describe("buildAnalysisCoverage — hints", () => {
         tsxFileWithClassName(`c${i}.tsx`, "site-header active"),
       );
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
-      const hints = (analysisCoverage?.["hints"] as string[] | undefined) ?? [];
-      const cssHint = hints.find((h) => h.includes("CSS file(s)"));
+      const hints =
+        (analysisCoverage?.["hints"] as
+          | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+          | undefined) ?? [];
+      const cssHint = hints.find((h) => h.code === "css_coverage_thin");
       expect(cssHint).toBeDefined();
-      expect(cssHint).not.toContain("Tailwind usage detected");
+      expect(cssHint?.text).not.toContain("Tailwind usage detected");
+      expect(cssHint?.detail?.["tailwindDetected"]).toBe(false);
     });
   });
 
@@ -1976,5 +2010,73 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(coverage?.["fragmentFilesTruncated"]).toEqual({ shown: 50, total: 75 });
       expect(result.metaArrayTruncated).toBe(true);
     });
+  });
+});
+
+describe("buildAnalysisCoverage — hints response-shape invariant (V1-HINTS-STRUCTURED-CODE)", () => {
+  it("every emitted hint carries a string `code` and a string `text`", () => {
+    // Exercises every hint-emission path through buildAnalysisCoverage
+    // in one scan: opaque components (>=8), thin CSS coverage with
+    // Tailwind signal, and at least one markdown file.
+    const opaque = Array.from({ length: 10 }, (_, i) => `Comp${i}`);
+    const files: readonly ParsedFile[] = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        tsxFileWithClassName(`c${i}.tsx`, "flex items-center bg-red-500 text-white"),
+      ),
+      tsxFile("opaque.tsx", opaque, { interactive: true }),
+      htmlFile("page.md", "# hi\n\n<p>hello</p>"),
+    ];
+    const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+    const hints = analysisCoverage?.["hints"] as
+      | readonly { code: unknown; text: unknown }[]
+      | undefined;
+    expect(hints).toBeDefined();
+    expect(hints?.length).toBeGreaterThanOrEqual(3);
+    for (const hint of hints ?? []) {
+      expect(typeof hint.code).toBe("string");
+      expect((hint.code as string).length).toBeGreaterThan(0);
+      expect(typeof hint.text).toBe("string");
+      expect((hint.text as string).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("every emitted code is a member of the HINT_CODES closed set", async () => {
+    // Reads the canonical constant and asserts no hint slips through
+    // with a code outside the documented taxonomy. Guards against a
+    // future emitter landing a new kebab-case or free-form string.
+    const { HINT_CODES } = await import("../../../src/mcp/hint-codes.ts");
+    const opaque = Array.from({ length: 10 }, (_, i) => `Comp${i}`);
+    const files: readonly ParsedFile[] = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        tsxFileWithClassName(`c${i}.tsx`, "flex items-center bg-red-500 text-white"),
+      ),
+      tsxFile("opaque.tsx", opaque, { interactive: true }),
+      htmlFile("page.md", "# hi\n\n<p>hello</p>"),
+    ];
+    const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+    const hints = analysisCoverage?.["hints"] as
+      | readonly { code: string; text: string }[]
+      | undefined;
+    for (const hint of hints ?? []) {
+      expect(HINT_CODES.has(hint.code as never)).toBe(true);
+    }
+  });
+
+  it("HINT_CODES contains every known hint kind", async () => {
+    // Tripwire: renaming / retiring a code must fail a test rather
+    // than silently removing the branching discriminator downstream
+    // consumers rely on. Names each code string literally so a grep
+    // lands here first on a rename.
+    const { HINT_CODES } = await import("../../../src/mcp/hint-codes.ts");
+    const expected: readonly string[] = [
+      "opaque_components_present",
+      "css_coverage_thin",
+      "markdown_html_residue",
+      "ssg_build_output_hint",
+      "catalog_shape_detected",
+    ];
+    for (const code of expected) expect(HINT_CODES.has(code as never)).toBe(true);
+    // The set is closed — count equals the expected list.
+    expect(HINT_CODES.size).toBe(expected.length);
   });
 });

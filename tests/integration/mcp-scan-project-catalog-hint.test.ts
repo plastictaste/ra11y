@@ -124,10 +124,15 @@ describe("scan_project: Q6-CATALOG-REPO-SIBLING-HINT", () => {
       expect(hint?.exampleSiblings).toEqual(["agile-agency", "coffee-shop", "delite-music"]);
       const coverage = meta.analysisCoverage as Record<string, unknown> | undefined;
       expect(coverage).toBeDefined();
-      const hints = coverage?.hints as readonly string[] | undefined;
+      const hints = coverage?.hints as
+        | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+        | undefined;
       expect(Array.isArray(hints)).toBe(true);
-      expect(hints?.some((h) => h.includes("catalog"))).toBe(true);
-      expect(hints?.some((h) => h.includes('scan_project({ cwd: "<subdir>" })'))).toBe(true);
+      const catalogHintEntry = hints?.find((h) => h.code === "catalog_shape_detected");
+      expect(catalogHintEntry).toBeDefined();
+      expect(catalogHintEntry?.text).toContain("catalog");
+      expect(catalogHintEntry?.text).toContain('scan_project({ cwd: "<subdir>" })');
+      expect(catalogHintEntry?.detail?.["topLevelSiblings"]).toBe(5);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -147,8 +152,10 @@ describe("scan_project: Q6-CATALOG-REPO-SIBLING-HINT", () => {
       const hint = meta.catalogHint as Record<string, unknown> | undefined;
       expect(hint?.topLevelSiblings).toBe(5);
       const coverage = meta.analysisCoverage as Record<string, unknown> | undefined;
-      const hints = coverage?.hints as readonly string[] | undefined;
-      expect(hints?.some((h) => h.includes("catalog"))).toBe(true);
+      const hints = coverage?.hints as
+        | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+        | undefined;
+      expect(hints?.some((h) => h.code === "catalog_shape_detected")).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

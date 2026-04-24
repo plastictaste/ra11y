@@ -973,12 +973,28 @@ function evalMetaHintIncludes(
   };
 }
 
+/**
+ * Reads `meta.analysisCoverage.hints[].text` out of the formatted
+ * scan. Post V1-HINTS-STRUCTURED-CODE hints are
+ * `{ code, text, detail? }` objects; `meta-hint-includes` substring
+ * predicates match against `text`, which is the human-readable
+ * mirror kept populated on every hint. The `code` discriminator is
+ * available via the `meta-field` predicate path
+ * `["analysisCoverage", "hints"]` for fixtures that want to assert
+ * structured shape.
+ */
 function readHints(formatted: ScanFormatted): readonly string[] | null {
   const coverage = formatted.meta["analysisCoverage"];
   if (typeof coverage !== "object" || coverage === null) return null;
   const hints = (coverage as Record<string, unknown>)["hints"];
   if (!Array.isArray(hints)) return null;
-  return hints.filter((h): h is string => typeof h === "string");
+  return hints
+    .map((h) => {
+      if (h === null || typeof h !== "object") return null;
+      const text = (h as Record<string, unknown>)["text"];
+      return typeof text === "string" ? text : null;
+    })
+    .filter((t): t is string => t !== null);
 }
 
 function evalMetaField(

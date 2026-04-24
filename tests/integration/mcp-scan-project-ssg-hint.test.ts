@@ -108,10 +108,15 @@ describe("scan_project: Q4-SSG-BUILD-HINT", () => {
       });
       const coverage = meta.analysisCoverage as Record<string, unknown> | undefined;
       expect(coverage).toBeDefined();
-      const hints = coverage?.hints as readonly string[] | undefined;
+      const hints = coverage?.hints as
+        | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+        | undefined;
       expect(Array.isArray(hints)).toBe(true);
-      expect(hints?.some((h) => h.includes("jekyll"))).toBe(true);
-      expect(hints?.some((h) => h.includes('additionalPaths: ["_site"]'))).toBe(true);
+      const ssgHint = hints?.find((h) => h.code === "ssg_build_output_hint");
+      expect(ssgHint).toBeDefined();
+      expect(ssgHint?.detail?.["framework"]).toBe("jekyll");
+      expect(ssgHint?.text).toContain("jekyll");
+      expect(ssgHint?.text).toContain('additionalPaths: ["_site"]');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -139,8 +144,11 @@ describe("scan_project: Q4-SSG-BUILD-HINT", () => {
       const detected = meta.detectedFramework as Record<string, unknown> | undefined;
       expect(detected).toEqual({ name: "hugo", buildOutput: "public/", buildCommand: "hugo" });
       const coverage = meta.analysisCoverage as Record<string, unknown> | undefined;
-      const hints = coverage?.hints as readonly string[] | undefined;
-      expect(hints?.some((h) => h.includes("hugo"))).toBe(true);
+      const hints = coverage?.hints as
+        | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
+        | undefined;
+      const hugoHint = hints?.find((h) => h.code === "ssg_build_output_hint");
+      expect(hugoHint?.detail?.["framework"]).toBe("hugo");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -159,36 +159,55 @@ describe("detectCatalogShape: honest absence", () => {
 });
 
 describe("catalogHintProse", () => {
-  it("embeds the sibling count and at least one example", () => {
+  it("embeds the sibling count and at least one example plus structured detail", () => {
     const hint: CatalogHint = {
       topLevelSiblings: 174,
       exampleSiblings: ["agile-agency", "coffee-shop", "delite-music"],
     };
-    const prose = catalogHintProse(hint);
-    expect(prose).toContain("174");
-    expect(prose).toContain("agile-agency");
-    expect(prose).toContain("coffee-shop");
+    const structured = catalogHintProse(hint);
+    expect(structured.code).toBe("catalog_shape_detected");
+    expect(structured.text).toContain("174");
+    expect(structured.text).toContain("agile-agency");
+    expect(structured.text).toContain("coffee-shop");
     // Names the second-call shape so the agent has a paste-ready hint.
-    expect(prose).toContain('scan_project({ cwd: "<subdir>" })');
+    expect(structured.text).toContain('scan_project({ cwd: "<subdir>" })');
+    // V1-HINTS-STRUCTURED-CODE: structured detail mirrors
+    // CatalogHint so agents dispatch without reparsing `text`.
+    expect(structured.detail?.["topLevelSiblings"]).toBe(174);
+    expect(structured.detail?.["exampleSiblings"]).toEqual([
+      "agile-agency",
+      "coffee-shop",
+      "delite-music",
+    ]);
   });
 });
 
 describe("withCatalogHint", () => {
+  type HintShape = { readonly code: string; readonly text: string };
+
   it("returns meta unchanged when no catalog resolved", () => {
-    const meta = { filesScanned: 12, analysisCoverage: { hints: ["existing hint"] } };
+    const meta = {
+      filesScanned: 12,
+      analysisCoverage: { hints: [{ code: "markdown_html_residue", text: "existing hint" }] },
+    };
     expect(withCatalogHint(meta, null)).toBe(meta);
   });
 
   it("appends the catalog hint to an existing analysisCoverage.hints array", () => {
-    const meta = { filesScanned: 12, analysisCoverage: { hints: ["existing hint"] } };
+    const meta = {
+      filesScanned: 12,
+      analysisCoverage: { hints: [{ code: "markdown_html_residue", text: "existing hint" }] },
+    };
     const result = withCatalogHint(meta, {
       topLevelSiblings: 7,
       exampleSiblings: ["a", "b", "c"],
     });
-    const coverage = result["analysisCoverage"] as { readonly hints: readonly string[] };
-    expect(coverage.hints[0]).toBe("existing hint");
-    expect(coverage.hints[1]).toContain("catalog");
-    expect(coverage.hints[1]).toContain("7");
+    const coverage = result["analysisCoverage"] as { readonly hints: readonly HintShape[] };
+    expect(coverage.hints[0]?.code).toBe("markdown_html_residue");
+    expect(coverage.hints[0]?.text).toBe("existing hint");
+    expect(coverage.hints[1]?.code).toBe("catalog_shape_detected");
+    expect(coverage.hints[1]?.text).toContain("catalog");
+    expect(coverage.hints[1]?.text).toContain("7");
   });
 
   it("seeds analysisCoverage with just the hint when the meta block has none", () => {
@@ -197,13 +216,15 @@ describe("withCatalogHint", () => {
       topLevelSiblings: 5,
       exampleSiblings: ["a", "b", "c"],
     });
-    const coverage = result["analysisCoverage"] as { readonly hints: readonly string[] };
+    const coverage = result["analysisCoverage"] as { readonly hints: readonly HintShape[] };
     expect(coverage.hints.length).toBe(1);
-    expect(coverage.hints[0]).toContain("catalog");
+    expect(coverage.hints[0]?.code).toBe("catalog_shape_detected");
+    expect(coverage.hints[0]?.text).toContain("catalog");
   });
 });
 
 describe("catalogEmptyResultMetaFields", () => {
+  type HintShape = { readonly code: string; readonly text: string };
   it("returns an empty object on a non-catalog root", async () => {
     await withScratch((root) => {
       expect(catalogEmptyResultMetaFields(root)).toEqual({});
@@ -217,9 +238,10 @@ describe("catalogEmptyResultMetaFields", () => {
       const hint = fields["catalogHint"] as CatalogHint | undefined;
       expect(hint?.topLevelSiblings).toBe(5);
       const coverage = fields["analysisCoverage"] as
-        | { readonly hints: readonly string[] }
+        | { readonly hints: readonly HintShape[] }
         | undefined;
-      expect(coverage?.hints?.[0]).toContain("catalog");
+      expect(coverage?.hints?.[0]?.code).toBe("catalog_shape_detected");
+      expect(coverage?.hints?.[0]?.text).toContain("catalog");
     });
   });
 });

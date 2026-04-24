@@ -63,6 +63,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { Hint } from "./hint-codes.ts";
 
 /**
  * Stable kebab-case identifiers for the SSGs the detector recognizes.
@@ -373,20 +374,32 @@ function detectHugoLegacyConfigToml(root: string): DetectedFramework | null {
 }
 
 /**
- * Builds the prose hint appended to `analysisCoverage.hints` when an
- * SSG resolves. Single sentence, embeds the framework tag inline, names
- * the conventional emit directory, and shows the exact
- * `additionalPaths` argument the agent copies into a follow-up
- * `scan_project` call. Returns `null` when no framework is detected so
- * callers can conditional-spread instead of emitting an empty hint.
+ * Builds the structured hint appended to `analysisCoverage.hints` when
+ * an SSG resolves. Carries `code: "ssg_build_output_hint"` so agents
+ * branch on the discriminator without substring-matching
+ * `text`, plus a `detail` payload naming the framework tag, build
+ * command, and emit-directory path that the agent can paste into a
+ * follow-up `scan_project({ additionalPaths: [...] })` call. The
+ * `additionalPathsArgument` pre-renders the quoted array entry so the
+ * agent doesn't re-derive it from `buildOutput`'s trailing slash.
  */
-export function ssgHint(framework: DetectedFramework): string {
-  return (
+export function ssgHint(framework: DetectedFramework): Hint {
+  const additionalPathsArgument = framework.buildOutput.replace(/\/$/, "");
+  const text =
     `Detected ${framework.name}; static analysis over the source tree ` +
     `undercounts rendered markup. For full coverage, run \`${framework.buildCommand}\` ` +
-    `and re-run scan_project with \`additionalPaths: ["${framework.buildOutput.replace(/\/$/, "")}"]\` ` +
-    `so the emitted HTML/CSS is included.`
-  );
+    `and re-run scan_project with \`additionalPaths: ["${additionalPathsArgument}"]\` ` +
+    `so the emitted HTML/CSS is included.`;
+  return {
+    code: "ssg_build_output_hint",
+    text,
+    detail: {
+      framework: framework.name,
+      buildCommand: framework.buildCommand,
+      buildOutput: framework.buildOutput,
+      additionalPathsArgument,
+    },
+  };
 }
 
 /**
@@ -415,7 +428,7 @@ export function withSsgHint(
   const base =
     existing && typeof existing === "object" ? (existing as Record<string, unknown>) : {};
   const hintsRaw = base["hints"];
-  const hints = Array.isArray(hintsRaw) ? (hintsRaw as readonly string[]) : [];
+  const hints = Array.isArray(hintsRaw) ? (hintsRaw as readonly Hint[]) : [];
   return { ...meta, analysisCoverage: { ...base, hints: [...hints, hint] } };
 }
 

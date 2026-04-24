@@ -27,6 +27,7 @@ import { buildConfigHint } from "./config-hint.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { buildFileLimitation } from "./file-limitations.ts";
+import type { Hint } from "./hint-codes.ts";
 import { hasMetaArrayTruncation } from "./meta-array-cap.ts";
 import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
@@ -991,14 +992,20 @@ function mergeEmptyResultHints(
  * Reads `analysisCoverage.hints` out of a hint-fragment object.
  * Returns an empty array when the fragment doesn't have the shape —
  * lets {@link mergeEmptyResultHints} concatenate without per-call
- * type guards.
+ * type guards. Post V1-HINTS-STRUCTURED-CODE the hints are
+ * `{ code, text, detail? }` objects; the filter keeps only entries
+ * that expose a string `code` so hostile shapes can't flow through.
  */
-function readHintsArray(fragment: Record<string, unknown>): readonly string[] {
+function readHintsArray(fragment: Record<string, unknown>): readonly Hint[] {
   const coverage = fragment["analysisCoverage"];
   if (typeof coverage !== "object" || coverage === null) return [];
   const hintsRaw = (coverage as Record<string, unknown>)["hints"];
   if (!Array.isArray(hintsRaw)) return [];
-  return hintsRaw.filter((h): h is string => typeof h === "string");
+  return hintsRaw.filter((h): h is Hint => {
+    if (h === null || typeof h !== "object") return false;
+    const record = h as Record<string, unknown>;
+    return typeof record["code"] === "string" && typeof record["text"] === "string";
+  });
 }
 
 /**

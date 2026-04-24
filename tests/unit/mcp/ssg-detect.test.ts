@@ -336,22 +336,29 @@ describe("ssgHint", () => {
   // Guards the wire-level shape. Agents reading the hint prose may
   // key off the framework tag and the additionalPaths argument, so
   // both must appear inline and in the expected format.
-  it("embeds the framework tag, build command, and quoted additionalPaths argument", () => {
+  it("embeds the framework tag, build command, and quoted additionalPaths argument in text + structured detail", () => {
     const framework: DetectedFramework = {
       name: "jekyll",
       buildOutput: "_site/",
       buildCommand: "bundle exec jekyll build",
     };
     const hint = ssgHint(framework);
-    expect(hint).toContain("jekyll");
-    expect(hint).toContain("bundle exec jekyll build");
+    expect(hint.code).toBe("ssg_build_output_hint");
+    expect(hint.text).toContain("jekyll");
+    expect(hint.text).toContain("bundle exec jekyll build");
     // The trailing slash on buildOutput is stripped from the
     // additionalPaths argument — agents pasting the value into a
     // `string[]` do not want a trailing slash because the scanner
     // normalizes input paths either way and an un-trimmed path
     // reads as a typo on the review diff.
-    expect(hint).toContain('additionalPaths: ["_site"]');
-    expect(hint).not.toContain('"_site/"');
+    expect(hint.text).toContain('additionalPaths: ["_site"]');
+    expect(hint.text).not.toContain('"_site/"');
+    // Structured detail: every field the agent would otherwise have
+    // to parse out of `text` is exposed directly (V1-HINTS-STRUCTURED-CODE).
+    expect(hint.detail?.["framework"]).toBe("jekyll");
+    expect(hint.detail?.["buildCommand"]).toBe("bundle exec jekyll build");
+    expect(hint.detail?.["buildOutput"]).toBe("_site/");
+    expect(hint.detail?.["additionalPathsArgument"]).toBe("_site");
   });
 
   it("works symmetrically for every framework the detector returns", () => {
@@ -366,9 +373,12 @@ describe("ssgHint", () => {
     ];
     for (const fw of frameworks) {
       const hint = ssgHint(fw);
-      expect(hint).toContain(fw.name);
-      expect(hint).toContain(fw.buildCommand);
-      expect(hint).toContain(`additionalPaths: ["${fw.buildOutput.replace(/\/$/, "")}"]`);
+      expect(hint.code).toBe("ssg_build_output_hint");
+      expect(hint.text).toContain(fw.name);
+      expect(hint.text).toContain(fw.buildCommand);
+      expect(hint.text).toContain(`additionalPaths: ["${fw.buildOutput.replace(/\/$/, "")}"]`);
+      expect(hint.detail?.["framework"]).toBe(fw.name);
+      expect(hint.detail?.["buildCommand"]).toBe(fw.buildCommand);
     }
   });
 });

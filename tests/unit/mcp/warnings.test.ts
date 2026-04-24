@@ -192,14 +192,20 @@ describe("computeScanWarnings", () => {
     expect(codes).toContain("no_config_found");
   });
 
-  it("fires `tailwind_detected_css_undercounted` when the Tailwind hint is present and .css files < 3", () => {
+  it("fires `tailwind_detected_css_undercounted` when the css_coverage_thin hint carries detail.tailwindDetected=true and .css files < 3", () => {
     const codes = computeScanWarnings({
       filesScanned: 60,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
+        // V1-HINTS-STRUCTURED-CODE: the warnings module dispatches on
+        // `detail.tailwindDetected` rather than substring-matching text.
         hints: [
-          "Only 1 CSS file(s) scanned vs 60 JSX/HTML file(s). Tailwind usage detected: run the build...",
+          {
+            code: "css_coverage_thin",
+            text: "Only 1 CSS file(s) scanned vs 60 JSX/HTML file(s). Tailwind usage detected: run the build...",
+            detail: { cssFiles: 1, markupFiles: 60, tailwindDetected: true },
+          },
         ],
       },
       filesByExtension: { ".tsx": 60, ".css": 1 },
@@ -213,7 +219,13 @@ describe("computeScanWarnings", () => {
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        hints: ["Tailwind usage detected: run the build..."],
+        hints: [
+          {
+            code: "css_coverage_thin",
+            text: "Tailwind usage detected: run the build...",
+            detail: { cssFiles: 5, markupFiles: 60, tailwindDetected: true },
+          },
+        ],
       },
       filesByExtension: { ".tsx": 60, ".css": 5 },
     });
@@ -226,7 +238,13 @@ describe("computeScanWarnings", () => {
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        hints: ["Build the site and point scan at the emitted .css..."],
+        hints: [
+          {
+            code: "css_coverage_thin",
+            text: "Build the site and point scan at the emitted .css...",
+            detail: { cssFiles: 0, markupFiles: 60, tailwindDetected: false },
+          },
+        ],
       },
       filesByExtension: { ".tsx": 60 },
     });
@@ -655,7 +673,13 @@ describe("warningsFromScanMeta", () => {
         filesScanned: 60,
         filesByExtension: { ".tsx": 60, ".css": 1 },
         analysisCoverage: {
-          hints: ["Tailwind usage detected: run the build"],
+          hints: [
+            {
+              code: "css_coverage_thin",
+              text: "Tailwind usage detected: run the build",
+              detail: { cssFiles: 1, markupFiles: 60, tailwindDetected: true },
+            },
+          ],
         },
       },
       rootSource: "explicit",

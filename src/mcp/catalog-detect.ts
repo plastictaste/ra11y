@@ -45,6 +45,7 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { Hint } from "./hint-codes.ts";
 
 /**
  * Structured hint payload surfaced under `meta.catalogHint`.
@@ -167,19 +168,30 @@ function isSiteShapedDir(subdir: string): boolean {
 }
 
 /**
- * Builds the prose hint appended to `analysisCoverage.hints` when a
- * catalog shape resolves. Single sentence, names the count and the
- * exact `scan_project({ cwd: "<subdir>" })` call shape so the agent
- * can paste the second call inline. Examples are quoted so they read
- * as identifiers rather than continuous prose.
+ * Builds the structured hint appended to `analysisCoverage.hints` when
+ * a catalog shape resolves. Carries `code: "catalog_shape_detected"`
+ * so agents branch on the discriminator without substring-matching
+ * `text`, plus a `detail` payload mirroring {@link CatalogHint}
+ * (`topLevelSiblings` + `exampleSiblings`) so an agent can dispatch
+ * per-subdir scans against the example names directly. The name
+ * retains the `Prose` suffix for API stability — the shape is
+ * structured now, but `text` remains populated for humans reading
+ * agent output verbatim.
  */
-export function catalogHintProse(catalog: CatalogHint): string {
+export function catalogHintProse(catalog: CatalogHint): Hint {
   const examples = catalog.exampleSiblings.map((s) => `\`${s}\``).join(", ");
-  return (
+  const text =
     `Detected catalog shape (${catalog.topLevelSiblings} top-level sibling site dirs, e.g. ${examples}); ` +
     `the flat scan_project treats the catalog as one repo, conflating per-template parse errors and identifier noise. ` +
-    `For per-site signal, run \`scan_project({ cwd: "<subdir>" })\` per template.`
-  );
+    `For per-site signal, run \`scan_project({ cwd: "<subdir>" })\` per template.`;
+  return {
+    code: "catalog_shape_detected",
+    text,
+    detail: {
+      topLevelSiblings: catalog.topLevelSiblings,
+      exampleSiblings: catalog.exampleSiblings,
+    },
+  };
 }
 
 /**
@@ -208,7 +220,7 @@ export function withCatalogHint(
   const base =
     existing && typeof existing === "object" ? (existing as Record<string, unknown>) : {};
   const hintsRaw = base["hints"];
-  const hints = Array.isArray(hintsRaw) ? (hintsRaw as readonly string[]) : [];
+  const hints = Array.isArray(hintsRaw) ? (hintsRaw as readonly Hint[]) : [];
   return { ...meta, analysisCoverage: { ...base, hints: [...hints, hint] } };
 }
 

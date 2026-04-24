@@ -64,7 +64,9 @@ import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile } from "../utils/path.ts";
+import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
 import { isBuildArtifact } from "./build-artifacts.ts";
+import type { Hint } from "./hint-codes.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { extractComponentIdentifier, isJsxBearingFile } from "./opaque-tag-filter.ts";
 
@@ -156,7 +158,16 @@ interface CoverageBlock {
   partialParseFilesTruncated?: MetaArrayTruncationSummary;
   rulesByExtension?: Readonly<Record<string, readonly string[]>>;
   parseModeByExtension?: Readonly<Record<string, string>>;
-  hints?: readonly string[];
+  /**
+   * Structured hints, keyed by `code` so agents dispatch without
+   * substring-matching English prose (V1-HINTS-STRUCTURED-CODE). Each
+   * entry carries `{ code, text, detail? }` — `code` is the load-bearing
+   * branching field, `text` is the human-readable mirror kept populated
+   * for humans reading agent output verbatim, and `detail` is
+   * present-when-meaningful per-code structured data. See
+   * {@link Hint} and {@link HintCode} in `./hint-codes.ts`.
+   */
+  hints?: readonly Hint[];
   skippedByExtension?: Readonly<Record<string, number>>;
   fragmentFileCount?: number;
   fragmentFiles?: readonly string[];
@@ -618,30 +629,11 @@ function assembleOpaqueComponentBlock(
   }
 }
 
-function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): readonly string[] {
-  const hints: string[] = [];
+function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): readonly Hint[] {
+  const hints: Hint[] = [];
   const opaqueCount = acc.opaqueComponents.size;
   if (opaqueCount >= OPAQUE_COMPONENT_HINT_MIN) {
-    // `rankOpaqueByCallSites` filters for interactive components; when
-    // every opaque component is non-interactive the examples string is
-    // empty and the literal "(top: )" parenthetical would render with
-    // nothing after the colon. Omit the parenthetical entirely in that
-    // case rather than ship broken prose.
-    const examples = rankOpaqueByCallSites(acc.opaqueComponents)
-      .slice(0, 3)
-      .map((e) => `${e.name} (${e.callSites} call sites)`)
-      .join(", ");
-    const opaqueLead =
-      examples.length > 0
-        ? `${opaqueCount} PascalCase components are opaque to the scanner (top: ${examples}).`
-        : `${opaqueCount} PascalCase components are opaque to the scanner.`;
-    hints.push(
-      `${opaqueLead} ` +
-        `Rules needing the underlying element (button-name, alt-text, link-purpose) skip these. ` +
-        `Wire common wrappers via \`nativeWrappers\` in ra11y.config.ts — e.g. ` +
-        `{ Button: "button", Link: "a", Image: "img" } — to unlock analysis. ` +
-        `Call \`detect_native_wrappers\` for a suggested mapping based on this codebase.`,
-    );
+    hints.push(buildOpaqueComponentsHint(opaqueCount, acc.opaqueComponents));
   }
   const counts = countByCategory(files);
   const markupFiles = counts.jsx + counts.html;
@@ -659,17 +651,64 @@ function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): rea
   // whenever at least one `.md` or `.markdown` file participated in
   // the scan so the agent can calibrate coverage expectations.
   if (files.some((f) => isMarkdownFile(f.filePath))) {
-    hints.push(
-      "Markdown files parsed as HTML residue: embedded HTML, image alt-text, and " +
+    hints.push({
+      code: "markdown_html_residue",
+      text:
+        "Markdown files parsed as HTML residue: embedded HTML, image alt-text, and " +
         "kramdown IAL are checked; link text and prose are not. ATX (`# …`) and " +
         "Setext headings are stripped before the residue reaches `parseHtml`, so " +
         "`semantics/heading-hierarchy` is skipped on `.md` / `.markdown` files to " +
         "avoid emits that contradict this coverage gap. For full coverage, build " +
         "the site and point `scan_project` at the rendered output (`_site/`, " +
         "`public/`, `dist/`) via `additionalPaths`.",
-    );
+    });
   }
   return hints;
+}
+
+/**
+ * Builds the `opaque_components_present` hint. Extracted so
+ * {@link buildHints} stays flat — the examples-prose branch and the
+ * structured-detail payload both key off the same opaque-components
+ * map. `detail` carries the total count plus the top-3 interactive
+ * candidates (name + callSites) so an agent triaging wrapper
+ * registration reads the structured payload and skips parsing the
+ * English examples list in `text`.
+ */
+function buildOpaqueComponentsHint(
+  opaqueCount: number,
+  opaque: ReadonlyMap<string, OpaqueComponentUsage>,
+): Hint {
+  // `rankOpaqueByCallSites` filters for interactive components; when
+  // every opaque component is non-interactive the examples list is
+  // empty and the literal "(top: )" parenthetical would render with
+  // nothing after the colon. Omit the parenthetical entirely in that
+  // case rather than ship broken prose.
+  const topCandidates = rankOpaqueByCallSites(opaque).slice(0, 3);
+  const examples = topCandidates.map((e) => `${e.name} (${e.callSites} call sites)`).join(", ");
+  const opaqueLead =
+    examples.length > 0
+      ? `${opaqueCount} PascalCase components are opaque to the scanner (top: ${examples}).`
+      : `${opaqueCount} PascalCase components are opaque to the scanner.`;
+  const text =
+    `${opaqueLead} ` +
+    `Rules needing the underlying element (button-name, alt-text, link-purpose) skip these. ` +
+    `Wire common wrappers via \`nativeWrappers\` in ra11y.config.ts — e.g. ` +
+    `{ Button: "button", Link: "a", Image: "img" } — to unlock analysis. ` +
+    `Call \`detect_native_wrappers\` for a suggested mapping based on this codebase.`;
+  // Conditional-spread on `topCandidates` keeps the `detail` shape
+  // honest: when every opaque sighting is non-interactive the list is
+  // empty and we omit it rather than ship `topInteractive: []` (which
+  // would read as a dishonest empty sentinel per CLAUDE.md §1). The
+  // `opaqueCount` scalar is the invariant carrier either way.
+  return {
+    code: "opaque_components_present",
+    text,
+    detail: {
+      opaqueCount,
+      ...(topCandidates.length > 0 ? { topInteractive: topCandidates } : {}),
+    },
+  };
 }
 
 /**
@@ -721,92 +760,6 @@ function stripMarkdownCodeRegions(source: string): string {
     else lines[i] = "";
   }
   return lines.join("\n");
-}
-
-/**
- * Builds the thin-CSS-coverage hint, strengthened with a Tailwind-
- * specific follow-up when Tailwind usage is detected. On a Tailwind
- * codebase the only realistic way to get contrast/focus-visible
- * coverage is to run the build and point scan_project at the emitted
- * CSS — naming the exact `additionalPaths` argument saves the agent
- * a discovery round trip.
- */
-function buildCssThinHint(files: readonly ParsedFile[], css: number, markup: number): string {
-  const base =
-    `Only ${css} CSS file(s) scanned vs ${markup} JSX/HTML file(s). ` +
-    "Post-compile output (Tailwind, CSS-in-JS, SCSS) isn't parsed — color-contrast " +
-    "and focus-visible coverage may be undercounted.";
-  if (hasTailwindSignal(files)) {
-    return (
-      `${base} Tailwind usage detected: run the build, then re-run scan_project with ` +
-      '`additionalPaths: ["dist/assets"]` (or wherever your bundler emits CSS) to ' +
-      "include the generated stylesheet. `additionalPaths` bypasses `.gitignore` and " +
-      "the default build-dir skips for the paths you list."
-    );
-  }
-  return `${base} Build the site and point \`scan\` at the emitted .css, or scan the Tailwind source config alongside JSX.`;
-}
-
-/**
- * Cheap Tailwind detector: a `class`/`className` attribute anywhere in
- * the scanned JSX whose value contains two or more tokens with the
- * `prefix-value` shape characteristic of Tailwind utilities. We
- * deliberately don't parse tailwind.config.*; that would require
- * filesystem access and version-specific config support for zero
- * marginal signal. Two utility-shaped tokens together is both sparse
- * enough to avoid false positives on class names like "site-header
- * active" and common enough to catch any real Tailwind project on the
- * first JSX file we look at.
- */
-function hasTailwindSignal(files: readonly ParsedFile[]): boolean {
-  for (const f of files) {
-    if (f.ast.language !== "tsx" && f.ast.language !== "jsx") continue;
-    if (fileHasTailwindClass(f.ast.root as import("../types/ast.ts").TsxModule)) return true;
-  }
-  return false;
-}
-
-function fileHasTailwindClass(root: import("../types/ast.ts").TsxModule): boolean {
-  for (const el of walkJsxElements(root)) {
-    for (const attr of el.attributes) {
-      if (attr.name !== "className" && attr.name !== "class") continue;
-      if (attr.value?.kind !== "StringLiteral") continue;
-      if (looksLikeTailwindClassString(attr.value.value)) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Two tokens of shape `<letters>-<letters-or-digits>` (e.g. `bg-red-500
- * text-center`, `md:hover:text-white flex`) are a strong Tailwind
- * signal. Variants with `:` (`md:`, `hover:`, `dark:`) count. Arbitrary
- * values in `[...]` also count when attached to a utility prefix.
- */
-function looksLikeTailwindClassString(classString: string): boolean {
-  const tokens = classString.trim().split(/\s+/);
-  let matches = 0;
-  for (const token of tokens) {
-    if (TAILWIND_TOKEN_RE.test(token)) {
-      matches += 1;
-      if (matches >= 2) return true;
-    }
-  }
-  return false;
-}
-
-const TAILWIND_TOKEN_RE = /^(?:[a-z]+:)*-?[a-z]+(?:-[a-z0-9/.%]+)+(?:\[[^\]]*\])?$/i;
-
-function countByCategory(files: readonly ParsedFile[]): { jsx: number; html: number; css: number } {
-  let jsx = 0,
-    html = 0,
-    css = 0;
-  for (const f of files) {
-    if (f.ast.language === "tsx" || f.ast.language === "jsx") jsx += 1;
-    else if (f.ast.language === "html") html += 1;
-    else if (f.ast.language === "css") css += 1;
-  }
-  return { jsx, html, css };
 }
 
 /**

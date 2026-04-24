@@ -817,12 +817,24 @@ function dominantUnsupportedLanguage(
   return winner;
 }
 
+/**
+ * True when `coverage.hints[]` carries a `css_coverage_thin` entry
+ * whose structured `detail.tailwindDetected` is `true`. Dispatches on
+ * the hint `code` discriminator rather than substring-matching English
+ * prose (V1-HINTS-STRUCTURED-CODE). Returns `false` defensively on
+ * malformed shapes so hostile input can't short-circuit the warning.
+ */
 function hasTailwindHint(coverage: Record<string, unknown> | undefined): boolean {
   if (coverage === undefined) return false;
   const hints = coverage["hints"];
   if (!Array.isArray(hints)) return false;
   for (const hint of hints) {
-    if (typeof hint === "string" && hint.includes("Tailwind usage detected")) return true;
+    if (hint === null || typeof hint !== "object") continue;
+    const record = hint as Record<string, unknown>;
+    if (record["code"] !== "css_coverage_thin") continue;
+    const detail = record["detail"];
+    if (detail === null || typeof detail !== "object") continue;
+    if ((detail as Record<string, unknown>)["tailwindDetected"] === true) return true;
   }
   return false;
 }
