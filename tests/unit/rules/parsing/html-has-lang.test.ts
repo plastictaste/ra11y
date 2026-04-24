@@ -182,7 +182,7 @@ describe("rule parsing/html-has-lang", () => {
     expect(v).toHaveLength(0);
   });
 
-  it('does not count <script>/<style>/<head> text toward the visible-text check', () => {
+  it("does not count <script>/<style>/<head> text toward the visible-text check", () => {
     // Page has no body prose — script source and stylesheet declarations
     // are not user-visible text. zxx remains valid here.
     const v = runRule(
