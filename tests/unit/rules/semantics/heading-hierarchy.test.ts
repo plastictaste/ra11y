@@ -376,4 +376,56 @@ describe("rule semantics/heading-hierarchy", () => {
       expect(missing?.couldBeWrongBecause).toBeUndefined();
     });
   });
+
+  // V1-HEADING-HIERARCHY-MARKDOWN-SELF-CONTRADICTION — `parseMarkdown`
+  // strips ATX (`# …`) and Setext headings before the residue reaches
+  // `parseHtml`, so the rule sees only whatever HTML headings survived
+  // in embedded blocks (admonition divs, callout widgets). That residue
+  // is a systematically partial view: the file's real outline lived in
+  // stripped ATX syntax. Emitting against it contradicts the scanner's
+  // own `analysisCoverage` hint ("heading hierarchy … [is] not
+  // [checked]"). Skip on `.md` / `.markdown` so the rule's behavior
+  // matches what the tool tells agents.
+  describe("markdown ingestion skip", () => {
+    it("does not fire on a README.md whose only heading is ATX `# Bootstrap`", () => {
+      // Bootstrap README repro (bootstrap-05 §B1): the real `<h1>` is
+      // ATX syntax that `parseMarkdown` blanks. If the rule ran on the
+      // residue it would emit the page-level missing-h1 variant or the
+      // first-heading emit, contradicting the residue-coverage hint.
+      const source = "# Bootstrap\n\nA toolkit for building things.\n";
+      const v = runRule(rule, source, { filePath: "README.md" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire on a Jekyll doc whose only embedded HTML heading is an admonition h5", () => {
+      // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT repro (jekyll-v3
+      // §bug-3): ATX headings carry the real outline, and a single
+      // admonition `<h5>` is the only HTML heading that survives the
+      // markdown strip. The pre-fix rule fired "no <h1>, first heading
+      // is <h5>" — dishonest because the `# Getting started` /
+      // `## Install` ATX headings were the top of the outline.
+      const source =
+        "# Getting started\n\n## Install\n\n" +
+        '<div class="admonition note"><h5>Note</h5>\nHeads up.</div>\n';
+      const v = runRule(rule, source, { filePath: "_docs/intro.md" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does not fire on a .markdown file with embedded heading residue", () => {
+      // Guards the `.markdown` extension alongside `.md` — both route
+      // through `parseMarkdown` per PARSEABLE_EXTENSIONS and the
+      // extension-alias table in `src/utils/path.ts`.
+      const source = "# Page\n\n<section><h3>Embedded</h3></section>\n";
+      const v = runRule(rule, source, { filePath: "post.markdown" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("still fires on sibling .html files in the same scan", () => {
+      // Narrow the skip to the markdown extensions only — an HTML file
+      // whose ATX syntax is NOT stripped must continue to surface the
+      // missing-h1 / skipped-level emits.
+      const v = runRule(rule, `<h2>Section</h2>`, { filePath: "sibling.html" });
+      expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+    });
+  });
 });

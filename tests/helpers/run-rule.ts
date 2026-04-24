@@ -10,7 +10,7 @@
 
 import { describeNodeShape, findTargetNodeAtLocation } from "../../src/engine/ast-helpers.ts";
 import { buildContext } from "../../src/engine/context-builder.ts";
-import { parseCss, parseHtml, parseTsx } from "../../src/input/parsers/index.ts";
+import { parseCss, parseHtml, parseMarkdown, parseTsx } from "../../src/input/parsers/index.ts";
 import type { Ast } from "../../src/types/ast.ts";
 import type { EmittedViolation, Language, ProjectContext, Rule } from "../../src/types/rule.ts";
 import type { Violation } from "../../src/types/violation.ts";
@@ -154,6 +154,15 @@ function parseSource(filePath: string, source: string): Ast {
     filePath.endsWith(".svg")
   ) {
     const result = parseHtml(source);
+    return { language: "html", root: result.root, errors: result.errors };
+  }
+  if (filePath.endsWith(".md") || filePath.endsWith(".markdown")) {
+    // `.md` / `.markdown` route through `parseMarkdown` in production
+    // (ADR 0025 Option B): markdown syntax is stripped, `![alt](url)`
+    // is rewritten to `<img>`, and the residue feeds `parseHtml`.
+    // Unit tests that point `filePath` at an `.md` file exercise the
+    // same residue the HTML-family rules see at scan time.
+    const result = parseMarkdown(source);
     return { language: "html", root: result.root, errors: result.errors };
   }
   if (filePath.endsWith(".css")) {

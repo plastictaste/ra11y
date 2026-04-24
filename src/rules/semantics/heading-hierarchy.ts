@@ -52,8 +52,21 @@ import {
   looksLikeFullPage,
 } from "../../engine/layout-partial.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
+import { extension } from "../../utils/path.ts";
 
 const HEADING_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+
+/**
+ * True when `filePath` is a markdown source file whose ATX / Setext
+ * headings get stripped by `parseMarkdown` before the rule runs. The
+ * extension list mirrors the EXTENSION_ALIASES entry in
+ * `src/utils/path.ts` that routes `.md` / `.markdown` into the
+ * HTML-family rule gate.
+ */
+function isMarkdownSourceFile(filePath: string): boolean {
+  const ext = extension(filePath);
+  return ext === ".md" || ext === ".markdown";
+}
 
 export const rule = defineRule({
   id: "semantics/heading-hierarchy",
@@ -81,6 +94,23 @@ export const rule = defineRule({
   },
   afterFile(ctx) {
     if (ctx.language !== "html") return;
+    // Markdown ingestion gap (V1-HEADING-HIERARCHY-MARKDOWN-SELF-CONTRADICTION).
+    // `.md` / `.markdown` files route through `parseMarkdown`, which
+    // strips ATX (`# …`) and Setext headings before the residue reaches
+    // `parseHtml` — see `src/input/parsers/markdown.ts` §"Passes" and
+    // ADR 0025 which names heading hierarchy as an accepted residue gap.
+    // The rule then only sees whatever HTML `<h1>`-`<h6>` tags survived
+    // in embedded blocks (admonition divs, callout widgets, etc.),
+    // which is systematically a *partial* view of the file's real
+    // outline: a README whose sole heading is `# Bootstrap` presents to
+    // this rule as zero headings, and a Jekyll doc whose top-level
+    // outline is ATX but whose only embedded HTML is an admonition
+    // `<h5>` presents as "no <h1>, first heading is <h5>". Emitting
+    // against that residue contradicts the scanner's own
+    // `analysisCoverage` hint ("Markdown files parsed as HTML residue:
+    // … heading hierarchy … [is] not [checked]"). Skip on `.md` /
+    // `.markdown` so the rule's behavior matches what we tell agents.
+    if (isMarkdownSourceFile(ctx.filePath)) return;
     const doc = ctx.ast as HtmlDocument;
     const headings = collectHeadings(doc);
 

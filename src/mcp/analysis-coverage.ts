@@ -607,9 +607,12 @@ function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): rea
   if (files.some((f) => isMarkdownFile(f.filePath))) {
     hints.push(
       "Markdown files parsed as HTML residue: embedded HTML, image alt-text, and " +
-        "kramdown IAL are checked; link text, heading hierarchy, and prose are not. " +
-        "For full coverage, build the site and point `scan_project` at the rendered " +
-        "output (`_site/`, `public/`, `dist/`) via `additionalPaths`.",
+        "kramdown IAL are checked; link text and prose are not. ATX (`# …`) and " +
+        "Setext headings are stripped before the residue reaches `parseHtml`, so " +
+        "`semantics/heading-hierarchy` is skipped on `.md` / `.markdown` files to " +
+        "avoid emits that contradict this coverage gap. For full coverage, build " +
+        "the site and point `scan_project` at the rendered output (`_site/`, " +
+        "`public/`, `dist/`) via `additionalPaths`.",
     );
   }
   return hints;
