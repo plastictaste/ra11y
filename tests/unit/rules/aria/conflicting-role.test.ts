@@ -183,6 +183,70 @@ describe("rule aria/conflicting-role", () => {
     });
   });
 
+  describe("Bootstrap data-bs-* action triggers (reason-text enrichment)", () => {
+    it("HTML carousel <a role='button' data-bs-slide='prev'> still fires; suggestion names the Bootstrap fix", () => {
+      const violations = runRule(
+        rule,
+        `<a href="#carousel" role="button" data-bs-slide="prev">prev</a>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const suggestion = violations[0]?.suggestion ?? "";
+      expect(suggestion).toContain("Bootstrap action trigger");
+      expect(suggestion).toContain('data-bs-slide="prev"');
+      expect(suggestion).toContain('<button type="button">');
+    });
+
+    it("HTML <a href role='button' data-bs-toggle='modal'> enriches with toggle attribute", () => {
+      const violations = runRule(
+        rule,
+        `<a href="#" role="button" data-bs-toggle="modal" data-bs-target="#m">Open</a>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("Bootstrap action trigger");
+      expect(violations[0]?.suggestion).toContain('data-bs-toggle="modal"');
+    });
+
+    it("HTML <a href role='button' data-bs-dismiss='alert'> enriches with dismiss attribute", () => {
+      const violations = runRule(
+        rule,
+        `<a href="#" role="button" data-bs-dismiss="alert">Close</a>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("Bootstrap action trigger");
+      expect(violations[0]?.suggestion).toContain('data-bs-dismiss="alert"');
+    });
+
+    it("HTML non-Bootstrap conflict keeps the original suggestion (no enrichment)", () => {
+      const violations = runRule(rule, `<a href="/docs" role="button">Read the docs</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain("Bootstrap action trigger");
+    });
+
+    it("JSX <a href role='button' data-bs-slide='next'> enrichment also fires on JSX path", () => {
+      const violations = runRule(
+        rule,
+        `const X = <a href="#carousel" role="button" data-bs-slide="next">next</a>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("Bootstrap action trigger");
+      expect(violations[0]?.suggestion).toContain('data-bs-slide="next"');
+    });
+
+    it("data-bs-* on a non-conflicting element does not invent a finding", () => {
+      // <a href> + role="link" is redundant (out of scope) — the
+      // data-bs-* attribute must not be enough on its own to flag.
+      const violations = runRule(rule, `<a href="/x" role="link" data-bs-toggle="tooltip">x</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

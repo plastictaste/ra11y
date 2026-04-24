@@ -120,7 +120,8 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     // using <a> as a styled container and the role clarifies intent.
     if (element.tagName.toLowerCase() === "a" && attrs.href == null) continue;
     if (!isRoleConflict(implicit, explicit)) continue;
-    emit(buildViolation(element.tagName, implicit, explicit, element.loc.start));
+    const bootstrapTrigger = bootstrapTriggerFromHtml(element);
+    emit(buildViolation(element.tagName, implicit, explicit, element.loc.start, bootstrapTrigger));
   }
 }
 
@@ -135,7 +136,8 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (implicit === null) continue;
     if (element.tagName.toLowerCase() === "a" && attrs.href == null) continue;
     if (!isRoleConflict(implicit, explicit)) continue;
-    emit(buildViolation(element.tagName, implicit, explicit, element.loc.start));
+    const bootstrapTrigger = bootstrapTriggerFromJsx(element);
+    emit(buildViolation(element.tagName, implicit, explicit, element.loc.start, bootstrapTrigger));
   }
 }
 
@@ -210,18 +212,63 @@ function buildViolation(
   implicit: string,
   explicit: string,
   loc: { line: number; column: number },
+  bootstrapTrigger: string | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
 } {
+  const baseSuggestion = remediationSuggestion(tagName, implicit, explicit);
+  const suggestion =
+    bootstrapTrigger === null
+      ? baseSuggestion
+      : `${baseSuggestion} Bootstrap action trigger (${bootstrapTrigger}) — use \`<button type="button">\` (data-bs-* attributes work on buttons identically).`;
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<${tagName}> has role="${explicit}" but its implicit role is "${implicit}" — screen readers will announce "${explicit}" while the browser behaves like a "${implicit}".`,
-    suggestion: remediationSuggestion(tagName, implicit, explicit),
+    suggestion,
   };
+}
+
+/**
+ * Bootstrap 5 wires its JS plugins (carousel, modal, dropdown, tabs,
+ * collapse, offcanvas, tooltip) through `data-bs-*` declarative
+ * attributes. The library's own docs use `<a role="button">` for
+ * carousel controls — a copy-paste pattern that lands here as a
+ * conflicting-role finding. The canonical fix is to switch the tag to
+ * `<button type="button">`, NOT to remove the role; the data-bs-*
+ * attributes work identically on a button. Surfacing the trigger name
+ * in the suggestion lets the agent recognize the idiom without having
+ * to re-derive it from the snippet.
+ */
+const BOOTSTRAP_TRIGGER_ATTRS = [
+  "data-bs-slide",
+  "data-bs-slide-to",
+  "data-bs-dismiss",
+  "data-bs-toggle",
+  "data-bs-target",
+] as const;
+
+function bootstrapTriggerFromHtml(element: HtmlElement): string | null {
+  for (const name of BOOTSTRAP_TRIGGER_ATTRS) {
+    if (hasHtmlAttribute(element, name)) {
+      const value = getHtmlAttribute(element, name);
+      return value && value.length > 0 ? `${name}="${value}"` : name;
+    }
+  }
+  return null;
+}
+
+function bootstrapTriggerFromJsx(element: JsxElement): string | null {
+  for (const name of BOOTSTRAP_TRIGGER_ATTRS) {
+    if (hasJsxAttribute(element, name)) {
+      const value = getJsxAttributeString(element, name);
+      return value && value.length > 0 ? `${name}="${value}"` : name;
+    }
+  }
+  return null;
 }
 
 function remediationSuggestion(tagName: string, implicit: string, explicit: string): string {
