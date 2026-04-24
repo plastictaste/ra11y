@@ -272,6 +272,51 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
+  // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: frontmatter is a
+  // parser-level substrate the HTML parser sees as literal text — a
+  // Jekyll / Hugo / Eleventy / Astro post header. The warning must
+  // fire on its presence regardless of directive-overlap because the
+  // corruption is file-wide (not a per-finding line intersection).
+  it("fires `template_files_parsed_as_literal` when hasFrontmatterFence is true — no directives or overlap needed", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { hasFrontmatterFence: true },
+      filesByExtension: { ".html": 5 },
+      // Deliberately no directives, no overlap — frontmatter alone is
+      // sufficient evidence per the file-wide substrate argument.
+      templateDirectivesOverlap: false,
+    });
+    expect(codes).toContain("template_files_parsed_as_literal");
+  });
+
+  it("fires `template_files_parsed_as_literal` when frontmatter coexists with directives but no overlap — substrate path wins", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        hasFrontmatterFence: true,
+        templateDirectivesFound: ["jinja-or-liquid"],
+      },
+      filesByExtension: { ".html": 5 },
+      templateDirectivesOverlap: false,
+    });
+    expect(codes).toContain("template_files_parsed_as_literal");
+  });
+
+  it("does NOT fire `template_files_parsed_as_literal` when hasFrontmatterFence is false and no directive overlap", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { hasFrontmatterFence: false },
+      filesByExtension: { ".html": 5 },
+    });
+    expect(codes).not.toContain("template_files_parsed_as_literal");
+  });
+
   it("fires `extensions_skipped_no_parser` when the coverage block reports a non-empty skippedByExtension map", () => {
     const codes = computeScanWarnings({
       filesScanned: 125,

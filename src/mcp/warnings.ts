@@ -598,7 +598,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   ) {
     out.push("tailwind_detected_css_undercounted");
   }
-  if (hasTemplateDirectives(inputs.analysisCoverage) && inputs.templateDirectivesOverlap === true) {
+  if (shouldEmitTemplateFilesLiteral(inputs)) {
     // Q4-WARNING-DOWNGRADE-NOISE: fire the warning only when the
     // literal-template-parse actually polluted a finding — i.e. at
     // least one emitted finding's line sits inside a detected
@@ -612,6 +612,17 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // handling summary still sees it; the top-level warning is
     // now gated by the evidence that the parse-as-literal actually
     // reached a finding the agent must triage.
+    //
+    // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: frontmatter is a
+    // parser-level substrate signal, not per-finding pollution — the
+    // `---\n…\n---\n` fence at the top of a Jekyll / Hugo / Eleventy
+    // / Astro post is read by the HTML parser as literal text that
+    // can corrupt the downstream parse of a richer file. The overlap
+    // gate does not apply because the corruption is file-wide (not
+    // a directive-line intersection), so frontmatter presence alone
+    // is sufficient to fire the code — closing the silent-miss shape
+    // where a 1-line-body post returned `warnings: ["no_config_found"]`
+    // only.
     out.push("template_files_parsed_as_literal");
   }
   if (inputs.scannedBuildArtifactsPresent === true) {
@@ -825,6 +836,41 @@ function hasTemplateDirectives(coverage: Record<string, unknown> | undefined): b
   if (coverage === undefined) return false;
   const directives = coverage["templateDirectivesFound"];
   return Array.isArray(directives) && directives.length > 0;
+}
+
+/**
+ * V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: returns `true` when
+ * the coverage block reports a scan-level YAML frontmatter fence
+ * (Jekyll / Hugo / Eleventy / Astro post header). The fence is a
+ * parser-level substrate — the HTML parser sees it as literal text —
+ * and the warning fires regardless of directive-overlap because the
+ * corruption is file-wide rather than per-finding.
+ */
+function hasFrontmatterFence(coverage: Record<string, unknown> | undefined): boolean {
+  if (coverage === undefined) return false;
+  return coverage["hasFrontmatterFence"] === true;
+}
+
+/**
+ * Combined predicate for the `template_files_parsed_as_literal` code.
+ * Two independent emission paths:
+ *
+ *   - `{{ }}` / `{% %}` / `<% %>` directives detected AND at least
+ *     one finding's line intersects a directive line (Q4-WARNING-
+ *     DOWNGRADE-NOISE — overlap gate keeps the warning off every
+ *     template-heavy scan where no finding actually sits on a
+ *     directive line).
+ *   - YAML frontmatter fence detected at the top of at least one
+ *     HTML-family file (V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER).
+ *     Skips the overlap gate because the `---\n…\n---\n` fence is a
+ *     file-wide parser-level corruption vector — not a per-finding
+ *     line intersection.
+ */
+function shouldEmitTemplateFilesLiteral(inputs: WarningInputs): boolean {
+  if (hasFrontmatterFence(inputs.analysisCoverage)) return true;
+  return (
+    hasTemplateDirectives(inputs.analysisCoverage) && inputs.templateDirectivesOverlap === true
+  );
 }
 
 /**

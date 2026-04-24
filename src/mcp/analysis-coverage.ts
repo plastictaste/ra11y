@@ -134,6 +134,20 @@ interface CoverageBlock {
   opaqueCustomComponentsExcludedByAutoDetect?: number;
   templateDirectivesFound?: readonly string[];
   templateDirectiveHandling?: string;
+  /**
+   * V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: true when at least one
+   * parsed HTML-family file (including markdown routed through the HTML
+   * parser per ADR 0025) opened with a YAML frontmatter fence
+   * (`^---\n…\n---\n`). Tracked alongside `templateDirectivesFound`
+   * because the fence itself is a template substrate the HTML parser
+   * sees as literal text — a Jekyll / Hugo / Eleventy / Astro post
+   * header. The warnings layer ORs this into the
+   * `template_files_parsed_as_literal` gate so files with frontmatter
+   * but no `{{ }}` / `{% %}` / `<% %>` tokens still surface the
+   * literal-parse signal. Present-when-meaningful: omitted when no
+   * scanned file opened with a fence.
+   */
+  hasFrontmatterFence?: boolean;
   parseErrorFileCount?: number;
   parseErrorFiles?: readonly ParseErrorEntry[];
   parseErrorFilesTruncated?: MetaArrayTruncationSummary;
@@ -147,6 +161,30 @@ interface CoverageBlock {
   fragmentFileCount?: number;
   fragmentFiles?: readonly string[];
   fragmentFilesTruncated?: MetaArrayTruncationSummary;
+}
+
+/**
+ * Matches a YAML frontmatter fence at the very start of a file:
+ * `---\n` opener, any content (including empty), a closing `---` on
+ * its own line, and optionally a trailing newline. Supports CRLF as
+ * well as LF line endings so Windows-authored static sites classify
+ * the same way as Unix-authored ones. The regex is anchored at
+ * offset 0 (`^`) so a stray `---` horizontal rule partway through a
+ * document does NOT trip the detector — only the top-of-file fence
+ * that Jekyll / Hugo / Eleventy / Astro use as their post header.
+ *
+ * Not keyed by extension because the same substrate shape appears in
+ * `.md`, `.markdown`, `.html`, and `.htm` across ecosystems (Jekyll
+ * `test/source/properties.html` is the canonical repro). Files whose
+ * content happens to start with three dashes followed by a newline
+ * but no closing fence are NOT matched — the closing fence is what
+ * distinguishes structured frontmatter from a document that opens
+ * with a horizontal rule.
+ */
+const FRONTMATTER_FENCE_RE = /^---\r?\n[\s\S]*?\r?\n---\r?(?:\n|$)/;
+
+function hasFrontmatterFence(source: string): boolean {
+  return FRONTMATTER_FENCE_RE.test(source);
 }
 
 interface CoverageAccumulator {
@@ -174,6 +212,16 @@ interface CoverageAccumulator {
    * `parseErrorFiles` / `partialParseFiles`.
    */
   readonly fragmentFiles: string[];
+  /**
+   * V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: flipped to true the
+   * first time any parsed HTML-family file opens with a YAML
+   * frontmatter fence. A single sighting is sufficient — the fence is
+   * not per-file telemetry but a scan-level substrate signal ("at
+   * least one file in this scan sits on a template layer the HTML
+   * parser saw as literal text"), so the accumulator stays a boolean
+   * rather than a path list.
+   */
+  hasFrontmatterFence: boolean;
 }
 
 /**
@@ -269,6 +317,7 @@ export function buildAnalysisCoverage(
     templateEngines: new Set(),
     parseErrorEntries: [],
     fragmentFiles: [],
+    hasFrontmatterFence: false,
   };
   const wrapperSet = new Set(wrappers);
   for (const file of files) accumulateCoverageForFile(file, wrapperSet, acc, preset);
@@ -296,6 +345,15 @@ export function buildAnalysisCoverage(
   if (acc.templateEngines.size > 0) {
     coverage.templateDirectivesFound = [...acc.templateEngines].sort();
     coverage.templateDirectiveHandling = describeTemplateDirectiveHandling(acc.templateEngines);
+  }
+  if (acc.hasFrontmatterFence) {
+    // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: surface the
+    // substrate signal alongside `templateDirectivesFound` so the
+    // warnings layer can fire `template_files_parsed_as_literal`
+    // on Jekyll / Hugo / Eleventy / Astro posts whose header is the
+    // only template evidence. Present-when-meaningful — omitted when
+    // no file in this scan opened with a fence.
+    coverage.hasFrontmatterFence = true;
   }
   if (acc.parseErrorEntries.length > 0) {
     if (assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage)) {
@@ -851,6 +909,19 @@ function accumulateCoverageForFile(
   }
   if (file.ast.language === "html") {
     detectTemplateEngines(file.source, acc.templateEngines);
+    // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: the HTML parser
+    // treats a top-of-file `---\n…\n---\n` YAML fence as literal text
+    // rather than structured metadata — a Jekyll / Hugo / Eleventy /
+    // Astro post header is invisible as frontmatter and surfaces in
+    // the parse as stray horizontal-rule-looking text. Flagging the
+    // presence lets the warnings layer fire
+    // `template_files_parsed_as_literal` on files whose only template
+    // substrate is the header, closing the zero-output-success gap on
+    // 1-line-body posts where no `{{ }}` / `{% %}` / `<% %>` tokens
+    // exist to trip the existing detector.
+    if (!acc.hasFrontmatterFence && hasFrontmatterFence(file.source)) {
+      acc.hasFrontmatterFence = true;
+    }
     // Record HTML files that parsed as fragments so the coverage
     // block can surface which files were
     // skipped for page-level rules (skip-link primary-nav gating,

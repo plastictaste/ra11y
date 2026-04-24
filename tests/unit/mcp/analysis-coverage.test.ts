@@ -840,6 +840,83 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
+  // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: the HTML parser sees
+  // a top-of-file `---\n…\n---\n` YAML fence as literal text; this is
+  // the substrate Jekyll / Hugo / Eleventy / Astro authors rely on and
+  // the scanner must surface so the agent knows the document was
+  // parsed with a stray horizontal-rule-looking header in scope.
+  describe("frontmatter-fence detection", () => {
+    it("flags hasFrontmatterFence when an HTML file opens with a `---\\n…\\n---\\n` fence", () => {
+      const jekyllPage = htmlFile(
+        "_posts/hello.html",
+        "---\ntitle: Hello\nlayout: post\n---\n<p>body</p>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([jekyllPage], [], NO_RULES, false);
+      expect(analysisCoverage?.["hasFrontmatterFence"]).toBe(true);
+    });
+
+    it("flags hasFrontmatterFence with CRLF line endings (Windows-authored static sites)", () => {
+      const crlfPage = htmlFile(
+        "_posts/windows.html",
+        "---\r\ntitle: Windows\r\n---\r\n<p>body</p>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([crlfPage], [], NO_RULES, false);
+      expect(analysisCoverage?.["hasFrontmatterFence"]).toBe(true);
+    });
+
+    it("flags hasFrontmatterFence on a 1-line-body post with no template directives — the V1 repro", () => {
+      // Jekyll `test/source/properties.html`: frontmatter + single
+      // body line, zero `{{ }}` / `{% %}` / `<% %>` tokens. Before the
+      // fix, this scan returned `warnings: ["no_config_found"]` only
+      // despite the HTML parser treating `---` as literal text.
+      const v1Repro = htmlFile(
+        "test/source/properties.html",
+        "---\npermalink: /properties/\n---\n<p>properties</p>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([v1Repro], [], NO_RULES, false);
+      expect(analysisCoverage?.["hasFrontmatterFence"]).toBe(true);
+      // The substrate is the frontmatter, not a Liquid/Handlebars tag
+      // — templateDirectivesFound stays empty because no directive
+      // token exists in the source.
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+    });
+
+    it("does NOT flag hasFrontmatterFence on a plain HTML file with no fence", () => {
+      const plain = htmlFile("index.html", "<p>hello</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([plain], [], NO_RULES, false);
+      expect(analysisCoverage?.["hasFrontmatterFence"]).toBeUndefined();
+    });
+
+    it("does NOT flag hasFrontmatterFence on a mid-document `---` horizontal rule", () => {
+      // The fence matcher is anchored at offset 0 — a stray `---`
+      // partway through the document (a markdown horizontal rule in an
+      // HTML-residue-parsed .md, or a thematic break in authored HTML)
+      // must not trip the detector. Only a top-of-file fence with a
+      // closing `---` line counts.
+      const midDocumentRule = htmlFile(
+        "article.html",
+        "<h1>Intro</h1>\n---\nnot frontmatter\n---\n<p>body</p>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [midDocumentRule],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["hasFrontmatterFence"]).toBeUndefined();
+    });
+
+    it("does NOT flag hasFrontmatterFence when a file opens with `---` but no closing fence", () => {
+      // A document that starts with three dashes and a newline but
+      // never closes the fence isn't structured frontmatter — the
+      // closing `---` line is what distinguishes a post header from a
+      // document that opens with a horizontal rule.
+      const openOnly = htmlFile("broken.html", "---\ntitle: No close\n<p>body</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([openOnly], [], NO_RULES, false);
+      expect(analysisCoverage?.["hasFrontmatterFence"]).toBeUndefined();
+    });
+  });
+
   describe("preset: 'storybook'", () => {
     it("counts Storybook primitives as opaque when preset is not active", () => {
       // Story file scanned as plain TSX: every primitive inflates the
