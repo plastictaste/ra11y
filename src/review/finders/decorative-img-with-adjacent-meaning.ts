@@ -170,41 +170,56 @@ function findHtmlCandidates(
   // and the content-card path don't double-fire on the same <img>.
   const seen = new Set<string>();
   for (const element of walkHtmlElements(root)) {
-    const soleImg = soleEmptyAltImgHtml(element);
-    if (!soleImg) continue;
-    const matchedWord = matchAdjacentMeaningHtml(element, soleImg);
-    if (!matchedWord) continue;
-    const key = locationKey(soleImg.loc.start.line, soleImg.loc.start.column);
+    tryEmitDictionaryHtml(element, filePath, candidates, seen);
+  }
+  // Content-card-container path: `<img alt="">` inside a content
+  // card with a heading or substantive paragraph descendant.
+  for (const container of walkHtmlElements(root)) {
+    tryEmitContentCardHtml(container, filePath, candidates, seen);
+  }
+}
+
+function tryEmitDictionaryHtml(
+  element: HtmlElement,
+  filePath: string,
+  candidates: ReviewCandidate[],
+  seen: Set<string>,
+): void {
+  const soleImg = soleEmptyAltImgHtml(element);
+  if (!soleImg) return;
+  const matchedWord = matchAdjacentMeaningHtml(element, soleImg);
+  if (!matchedWord) return;
+  const { line, column } = soleImg.loc.start;
+  const key = locationKey(line, column);
+  if (seen.has(key)) return;
+  seen.add(key);
+  pushCandidates(candidates, filePath, line, column, reasonForDictionaryWord(matchedWord));
+}
+
+function tryEmitContentCardHtml(
+  container: HtmlElement,
+  filePath: string,
+  candidates: ReviewCandidate[],
+  seen: Set<string>,
+): void {
+  if (!isContentCardContainerHtml(container)) return;
+  const imgs = collectEmptyAltImgsHtml(container);
+  if (imgs.length === 0) return;
+  const textSignal = substantiveTextSignalHtml(container);
+  if (!textSignal) return;
+  const containerTag = container.tagName.toLowerCase();
+  for (const img of imgs) {
+    const { line, column } = img.loc.start;
+    const key = locationKey(line, column);
     if (seen.has(key)) continue;
     seen.add(key);
     pushCandidates(
       candidates,
       filePath,
-      soleImg.loc.start.line,
-      soleImg.loc.start.column,
-      reasonForDictionaryWord(matchedWord),
+      line,
+      column,
+      reasonForContentCard(containerTag, textSignal),
     );
-  }
-  // Content-card-container path: `<img alt="">` inside a content
-  // card with a heading or substantive paragraph descendant.
-  for (const container of walkHtmlElements(root)) {
-    if (!isContentCardContainerHtml(container)) continue;
-    const imgs = collectEmptyAltImgsHtml(container);
-    if (imgs.length === 0) continue;
-    const textSignal = substantiveTextSignalHtml(container);
-    if (!textSignal) continue;
-    for (const img of imgs) {
-      const key = locationKey(img.loc.start.line, img.loc.start.column);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      pushCandidates(
-        candidates,
-        filePath,
-        img.loc.start.line,
-        img.loc.start.column,
-        reasonForContentCard(container.tagName.toLowerCase(), textSignal),
-      );
-    }
   }
 }
 
@@ -333,28 +348,35 @@ function walkJsxContainers(
   candidates: ReviewCandidate[],
   seen: Set<string>,
 ): void {
-  if (isContentCardContainerJsx(element)) {
-    const imgs = collectEmptyAltImgsJsx(element);
-    if (imgs.length > 0) {
-      const textSignal = substantiveTextSignalJsx(element);
-      if (textSignal) {
-        for (const img of imgs) {
-          const key = locationKey(img.loc.start.line, img.loc.start.column);
-          if (seen.has(key)) continue;
-          seen.add(key);
-          pushCandidates(
-            candidates,
-            filePath,
-            img.loc.start.line,
-            img.loc.start.column,
-            reasonForContentCard(element.tagName, textSignal),
-          );
-        }
-      }
-    }
-  }
+  tryEmitContentCardJsx(element, filePath, candidates, seen);
   for (const child of element.children) {
     if (child.kind === "JsxElement") walkJsxContainers(child, filePath, candidates, seen);
+  }
+}
+
+function tryEmitContentCardJsx(
+  element: JsxElement,
+  filePath: string,
+  candidates: ReviewCandidate[],
+  seen: Set<string>,
+): void {
+  if (!isContentCardContainerJsx(element)) return;
+  const imgs = collectEmptyAltImgsJsx(element);
+  if (imgs.length === 0) return;
+  const textSignal = substantiveTextSignalJsx(element);
+  if (!textSignal) return;
+  for (const img of imgs) {
+    const { line, column } = img.loc.start;
+    const key = locationKey(line, column);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pushCandidates(
+      candidates,
+      filePath,
+      line,
+      column,
+      reasonForContentCard(element.tagName, textSignal),
+    );
   }
 }
 
