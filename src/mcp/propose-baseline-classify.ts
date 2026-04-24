@@ -158,9 +158,10 @@ export function buildProposedEntries(args: {
  * ("same shape across findings") — agents don't have to branch on
  * "inline vs. hoisted" depending on size.
  */
-export function hoistRationales(
-  raw: readonly RawProposedEntry[],
-): { readonly entries: readonly ProposedEntry[]; readonly rationales: Readonly<Record<string, string>> } {
+export function hoistRationales(raw: readonly RawProposedEntry[]): {
+  readonly entries: readonly ProposedEntry[];
+  readonly rationales: Readonly<Record<string, string>>;
+} {
   const rationales: Record<string, string> = {};
   const entries: ProposedEntry[] = [];
   for (const r of raw) {
