@@ -36,6 +36,15 @@ const SITEMAP_RE = /site-?map/i;
 const BREADCRUMB_RE = /breadcrumb/i;
 const DIRECT_NAV_LINK_MIN = 3;
 
+// Path tokens used by static-site generators (Jekyll, Hugo, Eleventy,
+// Astro) and component-scaffolded apps to mark files that are stitched
+// into a parent layout rather than served as a standalone page. When
+// the predicate fires on a file under one of these segments, the agent
+// gets a redirect hint to verify the multi-way nav in the composing
+// parent file — per AI-first doctrine the candidate still surfaces;
+// the path is additive context, not a suppression gate.
+const FRAGMENT_PATH_RE = /(?:^|[\\/])_(?:includes|partials|components)[\\/]/i;
+
 export const finder = defineCandidateFinder({
   id: "review/multiple-ways",
   criterionIds: [...CRITERION_IDS],
@@ -67,6 +76,18 @@ export const finder = defineCandidateFinder({
 
 function findHtmlCandidates(ctx: FileContext, root: HtmlDocument): readonly ReviewCandidate[] {
   if (!looksLikeHtmlRootLayout(root, ctx.filePath)) return [];
+  // Predicate gate: a file qualifies as a candidate "site root" only
+  // when it has BOTH a `<body>` element AND ≥1 anchor or `<nav>`. A
+  // `<head>`-only template partial (e.g. Jekyll `_includes/top.html`
+  // that opens `<html><head>...</head>` to be closed by a sibling
+  // partial) has no `<body>` and is not a site root. A vanilla
+  // single-page CSS-trick demo with no anchors and no `<nav>` is also
+  // not a site root in any practical sense — the agent reading the
+  // file would dismiss it. The body+link/nav predicate is structural
+  // (deterministic from the AST), not a heuristic, so it earns a
+  // gate; everything else (SPA shell, fragment-path, single-page)
+  // remains additive reason context.
+  if (!hasHtmlBodyAndLinkOrNav(root)) return [];
   if (hasHtmlMultipleWaysSignal(root)) return [];
   const location = firstHtmlLocation(root);
   // SPA index shells (Vite/CRA/React Router root) carry no navigation
@@ -85,7 +106,13 @@ function findHtmlCandidates(ctx: FileContext, root: HtmlDocument): readonly Revi
   // file in one read. SPA shells get their own annotation (emptier
   // evidence: no outbound links AND a mount-div + module-script pair)
   // and take precedence over the generic single-page hint.
-  const annotation = pickHtmlAnnotation(root);
+  //
+  // Fragment-path files (`_includes/`, `_partials/`, `_components/`)
+  // get a redirect hint to the composing parent file — strongest
+  // structural signal, takes precedence over SPA-shell / single-page
+  // hints because fragments are partials by definition regardless of
+  // body content.
+  const annotation = pickHtmlAnnotation(root, ctx.filePath);
   const signals = summarizeHtmlSignals(root);
   return candidatesForAllCriteria(
     ctx.filePath,
@@ -96,10 +123,35 @@ function findHtmlCandidates(ctx: FileContext, root: HtmlDocument): readonly Revi
   );
 }
 
-function pickHtmlAnnotation(root: HtmlDocument): string | null {
+function pickHtmlAnnotation(root: HtmlDocument, filePath: string): string | null {
+  if (looksLikeFragmentPath(filePath)) return FRAGMENT_PATH_HINT;
   if (looksLikeSpaShell(root)) return SPA_SHELL_HINT;
   if (!hasSiblingHtmlPageLink(root)) return SINGLE_PAGE_SCOPE_HINT;
   return null;
+}
+
+function looksLikeFragmentPath(filePath: string): boolean {
+  return FRAGMENT_PATH_RE.test(filePath);
+}
+
+/**
+ * Does the file have BOTH a `<body>` element AND at least one anchor
+ * (`<a>`) or `<nav>` somewhere in the tree? This is the predicate gate
+ * for HTML candidates — a true "site root" file participates in a
+ * page set, which means a rendered body and at least some link/nav
+ * structure. A `<head>`-only template partial fails the body check;
+ * a CSS-trick demo with no links fails the link/nav check.
+ */
+function hasHtmlBodyAndLinkOrNav(root: HtmlDocument): boolean {
+  let hasBody = false;
+  let hasLinkOrNav = false;
+  for (const el of walkHtmlElements(root)) {
+    const tag = el.tagName.toLowerCase();
+    if (!hasBody && tag === "body") hasBody = true;
+    if (!hasLinkOrNav && (tag === "a" || tag === "nav")) hasLinkOrNav = true;
+    if (hasBody && hasLinkOrNav) return true;
+  }
+  return false;
 }
 
 function findJsxCandidates(ctx: FileContext, root: TsxModule): readonly ReviewCandidate[] {
@@ -107,7 +159,19 @@ function findJsxCandidates(ctx: FileContext, root: TsxModule): readonly ReviewCa
   if (hasJsxMultipleWaysSignal(root)) return [];
   const location = firstJsxLocation(root);
   const signals = summarizeJsxSignals(root);
-  return candidatesForAllCriteria(ctx.filePath, location.line, location.column, signals);
+  // Fragment-path hint applies to JSX too — a `_includes/Header.tsx`
+  // or `_components/Layout.tsx` is a partial composed into a parent
+  // by convention. The body+link/nav predicate is HTML-only because
+  // JSX layout components rarely contain a literal `<body>` element;
+  // the JSX gate stays at filename/root-tag heuristics.
+  const annotation = looksLikeFragmentPath(ctx.filePath) ? FRAGMENT_PATH_HINT : null;
+  return candidatesForAllCriteria(
+    ctx.filePath,
+    location.line,
+    location.column,
+    signals,
+    annotation,
+  );
 }
 
 function isJsLike(language: Language): boolean {
@@ -413,6 +477,9 @@ const SPA_SHELL_HINT =
 
 const SINGLE_PAGE_SCOPE_HINT =
   "no anchors target a sibling HTML page from this file — SC 2.4.5 applies to sets of Web pages, so if this is a standalone single-page file or SPA, the criterion may not apply; verify whether the scanned file is part of a multi-page set";
+
+const FRAGMENT_PATH_HINT =
+  "file path suggests this is a fragment composed into a parent layout (_includes/, _partials/, _components/) — verify multi-way nav lives in the parent file rather than treating this partial as the failure point";
 
 const HTML_PAGE_HREF_RE = /\.html?(?:$|[?#])/i;
 const NON_NAVIGABLE_SCHEME_RE = /^(?:mailto:|tel:|sms:|javascript:|data:|blob:|about:)/i;

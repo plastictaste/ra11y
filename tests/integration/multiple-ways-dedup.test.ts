@@ -88,9 +88,18 @@ describe("candidate-runner — inline-disable suppresses candidates", () => {
 
 describe("multiple-ways finder — uniquePerCriterion dedup", () => {
   it("emits one candidate per criterion even when multiple root layouts match", () => {
+    // Each HTML root carries body + a single fragment anchor to
+    // satisfy the body+link/nav predicate gate; below the 3-link nav
+    // signal threshold so the candidate still surfaces.
     const files: ParsedFile[] = [
-      htmlFile("/p/app/templates/base.html", "<html><body><main>x</main></body></html>"),
-      htmlFile("/p/frontend/index.html", "<html><body><main>x</main></body></html>"),
+      htmlFile(
+        "/p/app/templates/base.html",
+        '<html><body><main>x</main><a href="#top">Top</a></body></html>',
+      ),
+      htmlFile(
+        "/p/frontend/index.html",
+        '<html><body><main>x</main><a href="#top">Top</a></body></html>',
+      ),
       tsxFile("/p/frontend/src/App.tsx", "export const App = () => <Layout><main/></Layout>;"),
     ];
     const { report } = runScan({

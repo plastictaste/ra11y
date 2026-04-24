@@ -8,10 +8,14 @@ import { runFinder } from "../../helpers/run-finder.ts";
 
 describe("review/multiple-ways", () => {
   it("flags an HTML root document with no alternate-navigation signals", () => {
+    // Body + ≥1 anchor satisfies the predicate gate; the anchor is a
+    // fragment-only `#top` so no nav-landmark / sitemap / search /
+    // breadcrumb signal fires and the candidate surfaces.
     const source = `
       <html>
         <body>
           <main>Dashboard</main>
+          <a href="#top">Top</a>
         </body>
       </html>
     `;
@@ -109,17 +113,22 @@ describe("review/multiple-ways", () => {
     // without reopening the file. Counts are additive context, not a
     // suppression threshold — the candidate still fires at zero-signal.
     it("inlines counted nav signals into the reason for a minimal HTML shell", () => {
+      // One fragment anchor satisfies the body+anchor predicate gate
+      // without contributing a nav landmark / sitemap / search /
+      // breadcrumb signal — the finder fires and the reason surfaces
+      // the counted-zero structure (1 <a>, 0 <nav>, no breadcrumb...).
       const source = `
         <html>
           <body>
             <main>Dashboard</main>
+            <a href="#top">Top</a>
           </body>
         </html>
       `;
       const out = runFinder(finder, source, { filePath: "index.html" });
       const reason = out[0]?.reason ?? "";
       expect(reason).toContain("0 <nav>");
-      expect(reason).toContain("0 <a>");
+      expect(reason).toContain("1 <a>");
       expect(reason).toContain("no <input type='search'>");
       expect(reason).toContain("no breadcrumb");
       expect(reason).toContain("no sitemap link");
@@ -163,9 +172,13 @@ describe("review/multiple-ways", () => {
     });
 
     it("keeps the SPA-shell annotation alongside the counts", () => {
+      // SPA shell with an in-shell skip-link satisfies the body+anchor
+      // predicate gate — the SPA-shell evidence (mount div + module
+      // script) still wins the annotation slot.
       const source = `
         <html>
           <body>
+            <a href="#main">Skip to main</a>
             <div id="root"></div>
             <script type="module" src="/src/main.tsx"></script>
           </body>
@@ -183,6 +196,7 @@ describe("review/multiple-ways", () => {
       <html>
         <body>
           <main>Dashboard</main>
+          <a href="#top">Top</a>
         </body>
       </html>
     `;
@@ -199,9 +213,12 @@ describe("review/multiple-ways", () => {
     // The annotation redirects the agent's review to the router config
     // instead of treating the index HTML as the failure point.
     it("annotates when a Vite-style index has a root mount div + module script", () => {
+      // Skip-link anchor satisfies the body+anchor predicate; the SPA
+      // shell evidence still drives the annotation.
       const source = `
         <html>
           <body>
+            <a href="#main">Skip</a>
             <div id="root"></div>
             <script type="module" src="/src/main.tsx"></script>
           </body>
@@ -217,6 +234,7 @@ describe("review/multiple-ways", () => {
       const source = `
         <html>
           <body>
+            <a href="#main">Skip</a>
             <div id="app"></div>
             <script src="/assets/bundle.abc123.js"></script>
           </body>
@@ -233,6 +251,7 @@ describe("review/multiple-ways", () => {
             <div id="root">
               <header>Acme</header>
               <main>Welcome</main>
+              <a href="#top">Top</a>
             </div>
             <script type="module" src="/src/main.tsx"></script>
           </body>
@@ -247,6 +266,7 @@ describe("review/multiple-ways", () => {
         <html>
           <body>
             <main>Dashboard</main>
+            <a href="#top">Top</a>
           </body>
         </html>
       `;
@@ -258,6 +278,7 @@ describe("review/multiple-ways", () => {
       const source = `
         <html>
           <body>
+            <a href="#main">Skip</a>
             <div id="root"></div>
             <script type="module" src="/src/main.tsx"></script>
           </body>
@@ -275,10 +296,14 @@ describe("review/multiple-ways", () => {
     // scopes to "sets of Web pages", so an HTML file with no anchors
     // pointing at sibling HTML pages is a valid dismissal signal.
     it("annotates a standalone HTML file with zero sibling-HTML links", () => {
+      // Fragment anchor satisfies the body+anchor predicate but is
+      // not a sibling-HTML-page link, so the single-page-scope hint
+      // still applies.
       const source = `
         <html>
           <body>
             <main>Dashboard</main>
+            <a href="#top">Top</a>
           </body>
         </html>
       `;
@@ -355,6 +380,7 @@ describe("review/multiple-ways", () => {
       const source = `
         <html>
           <body>
+            <a href="#main">Skip</a>
             <div id="root"></div>
             <script type="module" src="/src/main.tsx"></script>
           </body>
@@ -370,6 +396,7 @@ describe("review/multiple-ways", () => {
         <html>
           <body>
             <main>Dashboard</main>
+            <a href="#top">Top</a>
           </body>
         </html>
       `;
@@ -391,6 +418,182 @@ describe("review/multiple-ways", () => {
       `;
       const out = runFinder(finder, source, { filePath: "shell.tsx" });
       expect(out[0]?.reason).not.toContain("sets of Web pages");
+    });
+  });
+
+  describe("body+link/nav predicate gate (V1-FINDER-2.4.5-MULTIPLE-WAYS-REQUIRE-BODY)", () => {
+    // The finder previously fired on every HTML root (including
+    // `<head>`-only template partials and standalone CSS-trick
+    // demos). The new predicate gates emission on BOTH a `<body>`
+    // element AND ≥1 anchor or `<nav>` — together those signal a
+    // file the agent would actually treat as a site-root layout.
+    it("does NOT fire on a <head>-only template partial (no <body>)", () => {
+      // Realistic Jekyll/Eleventy `_includes/top.html` shape: opens
+      // `<html><head>...` to be closed by a sibling partial. The
+      // composed page has full nav; this fragment alone has none.
+      const source = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>Site</title>
+            <link rel="stylesheet" href="/assets/main.css" />
+          </head>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out).toEqual([]);
+    });
+
+    it("does NOT fire on a single-page CSS-trick demo with no anchors and no <nav>", () => {
+      // Vanilla single-page demo: full body but zero link / nav
+      // structure. The agent reading the file would dismiss it; the
+      // predicate dismisses upstream.
+      const source = `
+        <html>
+          <body>
+            <div class="cube">
+              <div class="face front"></div>
+              <div class="face back"></div>
+            </div>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out).toEqual([]);
+    });
+
+    it("fires when <body> is present AND a single anchor is present", () => {
+      // Body + one fragment anchor satisfies the predicate. No nav
+      // landmark / sitemap / search / breadcrumb signals, so the
+      // candidate surfaces.
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out.length).toBe(4);
+    });
+
+    it("fires when <body> is present AND a <nav> element is present (even with no links)", () => {
+      // A `<nav>` landmark with zero anchors counts toward the
+      // predicate (link/nav presence) but doesn't satisfy the
+      // multi-link nav signal (which requires ≥3 anchors), so the
+      // candidate still surfaces.
+      const source = `
+        <html>
+          <body>
+            <nav></nav>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out.length).toBe(4);
+    });
+  });
+
+  describe("fragment-path reason hint (V1-FINDER-2.4.5-MULTIPLE-WAYS-REQUIRE-BODY)", () => {
+    // Per AI-first doctrine the candidate still surfaces — the
+    // path-derived hint is additive context redirecting the agent's
+    // review to the composing parent file rather than auto-suppressing.
+    it("annotates an _includes/ HTML partial that satisfies the predicate", () => {
+      // A Jekyll `_includes/header.html` that happens to wrap the
+      // body itself (some templating engines do this when the layout
+      // emits the outer chrome from the include). The path tells the
+      // agent the multi-way nav check should target the parent
+      // layout, not this file.
+      const source = `
+        <html>
+          <body>
+            <header>
+              <a href="/">Home</a>
+            </header>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "_includes/header.html" });
+      expect(out.length).toBe(4);
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("fragment composed into a parent layout");
+      expect(reason).toContain("multi-way nav lives in the parent");
+    });
+
+    it("annotates _partials/ HTML files", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Content</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "_partials/page.html" });
+      expect(out[0]?.reason).toContain("fragment composed into a parent layout");
+    });
+
+    it("annotates _components/ JSX files", () => {
+      const source = `
+        export function Header() {
+          return (
+            <Layout>
+              <main>Hi</main>
+            </Layout>
+          );
+        }
+      `;
+      const out = runFinder(finder, source, { filePath: "_components/Header.tsx" });
+      expect(out.length).toBe(4);
+      expect(out[0]?.reason).toContain("fragment composed into a parent layout");
+    });
+
+    it("does NOT add the fragment hint for files outside _includes/_partials/_components", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "src/index.html" });
+      expect(out[0]?.reason).not.toContain("fragment composed into a parent layout");
+    });
+
+    it("fragment-path hint takes precedence over SPA-shell hint", () => {
+      // Fragment evidence (path) is stronger than SPA-shell evidence
+      // (mount div + module script) — a partial that happens to
+      // embed an SPA-style mount is still a partial.
+      const source = `
+        <html>
+          <body>
+            <a href="#main">Skip</a>
+            <div id="root"></div>
+            <script type="module" src="/src/main.tsx"></script>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "_includes/shell.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("fragment composed into a parent layout");
+      expect(reason).not.toContain("SPA index shell");
+    });
+
+    it("fragment-path hint takes precedence over single-page hint", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Content</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "_includes/page.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("fragment composed into a parent layout");
+      expect(reason).not.toContain("sets of Web pages");
     });
   });
 });
