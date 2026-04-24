@@ -506,6 +506,139 @@ describe("rule aria/expanded-on-disclosure", () => {
     });
   });
 
+  describe("disclosure-pattern class-name fallback (no other disclosure signal)", () => {
+    it('fires on <button class="toggle">Dark mode</button> with no aria-expanded (theme-toggle pattern)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="toggle">Dark mode</button>
+        </body></html>`,
+        { filePath: "theme-toggle.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "toggle"/);
+      expect(violations[0]?.suggestion).toMatch(/aria-expanded="false"/);
+    });
+
+    it('fires on <button class="dropdown-toggle">Menu</button> (Bootstrap-style trigger naming)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="dropdown-toggle">Menu</button>
+        </body></html>`,
+        { filePath: "dropdown-toggle.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "dropdown-toggle"/);
+    });
+
+    it('fires on a <button class="accordion-header accordion"> trigger with no aria-expanded', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="accordion-header accordion">Section 1</button>
+        </body></html>`,
+        { filePath: "accordion.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "accordion"/);
+    });
+
+    it('fires on a JSX <button className="toggle"> with no aria-expanded', () => {
+      const violations = runRule(
+        rule,
+        `function ThemeToggle() {
+           return <button className="toggle">Toggle theme</button>;
+         }`,
+        { filePath: "ThemeToggle.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "toggle"/);
+    });
+
+    it('does not fire on <button class="toggle-button-group"> (substring, not token-exact)', () => {
+      // The class-only branch is conservative: it requires a whitespace-
+      // separated token equal to a disclosure-pattern name. A class
+      // containing "toggle" as a substring (e.g. `toggle-button-group`,
+      // `toggle-row`, `toggle-icon`) does not match. Stronger evidence
+      // is required to fire on substring overlap.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="toggle-button-group">Group</button>
+        </body></html>`,
+        { filePath: "substr.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does not fire on a plain <button>Click me</button> with no class and no other disclosure signal", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button>Click me</button>
+        </body></html>`,
+        { filePath: "plain.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('matches the disclosure-class token case-insensitively (<button class="Toggle">)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="Toggle">Dark mode</button>
+        </body></html>`,
+        { filePath: "case.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "toggle"/);
+    });
+
+    it("still recognises a disclosure trigger when the class token sits among other classes", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="btn btn-primary toggle theme-button">Dark mode</button>
+        </body></html>`,
+        { filePath: "many.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it('does not fire when the class-named disclosure trigger already declares aria-expanded="false"', () => {
+      // Class-name branch: aria-expanded present + non-aria-controls
+      // signal would normally fire `missing-controls`, matching the
+      // existing data-toggle behavior. Document the parallel here so
+      // future readers see the branches behave consistently.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="toggle" aria-expanded="false" aria-controls="m1">Menu</button>
+          <ul id="m1"><li>x</li></ul>
+        </body></html>`,
+        { filePath: "ok.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('fires `missing-controls` on <button class="dropdown-toggle" aria-expanded="false"> with no aria-controls', () => {
+      // Parallels the existing data-bs-toggle="dropdown" Bootstrap-canonical
+      // case: when the class evidence proves disclosure-shape and aria-expanded
+      // is set but aria-controls is absent, surface the gap honestly.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="dropdown-toggle" aria-expanded="false">Menu</button>
+        </body></html>`,
+        { filePath: "no-controls.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/missing aria-controls/);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "dropdown-toggle"/);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2 in satisfies", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

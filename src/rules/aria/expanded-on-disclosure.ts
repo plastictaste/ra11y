@@ -32,8 +32,10 @@
  *
  * The rule is framework-agnostic: it matches on the *shape* of a
  * disclosure trigger (aria-controls, toggle-style data attributes with
- * collapse/disclosure values, or inline onclick handlers that toggle a
- * visibility class). Widely-used framework data attributes like
+ * collapse/disclosure values, inline onclick handlers that toggle a
+ * visibility class, or disclosure-pattern class-name tokens like
+ * `toggle` / `dropdown-toggle` / `accordion` / `disclosure` /
+ * `collapse-toggle` on the trigger itself). Widely-used framework data attributes like
  * `data-bs-toggle="collapse"` / `data-toggle="dropdown"` merely serve as
  * additive evidence hints that the element *is* a disclosure trigger —
  * the rule is not Bootstrap-specific (see CLAUDE.md §14 "no
@@ -121,6 +123,39 @@ const VISIBILITY_CLASS_TOKENS: readonly string[] = [
   "hidden",
 ];
 
+/**
+ * Class-name tokens on the trigger element itself that mark it as a
+ * disclosure-shaped widget even when there is no `aria-controls`,
+ * `data-*-toggle`, or inline classList handler to detect. These are the
+ * common naming conventions widely used by frameworks and hand-rolled
+ * disclosure patterns to identify a control that toggles a collapsible
+ * region:
+ *
+ *   - `toggle` — generic toggle convention (`<button class="toggle">`)
+ *   - `dropdown-toggle` — Bootstrap, generic dropdown trigger
+ *   - `collapse-toggle` — common collapse trigger naming
+ *   - `accordion` — generic accordion-header naming
+ *   - `disclosure` — APG-aligned naming
+ *
+ * Matched as an EXACT whitespace-split token (case-insensitive). A
+ * class like `toggle-button-group` does NOT match `toggle`. The
+ * conservative bias is intentional: the predicate already fires on
+ * stronger signals (data-*-toggle, aria-controls, onclick classList),
+ * so the class-only branch only earns its keep when the naming is a
+ * recognized disclosure idiom — not on any element that happens to
+ * carry a class containing "toggle".
+ *
+ * Per CLAUDE.md §14 we detect the shape, not the framework — the
+ * tokens here are conventions independent of any one library.
+ */
+const DISCLOSURE_CLASS_TOKENS: readonly string[] = [
+  "toggle",
+  "dropdown-toggle",
+  "collapse-toggle",
+  "accordion",
+  "disclosure",
+];
+
 /** classList method names used to toggle visibility classes. */
 const CLASSLIST_METHODS: readonly string[] = ["toggle", "add", "remove"];
 
@@ -159,7 +194,8 @@ const VISUALLY_HIDDEN_CLASS_TOKENS: readonly string[] = [
 type PredicateBranch =
   | { readonly kind: "aria-controls"; readonly targetId: string }
   | { readonly kind: "data-toggle"; readonly attrName: string; readonly value: string }
-  | { readonly kind: "onclick-classlist"; readonly matchedClass: string };
+  | { readonly kind: "onclick-classlist"; readonly matchedClass: string }
+  | { readonly kind: "disclosure-class"; readonly matchedToken: string };
 
 /**
  * Which gap the rule is flagging. `missing-expanded` is the original
@@ -291,6 +327,8 @@ function matchHtmlPredicate(el: HtmlElement, doc: HtmlDocument): PredicateBranch
   if (toggleMatch) return toggleMatch;
   const onclickMatch = findHtmlOnclickClasslist(el);
   if (onclickMatch) return onclickMatch;
+  const classMatch = findDisclosureClassToken(getHtmlAttribute(el, "class"));
+  if (classMatch) return { kind: "disclosure-class", matchedToken: classMatch };
   return null;
 }
 
@@ -346,6 +384,32 @@ function findHtmlOnclickClasslist(el: HtmlElement): PredicateBranch | null {
  * probe is text-level by design: we're shaping a fix, not proving
  * intent, and an agent reading the handler decides from there.
  */
+/**
+ * Returns the first disclosure-pattern class token present on the
+ * element (whitespace-split, case-insensitive, exact-token match).
+ * Used as the last-resort predicate branch: when an interactive
+ * element has none of the stronger disclosure signals (aria-controls,
+ * data-*-toggle, onclick classList) but its own class list contains
+ * a recognized disclosure-naming idiom, treat it as a disclosure
+ * trigger so the missing-aria-expanded gap surfaces.
+ *
+ * Token-exact match is intentional: a class like `toggle-button-group`
+ * does NOT match the `toggle` token. This bias keeps the branch
+ * conservative — it earns its keep on common naming conventions
+ * (`<button class="toggle">`, `<button class="dropdown-toggle">`)
+ * without firing on every element whose class string contains
+ * "toggle" as a substring.
+ */
+function findDisclosureClassToken(classValue: string | null): string | null {
+  if (classValue === null) return null;
+  for (const raw of classValue.split(/\s+/)) {
+    const token = raw.trim().toLowerCase();
+    if (!token) continue;
+    if (DISCLOSURE_CLASS_TOKENS.includes(token)) return token;
+  }
+  return null;
+}
+
 function inspectHandlerBody(body: string): PredicateBranch | null {
   const lowered = body.toLowerCase();
   if (!lowered.includes("classlist")) return null;
@@ -425,6 +489,9 @@ function matchJsxPredicate(el: JsxElement, idIndex: ReadonlySet<string>): Predic
   if (toggleMatch) return toggleMatch;
   const onclickMatch = findJsxOnclickClasslist(el);
   if (onclickMatch) return onclickMatch;
+  const classValue = getJsxAttributeString(el, "className") ?? getJsxAttributeString(el, "class");
+  const classMatch = findDisclosureClassToken(classValue);
+  if (classMatch) return { kind: "disclosure-class", matchedToken: classMatch };
   return null;
 }
 
@@ -529,6 +596,9 @@ function describeBranch(branch: PredicateBranch): string {
   }
   if (branch.kind === "data-toggle") {
     return `${branch.attrName}="${branch.value}" is a disclosure-style toggle value`;
+  }
+  if (branch.kind === "disclosure-class") {
+    return `class includes the disclosure-pattern token "${branch.matchedToken}"`;
   }
   return `inline onclick toggles a visibility class "${branch.matchedClass}" via classList`;
 }
