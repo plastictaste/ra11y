@@ -99,4 +99,61 @@ describe("review/sensory-characteristics", () => {
       expect(runFinder(finder, source, { filePath: "input.html" })).toEqual([]);
     }
   });
+
+  it("reason text includes the surrounding sentence so a benign-prose dismiss is mechanical", () => {
+    // Real-world false positive: alert.html demo prose where the match
+    // is a phrase inside a longer sentence ("Holy guacamole! You should
+    // check in on some of those fields below."). The agent should be
+    // able to dismiss without opening the file — the reason carries
+    // the sentence so the prose context is visible inline.
+    const source = `<p>To proceed, click the red button to submit.</p>`;
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    // The matched phrase
+    expect(c.reason).toContain("the red");
+    // The surrounding sentence — both the matched phrase AND the
+    // pointing context ("click", "submit") that frames the question.
+    expect(c.reason).toContain("click");
+    expect(c.reason).toContain("submit");
+  });
+
+  it("cites the line of the matched phrase, not the parent element's opening tag", () => {
+    // Multi-line element body — the matched phrase sits on line 4 of
+    // the source. Previously the finder reported the parent element's
+    // opening tag (line 1), causing off-by-N citation drift the agent
+    // had to reconcile by counting lines manually.
+    const source = [
+      "<div>",
+      "  Welcome to the dashboard.",
+      "  Read the instructions carefully.",
+      "  Click the red button to submit.",
+      "</div>",
+    ].join("\n");
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    // 1-based: line 4 is "Click the red button to submit."
+    expect(c.location.line).toBe(4);
+  });
+
+  it("cites the line of the matched phrase in JSX multi-line bodies", () => {
+    // Same precise-line invariant for JSX text children. The matched
+    // phrase ("the red") lives on line 4 of the source.
+    const source = [
+      "const Demo = () => (",
+      "  <p>",
+      "    Step one.",
+      "    Click the red button to submit.",
+      "  </p>",
+      ");",
+    ].join("\n");
+    const candidates = runFinder(finder, source, { filePath: "input.tsx" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    expect(c.location.line).toBe(4);
+  });
 });
