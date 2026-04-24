@@ -343,4 +343,65 @@ describe("rule contrast/non-text", () => {
     expect(rule.satisfies).toContain("wcag22:1.4.11");
     expect(rule.satisfies).toContain("wcag21:1.4.11");
   });
+
+  describe("preprocessor source (.scss / .less)", () => {
+    // Same SSG-ecosystem rationale as `contrast/minimum`: SCSS and Less
+    // preprocess to a CSS AST that the rule's afterProject CSS branch
+    // already handles; the extension gate must list the preprocessor
+    // suffixes so per-rule coverage's `eligible` count is bumped.
+    it("flags a sub-3:1 button border in a .scss source", () => {
+      const v = runRule(rule, `button { background: #ffffff; border: 1px solid #d0d0d0; }`, {
+        filePath: "ui.scss",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.location.filePath).toBe("ui.scss");
+      expect(v[0]?.message).toContain("border");
+    });
+
+    it("flags a sub-3:1 button border in a .less source", () => {
+      const v = runRule(rule, `button { background: #ffffff; border: 1px solid #d0d0d0; }`, {
+        filePath: "ui.less",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.location.filePath).toBe("ui.less");
+    });
+
+    it("does NOT fire when the boundary clears 3:1 (.scss)", () => {
+      // #595959 on white ≈ 7.0:1 — clears the 3:1 floor.
+      const v = runRule(rule, `button { background: #ffffff; border: 1px solid #595959; }`, {
+        filePath: "ui.scss",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("resolves $variable substitution in Sass before checking the boundary", () => {
+      const v = runRule(
+        rule,
+        `$bg: #ffffff;\n$border: #d0d0d0;\nbutton { background: $bg; border: 1px solid $border; }`,
+        { filePath: "tokens.scss" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("#d0d0d0");
+    });
+
+    it("resolves @variable substitution in Less before checking the boundary", () => {
+      const v = runRule(
+        rule,
+        `@bg: #ffffff;\n@border: #d0d0d0;\nbutton { background: @bg; border: 1px solid @border; }`,
+        { filePath: "tokens.less" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("#d0d0d0");
+    });
+
+    it("declares .scss and .less in appliesTo.fileExtensions", () => {
+      // Same per-rule coverage gate as contrast/minimum — without the
+      // preprocessor extensions in the list, an SSG scan with zero
+      // `.css` files reports `filesEvaluated: 0` even when the rule
+      // walked every Sass / Less file.
+      expect(rule.appliesTo?.fileExtensions).toContain(".scss");
+      expect(rule.appliesTo?.fileExtensions).toContain(".less");
+    });
+  });
 });

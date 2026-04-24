@@ -10,7 +10,14 @@
 
 import { describeNodeShape, findTargetNodeAtLocation } from "../../src/engine/ast-helpers.ts";
 import { buildContext } from "../../src/engine/context-builder.ts";
-import { parseCss, parseHtml, parseMarkdown, parseTsx } from "../../src/input/parsers/index.ts";
+import {
+  parseCss,
+  parseHtml,
+  parseLess,
+  parseMarkdown,
+  parseScss,
+  parseTsx,
+} from "../../src/input/parsers/index.ts";
 import type { Ast } from "../../src/types/ast.ts";
 import type { EmittedViolation, Language, ProjectContext, Rule } from "../../src/types/rule.ts";
 import type { Violation } from "../../src/types/violation.ts";
@@ -167,6 +174,20 @@ function parseSource(filePath: string, source: string): Ast {
   }
   if (filePath.endsWith(".css")) {
     const result = parseCss(source);
+    return { language: "css", root: result.root, errors: result.errors };
+  }
+  if (filePath.endsWith(".scss")) {
+    // SCSS source preprocesses to a CSS-shaped AST (`src/input/parsers/
+    // scss.ts`); production scan/conformance commands route the same
+    // way. Unit tests that point `filePath` at an `.scss` file exercise
+    // the same AST shape the CSS-family rules see at scan time.
+    const result = parseScss(source);
+    return { language: "css", root: result.root, errors: result.errors };
+  }
+  if (filePath.endsWith(".less")) {
+    // Same adapter pattern as `.scss` — the Less preprocessor emits a
+    // CSS AST so downstream CSS rules consume it unchanged.
+    const result = parseLess(source);
     return { language: "css", root: result.root, errors: result.errors };
   }
   const result = parseTsx(source);

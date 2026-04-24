@@ -119,8 +119,31 @@ export const rule = defineRule({
   // `style="color:…;background:…"` pair is scored. The rule still runs
   // in `afterProject` — the extension gate only threads through the
   // per-rule coverage tracker, not per-file dispatch.
+  //
+  // `.scss` / `.less` are listed because the SCSS and Less parsers
+  // (`src/input/parsers/scss.ts`, `src/input/parsers/less.ts`)
+  // preprocess preprocessor source into a CSS-shaped AST and the
+  // dispatch sites (`src/cli/commands/scan.ts`,
+  // `src/cli/commands/conformance.ts`, `src/mcp/session.ts`) tag the
+  // resulting `Ast.language` as `"css"`. The `afterProject` loop
+  // already handles `file.language === "css"`, so adding these
+  // extensions to the gate makes the per-rule coverage tracker bump
+  // `eligible` for every parsed `.scss` / `.less` file — without it,
+  // SSG docs sites with their full color story authored in Sass/Less
+  // (Jekyll, Hugo, Middleman, Eleventy ecosystems) silently report
+  // `filesEvaluated: 0` for `contrast/minimum`. Statically resolvable
+  // pairs (literal hex / named / `rgb()` colors, top-level
+  // `$var: <literal>` substitution) flag normally; preprocessor
+  // constructs the parsers can't statically resolve (mixin bodies,
+  // `@function`, math, `#{…}` interpolation, cross-file imports,
+  // Less guards) stay unresolved so the rule does not emit false
+  // findings — `crossFileCapable: false` already downgrades the
+  // coverage row to honestly signal that bound (ADR 0026).
+  // `.sass` (indented syntax) is intentionally absent — no parser
+  // exists for it; adding the extension without a parser would
+  // surface a zero-output success on Sass-indented projects.
   appliesTo: {
-    fileExtensions: [".css", ".html", ".htm"],
+    fileExtensions: [".css", ".html", ".htm", ".scss", ".less"],
   },
   // SC 1.4.3's spec measures the *rendered* color pair; design-system
   // CSS routinely hosts that pair across files — a `tokens.css` with

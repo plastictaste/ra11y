@@ -689,4 +689,85 @@ describe("rule contrast/minimum", () => {
     expect(rule.satisfies).toContain("wcag22:1.4.3");
     expect(rule.satisfies).toContain("wcag21:1.4.3");
   });
+
+  describe("preprocessor source (.scss / .less)", () => {
+    // SSG ecosystems (Jekyll, Hugo, Middleman, Eleventy) author the bulk
+    // of their color decisions in Sass / Less rather than plain CSS.
+    // The SCSS and Less parsers preprocess to a CSS-shaped AST and the
+    // dispatch routes tag the language as "css", so the rule fires on
+    // the same code paths — these tests pin the `appliesTo.fileExtensions`
+    // gate so a future trim of the gate immediately falls into a known-bad
+    // SSG ecosystem hole. The `appliesTo` declaration is also
+    // independently asserted below for the per-rule coverage telemetry
+    // that tracker uses to surface `filesEvaluated > 0`.
+    it("flags a sub-AA pair in a .scss source", () => {
+      // #818181 on #212121 ≈ 4.13:1 — fails the 4.5:1 normal-text floor.
+      const v = runRule(rule, `.c { color: #818181; background: #212121; }`, {
+        filePath: "site.scss",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.location.filePath).toBe("site.scss");
+      expect(v[0]?.message).toContain("4.5");
+    });
+
+    it("flags a sub-AA pair in a .less source", () => {
+      const v = runRule(rule, `.c { color: #818181; background: #212121; }`, {
+        filePath: "site.less",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.location.filePath).toBe("site.less");
+    });
+
+    it("does NOT fire on a passing .scss pair (white on black)", () => {
+      const v = runRule(rule, `.bar { color: #ffffff; background: #000000; }`, {
+        filePath: "site.scss",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("resolves a top-level $variable substitution before checking", () => {
+      // $fg → #818181, $bg → #212121 — same failing pair as above, but
+      // authored as Sass variables. The preprocessor's substituteVariables
+      // pass folds the literals before the CSS parser sees them, so the
+      // suggestion text echoes the resolved hex (proves substitution
+      // landed before the contrast extractor read the declaration).
+      const v = runRule(rule, `$fg: #818181;\n$bg: #212121;\n.c { color: $fg; background: $bg; }`, {
+        filePath: "tokens.scss",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion ?? "").toContain("#818181");
+    });
+
+    it("resolves a top-level @variable substitution in Less", () => {
+      const v = runRule(rule, `@fg: #818181;\n@bg: #212121;\n.c { color: @fg; background: @bg; }`, {
+        filePath: "tokens.less",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion ?? "").toContain("#818181");
+    });
+
+    it("does not fire when an unresolved @function call appears in the value", () => {
+      // `darken($base, 20%)` is a Sass function the zero-dep preprocessor
+      // cannot evaluate; the value stays unresolved and the contrast
+      // extractor honestly skips the pair rather than fabricating one.
+      const v = runRule(
+        rule,
+        `$base: #ffffff;\n.c { color: darken($base, 20%); background: $base; }`,
+        { filePath: "fns.scss" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("declares .scss and .less in appliesTo.fileExtensions", () => {
+      // Per-rule coverage's `eligible` count is bumped per file whose
+      // extension matches this gate (`src/engine/per-rule-coverage.ts`
+      // line 219). Without `.scss` / `.less` in the gate, an SSG scan
+      // with zero `.css` files reports `filesEvaluated: 0` for
+      // contrast/minimum even when the rule walked every Sass file —
+      // the silent-miss shape the AI-first consumer model warns against.
+      expect(rule.appliesTo?.fileExtensions).toContain(".scss");
+      expect(rule.appliesTo?.fileExtensions).toContain(".less");
+    });
+  });
 });

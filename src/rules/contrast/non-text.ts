@@ -100,11 +100,18 @@ export const rule = defineRule({
   // the cross-reference is cross-file by nature (CSS failure, JSX/HTML
   // consumer). `.html` / `.htm` are listed alongside `.css` so
   // `rulesByExtension` honestly reports HTML inline-style evaluations
-  // alongside stylesheet rules.
+  // alongside stylesheet rules. `.scss` / `.less` are listed for the
+  // same reason as `contrast/minimum`: the SCSS and Less parsers
+  // preprocess preprocessor source to a CSS-shaped AST and tag
+  // `Ast.language` as `"css"`, so the `afterProject` CSS branch
+  // already handles them — without the extension gate, SSG docs
+  // sites authoring boundary colors in Sass/Less silently report
+  // `filesEvaluated: 0` for `contrast/non-text`. `.sass` (indented
+  // syntax) is intentionally absent — no parser exists for it.
   scope: "project",
   fixClass: "guidance",
   appliesTo: {
-    fileExtensions: [".css", ".html", ".htm"],
+    fileExtensions: [".css", ".html", ".htm", ".scss", ".less"],
   },
   docs: {
     description:
