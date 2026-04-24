@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Contact - sanitized template</title>
+</head>
+<body>
+    <main>
+        <section class="contact">
+            <div class="container">
+                <!--
+                    Sanitized contact-form pattern from a Bootstrap-derived
+                    template (BizPage-style). Five form rows: four <input>
+                    siblings and one <textarea> sibling, each preceded by a
+                    visible `<label>` with no for=. None of the controls
+                    carries an id.
+
+                    The four <input> rows additionally carry a `title=`
+                    tooltip — common in Bootstrap templates for inline
+                    validation hints. The <textarea> row does NOT carry a
+                    title.
+
+                    Bug being guarded: before the fix, the rule treated
+                    `title=` as "the control already has an accessible
+                    name" and silenced itself, so only the textarea row
+                    fired. The four input rows — the high-volume orphan
+                    pattern — went silently missing. After the fix, all
+                    five rows emit `forms/label-adjacent-unassociated`
+                    with synthesized for=/id= mechanical pairs.
+                -->
+                <form class="contact-form">
+                    <div class="form-row">
+                        <label>Your Name</label>
+                        <input type="text" name="name" class="form-control" placeholder="Your Name" title="Please enter your full name">
+                    </div>
+                    <div class="form-row">
+                        <label>Your Email</label>
+                        <input type="email" name="email" class="form-control" placeholder="Your Email" title="Please enter a valid email address">
+                    </div>
+                    <div class="form-row">
+                        <label>Subject</label>
+                        <input type="text" name="subject" class="form-control" placeholder="Subject" title="Please enter a subject">
+                    </div>
+                    <div class="form-row">
+                        <label>Phone</label>
+                        <input type="tel" name="phone" class="form-control" placeholder="Phone" title="Please enter a valid phone number">
+                    </div>
+                    <div class="form-row">
+                        <label>Message</label>
+                        <textarea name="message" class="form-control" placeholder="Your message" rows="6"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Send Message</button>
+                </form>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
