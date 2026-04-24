@@ -199,7 +199,8 @@ export const checklistTool: McpTool = {
             },
             afterCandidateIndex: {
               type: "number",
-              description: "Zero-based index into that criterion's pre-clip candidates. Resume emits candidates starting at `afterCandidateIndex + 1`.",
+              description:
+                "Zero-based index into that criterion's pre-clip candidates. Resume emits candidates starting at `afterCandidateIndex + 1`.",
             },
           },
           required: ["afterCriterion", "afterCandidateIndex"],
@@ -469,45 +470,13 @@ export const checklistTool: McpTool = {
       level,
       cwd,
     });
-    const derivativeWarnings = buildDerivativeScanWarnings({
-      filesScanned: files.length,
-      rootSource: null,
-      configSource: undefined,
-      analysisCoverage: analysisCoverageField.analysisCoverage,
+    const warningsFragment = buildChecklistWarnings({
+      files,
+      analysisCoverageField,
       filesByExtension,
-      // Q4-WARNING-DOWNGRADE-NOISE: gate
-      // `template_files_parsed_as_literal` on actual overlap between
-      // emitted findings and detected template-directive lines.
-      // `checklist` runs `runScan` over the same parsed-file set it
-      // discovered; cross-reference `result.violations` with the
-      // per-file source already in `files` so the code fires only
-      // when the literal-parse actually polluted a finding.
-      templateDirectivesOverlap: computeTemplateDirectiveOverlap({
-        findings: result.violations.map((v) => ({
-          filePath: v.location.filePath,
-          line: v.location.line,
-        })),
-        sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
-      }),
-      // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage
-      // helper's truncation bit so `response_meta_truncated`
-      // fires honestly when a parse-error dump was head-sliced.
-      ...(analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
+      violations: result.violations,
+      nextCursor: page.paginationFields.nextCursor,
     });
-    // V1-CHECKLIST-PERCRITERION-CURSOR: honest-shape pairing for the
-    // cursor. When `nextCursor` is emitted, surface a structured
-    // warning code so the agent's `warnings[]` read-path matches the
-    // "zero-output success is ambiguous failure" doctrine — a
-    // perCriterionClipped response with a cursor is success-with-more-
-    // to-fetch, not success-complete. The code rides alongside any
-    // scan-derivative codes via the shared `warnings` array; the
-    // cursor itself lives in `paginationFields.nextCursor` where
-    // other paging signals already sit.
-    const toolWarnings = new Set<string>(derivativeWarnings.warnings ?? []);
-    if (page.paginationFields.nextCursor !== undefined) {
-      toolWarnings.add("results_truncated_use_nextcursor");
-    }
-    const mergedWarnings = [...toolWarnings].sort();
     return textResult({
       summary,
       items: page.items,
@@ -517,13 +486,66 @@ export const checklistTool: McpTool = {
       likelyIrrelevant: filteredIrrelevant,
       ...checklistNextStep,
       ...metaField,
-      ...(mergedWarnings.length > 0 ? { warnings: mergedWarnings } : {}),
-      ...(derivativeWarnings.warningsDetails === undefined
-        ? {}
-        : { warningsDetails: derivativeWarnings.warningsDetails }),
+      ...warningsFragment,
     });
   },
 };
+
+/**
+ * Assembles the `warnings` + `warningsDetails` fragment for `checklist`.
+ * Merges the shared scan-derivative codes (from `buildDerivativeScanWarnings`)
+ * with the bespoke `results_truncated_use_nextcursor` code that only the
+ * checklist tool emits when per-criterion elision left an unfetched tail.
+ *
+ * Extracted from the handler so the handler stays under the lint's
+ * cognitive-complexity cap; the two-channel merge is narrow enough that
+ * a helper keeps the handler's shape flat without obscuring intent.
+ *
+ * V1-CHECKLIST-PERCRITERION-CURSOR: surfacing a structured warning code
+ * alongside `nextCursor` makes the pairing honest per the "zero-output
+ * success is ambiguous failure" doctrine — a perCriterionClipped response
+ * with a cursor is success-with-more-to-fetch, not success-complete.
+ */
+function buildChecklistWarnings(args: {
+  readonly files: readonly ParsedFile[];
+  readonly analysisCoverageField: ReturnType<typeof buildAnalysisCoverage>;
+  readonly filesByExtension: Record<string, number>;
+  readonly violations: ReturnType<typeof runScan>["result"]["violations"];
+  readonly nextCursor: ChecklistCursor | undefined;
+}): { readonly warnings?: readonly string[]; readonly warningsDetails?: unknown } {
+  const derivative = buildDerivativeScanWarnings({
+    filesScanned: args.files.length,
+    rootSource: null,
+    configSource: undefined,
+    analysisCoverage: args.analysisCoverageField.analysisCoverage,
+    filesByExtension: args.filesByExtension,
+    // Q4-WARNING-DOWNGRADE-NOISE: gate `template_files_parsed_as_literal`
+    // on actual overlap between emitted findings and detected
+    // template-directive lines. Cross-reference `result.violations` with
+    // the per-file source so the code fires only when the literal-parse
+    // actually polluted a finding.
+    templateDirectivesOverlap: computeTemplateDirectiveOverlap({
+      findings: args.violations.map((v) => ({
+        filePath: v.location.filePath,
+        line: v.location.line,
+      })),
+      sourcesByPath: new Map(args.files.map((f) => [f.filePath, f.source])),
+    }),
+    // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage helper's
+    // truncation bit so `response_meta_truncated` fires honestly when a
+    // parse-error dump was head-sliced.
+    ...(args.analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
+  });
+  const merged = new Set<string>(derivative.warnings ?? []);
+  if (args.nextCursor !== undefined) merged.add("results_truncated_use_nextcursor");
+  const sorted = [...merged].sort();
+  return {
+    ...(sorted.length > 0 ? { warnings: sorted } : {}),
+    ...(derivative.warningsDetails === undefined
+      ? {}
+      : { warningsDetails: derivative.warningsDetails }),
+  };
+}
 
 /**
  * Tallies parseable files by extension. Mirrors the private helper in
@@ -1114,44 +1136,34 @@ interface ChecklistNextStepInputs {
  * `nextStep` + `nextStepStructured` are emitted as a pair or not at
  * all — one-sided emission would re-create the drift ADR 0010 closes.
  */
-function buildChecklistNextStep({
-  actionableLen,
-  truncated,
-  nextOffset,
-  nextCursor,
-  cwd,
-  standard,
-  level,
-}: ChecklistNextStepInputs): {
+function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
   readonly nextStep?: string;
   readonly nextStepStructured?: { readonly tool: string; readonly args: Record<string, unknown> };
 } {
+  const { actionableLen, truncated, nextOffset, nextCursor, cwd } = inputs;
   if (actionableLen === 0) {
-    const args: Record<string, unknown> = { cwd };
-    if (standard !== undefined) args["standard"] = standard;
-    if (level !== undefined) args["level"] = level;
     return {
       nextStep:
         "No actionable manual items. Call `coverage` for the per-standard compliance dashboard. For a full end-to-end conformance audit, use the `ra11y/audit` prompt (via `prompts/get`); for per-criterion VPAT narrative drafting, use the `ra11y/vpat-narrative` prompt.",
-      nextStepStructured: { tool: "coverage", args },
+      nextStepStructured: { tool: "coverage", args: buildChecklistArgs(inputs) },
     };
   }
   if (truncated && typeof nextOffset === "number") {
-    const args: Record<string, unknown> = { cwd, offset: nextOffset };
-    if (standard !== undefined) args["standard"] = standard;
-    if (level !== undefined) args["level"] = level;
     return {
       nextStep: `Page truncated. Call \`checklist\` again with \`offset: ${nextOffset}\` to continue; call \`coverage\` for the per-standard compliance dashboard.`,
-      nextStepStructured: { tool: "checklist", args },
+      nextStepStructured: {
+        tool: "checklist",
+        args: buildChecklistArgs(inputs, { offset: nextOffset }),
+      },
     };
   }
   if (nextCursor !== undefined) {
-    const args: Record<string, unknown> = { cwd, cursor: nextCursor };
-    if (standard !== undefined) args["standard"] = standard;
-    if (level !== undefined) args["level"] = level;
     return {
       nextStep: `At least one criterion's candidate list was clipped by \`maxCandidatesPerCriterion\`. Call \`checklist\` again with \`cursor: nextCursor\` (pass the token back verbatim) to fetch the elided tail of \`${nextCursor.afterCriterion}\`; repeat while a \`nextCursor\` is emitted. Raising \`maxCandidatesPerCriterion\` on the next call is the alternative when you want a deeper cut in one shot.`,
-      nextStepStructured: { tool: "checklist", args },
+      nextStepStructured: {
+        tool: "checklist",
+        args: buildChecklistArgs(inputs, { cursor: nextCursor }),
+      },
     };
   }
   // Actionable items present, no truncation. Iterate items[] reading
@@ -1165,5 +1177,26 @@ function buildChecklistNextStep({
     nextStep:
       "Iterate `items[]`, reading each cited file and line. After verifying an item, call `attest` with the item's `criterionId`, a `verdict` (`pass` / `fail` / `n/a`), a `reason`, and an `evidenceSource` to record the verdict durably; call `scan_project` to re-run after fixing violations.",
     nextStepStructured: { tool: "scan_project", args: { cwd } },
+  };
+}
+
+/**
+ * Assembles the `nextStepStructured.args` record for branches that
+ * route back to `checklist` or `coverage`. Every branch carries `cwd`;
+ * `standard` and `level` conditional-spread as present-when-meaningful
+ * (per CLAUDE.md §1 — omit when the caller didn't supply them so the
+ * structured arg doesn't fabricate defaults the caller never chose).
+ * Extras are the branch-specific keys (`offset`, `cursor`).
+ */
+function buildChecklistArgs(
+  inputs: ChecklistNextStepInputs,
+  extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const { cwd, standard, level } = inputs;
+  return {
+    cwd,
+    ...extras,
+    ...(standard === undefined ? {} : { standard }),
+    ...(level === undefined ? {} : { level }),
   };
 }
