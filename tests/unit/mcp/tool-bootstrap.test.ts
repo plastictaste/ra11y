@@ -44,7 +44,7 @@ interface BootstrapResponse {
     };
     readonly limitations?: readonly string[];
   };
-  readonly baseline: { readonly written: boolean; readonly path: string } | null;
+  readonly baseline?: { readonly written: boolean; readonly path: string };
   readonly ciSnippet: string;
   readonly nextStep: string;
   readonly nextStepStructured: { readonly tool: string; readonly args: Record<string, unknown> };
@@ -109,7 +109,14 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       // never reappears on the subset either.
       expect(response.scan.fixesByClass).toBeUndefined();
       expect((response.scan as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
-      expect(response.baseline).toBeNull();
+      // Dry-run: `baseline` is omitted from the response (not `null`)
+      // and `baseline_dry_run` lands under `warnings` so dry-run is
+      // distinguishable from baseline-creation-failed by reading the
+      // shape alone (V1-BOOTSTRAP-BASELINE-NULL-SENTINEL,
+      // CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+      expect(response.baseline).toBeUndefined();
+      expect(response.warnings).toBeDefined();
+      expect(response.warnings).toContain("baseline_dry_run");
       expect(response.ciSnippet).toContain("ra11y");
       expect(response.ciSnippet).toContain("baseline check");
       expect(response.meta.scanned).toEqual({ mode: "project", root: dir });
@@ -160,7 +167,8 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       );
       const { response } = await callBootstrap({ cwd: dir });
       expect(response.scan.violationsCount).toBeGreaterThan(0);
-      expect(response.baseline).toBeNull();
+      expect(response.baseline).toBeUndefined();
+      expect(response.warnings).toContain("baseline_dry_run");
       // Self-loop is gone: structured hint never points at bootstrap.
       expect(response.nextStepStructured.tool).not.toBe("bootstrap");
       // No wrapper candidates in this fixture (raw HTML, no
@@ -204,7 +212,8 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       const { response } = await callBootstrap({ cwd: dir });
       expect(response.scan.violationsCount).toBeGreaterThan(0);
       expect(response.wrappers.candidates.length).toBeGreaterThan(0);
-      expect(response.baseline).toBeNull();
+      expect(response.baseline).toBeUndefined();
+      expect(response.warnings).toContain("baseline_dry_run");
       expect(response.nextStepStructured.tool).toBe("detect_native_wrappers");
       expect(response.nextStepStructured.args.cwd).toBe(dir);
     });
@@ -272,11 +281,14 @@ describe("bootstrap: writeBaseline opt-in", () => {
       );
       const { response, isError } = await callBootstrap({ cwd: dir, writeBaseline: true });
       expect(isError).toBeUndefined();
-      expect(response.baseline).not.toBeNull();
+      expect(response.baseline).toBeDefined();
       expect(response.baseline?.written).toBe(true);
       expect(response.baseline?.path).toContain(".ra11y-baseline.json");
       expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(true);
       expect(response.meta.writeBaseline).toBe(true);
+      // writeBaseline:true must NOT emit `baseline_dry_run` — that
+      // code is the dry-run discriminator only.
+      expect(response.warnings ?? []).not.toContain("baseline_dry_run");
       // After a successful baseline write, the next-step routes to
       // `baseline check` — the canonical verify-in-CI move.
       expect(response.nextStepStructured.tool).toBe("baseline");
@@ -304,7 +316,7 @@ describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
-      expect(response.baseline).toBeNull();
+      expect(response.baseline).toBeUndefined();
       expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
       // Create step precedes check step — ordering is the contract.
       // Match the yaml `- run:` lines, not just the substring, so the
@@ -563,7 +575,11 @@ describe("bootstrap: empty project edge case", () => {
       expect(response.scan.filesScanned).toBe(0);
       expect(response.warnings).toBeDefined();
       expect(response.warnings).toContain("scanned_zero_files");
-      expect(response.baseline).toBeNull();
+      // Dry-run code joins the scan-leg code in `warnings` —
+      // V1-BOOTSTRAP-BASELINE-NULL-SENTINEL applies regardless of
+      // whether the scan parsed any files.
+      expect(response.warnings).toContain("baseline_dry_run");
+      expect(response.baseline).toBeUndefined();
       expect(response.nextStep.toLowerCase()).toContain("zero files");
     });
   });

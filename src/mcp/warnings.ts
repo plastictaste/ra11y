@@ -151,6 +151,18 @@ export type ScanWarningCode =
   // only when at least one cap actually trimmed (never on a
   // response where every capped array fit under the threshold).
   | "response_meta_truncated"
+  // V1-BOOTSTRAP-BASELINE-NULL-SENTINEL: `bootstrap` ran with
+  // `writeBaseline: false` (the default), so no `.ra11y-baseline.json`
+  // was written. The `baseline` field is omitted from the response
+  // (conditional-spread, present-when-meaningful) — without this code,
+  // an agent inspecting the response could not distinguish "dry-run,
+  // not created" from "baseline-creation-failed" by reading the shape
+  // alone. The former `baseline: null` sentinel collapsed those two
+  // states into one ambiguous value (CLAUDE.md §1 "Ambiguous field
+  // shapes are dishonest"); the dedicated code makes the dry-run state
+  // explicit and lets the failure path stay distinct (it surfaces as
+  // `bootstrap_baseline_failed` from the partial-failure pipeline).
+  | "baseline_dry_run"
   // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS build artifacts
   // (bootstrap.css, font-awesome.css, jquery-era bundles) dominate
   // the finding set so heavily that the response's file budget is

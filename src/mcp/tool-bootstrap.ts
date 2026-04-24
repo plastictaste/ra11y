@@ -13,11 +13,18 @@
  * surface a `bootstrap_<leg>_failed` warning code.
  *
  * Shape contract (AI-first doctrine, `docs/kb/architecture/ai-first-consumer.md`):
- *   - `baseline: null` (never `{}`) in dry-run — present-when-meaningful.
+ *   - `baseline` is omitted entirely in dry-run (writeBaseline: false)
+ *     and a `baseline_dry_run` warning code is emitted alongside, so
+ *     dry-run is distinguishable from baseline-creation-failed by the
+ *     response shape alone (V1-BOOTSTRAP-BASELINE-NULL-SENTINEL).
+ *     When `writeBaseline: true` succeeds, `baseline` is the
+ *     `BaselineSummary` record; when the leg fails the field is
+ *     omitted and `bootstrap_baseline_failed` fires.
  *   - `ciSnippet` always populated (even on clean scans) so agents
  *     preserve CI wiring regardless of current violations.
  *   - `warnings` propagates scan-leg codes verbatim plus
- *     `bootstrap_<leg>_failed` entries; omitted when empty.
+ *     `bootstrap_<leg>_failed` entries and `baseline_dry_run` when
+ *     applicable; omitted when empty.
  *   - `scan` subset preserves the upstream `plan` split verbatim —
  *     `violationsCount` and `notesCount` stay separate (no
  *     `totalFindings` re-sum), and the per-lane `fixesByClass` tally
@@ -74,7 +81,7 @@ export const bootstrapTool: McpTool = {
         writeBaseline: {
           type: "boolean",
           description:
-            "When true, write `.ra11y-baseline.json` at the scan root containing every current violation — grandfathered so future regressions fail `baseline check` in CI. Defaults to false (dry-run): the scan payload is still returned, but no file is written. The `baseline` field on the response is null in dry-run mode.",
+            "When true, write `.ra11y-baseline.json` at the scan root containing every current violation — grandfathered so future regressions fail `baseline check` in CI. Defaults to false (dry-run): the scan payload is still returned, but no file is written. In dry-run mode the `baseline` field is omitted from the response and a `baseline_dry_run` code joins `warnings`, so callers can distinguish dry-run from baseline-creation-failed (which surfaces as `bootstrap_baseline_failed`) without reading the docstring.",
         },
       },
     },
@@ -128,8 +135,14 @@ export const bootstrapTool: McpTool = {
     const wrappersPayload = extractWrappersSubset(detectSettled, failedLegs);
     const suggestedConfig = extractProposedConfig(proposeSettled, failedLegs);
 
-    // Baseline runs sequentially when opted in. Dry-run returns null —
-    // present-when-meaningful shape.
+    // Baseline runs sequentially when opted in. In dry-run the field is
+    // omitted from the response entirely and a `baseline_dry_run` code
+    // fires under `warnings` so dry-run stays distinguishable from
+    // baseline-creation-failed (which leaves `baseline` undefined too,
+    // but surfaces under `bootstrap_baseline_failed`). The former
+    // `baseline: null` sentinel collapsed those states into one
+    // ambiguous value (CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest"; V1-BOOTSTRAP-BASELINE-NULL-SENTINEL).
     const baseline = writeBaseline ? await runBaseline(root, session, failedLegs) : null;
 
     const scanSubset = extractScanSubset(scan);
@@ -137,6 +150,7 @@ export const bootstrapTool: McpTool = {
     const warnings: string[] = [
       ...scanWarnings,
       ...failedLegs.map((leg) => `bootstrap_${leg}_failed`),
+      ...(writeBaseline ? [] : ["baseline_dry_run"]),
     ];
 
     // Snippet content tracks actual baseline-existence on disk: pasting
@@ -183,7 +197,11 @@ export const bootstrapTool: McpTool = {
       wrappers: wrappersPayload,
       ...configPair,
       scan: scanSubset,
-      baseline,
+      // Conditional-spread per CLAUDE.md §1 "Ambiguous field shapes are
+      // dishonest" — the field is present only when it carries a
+      // populated baseline summary. Dry-run and creation-failed both
+      // omit; the warnings channel discriminates them.
+      ...(baseline === null ? {} : { baseline }),
       ciSnippet,
       nextStep,
       nextStepStructured: buildNextStepStructured({
