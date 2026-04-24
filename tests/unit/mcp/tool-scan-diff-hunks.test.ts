@@ -120,6 +120,66 @@ describe("scan_diff hunks mode: errors", () => {
       expect((body as ErrorBody).details?.["comparisonRef"]).toBe("refs/does-not-exist");
     });
   });
+
+  it("flags `details.shallowClone: false` and uses branch-fetch remediation in a full clone", async () => {
+    await withScratch(async (dir) => {
+      await writeBadImg(dir);
+      initRepo(dir);
+      git(dir, ["add", "."]);
+      git(dir, ["commit", "-q", "-m", "seed"]);
+      const { isError, code, body } = await callHandler(new McpSession(), {
+        cwd: dir,
+        hunksOnly: true,
+        comparisonRef: "refs/does-not-exist",
+      });
+      expect(isError).toBe(true);
+      expect(code).toBe("unknown-ref");
+      const err = body as ErrorBody;
+      expect(err.details?.["shallowClone"]).toBe(false);
+      const remediation = (err as unknown as { remediation?: string }).remediation ?? "";
+      // Branch-fetch advice — explicit, not the shallow-clone phrasing.
+      expect(remediation).toMatch(/origin branch/i);
+      expect(remediation).not.toMatch(/--unshallow|fetch-depth: 0/);
+    });
+  });
+
+  it("flags `details.shallowClone: true` and switches remediation to unshallow advice on a shallow clone", async () => {
+    await withScratch(async (origin) => {
+      // Build a multi-commit "remote" so a depth-1 clone really does
+      // truncate history — otherwise `HEAD~1` would still resolve and
+      // we'd never trip the shallow branch we want to cover.
+      initRepo(origin);
+      await writeBadImg(origin, "a.html");
+      git(origin, ["add", "."]);
+      git(origin, ["commit", "-q", "-m", "first"]);
+      await writeBadImg(origin, "b.html");
+      git(origin, ["add", "."]);
+      git(origin, ["commit", "-q", "-m", "second"]);
+
+      await withScratch(async (clone) => {
+        const cloneDir = join(clone, "shallow");
+        const r = spawnSync("git", ["clone", "--depth", "1", `file://${origin}`, cloneDir, "-q"], {
+          stdio: "pipe",
+          encoding: "utf8",
+        });
+        if (r.status !== 0) throw new Error(`git clone --depth 1 failed: ${r.stderr ?? ""}`);
+
+        const { isError, code, body } = await callHandler(new McpSession(), {
+          cwd: cloneDir,
+          hunksOnly: true,
+          comparisonRef: "HEAD~1",
+        });
+        expect(isError).toBe(true);
+        expect(code).toBe("unknown-ref");
+        const err = body as ErrorBody;
+        expect(err.details?.["shallowClone"]).toBe(true);
+        const remediation = (err as unknown as { remediation?: string }).remediation ?? "";
+        // Shallow-specific advice — names the unshallow recovery path.
+        expect(remediation).toMatch(/--unshallow/);
+        expect(remediation).toMatch(/fetch-depth: 0/);
+      });
+    });
+  });
 });
 
 describe("scan_diff hunks mode: happy path + warnings", () => {

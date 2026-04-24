@@ -62,7 +62,7 @@ Two codes — `reason-required` and `line-out-of-range` — are local to the `su
 |------|-------|-----------|----------|
 | `no-staged-files` | `scan_project` | `changedOnly: true` was set but `git diff --cached` returns no files. The scan would otherwise silently run against the full tree. | Stage the files to scan (`git add <path>`), or drop `changedOnly` for a full scan. |
 | `not-a-git-repo` | `scan_diff` | `hunksOnly` mode requires a git repository but the `cwd` is not inside one. (`scan_project` with `changedOnly` or `since` in a non-git directory falls back to a full scan rather than erroring.) | Run from inside a git checkout, or drop `hunksOnly` to use baseline mode. |
-| `unknown-ref` | `scan_diff` | The `comparisonRef` does not resolve in the local git repository. | Pass an existing ref (`main`, `HEAD~1`, a commit SHA). Fetch the remote if comparing against an origin branch. |
+| `unknown-ref` | `scan_diff` | The `comparisonRef` does not resolve in the local git repository. `details.shallowClone` distinguishes the two recovery paths. | If `details.shallowClone: true` (e.g. `actions/checkout@v4` with the default `fetch-depth: 1`), run `git fetch --unshallow` or re-clone with `fetch-depth: 0`. Otherwise pass an existing ref (`main`, `HEAD~1`, a commit SHA), fetching the remote first if comparing against an origin branch. |
 
 ### Edit safety gates
 

@@ -115,6 +115,32 @@ export function changedFilesBetween(
   return out;
 }
 
+/**
+ * True when the repo at `cwd` is a shallow clone (history truncated by
+ * `git clone --depth N` or `actions/checkout@v4` with the default
+ * `fetch-depth: 1`). Shells out to `git rev-parse
+ * --is-shallow-repository`, which prints `true`/`false` on stdout.
+ *
+ * Returns `false` for not-a-git-repo and for any git failure — the
+ * caller of this helper is producing remediation prose, and the
+ * conservative answer when we can't tell is "don't claim it's shallow"
+ * (the no-op branch keeps the existing branch-fetch advice; a real
+ * shallow clone surfaces with `true` and the shallow-specific advice
+ * fires). Distinguishing "not shallow" from "couldn't tell" is
+ * unnecessary at this call site because the remediation in either case
+ * is the existing branch-fetch hint — the shallow advice is purely
+ * additive.
+ */
+export function isShallowRepository(cwd: string = process.cwd()): boolean {
+  const result = spawnSync("git", ["rev-parse", "--is-shallow-repository"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) return false;
+  return (result.stdout ?? "").trim() === "true";
+}
+
 /** Current HEAD SHA, or null if the lookup fails. */
 export function headSha(cwd: string = process.cwd()): string | null {
   const root = gitRoot(cwd);

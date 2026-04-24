@@ -33,6 +33,7 @@ import {
   gitRoot,
   type HunkRange,
   isInsideHunk,
+  isShallowRepository,
   stagedFiles,
 } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
@@ -283,12 +284,23 @@ async function handleHunksMode(
     });
   }
   if (hunksResult.status === "unknown-ref") {
+    // Probe shallow-clone status at error-construction time. PR-review
+    // agents using `actions/checkout@v4` get `fetch-depth: 1` by
+    // default, which makes `HEAD~N` (and any commit-SHA off the trunk
+    // history) unresolvable — the original branch-fetch advice doesn't
+    // address that case, so callers loop on it. Branch the remediation
+    // prose AND surface a structured `details.shallowClone` boolean so
+    // agents can program against the cause without parsing English
+    // (per ai-first-consumer doctrine: structured signals over prose).
+    const shallowClone = isShallowRepository(cwd);
+    const remediation = shallowClone
+      ? "This is a shallow clone — `HEAD~N` and ancestor SHAs aren't reachable. Run `git fetch --unshallow` to deepen the local history, or re-clone with `fetch-depth: 0` (in `actions/checkout@v4`, set `fetch-depth: 0` on the workflow step). Then retry. If you meant an origin branch (e.g. `origin/main`), `git fetch origin <branch>` first."
+      : "Pass an existing ref via `comparisonRef` (e.g. `main`, `HEAD~1`, a commit SHA). Fetch the remote first if you're comparing against an origin branch.";
     return errorResult({
       code: "unknown-ref",
       message: `Comparison ref \`${comparisonRef}\` does not resolve in the git repo at \`${cwd}\`.`,
-      details: { cwd, comparisonRef },
-      remediation:
-        "Pass an existing ref via `comparisonRef` (e.g. `main`, `HEAD~1`, a commit SHA). Fetch the remote first if you're comparing against an origin branch.",
+      details: { cwd, comparisonRef, shallowClone },
+      remediation,
     });
   }
 
