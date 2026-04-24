@@ -27,11 +27,12 @@ interface ProposedEntry {
     | "legacy-route"
     | "design-system-internal"
     | "unclassified";
-  readonly rationale: string;
+  readonly rationaleKey: string;
 }
 
 interface ProposeBaselineResponse {
   readonly proposed: readonly ProposedEntry[];
+  readonly rationales: Readonly<Record<string, string>>;
   readonly counts: {
     readonly wrapperUndetected: number;
     readonly thirdPartyHtml: number;
@@ -114,7 +115,9 @@ describe("propose_baseline: third-party-html", () => {
       const body = await callTool(dir);
       expect(body.counts.thirdPartyHtml).toBeGreaterThan(0);
       const hit = body.proposed.find((e) => e.reason === "third-party-html");
-      expect(hit?.rationale).toContain(".min.html");
+      expect(hit).toBeDefined();
+      const rationale = hit ? body.rationales[hit.rationaleKey] : undefined;
+      expect(rationale).toContain(".min.html");
     });
   });
 
@@ -152,8 +155,10 @@ describe("propose_baseline: legacy-route", () => {
       const body = await callTool(dir, { legacyRoutes: ["legacy/**"] });
       expect(body.counts.legacyRoute).toBeGreaterThan(0);
       const hit = body.proposed.find((e) => e.reason === "legacy-route");
-      expect(hit?.rationale).toContain("legacyRoutes");
-      expect(hit?.rationale).toContain("legacy/admin/dashboard.html");
+      expect(hit).toBeDefined();
+      const rationale = hit ? body.rationales[hit.rationaleKey] : undefined;
+      expect(rationale).toContain("legacyRoutes");
+      expect(rationale).toContain("legacy/admin/dashboard.html");
     });
   });
 
@@ -190,7 +195,9 @@ describe("propose_baseline: design-system-internal", () => {
       const body = await callTool(dir, { designSystemPaths: ["packages/ui/src/**"] });
       expect(body.counts.designSystemInternal).toBeGreaterThan(0);
       const hit = body.proposed.find((e) => e.reason === "design-system-internal");
-      expect(hit?.rationale).toContain("designSystemPaths");
+      expect(hit).toBeDefined();
+      const rationale = hit ? body.rationales[hit.rationaleKey] : undefined;
+      expect(rationale).toContain("designSystemPaths");
     });
   });
 
@@ -240,8 +247,10 @@ describe("propose_baseline: wrapper-undetected", () => {
       const body = await callTool(dir);
       expect(body.counts.wrapperUndetected).toBeGreaterThan(0);
       const hit = body.proposed.find((e) => e.reason === "wrapper-undetected");
-      expect(hit?.rationale).toContain("CustomThing");
-      expect(hit?.rationale).toContain("nativeWrappers");
+      expect(hit).toBeDefined();
+      const rationale = hit ? body.rationales[hit.rationaleKey] : undefined;
+      expect(rationale).toContain("CustomThing");
+      expect(rationale).toContain("nativeWrappers");
     });
   });
 
@@ -342,7 +351,132 @@ describe("propose_baseline: unclassified default", () => {
       const body = await callTool(dir);
       expect(body.counts.unclassified).toBeGreaterThan(0);
       const hit = body.proposed.find((e) => e.reason === "unclassified");
-      expect(hit?.rationale).toContain("No heuristic");
+      expect(hit).toBeDefined();
+      const rationale = hit ? body.rationales[hit.rationaleKey] : undefined;
+      expect(rationale).toContain("No heuristic");
+    });
+  });
+});
+
+describe("propose_baseline: rationale-hoist dedup", () => {
+  // Invariant: identical rationales across entries collapse to a single
+  // entry in `rationales`. A scratch project with multiple bare `<img>`
+  // findings produces N `unclassified` entries; the response-level
+  // `rationales` map carries the shared prose exactly once. This is the
+  // core V1-PROPOSE-BASELINE-RATIONALE-DEDUP guard — the bloat repro'd
+  // on a 242-finding / 76 KB scan where every entry inlined the same
+  // 128-char string.
+  it("collapses identical rationales to one entry in `rationales`", async () => {
+    await withScratch(async (dir) => {
+      // Three bare `<img>` elements across two files — each fires the
+      // same rule + produces an identical `unclassified` rationale. We
+      // expect ≥3 `proposed` entries all sharing one `rationaleKey`.
+      await writeFile(
+        join(dir, "page-one.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"><img src="/b.png"></body></html>\n',
+      );
+      await writeFile(
+        join(dir, "page-two.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/c.png"></body></html>\n',
+      );
+      const body = await callTool(dir);
+      const unclassified = body.proposed.filter((e) => e.reason === "unclassified");
+      expect(unclassified.length).toBeGreaterThanOrEqual(3);
+      // All `unclassified` entries point at the same rationaleKey.
+      const uniqueKeys = new Set(unclassified.map((e) => e.rationaleKey));
+      expect(uniqueKeys.size).toBe(1);
+      // The map resolves that single key to the canonical prose.
+      const key = unclassified[0]?.rationaleKey ?? "";
+      expect(body.rationales[key]).toContain("No heuristic");
+    });
+  });
+
+  // Every `rationaleKey` on an entry resolves to a string in the
+  // `rationales` map — a dangling key would force the agent to fall back
+  // on a missing-field read, and the ambiguous-field doctrine forbids
+  // that shape.
+  it("populates a rationale string for every rationaleKey on an entry", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "page.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"><button title="x">X</button></body></html>\n',
+      );
+      await writeFile(
+        join(dir, "bundle.min.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/b.png"></body></html>\n',
+      );
+      const body = await callTool(dir);
+      expect(body.proposed.length).toBeGreaterThan(0);
+      for (const entry of body.proposed) {
+        expect(typeof body.rationales[entry.rationaleKey]).toBe("string");
+        expect((body.rationales[entry.rationaleKey] ?? "").length).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  // Single-entry case: dedup still runs (one entry → one key → one
+  // rationale). The shape stays consistent so agents don't branch on
+  // inline-vs-hoisted based on response size (same discipline as
+  // `referenceGuide.fixDescriptions` hoisting at per-rule granularity).
+  it("still hoists rationale on a single-finding scan", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "page.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      const body = await callTool(dir);
+      expect(body.proposed.length).toBeGreaterThanOrEqual(1);
+      // `rationales` is populated (not an empty object) when entries exist.
+      expect(Object.keys(body.rationales).length).toBeGreaterThanOrEqual(1);
+      for (const entry of body.proposed) {
+        expect(entry.rationaleKey.length).toBe(12);
+        expect(body.rationales[entry.rationaleKey]).toBeDefined();
+      }
+    });
+  });
+
+  // Empty-scan case: `rationales` is an empty object when nothing fires.
+  // Present-when-meaningful tension: we still emit the field so the
+  // shape stays consistent across calls (agents don't branch on
+  // "present vs. absent" for a structural field). Per the `proposed: []`
+  // precedent — which is also empty not omitted — same shape wins.
+  it("emits an empty rationales object on a clean scan", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body></body></html>\n',
+      );
+      const body = await callTool(dir);
+      expect(body.proposed).toEqual([]);
+      expect(body.rationales).toEqual({});
+    });
+  });
+
+  // Rationale-hoist should NOT inflate `counts` — the counters are
+  // per-reason, not per-rationale-key, so a 10-finding scan with one
+  // shared rationale still reports 10 entries. Guards against a
+  // refactor that accidentally ties counts to rationaleKey cardinality.
+  it("keeps `counts` proportional to entries, not to distinct rationales", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "a.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      await writeFile(
+        join(dir, "b.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/b.png"></body></html>\n',
+      );
+      const body = await callTool(dir);
+      const sumCounts =
+        body.counts.wrapperUndetected +
+        body.counts.thirdPartyHtml +
+        body.counts.legacyRoute +
+        body.counts.designSystemInternal +
+        body.counts.unclassified;
+      expect(sumCounts).toBe(body.proposed.length);
+      // Unclassified rationales are identical across the two files, so
+      // the dedup collapses them — but the count still tracks entries.
+      expect(body.counts.unclassified).toBeGreaterThanOrEqual(2);
     });
   });
 });

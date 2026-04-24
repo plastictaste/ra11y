@@ -5,9 +5,18 @@
  * surface; every shape change here is a wire-shape change.
  */
 
+import { createHash } from "node:crypto";
 import { relative } from "node:path";
 import type { Violation } from "../types/violation.ts";
 import type { compileGlobs } from "../utils/glob.ts";
+
+/**
+ * Length of the truncated SHA-256 digest used to key the `rationales`
+ * hoist map. Matches the format used elsewhere in the MCP surface
+ * (`findingId`, `referenceGuide.fixDescriptions[ruleId][hash]`) so the
+ * short-hex token shape is consistent across the response.
+ */
+const RATIONALE_KEY_LENGTH = 12;
 
 /**
  * The five reason codes the tool emits. Kept as a union literal rather
@@ -40,7 +49,17 @@ export interface ProposedEntry {
   readonly ruleId: string;
   readonly findingId: string;
   readonly reason: BaselineReason;
-  readonly rationale: string;
+  /**
+   * Short stable key (12-hex SHA-256 truncation) into the top-level
+   * `rationales` map. Replaces the inline `rationale` string — a scan of
+   * 242 findings with every entry carrying the same 128-char unclassified
+   * rationale was shipping 30+ KB of redundant prose on one line (V1-
+   * PROPOSE-BASELINE-RATIONALE-DEDUP). Identical rationales across
+   * entries now share one key; specific-evidence rationales (which embed
+   * matched paths or wrapper names) collapse as well when two entries
+   * happen to produce the same text.
+   */
+  readonly rationaleKey: string;
 }
 
 export interface ReasonCounts {
@@ -52,8 +71,22 @@ export interface ReasonCounts {
 }
 
 /**
- * Maps each violation to a proposed baseline entry with a reason
- * code + rationale. Precedence (first match wins):
+ * Intermediate classification result before rationale-hoisting. The tool
+ * handler converts these to {@link ProposedEntry} + a `rationales` map
+ * via {@link hoistRationales} — see the header of this file for the
+ * dedup motivation.
+ */
+interface RawProposedEntry {
+  readonly filePath: string;
+  readonly ruleId: string;
+  readonly findingId: string;
+  readonly reason: BaselineReason;
+  readonly rationale: string;
+}
+
+/**
+ * Maps each violation to a raw proposed baseline entry with a reason
+ * code + inline rationale. Precedence (first match wins):
  *
  *   1. `legacy-route`          — caller-declared glob
  *   2. `design-system-internal`— caller-declared glob
@@ -64,6 +97,10 @@ export interface ReasonCounts {
  * User-declared classifications beat path heuristics; deterministic
  * path signals beat component-name heuristics. No finding is dropped
  * — every violation surfaces with a reason the agent uses to triage.
+ *
+ * The inline `rationale` on raw entries is hoisted into a top-level
+ * `rationales` map by {@link hoistRationales} before the tool emits the
+ * response.
  */
 export function buildProposedEntries(args: {
   readonly violations: readonly Violation[];
@@ -71,9 +108,9 @@ export function buildProposedEntries(args: {
   readonly assumedWrappers: ReadonlySet<string>;
   readonly legacyMatcher: ReturnType<typeof compileGlobs>;
   readonly designMatcher: ReturnType<typeof compileGlobs>;
-}): readonly ProposedEntry[] {
+}): readonly RawProposedEntry[] {
   const { violations, root, assumedWrappers, legacyMatcher, designMatcher } = args;
-  const out: ProposedEntry[] = [];
+  const out: RawProposedEntry[] = [];
   for (const v of violations) {
     const filePath = v.location.filePath;
     const relPath = toRelPath(filePath, root);
@@ -94,6 +131,61 @@ export function buildProposedEntries(args: {
     });
   }
   return out;
+}
+
+/**
+ * Coalesces inline rationale strings into a response-level `rationales`
+ * map keyed by short SHA-256 truncation. Entries drop the inline
+ * `rationale` field in favour of a `rationaleKey` pointer.
+ *
+ * Why dedup: on a 242-finding scan, every entry shipped the same
+ * 128-char `unclassified` rationale — identical prose inflated the
+ * response past 70 KB on one line. Specific-evidence rationales
+ * (`legacy-route`, `third-party-html`, `wrapper-undetected`) vary by
+ * path or wrapper name but still collapse when two entries happen to
+ * land on the same text (two findings under the same matched path,
+ * multiple findings flagging the same wrapper).
+ *
+ * The shape mirrors `referenceGuide.fixDescriptions[ruleId][hash]` and
+ * `findingId`: 12-hex-char truncated SHA-256 keys, so agents recognize
+ * the short-hex-token format across the MCP surface.
+ *
+ * Insertion order into `rationales` follows first-seen across entries —
+ * stable across scans with the same inputs, so snapshots stay clean.
+ *
+ * Single-entry scans are deduped too: the map carries one key, the
+ * entry carries one `rationaleKey`. Consistent shape per CLAUDE.md §14
+ * ("same shape across findings") — agents don't have to branch on
+ * "inline vs. hoisted" depending on size.
+ */
+export function hoistRationales(
+  raw: readonly RawProposedEntry[],
+): { readonly entries: readonly ProposedEntry[]; readonly rationales: Readonly<Record<string, string>> } {
+  const rationales: Record<string, string> = {};
+  const entries: ProposedEntry[] = [];
+  for (const r of raw) {
+    const key = rationaleKey(r.rationale);
+    if (!(key in rationales)) {
+      rationales[key] = r.rationale;
+    }
+    entries.push({
+      filePath: r.filePath,
+      ruleId: r.ruleId,
+      findingId: r.findingId,
+      reason: r.reason,
+      rationaleKey: key,
+    });
+  }
+  return { entries, rationales };
+}
+
+/**
+ * Computes the truncated SHA-256 key for a rationale string. Exported
+ * so tests can reconstruct the key from a known rationale without
+ * reaching into internals.
+ */
+export function rationaleKey(rationale: string): string {
+  return createHash("sha256").update(rationale).digest("hex").slice(0, RATIONALE_KEY_LENGTH);
 }
 
 interface Classification {
@@ -179,7 +271,9 @@ function toRelPath(filePath: string, root: string): string {
   return rel.split("\\").join("/");
 }
 
-export function tallyReasons(entries: readonly ProposedEntry[]): ReasonCounts {
+export function tallyReasons(
+  entries: readonly { readonly reason: BaselineReason }[],
+): ReasonCounts {
   let wrapperUndetected = 0;
   let thirdPartyHtml = 0;
   let legacyRoute = 0;

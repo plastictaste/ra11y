@@ -11,10 +11,21 @@
  *
  * Shape contract (AI-first doctrine, `docs/kb/architecture/ai-first-consumer.md`):
  *
- *   - `proposed: Array<{filePath, ruleId, findingId, reason, rationale}>`
+ *   - `proposed: Array<{filePath, ruleId, findingId, reason, rationaleKey}>`
  *     — one entry per current violation, deterministic. Each entry
  *     reuses the existing stable `findingId` so an agent can cross-
  *     reference against `scan_project` output without re-deriving it.
+ *     The per-entry `rationaleKey` is a short SHA-256 truncation
+ *     pointing into the top-level `rationales` map (below).
+ *   - `rationales: { [rationaleKey]: string }` — hoisted prose keyed by
+ *     12-hex truncated SHA-256. Identical rationales across entries
+ *     (the common `unclassified` case, where every entry would ship the
+ *     same 128-char string) collapse to one key; the response shrinks
+ *     from "one inline rationale per entry" to "one entry in `rationales`
+ *     per distinct rationale." Matches the hoist pattern used by
+ *     `referenceGuide.fixDescriptions[ruleId][hash]` so agents
+ *     recognize the short-hex-token format (V1-PROPOSE-BASELINE-
+ *     RATIONALE-DEDUP).
  *   - `counts: { wrapperUndetected, thirdPartyHtml, legacyRoute,
  *     designSystemInternal, unclassified }` — FIVE distinct headline
  *     counters, one per reason code. Per CLAUDE.md §1 "Composite
@@ -81,6 +92,7 @@ import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wr
 import {
   buildProposedEntries,
   buildProposedNextStep,
+  hoistRationales,
   tallyReasons,
 } from "./propose-baseline-classify.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
@@ -102,7 +114,7 @@ export const proposeBaselineTool: McpTool = {
   def: {
     name: "propose_baseline",
     description:
-      'Read-only: propose a structured baseline from the current scan state without writing anything to disk. Each would-be baseline entry carries a machine-readable `reason` code (`wrapper-undetected` / `third-party-html` / `legacy-route` / `design-system-internal` / `unclassified`) plus a one-line rationale so the agent can triage by category before calling `baseline` with mode: "create" to actually persist. Five distinct headline counters (one per reason) — never summed into a single "itemsProposed" number. Deterministic; no LLM; identical findings in, identical proposal out.\n\nUse `legacyRoutes` / `designSystemPaths` to tag findings in paths you (the agent) already know are legacy / design-system internals — glob patterns are matched against paths relative to `scanned.root`. Heuristic reason codes (`third-party-html`, `wrapper-undetected`) fire automatically from the scan state; per "no heuristic suppression" we deliberately do NOT guess which routes are legacy from filename alone.',
+      'Read-only: propose a structured baseline from the current scan state without writing anything to disk. Each would-be baseline entry carries a machine-readable `reason` code (`wrapper-undetected` / `third-party-html` / `legacy-route` / `design-system-internal` / `unclassified`) plus a `rationaleKey` pointer into the response-level `rationales: { [key]: string }` map — identical rationale prose across entries collapses to one shared entry, so a 242-finding scan ships one `unclassified` rationale once rather than 242 times. Five distinct headline counters (one per reason) — never summed into a single "itemsProposed" number. Deterministic; no LLM; identical findings in, identical proposal out.\n\nUse `legacyRoutes` / `designSystemPaths` to tag findings in paths you (the agent) already know are legacy / design-system internals — glob patterns are matched against paths relative to `scanned.root`. Heuristic reason codes (`third-party-html`, `wrapper-undetected`) fire automatically from the scan state; per "no heuristic suppression" we deliberately do NOT guess which routes are legacy from filename alone.',
     inputSchema: {
       type: "object",
       properties: {
@@ -190,16 +202,23 @@ export const proposeBaselineTool: McpTool = {
     // entries to `.ra11y-baseline.json` if `baseline mode:"create"` ran
     // against this proposal.
     const seen = new Set<string>();
-    const proposed: typeof rawProposed = rawProposed.filter((e) => {
+    const dedupedRaw = rawProposed.filter((e) => {
       if (seen.has(e.findingId)) return false;
       seen.add(e.findingId);
       return true;
     });
 
+    // Hoist per-entry `rationale` prose into a top-level `rationales`
+    // map keyed by short SHA-256 — identical rationales across entries
+    // (the common `unclassified` case: every entry shares the same
+    // 128-char prose) collapse to one key. See `hoistRationales` header
+    // for the rationale behind the shape.
+    const { entries: proposed, rationales } = hoistRationales(dedupedRaw);
     const counts = tallyReasons(proposed);
 
     return textResult({
       proposed,
+      rationales,
       counts,
       meta: {
         scanned: scannedProject(root),

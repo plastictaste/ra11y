@@ -20,8 +20,9 @@ interface ProposeBaselineResponse {
     readonly ruleId: string;
     readonly findingId: string;
     readonly reason: string;
-    readonly rationale: string;
+    readonly rationaleKey: string;
   }[];
+  readonly rationales: Readonly<Record<string, string>>;
   readonly counts: {
     readonly wrapperUndetected: number;
     readonly thirdPartyHtml: number;
