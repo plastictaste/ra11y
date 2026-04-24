@@ -1252,9 +1252,9 @@ function paginateFiles<T>(
 ): {
   readonly files: readonly T[];
   readonly paginationFields: {
-    readonly truncated?: true;
+    readonly truncated: boolean;
     readonly nextOffset?: number;
-    readonly totalFilesWithFindings?: number;
+    readonly totalFilesWithFindings: number;
     readonly requestedLimit?: number;
     readonly effectiveLimit?: number;
     readonly pageClipReason?: "end_of_results";
@@ -1262,14 +1262,35 @@ function paginateFiles<T>(
 } {
   const page = files.slice(offset, offset + limit);
   const hasMore = offset + limit < files.length;
+  // V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: `truncated` and
+  // `totalFilesWithFindings` ALWAYS ride on every scan_project response,
+  // including the small-scan path where the whole result fit. The
+  // negative answer ("not truncated, this is the full inventory") is
+  // load-bearing: a caller reading `truncated: false` knows the
+  // emitted file count IS the inventory size, while an absent field
+  // forces the agent to disambiguate "not truncated" from "field
+  // never emitted on this scan shape." Conditional-spread is wrong
+  // here — present-when-meaningful applies only when absence carries
+  // no signal; here, the negative IS the signal. See
+  // `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+  // shapes are dishonest" + "Zero-output success is ambiguous failure"
+  // for the rationale: a callable load-bearing predicate must always
+  // resolve to true OR false, never "missing means false."
   if (!hasMore && offset === 0) {
-    return { files: page, paginationFields: {} };
+    return {
+      files: page,
+      paginationFields: {
+        truncated: false,
+        totalFilesWithFindings: files.length,
+      },
+    };
   }
   const clippedByEnd = !hasMore && page.length < limit;
   return {
     files: page,
     paginationFields: {
-      ...(hasMore ? { truncated: true as const, nextOffset: offset + limit } : {}),
+      truncated: hasMore,
+      ...(hasMore ? { nextOffset: offset + limit } : {}),
       totalFilesWithFindings: files.length,
       requestedLimit: limit,
       effectiveLimit: page.length,

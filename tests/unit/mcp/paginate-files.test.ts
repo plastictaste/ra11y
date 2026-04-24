@@ -6,8 +6,17 @@
  *
  * Exercises the internal pagination helpers via scan_project's public
  * MCP surface so the contract the agent sees (truncated + nextOffset
- * + totalFilesWithFindings, or omitted pagination fields when the
- * whole result fits) stays guarded against drift.
+ * + totalFilesWithFindings) stays guarded against drift.
+ *
+ * V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: `truncated` and
+ * `totalFilesWithFindings` ALWAYS ride on every scan_project response —
+ * the negative answer ("not truncated, this IS the full inventory") is
+ * load-bearing. Conditional-spread is wrong for these two fields:
+ * present-when-meaningful applies only when absence carries no signal,
+ * but here the false/full-inventory case IS the signal. The other
+ * pagination fields (`nextOffset`, `requestedLimit`, `effectiveLimit`,
+ * `pageClipReason`) stay present-when-meaningful because pagination
+ * may not have been active.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -86,7 +95,7 @@ function buildFixture(fileCount: number): string {
 }
 
 describe("scan_project pagination (P1-OVF)", () => {
-  it("omits pagination fields when every files-with-findings entry fits under the cap", async () => {
+  it("emits truncated:false + totalFilesWithFindings when every files-with-findings entry fits under the cap", async () => {
     const root = buildFixture(3);
     try {
       const responses = await mcpSession([
@@ -99,13 +108,20 @@ describe("scan_project pagination (P1-OVF)", () => {
         nextOffset?: unknown;
         totalFilesWithFindings?: unknown;
       };
-      // Honest shape: when the whole result fits, the pagination
-      // fields are absent — not `truncated: false` with a totals
-      // sentinel, which would read as "partial answer" when it isn't.
+      // V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: load-bearing negative —
+      // `truncated: false` is the explicit "this IS the full inventory"
+      // signal. Omitting it would force the agent to disambiguate
+      // "not truncated" from "field never emitted on this scan
+      // shape." `totalFilesWithFindings` rides alongside so the
+      // caller can confirm `files.length === totalFilesWithFindings`
+      // on the un-truncated path. Other pagination fields
+      // (`nextOffset`, `requestedLimit`, `effectiveLimit`,
+      // `pageClipReason`) stay absent because pagination wasn't
+      // active.
       expect(body.files.length).toBe(3);
-      expect(body.truncated).toBeUndefined();
+      expect(body.truncated).toBe(false);
+      expect(body.totalFilesWithFindings).toBe(3);
       expect(body.nextOffset).toBeUndefined();
-      expect(body.totalFilesWithFindings).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -151,15 +167,16 @@ describe("scan_project pagination (P1-OVF)", () => {
         pageClipReason?: string;
       };
       // Page 2 of 2: the remaining 2 files (5 total - offset 3).
-      // `truncated` should be ABSENT (final page), but
-      // `totalFilesWithFindings` stays so the agent can confirm it's
-      // seen the whole inventory. The last-page clip (`limit: 3`
-      // requested, 2 returned because the tail ran out) surfaces as
-      // `pageClipReason: "end_of_results"` + the limit/effective
-      // settlement so the caller can distinguish "ran out of data"
-      // from the density-cap regime without a re-page.
+      // V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: `truncated: false` rides
+      // on the last page so the caller knows no more pages remain;
+      // `nextOffset` stays absent because there's nothing to resume.
+      // `totalFilesWithFindings` carries the full inventory size.
+      // The last-page clip (`limit: 3` requested, 2 returned because
+      // the tail ran out) surfaces as `pageClipReason: "end_of_results"`
+      // + the limit/effective settlement so the caller can distinguish
+      // "ran out of data" from the density-cap regime without a re-page.
       expect(body.files.length).toBe(2);
-      expect(body.truncated).toBeUndefined();
+      expect(body.truncated).toBe(false);
       expect(body.nextOffset).toBeUndefined();
       expect(body.totalFilesWithFindings).toBe(5);
       expect(body.requestedLimit).toBe(3);
@@ -235,10 +252,10 @@ describe("scan_project pagination (P1-OVF)", () => {
       expect(lastPage.effectiveLimit).toBe(2);
       expect(lastPage.pageClipReason).toBe("end_of_results");
       // Non-paginated single-page response (offset === 0, whole thing
-      // fit): pagination fields all omitted per the honest-shape rule
-      // in `paginateFiles`. A caller who didn't pass `offset` doesn't
-      // see `requestedLimit`/`effectiveLimit`/`pageClipReason` because
-      // pagination wasn't active — there's no ambiguity to resolve.
+      // fit): V1-TRUNCATED-FIELD-PRESENCE-CONTRACT — `truncated: false`
+      // and `totalFilesWithFindings` always ride; the rest of the
+      // pagination fields stay omitted because pagination wasn't
+      // active (no clip to disambiguate).
       const onePage = bodyOf(responses[2]) as {
         files: unknown[];
         requestedLimit?: number;
@@ -248,8 +265,8 @@ describe("scan_project pagination (P1-OVF)", () => {
         totalFilesWithFindings?: unknown;
       };
       expect(onePage.files.length).toBe(5);
-      expect(onePage.truncated).toBeUndefined();
-      expect(onePage.totalFilesWithFindings).toBeUndefined();
+      expect(onePage.truncated).toBe(false);
+      expect(onePage.totalFilesWithFindings).toBe(5);
       expect(onePage.requestedLimit).toBeUndefined();
       expect(onePage.effectiveLimit).toBeUndefined();
       expect(onePage.pageClipReason).toBeUndefined();
@@ -304,6 +321,61 @@ describe("scan_project pagination (P1-OVF)", () => {
       expect(body.totalFilesWithFindings).toBe(30);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: emits truncated + totalFilesWithFindings on every shape (small / paginated-mid / paginated-last / capped)", async () => {
+    // The four scan_project shapes a caller might encounter — every
+    // one must carry both fields so an agent reading `truncated` can
+    // distinguish "this IS the full inventory" (false) from "more
+    // pages remain" (true) WITHOUT having to detect "is this the
+    // small-scan shape that omits the fields entirely." The
+    // load-bearing negative ("not truncated") is the signal here;
+    // omitting it on the small-scan path is the dishonest shape that
+    // forces silent disambiguation.
+    const small = buildFixture(3);
+    const six = buildFixture(6);
+    const five = buildFixture(5);
+    const huge = buildFixture(30);
+    try {
+      const responses = await mcpSession([
+        initMsg(1),
+        // (a) Small: whole result fits (offset 0, hasMore false).
+        toolCall(2, "scan_project", { cwd: small, limit: 200 }),
+        // (b) Paginated mid: more pages remain (truncated true).
+        toolCall(3, "scan_project", { cwd: six, limit: 2 }),
+        // (c) Paginated last: offset > 0, hasMore false.
+        toolCall(4, "scan_project", { cwd: five, limit: 3, offset: 3 }),
+        // (d) Default cap: ADR 0021 25-file default trims a 30-file scan.
+        toolCall(5, "scan_project", { cwd: huge }),
+      ]);
+      type Shape = { files: unknown[]; truncated?: unknown; totalFilesWithFindings?: unknown };
+      const a = bodyOf(responses[1]) as Shape;
+      const b = bodyOf(responses[2]) as Shape;
+      const c = bodyOf(responses[3]) as Shape;
+      const d = bodyOf(responses[4]) as Shape;
+      // Every shape carries both fields with the right kind. Type
+      // checks here are belt-and-suspenders: a regression that
+      // re-omitted on one path would fail `typeof === "boolean"`
+      // and `typeof === "number"` rather than slipping past a
+      // truthy/falsy assertion.
+      for (const shape of [a, b, c, d]) {
+        expect(typeof shape.truncated).toBe("boolean");
+        expect(typeof shape.totalFilesWithFindings).toBe("number");
+      }
+      expect(a.truncated).toBe(false);
+      expect(a.totalFilesWithFindings).toBe(3);
+      expect(b.truncated).toBe(true);
+      expect(b.totalFilesWithFindings).toBe(6);
+      expect(c.truncated).toBe(false);
+      expect(c.totalFilesWithFindings).toBe(5);
+      expect(d.truncated).toBe(true);
+      expect(d.totalFilesWithFindings).toBe(30);
+    } finally {
+      rmSync(small, { recursive: true, force: true });
+      rmSync(six, { recursive: true, force: true });
+      rmSync(five, { recursive: true, force: true });
+      rmSync(huge, { recursive: true, force: true });
     }
   });
 });

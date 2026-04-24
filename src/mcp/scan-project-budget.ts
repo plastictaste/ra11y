@@ -46,9 +46,23 @@ type FileEntry = ScanFormatted["files"][number];
 type PageClipReason = "token_density" | "end_of_results" | "per_criterion_cap";
 
 interface PaginationFields {
-  readonly truncated?: true;
+  /**
+   * V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: load-bearing negative —
+   * `truncated: false` means "this IS the full inventory." Always
+   * present on scan_project responses; never conditional-spread.
+   * The density-cap path in {@link mergeBudgetedFields} overrides
+   * to `true as const` when it drops trailing entries.
+   */
+  readonly truncated: boolean;
   readonly nextOffset?: number;
-  readonly totalFilesWithFindings?: number;
+  /**
+   * V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: always emitted alongside
+   * `truncated`. When `truncated: false`, this equals the response's
+   * `files.length`; when `truncated: true`, it carries the full
+   * pre-truncation inventory size so the caller still sees the
+   * total even with trimmed pages.
+   */
+  readonly totalFilesWithFindings: number;
   readonly requestedLimit?: number;
   readonly effectiveLimit?: number;
   readonly pageClipReason?: PageClipReason;
