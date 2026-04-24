@@ -254,7 +254,7 @@ describe("rule navigation/href-javascript-void", () => {
       expect(violations).toHaveLength(3);
     });
 
-    it("fragment-nav case `<a href=\"#non-empty-id\">` still does NOT fire", () => {
+    it('fragment-nav case `<a href="#non-empty-id">` still does NOT fire', () => {
       // Regression guard — extending coverage to empty href must not
       // sweep up legitimate in-page fragment navigation. Real fragment
       // ids land on a node and scroll/focus it; that's real navigation.
