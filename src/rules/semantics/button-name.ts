@@ -1,8 +1,3 @@
-// ra11y-limits-exempt: V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT inlines the
-// open-tag boundary scanner locally (mirroring the same private duplication
-// in autocomplete-missing.ts and lang-attribute.ts) per the cross-turn note
-// for V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY — Turn 9 owns the helper
-// extraction into ast-helpers, at which point this exemption decays.
 /**
  * Rule: semantics/button-name
  * Satisfies: wcag22:4.1.2, wcag21:4.1.2
@@ -53,6 +48,8 @@ import {
 } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { FixPaths } from "../../types/violation.ts";
+import { matchFaGlyph } from "./_fa-glyph-labels.ts";
+import { buildAttributeInsertEdit } from "./_open-tag-attr-edit.ts";
 
 export const rule = defineRule({
   id: "semantics/button-name",
@@ -480,67 +477,19 @@ function buildViolation(
  * What the unnamed button/role=button is currently wrapping — if
  * anything. Drives the fix text so the agent gets a concrete
  * aria-label candidate rather than a generic "add a name".
+ *
+ * `fa-icon` fires only when the only interesting child is an `<i>`
+ * whose class attribute carries a glyph token in the shared
+ * `FA_GLYPH_LABELS` map (see `_fa-glyph-labels.ts`). Unknown glyphs
+ * (e.g. `fa-flux-capacitor`) fall through to `empty` so the existing
+ * generic fix stays primary — we only emit a glyph-derived
+ * aria-label when the map speaks for the glyph.
  */
 type IconContext =
   | { kind: "svg-no-title" }
   | { kind: "img"; subject: string | null }
-  // `fa-icon` fires only when the only interesting child is an `<i>`
-  // whose class attribute carries a glyph token in FA_GLYPH_LABELS.
-  // Unknown glyphs (e.g. `fa-flux-capacitor`) fall through to `empty`
-  // so the existing generic fix stays primary — we only emit a
-  // glyph-derived aria-label when the map speaks for the glyph.
   | { kind: "fa-icon"; label: string; glyph: string }
   | { kind: "empty" };
-
-/**
- * Well-known Font Awesome glyph → UI action-verb mapping. Kept small
- * and in-file (per Q5-BUTTON-NAME-ICON-GLYPH-MAP) so the fix text is
- * concrete for the most-common icon-only `<button>` patterns without
- * committing the tool to an exhaustive FA catalogue.
- *
- * Both FA4 (`fa-times`) and FA6 (`fa-xmark`) aliases for "close" are
- * preserved — FA6 renamed several glyphs but projects still ship FA4
- * class names for years, so both tokens map to the same label.
- *
- * The map is a suggestion surface, not a spec: the agent verifies the
- * derived label against the button's actual action in one read. When
- * the glyph isn't in this map, the rule falls back to the generic
- * action-verb prompt — no silent suppression.
- */
-const FA_GLYPH_LABELS: Readonly<Record<string, string>> = {
-  "fa-bars": "Menu",
-  "fa-times": "Close",
-  "fa-xmark": "Close",
-  "fa-arrow-left": "Previous",
-  "fa-arrow-right": "Next",
-  "fa-search": "Search",
-  "fa-magnifying-glass": "Search",
-  "fa-bell": "Notifications",
-  "fa-user": "Account",
-  // V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT: extended after the field
-  // report cited two icon-only `<button>` patterns whose glyphs were
-  // common in shipping projects but absent from the map (simple-timer
-  // `fa-play`, password-generator `fa-clipboard`). Without these
-  // entries the FA-aware fix prose did not fire and the button fell
-  // through to the generic "<button>Close</button>" placeholder.
-  "fa-play": "Play",
-  "fa-clipboard": "Copy",
-};
-
-/**
- * Scans a space-separated class attribute for a `fa-*` glyph token
- * present in FA_GLYPH_LABELS. Returns `{ glyph, label }` on the first
- * hit, or null. FA-style tokens like `fas`, `far`, `fa-lg`, `fa-fw`
- * are skipped implicitly — they are not keys in the label map.
- */
-function matchFaGlyph(classValue: string): { glyph: string; label: string } | null {
-  for (const raw of classValue.split(/\s+/u)) {
-    const tok = raw.toLowerCase();
-    const label = FA_GLYPH_LABELS[tok];
-    if (label !== undefined) return { glyph: tok, label };
-  }
-  return null;
-}
 
 function describeIconChildHtml(element: HtmlElement): IconContext {
   // The caller has already confirmed no accessible name — so
@@ -689,21 +638,22 @@ function buildIconAwareSuggestion(subject: string, icon: IconContext): string {
 }
 
 // ---------------------------------------------------------------------------
-// FA-icon mechanical edit (V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT).
+// FA-icon mechanical edit (V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT,
+// V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY).
 //
 // When the unnamed `<button>` / `role="button"` element wraps an
-// `<i class="(fa|fas|far|fab) fa-<glyph>">` whose glyph is in
-// FA_GLYPH_LABELS, we ship a deterministic `fixPaths.primary.edit` that
-// inserts ` aria-label="<derived>"` into the host's open tag — so
-// `suggest_fix` returns `kind: "edit"` and matches the prose ("Primary
-// fix: aria-label=\"Close\"") rather than `kind: "guidance"`.
+// `<i class="(fa|fas|far|fab) fa-<glyph>">` whose glyph is in the
+// shared `FA_GLYPH_LABELS` map (see `_fa-glyph-labels.ts`), we ship a
+// deterministic `fixPaths.primary.edit` that inserts
+// ` aria-label="<derived>"` into the host's open tag — so `suggest_fix`
+// returns `kind: "edit"` and matches the prose ("Primary fix:
+// aria-label=\"Close\"") rather than `kind: "guidance"`.
 //
-// The open-tag boundary scanner is duplicated locally rather than
-// extracted to a shared helper to honor the cross-turn note for
-// V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY (Turn 9 owns the helper
-// extraction). Mirrors the same private duplication in
-// `src/rules/forms/autocomplete-missing.ts` and
-// `src/rules/document/lang-attribute.ts`.
+// Both the FA-glyph derivation and the open-tag boundary scanner are
+// extracted (`_fa-glyph-labels.ts`, `_open-tag-attr-edit.ts`) so a
+// single derivation drives every surface — fixDescription prose,
+// rule-emitted `fixPaths.primary.edit`, and the `suggest_fix` outcome
+// shape that consumes them.
 // ---------------------------------------------------------------------------
 
 function buildFaIconFixPathsHtml(
@@ -713,14 +663,12 @@ function buildFaIconFixPathsHtml(
 ): FixPaths | undefined {
   if (icon.kind !== "fa-icon") return undefined;
   const tag = element.tagName.toLowerCase();
-  const edit = buildAriaLabelInsertEdit(
-    element.range.start,
-    element.range.end,
-    source,
-    tag,
-    icon.label,
-    "html",
-  );
+  const edit = buildAttributeInsertEdit(element.range.start, element.range.end, source, {
+    tagName: tag,
+    attrName: "aria-label",
+    attrValue: icon.label,
+    dialect: "html",
+  });
   if (edit === null) return undefined;
   return {
     primary: {
@@ -741,14 +689,12 @@ function buildFaIconFixPathsJsx(
   // `Button`, `Slot`); the open-tag scanner matches the literal tag
   // name in source so case-as-authored is correct.
   const tag = element.tagName;
-  const edit = buildAriaLabelInsertEdit(
-    element.range.start,
-    element.range.end,
-    source,
-    tag,
-    icon.label,
-    "jsx",
-  );
+  const edit = buildAttributeInsertEdit(element.range.start, element.range.end, source, {
+    tagName: tag,
+    attrName: "aria-label",
+    attrValue: icon.label,
+    dialect: "jsx",
+  });
   if (edit === null) return undefined;
   return {
     primary: {
@@ -757,155 +703,4 @@ function buildFaIconFixPathsJsx(
     },
     alternatives: [],
   };
-}
-
-/**
- * Slices the host element's open tag from `source` and inserts
- * ` aria-label="<value>"` immediately before the tag-closing `>` (and
- * before any trailing whitespace or self-closing `/`). Returns null
- * when the slice doesn't begin with the expected `<tagName` open tag —
- * the caller falls through to guidance instead of emitting a
- * confidently-wrong edit.
- *
- * The `dialect` parameter routes brace-counting (JSX `{...expr}`
- * attribute values can contain `>` characters that don't terminate the
- * open tag) and is the same shape as the helper in
- * `src/rules/forms/autocomplete-missing.ts`.
- */
-function buildAriaLabelInsertEdit(
-  startOffset: number,
-  endOffset: number,
-  source: string,
-  tagName: string,
-  ariaLabel: string,
-  dialect: "html" | "jsx",
-): { readonly oldText: string; readonly newText: string } | null {
-  const raw = source.slice(startOffset, endOffset);
-  const afterTagName = scanExpectedTagName(raw, tagName);
-  if (afterTagName === -1) return null;
-  const gtIndex = scanOpenTagToGt(raw, afterTagName, dialect);
-  if (gtIndex === -1) return null;
-  const openTag = raw.slice(0, gtIndex + 1);
-  let insertAt = gtIndex;
-  if (raw.charCodeAt(insertAt - 1) === 0x2f /* / */) insertAt -= 1;
-  while (insertAt > 0 && isAsciiWhitespaceCharCode(raw.charCodeAt(insertAt - 1))) {
-    insertAt -= 1;
-  }
-  const before = raw.slice(0, insertAt);
-  const afterToGt = raw.slice(insertAt, gtIndex + 1);
-  return {
-    oldText: openTag,
-    newText: `${before} aria-label="${ariaLabel}"${afterToGt}`,
-  };
-}
-
-/**
- * Returns the byte offset AFTER `<tagName` in `raw`, or -1 when `raw`
- * does not start with `<tagName` followed by an open-tag-separator
- * byte. Mirrors `scanHtmlTagName` in
- * `src/rules/document/lang-attribute.ts` but parameterized over the
- * tag name so this rule can verify both `<button` and arbitrary
- * `role="button"` host tags (`<div role="button">`, `<a role="button">`).
- */
-function scanExpectedTagName(raw: string, tagName: string): number {
-  const minLen = 1 + tagName.length + 1;
-  if (raw.length < minLen) return -1;
-  if (raw.charCodeAt(0) !== 0x3c /* < */) return -1;
-  for (let i = 0; i < tagName.length; i += 1) {
-    if (raw.charCodeAt(1 + i) !== tagName.charCodeAt(i)) return -1;
-  }
-  const next = raw.charCodeAt(1 + tagName.length);
-  // Open-tag separator: whitespace, `/`, or `>`. Any letter/digit means
-  // the source's tag name continues past the expected one (e.g.
-  // `<buttonGroup` vs the expected `button`), so this isn't the
-  // element we think it is.
-  if (
-    next === 0x20 ||
-    next === 0x09 ||
-    next === 0x0a ||
-    next === 0x0d ||
-    next === 0x2f ||
-    next === 0x3e
-  ) {
-    return 1 + tagName.length;
-  }
-  return -1;
-}
-
-/**
- * Walks `raw` from `startIndex` until the `>` that closes the open
- * tag, respecting single/double-quoted attribute values and (for the
- * JSX dialect) `{...}` expression nesting. Returns the byte offset of
- * the `>` or -1 if input runs out / a quote/brace stays unclosed.
- *
- * Same shape as `scanToOpenTagEnd` in
- * `src/rules/forms/autocomplete-missing.ts` — duplicated locally per
- * the cross-turn note (V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY owns
- * shared-helper extraction in Turn 9). The per-byte transition is
- * factored into {@link advanceOpenTagState} so this loop stays under
- * the cognitive-complexity budget.
- */
-function scanOpenTagToGt(raw: string, startIndex: number, dialect: "html" | "jsx"): number {
-  const state: OpenTagState = { inSingle: false, inDouble: false, braceDepth: 0 };
-  for (let i = startIndex; i < raw.length; i += 1) {
-    if (advanceOpenTagState(raw.charCodeAt(i), state, dialect) === "gt") return i;
-  }
-  return -1;
-}
-
-interface OpenTagState {
-  inSingle: boolean;
-  inDouble: boolean;
-  braceDepth: number;
-}
-
-/**
- * Per-byte transition for {@link scanOpenTagToGt}. Mutates `state` in
- * place (toggling the active quote flag, updating brace depth) and
- * returns `"gt"` only when the byte is the open-tag-closing `>`
- * outside any quote or `{...}` expression — the caller short-circuits
- * the loop with the current index when it sees that signal. Quote- and
- * brace-mode handling are extracted into siblings so each branch stays
- * trivial under the cognitive-complexity ceiling.
- */
-function advanceOpenTagState(
-  ch: number,
-  state: OpenTagState,
-  dialect: "html" | "jsx",
-): "gt" | "continue" {
-  if (state.inSingle) {
-    if (ch === 0x27) state.inSingle = false;
-    return "continue";
-  }
-  if (state.inDouble) {
-    if (ch === 0x22) state.inDouble = false;
-    return "continue";
-  }
-  if (state.braceDepth > 0) {
-    advanceBraceDepth(ch, state, dialect);
-    return "continue";
-  }
-  return enterTopLevelByte(ch, state, dialect);
-}
-
-function advanceBraceDepth(ch: number, state: OpenTagState, dialect: "html" | "jsx"): void {
-  if (dialect !== "jsx") return;
-  if (ch === 0x7b) state.braceDepth += 1;
-  else if (ch === 0x7d) state.braceDepth -= 1;
-}
-
-function enterTopLevelByte(
-  ch: number,
-  state: OpenTagState,
-  dialect: "html" | "jsx",
-): "gt" | "continue" {
-  if (ch === 0x3e) return "gt";
-  if (ch === 0x27) state.inSingle = true;
-  else if (ch === 0x22) state.inDouble = true;
-  else if (dialect === "jsx" && ch === 0x7b) state.braceDepth = 1;
-  return "continue";
-}
-
-function isAsciiWhitespaceCharCode(ch: number): boolean {
-  return ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d;
 }
