@@ -309,9 +309,9 @@ function emit(
   // the consistent direction.
   const statusWordMatch = STATUS_WORD_TEXT.exec(echoed);
   const enrichment =
-    statusWordMatch !== null
-      ? ` -- visible text already carries status word "${statusWordMatch[0]}", so a sighted reader of the prose has the second channel; verify the status is also reachable for screen-reader users (consider role="alert"/role="status" or an sr-only label) and for users under color-inverted themes`
-      : "";
+    statusWordMatch === null
+      ? ""
+      : ` -- visible text already carries status word "${statusWordMatch[0]}", so a sighted reader of the prose has the second channel; verify the status is also reachable for screen-reader users (consider role="alert"/role="status" or an sr-only label) and for users under color-inverted themes`;
   const reason = `className uses status color "${matched}" on an element with visible text "${trimmed}" -- color-only indicator check: verify the state is not conveyed by "${matched}" alone; ensure a non-color affordance (icon, label, underline) is present${enrichment}`;
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": className-regex on status-color utility
