@@ -40,7 +40,7 @@ Coverage: 41 rule · 31 finder · 13 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `wcag22:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +1 | decorative-img-with-adjacent-meaning | **rule** |
+| `wcag22:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +2 | decorative-img-with-adjacent-meaning | **rule** |
 | `wcag22:1.2.1` | Audio-only and Video-only (Prerecorded) | A | manual | — | media-alternatives | **finder** |
 | `wcag22:1.2.2` | Captions (Prerecorded) | A | partial | media/video-captions-missing | — | **rule** |
 | `wcag22:1.2.3` | Audio Description or Media Alternative (Prerecorded) | A | manual | — | media-alternatives | **finder** |
@@ -135,7 +135,7 @@ Coverage: 39 rule · 28 finder · 10 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `wcag21:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +1 | decorative-img-with-adjacent-meaning | **rule** |
+| `wcag21:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +2 | decorative-img-with-adjacent-meaning | **rule** |
 | `wcag21:1.2.1` | Audio-only and Video-only (Prerecorded) | A | manual | — | media-alternatives | **finder** |
 | `wcag21:1.2.2` | Captions (Prerecorded) | A | partial | media/video-captions-missing | — | **rule** |
 | `wcag21:1.2.3` | Audio Description or Media Alternative (Prerecorded) | A | manual | — | media-alternatives | **finder** |
@@ -222,7 +222,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `section508:1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +1 | decorative-img-with-adjacent-meaning | **rule** |
+| `section508:1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +2 | decorative-img-with-adjacent-meaning | **rule** |
 | `section508:1.2.1` | Audio-only and Video-only (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `section508:1.2.2` | Captions (Prerecorded) | base | partial | media/video-captions-missing | — | **rule** |
 | `section508:1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
@@ -269,7 +269,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `en301549:9.1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +1 | decorative-img-with-adjacent-meaning | **rule** |
+| `en301549:9.1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +2 | decorative-img-with-adjacent-meaning | **rule** |
 | `en301549:9.1.2.1` | Audio-only and Video-only (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `en301549:9.1.2.2` | Captions (Prerecorded) | base | partial | media/video-captions-missing | — | **rule** |
 | `en301549:9.1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
