@@ -59,7 +59,15 @@ describe("capMetaArray", () => {
 });
 
 describe("hasMetaArrayTruncation", () => {
-  it("returns true when analysisCoverage carries a parseErrorFilesTruncated sibling", () => {
+  // V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: `parseErrorFilesTruncated`
+  // and `partialParseFilesTruncated` were removed from the truncation
+  // key list — those two arrays now switch to the rollup form at
+  // default verbosity and ship uncapped under `verboseMeta: true`. A
+  // stray legacy `parseErrorFilesTruncated` key on `analysisCoverage`
+  // (e.g. from a stale subprocess or a test fixture) must NOT
+  // re-trigger the warning, otherwise the warnings layer would emit
+  // `response_meta_truncated` for a shape that no longer truncates.
+  it("does NOT signal truncation for legacy parseErrorFilesTruncated (key removed in V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED)", () => {
     expect(
       hasMetaArrayTruncation({
         analysisCoverage: {
@@ -68,15 +76,15 @@ describe("hasMetaArrayTruncation", () => {
           parseErrorFilesTruncated: { shown: 50, total: 120 },
         },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("returns true when analysisCoverage carries partialParseFilesTruncated", () => {
+  it("does NOT signal truncation for legacy partialParseFilesTruncated", () => {
     expect(
       hasMetaArrayTruncation({
         analysisCoverage: { partialParseFilesTruncated: { shown: 50, total: 80 } },
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("returns true when analysisCoverage carries fragmentFilesTruncated", () => {

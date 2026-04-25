@@ -1,9 +1,15 @@
 /**
  * Cap for path-list meta arrays that grow linearly with scanner
- * inputs — `meta.scannedBuildArtifacts.ungrouped`,
- * `meta.analysisCoverage.parseErrorFiles`,
- * `meta.analysisCoverage.partialParseFiles`,
- * `meta.analysisCoverage.fragmentFiles`, and any future cousin.
+ * inputs — `meta.scannedBuildArtifacts.ungrouped` and
+ * `meta.analysisCoverage.fragmentFiles` (the path-identity arrays
+ * that don't aggregate cleanly into a reason rollup). The
+ * `parseErrorFiles` / `partialParseFiles` arrays were moved out of
+ * the cap regime in V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED — at
+ * default verbosity their bulk-template wire-size cost is now
+ * absorbed by the inline-vs-rollup gate in
+ * {@link assembleParseErrorBlocks}, and under `verboseMeta: true`
+ * the full path list ships uncapped (the opt-in is the agent's
+ * acknowledgment that the wire-size cost is justified for triage).
  *
  * Q-SHARED-META-ARRAY-BUDGET-CAP: a full-root website-templates scan
  * returned 315KB where 281KB (89%) was `meta`, split almost entirely
@@ -18,20 +24,12 @@
  * from the wire-size budget the agent host tolerates (~100KB total
  * response) against the observed per-entry density:
  *
- *   - `parseErrorFiles` / `partialParseFiles` entries are
- *     `{ path, parser, reason }` triples averaging ~220 chars each
- *     (path ≈ 100, parser ≈ 8, reason ≤ 200). 50 entries ≈ 11KB.
- *     Two arrays at the same cap ≈ 22KB.
  *   - `scannedBuildArtifacts.ungrouped` entries are `{ path, reason }`
  *     pairs averaging ~110 chars. 50 entries ≈ 5.5KB.
  *   - `fragmentFiles` is a string[] averaging ~60 chars/entry.
  *     50 entries ≈ 3KB.
  *
- * Aggregate worst-case ≈ 30KB of meta — roughly 10% of the former
- * 315KB response — while preserving the top of each list
- * (alphabetical sort means the first 50 are a stable, deterministic
- * sample rather than random). Paired counts (`parseErrorFileCount`,
- * `partialParseFileCount`, `fragmentFileCount`, plus the summary
+ * Paired counts (`fragmentFileCount`, plus the summary
  * field on `*Truncated`) stay full so no telemetry is lost — only
  * the trailing entries drop.
  *
@@ -116,9 +114,15 @@ export function capMetaArray<T>(
  * enters the cap regime.
  */
 const META_ARRAY_TRUNCATION_KEYS = [
-  // `meta.analysisCoverage.*`
-  "parseErrorFilesTruncated",
-  "partialParseFilesTruncated",
+  // `meta.analysisCoverage.*`. `parseErrorFilesTruncated` and
+  // `partialParseFilesTruncated` were removed in V1-COVERAGE-PARSE-
+  // ERROR-FILES-UNCAPPED — those two arrays now switch to the
+  // {@link parseErrorTopReasons} / {@link partialParseTopReasons}
+  // rollup at the inline-threshold rather than head-slicing under a
+  // {@link META_ARRAY_CAP}, so no `*Truncated` sibling can fire on
+  // either field. `fragmentFiles` keeps the cap regime because its
+  // signal is the path identity (`_includes/footer.html` etc.), not
+  // a reason rollup that would aggregate cleanly.
   "fragmentFilesTruncated",
   // `meta.scannedBuildArtifacts.ungroupedTruncated`
   "ungroupedTruncated",

@@ -2064,12 +2064,78 @@ describe("buildAnalysisCoverage — hints", () => {
       };
     }
 
-    it("caps parseErrorFiles at META_ARRAY_CAP (50), surfaces `{ shown, total }`, preserves count", () => {
-      // 120 errored HTML files, none with findings — all route into
-      // the invisible bucket. The list caps to 50 deterministic head
-      // entries (alphabetical sort → paths 000..049) while
-      // parseErrorFileCount stays at 120.
-      const paths = Array.from({ length: 120 }, (_, i) => `f${String(i).padStart(3, "0")}.html`);
+    // V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: `parseErrorFiles` and
+    // `partialParseFiles` exited the {@link META_ARRAY_CAP} cap regime
+    // in favor of the inline-vs-rollup gate at default verbosity. The
+    // `*Truncated` siblings and the `metaArrayTruncated` signal that
+    // used to flow from these fields no longer fire — the rollup form
+    // (`parseErrorTopReasons` / `partialParseTopReasons`) is the new
+    // bounded-default mechanism, and `verboseMeta: true` ships the
+    // full uncapped path list. `fragmentFiles` keeps the cap regime
+    // (see fragmentFiles cap test below).
+
+    it("emits parseErrorTopReasons rollup (omits parseErrorFiles) when count > 20 at default verbosity", () => {
+      // 25 errored HTML files, none with findings → invisible bucket.
+      // count > 20 + verbose=false flips the wire shape to rollup-only:
+      // the inline path list is omitted; the top distinct reasons (one
+      // here, since every file shares the same parser message) ship
+      // with the full count.
+      const paths = Array.from({ length: 25 }, (_, i) => `f${String(i).padStart(3, "0")}.html`);
+      const files = paths.map(htmlFileWithErrorsAt);
+      const result = buildAnalysisCoverage(
+        files,
+        [],
+        [],
+        false, // verbose: false
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      const coverage = result.analysisCoverage;
+      expect(coverage?.["parseErrorFileCount"]).toBe(25);
+      expect(coverage?.["parseErrorFiles"]).toBeUndefined();
+      expect(coverage?.["parseErrorFilesTruncated"]).toBeUndefined();
+      expect(coverage?.["parseErrorTopReasons"]).toEqual([
+        { reason: "Unexpected end of input while parsing tag", count: 25 },
+      ]);
+      // No more cap-truncation signal from these fields.
+      expect(result.metaArrayTruncated).toBeUndefined();
+    });
+
+    it("re-includes the full (uncapped) parseErrorFiles list under verboseMeta=true", () => {
+      // Same 25-file corpus, verbose=true — full path list ships
+      // uncapped (no head-slice, no rollup), since the agent has
+      // explicitly opted into the wire-size cost.
+      const paths = Array.from({ length: 25 }, (_, i) => `f${String(i).padStart(3, "0")}.html`);
+      const files = paths.map(htmlFileWithErrorsAt);
+      const result = buildAnalysisCoverage(
+        files,
+        [],
+        [],
+        true, // verbose: true
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      const coverage = result.analysisCoverage;
+      expect(coverage?.["parseErrorFileCount"]).toBe(25);
+      const list = coverage?.["parseErrorFiles"] as readonly { path: string }[] | undefined;
+      expect(list?.length).toBe(25);
+      expect(list?.[0]?.path).toBe("f000.html");
+      expect(list?.[24]?.path).toBe("f024.html");
+      // Rollup is NOT emitted alongside the full list — the per-entry
+      // `reason` strings already carry every signal the rollup
+      // aggregates (CLAUDE.md §1 "Verbose meta is signal, not clutter":
+      // shipping both would be redundant, not additive).
+      expect(coverage?.["parseErrorTopReasons"]).toBeUndefined();
+    });
+
+    it("ships the full inline parseErrorFiles array (no rollup) at the threshold (count = 20, verbose=false)", () => {
+      // count == PARSE_ERROR_INLINE_THRESHOLD (20): inline list still
+      // wins — rollup only fires above the threshold.
+      const paths = Array.from({ length: 20 }, (_, i) => `f${String(i).padStart(2, "0")}.html`);
       const files = paths.map(htmlFileWithErrorsAt);
       const result = buildAnalysisCoverage(
         files,
@@ -2082,19 +2148,16 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set<string>(),
       );
       const coverage = result.analysisCoverage;
-      expect(coverage?.["parseErrorFileCount"]).toBe(120);
-      const capped = coverage?.["parseErrorFiles"] as readonly { path: string }[] | undefined;
-      expect(capped?.length).toBe(50);
-      expect(capped?.[0]?.path).toBe("f000.html");
-      expect(capped?.[49]?.path).toBe("f049.html");
-      expect(coverage?.["parseErrorFilesTruncated"]).toEqual({ shown: 50, total: 120 });
-      expect(result.metaArrayTruncated).toBe(true);
+      expect(coverage?.["parseErrorFileCount"]).toBe(20);
+      expect((coverage?.["parseErrorFiles"] as readonly unknown[]).length).toBe(20);
+      expect(coverage?.["parseErrorTopReasons"]).toBeUndefined();
     });
 
-    it("caps partialParseFiles independently and emits its own truncation summary", () => {
-      // 60 errored HTML files, every one producing a finding → all
-      // route to partial bucket. Cap at 50, count stays 60.
-      const paths = Array.from({ length: 60 }, (_, i) => `p${String(i).padStart(3, "0")}.html`);
+    it("emits partialParseTopReasons rollup independently when partial bucket count > 20", () => {
+      // 30 errored HTML files, every one producing a finding → all
+      // route to partial bucket. Same threshold gate, separate rollup
+      // field name so the two lanes don't collide on the wire.
+      const paths = Array.from({ length: 30 }, (_, i) => `p${String(i).padStart(3, "0")}.html`);
       const files = paths.map(htmlFileWithErrorsAt);
       const result = buildAnalysisCoverage(
         files,
@@ -2107,15 +2170,72 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set(paths),
       );
       const coverage = result.analysisCoverage;
-      expect(coverage?.["partialParseFileCount"]).toBe(60);
-      expect((coverage?.["partialParseFiles"] as readonly unknown[]).length).toBe(50);
-      expect(coverage?.["partialParseFilesTruncated"]).toEqual({ shown: 50, total: 60 });
-      expect(result.metaArrayTruncated).toBe(true);
+      expect(coverage?.["partialParseFileCount"]).toBe(30);
+      expect(coverage?.["partialParseFiles"]).toBeUndefined();
+      expect(coverage?.["partialParseTopReasons"]).toEqual([
+        { reason: "Unexpected end of input while parsing tag", count: 30 },
+      ]);
     });
 
-    it("omits truncation sibling + metaArrayTruncated when arrays fit under the cap", () => {
-      // 3 errored files → no truncation; the count is authoritative
-      // and the sibling field is absent (present-when-meaningful).
+    it("ranks parseErrorTopReasons by frequency (desc), tied alphabetical, capped at top-5", () => {
+      // Build a heterogeneous corpus that exercises the rollup sort:
+      // - 10 files with reason A (most common)
+      // - 7 with reason B
+      // - 7 with reason C (tied with B → alphabetical break: B before C)
+      // - 5 with reason D
+      // - 3 with reason E
+      // - 1 with reason F (drops out of top-5)
+      const reasons = [
+        ...Array(10).fill("aaaa unexpected"),
+        ...Array(7).fill("bbbb unexpected"),
+        ...Array(7).fill("cccc unexpected"),
+        ...Array(5).fill("dddd unexpected"),
+        ...Array(3).fill("eeee unexpected"),
+        "ffff unexpected",
+      ];
+      const files: ParsedFile[] = reasons.map((message, i) => ({
+        filePath: `f${String(i).padStart(3, "0")}.html`,
+        source: "<div",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [{ message, position: { line: 1, column: 1, offset: 0 }, recoverable: true }],
+        },
+      }));
+      const result = buildAnalysisCoverage(
+        files,
+        [],
+        [],
+        false,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      const coverage = result.analysisCoverage;
+      expect(coverage?.["parseErrorFileCount"]).toBe(33);
+      expect(coverage?.["parseErrorTopReasons"]).toEqual([
+        { reason: "aaaa unexpected", count: 10 },
+        { reason: "bbbb unexpected", count: 7 },
+        { reason: "cccc unexpected", count: 7 },
+        { reason: "dddd unexpected", count: 5 },
+        { reason: "eeee unexpected", count: 3 },
+      ]);
+      // ffff (1 occurrence) drops out of the top-5; agents reconstruct
+      // the residue as parseErrorFileCount - sum(topReasons[].count) = 1.
+    });
+
+    it("inlines the full path list when count is small (3 entries, verbose=false)", () => {
+      // count ≤ 20 + verbose=false: inline list still ships, rollup
+      // is NOT emitted (per-entry detail subsumes it).
       const files = ["a.html", "b.html", "c.html"].map(htmlFileWithErrorsAt);
       const result = buildAnalysisCoverage(
         files,
@@ -2129,6 +2249,7 @@ describe("buildAnalysisCoverage — hints", () => {
       );
       const coverage = result.analysisCoverage;
       expect((coverage?.["parseErrorFiles"] as readonly unknown[]).length).toBe(3);
+      expect(coverage?.["parseErrorTopReasons"]).toBeUndefined();
       expect(coverage?.["parseErrorFilesTruncated"]).toBeUndefined();
       expect(result.metaArrayTruncated).toBeUndefined();
     });

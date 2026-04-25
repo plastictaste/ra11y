@@ -42,20 +42,26 @@
  *     is a single sentence an agent can act on in one tool call.
  *
  * `parseErrorFiles` and `partialParseFiles` both ship `{ path, parser,
- * reason }` entries whenever their bucket has entries — the reason +
+ * reason }` entries when their bucket has entries — the reason +
  * parser pair is the actionable signal an agent needs to investigate
  * ("html parser: Unexpected end of input while parsing tag" is a
- * different fix path than "css parser: Unterminated string literal"),
- * so gating the detail behind `verboseMeta` would leave the top-level
- * `parse_errors_present` / `parseErrorFileCount` signals as a silent-
- * failure shape (CLAUDE.md §1 "Zero-output success is ambiguous
- * failure" — the response-level analogue applies to partial-success
- * signals too). `opaqueCustomComponentNames` and `rulesFiredByExtension`
- * still hide behind `verboseMeta` because they are bounded-but-large
- * inventories whose per-entry value is lower than the top-level count;
- * parse errors are high-signal per-entry and rarely exceed a handful
- * per scan. Fields are omitted when they'd be empty, so clean projects
- * stay terse. The deprecated alias `rulesByExtension` ships alongside
+ * different fix path than "css parser: Unterminated string literal").
+ * Wire shape splits on bucket size per V1-COVERAGE-PARSE-ERROR-FILES-
+ * UNCAPPED: at small inventories (count ≤ {@link PARSE_ERROR_INLINE_THRESHOLD})
+ * or when `verboseMeta: true`, the full per-entry list ships inline;
+ * above the threshold at default verbosity, the list is replaced by
+ * the `parseErrorTopReasons` / `partialParseTopReasons` rollup
+ * (top-{@link PARSE_ERROR_TOP_REASONS_N} distinct reasons by frequency,
+ * full counts) so the response stays bounded on bulk-template scans
+ * (501 entries × ~250 chars ≈ 125KB on the canonical website-templates
+ * corpus). The count scalar (`parseErrorFileCount` /
+ * `partialParseFileCount`) is the authoritative total at every shape,
+ * so the agent never loses sight of the failure-mode size.
+ * `opaqueCustomComponentNames` and `rulesFiredByExtension` still hide
+ * behind `verboseMeta` because they are bounded-but-large inventories
+ * whose per-entry value is lower than the top-level count. Fields are
+ * omitted when they'd be empty, so clean projects stay terse. The
+ * deprecated alias `rulesByExtension` ships alongside
  * `rulesFiredByExtension` for one minor release (ADR 0028) — both
  * fields carry the identical value, and the warnings channel emits
  * `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
@@ -69,6 +75,8 @@ import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile } from "../utils/path.ts";
 import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
+import { assembleParseErrorBlocks } from "./analysis-coverage-parse-errors.ts";
+import type { ParseErrorEntry } from "./analysis-coverage-types.ts";
 import { isBuildArtifact } from "./build-artifacts.ts";
 import type { Hint } from "./hint-codes.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
@@ -104,24 +112,8 @@ interface OpaqueComponentUsage {
   interactive: boolean;
 }
 
-/**
- * A file whose parser emitted errors. The `reason` is the first parse
- * error's message — surfaced as-is so an agent can branch on the root
- * cause ("Unexpected token `<`" vs "Unterminated string literal") rather
- * than guessing from the file extension. The `parser` names which
- * in-house parser owned the failure (`html`, `css`, `tsx`, `jsx`, `ts`,
- * `js`) — distinguishable from the file extension because e.g. `.mdx`
- * routes through the MDX → TSX bridge and emits `tsx`-class diagnostics.
- * Classification into either `parseErrorFiles` (total-parse-failure,
- * file invisible to rules) or `partialParseFiles` (rules fired on the
- * recovered slice) is decided at emission time by checking whether the
- * file produced any findings.
- */
-interface ParseErrorEntry {
-  readonly path: string;
-  readonly parser: string;
-  readonly reason: string;
-}
+// `ParseErrorEntry` is co-owned with the parse-error sub-assembler;
+// see {@link ./analysis-coverage-types.ts} for the canonical shape.
 
 /**
  * Structured coverage block written onto `meta.analysisCoverage`. Every
@@ -156,10 +148,38 @@ interface CoverageBlock {
   hasFrontmatterFence?: boolean;
   parseErrorFileCount?: number;
   parseErrorFiles?: readonly ParseErrorEntry[];
-  parseErrorFilesTruncated?: MetaArrayTruncationSummary;
+  /**
+   * V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: top distinct parse-error
+   * reasons across the `parseErrorFiles` bucket, ranked by frequency
+   * (desc) with alphabetical tiebreak for determinism. Emitted as the
+   * default rollup form whenever `parseErrorFileCount` exceeds
+   * {@link PARSE_ERROR_INLINE_THRESHOLD} (20) and `verbose` is false —
+   * the full `parseErrorFiles` array is replaced by this aggregate so
+   * the response stays bounded on bulk-template scans (501 entries ×
+   * ~250 chars = ~125KB on the canonical website-templates corpus).
+   * Counts are full (sum equals `parseErrorFileCount`), not capped to
+   * the top-5; the top-N is the *list* of distinct reason strings,
+   * each carrying its full occurrence count. Omitted when the inline
+   * `parseErrorFiles` array ships (count ≤ threshold or verbose=true)
+   * — the per-entry `reason` strings on the inline list subsume the
+   * rollup, and shipping both would be redundant. Doctrine: any
+   * internal array > N entries ships as `{topN, totalCount}`; the
+   * `parseErrorFileCount` scalar carries `totalCount` and this field
+   * carries the `topN` rollup.
+   */
+  parseErrorTopReasons?: readonly { readonly reason: string; readonly count: number }[];
   partialParseFileCount?: number;
   partialParseFiles?: readonly ParseErrorEntry[];
-  partialParseFilesTruncated?: MetaArrayTruncationSummary;
+  /**
+   * V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: rollup mirror of
+   * {@link parseErrorTopReasons} for the `partialParseFiles` bucket.
+   * Same emission gate (count > {@link PARSE_ERROR_INLINE_THRESHOLD},
+   * verbose=false) and same shape; ships when the partial-parse
+   * inventory is large enough that inlining every entry would dominate
+   * the response (canonical case: ~201 templated files on Hugo /
+   * Jekyll-class corpora).
+   */
+  partialParseTopReasons?: readonly { readonly reason: string; readonly count: number }[];
   /**
    * V1-RULES-BY-EXTENSION-LABELING (ADR 0028): for each extension that
    * had files in this scan, the list of active rule IDs eligible to
@@ -391,9 +411,13 @@ export function buildAnalysisCoverage(
     coverage.hasFrontmatterFence = true;
   }
   if (acc.parseErrorEntries.length > 0) {
-    if (assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage)) {
-      metaArrayTruncated = true;
-    }
+    // V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: this assembler never
+    // contributes to `metaArrayTruncated` anymore — the previous
+    // {@link META_ARRAY_CAP} truncation on `parseErrorFiles` /
+    // `partialParseFiles` was replaced by the inline-vs-rollup gate.
+    // The boolean return is preserved on the helper for caller-shape
+    // stability but is always `false` on this branch.
+    assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage, verbose);
   }
   if (acc.fragmentFiles.length > 0) {
     if (assembleFragmentFilesBlock(acc.fragmentFiles, coverage)) {
@@ -513,83 +537,6 @@ const PARSE_ERROR_REASON_MAX = 200;
 function truncateParseErrorReason(message: string): string {
   if (message.length <= PARSE_ERROR_REASON_MAX) return message;
   return `${message.slice(0, PARSE_ERROR_REASON_MAX - 1)}…`;
-}
-
-/**
- * Splits the accumulated parse-error entries into the two honest
- * buckets and assigns them to the coverage block.
- *
- * - `parseErrorFiles` (always an array of `{ path, parser, reason }`
- *   when non-empty): files whose parser emitted errors AND produced
- *   zero findings. These are invisible to rules; an agent reading the
- *   list treats them as "could contain a11y violations the scanner
- *   never saw." The bare `parse_errors_present` / `parseErrorFileCount`
- *   signals tell an agent a file didn't parse, but without the parser
- *   + reason the agent has no fix pivot — `parse_errors_present: true`
- *   alone is a silent-failure shape (CLAUDE.md §1 "Zero-output success
- *   is ambiguous failure" applies to partial-success signals). The
- *   entry list is the actionable detail; it ships at every verbosity.
- * - `partialParseFiles` (always an array of `{ path, parser, reason }`
- *   when non-empty): files whose parser emitted errors but for which
- *   at least one rule fired on the recovered slice. Findings on these
- *   paths are present in the response with live line numbers; the
- *   entry is a calibration warning, not a blanket "invisible" signal.
- *
- * Classification depends on `findingFilePaths`. When the caller passes
- * `undefined` (rare — e.g. a coverage surface that hasn't consumed
- * violations yet), every errored file routes into the historical
- * `parseErrorFiles` bucket so the absence of the signal never silently
- * demotes a file from "fully invisible" to "partially reported."
- *
- * Each bucket is emitted only when non-empty (present-when-meaningful).
- * The `parser` and `reason` strings on every entry are always
- * populated; conditional spreads at the field level are for whole-field
- * absence, not per-entry "did you mean empty or unknown" (see CLAUDE.md
- * §1 "Ambiguous field shapes are dishonest").
- */
-function assembleParseErrorBlocks(
-  entries: readonly ParseErrorEntry[],
-  findingFilePaths: ReadonlySet<string> | undefined,
-  coverage: CoverageBlock,
-): boolean {
-  const totalFailure: ParseErrorEntry[] = [];
-  const partial: ParseErrorEntry[] = [];
-  for (const entry of entries) {
-    if (findingFilePaths?.has(entry.path)) {
-      partial.push(entry);
-    } else {
-      totalFailure.push(entry);
-    }
-  }
-  let truncated = false;
-  if (totalFailure.length > 0) {
-    // Count stays honest (full size) — only the list is capped.
-    // Q-SHARED-META-ARRAY-BUDGET-CAP.
-    coverage.parseErrorFileCount = totalFailure.length;
-    const sorted = [...totalFailure].sort((a, b) => a.path.localeCompare(b.path));
-    const capped = capMetaArray(sorted);
-    coverage.parseErrorFiles = capped.values;
-    if (capped.truncated !== undefined) {
-      coverage.parseErrorFilesTruncated = capped.truncated;
-      truncated = true;
-    }
-  }
-  if (partial.length > 0) {
-    coverage.partialParseFileCount = partial.length;
-    // `partialParseFiles` always ships when non-empty (no verbose gate):
-    // the per-entry `parser` + `reason` pair is the actionable signal
-    // an agent needs to decide what to investigate, not a dumpable path
-    // list. Sorted for deterministic wire output. Capped per
-    // Q-SHARED-META-ARRAY-BUDGET-CAP — the count is the honest total.
-    const sorted = [...partial].sort((a, b) => a.path.localeCompare(b.path));
-    const capped = capMetaArray(sorted);
-    coverage.partialParseFiles = capped.values;
-    if (capped.truncated !== undefined) {
-      coverage.partialParseFilesTruncated = capped.truncated;
-      truncated = true;
-    }
-  }
-  return truncated;
 }
 
 /**

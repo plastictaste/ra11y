@@ -57,6 +57,11 @@ export const coverageTool: McpTool = {
           description:
             "Include the full `untargetedCriteriaList` (bare WCAG titles for criteria no finder grounded in code). Default false; `untargetedCriteria` (the count) is always returned. Mirrors the `checklist` tool so both surfaces behave consistently.",
         },
+        verboseMeta: {
+          type: "boolean",
+          description:
+            "When true, `analysisCoverage.parseErrorFiles` and `partialParseFiles` ship the full per-entry `{ path, parser, reason }` arrays uncapped. Default false: at counts ≤ 20 the inline arrays still ship; above 20 the response surfaces the `parseErrorTopReasons` / `partialParseTopReasons` rollup (top distinct reasons by frequency) and omits the path list to keep the response bounded on bulk-template scans. The count scalar (`parseErrorFileCount` / `partialParseFileCount`) is the authoritative total at every shape. Off by default; flip when triaging which specific files failed to parse.",
+        },
         metaMode: metaModeSchema,
       },
     },
@@ -235,18 +240,21 @@ export const coverageTool: McpTool = {
     // files at the parseable-extension check, an agent gating "are we
     // done?" on the coverage response alone hits the canonical
     // silent-miss failure mode. The `coverage` handler doesn't compute
-    // auto-detected wrappers or a verbose-meta toggle, so the feature
-    // flags collapse to defaults: session wrappers for opaque-component
-    // filtering, non-verbose, 0 auto-detect-confirmed. Surfaced at the
+    // auto-detected wrappers, so that flag collapses to 0;
+    // `verboseMeta` flows from the input param so an agent triaging
+    // bulk-template parse errors can opt into the full
+    // `parseErrorFiles` / `partialParseFiles` lists when needed
+    // (V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED). Surfaced at the
     // top level (not gated by `metaMode`) because the signal is
     // load-bearing for a conformance-gating tool; the existing `meta`
     // block stays opt-in so legacy callers still see no meta on a
     // default call.
+    const verboseMeta = params["verboseMeta"] === true;
     const analysisCoverageField = buildAnalysisCoverage(
       files,
       session.config.nativeWrappers,
       activeRules,
-      false,
+      verboseMeta,
       0,
       undefined,
       discoveryDiagnostics,
