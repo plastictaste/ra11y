@@ -371,9 +371,7 @@ const sessionConfigureTool: McpTool = {
         allowWrite: config.allowWrite,
         ...(config.exclude.length > 0 ? { exclude: [...config.exclude] } : {}),
         ...(Object.keys(config.rules).length > 0 ? { rules: { ...config.rules } } : {}),
-        ...(config.nativeWrappers.length > 0
-          ? { nativeWrappers: [...config.nativeWrappers] }
-          : {}),
+        ...(config.nativeWrappers.length > 0 ? { nativeWrappers: [...config.nativeWrappers] } : {}),
         ...(Object.keys(config.nativeWrapperElements).length > 0
           ? { nativeWrapperElements: { ...config.nativeWrapperElements } }
           : {}),

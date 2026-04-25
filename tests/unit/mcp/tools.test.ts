@@ -2150,10 +2150,7 @@ describe("MCP tool: sessionConfigure", () => {
   it("omits unknown_rule_ids when every ID resolves through the registry or alias table", async () => {
     const tool = findTool("sessionConfigure");
     const session = new McpSession();
-    const result = await tool.handler(
-      { rules: { "media/alt-text-missing": "off" } },
-      session,
-    );
+    const result = await tool.handler({ rules: { "media/alt-text-missing": "off" } }, session);
     const data = JSON.parse(result.content[0].text) as {
       warnings?: readonly string[];
     };
@@ -2168,10 +2165,7 @@ describe("MCP tool: sessionConfigure", () => {
     // deprecation window.
     const tool = findTool("sessionConfigure");
     const session = new McpSession();
-    const result = await tool.handler(
-      { rules: { "navigation/href-placeholder": "off" } },
-      session,
-    );
+    const result = await tool.handler({ rules: { "navigation/href-placeholder": "off" } }, session);
     const data = JSON.parse(result.content[0].text) as {
       warnings?: readonly string[];
     };
