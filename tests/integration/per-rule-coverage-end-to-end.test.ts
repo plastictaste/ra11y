@@ -20,6 +20,7 @@ import { buildScanMeta } from "../../src/mcp/scan-assembly.ts";
 import { BUILTIN_RULES } from "../../src/rules/index.ts";
 import { wcag22 } from "../../src/standards/wcag22/standard.ts";
 import type { Ast } from "../../src/types/ast.ts";
+import type { PerRuleCoverage } from "../../src/types/violation.ts";
 
 function tsxFile(path: string, source: string): ParsedFile {
   const parsed = parseTsx(source);
@@ -467,6 +468,84 @@ describe("per-rule coverage end-to-end", () => {
       const missing = [...reachableIds].filter((id) => !presentIds.has(id));
       expect({ level, missing }).toEqual({ level, missing: [] });
     }
+  });
+
+  // Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE: an HTML-only project
+  // scanned with the full WCAG22 rule set used to ship ~30 boilerplate
+  // perRuleCoverage entries for CSS/TSX-eligible rules, each carrying
+  // identical "no files matching .css were scanned" remediation prose
+  // (~200 chars per row, dominating a single-subdir 347KB response).
+  // The collapse rolls those rows up into one
+  // `meta.rulesNotEvaluatedDueToInputType: { count, byExtension }`
+  // counter so the agent reads `byExtension` once and decides whether
+  // to widen scope. Level-gated rows (gated_by_level discriminator)
+  // and rows with eligible inputs survive the partition unchanged.
+  it("HTML-only scan collapses zero-eligibility CSS/TSX rows into rulesNotEvaluatedDueToInputType", () => {
+    const files = [
+      htmlFile(
+        "site/index.html",
+        `<!doctype html><html lang="en"><head><title>x</title></head><body><h1>Hi</h1></body></html>`,
+      ),
+    ];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const meta = buildScanMeta({
+      filesScanned: result.filesScanned,
+      files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      wrappers: [],
+      sessionOnly: [],
+      unusedWrappers: [],
+      wrapperProvenance: {
+        fromConfig: [],
+        fromAutoDetect: { confirmed: [], assumed: [] },
+        fromSession: [],
+      },
+      wrapperElements: {},
+      verboseMeta: false,
+      preset: undefined,
+      suppressions: [],
+      perRuleCoverage,
+    });
+
+    const collapsed = meta["rulesNotEvaluatedDueToInputType"] as {
+      readonly count: number;
+      readonly byExtension: Readonly<Record<string, number>>;
+    };
+    // Counter is always present so the agent has a deterministic field
+    // to read — even on a clean HTML-only scan the field rides.
+    expect(collapsed).toBeDefined();
+    expect(collapsed.count).toBeGreaterThan(0);
+    // CSS rules (contrast/*) must collapse under `.css` since the
+    // HTML-only scan has zero eligible CSS files.
+    expect(collapsed.byExtension[".css"]).toBeGreaterThan(0);
+
+    const surfaced = meta["perRuleCoverage"] as readonly PerRuleCoverage[];
+    expect(surfaced).toBeDefined();
+    // Every surfaced row either has eligible inputs OR carries the
+    // level-gated discriminator from Q7-AAA-RULE-LOADER-SILENT-NORUN.
+    for (const row of surfaced) {
+      const isEligible = row.filesEvaluated > 0 || row.filesEligible > 0;
+      const isLevelGated = row.skipReason === "gated_by_level";
+      // Project-scoped rules without an extension gate also stay — but
+      // on a non-empty scan those report `filesScanned > 0` so they
+      // satisfy the `isEligible` branch.
+      expect(isEligible || isLevelGated).toBe(true);
+    }
+    // Sanity: the engine's own perRuleCoverage stays full (other
+    // consumers — buildRuleCoverageDerivative, buildRulesEvaluated,
+    // testable-criteria — must still see every row).
+    expect(perRuleCoverage.length).toBeGreaterThan(surfaced.length);
+    // Reduction is meaningful — the collapse must have folded enough
+    // rows that the surfaced array is materially smaller.
+    expect(collapsed.count + surfaced.length).toBe(perRuleCoverage.length);
   });
 
   // V1-MOTION-PAUSE-STOP-FILES-EVALUATED-OFF-BY-ONE: rules sharing the

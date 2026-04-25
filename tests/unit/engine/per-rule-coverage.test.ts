@@ -30,11 +30,14 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { buildPerRuleCoverage } from "../../../src/engine/per-rule-coverage.ts";
+import {
+  buildPerRuleCoverage,
+  partitionPerRuleCoverage,
+} from "../../../src/engine/per-rule-coverage.ts";
 import type { RuleEvaluationTracker } from "../../../src/engine/rule-runner.ts";
 import type { StandardFilter } from "../../../src/engine/standard-filter.ts";
 import type { Rule } from "../../../src/types/rule.ts";
-import type { Violation } from "../../../src/types/violation.ts";
+import type { PerRuleCoverage, Violation } from "../../../src/types/violation.ts";
 
 function mkRule(
   id: string,
@@ -890,5 +893,189 @@ describe("buildPerRuleCoverage", () => {
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("medium");
     expect(row!.reason).toBe("cross_file_evidence_bounded_on_this_input");
+  });
+});
+
+// Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE: extension-gated rows that
+// scanned zero eligible files of the rule's extension type used to ship
+// ~200 chars of identical "no files matching .css were scanned"
+// remediation prose, ~30 of ~70 entries on an HTML-only Tailwind scan.
+// `partitionPerRuleCoverage` rolls those rows up into a single
+// `rulesNotEvaluatedDueToInputType` counter keyed by the rule's first
+// eligible extension — the agent reads `byExtension` once and decides
+// whether to widen scope. Doctrine balance: surface the actionable
+// signal (which extensions the scan never saw) without per-rule
+// repetition; level-gated and project-scoped rows stay verbatim because
+// they name orthogonal gaps the agent acts on differently.
+describe("partitionPerRuleCoverage", () => {
+  // Builds a zero-eligibility low-confidence row — the canonical
+  // collapse target. The eligible-row tests construct their own literal
+  // (without `reason` / `remediation`) instead of spreading overrides,
+  // because `exactOptionalPropertyTypes: true` forbids passing
+  // `reason: undefined` to override the default — the optional field
+  // must be omitted from the literal entirely.
+  function mkZeroEligibleRow(ruleId: string): PerRuleCoverage {
+    return {
+      ruleId,
+      filesEvaluated: 0,
+      filesEligible: 0,
+      findingsEmitted: 0,
+      coverageConfidence: "low",
+      reason: `no files matching .css were scanned`,
+      remediation: "add CSS source files to the scan path",
+    };
+  }
+
+  it("rolls up extension-gated rows with zero eligibility under the rule's first extension", () => {
+    const rules = [
+      mkRule("contrast/minimum", [".css"]),
+      mkRule("contrast/enhanced", [".css"]),
+      mkRule("forms/autocomplete-missing", [".html", ".htm"]),
+    ];
+    const rows: PerRuleCoverage[] = [
+      mkZeroEligibleRow("contrast/minimum"),
+      mkZeroEligibleRow("contrast/enhanced"),
+      {
+        ruleId: "forms/autocomplete-missing",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        reason: "no files matching .html, .htm were scanned",
+        remediation: "add HTML source files to the scan path",
+      },
+    ];
+    const partition = partitionPerRuleCoverage(rows, rules);
+    expect(partition.retained).toHaveLength(0);
+    expect(partition.notEvaluatedDueToInputType.count).toBe(3);
+    // Each rule's FIRST eligible extension is the bucket key — the
+    // dispatch's stated heuristic. Two CSS rules collapse under `.css`,
+    // one HTML rule under `.html` (the head of `[".html", ".htm"]`).
+    expect(partition.notEvaluatedDueToInputType.byExtension).toEqual({
+      ".css": 2,
+      ".html": 1,
+    });
+  });
+
+  it("retains rows with at least one eligible file (zero-eligibility predicate is strict)", () => {
+    const rules = [mkRule("contrast/minimum", [".css"]), mkRule("contrast/enhanced", [".css"])];
+    const rows: PerRuleCoverage[] = [
+      // First row has eligible inputs — must stay verbatim so the agent
+      // sees the per-rule findingsEmitted / concentration / remediation
+      // signal. `reason` / `remediation` are omitted entirely (not
+      // passed as `undefined`) per `exactOptionalPropertyTypes: true`.
+      // Second row collapses under `.css`.
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 3,
+        filesEligible: 3,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+      mkZeroEligibleRow("contrast/enhanced"),
+    ];
+    const partition = partitionPerRuleCoverage(rows, rules);
+    expect(partition.retained.map((r) => r.ruleId)).toEqual(["contrast/minimum"]);
+    expect(partition.notEvaluatedDueToInputType.count).toBe(1);
+    expect(partition.notEvaluatedDueToInputType.byExtension).toEqual({ ".css": 1 });
+  });
+
+  it("retains level-gated rows verbatim (skipReason carries actionable remediation a counter cannot)", () => {
+    // Q7-AAA-RULE-LOADER-SILENT-NORUN. A level-gated row carries
+    // `skipReason: "gated_by_level"` plus `requiredLevel` /
+    // `requestedLevel` so the agent has the exact remediation
+    // ("re-run with `level: 'AAA'`"). Folding it into the
+    // `byExtension` counter would hide that — extensions and level
+    // are orthogonal axes.
+    const rules = [mkRule("contrast/enhanced", [".css"])];
+    const rows: PerRuleCoverage[] = [
+      {
+        ruleId: "contrast/enhanced",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        skipReason: "gated_by_level",
+        requiredLevel: "AAA",
+        requestedLevel: "AA",
+        reason: "gated_by_level: rule requires level AAA; scan requested level AA",
+        remediation: "re-run with `level: 'AAA'` to evaluate this rule",
+      },
+    ];
+    const partition = partitionPerRuleCoverage(rows, rules);
+    expect(partition.retained).toHaveLength(1);
+    expect(partition.retained[0]!.ruleId).toBe("contrast/enhanced");
+    expect(partition.retained[0]!.skipReason).toBe("gated_by_level");
+    expect(partition.notEvaluatedDueToInputType.count).toBe(0);
+    expect(partition.notEvaluatedDueToInputType.byExtension).toEqual({});
+  });
+
+  it("retains project-scoped rows (no extension gate) so the zero-file 'nothing to evaluate' signal stays visible", () => {
+    // Project-scoped rules without `appliesTo.fileExtensions` carry a
+    // distinct `reason: "no files were scanned; project-scoped rule
+    // had nothing to evaluate"` that names a different gap (zero
+    // parseable files at all) than "wrong input type." There's also
+    // no extension to bucket by, so collapsing is structurally
+    // meaningless.
+    const rules = [mkRule("focus/outline-visible", undefined)];
+    const rows: PerRuleCoverage[] = [
+      {
+        ruleId: "focus/outline-visible",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        reason: "no files were scanned; project-scoped rule had nothing to evaluate",
+        remediation: "check the scan root and include patterns",
+      },
+    ];
+    const partition = partitionPerRuleCoverage(rows, rules);
+    expect(partition.retained).toHaveLength(1);
+    expect(partition.retained[0]!.ruleId).toBe("focus/outline-visible");
+    expect(partition.notEvaluatedDueToInputType.count).toBe(0);
+  });
+
+  it("retains rows whose rule isn't in the lookup map (defensive — collapsing on absent metadata would hide signal)", () => {
+    // A row whose ruleId can't be resolved to a Rule (e.g. a stale
+    // alias, a registry mismatch) keeps the row visible so the agent
+    // sees the unknown row rather than silently dropping it into a
+    // rolled-up counter under no honest extension key.
+    const rules: Rule[] = [];
+    const rows: PerRuleCoverage[] = [mkZeroEligibleRow("orphan/no-rule")];
+    const partition = partitionPerRuleCoverage(rows, rules);
+    expect(partition.retained).toHaveLength(1);
+    expect(partition.retained[0]!.ruleId).toBe("orphan/no-rule");
+    expect(partition.notEvaluatedDueToInputType.count).toBe(0);
+  });
+
+  it("returns a zero-and-empty counter and the input rows reference unchanged when nothing collapses", () => {
+    const rules = [mkRule("contrast/minimum", [".css"])];
+    const rows: PerRuleCoverage[] = [
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 2,
+        filesEligible: 2,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+    ];
+    const partition = partitionPerRuleCoverage(rows, rules);
+    // Identity preservation: when nothing collapses the same array
+    // reference is returned so downstream identity checks (e.g. vendor-
+    // concentration's `if (enriched === rows) return meta`) keep
+    // working without an unconditional rebuild.
+    expect(partition.retained).toBe(rows);
+    expect(partition.notEvaluatedDueToInputType.count).toBe(0);
+    expect(partition.notEvaluatedDueToInputType.byExtension).toEqual({});
+  });
+
+  it("counter is always present (zero-and-empty) even when input rows is empty", () => {
+    // The counter rides at zero so the agent has a deterministic field
+    // to read on every scan shape — present-when-meaningful is inverted
+    // here for scan-confidence telemetry, see
+    // `RulesNotEvaluatedDueToInputType` doc.
+    const partition = partitionPerRuleCoverage([], []);
+    expect(partition.retained).toHaveLength(0);
+    expect(partition.notEvaluatedDueToInputType).toEqual({ count: 0, byExtension: {} });
   });
 });

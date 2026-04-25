@@ -892,3 +892,116 @@ const MATERIAL_EXACT_PATTERN_TOKENS: ReadonlySet<string> = new Set([
   "material-icons-sharp",
   "material-icons-two-tone",
 ]);
+
+// ---------------------------------------------------------------------------
+// Boilerplate-collapse partition (Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE)
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate descriptor surfaced as `meta.rulesNotEvaluatedDueToInputType`
+ * on the MCP wire. Rolls up extension-gated rules whose inputs the scan
+ * never saw — `filesEvaluated === 0` AND `filesEligible === 0` — into a
+ * single counter keyed by the rule's first eligible extension. The agent
+ * reads `byExtension` once and decides whether to widen scope (e.g.
+ * pass `additionalPaths: ["dist/assets"]` when the project ships built
+ * CSS) instead of paging through ~30 boilerplate per-rule rows that
+ * each carry the same "no files matching .css were scanned" remediation.
+ *
+ * Doctrine balance — verbose meta is signal, but boilerplate repeated
+ * across rules with zero eligible inputs is not telemetry, it's noise
+ * (the canonical 347KB single-subdir scan response had ~30 of ~70
+ * `perRuleCoverage` entries fitting this shape, each ~200 chars). The
+ * collapsed counter preserves the actionable signal (which extensions
+ * the scan failed to see) without the per-rule repetition. Level-gated
+ * rows (`skipReason: "gated_by_level"` from
+ * Q7-AAA-RULE-LOADER-SILENT-NORUN) are NEVER folded in — they are an
+ * orthogonal axis the agent can act on directly (re-run with
+ * `level: 'AAA'`), and collapsing them would hide the exact remediation
+ * a per-rule row carries.
+ *
+ * `count` is `0` and `byExtension` is `{}` when nothing collapses —
+ * always-present so the agent has a deterministic field to read instead
+ * of disambiguating "absent" from "zero" (CLAUDE.md §1 "Ambiguous field
+ * shapes are dishonest" inverted at the field-presence level: a
+ * scan-confidence telemetry field stays present even at zero so the
+ * agent can branch on it without re-checking).
+ */
+export interface RulesNotEvaluatedDueToInputType {
+  readonly count: number;
+  readonly byExtension: Readonly<Record<string, number>>;
+}
+
+/**
+ * Result of partitioning a `perRuleCoverage` array into the rows the MCP
+ * wire surfaces verbatim and the rolled-up counter for the boilerplate
+ * tail. Returned by {@link partitionPerRuleCoverage}; consumed at meta-
+ * assembly time so the engine output stays full (other consumers —
+ * `buildRuleCoverageDerivative`, `buildRulesEvaluated`,
+ * `testable-criteria` — still see every row).
+ */
+export interface PerRuleCoveragePartition {
+  readonly retained: readonly PerRuleCoverage[];
+  readonly notEvaluatedDueToInputType: RulesNotEvaluatedDueToInputType;
+}
+
+/**
+ * Splits a `perRuleCoverage` array into:
+ *   - `retained`: rows the MCP `meta.perRuleCoverage` surface keeps
+ *     verbatim — every row with at least one eligible file (`filesEligible
+ *     > 0`), every level-gated row (`skipReason: "gated_by_level"`,
+ *     surfaced for Q7-AAA-RULE-LOADER-SILENT-NORUN), every
+ *     project-scoped row (no `appliesTo.fileExtensions` — the
+ *     `filesScanned === 0` zero-file case carries `"no files were
+ *     scanned"` remediation that names a different gap than "wrong input
+ *     type"), and every row whose rule isn't in the lookup map (defensive
+ *     — collapsing on absent metadata would hide signal).
+ *   - `notEvaluatedDueToInputType`: a single rolled-up counter
+ *     `{ count, byExtension }` for the extension-gated tail where
+ *     `filesEvaluated === 0 && filesEligible === 0`. Each rule
+ *     contributes `+1` to `byExtension[<first extension in its
+ *     appliesTo.fileExtensions set>]` — the heuristic the dispatch named
+ *     so an HTML-only scan over a Tailwind project sees
+ *     `{ ".css": 12, ".tsx": 8, … }` and routes to one read instead of N.
+ *
+ * `count` and `byExtension` are always present (zero / empty when no
+ * rows collapse) so the agent has a deterministic field to read on every
+ * scan shape — see {@link RulesNotEvaluatedDueToInputType} for the
+ * presence-on-zero rationale.
+ *
+ * Pure over its inputs; returns the same `retained` array reference when
+ * nothing collapses so downstream identity checks (e.g. vendor-
+ * concentration enrichment's `if (enriched === rows) return meta`) keep
+ * working without an unconditional rebuild.
+ */
+export function partitionPerRuleCoverage(
+  rows: readonly PerRuleCoverage[],
+  rules: readonly Rule[],
+): PerRuleCoveragePartition {
+  const ruleById = new Map<string, Rule>();
+  for (const r of rules) ruleById.set(r.id, r);
+  const retained: PerRuleCoverage[] = [];
+  const byExtension: Record<string, number> = {};
+  let count = 0;
+  let collapsedAny = false;
+  for (const row of rows) {
+    const rule = ruleById.get(row.ruleId);
+    const extensions = rule?.appliesTo?.fileExtensions;
+    const isExtensionGated = extensions !== undefined && extensions.length > 0;
+    const isEmptyEligible = row.filesEvaluated === 0 && row.filesEligible === 0;
+    const isLevelGated = row.skipReason === "gated_by_level";
+    if (isExtensionGated && isEmptyEligible && !isLevelGated) {
+      const head = extensions[0];
+      if (head !== undefined) {
+        byExtension[head] = (byExtension[head] ?? 0) + 1;
+        count += 1;
+        collapsedAny = true;
+        continue;
+      }
+    }
+    retained.push(row);
+  }
+  return {
+    retained: collapsedAny ? retained : rows,
+    notEvaluatedDueToInputType: { count, byExtension },
+  };
+}

@@ -7,6 +7,10 @@
  * `limitations` prose) live next to the shape they describe.
  */
 
+import {
+  partitionPerRuleCoverage,
+  type RulesNotEvaluatedDueToInputType,
+} from "../engine/per-rule-coverage.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { DiscoveryDiagnostics } from "../input/discover.ts";
 import { scssVariableDeclarationsLikelyUnresolved } from "../input/parsers/scss-internals.ts";
@@ -323,8 +327,50 @@ export function buildScanMeta(args: {
     // parse-error / partial-parse files exist, so the meta and the
     // top-level `ruleCoverage` derivative agree on
     // `coverageConfidence` for every row (no cross-surface drift).
-    // Omitted when the array is empty.
-    ...(perRuleCoverage.length > 0 ? { perRuleCoverage } : {}),
+    //
+    // Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE: extension-gated rows
+    // with `filesEvaluated === 0 && filesEligible === 0` are rolled up
+    // into the sibling `rulesNotEvaluatedDueToInputType` counter rather
+    // than each shipping ~200 chars of identical "no files matching .css
+    // were scanned" boilerplate. On an HTML-only scan over a Tailwind
+    // project ~30 of ~70 entries fit this shape; the collapsed counter
+    // names the same actionable signal (which extensions the scan never
+    // saw) so the agent reads `byExtension` once and decides whether to
+    // widen scope. Level-gated rows (Q7-AAA-RULE-LOADER-SILENT-NORUN)
+    // and project-scoped rows are NOT collapsed — they name orthogonal
+    // gaps the agent acts on differently.
+    //
+    // Doctrine balance — verbose meta is signal, but identical
+    // remediation prose repeated across N rules is not telemetry; the
+    // collapse preserves what the agent reads (extension to widen) and
+    // drops what it skims past (per-rule repetition). Omitted only when
+    // both `retained` is empty AND `count` is zero — otherwise the
+    // counter rides even at zero so the agent has a deterministic
+    // field to read.
+    ...perRuleCoverageMetaFragment(perRuleCoverage, activeRules),
+  };
+}
+
+/**
+ * Builds the spreadable `perRuleCoverage` + `rulesNotEvaluatedDueToInputType`
+ * meta fragment from the adjusted rows. Extracted so {@link buildScanMeta}'s
+ * cognitive complexity stays inside the lint cap and the partition + emit
+ * rules live in one place. The counter is always present — including the
+ * zero/empty case — so the agent has a deterministic field to branch on.
+ * `perRuleCoverage` is conditional-spread per the existing presence rule
+ * (omitted when no rows survive partition).
+ */
+function perRuleCoverageMetaFragment(
+  rows: readonly PerRuleCoverage[],
+  activeRules: readonly Rule[],
+): {
+  readonly perRuleCoverage?: readonly PerRuleCoverage[];
+  readonly rulesNotEvaluatedDueToInputType: RulesNotEvaluatedDueToInputType;
+} {
+  const { retained, notEvaluatedDueToInputType } = partitionPerRuleCoverage(rows, activeRules);
+  return {
+    ...(retained.length > 0 ? { perRuleCoverage: retained } : {}),
+    rulesNotEvaluatedDueToInputType: notEvaluatedDueToInputType,
   };
 }
 
