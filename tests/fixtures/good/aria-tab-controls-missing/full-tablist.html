@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings tabs</title>
+  </head>
+  <body>
+    <h1>Settings</h1>
+    <!--
+      Compliant WAI-ARIA "tabs" pattern. Every role="tab" names its
+      panel via aria-controls; every role="tabpanel" names the tab
+      that owns it via aria-labelledby. Branches A, B, and C of
+      aria/tab-controls-missing each pass.
+    -->
+    <div role="tablist" aria-label="Settings sections">
+      <button
+        role="tab"
+        id="tab-account"
+        aria-selected="true"
+        aria-controls="panel-account"
+      >
+        Account
+      </button>
+      <button
+        role="tab"
+        id="tab-billing"
+        aria-selected="false"
+        aria-controls="panel-billing"
+      >
+        Billing
+      </button>
+    </div>
+    <div role="tabpanel" id="panel-account" aria-labelledby="tab-account">
+      <p>Account settings content.</p>
+    </div>
+    <div role="tabpanel" id="panel-billing" aria-labelledby="tab-billing" hidden>
+      <p>Billing settings content.</p>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings tabs</title>
+  </head>
+  <body>
+    <h1>Settings</h1>
+    <!--
+      Branch A: each role="tab" element is missing aria-controls.
+      The panel exists with the right role and id, and even points
+      back via aria-labelledby — but the tab→panel half of the
+      reciprocal-pair is silently absent. AT can announce the tab
+      label but has no programmatic link to the panel it activates.
+      aria/tab-controls-missing should fire on each <button role="tab">.
+    -->
+    <div role="tablist" aria-label="Settings sections">
+      <button role="tab" id="tab-account" aria-selected="true">Account</button>
+      <button role="tab" id="tab-billing" aria-selected="false">Billing</button>
+    </div>
+    <div role="tabpanel" id="panel-account" aria-labelledby="tab-account">
+      <p>Account settings content.</p>
+    </div>
+    <div role="tabpanel" id="panel-billing" aria-labelledby="tab-billing" hidden>
+      <p>Billing settings content.</p>
+    </div>
+  </body>
+</html>

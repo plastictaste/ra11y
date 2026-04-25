@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings tabs</title>
+  </head>
+  <body>
+    <h1>Settings</h1>
+    <!--
+      Branch C: the "billing" panel has no aria-labelledby attribute,
+      AND no <… role="tab"> in the file references its id via
+      aria-controls. The panel has no accessible name and AT cannot
+      announce which tab owns it; for screen-reader users the
+      content reads as "an unnamed region."
+      aria/tab-controls-missing should fire on the orphan
+      <div role="tabpanel" id="panel-billing">.
+    -->
+    <div role="tablist" aria-label="Settings sections">
+      <button
+        role="tab"
+        id="tab-account"
+        aria-selected="true"
+        aria-controls="panel-account"
+      >
+        Account
+      </button>
+    </div>
+    <div role="tabpanel" id="panel-account" aria-labelledby="tab-account">
+      <p>Account settings content.</p>
+    </div>
+    <div role="tabpanel" id="panel-billing">
+      <p>Billing settings content (no aria-labelledby and no inbound aria-controls).</p>
+    </div>
+  </body>
+</html>

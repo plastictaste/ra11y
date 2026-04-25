@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings tabs</title>
+  </head>
+  <body>
+    <h1>Settings</h1>
+    <!--
+      Branch B: the "billing" tab's aria-controls points at
+      "panel-bills" — a panel id that does not exist in the document.
+      The panel under id="panel-billing" was renamed and the tab's
+      aria-controls token was forgotten. AT will look up the id, miss
+      it, and the tab→panel relationship resolves to nothing.
+      aria/tab-controls-missing should fire on the <button role="tab"
+      aria-controls="panel-bills">.
+    -->
+    <div role="tablist" aria-label="Settings sections">
+      <button
+        role="tab"
+        id="tab-account"
+        aria-selected="true"
+        aria-controls="panel-account"
+      >
+        Account
+      </button>
+      <button
+        role="tab"
+        id="tab-billing"
+        aria-selected="false"
+        aria-controls="panel-bills"
+      >
+        Billing
+      </button>
+    </div>
+    <div role="tabpanel" id="panel-account" aria-labelledby="tab-account">
+      <p>Account settings content.</p>
+    </div>
+    <div role="tabpanel" id="panel-billing" aria-labelledby="tab-billing" hidden>
+      <p>Billing settings content (the id the tab forgot).</p>
+    </div>
+  </body>
+</html>
