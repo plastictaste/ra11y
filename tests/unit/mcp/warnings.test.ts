@@ -1860,3 +1860,129 @@ describe("computeScanWarnings: V1-BULK-CATALOG-SCAN-PERF-12S", () => {
     expect("topVendorFile" in (details.bulk_catalog_detected ?? {})).toBe(false);
   });
 });
+
+// V1-VENDOR-ANIMATION-LIB-GUARD-HINT: a banner-detected vendor library
+// emitting a single rule's findings ≥ ANIMATION_LIB_GUARD_FINDING_FLOOR
+// times on one file earns the additive guard warning. The remediation
+// pivot ("wrap the import in @media (prefers-reduced-motion)") shifts
+// the agent's triage from O(N) per-finding pragma writes to O(1) one
+// wrap. Surface-don't-suppress: every individual finding stays in
+// `files[]`; the warning is additive routing telemetry only.
+describe("computeScanWarnings — animation_library_without_reduced_motion_guard", () => {
+  it("fires when at least one (ruleId, file) pair on a vendor library cleared the floor", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      animationLibraryGuardCandidates: [
+        {
+          ruleId: "motion/pause-stop-hide",
+          file: "vendor/animate.css",
+          findingCount: 27,
+          library: "animate.css",
+          suggestion: "wrap @import in @media (prefers-reduced-motion: no-preference)",
+        },
+      ],
+    });
+    expect(codes).toContain("animation_library_without_reduced_motion_guard");
+  });
+
+  it("does NOT fire on the same finding count when the candidate list is omitted (caller didn't compute it)", () => {
+    // The cross-reference predicate is computed at the call site; this
+    // module stays pure over its inputs. A caller that doesn't
+    // participate (e.g. a derivative tool that lacks vendor-library
+    // detection) silently drops the code rather than emitting it on
+    // weaker evidence.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+    });
+    expect(codes).not.toContain("animation_library_without_reduced_motion_guard");
+  });
+
+  it("does NOT fire on an empty candidate array (caller computed but no pair cleared the floor)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      animationLibraryGuardCandidates: [],
+    });
+    expect(codes).not.toContain("animation_library_without_reduced_motion_guard");
+  });
+
+  it("warningsField pairs the code with its structured payload — densest tuple on the headline", () => {
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      animationLibraryGuardCandidates: [
+        {
+          ruleId: "motion/pause-stop-hide",
+          file: "vendor/animate.css",
+          findingCount: 27,
+          library: "animate.css",
+          suggestion:
+            "Wrap the `animate.css` import in `@media (prefers-reduced-motion: no-preference) { ... }`.",
+        },
+      ],
+    });
+    expect(out.warnings).toContain("animation_library_without_reduced_motion_guard");
+    const payload = out.warningsDetails?.animation_library_without_reduced_motion_guard;
+    expect(payload?.ruleId).toBe("motion/pause-stop-hide");
+    expect(payload?.file).toBe("vendor/animate.css");
+    expect(payload?.findingCount).toBe(27);
+    expect(payload?.library).toBe("animate.css");
+    expect(payload?.suggestion).toContain("prefers-reduced-motion");
+    expect(payload?.additionalMatches).toBeUndefined();
+  });
+
+  it("packs lower-density candidates under additionalMatches[] when multiple libraries hit the regime", () => {
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      animationLibraryGuardCandidates: [
+        {
+          ruleId: "motion/pause-stop-hide",
+          file: "vendor/animate.css",
+          findingCount: 27,
+          library: "animate.css",
+          suggestion: "wrap animate.css",
+        },
+        {
+          ruleId: "motion/pause-stop-hide",
+          file: "vendor/extra.css",
+          findingCount: 50,
+          library: "other-lib",
+          suggestion: "wrap other-lib",
+        },
+      ],
+    });
+    const payload = out.warningsDetails?.animation_library_without_reduced_motion_guard;
+    // Highest findingCount rides on the headline (50 > 27).
+    expect(payload?.findingCount).toBe(50);
+    expect(payload?.library).toBe("other-lib");
+    // The lower-density candidate lands under additionalMatches.
+    expect(payload?.additionalMatches?.length).toBe(1);
+    expect(payload?.additionalMatches?.[0]).toMatchObject({
+      ruleId: "motion/pause-stop-hide",
+      file: "vendor/animate.css",
+      findingCount: 27,
+      library: "animate.css",
+    });
+    // additionalMatches entries deliberately omit `suggestion` — the
+    // headline tuple's text already names the remediation pattern.
+    expect(payload?.additionalMatches?.[0]).not.toHaveProperty("suggestion");
+  });
+});

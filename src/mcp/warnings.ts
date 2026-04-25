@@ -352,7 +352,49 @@ export type ScanWarningCode =
   // DRIFT). Surface-don't-suppress: both fields ship unchanged today;
   // the warning is the additive signal that lets callers self-migrate
   // without a hidden break.
-  | "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension";
+  | "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension"
+  // V1-VENDOR-ANIMATION-LIB-GUARD-HINT: a banner-detected vendor
+  // library (typical case: a 3000+ line `animate.css` clone whose
+  // first non-blank line matches the curated `animate.css` banner)
+  // emitted ≥ {@link ANIMATION_LIB_GUARD_FINDING_FLOOR} findings from
+  // a single rule on a single file. Canonical case: `motion/pause-stop-
+  // hide` firing 27 times against an `animate.css` import — one
+  // finding per `.animate__*` keyframe helper, every finding pointing
+  // at the same un-editable vendor file. The remediation is one wrap
+  // (`@import` or `<link>` inside `@media (prefers-reduced-motion:
+  // no-preference) { ... }`), not 27 source-level pragmas. Without
+  // this code, an agent reading the bare per-finding stream pays N×
+  // per-finding triage cost on what is structurally one decision.
+  //
+  // Predicate is two-part and both parts are deterministic (per
+  // CLAUDE.md §1 "Labeled buckets are only honest when provable from
+  // the code"): (a) the file appears in
+  // `meta.scannedBuildArtifacts.vendorLibraries[]` — banner-detected,
+  // not path-heuristic; see `detectVendorLibraries` in
+  // `./build-artifacts.ts`; (b) one rule emitted ≥ floor findings on
+  // that file. The two parts together name the "library author
+  // emitted N similar selectors, our rule fires once per selector"
+  // shape; either alone is not sufficient (a 27-finding spike on
+  // hand-authored CSS earns the per-finding stream; a vendor library
+  // with one finding doesn't earn the wrap-the-import suggestion).
+  //
+  // Surface-don't-suppress: every finding stays in `files[]`. The
+  // warning is additive routing telemetry the agent reads BEFORE
+  // walking the per-finding list, so it can attempt the one-wrap
+  // remediation first. Paired payload:
+  // `warningsDetails.animation_library_without_reduced_motion_guard`
+  // carries the `(ruleId, file, findingCount, library, suggestion)`
+  // tuple so the agent has the load-bearing pivot in one read.
+  // Per-rule scope by design — one library can earn multiple codes
+  // (motion + contrast on the same `animate.css`); the dispatch
+  // table emits at most one code per (ruleId, file) pair.
+  //
+  // Depends on V1-VENDOR-LIBRARY-BANNER-DETECTION (closed): the
+  // vendor-library detection that supplies the deterministic predicate
+  // half. Without that detector, the file-side identification would
+  // have to fall back to path or basename heuristics — the canonical
+  // mistake the labeled-buckets doctrine warns against.
+  | "animation_library_without_reduced_motion_guard";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -588,6 +630,44 @@ export interface WarningInputs {
    * conservatively when this field is absent.
    */
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
+  /**
+   * V1-VENDOR-ANIMATION-LIB-GUARD-HINT: caller-supplied list of
+   * `(ruleId, file, findingCount, library)` tuples that satisfy both
+   * predicate halves: (a) `file` is banner-identified as a vendor
+   * library (per `meta.scannedBuildArtifacts.vendorLibraries[]`), AND
+   * (b) `findingCount` for `ruleId` on `file` clears
+   * {@link ANIMATION_LIB_GUARD_FINDING_FLOOR}. Drives the
+   * `animation_library_without_reduced_motion_guard` code + its
+   * paired `warningsDetails` payload.
+   *
+   * The cross-reference detector lives at the call site
+   * (`tool-scan-project.ts`) so the warnings module stays pure over
+   * its inputs — same pattern as `vendorCssNoise` and
+   * `scannedMinifiedFiles`. Empty array is acceptable and treated
+   * identically to `undefined`; neither fires the code. When ≥1 entry
+   * is present, the code fires once per entry's payload — but the
+   * dispatcher caps `warningsDetails` to the densest single entry so
+   * the wire shape stays bounded; the rest live as `additionalMatches`
+   * for callers that want the full set without re-scanning.
+   *
+   * `library` is the canonical short identifier from
+   * {@link import("./build-artifacts.ts").DetectedVendorLibrary} (e.g.
+   * `"animate.css"`, `"bootstrap"`, `"font-awesome"`); the call site
+   * stamps it from the matched banner so the payload reads as a
+   * deterministic identification, not a heuristic guess. `suggestion`
+   * is generated at the call site against the matched library so the
+   * remediation prose names the concrete edit (wrap an `@import` for
+   * library-import shapes; wrap a `<link rel="stylesheet">` for
+   * page-include shapes); see the per-call-site builder for the
+   * library-aware text.
+   */
+  readonly animationLibraryGuardCandidates?: readonly {
+    readonly ruleId: string;
+    readonly file: string;
+    readonly findingCount: number;
+    readonly library: string;
+    readonly suggestion: string;
+  }[];
 }
 
 // MARKER_PROBE_002
@@ -707,6 +787,26 @@ const VENDOR_CSS_DOMINATES_FINDINGS_FLOOR = 200;
 const VENDOR_CSS_DOMINATES_SHARE_THRESHOLD = 0.5;
 
 /**
+ * Floor above which `animation_library_without_reduced_motion_guard`
+ * fires on a single (ruleId, file) pair. Picked at 21 (one above the
+ * 20 the spec floor names) so the canonical 27-finding `animate.css`
+ * repro trips the code while a hand-authored 10-keyframe test fixture
+ * does not. The floor is paired with the deterministic vendor-library
+ * banner predicate at the call site — both halves must hold, so the
+ * floor alone never fires the code on hand-authored CSS.
+ *
+ * The threshold gates only the warning's emission; every individual
+ * finding stays in `files[]` regardless. This is the same pattern
+ * `VENDOR_CSS_DOMINATES_FINDINGS_FLOOR` uses (additive
+ * routing-telemetry threshold, no suppression of underlying signal),
+ * and earns the same doctrinal pass: the threshold doesn't pick a
+ * point on a continuous axis to hide things on one side; it picks the
+ * regime where the wrap-the-import remediation actually shifts the
+ * agent's triage cost from O(N) to O(1).
+ */
+export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
+
+/**
  * Structured sibling to the bare-string `warnings[]` channel — see
  * ADR 0023. Keyed by `ScanWarningCode`; only codes whose signal is
  * enriched by a quantitative payload appear here. Codes whose presence
@@ -726,7 +826,8 @@ const VENDOR_CSS_DOMINATES_SHARE_THRESHOLD = 0.5;
  *     `extensions_skipped_no_parser`, `response_token_budget_truncated`,
  *     `content_files_skipped`, `source_language_unsupported`,
  *     `vendor_css_dominates_findings`, `parse_errors_present`,
- *     `scanned_build_artifacts_present`, and `scanned_minified_file`.
+ *     `scanned_build_artifacts_present`, `scanned_minified_file`,
+ *     and `animation_library_without_reduced_motion_guard`.
  *     Each carries a `summarize*`
  *     helper that returns `undefined` if the predicate fired but the
  *     payload would be degenerate (e.g. zero counts, missing pivot) —
@@ -1039,6 +1140,42 @@ export interface ScanWarningDetails {
     readonly suggestedExcludes: readonly string[];
     readonly topVendorFile?: string;
   };
+  /**
+   * V1-VENDOR-ANIMATION-LIB-GUARD-HINT: payload for
+   * `animation_library_without_reduced_motion_guard`. Names the
+   * single densest `(ruleId, file)` pair that earned the code so an
+   * agent reading the warning channel has the load-bearing pivot in
+   * one read — `library` (banner identification),
+   * `findingCount` (so the agent can budget the wrap's payoff), and
+   * `suggestion` (the concrete remediation text). When the scan
+   * carried multiple library hits in the same regime (e.g. an
+   * `animate.css` + a `font-awesome` distribution both spiking on
+   * different rules), the densest pair rides on the headline payload
+   * and the rest live under `additionalMatches[]` so the wire shape
+   * stays bounded but no information is lost.
+   *
+   * Per CLAUDE.md §1 "Heuristic-mislabeled meta sub-fields are
+   * dishonest," the `library` value is the deterministic banner
+   * match from {@link import("./build-artifacts.ts").DetectedVendorLibrary}
+   * — not a path or basename heuristic. The `suggestion` is the
+   * library-aware remediation prose the call-site builder generates
+   * (wrap-the-`@import` shape for stylesheets that ship as a CSS
+   * library, with the agent reading the rest of the file to confirm
+   * the import shape).
+   */
+  readonly animation_library_without_reduced_motion_guard?: {
+    readonly ruleId: string;
+    readonly file: string;
+    readonly findingCount: number;
+    readonly library: string;
+    readonly suggestion: string;
+    readonly additionalMatches?: readonly {
+      readonly ruleId: string;
+      readonly file: string;
+      readonly findingCount: number;
+      readonly library: string;
+    }[];
+  };
 }
 
 function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
@@ -1090,6 +1227,9 @@ function fileListDrivenCodes(inputs: WarningInputs): readonly ScanWarningCode[] 
   }
   if (hasScssUnresolvedVariables(inputs.scssUnresolvedVariableFiles)) {
     out.push("scss_unresolved_variables");
+  }
+  if (hasAnimationLibraryGuardCandidates(inputs.animationLibraryGuardCandidates)) {
+    out.push("animation_library_without_reduced_motion_guard");
   }
   return out;
 }
@@ -1317,6 +1457,22 @@ function hasScssUnresolvedVariables(files: WarningInputs["scssUnresolvedVariable
  */
 function hasScannedMinifiedFiles(files: WarningInputs["scannedMinifiedFiles"]): boolean {
   return files !== undefined && files.length > 0;
+}
+
+/**
+ * Predicate for `animation_library_without_reduced_motion_guard`.
+ * Returns `true` when the caller-supplied list of (ruleId, file,
+ * findingCount, library) tuples — already cross-referenced at the
+ * call site against `vendorLibraries[]` and the per-rule per-file
+ * count — is non-empty. Pure over its input; the cross-reference
+ * lives in `tool-scan-project.ts` so this module stays decoupled
+ * from the build-artifact pipeline internals (mirrors the
+ * `hasScannedMinifiedFiles` / `hasScssUnresolvedVariables` pattern).
+ */
+function hasAnimationLibraryGuardCandidates(
+  candidates: WarningInputs["animationLibraryGuardCandidates"],
+): boolean {
+  return candidates !== undefined && candidates.length > 0;
 }
 
 function vendorCssDominates(noise: WarningInputs["vendorCssNoise"]): boolean {
@@ -1618,6 +1774,7 @@ type ScanMetaWarningArgs = {
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly scannedMinifiedFiles?: readonly string[];
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
+  readonly animationLibraryGuardCandidates?: WarningInputs["animationLibraryGuardCandidates"];
 };
 
 function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
@@ -1664,6 +1821,9 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.bulkCatalogDetection === undefined
       ? {}
       : { bulkCatalogDetection: args.bulkCatalogDetection }),
+    ...(args.animationLibraryGuardCandidates === undefined
+      ? {}
+      : { animationLibraryGuardCandidates: args.animationLibraryGuardCandidates }),
   };
 }
 
@@ -1730,6 +1890,10 @@ export function computeScanWarningDetails(
     {
       code: "bulk_catalog_detected",
       summarize: () => summarizeBulkCatalog(inputs.bulkCatalogDetection),
+    },
+    {
+      code: "animation_library_without_reduced_motion_guard",
+      summarize: () => summarizeAnimationLibraryGuard(inputs.animationLibraryGuardCandidates),
     },
   ];
   for (const row of dispatch) {
@@ -1846,6 +2010,44 @@ function summarizeBulkCatalog(
     buildArtifactsCount: detection.buildArtifactsCount,
     suggestedExcludes: detection.suggestedExcludes,
     ...(detection.topVendorFile === undefined ? {} : { topVendorFile: detection.topVendorFile }),
+  };
+}
+
+/**
+ * Builds the `animation_library_without_reduced_motion_guard` payload
+ * from the caller-supplied (ruleId, file, findingCount, library,
+ * suggestion) tuples. The densest single tuple (highest
+ * `findingCount`, then `file` alphabetical for determinism) rides on
+ * the headline payload as the load-bearing pivot the agent reads
+ * first; the rest land under `additionalMatches[]` (without the
+ * suggestion text — the headline tuple's suggestion already names
+ * the remediation pattern). Returns `undefined` when the list is
+ * missing or empty so the dispatch table conditional-spreads the
+ * entry away (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION
+ * payload-vs-binary contract).
+ */
+function summarizeAnimationLibraryGuard(
+  candidates: WarningInputs["animationLibraryGuardCandidates"],
+): NonNullable<ScanWarningDetails["animation_library_without_reduced_motion_guard"]> | undefined {
+  if (candidates === undefined || candidates.length === 0) return undefined;
+  const sorted = [...candidates].sort(
+    (a, b) => b.findingCount - a.findingCount || a.file.localeCompare(b.file),
+  );
+  const head = sorted[0];
+  if (head === undefined) return undefined;
+  const tail = sorted.slice(1).map((c) => ({
+    ruleId: c.ruleId,
+    file: c.file,
+    findingCount: c.findingCount,
+    library: c.library,
+  }));
+  return {
+    ruleId: head.ruleId,
+    file: head.file,
+    findingCount: head.findingCount,
+    library: head.library,
+    suggestion: head.suggestion,
+    ...(tail.length === 0 ? {} : { additionalMatches: tail }),
   };
 }
 
