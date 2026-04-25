@@ -168,6 +168,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [parsing/duplicate-id](./rules/parsing__duplicate-id.md)
 - [parsing/html-has-lang](./rules/parsing__html-has-lang.md)
 - [parsing/invalid-id-shape](./rules/parsing__invalid-id-shape.md)
+- [parsing/malformed-tag](./rules/parsing__malformed-tag.md)
 - [pointer/cancellation](./rules/pointer__cancellation.md)
 - [pointer/drag-alternative](./rules/pointer__drag-alternative.md)
 - [pointer/draggable-no-keyboard-alt](./rules/pointer__draggable-no-keyboard-alt.md)

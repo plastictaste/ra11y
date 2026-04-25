@@ -210,7 +210,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
-| `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +1 | — | **rule** |
+| `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +2 | — | **rule** |
 | `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +34 | pagination-glyph-accessible-name | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
 
