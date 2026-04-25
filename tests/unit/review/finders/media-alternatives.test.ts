@@ -3,24 +3,28 @@
  * (wcag22:1.2.1 / 1.2.3 / 1.2.5 and wcag21 equivalents — Audio-only,
  * Video-only, Audio-description/Media-alternative, Audio-description).
  *
- * Pins two gates:
+ * Pins two contracts:
  *
  *   1. DOM-origin extension gate: `.js` / `.ts` files get routed through
  *      `parseTsx` and see the finder via the `.js → .jsx` alias in
- *      `extensionMatches`, but string-literal iframes in runtime
- *      DOM-builder libraries (jQuery, fancybox) are not rendered
- *      iframes. The finder must only emit candidates for DOM-origin
+ *      `extensionMatches`, but string-literal media markup in runtime
+ *      DOM-builder libraries (jQuery, fancybox) is not a rendered
+ *      element. The finder must only emit candidates for DOM-origin
  *      file extensions — the agent reads library JS directly when
  *      investigating.
  *
- *   2. Video-host iframe allowlist: iframes are treated as media ONLY
- *      when `src` resolves to one of the known video-embed hosts
- *      (YouTube, Vimeo, Wistia, Brightcove, Loom — shared allowlist
- *      in `src/utils/video-embed-hosts.ts`). A bare `<iframe
- *      src="https://example.com/…">` on a docs site, a payment widget,
- *      or a map embed does NOT promote 1.2.* out of the
- *      `likelyIrrelevant` bucket, per the AI-first doctrine rule that
- *      `likelyIrrelevant` must be provable from code.
+ *   2. Iframe non-emission (V1-LIKELY-IRRELEVANT-INCONSISTENT): the
+ *      `likelyIrrelevant` bucket in `src/mcp/manual-applicability.ts`
+ *      decides relevance from `<video>` / `<audio>` presence. The
+ *      finder's emission predicate must agree, otherwise the same
+ *      criterion ends up `likelyIrrelevant: true` (because the bucket
+ *      sees no `<video>`/`<audio>`) yet has iframe-grounded candidates
+ *      attached — the contradiction reported as
+ *      `V1-LIKELY-IRRELEVANT-INCONSISTENT`. Iframes therefore emit zero
+ *      candidates regardless of `src` host. Captions for iframe-
+ *      embedded media (1.2.2) remain surfaced as a deterministic
+ *      warning by the `media/video-captions-missing` rule, which lives
+ *      at the violations layer and is unaffected by this contract.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -59,41 +63,20 @@ describe("review/media-alternatives — DOM-origin extension gate", () => {
     // Plain TypeScript libraries aliasing into `.tsx` via
     // `extensionMatches` get filtered by the same gate — `.ts` can
     // hold string-literal HTML the same way `.js` can.
-    const source = `export const HTML = '<iframe src="https://www.youtube.com/embed/abc"></iframe>';\n`;
+    const source = `export const HTML = '<video src="/demo.mp4" controls></video>';\n`;
     const out = runFinder(finder, source, { filePath: "pkg/src/template.ts" });
     expect(out.length).toBe(0);
   });
 
-  it("emits candidates for JSX iframes pointing at a video-host allowlist entry (`.jsx`)", () => {
-    // Positive control: the gate allows `.jsx` / `.tsx` through, and
-    // the iframe src points at `youtube.com/embed/...` which is on
-    // the video-host allowlist.
-    const source = loadFixture("good", "iframe-in-jsx.jsx");
-    const out = runFinder(finder, source, { filePath: "src/Embed.jsx" });
-    // One <iframe> × 6 criterion IDs (1.2.1 x2, 1.2.3 x2, 1.2.5 x2).
-    expect(out.length).toBe(6);
-    expect(out[0]?.reason).toContain("iframe element");
-    expect(out[0]?.reason).toContain("YouTube");
-    expect(new Set(out.map((c) => c.criterionId))).toEqual(
-      new Set([
-        "wcag22:1.2.1",
-        "wcag21:1.2.1",
-        "wcag22:1.2.3",
-        "wcag21:1.2.3",
-        "wcag22:1.2.5",
-        "wcag21:1.2.5",
-      ]),
-    );
-  });
-
-  it("emits candidates for <video>, <audio>, and video-host <iframe> in a `.html` file", () => {
+  it("emits candidates for <video> and <audio> in a `.html` file", () => {
     // Positive control: HTML is the canonical DOM-origin extension.
-    // The iframe in this fixture points at player.vimeo.com/video
-    // (allowlist), so it contributes to the 3-tag set.
+    // The fixture intentionally also embeds an <iframe>, which the
+    // finder must skip (see the iframe-non-emission contract).
     const source = loadFixture("bad", "video-in-html.html");
     const out = runFinder(finder, source, { filePath: "pages/demo.html" });
-    // 3 tags x 6 criterion IDs = 18.
-    expect(out.length).toBe(18);
+    // 2 tags (<video>, <audio>) × 6 criterion IDs = 12. The iframe
+    // contributes nothing — see the second describe block.
+    expect(out.length).toBe(12);
     const tags = new Set<string>();
     for (const c of out) {
       const reason = c.reason;
@@ -101,19 +84,24 @@ describe("review/media-alternatives — DOM-origin extension gate", () => {
       else if (reason.startsWith("audio")) tags.add("audio");
       else if (reason.startsWith("iframe")) tags.add("iframe");
     }
-    expect(tags).toEqual(new Set(["video", "audio", "iframe"]));
+    expect(tags).toEqual(new Set(["video", "audio"]));
   });
 });
 
-describe("review/media-alternatives — iframe video-host allowlist gate", () => {
-  // Q-SHARED-LIKELY-IRRELEVANT-IFRAME-NOT-MEDIA: a bare iframe on a
-  // docs page (`site/src/content/docs/helpers/ratio.mdx` in the
-  // reported case) must not promote 1.2.1/1.2.3/1.2.5 out of the
-  // `likelyIrrelevant` bucket. The iframe allowlist is the gate —
-  // iframes pointing at non-video hosts emit zero candidates, so the
-  // media-applicability check downstream (see
-  // `src/mcp/manual-applicability.ts`) keeps 1.2.* irrelevant on
-  // projects with no real A/V content.
+describe("review/media-alternatives — iframe non-emission (V1-LIKELY-IRRELEVANT-INCONSISTENT)", () => {
+  // V1-LIKELY-IRRELEVANT-INCONSISTENT: the bucket predicate in
+  // `src/mcp/manual-applicability.ts` decides 1.2.x relevance from
+  // `<video>` / `<audio>` presence. If the finder emitted candidates
+  // for iframes, the same scan would carry `likelyIrrelevant: true`
+  // for 1.2.1/1.2.3/1.2.5 (because the bucket sees no `<video>`/
+  // `<audio>`) AND iframe-grounded candidates for those same criteria.
+  // That dual signal is the inconsistency a labeled bucket cannot
+  // honestly carry — per doctrine, "labeled buckets must be provable
+  // from evidence." The finder agrees with the bucket: iframes are
+  // NEVER evidence for 1.2.1/1.2.3/1.2.5. (Captions for iframe-
+  // embedded video are surfaced separately as 1.2.2 warnings by the
+  // `media/video-captions-missing` rule.)
+
   it("emits zero candidates for a bare `<iframe>` with a non-video-host src (HTML)", () => {
     const source = `<!doctype html>
 <html lang="en"><body>
@@ -123,44 +111,30 @@ describe("review/media-alternatives — iframe video-host allowlist gate", () =>
     expect(out.length).toBe(0);
   });
 
-  it("emits zero candidates for an iframe whose src is a protocol-relative path outside the allowlist", () => {
+  it("emits zero candidates for a YouTube-embed iframe (HTML)", () => {
+    // Even though `https://www.youtube.com/embed/…` is the canonical
+    // video-host shape, the URL alone does not deterministically prove
+    // a playable video is embedded. The agent reads the file and
+    // decides — the finder does not pre-empt with a heuristic that
+    // contradicts the bucket's contract.
     const source = `<!doctype html><html><body>
-  <iframe src="//docs.example.com/embed/faq" title="FAQ"></iframe>
+  <iframe src="https://www.youtube.com/embed/abc123" title="Video"></iframe>
 </body></html>`;
     const out = runFinder(finder, source, { filePath: "site/page.html" });
     expect(out.length).toBe(0);
   });
 
-  it("emits zero candidates for an iframe with a relative `src`", () => {
-    const source = `<!doctype html><html><body>
-  <iframe src="/embed/settings" title="Settings"></iframe>
-</body></html>`;
-    const out = runFinder(finder, source, { filePath: "app/page.html" });
-    expect(out.length).toBe(0);
-  });
-
-  it("emits candidates for an HTML iframe pointing at youtube.com/embed", () => {
-    const source = `<!doctype html><html><body>
-  <iframe src="https://youtube.com/embed/abc123" title="Video"></iframe>
-</body></html>`;
-    const out = runFinder(finder, source, { filePath: "site/page.html" });
-    // 1 iframe × 6 criterion IDs.
-    expect(out.length).toBe(6);
-    expect(out[0]?.reason).toContain("YouTube");
-  });
-
-  it("emits candidates for an iframe pointing at player.vimeo.com", () => {
+  it("emits zero candidates for a Vimeo-player iframe (HTML)", () => {
     const source = `<!doctype html><html><body>
   <iframe src="https://player.vimeo.com/video/99999"></iframe>
 </body></html>`;
     const out = runFinder(finder, source, { filePath: "site/page.html" });
-    expect(out.length).toBe(6);
-    expect(out[0]?.reason).toContain("Vimeo");
+    expect(out.length).toBe(0);
   });
 
-  it("emits candidates for each allowlist platform (YouTube, Vimeo, Wistia, Brightcove, Loom)", () => {
-    // Pin the full allowlist shape — regressions in the shared
-    // constant (`src/utils/video-embed-hosts.ts`) would trip here.
+  it("emits zero candidates for any of the former allowlist hosts (HTML)", () => {
+    // Pin the contract across every host that previously promoted an
+    // iframe to a 1.2.x candidate. None should emit now.
     const source = `<!doctype html><html><body>
   <iframe src="https://www.youtube.com/embed/a"></iframe>
   <iframe src="https://player.vimeo.com/video/b"></iframe>
@@ -169,21 +143,23 @@ describe("review/media-alternatives — iframe video-host allowlist gate", () =>
   <iframe src="https://www.loom.com/embed/e"></iframe>
 </body></html>`;
     const out = runFinder(finder, source, { filePath: "site/page.html" });
-    // 5 iframes × 6 criterion IDs = 30.
-    expect(out.length).toBe(30);
-    const platforms = new Set(
-      out
-        .map((c) => c.reason.match(/\(([^)]+)\)/)?.[1])
-        .filter((name): name is string => typeof name === "string"),
-    );
-    expect(platforms).toEqual(new Set(["YouTube", "Vimeo", "Wistia", "Brightcove", "Loom"]));
+    expect(out.length).toBe(0);
   });
 
-  it("emits zero candidates for a JSX iframe with a dynamic `src={…}` expression (allowlist can't resolve)", () => {
-    // When `src` is an expression rather than a string literal, the
-    // finder sees `null` from `getJsxAttributeString` and skips —
-    // we don't guess whether the expression value resolves to a
-    // video host. The agent reads the component and decides.
+  it("emits zero candidates for a JSX iframe even with a YouTube literal src", () => {
+    // Companion of the HTML pin — same contract on the JSX path. The
+    // fixture's `src` literal is `https://www.youtube.com/embed/…`,
+    // which under the old allowlist would have emitted 6 candidates;
+    // the new contract emits zero.
+    const source = loadFixture("good", "iframe-in-jsx.jsx");
+    const out = runFinder(finder, source, { filePath: "src/Embed.jsx" });
+    expect(out.length).toBe(0);
+  });
+
+  it("emits zero candidates for a JSX iframe with a dynamic `src={…}` expression", () => {
+    // Dynamic-src iframes already returned zero under the previous
+    // allowlist gate; they continue to return zero under the broader
+    // contract. Pinned for parity with the HTML cases.
     const source = `
       export function Embed({ url }) {
         return <iframe src={url} title="Dynamic" />;

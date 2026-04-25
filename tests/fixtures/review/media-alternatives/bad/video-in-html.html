@@ -5,11 +5,11 @@
     <video src="/demo.mp4" controls></video>
     <audio src="/intro.mp3" controls></audio>
     <!--
-      Iframe is counted as media only when its src points at one of
-      the video-host allowlist entries (see
-      src/utils/video-embed-hosts.ts). The allowlist entry here is
-      a Vimeo player embed.
+      An <iframe> would NOT contribute candidates here. The finder
+      treats only <video> and <audio> as evidence for 1.2.1/1.2.3/1.2.5
+      so the `likelyIrrelevant` bucket on the manual-review surface
+      stays provable from code (see V1-LIKELY-IRRELEVANT-INCONSISTENT
+      and the finder header).
     -->
-    <iframe src="https://player.vimeo.com/video/12345" title="Demo"></iframe>
   </body>
 </html>
