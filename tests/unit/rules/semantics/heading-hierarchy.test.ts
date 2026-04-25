@@ -4,17 +4,24 @@ import { runRule } from "../../../helpers/run-rule.ts";
 
 describe("rule semantics/heading-hierarchy", () => {
   describe("missing h1", () => {
+    // The legacy missing-h1 emit fires for documents that have at least
+    // one heading other than <h1> AND carry an envelope (<html>/<body>/
+    // <head>) so the fragment gate doesn't classify the file as a
+    // composed-elsewhere fragment. Bare-fragment shapes (raw <h2> with
+    // no envelope) are covered by the fragment-file gate describe block
+    // below — they correctly suppress the no-h1 emit because the
+    // composed parent layout supplies <h1>.
     it("fires when document has h2 but no h1", () => {
-      const v = runRule(rule, `<h2>Section</h2>`, { filePath: "index.html" });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.message).toContain("no <h1>");
+      const v = runRule(rule, `<html><body><h2>Section</h2></body></html>`, {
+        filePath: "index.html",
+      });
+      expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
     });
 
     it("fires when document starts with h3", () => {
-      const v = runRule(rule, `<h3>Sub</h3>`, { filePath: "index.html" });
-      // One "no h1" violation + one "skipped levels" violation (from
-      // inferred h1 to h3 — but the skip check runs on the sequence,
-      // not against the imaginary h1). Only "no h1" fires here.
+      const v = runRule(rule, `<html><body><h3>Sub</h3></body></html>`, {
+        filePath: "index.html",
+      });
       expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
     });
 
@@ -206,15 +213,17 @@ describe("rule semantics/heading-hierarchy", () => {
     });
 
     it("does NOT fire on a bare component fragment (no body, doesn't look like a page)", () => {
-      // A fragment without <html>/<body> with only an <h2>: legacy
-      // missing-h1 emit fires (anchored at the h2), but the variant
-      // does NOT — the file isn't a full page.
+      // A fragment without <html>/<body>/<head> with only an <h2>:
+      // neither the variant NOR the legacy first-heading emit fires.
+      // The fragment-file gate (Q7-FRAGMENT-FILE-HEADING-HIERARCHY)
+      // suppresses both no-h1 branches because the composed parent
+      // layout supplies <h1>. Skipped-level emits would still fire on
+      // such a file if a level skip were present.
       const v = runRule(rule, "<h2>Section</h2>", { filePath: "fragment.html" });
       const variant = v.find((x) => x.message.includes("no <h1> heading"));
       expect(variant).toBeUndefined();
-      // Legacy emit still fires so the user gets some signal.
       const legacy = v.find((x) => x.message.includes("Document has no <h1>."));
-      expect(legacy).toBeDefined();
+      expect(legacy).toBeUndefined();
     });
 
     it("does NOT fire on a partial / layout file (composed page may supply h1)", () => {
@@ -287,16 +296,26 @@ describe("rule semantics/heading-hierarchy", () => {
   });
 
   describe("partial / layout enrichment", () => {
-    // Q4-HEADING-HIERARCHY-PARTIAL-ENRICH-REASON. Jekyll `_docs/*.md`,
-    // `_includes/*.html`, Hugo partials, Eleventy includes — files
-    // whose composed `<h1>` is supplied by the parent layout's
-    // `page.title` front-matter. The rule still surfaces the candidate
-    // (surface-don't-suppress); the enrichment annotates the message
-    // and adds a structured `couldBeWrongBecause` so the agent reads
-    // the composed layout in one pass.
+    // Q4-HEADING-HIERARCHY-PARTIAL-ENRICH-REASON. Files whose composed
+    // `<h1>` is supplied by the parent layout's `page.title`
+    // front-matter or a sibling include. Enrichment fires only on files
+    // that are partials BUT NOT fragments — fragment-shaped files
+    // (bare component snippets, files under `_includes/`/`_layouts/`/
+    // `_partials/`/`partials/`/`components/`, files with `---`
+    // front-matter) are suppressed outright by the fragment-file gate.
+    // The remaining partial-but-not-fragment shape is a full-document
+    // file (carries `<html>` + `<body>` + `<head>`) whose top-of-file
+    // is a Liquid / ERB directive or whose path lives under
+    // `_docs/`/`_posts/` (content partials with full envelopes that
+    // the SSG renders into a page chrome).
 
     it("enriches missing-h1 message when path lives under _docs/", () => {
-      const v = runRule(rule, `<h5>Subsection</h5>`, { filePath: "_docs/intro.html" });
+      // `_docs/` is a partial path (content partial composed into a
+      // page chrome) but NOT a fragment path — a full-envelope file
+      // here still gets enriched, not suppressed.
+      const v = runRule(rule, `<html><body><h5>Subsection</h5></body></html>`, {
+        filePath: "_docs/intro.html",
+      });
       const missing = v.find((x) => x.message.includes("no <h1>"));
       expect(missing?.message).toContain("partial / layout");
       expect(missing?.couldBeWrongBecause).toContain(
@@ -304,20 +323,12 @@ describe("rule semantics/heading-hierarchy", () => {
       );
     });
 
-    it("enriches missing-h1 message when path lives under _includes/", () => {
-      const v = runRule(rule, `<h3>Header text</h3>`, {
-        filePath: "site/_includes/header.html",
-      });
-      const missing = v.find((x) => x.message.includes("no <h1>"));
-      expect(missing?.couldBeWrongBecause).toContain(
-        "partial_or_layout_file_requires_composed_check",
-      );
-    });
-
     it("enriches when first non-whitespace token is a Liquid {%- ... -%} directive", () => {
-      // File path is a non-partial location, but the leading directive
-      // signals partial composition just as strongly.
-      const source = `{%- include head.html -%}\n<h4>Section</h4>`;
+      // File path is a non-partial location AND has full envelope, but
+      // the leading directive signals partial composition just as
+      // strongly. Not a fragment under any branch — partial-enrichment
+      // applies.
+      const source = `{%- include head.html -%}\n<html><body><h4>Section</h4></body></html>`;
       const v = runRule(rule, source, { filePath: "page.html" });
       const missing = v.find((x) => x.message.includes("no <h1>"));
       expect(missing?.couldBeWrongBecause).toContain(
@@ -326,7 +337,7 @@ describe("rule semantics/heading-hierarchy", () => {
     });
 
     it("enriches when first non-whitespace token is a {{ ... }} interpolation", () => {
-      const source = `{{ page.title }}\n<h2>Sub</h2>`;
+      const source = `{{ page.title }}\n<html><body><h2>Sub</h2></body></html>`;
       const v = runRule(rule, source, { filePath: "page.html" });
       const missing = v.find((x) => x.message.includes("no <h1>"));
       expect(missing?.couldBeWrongBecause).toContain(
@@ -336,6 +347,10 @@ describe("rule semantics/heading-hierarchy", () => {
 
     it("enriches the skipped-level emit too, not just missing-h1", () => {
       // h1 present so missing-h1 does NOT fire — but h1 → h3 skip does.
+      // `_layouts/` is BOTH a fragment path AND a partial path; the
+      // skipped-level branch keeps the partial-enrichment because
+      // skipped-level emits continue to fire on fragments (they're real
+      // ordering bugs regardless of envelope composition).
       const v = runRule(rule, `<h1>Title</h1><h3>Skipped</h3>`, {
         filePath: "_layouts/default.html",
       });
@@ -349,7 +364,9 @@ describe("rule semantics/heading-hierarchy", () => {
     it("does NOT enrich on a regular full-page file", () => {
       // Same heading shape as the partial cases above, but the file
       // path is a normal page and the source has no leading directive.
-      const v = runRule(rule, `<h5>Subsection</h5>`, { filePath: "src/pages/about.html" });
+      const v = runRule(rule, `<html><body><h5>Subsection</h5></body></html>`, {
+        filePath: "src/pages/about.html",
+      });
       const missing = v.find((x) => x.message.includes("no <h1>"));
       expect(missing).toBeDefined();
       expect(missing?.couldBeWrongBecause).toBeUndefined();
@@ -360,7 +377,7 @@ describe("rule semantics/heading-hierarchy", () => {
       // `my_layouts` is not a partial directory; the match must require
       // the underscore-prefixed segment to be flanked by `/` (or
       // boundary), not appear as a substring inside a longer name.
-      const v = runRule(rule, `<h5>Subsection</h5>`, {
+      const v = runRule(rule, `<html><body><h5>Subsection</h5></body></html>`, {
         filePath: "src/my_layouts_extras/page.html",
       });
       const missing = v.find((x) => x.message.includes("no <h1>"));
@@ -370,10 +387,175 @@ describe("rule semantics/heading-hierarchy", () => {
     it("does NOT enrich when an HTML comment leads the file", () => {
       // An HTML comment at the top is a full-page signal (license
       // header, build-tool stamp), not a partial signal.
-      const source = `<!-- generated by build -->\n<h5>Subsection</h5>`;
+      const source = `<!-- generated by build -->\n<html><body><h5>Subsection</h5></body></html>`;
       const v = runRule(rule, source, { filePath: "page.html" });
       const missing = v.find((x) => x.message.includes("no <h1>"));
       expect(missing?.couldBeWrongBecause).toBeUndefined();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Fragment-file gate (Q7-FRAGMENT-FILE-HEADING-HIERARCHY).
+  //
+  // Component-fragment files (no root <html>/<body>/<head>), content-
+  // fragment files (`---` front-matter), and partials under conventional
+  // fragment paths (`_includes/`, `_layouts/`, `_partials/`, `partials/`,
+  // `components/`) do not own the document envelope — the composed
+  // parent layout supplies <h1>. The "Document has no <h1>" branch is
+  // suppressed outright on these files; the skipped-level branch keeps
+  // firing because a level skip is a real ordering bug regardless of
+  // envelope composition.
+  //
+  // Per docs/kb/architecture/ai-first-consumer.md, this suppression is
+  // honest because fragment classification is structural evidence
+  // (root-tag absence, front-matter delimiter, fragment-path segment) —
+  // not a heuristic guess about composition. Same predicate is intended
+  // to gate `semantics/landmark-main` (Q8 follow-up) — the shared
+  // helper lives in `src/engine/layout-partial.ts`.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("fragment-file gate", () => {
+    describe("branch (a) — no <html>/<body>/<head> envelope", () => {
+      it("suppresses no-h1 on a bare <h2> fragment with no envelope tags", () => {
+        const v = runRule(rule, "<h2>Section</h2>", { filePath: "fragment.html" });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("suppresses no-h1 on a bare <h3>-only fragment with no envelope tags", () => {
+        const v = runRule(rule, "<h3>Sub</h3>", { filePath: "fragment.html" });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("does NOT suppress no-h1 when <html> + <body> envelope is present", () => {
+        // Envelope tags signal "this file IS the page"; the fragment
+        // gate must defer to the existing variant / legacy emits.
+        const v = runRule(rule, "<html><body><h2>Section</h2></body></html>", {
+          filePath: "page.html",
+        });
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      });
+
+      it("does NOT suppress no-h1 when only <head> is present (head-only is not a fragment)", () => {
+        // Branch (a) requires ALL of <html>/<body>/<head> absent. A
+        // file with only <head> doesn't qualify — the legacy emit fires
+        // (because there's at least one heading other than h1 and the
+        // file isn't classified as a fragment by branch (a)).
+        const v = runRule(rule, "<head><title>X</title></head><h2>Sec</h2>", {
+          filePath: "page.html",
+        });
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      });
+    });
+
+    describe("branch (b) — `---` front-matter delimiter", () => {
+      it("suppresses no-h1 on a file beginning with `---` front-matter", () => {
+        const source = "---\ntitle: Intro\n---\n<html><body><h2>Section</h2></body></html>";
+        const v = runRule(rule, source, { filePath: "page.html" });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("suppresses no-h1 on a front-matter file with bare heading body", () => {
+        // Front-matter alone is conclusive — even with no envelope.
+        const source = "---\ntitle: Foo\nlayout: post\n---\n<h3>Body heading</h3>";
+        const v = runRule(rule, source, { filePath: "post.html" });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("does NOT classify a file with stray `---` mid-source as a fragment", () => {
+        // The opener must be at the very top of the file. A horizontal
+        // rule mid-document is not a front-matter signal.
+        const source = "<html><body><h2>Section</h2>\n---\nMore\n---\n</body></html>";
+        const v = runRule(rule, source, { filePath: "page.html" });
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      });
+
+      it("requires a closing `---` line to classify as front-matter", () => {
+        // A bare `---` opener with no closer is not a valid front-matter
+        // block; the file is treated as a normal page.
+        const source = "---\nthis is not closed\n<html><body><h2>X</h2></body></html>";
+        const v = runRule(rule, source, { filePath: "page.html" });
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      });
+    });
+
+    describe("branch (c) — fragment-convention path", () => {
+      it("suppresses no-h1 on `_includes/` path", () => {
+        const v = runRule(rule, "<html><body><h3>Header text</h3></body></html>", {
+          filePath: "site/_includes/header.html",
+        });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("suppresses no-h1 on `_layouts/` path", () => {
+        const v = runRule(rule, "<html><body><h2>Layout</h2></body></html>", {
+          filePath: "_layouts/default.html",
+        });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("suppresses no-h1 on `_partials/` path", () => {
+        const v = runRule(rule, "<html><body><h2>Partial</h2></body></html>", {
+          filePath: "src/_partials/sidebar.html",
+        });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("suppresses no-h1 on `partials/` path (no leading underscore)", () => {
+        const v = runRule(rule, "<html><body><h2>Partial</h2></body></html>", {
+          filePath: "templates/partials/header.html",
+        });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("suppresses no-h1 on `components/` path", () => {
+        const v = runRule(rule, "<html><body><h2>Card</h2></body></html>", {
+          filePath: "src/components/card.html",
+        });
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+      });
+
+      it("requires segment-flanked match — `mycomponents/` does NOT trigger", () => {
+        const v = runRule(rule, "<html><body><h2>Section</h2></body></html>", {
+          filePath: "src/mycomponents/page.html",
+        });
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      });
+
+      it("does NOT classify `_docs/` as a fragment path (still a partial path)", () => {
+        // `_docs/` is in PARTIAL_PATH_SEGMENTS but NOT
+        // FRAGMENT_PATH_SEGMENTS — the file emits with partial
+        // enrichment rather than being suppressed.
+        const v = runRule(rule, "<html><body><h5>Subsection</h5></body></html>", {
+          filePath: "_docs/intro.html",
+        });
+        const missing = v.find((x) => x.message.includes("no <h1>"));
+        expect(missing).toBeDefined();
+        expect(missing?.couldBeWrongBecause).toContain(
+          "partial_or_layout_file_requires_composed_check",
+        );
+      });
+    });
+
+    describe("skipped-level emits keep firing on fragments", () => {
+      it("emits skipped-level on a bare fragment with h1 → h3", () => {
+        // Fragment per branch (a), but the level skip is a real
+        // ordering bug regardless of whether the envelope is supplied
+        // elsewhere — the skipped-level emit must still fire.
+        const v = runRule(rule, "<h1>Title</h1><h3>Skipped</h3>", { filePath: "fragment.html" });
+        expect(v.some((x) => x.message.includes("skipped"))).toBe(true);
+      });
+
+      it("emits skipped-level on a `_includes/` partial with h2 → h4", () => {
+        const v = runRule(rule, "<html><body><h2>A</h2><h4>Sub</h4></body></html>", {
+          filePath: "_includes/widget.html",
+        });
+        expect(v.some((x) => x.message.includes("skipped"))).toBe(true);
+      });
+
+      it("emits skipped-level on a front-matter file with h1 → h4", () => {
+        const source = "---\ntitle: X\n---\n<h1>Title</h1><h4>Skipped</h4>";
+        const v = runRule(rule, source, { filePath: "post.html" });
+        expect(v.some((x) => x.message.includes("skipped"))).toBe(true);
+      });
     });
   });
 
@@ -423,8 +605,12 @@ describe("rule semantics/heading-hierarchy", () => {
     it("still fires on sibling .html files in the same scan", () => {
       // Narrow the skip to the markdown extensions only — an HTML file
       // whose ATX syntax is NOT stripped must continue to surface the
-      // missing-h1 / skipped-level emits.
-      const v = runRule(rule, `<h2>Section</h2>`, { filePath: "sibling.html" });
+      // missing-h1 / skipped-level emits. Wrap in <html><body> so the
+      // fragment-file gate doesn't classify the file as a composed
+      // fragment (a bare <h2> is now a fragment per branch (a)).
+      const v = runRule(rule, `<html><body><h2>Section</h2></body></html>`, {
+        filePath: "sibling.html",
+      });
       expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
     });
   });

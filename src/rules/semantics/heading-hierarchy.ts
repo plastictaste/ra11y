@@ -48,6 +48,7 @@ import { defineRule } from "../../api/plugin.ts";
 import { findHtmlElementsByTag, walkHtmlElements } from "../../engine/ast-helpers.ts";
 import {
   hasLeadingTemplateDirective,
+  isFragmentFile,
   looksLikeContentPartialPath,
   looksLikeFullPage,
 } from "../../engine/layout-partial.ts";
@@ -114,21 +115,36 @@ export const rule = defineRule({
     const doc = ctx.ast as HtmlDocument;
     const headings = collectHeadings(doc);
 
+    // Fragment-file gate (Q7-FRAGMENT-FILE-HEADING-HIERARCHY).
+    // Component-fragment files without root <html>/<body>/<head>,
+    // content-fragment files with `---` front-matter, and partials under
+    // `_includes/`, `_layouts/`, `_partials/`, `partials/`, `components/`
+    // do not own the document envelope — the composed parent layout
+    // supplies <h1>. The "Document has no <h1>" branch is suppressed
+    // outright on these files; the skipped-level branch continues to
+    // fire because a level skip is a real ordering bug regardless of
+    // whether the envelope is supplied elsewhere. Per
+    // docs/kb/architecture/ai-first-consumer.md, this suppression is
+    // honest because fragment classification is structural evidence
+    // (root-tag absence, front-matter delimiter, fragment-path
+    // segment) — not a heuristic guess about composition. Pairs with
+    // Q7-RULE-LANDMARK-MAIN-FRAGMENT-SCOPE which extends the same gate
+    // to the landmark-main rule. The shared helper lives in
+    // `src/engine/layout-partial.ts` so both rules consume the same
+    // "is this file a fragment?" predicate.
+    const fragment = isFragmentFile(doc, ctx.source, ctx.filePath);
+
     // Partial / layout enrichment (Q4-HEADING-HIERARCHY-PARTIAL-ENRICH-REASON).
-    // Jekyll `_docs/*.md`, `_includes/*.html`, Hugo partials and
-    // Eleventy includes routinely begin a heading sequence at <h5> or
-    // similar deep level — the composed page's <h1> is supplied by the
-    // parent layout via `page.title` front-matter or template
-    // injection. The scanner cannot see the composed DOM, so a confident
-    // "no <h1>" / "skipped level" emit on these files reads as a false
-    // positive in the field. Per docs/kb/architecture/ai-first-consumer.md
-    // §"Surface, don't suppress" the candidate stays in the primary
-    // list; the enrichment only annotates the message + adds a
-    // structured `couldBeWrongBecause` code so the agent reads the
-    // composed layout (or applies a source-level disable) in one pass.
-    // Pairs with Q4-PARTIAL-PAGE-TITLED on `document/page-titled` and
-    // the `partial_or_layout_file_requires_composed_check` shape on
-    // `semantics/landmark-main`.
+    // For files that are NOT fragments but still look like partials (a
+    // full-document layout opener with composition directives, a file
+    // outside the conventional partial-path tree whose top-of-file is
+    // a Liquid / ERB directive), the rule still surfaces the finding
+    // and enriches the message with a structured `couldBeWrongBecause`
+    // so the agent reads the composed layout in one pass. The
+    // enrichment is the right shape for *partials* (where the rule
+    // emits a "please verify" candidate); the `isFragmentFile` gate
+    // above handles the stronger *fragment* case (where the rule
+    // suppresses outright).
     const partialShape = looksLikePartialFile(ctx.filePath, ctx.source);
 
     // Variant: missing-h1-on-full-page (Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT).
@@ -140,19 +156,18 @@ export const rule = defineRule({
     // heading to anchor at. The variant fills that gap: when the body
     // looks like a real page (`looksLikeFullPage`) and has no <h1>, we
     // anchor at the <body> tag — the natural insertion point for the
-    // missing top-level heading. Partial files are skipped because their
-    // composed page may supply <h1> from a parent layout (same rationale
-    // as the `partialShape` enrichment above; for the variant, it's a
-    // hard skip rather than an enrichment because the variant's whole
-    // point is "full pages should have an h1" and partials aren't full
-    // pages). When the variant fires, the legacy first-heading emit is
+    // missing top-level heading. Fragment / partial files are skipped
+    // because their composed page may supply <h1> from a parent layout.
+    // When the variant fires, the legacy first-heading emit is
     // suppressed for the same file so we don't double-report.
     const hasH1 = headings.some((h) => h.level === 1);
-    const fullPageMissingH1 = !(hasH1 || partialShape) && isFullPageBody(doc);
-    if (fullPageMissingH1) {
-      reportMissingH1OnFullPage(doc, headings, (v) => ctx.emit(v));
-    } else if (headings.length > 0) {
-      reportMissingH1(headings, partialShape, (v) => ctx.emit(v));
+    if (!(hasH1 || fragment)) {
+      const fullPageMissingH1 = !partialShape && isFullPageBody(doc);
+      if (fullPageMissingH1) {
+        reportMissingH1OnFullPage(doc, headings, (v) => ctx.emit(v));
+      } else if (headings.length > 0) {
+        reportMissingH1(headings, partialShape, (v) => ctx.emit(v));
+      }
     }
 
     if (headings.length > 0) {
