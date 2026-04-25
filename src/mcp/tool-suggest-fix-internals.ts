@@ -51,7 +51,10 @@ import {
   deriveApproachFromProse,
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
+import { nearestFindingSpread } from "./suggest-fix-nearest-finding.ts";
+import type { VendorContext } from "./suggest-fix-vendor-context.ts";
 import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
+import { buildVendorOverrideOutcome } from "./tool-suggest-fix-vendor.ts";
 
 /**
  * Set of rule `fixClass` lanes that promise a source-edit path in
@@ -153,75 +156,33 @@ export interface BuildSuggestFixPayloadArgs {
    * "context-blind advice."
    */
   readonly tailwindDetected?: boolean;
+  /**
+   * Q7-SUGGEST-FIX-VENDOR-CONTEXT: when the target file is a build
+   * artifact (matches the {@link classifyBuildArtifactDetailed}
+   * predicate set powering `meta.scannedBuildArtifacts`) OR carries a
+   * recognized vendor-library banner ({@link detectVendorLibraries}),
+   * the handler computes a {@link VendorContext} and passes it here.
+   * The payload builder restructures the response so the primary fix
+   * lane recommends overriding the failing selector in the consumer's
+   * own stylesheet, and the original in-vendor edit/guidance is
+   * demoted to an alternative — editing vendor bytes in place is
+   * defeated by the next dependency bump.
+   *
+   * Pairs with Q6-NEXTSTEP-AVOIDS-VENDOR-CSS (closed): Q6 stops the
+   * `nextStep` *target* from pointing at a vendor file when an
+   * authored same-rule sibling exists; this field stops the suggested
+   * *fix* from rewriting vendor bytes when no such sibling exists
+   * (the suggest_fix scan is single-file by design — no reroute is
+   * available at this surface). Conditional-spread per CLAUDE.md §1
+   * "Ambiguous field shapes are dishonest" — undefined leaves behavior
+   * identical to today (the original primary lane stays primary).
+   */
+  readonly vendorContext?: VendorContext;
 }
 
-/**
- * Half-window for the `nearestFinding` / `didYouMean` breadcrumb in the
- * `kind: "none"` branch. The window is `±NEAREST_FINDING_WINDOW` lines
- * around the requested line; chosen to absorb the typical line-drift
- * sources (paginated diff stamping, intermediate edits inserting a few
- * lines above the violation, agents that re-prompted after truncation)
- * without sliding into "any nearby finding will do." A window above ~10
- * starts producing too many false-positive matches in dense JSX/CSS
- * files; below ~5 misses common pagination drift.
- */
-const NEAREST_FINDING_WINDOW = 10;
-
-/**
- * Cap on the `didYouMean` array. Three is enough to disambiguate the
- * common multi-match window without becoming a buried list the agent
- * skips. Sorted by absolute line distance from the requested line so the
- * closest candidate sits first.
- */
-const DID_YOU_MEAN_CAP = 3;
-
-/**
- * Walks `sameFileFindings` for findings sharing `ruleId` within
- * {@link NEAREST_FINDING_WINDOW} lines of the requested line and
- * returns the breadcrumb spread for the `kind: "none"` branch:
- *
- *   - exactly one same-rule finding in window → `{ nearestFinding: { ruleId, line } }`
- *   - two or more → `{ didYouMean: [{ ruleId, line }, …] }` (top
- *     {@link DID_YOU_MEAN_CAP}, sorted by absolute distance from the
- *     requested line, then by line ascending so output is deterministic
- *     across ties)
- *   - zero (or no findings list provided) → `{}` (no breadcrumb)
- *
- * Closes Q7-SUGGEST-FIX-NONE-NEAREST-FINDING. The two field shapes are
- * mutually exclusive — `nearestFinding` is the singular case the agent
- * can act on directly; `didYouMean` is the plural case where the agent
- * has to choose. Conditional-spread per CLAUDE.md §1 "Ambiguous field
- * shapes are dishonest" — the field is absent when no breadcrumb fits,
- * never `nearestFinding: null` or `didYouMean: []`.
- */
-function nearestFindingSpread(
-  ruleId: string,
-  requestedLine: number,
-  sameFileFindings: readonly Violation[] | undefined,
-): {
-  readonly nearestFinding?: { readonly ruleId: string; readonly line: number };
-  readonly didYouMean?: ReadonlyArray<{ readonly ruleId: string; readonly line: number }>;
-} {
-  if (!sameFileFindings || sameFileFindings.length === 0) return {};
-  const inWindow = sameFileFindings
-    .filter(
-      (v) =>
-        v.ruleId === ruleId && Math.abs(v.location.line - requestedLine) <= NEAREST_FINDING_WINDOW,
-    )
-    .map((v) => ({ ruleId: v.ruleId, line: v.location.line }));
-  if (inWindow.length === 0) return {};
-  if (inWindow.length === 1) {
-    const only = inWindow[0];
-    if (!only) return {};
-    return { nearestFinding: only };
-  }
-  const ranked = [...inWindow].sort((a, b) => {
-    const distDelta = Math.abs(a.line - requestedLine) - Math.abs(b.line - requestedLine);
-    if (distDelta !== 0) return distDelta;
-    return a.line - b.line;
-  });
-  return { didYouMean: ranked.slice(0, DID_YOU_MEAN_CAP) };
-}
+// `nearestFindingSpread` (Q7-SUGGEST-FIX-NONE-NEAREST-FINDING) lives in
+// its own module so this handler stays under the MCP-handler line
+// budget. See `suggest-fix-nearest-finding.ts` for the full doc block.
 
 /**
  * Builds the `verifyCommand` prose + `verifyCommandStructured`
@@ -305,6 +266,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     warnings,
     tailwindDetected,
     sameFileFindings,
+    vendorContext,
   } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
   // Response-level `warnings` for the zero-output-success doctrine
@@ -312,6 +274,15 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // and passes them here; `warningsSpreadField` handles the
   // conditional-spread so the field is absent when empty.
   const warningsField = warningsSpreadField(warnings);
+  // Q7-SUGGEST-FIX-VENDOR-CONTEXT: present-when-meaningful spread for
+  // the vendor-context payload. When the handler's classifier didn't
+  // fire on this file, the field is absent — behavior identical to
+  // pre-Q7 calls. When it did fire, the same `vendorContext` block
+  // rides every outcome branch (kind: "none" / "edit" / "guidance")
+  // so the agent always sees the override-redirect signal alongside
+  // whatever else the response carried.
+  const vendorContextField: { readonly vendorContext?: VendorContext } =
+    vendorContext === undefined ? {} : { vendorContext };
   if (!match) {
     // V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE: omit the verify pair on
     // `kind: "none"`. A populated `verifyCommand` next to "no
@@ -337,6 +308,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
       confidence: "low",
       ...nearestSpread,
       ...warningsField,
+      ...vendorContextField,
     };
   }
   const confidence = match.severity === "error" ? "high" : "medium";
@@ -345,6 +317,31 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // whether the value is unavailable or genuinely empty. Present-only-
   // when-populated is the honest shape.
   const snippetField = match.snippet ? { snippet: match.snippet } : {};
+  // Q7-SUGGEST-FIX-VENDOR-CONTEXT: when the target file is classified
+  // as a build artifact / vendor-library bundle, restructure the
+  // response so the primary fix lane recommends overriding the failing
+  // selector in the consumer's own stylesheet, and the rule's original
+  // edit/guidance is demoted to an alternative. The consumer-override
+  // approach is prose-by-definition (the consumer's stylesheet path is
+  // unknown to the scanner), so the response is always `kind:
+  // "guidance"` on this lane — even when the rule emitted a mechanical
+  // edit against the vendor file. The original mechanical text rides
+  // in `alternatives[0].explanation` so the agent can still see what
+  // the rule would have proposed if forking the vendor were the
+  // chosen path.
+  if (vendorContext !== undefined) {
+    return buildVendorOverrideOutcome({
+      match,
+      filePath,
+      vendorContext,
+      sourceContext,
+      tailwindDetected,
+      snippetField,
+      verify,
+      warningsField,
+      vendorContextField,
+    });
+  }
   if (match.fixPaths) {
     return buildFixPathsOutcome({
       match,

@@ -7,6 +7,7 @@
 import { runScan } from "../engine/scanner.ts";
 import { hasTailwindSignal } from "./analysis-coverage-hints.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
+import { detectVendorContext, type VendorContext } from "./suggest-fix-vendor-context.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
@@ -41,6 +42,55 @@ async function checkCwdContainment(
   });
 }
 
+/**
+ * Conditional-spread of the two optional `BuildSuggestFixPayloadArgs`
+ * fields the handler computes inline (`warnings` from the scan-confidence
+ * helper, `vendorContext` from `detectVendorContext`). Extracted to its
+ * own helper so the handler stays under the cognitive-complexity cap;
+ * the spread arity grows by one each time a new optional field is added,
+ * so centralizing the present-when-meaningful logic here keeps the call
+ * site flat.
+ */
+function optionalSuggestFixFields(
+  scanWarnings: readonly string[],
+  vendorContext: VendorContext | null,
+): {
+  readonly warnings?: readonly string[];
+  readonly vendorContext?: VendorContext;
+} {
+  return {
+    ...(scanWarnings.length > 0 ? { warnings: scanWarnings } : {}),
+    ...(vendorContext === null ? {} : { vendorContext }),
+  };
+}
+
+/**
+ * Param-validation preflight. Returns the canonical
+ * `missing-required-param` envelope when any of the three required
+ * params is absent, or null when all three are present. Extracted to
+ * its own helper so the main handler stays under the cognitive-
+ * complexity cap (Q7-SUGGEST-FIX-VENDOR-CONTEXT pushed the inline form
+ * past the 15-point Biome budget).
+ */
+function checkRequiredParams(
+  ruleId: string | undefined,
+  filePath: string | undefined,
+  line: number | undefined,
+): McpToolResult | null {
+  if (ruleId && filePath && line !== undefined) return null;
+  return errorResult({
+    code: "missing-required-param",
+    message: "ruleId, file, and line are required.",
+    details: {
+      missing: [
+        ...(ruleId ? [] : ["ruleId"]),
+        ...(filePath ? [] : ["file"]),
+        ...(line === undefined ? ["line"] : []),
+      ],
+    },
+  });
+}
+
 export const suggestFixTool: McpTool = {
   def: {
     name: "suggest_fix",
@@ -71,17 +121,7 @@ export const suggestFixTool: McpTool = {
     const line = numParam(params, "line");
 
     if (!(ruleId && filePath) || line === undefined) {
-      return errorResult({
-        code: "missing-required-param",
-        message: "ruleId, file, and line are required.",
-        details: {
-          missing: [
-            ...(ruleId ? [] : ["ruleId"]),
-            ...(filePath ? [] : ["file"]),
-            ...(line === undefined ? ["line"] : []),
-          ],
-        },
-      });
+      return checkRequiredParams(ruleId, filePath, line) as McpToolResult;
     }
 
     if (!findRule(ruleId, session)) {
@@ -143,6 +183,22 @@ export const suggestFixTool: McpTool = {
     // escape-hatch sentence so vanilla CSS repos don't read
     // context-blind advice.
     const tailwindDetected = hasTailwindSignal([parsed]);
+    // Q7-SUGGEST-FIX-VENDOR-CONTEXT: detect whether the target file is
+    // a build artifact (matches the same predicates that power
+    // `meta.scannedBuildArtifacts`) or a vendor-library bundle (matches
+    // the curated banner table powering
+    // `meta.scannedBuildArtifacts.vendorLibraries`). Both signals are
+    // deterministic from the file's (path, source) inputs alone — no
+    // heuristic guessing — so the vendor-context payload reads as
+    // honest evidence the agent can re-derive. When detected, the
+    // payload builder restructures the response so the primary fix
+    // lane recommends overriding the failing selector in the
+    // consumer's own stylesheet, with the rule's original edit/guidance
+    // demoted to an alternative. Pairs with Q6-NEXTSTEP-AVOIDS-VENDOR-
+    // CSS (closed): Q6 reroutes the `nextStep` target away from
+    // vendor; this reroutes the `suggest_fix` primary lane away from
+    // vendor edits.
+    const vendorContext = detectVendorContext(parsed.filePath, parsed.source);
     const payload = buildSuggestFixPayload({
       ruleId,
       line,
@@ -157,7 +213,7 @@ export const suggestFixTool: McpTool = {
       // suggest_fix scan is single-file, so `result.violations` IS the
       // per-file set — no further filtering needed here.
       sameFileFindings: result.violations,
-      ...(scanWarnings.length > 0 ? { warnings: scanWarnings } : {}),
+      ...optionalSuggestFixFields(scanWarnings, vendorContext),
     });
     return textResult(payload as Record<string, unknown>);
   },

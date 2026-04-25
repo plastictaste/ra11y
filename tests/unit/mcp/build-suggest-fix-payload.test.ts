@@ -916,3 +916,170 @@ describe("buildSuggestFixPayload — Tailwind hint scoping (V1-SUGGEST-FIX-TAILW
     expect(primary.explanation).toContain("Tailwind");
   });
 });
+
+describe("buildSuggestFixPayload — Q7-SUGGEST-FIX-VENDOR-CONTEXT lanes", () => {
+  // Doctrine (`docs/kb/architecture/ai-first-consumer.md` —
+  // "Heuristic-mislabeled meta sub-fields are dishonest" + "Don't
+  // duplicate capability the agent already has"): when the target file
+  // is classified as a vendor library / build artifact via the same
+  // deterministic predicates that power `meta.scannedBuildArtifacts`,
+  // the payload is restructured so the primary fix lane recommends
+  // overriding the failing selector in the consumer's own stylesheet.
+  // The rule's original edit/guidance is demoted to `alternatives[0]`
+  // so the agent can still see what the rule would have proposed.
+  // `vendorContext` rides every outcome branch (none / edit / guidance)
+  // when the predicate fired.
+  //
+  // Tests for the upstream `detectVendorContext` helper itself live in
+  // `suggest-fix-vendor-context.test.ts`; this block tests the payload
+  // builder's restructure behavior given a synthetic vendor context.
+  const VENDOR_PATH = "vendor/bootstrap.min.css";
+  const VENDOR_LIBRARY_CONTEXT = {
+    signal: { kind: "vendor-library" as const, library: "bootstrap", version: "5.3.0" },
+    redirectTo: "consumer-override" as const,
+  };
+  const BUILD_ARTIFACT_CONTEXT = {
+    signal: {
+      kind: "build-artifact" as const,
+      classification: "definite-min-infix" as const,
+      evidence: { kind: "min-infix" as const, value: "bootstrap.min.css" },
+    },
+    redirectTo: "consumer-override" as const,
+  };
+
+  function vendorBaseArgs(
+    match: Violation | undefined,
+    overrides?: Partial<BuildSuggestFixPayloadArgs>,
+  ): BuildSuggestFixPayloadArgs {
+    return {
+      ...baseArgs(match, overrides),
+      filePath: VENDOR_PATH,
+      vendorContext: VENDOR_LIBRARY_CONTEXT,
+      ...overrides,
+    };
+  }
+
+  it("vendor-detected + mechanical match: restructures to kind: 'guidance' (no edit on vendor bytes)", () => {
+    // The match carries fixPaths with a mechanical primary.edit; under
+    // the non-vendor lane this would produce kind: "edit" with a
+    // direct oldText/newText pair. With vendorContext set, the response
+    // becomes guidance — editing vendor bytes is defeated by the next
+    // dependency bump.
+    const payload = buildSuggestFixPayload(vendorBaseArgs(violationWithFixPaths()));
+    expect(payload["kind"]).toBe("guidance");
+  });
+
+  it("vendor-detected: primary.approach names the consumer-override action", () => {
+    const payload = buildSuggestFixPayload(vendorBaseArgs(violationWithFixPaths()));
+    const primary = payload["primary"] as { approach: string };
+    expect(primary.approach).toBe("Override the failing selector in your own stylesheet");
+  });
+
+  it("vendor-detected: primary.explanation cites the vendor library by name", () => {
+    const payload = buildSuggestFixPayload(vendorBaseArgs(violationWithFixPaths()));
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).toContain("bootstrap");
+    // The "edit defeated by dependency bump" rationale rides the prose
+    // so the agent reads WHY the override path is preferred.
+    expect(primary.explanation).toContain("dependency");
+  });
+
+  it("vendor-detected: alternatives[0] demotes the rule's original suggestion under the in-vendor label", () => {
+    const payload = buildSuggestFixPayload(vendorBaseArgs(violationWithFixPaths()));
+    const alternatives = payload["alternatives"] as ReadonlyArray<{
+      approach: string;
+      explanation: string;
+    }>;
+    expect(alternatives).toHaveLength(1);
+    expect(alternatives[0]?.approach).toMatch(/^Edit the vendor file in place/);
+    // Original suggestion text is preserved verbatim as the alternative
+    // explanation — surface-don't-suppress: the agent still sees what
+    // the rule would have proposed against the vendor source.
+    expect(alternatives[0]?.explanation).toBe("Add onKeyDown handler alongside onClick.");
+  });
+
+  it("vendor-detected: top-level vendorContext field carries the signal + redirectTo verbatim", () => {
+    const payload = buildSuggestFixPayload(vendorBaseArgs(violationWithFixPaths()));
+    expect(payload["vendorContext"]).toEqual(VENDOR_LIBRARY_CONTEXT);
+  });
+
+  it("vendor-detected: build-artifact-only context (no library banner) still restructures to guidance", () => {
+    const payload = buildSuggestFixPayload(
+      vendorBaseArgs(violationWithFixPaths(), { vendorContext: BUILD_ARTIFACT_CONTEXT }),
+    );
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { approach: string; explanation: string };
+    expect(primary.approach).toBe("Override the failing selector in your own stylesheet");
+    expect(primary.explanation).toContain("build artifact");
+    expect(payload["vendorContext"]).toEqual(BUILD_ARTIFACT_CONTEXT);
+  });
+
+  it("vendor-detected: verifyCommand + verifyCommandStructured still ride the response (re-scan after override)", () => {
+    const payload = buildSuggestFixPayload(vendorBaseArgs(violationWithFixPaths()));
+    expect(typeof payload["verifyCommand"]).toBe("string");
+    expect(payload["verifyCommandStructured"]).toEqual({
+      tool: "scan_file",
+      args: { path: VENDOR_PATH },
+      verifyRuleId: RULE_ID,
+    });
+  });
+
+  it("vendor-detected + guidance-only match: still restructures (no fixPaths required to trigger reroute)", () => {
+    // The non-vendor lane would have produced kind: "guidance" with
+    // the rule's suggestion as the primary explanation. With
+    // vendorContext set, the override prose takes the primary slot
+    // and the rule's suggestion is demoted.
+    const payload = buildSuggestFixPayload(vendorBaseArgs(violationGuidanceOnly()));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { approach: string };
+    expect(primary.approach).toBe("Override the failing selector in your own stylesheet");
+    const alternatives = payload["alternatives"] as ReadonlyArray<{
+      approach: string;
+      explanation: string;
+    }>;
+    expect(alternatives).toHaveLength(1);
+    expect(alternatives[0]?.explanation).toBe(
+      "Review the surrounding context and add keyboard support.",
+    );
+  });
+
+  it("vendor-detected + kind: 'none': vendorContext rides the dead-end response (so the agent learns the target IS vendor)", () => {
+    // A "no violation here" response carries no primary/alternatives
+    // restructure (there is no edit to demote) but still surfaces the
+    // vendorContext so the agent knows the file it pointed at is
+    // vendor-classified — useful when the agent is iterating on the
+    // wrong line and the vendor signal helps it reroute.
+    const payload = buildSuggestFixPayload(vendorBaseArgs(undefined));
+    expect(payload["kind"]).toBe("none");
+    expect(payload["vendorContext"]).toEqual(VENDOR_LIBRARY_CONTEXT);
+  });
+
+  it("not-vendor (vendorContext undefined): payload shape is identical to today (mechanical edit primary kept)", () => {
+    // Sanity check — when no vendor context is supplied, the existing
+    // kind: "edit" lane is preserved verbatim. This is the regression
+    // guard for non-vendor targets.
+    const payload = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
+    expect(payload["kind"]).toBe("edit");
+    expect(payload).not.toHaveProperty("vendorContext");
+    const primary = payload["primary"] as { label: string; edit: { newText: string } };
+    expect(primary.label).toBe("Add onKeyDown sibling");
+    expect(primary.edit.newText).toContain("onKeyDown");
+  });
+
+  it("not-vendor (vendorContext undefined): no-fixPaths guidance shape is preserved verbatim", () => {
+    const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    expect(payload["kind"]).toBe("guidance");
+    expect(payload).not.toHaveProperty("vendorContext");
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).toBe("Review the surrounding context and add keyboard support.");
+  });
+
+  it("vendor-detected: when the rule emitted a snippet, the primary explanation backticks it as the failing selector", () => {
+    const match = violationWithFixPaths({
+      snippet: ".btn-primary",
+    });
+    const payload = buildSuggestFixPayload(vendorBaseArgs(match));
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).toContain("`.btn-primary`");
+  });
+});
