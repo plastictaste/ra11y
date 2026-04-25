@@ -542,12 +542,29 @@ export async function runScanAndFormat(
   const deduped = collapseVendorCssFindings(severityFiltered);
   const filtered = applyCriterionSkip(deduped, skipCriteria);
   const grouped = groupViolationsByFile(filtered);
+  // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: thread per-file source
+  // into `buildAgentFinding` so `fix.oldText` / `fix.newText` widen via
+  // `widenToUniqueAnchor` — matching the shape `suggest_fix` emits on
+  // `primary.edit`. Without this, a rule whose minimal mechanical edit
+  // is a short literal that repeats across the file (e.g. the bare
+  // 4-char `<label>` produced by `forms/label-adjacent-unassociated`
+  // for each of N orphan-label findings) ships an `apply_fix`-clobber
+  // hazard the agent can't see from the response shape alone.
+  const sourcesByPath = new Map<string, string>(files.map((f) => [f.filePath, f.source]));
   const fileEntries = [...grouped.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([path, violations]) => ({
-      path,
-      findings: violations.map((v) => buildAgentFinding(v, { suppressPlacement: "omit" })),
-    }));
+    .map(([path, violations]) => {
+      const source = sourcesByPath.get(path);
+      return {
+        path,
+        findings: violations.map((v) =>
+          buildAgentFinding(v, {
+            suppressPlacement: "omit",
+            ...(source === undefined ? {} : { source }),
+          }),
+        ),
+      };
+    });
 
   const violations = filtered.filter((v) => v.severity !== "info");
   const notes = filtered.filter((v) => v.severity === "info");

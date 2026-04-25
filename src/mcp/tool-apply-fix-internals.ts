@@ -254,9 +254,19 @@ function fingerprintCandidate(c: ReviewCandidate): string {
   return `${c.criterionId}::${c.location.filePath}::${c.reason}`;
 }
 
-export function formatSlice(scan: SingleFileScan): Record<string, unknown> {
+export function formatSlice(scan: SingleFileScan, source?: string): Record<string, unknown> {
+  // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: forward the slice's source
+  // so per-finding `fix.oldText` widens via `widenToUniqueAnchor` —
+  // matching the cross-tool shape `suggest_fix` ships on
+  // `primary.edit`. Optional so legacy callers without source in scope
+  // keep the bare rule-emitted edit.
   return {
-    violations: scan.violations.map((v) => buildAgentFinding(v, { suppressPlacement: "omit" })),
+    violations: scan.violations.map((v) =>
+      buildAgentFinding(v, {
+        suppressPlacement: "omit",
+        ...(source === undefined ? {} : { source }),
+      }),
+    ),
     candidates: scan.candidates.map(formatCandidate),
   };
 }

@@ -36,9 +36,16 @@
  * second of two `aria-hidden="true"` attributes in a file needs the
  * widen to anchor at the second occurrence, not the first.
  *
- * Pure function, zero deps. Used by `suggest_fix` only; `apply_fix`
- * consumes the widened `{ oldText, newText }` through its normal literal
- * match + uniqueness path — no special casing there.
+ * Pure function, zero deps. Consumed by `suggest_fix` (`primary.edit`)
+ * and `buildAgentFinding` (per-finding `fix.oldText` on scan_project /
+ * scan / scan_file responses) so both surfaces ship the same multi-line
+ * unique anchor — `apply_fix` then matches a single occurrence verbatim.
+ * Lives in `src/utils/` rather than `src/mcp/` because both the MCP
+ * handler layer and the shared response-builder layer
+ * (`src/output/agent-response/`) depend on it; co-locating it under
+ * `src/mcp/` would force `src/output/` to import from `src/mcp/`,
+ * inverting the formatter→engine→shared-utils direction the cycle
+ * guard enforces (V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT).
  */
 
 export interface WidenInput {

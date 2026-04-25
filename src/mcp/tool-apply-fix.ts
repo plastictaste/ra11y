@@ -164,18 +164,26 @@ export const applyFixTool: McpTool = {
 
     const delta = computeDelta(before, after);
 
+    // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: thread per-slice source
+    // into `buildAgentFinding` so `fix.oldText` widens identically to
+    // `suggest_fix.primary.edit`. `resolvedViolations` are findings from
+    // the pre-edit source (now resolved by the applied edit);
+    // `newViolations` are findings introduced by the edit on the
+    // post-edit source.
+    const beforeSource = original.source;
+    const afterSource = newSource;
     return textResult({
       applied,
       dryRun,
       file: resolved,
-      before: formatSlice(before),
-      after: formatSlice(after),
+      before: formatSlice(before, beforeSource),
+      after: formatSlice(after, afterSource),
       delta: {
         resolvedViolations: delta.resolvedViolations.map((v) =>
-          buildAgentFinding(v, { suppressPlacement: "omit" }),
+          buildAgentFinding(v, { suppressPlacement: "omit", source: beforeSource }),
         ),
         newViolations: delta.newViolations.map((v) =>
-          buildAgentFinding(v, { suppressPlacement: "omit" }),
+          buildAgentFinding(v, { suppressPlacement: "omit", source: afterSource }),
         ),
         resolvedCandidates: delta.resolvedCandidates.map(formatCandidate),
         newCandidates: delta.newCandidates.map(formatCandidate),

@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "bun:test";
 
-import { widenToUniqueAnchor } from "../../../src/mcp/unique-anchor.ts";
+import { widenToUniqueAnchor } from "../../../src/utils/unique-anchor.ts";
 
 describe("widenToUniqueAnchor — ladder step 1: opening-tag cluster", () => {
   it("widens a bare attribute to its surrounding opening tag when that tag is unique", () => {

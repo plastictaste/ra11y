@@ -18,12 +18,12 @@
  */
 
 import type { FixPath, Violation } from "../types/violation.ts";
+import { widenToUniqueAnchor } from "../utils/unique-anchor.ts";
 import {
   buildGuidanceAlternatives,
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
 import { POISONED_NEWTEXT_CAVEAT, sanitizeFixPathAgainstPoison } from "./suggest-fix-sanitize.ts";
-import { widenToUniqueAnchor } from "./unique-anchor.ts";
 
 export interface BuildFixPathsOutcomeInputs {
   readonly match: Violation;

@@ -195,8 +195,24 @@ function findingFilePathSet(violations: readonly Violation[]): Set<string> {
  * the `files` sub-tree is identical in kind: a sorted list of
  * `{ path, findings }` buckets where each finding is
  * `buildAgentFinding(v, { suppressPlacement: "omit" })`.
+ *
+ * V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: when `sourcesByPath` is
+ * supplied, the per-file source is threaded into each
+ * `buildAgentFinding` call so mechanical-edit fixes (`fix.oldText` /
+ * `fix.newText`) ride the same `widenToUniqueAnchor` ladder that
+ * `suggest_fix.primary.edit` runs through. Both surfaces then ship
+ * identical multi-line unique-context windows — an agent pasting
+ * `fix.oldText` from a `scan_project` finding into `apply_fix` can't
+ * silently clobber the first of N matching occurrences (canonical case:
+ * 5 sibling `forms/label-adjacent-unassociated` findings whose
+ * rule-emitted oldText is the bare 4-char literal `<label>`). Omit the
+ * map at call sites that don't have parsed-file sources in scope; the
+ * bare rule-emitted edit ships unwidened in that case.
  */
-export function groupByFile(violations: readonly Violation[]): AssembledFile[] {
+export function groupByFile(
+  violations: readonly Violation[],
+  sourcesByPath?: ReadonlyMap<string, string>,
+): AssembledFile[] {
   const byPath = new Map<string, Violation[]>();
   for (const v of violations) {
     const bucket = byPath.get(v.location.filePath);
@@ -206,8 +222,12 @@ export function groupByFile(violations: readonly Violation[]): AssembledFile[] {
   const paths = [...byPath.keys()].sort();
   return paths.map((path) => {
     const bucketViolations = byPath.get(path) ?? [];
+    const source = sourcesByPath?.get(path);
     const findings = bucketViolations.map((v) =>
-      buildAgentFinding(v, { suppressPlacement: "omit" }),
+      buildAgentFinding(v, {
+        suppressPlacement: "omit",
+        ...(source === undefined ? {} : { source }),
+      }),
     );
     return { path, findings };
   });
@@ -319,8 +339,14 @@ export function assembleScanFamilyResponse(
     configSearchSawProjectMarker,
   } = input;
 
-  // (1) Group + build per-file findings.
-  let fileEntries: readonly AssembledFile[] = groupByFile(violations);
+  // (1) Group + build per-file findings. Thread the per-file source
+  // text through so `buildAgentFinding` can run the same
+  // `widenToUniqueAnchor` ladder that `suggest_fix.primary.edit` uses
+  // — `fix.oldText` on a scan-family response and `primary.edit.oldText`
+  // on a `suggest_fix` response now ship identical multi-line unique
+  // anchors (V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT).
+  const sourcesByPath = new Map<string, string>(parsedFiles.map((f) => [f.filePath, f.source]));
+  let fileEntries: readonly AssembledFile[] = groupByFile(violations, sourcesByPath);
 
   // (2) Split notes from non-notes; tally fixes.
   const nonNote = violations.filter((v) => v.severity !== "info");

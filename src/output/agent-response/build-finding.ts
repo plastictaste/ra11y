@@ -10,6 +10,18 @@
  * `description` — no empty-string sentinels. Per CLAUDE.md §1 "Ambiguous
  * field shapes are dishonest."
  *
+ * Cross-tool contract — `oldText` widening (V1-FIX-OLDTEXT-AMBIGUITY-LABEL-
+ * ADJACENT). When the caller provides the file's `source`, `oldText` /
+ * `newText` are widened to a unique anchor window via `widenToUniqueAnchor`
+ * — the same helper `suggest_fix` runs on its `primary.edit`. This unifies
+ * the edit shape across `scan_project` (per-finding `fix.oldText`) and
+ * `suggest_fix` (`primary.edit.oldText`): both surfaces ship multi-line
+ * unique context so an agent applying the edit through `apply_fix` can't
+ * silently clobber the wrong occurrence. Without source, the bare
+ * rule-emitted edit ships unwidened (current behavior preserved for
+ * surfaces that have no source in scope, e.g. CLI formatters consuming
+ * `ScanResult` only).
+ *
  * `safety` used to ride on every emitted fix as a constant `"safe"`, regardless
  * of `fixClass` — a field that never varies conveys no signal, and claiming
  * "safe" on a runtime-only or guidance fix is arguably wrong (static analysis
@@ -19,6 +31,7 @@
  */
 
 import type { Violation } from "../../types/violation.ts";
+import { widenToUniqueAnchor } from "../../utils/unique-anchor.ts";
 import type { AgentFinding, AgentFix, Category, Confidence } from "./types.ts";
 
 /** @internal */
@@ -39,7 +52,7 @@ function resolveConfidence(v: Violation): Confidence {
   return severityToConfidence(v.severity);
 }
 
-function buildFix(v: Violation): AgentFix | undefined {
+function buildFix(v: Violation, source: string | undefined): AgentFix | undefined {
   const hasMechanicalEdit = v.fixPaths?.primary.edit !== undefined;
   const hasGuidance = typeof v.suggestion === "string" && v.suggestion.length > 0;
 
@@ -47,9 +60,31 @@ function buildFix(v: Violation): AgentFix | undefined {
     // Deterministic rewrite — emit both text fields so an agent can apply verbatim.
     const edit = v.fixPaths.primary.edit;
     if (edit !== undefined) {
+      // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: widen the bare
+      // rule-emitted edit to a unique-in-file anchor window when the
+      // caller threaded the file's source through. The same
+      // `widenToUniqueAnchor` helper `suggest_fix` runs on its
+      // `primary.edit` — sharing it here unifies the cross-tool edit
+      // shape so an agent pasting `fix.oldText` straight into
+      // `apply_fix` can't silently clobber the first of N matching
+      // occurrences in the file (the canonical case: 5 sibling
+      // `forms/label-adjacent-unassociated` findings whose
+      // rule-emitted oldText is the bare 4-char literal `<label>`).
+      // Without source, the edit ships unwidened (current behavior
+      // preserved for surfaces that have no source in scope, e.g.
+      // CLI formatters that consume `ScanResult` only).
+      const widened =
+        source === undefined
+          ? { oldText: edit.oldText, newText: edit.newText }
+          : widenToUniqueAnchor({
+              source,
+              oldText: edit.oldText,
+              newText: edit.newText,
+              line: v.location.line,
+            });
       return {
-        oldText: edit.oldText,
-        newText: edit.newText,
+        oldText: widened.oldText,
+        newText: widened.newText,
         description: v.suggestion ?? v.fixPaths.primary.label,
       };
     }
@@ -133,6 +168,23 @@ export interface BuildAgentFindingOptions {
    * repeating identical text on every finding would just inflate the payload.
    */
   readonly suppressPlacement?: "inline" | "omit";
+  /**
+   * V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: the file's source text. When
+   * provided AND the violation carries a mechanical edit
+   * (`fixPaths.primary.edit`), `oldText` / `newText` are widened to a
+   * unique-in-file anchor window via `widenToUniqueAnchor` — the same
+   * helper `suggest_fix` runs on its `primary.edit`. Threading source
+   * through here unifies the cross-tool edit shape so an agent pasting
+   * `fix.oldText` from a `scan_project` finding straight into
+   * `apply_fix` can't silently clobber the first of N matching
+   * occurrences in the file.
+   *
+   * Omit when the caller does not have the source on hand (e.g. the CLI
+   * agent formatter consumes `ScanResult` only, which carries violations
+   * but not parsed-file sources). In that case the bare rule-emitted
+   * edit ships unwidened — the same as before this option existed.
+   */
+  readonly source?: string;
 }
 
 function categorize(v: Violation): Category {
@@ -151,7 +203,7 @@ function categorize(v: Violation): Category {
  */
 export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions): AgentFinding {
   const category = categorize(v);
-  const fix = buildFix(v);
+  const fix = buildFix(v, opts?.source);
   const placement =
     (opts?.suppressPlacement ?? "inline") === "inline"
       ? buildSuppressPlacement(v.location.filePath)

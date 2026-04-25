@@ -58,6 +58,7 @@ import {
   hashFixDescription,
   hoistAndBuildReferenceGuide,
 } from "../../../../src/mcp/reference-guide.ts";
+import { buildSuggestFixPayload } from "../../../../src/mcp/tool-suggest-fix-internals.ts";
 import { buildAgentFinding } from "../../../../src/output/agent-response/build-finding.ts";
 import type { AgentFinding } from "../../../../src/output/agent-response/types.ts";
 import type { Violation } from "../../../../src/types/violation.ts";
@@ -468,5 +469,228 @@ describe("V1-FIX-SAFETY-CONSTANT-FIELD — safety field is dropped", () => {
     // fixClass still carries the remediation-lane signal on the
     // parent finding — that's where the agent reads the lane.
     expect(finding.fixClass).toBe("runtime-only");
+  });
+});
+
+describe("buildAgentFinding — fix.oldText widens to a unique anchor when source is provided", () => {
+  // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT.
+  //
+  // Cross-tool contract: `scan_project` (this builder) and `suggest_fix`
+  // both consume the same `widenToUniqueAnchor` ladder so an agent
+  // pasting `fix.oldText` into `apply_fix` can't silently clobber the
+  // first of N matching occurrences in the file. The canonical bug:
+  // `forms/label-adjacent-unassociated` emits the bare 4-char literal
+  // `<label>` as `fixPaths.primary.edit.oldText`. On a file with five
+  // sibling orphan-label findings, `apply_fix` finds five matches and
+  // refuses (correctly), but the agent had no signal from the response
+  // that `fix.oldText` was non-unique to begin with.
+  //
+  // After the fix: the edit ships with the surrounding opening-tag /
+  // ±1-line / bracket-window context so the find-and-replace matches
+  // exactly one site.
+
+  it("widens a repeating bare oldText to a unique multi-line anchor", () => {
+    // Five sibling orphan-label findings — each ships oldText `<label>`
+    // pre-widen. Without source, the response would emit five identical
+    // 7-char (with closing `>` it's actually `<label>`, the bare opener)
+    // strings; with source, each widens to its own uniquely-anchored
+    // window via the ±1-line ladder step.
+    const source = [
+      "<form>",
+      "  <label>Length</label>",
+      '  <input id="length" type="number">',
+      "  <label>Lowercase</label>",
+      '  <input id="lowercase" type="checkbox">',
+      "  <label>Uppercase</label>",
+      '  <input id="uppercase" type="checkbox">',
+      "  <label>Numbers</label>",
+      '  <input id="numbers" type="checkbox">',
+      "  <label>Symbols</label>",
+      '  <input id="symbols" type="checkbox">',
+      "</form>",
+    ].join("\n");
+
+    const labelLines = [2, 4, 6, 8, 10] as const;
+    const findings = labelLines.map((line) =>
+      buildAgentFinding(
+        violation({
+          ruleId: "forms/label-adjacent-unassociated",
+          fixClass: "mechanical",
+          location: { filePath: "form.html", line, column: 3 },
+          suggestion: `add for="…" to the <label> on line ${line}`,
+          fixPaths: {
+            primary: {
+              label: "add for=",
+              edit: { oldText: "<label>", newText: '<label for="x">' },
+            },
+            alternatives: [],
+          },
+        }),
+        { source },
+      ),
+    );
+
+    // Each finding's oldText must be unique within the file.
+    for (const f of findings) {
+      const oldText = f.fix?.oldText;
+      expect(typeof oldText).toBe("string");
+      expect((oldText ?? "").length).toBeGreaterThan("<label>".length);
+      // Single-occurrence guarantee: the apply_fix pre-condition.
+      const matches = source.split(oldText ?? "<<UNDEFINED>>").length - 1;
+      expect(matches).toBe(1);
+    }
+
+    // And every oldText differs from the others — uniqueness across
+    // the response, not just within source.
+    const oldTexts = findings.map((f) => f.fix?.oldText ?? "");
+    expect(new Set(oldTexts).size).toBe(oldTexts.length);
+  });
+
+  it("oldText/newText carry the same prefix/suffix wrap so the edit is byte-symmetric", () => {
+    // The widen ladder wraps the rule-emitted edit with surrounding
+    // context — `prefix + newText + suffix` — so applying the edit
+    // stays a single literal find-and-replace.
+    const source = [
+      "<form>",
+      "  <label>Length</label>",
+      '  <input id="length" type="number">',
+      "  <label>Other</label>",
+      '  <input id="other" type="text">',
+      "</form>",
+    ].join("\n");
+
+    const finding = buildAgentFinding(
+      violation({
+        ruleId: "forms/label-adjacent-unassociated",
+        fixClass: "mechanical",
+        location: { filePath: "form.html", line: 2, column: 3 },
+        suggestion: 'add for="length"',
+        fixPaths: {
+          primary: {
+            label: "add for=",
+            edit: { oldText: "<label>", newText: '<label for="length">' },
+          },
+          alternatives: [],
+        },
+      }),
+      { source },
+    );
+
+    const oldText = finding.fix?.oldText ?? "";
+    const newText = finding.fix?.newText ?? "";
+    expect(oldText.includes("<label>")).toBe(true);
+    expect(newText.includes('<label for="length">')).toBe(true);
+    // Symmetric wrap: the prefix/suffix bytes around the bare edit
+    // must match on both sides.
+    const oldIdx = oldText.indexOf("<label>");
+    const newIdx = newText.indexOf('<label for="length">');
+    expect(oldText.slice(0, oldIdx)).toBe(newText.slice(0, newIdx));
+    expect(oldText.slice(oldIdx + "<label>".length)).toBe(
+      newText.slice(newIdx + '<label for="length">'.length),
+    );
+  });
+
+  it("ships the bare rule-emitted edit unchanged when source is omitted", () => {
+    // CLI-formatter / ScanResult-only callers don't have source in
+    // scope; the helper preserves the rule's edit verbatim there so
+    // the option is genuinely additive.
+    const v = violation({
+      ruleId: "forms/label-adjacent-unassociated",
+      fixClass: "mechanical",
+      location: { filePath: "form.html", line: 2, column: 3 },
+      suggestion: 'add for="length"',
+      fixPaths: {
+        primary: {
+          label: "add for=",
+          edit: { oldText: "<label>", newText: '<label for="length">' },
+        },
+        alternatives: [],
+      },
+    });
+    const finding = buildAgentFinding(v);
+    expect(finding.fix?.oldText).toBe("<label>");
+    expect(finding.fix?.newText).toBe('<label for="length">');
+  });
+
+  it("leaves a uniquely-anchored bare edit untouched when widening adds no value", () => {
+    // The widen helper short-circuits when the rule-emitted oldText
+    // already matches exactly once. Verify the builder forwards that
+    // (a single-match file rules out the multi-match clobber, so the
+    // agent doesn't need extra context).
+    const source = '<button aria-hidden="true" disabled>Click</button>';
+    const finding = buildAgentFinding(
+      violation({
+        ruleId: "aria/aria-hidden-on-interactive",
+        fixClass: "mechanical",
+        location: { filePath: "btn.html", line: 1, column: 1 },
+        suggestion: "Replace aria-hidden=true with inert",
+        fixPaths: {
+          primary: {
+            label: "use inert",
+            edit: { oldText: 'aria-hidden="true"', newText: "inert" },
+          },
+          alternatives: [],
+        },
+      }),
+      { source },
+    );
+    // Tag-window widen lifts the edit to the surrounding `<button …>`
+    // for symmetric rewrite — uniqueness is preserved either way.
+    const oldText = finding.fix?.oldText ?? "";
+    const matches = source.split(oldText).length - 1;
+    expect(matches).toBe(1);
+  });
+
+  it("cross-tool contract: scan_project fix.oldText matches suggest_fix primary.edit.oldText for the same violation", () => {
+    // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: the explicit invariant
+    // the backlog item asks for. `scan_project` (per-finding `fix`)
+    // and `suggest_fix` (`primary.edit`) consume the same widen helper,
+    // so the same violation + the same source should produce
+    // byte-identical `oldText` and `newText` on both surfaces. Without
+    // this guarantee, an agent that escalates from a scan response to
+    // a `suggest_fix` call sees two different anchors for what's
+    // logically the same edit, and either one could silently clobber
+    // the wrong line.
+    const source = [
+      "<form>",
+      "  <label>Length</label>",
+      '  <input id="length" type="number">',
+      "  <label>Other</label>",
+      '  <input id="other" type="text">',
+      "</form>",
+    ].join("\n");
+
+    const v: Violation = violation({
+      ruleId: "forms/label-adjacent-unassociated",
+      fixClass: "mechanical",
+      location: { filePath: "form.html", line: 2, column: 3 },
+      suggestion: 'add for="length"',
+      fixPaths: {
+        primary: {
+          label: "add for=",
+          edit: { oldText: "<label>", newText: '<label for="length">' },
+        },
+        alternatives: [],
+      },
+    });
+
+    const finding = buildAgentFinding(v, { source });
+
+    const suggestFix = buildSuggestFixPayload({
+      ruleId: v.ruleId,
+      line: v.location.line,
+      match: v,
+      sourceContext: source,
+      source,
+      filePath: v.location.filePath,
+    });
+
+    // suggest_fix's mechanical-edit lane nests the widened edit under
+    // `primary.edit`. Pull it out and compare byte-for-byte.
+    expect((suggestFix as { kind: string }).kind).toBe("edit");
+    const primary = (suggestFix as { primary: { edit: { oldText: string; newText: string } } })
+      .primary;
+    expect(finding.fix?.oldText).toBe(primary.edit.oldText);
+    expect(finding.fix?.newText).toBe(primary.edit.newText);
   });
 });
