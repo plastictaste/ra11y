@@ -52,6 +52,7 @@ import { rule as requiredMarkerWithoutRequiredAttr } from "./forms/required-mark
 import { rule as selectOnchangeContextChange } from "./forms/select-onchange-context-change.ts";
 import { rule as submitNotButtonOrInput } from "./forms/submit-not-button-or-input.ts";
 import { rule as accesskeyDuplicate } from "./keyboard/accesskey-duplicate.ts";
+import { rule as anchorButtonNotFocusable } from "./keyboard/anchor-button-not-focusable.ts";
 import { rule as characterShortcuts } from "./keyboard/character-shortcuts.ts";
 import { rule as handlerMissing } from "./keyboard/handler-missing.ts";
 import { rule as orientationLock } from "./layout/orientation-lock.ts";
@@ -103,6 +104,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   accesskeyDuplicate,
   altTextMissing,
   altTextPlaceholder,
+  anchorButtonNotFocusable,
   animationFromInteractions,
   ariaInvalidMissing,
   audioVideoNoControls,
@@ -198,6 +200,7 @@ export {
   accesskeyDuplicate,
   altTextMissing,
   altTextPlaceholder,
+  anchorButtonNotFocusable,
   animationFromInteractions,
   ariaInvalidMissing,
   audioVideoNoControls,
