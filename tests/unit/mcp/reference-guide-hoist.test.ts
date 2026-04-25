@@ -830,7 +830,6 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
   });
 });
 
-
 /**
  * Q7-FIXDESCRIPTIONREF-PAGINATION-DICT — per-page lookup completeness.
  *
@@ -857,6 +856,51 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
  * silently regress to whole-set hoist + slice (which WOULD have the
  * silent-miss failure mode the backlog described).
  */
+/** Asserts every per-finding `fixDescriptionRef.hash` in `file` resolves under `lookup[ruleId][hash]`. */
+function assertPerFindingRefsResolve(
+  file: { readonly path: string; readonly findings: readonly AgentFinding[] },
+  lookup: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined,
+): void {
+  for (const f of file.findings) {
+    const hash = f.fixDescriptionRef?.hash;
+    if (hash === undefined) continue;
+    const resolved = lookup?.[f.ruleId]?.[hash];
+    expect(
+      resolved,
+      `per-finding ref hash ${hash} on rule ${f.ruleId} (file ${file.path}) does not resolve in fixDescriptions`,
+    ).toBeDefined();
+  }
+}
+
+/**
+ * Asserts every file-level `groupFixDescriptionRefs[].hash` resolves under
+ * SOME rule in `lookup` — the per-file group lift collapses siblings under
+ * a shared groupKey, and the rule the group sits under is the rule of the
+ * underlying findings (which kept their groupKey).
+ */
+function assertGroupRefsResolve(
+  file: {
+    readonly path: string;
+    readonly findings: readonly AgentFinding[];
+    readonly groupFixDescriptionRefs?: readonly {
+      readonly groupKey: string;
+      readonly hash: string;
+    }[];
+  },
+  lookup: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined,
+): void {
+  const ruleIdsInFile = new Set(file.findings.map((f) => f.ruleId));
+  for (const groupRef of file.groupFixDescriptionRefs ?? []) {
+    const found = [...ruleIdsInFile].some(
+      (ruleId) => lookup?.[ruleId]?.[groupRef.hash] !== undefined,
+    );
+    expect(
+      found,
+      `group-level ref hash ${groupRef.hash} on file ${file.path} does not resolve in fixDescriptions for any rule on the file`,
+    ).toBe(true);
+  }
+}
+
 describe("hoistAndBuildReferenceGuide — Q7 per-page lookup completeness invariant", () => {
   /**
    * Walks one page's hoisted output and asserts every hash referenced by
@@ -868,33 +912,8 @@ describe("hoistAndBuildReferenceGuide — Q7 per-page lookup completeness invari
   ): void {
     const lookup = page.referenceGuide?.fixDescriptions;
     for (const file of page.files) {
-      for (const f of file.findings) {
-        const hash = f.fixDescriptionRef?.hash;
-        if (hash === undefined) continue;
-        const resolved = lookup?.[f.ruleId]?.[hash];
-        expect(
-          resolved,
-          `per-finding ref hash ${hash} on rule ${f.ruleId} (file ${file.path}) does not resolve in fixDescriptions`,
-        ).toBeDefined();
-      }
-      for (const groupRef of file.groupFixDescriptionRefs ?? []) {
-        // Group-level refs need a resolving entry under SOME rule in
-        // the lookup — the per-file group lift collapses siblings under
-        // a shared groupKey, and the rule the group sits under is the
-        // rule of the underlying findings (which kept their groupKey).
-        const ruleIdsInFile = new Set(file.findings.map((f) => f.ruleId));
-        let found = false;
-        for (const ruleId of ruleIdsInFile) {
-          if (lookup?.[ruleId]?.[groupRef.hash] !== undefined) {
-            found = true;
-            break;
-          }
-        }
-        expect(
-          found,
-          `group-level ref hash ${groupRef.hash} on file ${file.path} does not resolve in fixDescriptions for any rule on the file`,
-        ).toBe(true);
-      }
+      assertPerFindingRefsResolve(file, lookup);
+      assertGroupRefsResolve(file, lookup);
     }
   }
 
