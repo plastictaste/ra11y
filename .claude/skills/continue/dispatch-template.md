@@ -6,9 +6,9 @@ Every dispatched specialist MUST read this file on boot and follow every rule be
 
 ## 0. STOP — worktree-isolation non-negotiables (read FIRST, before any tool call)
 
-The four load-bearing worktree-isolation rules (relative paths only; no destructive git state; no `cd` out; rebase onto main first) live in `.claude/rules/worktree-discipline.md` and auto-attach for any agent spawned with `isolation: "worktree"`. Read that file in full before any tool call — it is authoritative and this template defers to it.
+The load-bearing worktree-isolation rules live in `.claude/rules/worktree-discipline.md` and auto-attach for any agent spawned with `isolation: "worktree"`. Read that file in full before any tool call — it is authoritative and this template defers to it.
 
-If rule-file auto-loading does not fire in your environment (older harness, edge config), the orchestrator's dispatch prompt repeats a one-sentence fallback. Either way, the discipline rules are non-negotiable: violating them has caused real integration rollbacks and corrupted sibling worktrees in this codebase (2026-04-22 parser-author escape via absolute paths; 2026-04-23 two stalled agents).
+If rule-file auto-loading does not fire in your environment (older harness, edge config), the orchestrator's dispatch prompt repeats a one-sentence fallback. Either way, the discipline rules are non-negotiable: violations silently corrupt `main` or sibling worktrees, or cause the integrator to drop your work.
 
 Only after the discipline rules are fully internalized should you read §1 (scope) and the rest of this template.
 
@@ -44,6 +44,8 @@ Follow `CLAUDE.md` §9 commit discipline:
 **Cross-cutting exemption.** If your dispatch prompt flags the pick with `crossCutting: true` (the planner sets this for type-shape cascades, interface widening across a producer-consumer graph, ≥8-file mechanical renames, and similar items where splitting would leave verify red in the middle of the range), the 400-LOC guideline is relaxed to: **split only if splitting keeps verify green at every commit; otherwise one commit is fine.** When you land a single cross-cutting commit above 400 LOC, the commit message body must note the justification — e.g. `"cross-cutting type-shape change; splitting would leave verify red between the types/-change commit and the callers-update commit"`. Don't use the exemption as a license to bundle unrelated changes; the planner's `crossCutting: true` is a scoped permission for this pick only.
 
 Stage files by explicit path (`git add src/rules/foo.ts tests/rules/foo.test.ts`). **Never `git add .` or `git add -A`** — other parallel agents' uncommitted debris may be sitting next to yours on the tree, and bulk-add sweeps it into your commit.
+
+**No backlog IDs in source or test code.** Tokens like `V1-…`, `Q7-…`, `Q3-…`, `R/nav` etc. belong in the commit message and `.claude/backlog.md` — not in source comments, JSDoc, test names, fixture filenames, or `it("…")` strings. PM trace rots in the codebase: items get renumbered, closed, superseded; the comment then misleads. Commit messages and ADRs are the durable trail.
 
 ## 4. Precommit verify before returning
 

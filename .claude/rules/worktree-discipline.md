@@ -5,7 +5,7 @@ isolation:
 
 # Worktree-discipline rules (auto-loaded for `isolation: "worktree"` agents)
 
-You are dispatched inside a git worktree under `.claude/worktrees/agent-<id>/`. The rules below are non-negotiable. Violating any one silently corrupts `main` or a sibling agent's worktree. All four have caused real integration rollbacks in this codebase.
+You are dispatched inside a git worktree under `.claude/worktrees/agent-<id>/`. The rules below are non-negotiable. Violating any one silently corrupts `main`, a sibling agent's worktree, or causes the integrator to drop your work. Every rule below has caused real integration rollbacks in this codebase.
 
 Read every rule before making ANY tool call.
 
@@ -43,6 +43,16 @@ The harness may create worktrees from a stale fork-point. If `merge main --ff-on
 
 This is the counterpart to rule 1: the absolute-path fallback tempts you ONLY when a file seems missing; rebasing first makes the missing file appear and the temptation disappears.
 
+## 5. Commit on the worktree's starting branch — never `git checkout -b`
+
+The harness creates your worktree on a branch named `worktree-agent-<id>` and the integrator's cherry-pick contract is `git cherry-pick main..worktree-agent-<id>`. Inventing a new branch (`git checkout -b`, `git switch -c`, rename) leaves the worktree branch unchanged — the integrator finds zero new commits there and silently skips the pick. Stay on whatever branch your worktree starts on; commit there.
+
+## 6. Suspected escape returns `blocked: suspected_worktree_escape` — never "tool corruption"
+
+If your Edit tool calls report success but `git status` in the worktree shows a clean tree, OR `grep` on disk shows none of your edits landed, the likely cause is that the edits escaped to `main` via absolute paths or a `cd`-out — NOT that the Edit tool is corrupted.
+
+Stop on the second confirmation. Return `blocked: suspected_worktree_escape` with the relative paths you tried to edit. Do NOT diagnose this as `tooling_state_corruption`, do NOT fall back to absolute paths, do NOT bash-redirect around the tool, do NOT keep editing. The orchestrator can detect leaked edits on `main` and recover; it cannot recover work an agent burns chasing a "tool is broken" diagnosis.
+
 ## Staging and committing
 
 - Stage files by explicit path (`git add src/rules/foo.ts tests/rules/foo.test.ts`). **Never `git add .` or `git add -A`** — other parallel agents' uncommitted debris may be sitting next to yours on the tree, and bulk-add sweeps it into your commit.
@@ -51,4 +61,4 @@ This is the counterpart to rule 1: the absolute-path fallback tempts you ONLY wh
 
 ## If you only remember one thing
 
-The four rules above protect isolation. The rest (scope-lock, commit-size, verify-before-return, structured JSON return) lives in `.claude/skills/continue/dispatch-template.md`. Read that template too.
+The numbered rules above protect isolation. The rest (scope-lock, commit-size, verify-before-return, structured JSON return, no backlog IDs in code) lives in `.claude/skills/continue/dispatch-template.md`. Read that template too.

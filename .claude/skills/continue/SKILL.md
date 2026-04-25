@@ -150,6 +150,8 @@ For each returned agent, treat the pick as a suspected stall if ANY of these cue
 - Return lacked structured JSON (free-form prose, truncated output, missing `sha`/`item`/`blocked` top-level keys)
 - Return surfaced `internal-error` / tool-result error from the harness rather than an agent-authored payload
 - Evidence of worktree-escape recovery in the agent's output (e.g. the agent mentioned restoring a tracked file on main, or `git status` dirt the dispatch prompt couldn't explain)
+- Returned `branch` differs from the `worktree-agent-<id>` branch the harness assigned (specialist created a custom branch). The integrator will look at the wrong branch and silently skip the pick. When the returned `branch` doesn't match the worktree branch, do not redispatch — pass the actual returned branch name straight to the integrator.
+- `blocked` reason is `tooling_state_corruption`, `edit_tool_silent_failure`, `disk_writes_unflushed`, or any similar self-diagnosis that blames the tooling. Combined with main being unexpectedly dirty (especially in files the agent listed as its scope), this is the canonical false-diagnosis-on-escape pattern. Treat as a worktree escape: redispatch in a fresh worktree, then `git restore` the leaked main edits after the redispatch's branch is verified.
 
 Action when any cue fires:
 
