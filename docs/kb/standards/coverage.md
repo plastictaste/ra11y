@@ -22,7 +22,7 @@ finders cover it and the resulting coverage verdict.
 **Finders column** strips the `review/` prefix for brevity.
 
 **Unique criteria across all standards:** 252
-**By verdict:** 136 rule · 89 finder · 25 attestation-only · 2 gap
+**By verdict:** 140 rule · 85 finder · 25 attestation-only · 2 gap
 
 ## Gaps
 
@@ -36,7 +36,7 @@ These are candidates for new rules or finders.
 
 **ID:** `wcag22` | **Version:** 2.2 | **Criteria:** 86
 
-Coverage: 41 rule · 31 finder · 13 attestation-only · 1 gap
+Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -110,7 +110,7 @@ Coverage: 41 rule · 31 finder · 13 attestation-only · 1 gap
 | `wcag22:3.1.5` | Reading Level | AAA | manual | — | — | **attestation-only** |
 | `wcag22:3.1.6` | Pronunciation | AAA | manual | — | — | **attestation-only** |
 | `wcag22:3.2.1` | On Focus | A | manual | — | on-input-change | **finder** |
-| `wcag22:3.2.2` | On Input | A | manual | — | on-input-change | **finder** |
+| `wcag22:3.2.2` | On Input | A | manual | forms/select-onchange-context-change | on-input-change | **rule** |
 | `wcag22:3.2.3` | Consistent Navigation | AA | manual | — | consistent-navigation | **finder** |
 | `wcag22:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
 | `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
@@ -131,7 +131,7 @@ Coverage: 41 rule · 31 finder · 13 attestation-only · 1 gap
 
 **ID:** `wcag21` | **Version:** 2.1 | **Criteria:** 78
 
-Coverage: 39 rule · 28 finder · 10 attestation-only · 1 gap
+Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -200,7 +200,7 @@ Coverage: 39 rule · 28 finder · 10 attestation-only · 1 gap
 | `wcag21:3.1.5` | Reading Level | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.1.6` | Pronunciation | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.2.1` | On Focus | A | manual | — | on-input-change | **finder** |
-| `wcag21:3.2.2` | On Input | A | manual | — | on-input-change | **finder** |
+| `wcag21:3.2.2` | On Input | A | manual | forms/select-onchange-context-change | on-input-change | **rule** |
 | `wcag21:3.2.3` | Consistent Navigation | AA | manual | — | consistent-navigation | **finder** |
 | `wcag21:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
 | `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
@@ -218,7 +218,7 @@ Coverage: 39 rule · 28 finder · 10 attestation-only · 1 gap
 
 **ID:** `section508` | **Version:** 2017 | **Criteria:** 38
 
-Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
+Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -251,7 +251,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:3.1.1` | Language of Page | base | full | document/lang-attribute, parsing/html-has-lang | — | **rule** |
 | `section508:3.1.2` | Language of Parts | base | partial | document/lang-on-parts, parsing/html-has-lang | — | **rule** |
 | `section508:3.2.1` | On Focus | base | manual | — | on-input-change | **finder** |
-| `section508:3.2.2` | On Input | base | manual | — | on-input-change | **finder** |
+| `section508:3.2.2` | On Input | base | manual | forms/select-onchange-context-change | on-input-change | **rule** |
 | `section508:3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `section508:3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `section508:3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
@@ -265,7 +265,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 
 **ID:** `en301549` | **Version:** v3.2.1 | **Criteria:** 50
 
-Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
+Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -309,7 +309,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.1.1` | Language of Page | base | full | document/lang-attribute, parsing/html-has-lang | — | **rule** |
 | `en301549:9.3.1.2` | Language of Parts | base | partial | document/lang-on-parts, parsing/html-has-lang | — | **rule** |
 | `en301549:9.3.2.1` | On Focus | base | manual | — | on-input-change | **finder** |
-| `en301549:9.3.2.2` | On Input | base | manual | — | on-input-change | **finder** |
+| `en301549:9.3.2.2` | On Input | base | manual | forms/select-onchange-context-change | on-input-change | **rule** |
 | `en301549:9.3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `en301549:9.3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `en301549:9.3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |

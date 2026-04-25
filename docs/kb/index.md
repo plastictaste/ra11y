@@ -134,6 +134,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [forms/radio-group-without-fieldset](./rules/forms__radio-group-without-fieldset.md)
 - [forms/required-indicator-missing](./rules/forms__required-indicator-missing.md)
 - [forms/required-marker-without-required-attr](./rules/forms__required-marker-without-required-attr.md)
+- [forms/select-onchange-context-change](./rules/forms__select-onchange-context-change.md)
 - [forms/submit-not-button-or-input](./rules/forms__submit-not-button-or-input.md)
 - [keyboard/accesskey-duplicate](./rules/keyboard__accesskey-duplicate.md)
 - [keyboard/character-shortcuts](./rules/keyboard__character-shortcuts.md)
