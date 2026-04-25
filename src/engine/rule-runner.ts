@@ -187,6 +187,14 @@ function stampViolation(
     criteriaTitles,
     severity: emitted.severity,
     location: { ...emitted.location, filePath },
+    // Selector/declaration line split for selector-scoped CSS findings
+    // (Q7-MOTION-FINDING-SELECTOR-LINE). `location.line` carries the
+    // structural anchor (the CSS rule's selector start); `decline` carries
+    // the offending declaration's line within that rule. Conditional
+    // spread keeps `decline: undefined` off the wire per CLAUDE.md §1
+    // "Ambiguous field shapes are dishonest." Currently emitted by
+    // `motion/pause-stop-hide`.
+    ...(typeof emitted.decline === "number" ? { decline: emitted.decline } : {}),
     message: emitted.message,
     findingId,
     groupKey,

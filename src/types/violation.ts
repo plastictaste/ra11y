@@ -107,6 +107,35 @@ export interface Violation {
   readonly criteriaTitles?: readonly string[];
   readonly severity: Severity;
   readonly location: Location;
+  /**
+   * Declaration-line sibling for selector-scoped findings, where the
+   * structural anchor (the CSS rule whose selector defines what the
+   * finding applies to) sits one or more lines above the offending
+   * `animation:` / `transition:` declaration. `location.line` carries
+   * the selector start line — the structural anchor an agent reads to
+   * understand what the rule targets — and `decline` (declaration line)
+   * carries the line of the offending declaration token within that
+   * rule.
+   *
+   * Canonical case (Q7-MOTION-FINDING-SELECTOR-LINE): an icon-spinner
+   * selector opens at line 80; an unprefixed `animation:` declaration
+   * sits at line 84. Without the split, the finding cited line 84 and
+   * the agent reading the file saw the declaration but had to scroll up
+   * four lines to find the selector context (which determines whether
+   * the rule is interaction-triggered or auto-playing). With the split,
+   * `line` = 80 (the agent lands on the structural anchor) and
+   * `decline` = 84 (the agent knows where the offending token is).
+   *
+   * Optional / present-when-meaningful: only stamped when (a) the rule
+   * is selector-scoped and (b) the declaration line differs from the
+   * selector line. A single-line `.x { animation: spin 1s infinite }`
+   * has selector and declaration on the same line — `decline` is
+   * omitted. Per CLAUDE.md §1 "Ambiguous field shapes are dishonest,"
+   * forwarders use a conditional spread so `decline: undefined` never
+   * reaches the wire. Currently emitted by `motion/pause-stop-hide`;
+   * other selector-scoped CSS rules may opt in by emitting it.
+   */
+  readonly decline?: number;
   readonly message: string;
   readonly suggestion?: string;
   readonly fix?: Fix;

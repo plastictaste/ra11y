@@ -121,6 +121,21 @@ export interface AgentFinding {
   readonly column: number;
   readonly endLine?: number;
   readonly endColumn?: number;
+  /**
+   * Declaration-line sibling for selector-scoped CSS findings — the
+   * line of the offending `animation:` / `transition:` declaration when
+   * it differs from `line` (the rule's selector start, the structural
+   * anchor). Lets the agent land on the selector for context and jump
+   * straight to the declaration for the surgical edit without rescanning
+   * the rule body.
+   *
+   * Currently emitted by `motion/pause-stop-hide`. Optional / present-
+   * when-meaningful: omitted when selector and declaration share a line
+   * (`.x { animation: spin 1s infinite }`) or when the rule is not
+   * selector-scoped, per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest." See Q7-MOTION-FINDING-SELECTOR-LINE.
+   */
+  readonly decline?: number;
   readonly message: string;
   /**
    * The flagged source text, when the rule produced one. Present-when-

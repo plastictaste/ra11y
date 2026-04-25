@@ -340,16 +340,28 @@ function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: Posit
     const mixedNote = anyPartHasUserInteractionPseudoClass(cssRule.selector)
       ? " (selector list mixes interaction-gated and always-on parts — the non-gated parts animate without user input)"
       : "";
+    // Q7-MOTION-FINDING-SELECTOR-LINE: report the rule's selector start
+    // line as `line` — the structural anchor — and surface the
+    // declaration line as the `decline` sibling when the two differ.
+    // The agent landing on the selector immediately sees what the rule
+    // applies to (key for 2.2.2 vs 2.3.3 lane discrimination); the
+    // `decline` pointer routes them to the offending token without a
+    // re-scan. Single-line rules (`.x { animation: spin 1s infinite }`)
+    // omit `decline` entirely per CLAUDE.md §1 "Ambiguous field shapes
+    // are dishonest."
+    const selectorLine = cssRule.loc.start.line + offset.lineOffset;
+    const declarationLine = decl.loc.start.line + offset.lineOffset;
     emit({
       severity: "warning",
       location: {
         filePath: "",
-        line: decl.loc.start.line + offset.lineOffset,
+        line: selectorLine,
         column:
-          decl.loc.start.line === 1
-            ? decl.loc.start.column + offset.colOffset
-            : decl.loc.start.column,
+          cssRule.loc.start.line === 1
+            ? cssRule.loc.start.column + offset.colOffset
+            : cssRule.loc.start.column,
       },
+      ...(declarationLine === selectorLine ? {} : { decline: declarationLine }),
       message: `'${echoSelector}' uses ${decl.property} (${profile.contextNote}) without a prefers-reduced-motion media query guard${mixedNote} — users who prefer reduced motion cannot disable this animation.`,
       suggestion: `Wrap the animation in @media (prefers-reduced-motion: reduce) { ${echoSelector} { ${decl.property}: none; } } or move the entire rule inside a prefers-reduced-motion query.`,
     });

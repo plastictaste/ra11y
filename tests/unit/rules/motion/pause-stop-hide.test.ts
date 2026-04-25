@@ -610,6 +610,75 @@ describe("rule motion/pause-stop-hide", () => {
     });
   });
 
+  describe("selector/declaration line split (Q7-MOTION-FINDING-SELECTOR-LINE)", () => {
+    // The structural anchor for a selector-scoped CSS finding is the
+    // selector at the rule's opening line — the agent reading the file
+    // there sees what the rule applies to (key for the 2.2.2 vs 2.3.3
+    // lane question). The `animation:` / `transition:` declaration
+    // line is the offending token's location, surfaced as a sibling
+    // `decline` pointer when it differs from the selector line.
+    it("multi-line CSS rule reports selector start as `line` and declaration as `decline`", () => {
+      const src = [
+        `.icon-spinner {`, // line 1 — selector start (structural anchor)
+        `  display: inline-block;`, // line 2
+        `  width: 1em;`, // line 3
+        `  animation: spin 1s infinite;`, // line 4 — offending declaration
+        `}`, // line 5
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "icons.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.location.line).toBe(1);
+      expect(v[0]?.decline).toBe(4);
+    });
+
+    it("single-line CSS rule omits `decline` (selector and declaration share a line)", () => {
+      const v = runRule(rule, `.spinner { animation: spin 1s infinite; }`, {
+        filePath: "icons.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.location.line).toBe(1);
+      // Conditional spread per CLAUDE.md §1 "Ambiguous field shapes are
+      // dishonest" — `decline: undefined` must not reach the wire.
+      expect(v[0]?.decline).toBeUndefined();
+    });
+
+    it("multi-line transition rule also splits selector and declaration", () => {
+      const src = [
+        `.fade {`, // line 1 — selector
+        `  opacity: 0;`, // line 2
+        `  transition: opacity 8s ease;`, // line 3 — offending declaration (>5s)
+        `}`, // line 4
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "fade.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.location.line).toBe(1);
+      expect(v[0]?.decline).toBe(3);
+    });
+
+    it("multi-line CSS rule inside an HTML <style> block carries offsets on both line and decline", () => {
+      // The HTML <style> block begins on line 2; the CSS sub-AST sees
+      // its first content line as line 2 (after the leading newline).
+      // After the lineOffset (textNode.loc.start.line - 1 = 1), the
+      // selector lands on the HTML's line 3 and the declaration on
+      // line 6.
+      const src = [
+        `<!doctype html><html><head>`, // line 1
+        `<style>`, // line 2
+        `  .icon-spinner {`, // line 3 — selector in HTML coords
+        `    display: inline-block;`, // line 4
+        `    width: 1em;`, // line 5
+        `    animation: spin 1s infinite;`, // line 6 — declaration
+        `  }`, // line 7
+        `</style>`, // line 8
+        `</head></html>`, // line 9
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "icons.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.location.line).toBe(3);
+      expect(v[0]?.decline).toBe(6);
+    });
+  });
+
   describe("real-world false-positive regressions (V1-RULE-MOTION-PAUSE-STOP-HIDE-IGNORES-ITERATION-COUNT)", () => {
     // Encodes the failure modes from the corpus report: a one-shot
     // 0.2s `animation: hide` and a `forwards` fill-mode animation on

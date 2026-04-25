@@ -75,6 +75,16 @@ export const USER_INTERACTION_PSEUDO_CLASSES: readonly string[] = [
 export type Emit = (v: {
   severity: "error" | "warning" | "info";
   location: { filePath: string; line: number; column: number };
+  /**
+   * Declaration-line sibling for selector-scoped findings. When the
+   * selector start (`location.line`) differs from the offending
+   * `animation:` / `transition:` declaration line, the emitter sets
+   * `decline` to the declaration line so the agent reads both — the
+   * structural anchor (`line`) for context and the offending token
+   * (`decline`) for surgical fixes. Omitted when selector and
+   * declaration share a line. See Q7-MOTION-FINDING-SELECTOR-LINE.
+   */
+  decline?: number;
   message: string;
   suggestion: string;
 }) => void;

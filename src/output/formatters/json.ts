@@ -33,6 +33,13 @@ export const jsonFormatter = defineFormatter({
           ...(v.criteriaTitles !== undefined && { criteriaTitles: v.criteriaTitles }),
           severity: v.severity,
           location: v.location,
+          // Selector/declaration line split for selector-scoped CSS
+          // findings (Q7-MOTION-FINDING-SELECTOR-LINE). `location.line`
+          // is the structural anchor (selector start); `decline` is the
+          // sibling pointer at the offending declaration line. Omitted
+          // when selector and declaration share a line, per CLAUDE.md
+          // §1 "Ambiguous field shapes are dishonest."
+          ...(typeof v.decline === "number" && { decline: v.decline }),
           message: v.message,
           ...(v.suggestion !== undefined && { suggestion: v.suggestion }),
           ...(v.snippet !== undefined && { snippet: v.snippet }),

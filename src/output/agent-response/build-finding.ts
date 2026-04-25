@@ -221,10 +221,7 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
       : {}),
     severity: v.severity,
     confidence: resolveConfidence(v),
-    line: v.location.line,
-    column: v.location.column,
-    ...(v.location.endLine !== undefined && { endLine: v.location.endLine }),
-    ...(v.location.endColumn !== undefined && { endColumn: v.location.endColumn }),
+    ...mapPositionToAgent(v),
     message: v.message,
     ...(typeof v.snippet === "string" && v.snippet.length > 0 ? { snippet: v.snippet } : {}),
     ...(fix === undefined ? {} : { fix }),
@@ -258,5 +255,31 @@ function mapSiblingInstancesToAgent(
     siblingInstances: siblings.map((s) =>
       s.id === undefined ? { line: s.line } : { line: s.line, id: s.id },
     ),
+  };
+}
+
+/**
+ * Folds the position cluster (`line`, `column`, optional `endLine` /
+ * `endColumn`, optional `decline`) into one shape so the assembly site
+ * stays under the cognitive-complexity ceiling. `decline` is the
+ * declaration-line sibling for selector-scoped CSS findings — present
+ * only when the rule's selector start (`location.line`) differs from
+ * the offending declaration line, per Q7-MOTION-FINDING-SELECTOR-LINE.
+ * Conditional spread keeps `decline: undefined` off the wire per
+ * CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+ */
+function mapPositionToAgent(v: Violation): {
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+  decline?: number;
+} {
+  return {
+    line: v.location.line,
+    column: v.location.column,
+    ...(v.location.endLine !== undefined && { endLine: v.location.endLine }),
+    ...(v.location.endColumn !== undefined && { endColumn: v.location.endColumn }),
+    ...(typeof v.decline === "number" && { decline: v.decline }),
   };
 }

@@ -132,6 +132,10 @@ function shapeViolation(
     severity: v.severity,
     // Project-scope emitters set filePath themselves; per-file paths fall through.
     location: { ...v.location, filePath: effectivePath },
+    // Selector/declaration line split (Q7-MOTION-FINDING-SELECTOR-LINE).
+    // Mirrors the engine's `stampViolation` conditional spread so unit
+    // tests see the same shape the engine ships.
+    ...(typeof v.decline === "number" ? { decline: v.decline } : {}),
     message: v.message,
     findingId,
     groupKey,
