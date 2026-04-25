@@ -163,6 +163,92 @@ Every tool returns `{ content: [{ type: "text", text: "<json>" }] }` where the J
 }
 ```
 
+## groupKey semantics
+
+Every finding carries two stable identity tokens: `findingId` and `groupKey`. They answer opposite questions.
+
+- `findingId` — "is this the same finding across re-runs of the same scan?" Includes the file path and the normalized text of the flagged line. Two identical `<img>` elements in two files get different `findingId`s.
+- `groupKey` — "is this the same kind of problem?" Excludes the file path and any identifier-specific data. Two identical `<img alt>` elements in 40 different files share one `groupKey`. Write one fix, apply it everywhere.
+
+### What the hash covers
+
+```
+groupKey = sha256(ruleId + NUL + normalizedShape).slice(0, 12)
+```
+
+`normalizedShape` is produced by `describeNodeShape` in `src/engine/ast-helpers.ts`. It encodes the node's structural kind and preserves which attribute/property names are present, but strips values and position. Specifically:
+
+| What is preserved | What is stripped |
+|---|---|
+| Element or selector kind (`html:img`, `jsx:a`, `css:rule`) | Attribute values (`alt="…"`, `href="…"`) |
+| Attribute/property name set (`[attrs=:alt:src]`) | Unique identifiers (`id="…"`, `class="…"`) |
+| Missingness of key attributes (`[missing=no-alt]`) | File path, line, column |
+| CSS declaration property names (`[decl=color,outline]`) | CSS declaration values |
+| CSS pseudo-class and pseudo-element markers (`:focus-visible`) | CSS selector class/id values |
+| JSX spread presence (`[spread]`) | JSX expression content |
+| Coarse children shape (`[children=text\|expr\|element\|mixed\|empty]`) | Literal text content |
+
+The `ruleId` prefix ensures that two different rules firing on the same node always produce different `groupKey`s.
+
+### What groupKey equality means in practice
+
+**Same rule, AST-equivalent nodes, any number of files → same `groupKey`.**
+
+```jsonc
+// navigation/href-javascript-void fires on <a href="javascript:void(0)">
+// in login.html AND checkout.tsx — both findings share one groupKey.
+// Fix once, grep groupKey to find every site.
+{ "groupKey": "a3f1b2c4d5e6" }
+```
+
+**Same rule, structurally distinct nodes → different `groupKey`.**
+
+```jsonc
+// media/alt-text-missing on <img> with no alt at all vs. <img alt="">
+// (decorative, already exempted): different missingness → different groupKey.
+// <img src="…">          → [missing=no-alt] → groupKey A
+// <img src="…" alt="x"> → [attrs=:alt:src]  → groupKey B
+```
+
+**Different rules on the same node → always different `groupKey`s.**
+
+### Per-rule-family behavior
+
+The normalization rules above are universal. The practical effect differs by rule family:
+
+**`navigation/link-descriptive-text` and `navigation/href-javascript-void`**
+
+These fire on `<a>` elements. The `href` *value* is stripped by normalization; only whether the `href` attribute is present feeds the shape. Two `<a href="javascript:void(0)">` elements in two separate files share a `groupKey` — the rule is keyed on the presence of `href`, not the specific placeholder string used. Cross-file aggregation is the intended use case.
+
+**`media/alt-text-missing`**
+
+Fires on `<img>`, `<input type="image">`, `<canvas>`, `<svg image>`, and `role="img"` elements. The `src` value is stripped. What separates groups is the combination of: (a) which labeling attributes are present by name, and (b) whether `alt` is absent (`[missing=no-alt]`). An `<img>` with no attributes at all and an `<img src="photo.jpg">` share a `groupKey`; an `<img alt="x">` does not (the presence of `alt` is part of the shape, and the rule would not fire on it anyway).
+
+**CSS rules (`contrast/minimum`, `focus/visible`, etc.)**
+
+The CSS selector's class/id tokens are stripped but the selector's structural kind and pseudo-class markers survive. `.login-btn:focus-visible` and `.submit-button:focus-visible` canonicalize to the same shape (`class-selector:focus-visible`) and share a `groupKey`. Declaration property names survive but not values — two rules that both lack `outline` on `:focus-visible` selectors will share a `groupKey` regardless of what other declarations they carry.
+
+### Fallback groupKey
+
+When the emitting rule is project-scoped (no individual node target), or when a rule crashes and emits a synthetic `internal/rule-crash` record, `normalizedShape` is set to `"unknown-shape"`. All un-groupable findings for a given rule share one `groupKey`. This is an honest "these don't share a targetable node" bucket, not a suppression.
+
+### How to use groupKey
+
+```jsonc
+// Collect all findings that share a groupKey and apply one fix:
+const targets = findings.filter(f => f.groupKey === "a3f1b2c4d5e6");
+// Every entry in targets has the same ruleId, the same structural
+// pattern, and can accept the same edit.
+
+// Use scan_project output: findings already carry groupKey.
+// Use suggest_fix on one representative finding to get the edit;
+// apply it at every location in targets.
+```
+
+Cross-file `groupKey` grouping is the primary affordance for bulk remediation. `findingId` is for tracking one finding's lifecycle. Both appear on every finding in the `scan` family responses.
+
+For the full design rationale: [`docs/adr/0008-violation-group-key.md`](../adr/0008-violation-group-key.md).
+
 ## See also
 
 - [`server-setup.md`](./server-setup.md) — how to wire this into your agent host.
