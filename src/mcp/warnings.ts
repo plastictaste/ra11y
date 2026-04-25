@@ -228,7 +228,23 @@ export type ScanWarningCode =
   // percentageOfFindings, topVendorFile: { path, findingsCount } }`
   // so the agent branches on the dominance without recounting
   // `files[]` against `meta.scannedBuildArtifacts`.
-  | "vendor_css_dominates_findings";
+  | "vendor_css_dominates_findings"
+  // Q7-CRITERION-ID-FIELD-NAME-DRIFT: `coverage` entries (failingAutomatedCriteria,
+  // manualWithCandidates, likelyIrrelevantCriteria, untestableCriteria,
+  // untargetedCriteriaList) historically named the criterion field `id` —
+  // the same concept `checklist.items[].criterionId` already used. Agents
+  // joining the two surfaces by criterion silently mis-matched. The
+  // canonical name is `criterionId` (matches the namespaced-id convention
+  // — e.g. `wcag22:1.4.3` — used elsewhere across the MCP surface). The
+  // legacy `id` field still ships alongside `criterionId` for one minor
+  // release as a deprecated alias; this code fires whenever the alias is
+  // emitted so agents reading the warnings channel can drop their `id`
+  // reads on the next call without paying the double-payload cost. The
+  // alias is removed in the next minor release; the `### Deprecated`
+  // CHANGELOG entry tracks the removal window. Surface-don't-suppress:
+  // both fields ship unchanged today; the warning is the additive signal
+  // that lets callers self-migrate without a hidden break.
+  | "deprecated_field_id_renamed_criterionId";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */

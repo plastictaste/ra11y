@@ -863,9 +863,11 @@ function mapCandidates(
  * criteria share the location.
  *
  * Why not collapse across items: the cross-tool invariant
- * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].id`)
- * is load-bearing — it's how the two tools read as one surface per
- * ADR 0010. Dropping secondary items would silently re-classify a
+ * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].criterionId`,
+ * also legacy `coverage.manualWithCandidates[].id` for the deprecation
+ * window — Q7-CRITERION-ID-FIELD-NAME-DRIFT) is load-bearing — it's how
+ * the two tools read as one surface per ADR 0010. Dropping secondary
+ * items would silently re-classify a
  * shared-candidate criterion as untargeted on checklist while
  * coverage still counts it as grounded; that drift is the canonical
  * "cross-surface drift forces wasted round trips" failure mode the

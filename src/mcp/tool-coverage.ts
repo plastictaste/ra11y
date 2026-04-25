@@ -268,7 +268,7 @@ export const coverageTool: McpTool = {
     // files on the parseable-extension check — same condition as
     // scan_project.
     const filesByExtension = countFilesByExtension(files);
-    const warnings = buildDerivativeScanWarnings({
+    const baseWarnings = buildDerivativeScanWarnings({
       filesScanned: files.length,
       rootSource: null,
       configSource: undefined,
@@ -294,6 +294,15 @@ export const coverageTool: McpTool = {
         sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
       }),
     });
+    // Q7-CRITERION-ID-FIELD-NAME-DRIFT: every coverage entry ships the
+    // legacy `id` field alongside the canonical `criterionId` for one
+    // minor as a deprecation alias (see `withTitles`). Fire the
+    // structured warning unconditionally on this path so agents reading
+    // the warnings channel know the alias is going away — the entry
+    // arrays are always emitted, so the alias is always present. Removed
+    // alongside the alias in the next minor release; the
+    // `### Deprecated` CHANGELOG entry tracks the removal window.
+    const warnings = mergeDeprecatedFieldIdWarning(baseWarnings);
     // `meta` is opt-in per `metaMode` — legacy callers (no metaMode)
     // never saw a `meta` block on this tool, and additive surface
     // creep is avoided by emitting under `metaMode: "delta"` only so
@@ -462,18 +471,60 @@ function buildCoverageNextStep({
  * Enriches bare criterion IDs (e.g. "wcag22:2.4.11") with their titles
  * ("Focus Not Obscured (Minimum)") so agents don't have to look them up.
  * Falls back to ID-only if a criterion isn't found in any loaded standard.
+ *
+ * Q7-CRITERION-ID-FIELD-NAME-DRIFT: the canonical field is
+ * `criterionId` — matches `checklist.items[].criterionId` and the
+ * namespaced-id convention used elsewhere across the MCP surface
+ * (`wcag22:1.4.3`). The legacy `id` field still ships alongside
+ * `criterionId` for one minor release as a deprecated alias so callers
+ * that learned the old name keep working; the alias is removed in the
+ * next minor release. The `deprecated_field_id_renamed_criterionId`
+ * warning code (see `src/mcp/warnings.ts`) fires whenever any coverage
+ * response emits the alias so agents can drop their `id` reads on the
+ * next call.
  */
 function withTitles(
   criterionIds: readonly string[],
   session: import("./session.ts").McpSession,
-): readonly { readonly id: string; readonly title: string; readonly level: string }[] {
+): readonly {
+  readonly criterionId: string;
+  readonly id: string;
+  readonly title: string;
+  readonly level: string;
+}[] {
   return criterionIds.map((id) => {
     for (const std of session.registry.standards) {
       const c = std.criteria.find((cr) => cr.id === id);
-      if (c) return { id, title: c.title, level: c.level };
+      if (c) return { criterionId: id, id, title: c.title, level: c.level };
     }
-    return { id, title: "", level: "" };
+    return { criterionId: id, id, title: "", level: "" };
   });
+}
+
+/**
+ * Q7-CRITERION-ID-FIELD-NAME-DRIFT: append the deprecation code for the
+ * legacy `id` alias to the warnings fragment returned by
+ * {@link buildDerivativeScanWarnings}. The base helper conditionally
+ * spreads `warnings` and `warningsDetails` — `warnings` may be absent
+ * when no scan-level code fired. We fold our code in either way:
+ *   - if `warnings` is already present, append.
+ *   - if absent, create a fresh single-element array.
+ *
+ * `warningsDetails` is left untouched — the deprecation code is
+ * presence-only signal (mirror of `proposed_config_deprecated_use_suggested_config`).
+ */
+function mergeDeprecatedFieldIdWarning(base: {
+  readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+}): {
+  readonly warnings: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+} {
+  const code: import("./warnings.ts").ScanWarningCode = "deprecated_field_id_renamed_criterionId";
+  const next = base.warnings === undefined ? [code] : [...base.warnings, code];
+  return base.warningsDetails === undefined
+    ? { warnings: next }
+    : { warnings: next, warningsDetails: base.warningsDetails };
 }
 
 /**

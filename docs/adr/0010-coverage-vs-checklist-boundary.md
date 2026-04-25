@@ -85,7 +85,16 @@ pairs following the P1-K contract.
    cwd, standard?, level? } }`. When it is empty but `failingAutomatedCriteria`
   is non-empty, points at `scan_project` instead. Both fields omitted
   when the report is clean — same conditional-spread discipline as
-  `scan_project`.
+  `scan_project`. Each criterion-bearing entry on these arrays
+  (`failingAutomatedCriteria`, `manualWithCandidates`,
+  `likelyIrrelevantCriteria`, `untestableCriteria`,
+  `untargetedCriteriaList`) carries the canonical `criterionId` field —
+  matching `checklist.items[].criterionId` so agents joining the two
+  surfaces can key on the same name. The legacy `id` field still ships
+  alongside `criterionId` for one minor as a deprecated alias and a
+  response-level `warnings: ["deprecated_field_id_renamed_criterionId"]`
+  fires whenever the alias is emitted (Q7-CRITERION-ID-FIELD-NAME-DRIFT,
+  removed in the next minor).
 - **`checklist`** — new `nextStep`. When `actionable.length === 0`,
   points at `coverage`:
   `"No actionable manual items. Call 'coverage' for the compliance

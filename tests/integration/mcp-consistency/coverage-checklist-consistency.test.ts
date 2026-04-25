@@ -137,9 +137,22 @@ interface CoverageBody {
   readonly standardId: string;
   readonly criteriaManualReviewRequired: number;
   readonly untargetedCriteria: number;
-  readonly manualWithCandidates: readonly { readonly id: string }[];
-  readonly likelyIrrelevantCriteria: readonly { readonly id: string }[];
-  readonly failingAutomatedCriteria: readonly { readonly id: string }[];
+  // Q7-CRITERION-ID-FIELD-NAME-DRIFT: canonical name is `criterionId`
+  // (matches `checklist.items[].criterionId` and the namespaced-id
+  // convention — `wcag22:1.4.3` — used elsewhere). The legacy `id`
+  // field still ships alongside `criterionId` for one minor as a
+  // deprecated alias and a `deprecated_field_id_renamed_criterionId`
+  // warning code fires on every coverage response.
+  readonly manualWithCandidates: readonly { readonly criterionId: string; readonly id: string }[];
+  readonly likelyIrrelevantCriteria: readonly {
+    readonly criterionId: string;
+    readonly id: string;
+  }[];
+  readonly failingAutomatedCriteria: readonly {
+    readonly criterionId: string;
+    readonly id: string;
+  }[];
+  readonly warnings?: readonly string[];
   readonly nextStep?: string;
   readonly nextStepStructured?: NextStepStructured;
 }
@@ -172,13 +185,19 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(coverage.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
 
     // likelyIrrelevant list: same criteria are flagged on both surfaces.
-    const coverageIrrelevantIds = new Set(coverage.likelyIrrelevantCriteria.map((c) => c.id));
+    // Q7: read the canonical `criterionId` field; the legacy `id` alias
+    // is asserted separately by the alias-deprecation test below.
+    const coverageIrrelevantIds = new Set(
+      coverage.likelyIrrelevantCriteria.map((c) => c.criterionId),
+    );
     const checklistIrrelevantIds = new Set(checklist.likelyIrrelevant.map((c) => c.criterionId));
     expect(coverageIrrelevantIds).toEqual(checklistIrrelevantIds);
 
     // Actionable (checklist items with candidates) lines up with
     // coverage's `manualWithCandidates`.
-    const coverageActionableIds = new Set(coverage.manualWithCandidates.map((c) => c.id));
+    const coverageActionableIds = new Set(
+      coverage.manualWithCandidates.map((c) => c.criterionId),
+    );
     const checklistActionableIds = new Set(checklist.items.map((i) => i.criterionId));
     expect(checklistActionableIds).toEqual(coverageActionableIds);
   });
@@ -345,7 +364,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
 
     // Coverage must NOT drop a criterion whose rule already fired.
     for (const c of coverage.failingAutomatedCriteria) {
-      expect(firedInScan.has(c.id)).toBe(true);
+      expect(firedInScan.has(c.criterionId)).toBe(true);
     }
 
     // And coverage must include every fired criterion that falls
@@ -355,7 +374,44 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const firedInScanScoped = new Set(
       [...firedInScan].filter((id) => id.startsWith(`${coverage.standardId}:`)),
     );
-    const coverageFailingIds = new Set(coverage.failingAutomatedCriteria.map((c) => c.id));
+    const coverageFailingIds = new Set(
+      coverage.failingAutomatedCriteria.map((c) => c.criterionId),
+    );
     expect(coverageFailingIds).toEqual(firedInScanScoped);
+  });
+
+  it("Q7-CRITERION-ID-FIELD-NAME-DRIFT: coverage emits canonical `criterionId` and the deprecated `id` alias agrees, with the deprecation warning code", async () => {
+    // The alias is the transitional shape — both fields must point at
+    // the same value so callers reading either name agree, and the
+    // structured warning code must fire so agents know to drop the
+    // legacy `id` reads on the next call. When the alias is removed in
+    // the next minor, this test flips: `id` goes away, the warning code
+    // goes away, and the canonical name stands alone.
+    const dir = await makeFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+    const coverage = body<CoverageBody>(responses[1]);
+
+    // Every entry in every criterion-bearing array must carry both
+    // `criterionId` (canonical) and `id` (deprecated alias) with the
+    // same value — agents joining `coverage` ⇄ `checklist` by the
+    // canonical name must get the same set as agents still reading
+    // `id` during the deprecation window.
+    for (const entry of coverage.manualWithCandidates) {
+      expect(entry.criterionId).toBe(entry.id);
+    }
+    for (const entry of coverage.likelyIrrelevantCriteria) {
+      expect(entry.criterionId).toBe(entry.id);
+    }
+    for (const entry of coverage.failingAutomatedCriteria) {
+      expect(entry.criterionId).toBe(entry.id);
+    }
+
+    // The deprecation code rides under the response-level `warnings`
+    // channel — same shape as `proposed_config_deprecated_use_suggested_config`
+    // (V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN). Coverage entries
+    // always emit the criteria arrays, so the alias is always present
+    // and the warning always fires on this surface.
+    expect(coverage.warnings).toBeDefined();
+    expect(coverage.warnings).toContain("deprecated_field_id_renamed_criterionId");
   });
 });
