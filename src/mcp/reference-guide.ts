@@ -34,6 +34,8 @@ const PLACEMENT_CSS =
   "Place on the line immediately above the CSS rule whose declarations are flagged.";
 const PLACEMENT_HTML =
   "Place on the line immediately above the opening tag of the flagged element.";
+const PLACEMENT_MARKDOWN =
+  "Place on the line immediately above the embedded-HTML element the finding refers to (the markdown parser only flags findings on raw HTML residue — `<table>`, `<iframe>`, `<img>` synthesized from `![alt](url)`, etc.). The `<!-- … -->` shape passes through the markdown renderer verbatim.";
 const PLACEMENT_DEFAULT = "Place on the line immediately above the flagged statement.";
 
 /**
@@ -78,6 +80,7 @@ export function suppressPlacementForExt(ext: string): string {
   if (ext === "tsx" || ext === "jsx") return PLACEMENT_TSX;
   if (ext === "css") return PLACEMENT_CSS;
   if (ext === "html" || ext === "htm") return PLACEMENT_HTML;
+  if (ext === "md" || ext === "markdown") return PLACEMENT_MARKDOWN;
   return PLACEMENT_DEFAULT;
 }
 
@@ -140,7 +143,15 @@ export function buildReferenceGuide(
       continue;
     }
     const raw = f.path.slice(dot + 1).toLowerCase();
-    if (raw === "tsx" || raw === "jsx" || raw === "css" || raw === "html" || raw === "htm") {
+    if (
+      raw === "tsx" ||
+      raw === "jsx" ||
+      raw === "css" ||
+      raw === "html" ||
+      raw === "htm" ||
+      raw === "md" ||
+      raw === "markdown"
+    ) {
       exts.add(raw);
     } else {
       exts.add("default");

@@ -172,6 +172,111 @@ describe("suppress: HTML emits block-comment pragma", () => {
   });
 });
 
+describe("suppress: Markdown emits HTML-comment pragma", () => {
+  // V1-SUPPRESS-MARKDOWN-FILE-UNSUPPORTED: scanner flags findings on
+  // .md / .markdown files (SSG projects routinely embed raw HTML —
+  // tables, iframe video embeds, admonition divs). Without this, the
+  // `suppressWith` shape echoed on every scan finding pointed at a
+  // suppress call the tool itself would reject with `file-unsupported`,
+  // making the deterministic-dismissal escape hatch unimplementable
+  // for the majority of SSG findings.
+  it("writes `<!-- ra11y-disable-next-line … -->` above the target line in a .md file", async () => {
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "guide.md");
+      const original = [
+        "# Embed guide",
+        "",
+        '<iframe src="https://example.com/video"></iframe>',
+        "",
+        "More prose.",
+        "",
+      ].join("\n");
+      await writeFile(filePath, original);
+
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        file: filePath,
+        line: 3,
+        ruleId: "document/iframe-title",
+        reason: "embed is decorative; companion <p> describes the content",
+        cwd: dir,
+        dryRun: false,
+      });
+
+      expect(isError).toBe(false);
+      const success = body as SuccessBody;
+      expect(success.applied).toBe(true);
+      expect(success.commentKind).toBe("html");
+      expect(success.pragma).toBe(
+        "<!-- ra11y-disable-next-line document/iframe-title: embed is decorative; companion <p> describes the content -->",
+      );
+      const updated = await readFile(filePath, "utf8");
+      const lines = updated.split("\n");
+      expect(lines[2]).toBe(success.pragma);
+      expect(lines[3]).toBe('<iframe src="https://example.com/video"></iframe>');
+    });
+  });
+
+  it("accepts .markdown long-form extension as well", async () => {
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "doc.markdown");
+      const original = ["## Stats", "", "<table><tr><td>data</td></tr></table>", ""].join("\n");
+      await writeFile(filePath, original);
+
+      const session = allowWriteSession();
+      const { isError, body } = await call(session, {
+        file: filePath,
+        line: 3,
+        ruleId: "wcag22:1.3.1",
+        reason: "presentational table; CSS resets all semantics",
+        cwd: dir,
+        dryRun: false,
+      });
+
+      expect(isError).toBe(false);
+      const success = body as SuccessBody;
+      expect(success.commentKind).toBe("html");
+      expect(success.pragma).toBe(
+        "<!-- ra11y-disable-next-line wcag22:1.3.1: presentational table; CSS resets all semantics -->",
+      );
+    });
+  });
+
+  it("round-trips through parseInlineDisables — the inserted pragma silences the finding on the next scan", async () => {
+    const { parseInlineDisablesDetailed } = await import("../../../src/config/inline-disables.ts");
+    await withScratch(async (dir) => {
+      const filePath = join(dir, "page.md");
+      const original = ["# Page", "", '<img src="/hero.png">', ""].join("\n");
+      await writeFile(filePath, original);
+
+      const session = allowWriteSession();
+      await call(session, {
+        file: filePath,
+        line: 3,
+        ruleId: "media/alt-text-missing",
+        reason: "decorative hero",
+        cwd: dir,
+        dryRun: false,
+      });
+
+      const updated = await readFile(filePath, "utf8");
+      const { declarations, disableMap } = parseInlineDisablesDetailed(updated);
+      expect(declarations.length).toBe(1);
+      const [decl] = declarations;
+      if (!decl) throw new Error("missing decl");
+      expect(decl.kind).toBe("disable-next-line");
+      expect([...decl.ruleIds]).toEqual(["media/alt-text-missing"]);
+      expect(decl.reason).toBe("decorative hero");
+      // disable-next-line on line N targets line N+1 — same as the
+      // .tsx round-trip test asserts. The original `<img>` was on
+      // line 3; after splice, the pragma sits on line 3 and the img
+      // is on line 4.
+      const targeted = disableMap.get(4);
+      expect(targeted?.has("media/alt-text-missing")).toBe(true);
+    });
+  });
+});
+
 describe("suppress: CSS emits CSS-comment pragma", () => {
   it("writes `/* ra11y-disable-next-line … */` above the target rule", async () => {
     await withScratch(async (dir) => {

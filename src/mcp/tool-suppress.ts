@@ -41,6 +41,18 @@ const LINE_OUT_OF_RANGE = "line-out-of-range" as StructuredErrorCode;
 
 type CommentKind = "jsx" | "line" | "html" | "block";
 
+// `.md` / `.markdown` use `commentKind: "html"` because the markdown
+// parser routes the file through `parseHtml` after stripping markdown
+// syntax (ADR 0025), so findings sit inside the embedded-HTML residue
+// where `<!-- … -->` is the only comment shape that survives both the
+// markdown renderer (raw HTML passes through verbatim in CommonMark
+// and every common SSG dialect) and the existing `parseInlineDisables`
+// reader (which already recognises HTML comments unconditionally —
+// see `src/config/inline-disables.ts`). A kramdown IAL or
+// `{::comment}` form was considered but would require a parallel
+// reader path; the HTML-comment shape works today on the writer half
+// while the reader half stays unchanged.
+
 interface PragmaShape {
   readonly kind: CommentKind;
   readonly open: string;
@@ -60,6 +72,8 @@ const EXT_SHAPES: Readonly<Record<string, PragmaShape>> = {
   ".js": { kind: "line", open: "// ", close: "" },
   ".html": { kind: "html", open: "<!-- ", close: " -->" },
   ".htm": { kind: "html", open: "<!-- ", close: " -->" },
+  ".md": { kind: "html", open: "<!-- ", close: " -->" },
+  ".markdown": { kind: "html", open: "<!-- ", close: " -->" },
   ".css": { kind: "block", open: "/* ", close: " */" },
 };
 
@@ -67,7 +81,7 @@ export const suppressTool: McpTool = {
   def: {
     name: "suppress",
     description:
-      "Insert a source-level `ra11y-disable-next-line` pragma above a target line so a specific finding stops firing on subsequent scans. Requires session `allowWrite: true` (same gate as `apply_fix`). Reason text is REQUIRED; a bare suppression is rejected with `reason-required` because an un-justified silence is the failure mode source pragmas exist to prevent.\n\nDefault behavior is NON-destructive: `dryRun: true` (default, mirroring `apply_fix`) computes the pragma + insertion line in memory, returns the preview envelope, and never touches disk. Flip `dryRun: false` to actually write. Both modes return the same `pragma`, `insertedLine`, and `commentKind`; the write-mode response additionally sets `applied: true` and includes a `revertHint` with the `git checkout --` command that restores the file.\n\nPragma shape is chosen from the file extension:\n  - .tsx/.jsx → `{/* ra11y-disable-next-line <ruleId>: <reason> */}`\n  - .ts/.js → `// ra11y-disable-next-line <ruleId>: <reason>`\n  - .html/.htm → `<!-- ra11y-disable-next-line <ruleId>: <reason> -->`\n  - .css → `/* ra11y-disable-next-line <ruleId>: <reason> */`\n\nIndentation matches the target line so the inserted comment stays visually aligned with the code it suppresses. The tool uses the `-disable-next-line` variant (not the region-opening bare `-disable`) because the input is a single line number — a bare region pragma without a matching `-enable` would silence every following line.\n\n`ruleId` accepts either a rule ID (e.g. `keyboard/handler-missing`) or a criterion ID (e.g. `wcag22:2.4.5`); the pragma parser honors both.",
+      "Insert a source-level `ra11y-disable-next-line` pragma above a target line so a specific finding stops firing on subsequent scans. Requires session `allowWrite: true` (same gate as `apply_fix`). Reason text is REQUIRED; a bare suppression is rejected with `reason-required` because an un-justified silence is the failure mode source pragmas exist to prevent.\n\nDefault behavior is NON-destructive: `dryRun: true` (default, mirroring `apply_fix`) computes the pragma + insertion line in memory, returns the preview envelope, and never touches disk. Flip `dryRun: false` to actually write. Both modes return the same `pragma`, `insertedLine`, and `commentKind`; the write-mode response additionally sets `applied: true` and includes a `revertHint` with the `git checkout --` command that restores the file.\n\nPragma shape is chosen from the file extension:\n  - .tsx/.jsx → `{/* ra11y-disable-next-line <ruleId>: <reason> */}`\n  - .ts/.js → `// ra11y-disable-next-line <ruleId>: <reason>`\n  - .html/.htm → `<!-- ra11y-disable-next-line <ruleId>: <reason> -->`\n  - .md/.markdown → `<!-- ra11y-disable-next-line <ruleId>: <reason> -->` (raw HTML comment; markdown passes it through verbatim and the pragma reader already recognises the HTML form)\n  - .css → `/* ra11y-disable-next-line <ruleId>: <reason> */`\n\nIndentation matches the target line so the inserted comment stays visually aligned with the code it suppresses. The tool uses the `-disable-next-line` variant (not the region-opening bare `-disable`) because the input is a single line number — a bare region pragma without a matching `-enable` would silence every following line.\n\n`ruleId` accepts either a rule ID (e.g. `keyboard/handler-missing`) or a criterion ID (e.g. `wcag22:2.4.5`); the pragma parser honors both.",
     inputSchema: {
       type: "object",
       properties: {
@@ -274,7 +288,7 @@ async function preflight(
     return {
       error: errorResult({
         code: "file-unsupported",
-        message: `Unsupported file extension for ${resolved}. suppress handles .tsx/.jsx, .ts/.js, .html/.htm, and .css only.`,
+        message: `Unsupported file extension for ${resolved}. suppress handles .tsx/.jsx, .ts/.js, .html/.htm, .md/.markdown, and .css only.`,
         details: { filePath: resolved },
       }),
     };

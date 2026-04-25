@@ -110,7 +110,9 @@ function buildSuppressPragma(filePath: string, ruleId: string): string {
     lower.endsWith(".htm") ||
     lower.endsWith(".astro") ||
     lower.endsWith(".svg") ||
-    lower.endsWith(".erb")
+    lower.endsWith(".erb") ||
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown")
   ) {
     // Astro templates are HTML, so the HTML-comment disable form is
     // the one that parses inside an Astro template body (a
@@ -120,7 +122,14 @@ function buildSuppressPragma(filePath: string, ruleId: string): string {
     // is XML, which also accepts `<!-- … -->` comments. ERB
     // templates are HTML skeletons with embedded Ruby; `<!-- … -->`
     // survives the ERB pre-processor verbatim and is the right form
-    // for the rendered HTML reviewer too.
+    // for the rendered HTML reviewer too. Markdown (.md / .markdown)
+    // routes through `parseHtml` after the markdown stripper (ADR
+    // 0025), so findings sit inside embedded-HTML residue where raw
+    // HTML comments pass through CommonMark verbatim and the pragma
+    // reader already accepts them. The shape echoed here matches the
+    // `suppress` tool's writer half so an agent calling
+    // `suppress({ file: "docs.md", … })` lands the same text the
+    // scan response promised.
     return `<!-- ra11y-disable-next-line ${ruleId} -->`;
   }
   if (lower.endsWith(".tsx") || lower.endsWith(".jsx") || lower.endsWith(".mdx")) {
@@ -149,6 +158,9 @@ function buildSuppressPlacement(filePath: string): string {
     lower.endsWith(".erb")
   ) {
     return "Place on the line immediately above the opening tag of the flagged element.";
+  }
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    return "Place on the line immediately above the embedded-HTML element the finding refers to (the markdown parser only flags findings on raw HTML residue — `<table>`, `<iframe>`, `<img>` synthesized from `![alt](url)`, etc.). The `<!-- … -->` shape passes through the markdown renderer verbatim.";
   }
   return "Place on the line immediately above the flagged statement.";
 }
