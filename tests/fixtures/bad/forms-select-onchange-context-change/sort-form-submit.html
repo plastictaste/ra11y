@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Results</title></head>
+  <body>
+    <form action="/results" method="get">
+      <label for="sort">Sort by</label>
+      <select id="sort" name="sort" onchange="this.form.submit()">
+        <option value="date">Date</option>
+        <option value="rank">Rank</option>
+      </select>
+    </form>
+  </body>
+</html>
