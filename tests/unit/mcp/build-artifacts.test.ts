@@ -34,12 +34,12 @@ import {
   BASENAME_GROUP_THRESHOLD,
   type BuildArtifactReason,
   type BuildArtifactSignal,
-  type ScannedBuildArtifact,
   classifyBuildArtifact,
   classifyBuildArtifactDetailed,
   collectBuildArtifacts,
   groupBuildArtifactsByBasename,
   isBuildArtifact,
+  type ScannedBuildArtifact,
 } from "../../../src/mcp/build-artifacts.ts";
 
 /**
@@ -51,8 +51,10 @@ import {
  * additions to the {@link BuildArtifactSignal} union don't force a
  * shotgun edit across the synthetic test entries.
  */
-const STUB_SIGNAL = { kind: "build-dir-segment", value: "dist/" } as const satisfies
-  BuildArtifactSignal;
+const STUB_SIGNAL = {
+  kind: "build-dir-segment",
+  value: "dist/",
+} as const satisfies BuildArtifactSignal;
 
 /**
  * Build a synthetic `{ path, reason, signal }` entry for the grouping
@@ -723,7 +725,11 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([]);
     expect(out.ungrouped).toEqual([
-      { path: "dist/a.min.css", reason: "minified", signal: { kind: "min-infix", value: "a.min.css" } },
+      {
+        path: "dist/a.min.css",
+        reason: "minified",
+        signal: { kind: "min-infix", value: "a.min.css" },
+      },
       {
         path: "dist/other/a.min.css",
         reason: "minified",
@@ -850,10 +856,7 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // constant ensures future edits stay aligned with the paired
     // exclude-collapse logic.
     expect(BASENAME_GROUP_THRESHOLD).toBe(3);
-    const two = [
-      mkEntry("/root/a/x.css", "dist-path"),
-      mkEntry("/root/b/x.css", "dist-path"),
-    ];
+    const two = [mkEntry("/root/a/x.css", "dist-path"), mkEntry("/root/b/x.css", "dist-path")];
     expect(groupBuildArtifactsByBasename(two, "/root").grouped).toEqual([]);
     const three = [...two, mkEntry("/root/c/x.css", "dist-path")];
     expect(groupBuildArtifactsByBasename(three, "/root").grouped.length).toBe(1);

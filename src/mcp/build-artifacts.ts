@@ -631,18 +631,24 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
 }
 
 /**
- * Returns true when the single-long-line probe fires AND at least one
- * second-tier corroborator also fires:
+ * Returns the structured `max-line-length-exceeds-threshold` signal
+ * when both the single-long-line probe AND a second-tier
+ * corroborator also fire; `null` otherwise. The two corroborators
+ * catch different bundle shapes:
  *   (a) ≥{@link MINIFIED_LONG_LINE_MIN_COUNT} long lines AND ≥
  *       {@link MINIFIED_LONG_LINE_RATIO} of lines exceed
- *       {@link MINIFIED_LINE_THRESHOLD}, OR
- *   (b) the median line length itself exceeds the threshold.
+ *       {@link MINIFIED_LINE_THRESHOLD} ("many long lines" — canonical
+ *       minified CSS with one rule per line but every line long), OR
+ *   (b) the median line length itself exceeds the threshold ("one
+ *       enormous line file" — canonical minified JS bundle with
+ *       everything on a single unwrapped line).
  *
- * The two corroborators catch different bundle shapes: (a) covers
- * "many long lines" (canonical minified CSS with one rule per line
- * but every line long), while (b) covers "one enormous line file"
- * (canonical minified JS bundle with everything on a single unwrapped
- * line).
+ * The returned signal carries the longest observed line length as
+ * `value`, the {@link MINIFIED_LINE_THRESHOLD} as `threshold`, and a
+ * `corroborator` discriminator (`median` or `ratio`) naming which
+ * conjunct carried the verdict — the agent can re-verify either
+ * branch by reading those three fields, no scanner re-run required
+ * (V1-BUILD-ARTIFACT-REASON-EXPLAIN).
  *
  * The count floor on (a) is load-bearing: without it a 4-line
  * authored file with a single >500-char line satisfies the ratio at
@@ -661,26 +667,6 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
  * {@link collectBuildArtifacts}); they do not need to participate
  * here because a file carrying any of them is already labeled
  * before the corroborated-long-line branch runs.
- */
-function hasLongMinifiedLineCorroborated(source: string): boolean {
-  return detectLongMinifiedLine(source) !== null;
-}
-
-/**
- * Detailed sibling of {@link hasLongMinifiedLineCorroborated}:
- * returns the structured `max-line-length-exceeds-threshold` signal
- * when both the single-long-line probe and a second-tier
- * corroborator fire, or `null` otherwise. The returned signal carries
- * the longest observed line length as `value`, the
- * {@link MINIFIED_LINE_THRESHOLD} as `threshold`, and the
- * `corroborator` discriminator that names which conjunct (`median`
- * or `ratio`) carried the verdict — the agent reading the signal
- * can re-verify either branch without re-running the scanner.
- *
- * Per V1-BUILD-ARTIFACT-REASON-EXPLAIN: this surfaces ONLY evidence
- * the existing `hasLongMinifiedLineCorroborated` already gathered;
- * no new predicate fires here. Both helpers stay aligned because
- * the boolean wrapper now delegates to this one.
  */
 function detectLongMinifiedLine(source: string): BuildArtifactSignal | null {
   if (!hasLongMinifiedLine(source)) return null;
@@ -776,10 +762,7 @@ export function collectBuildArtifacts(
  * convention. A sourcemap itself is never classified, so the probe
  * short-circuits on `.map` input.
  */
-function findSiblingSourcemap(
-  filePath: string,
-  pathsInSet: ReadonlySet<string>,
-): string | null {
+function findSiblingSourcemap(filePath: string, pathsInSet: ReadonlySet<string>): string | null {
   const normalized = filePath.replace(/\\/g, "/");
   if (normalized.endsWith(".map")) return null;
   const candidate = `${normalized}.map`;
