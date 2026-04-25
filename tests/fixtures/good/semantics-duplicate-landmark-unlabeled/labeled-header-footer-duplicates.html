@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Labeled header and footer duplicates</title>
+  </head>
+  <body>
+    <!-- Two body-level <header> landmarks are fine when each carries
+         a distinguishing aria-label — screen readers announce
+         "Site banner, banner" and "Promotional banner, banner". -->
+    <header aria-label="Site">
+      <img src="logo.svg" alt="Acme" />
+    </header>
+    <header aria-label="Promotional">
+      <p>Limited-time announcement.</p>
+    </header>
+    <main>
+      <h1>Welcome</h1>
+      <p>Body.</p>
+    </main>
+    <footer aria-label="Legal">
+      <p>&copy; 2026 Acme Inc.</p>
+    </footer>
+    <footer aria-label="Sitemap">
+      <a href="/sitemap">Sitemap</a>
+    </footer>
+  </body>
+</html>

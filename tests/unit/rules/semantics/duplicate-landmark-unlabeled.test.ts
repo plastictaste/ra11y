@@ -83,6 +83,66 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
       expect(violations).toHaveLength(2);
       expect(violations[0]?.message).toContain("<form>");
     });
+
+    it("a full page has two body-level <header> elements", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>Site title</header>",
+        "    <main>content</main>",
+        "    <header>Promo banner</header>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(2);
+      expect(violations[0]?.message).toContain("<header>");
+      expect(violations[0]?.suggestion).toContain("Site header");
+    });
+
+    it("a full page has two body-level <footer> elements", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <footer>Legal</footer>",
+        "    <footer>Sitemap</footer>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(2);
+      expect(violations[0]?.message).toContain("<footer>");
+      expect(violations[0]?.suggestion).toContain("Site footer");
+    });
+
+    it("one <header> labeled, one body-level <header> unlabeled → only the unlabeled fires", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header aria-label='Site'>logo</header>",
+        "    <header>Promo</header>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.location.line).toBe(4);
+      expect(violations[0]?.suggestion).toContain("1 does");
+    });
+
+    it("two body-level <header> elements in a fragment file", () => {
+      // Two same-type landmarks observable in the fragment is the
+      // deterministic duplicate path — fires per-instance, just like
+      // the two-form fragment case for <form>.
+      const source = [
+        "<header>Site title</header>",
+        "<main>article body</main>",
+        "<header>Article header</header>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "_layouts/page.html" });
+      expect(violations).toHaveLength(2);
+      expect(violations[0]?.message).toContain("<header>");
+    });
   });
 
   describe("does not fire when", () => {
@@ -181,6 +241,108 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
       const violations = runRule(rule, source, { filePath: "_includes/search.html" });
       expect(violations).toHaveLength(0);
     });
+
+    it("a body-level <header> coexists with a <header> inside <article> (not a duplicate)", () => {
+      // The <header> inside <article> is a generic group, not a banner
+      // landmark, so it does not count toward the duplicate predicate.
+      // Only one banner landmark exists → no firing.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>Site</header>",
+        "    <article>",
+        "      <header><h1>Article title</h1><p>byline</p></header>",
+        "      <p>body</p>",
+        "    </article>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("two <footer> elements both nested inside <article>/<section> (no contentinfo landmark)", () => {
+      // Both footers are nested inside sectioning content, so neither is
+      // a contentinfo landmark; the duplicate predicate does not fire.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <main>",
+        "      <article>",
+        "        <p>article 1 body</p>",
+        "        <footer>article 1 metadata</footer>",
+        "      </article>",
+        "      <section>",
+        "        <p>section body</p>",
+        "        <footer>section metadata</footer>",
+        "      </section>",
+        "    </main>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a body-level <header> alongside two <header>s nested in sectioning content", () => {
+      // Only the body-level <header> is a banner landmark; the two nested
+      // ones are generic groups. One landmark total → no duplicate.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>Site</header>",
+        "    <main>",
+        "      <article>",
+        "        <header><h1>Article 1</h1></header>",
+        "        <p>body</p>",
+        "      </article>",
+        "      <section>",
+        "        <header><h2>Sub-section</h2></header>",
+        "        <p>body</p>",
+        "      </section>",
+        "    </main>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a single body-level <header> with a labeled second body-level <header>", () => {
+      // Two banner landmarks but both have aria-label → no duplicate
+      // ambiguity in the screen-reader landmark list.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header aria-label='Site'>logo</header>",
+        "    <header aria-label='Promotional'>announcement</header>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a single body-level <header> alone (no duplicate)", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>Site</header>",
+        "    <main>content</main>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a fragment with a single body-level <footer> does not fire", () => {
+      // Single landmark in a fragment is the heuristic-emission case
+      // the rule deliberately avoids — same shape as single <nav>.
+      const source = ["<footer>", "  <p>contact info</p>", "</footer>"].join("\n");
+      const violations = runRule(rule, source, { filePath: "_includes/footer.html" });
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("edge cases", () => {
@@ -224,6 +386,45 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
     it("non-HTML files are not scanned", () => {
       const violations = runRule(rule, "export const x = 1;", { filePath: "a.tsx" });
       expect(violations).toHaveLength(0);
+    });
+
+    it("<header> inside <aside> is excluded (aside is sectioning content)", () => {
+      // Two body-level <header>s would normally fire; the <header>
+      // inside <aside> is a generic group and does not count. Only
+      // one banner landmark observable → no duplicate.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>Site</header>",
+        "    <aside>",
+        "      <header>Sidebar heading</header>",
+        "      <p>related content</p>",
+        "    </aside>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("two body-level <header>s both unlabeled, suggestion enumerates the other line", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <header>Site</header>",
+        "    <main>content</main>",
+        "    <header>Promo</header>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(2);
+      // First flagged <header> at line 3; suggestion should reference line 5.
+      expect(violations[0]?.location.line).toBe(3);
+      expect(violations[0]?.suggestion).toContain("line 5");
+      // Second flagged <header> at line 5; suggestion should reference line 3.
+      expect(violations[1]?.location.line).toBe(5);
+      expect(violations[1]?.suggestion).toContain("line 3");
     });
   });
 });

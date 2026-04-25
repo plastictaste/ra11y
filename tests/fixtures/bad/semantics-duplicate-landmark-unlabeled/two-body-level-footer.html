@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Two body-level footer landmarks</title>
+  </head>
+  <body>
+    <main>
+      <h1>Article</h1>
+      <p>Body content.</p>
+    </main>
+    <!-- Both <footer> elements are direct children of <body>, so
+         each is a 'contentinfo' landmark. Without aria-label, both
+         announce as the same generic "contentinfo" and the user
+         can't tell them apart in the landmark list. -->
+    <footer>
+      <p>&copy; 2026 Acme Inc.</p>
+    </footer>
+    <footer>
+      <a href="/sitemap">Sitemap</a>
+      <a href="/contact">Contact</a>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Header inside article is not a banner landmark</title>
+  </head>
+  <body>
+    <!-- Only the body-level <header> is a banner landmark; the
+         <header> nested inside <article> is a generic group with no
+         landmark role per ARIA-in-HTML §4.1.2. One landmark observed
+         → no duplicate predicate triggered. -->
+    <header>
+      <img src="logo.svg" alt="Acme" />
+    </header>
+    <main>
+      <article>
+        <header>
+          <h1>Article title</h1>
+          <p class="byline">Posted 2026-04-25</p>
+        </header>
+        <p>Article body.</p>
+      </article>
+    </main>
+  </body>
+</html>

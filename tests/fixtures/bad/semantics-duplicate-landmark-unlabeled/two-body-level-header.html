@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Two body-level header landmarks</title>
+  </head>
+  <body>
+    <!-- Both <header> elements are direct children of <body>, so
+         each is a 'banner' landmark per ARIA-in-HTML. With no
+         aria-label / aria-labelledby on either one, screen-reader
+         users hear "banner, banner" in the landmark list and have
+         to enter both to find the one they wanted. -->
+    <header>
+      <img src="logo.svg" alt="Acme" />
+    </header>
+    <main>
+      <h1>Welcome</h1>
+      <p>Body content.</p>
+    </main>
+    <header>
+      <p>Limited-time promotional banner.</p>
+    </header>
+  </body>
+</html>
