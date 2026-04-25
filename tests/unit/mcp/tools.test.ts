@@ -198,6 +198,60 @@ describe("MCP tool: list_rules", () => {
     expect(data.nextStepStructured.tool).toBe("scan_project");
     expect(data.nextStepStructured.args).toEqual({ standard: "wcag21" });
   });
+
+  it("displays equivalentTo-resolved satisfies so same-family rules share the cross-standard shape", async () => {
+    // Same-family rules currently hand-curate `satisfies` differently:
+    // `semantics/table-caption-missing` declares all 4 standards,
+    // `semantics/table-headers` declares only wcag22 + wcag21.
+    // After resolution through the reciprocal `equivalentTo` index,
+    // every rule that satisfies a 1.3.1-family criterion must surface
+    // its `wcag22:`, `wcag21:`, `section508:`, and `en301549:`
+    // equivalents — otherwise an agent filtering by Section 508 sees
+    // an inconsistent rule subset (matched against declared shape)
+    // that does not reflect actual coverage.
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      rules: Array<{ id: string; satisfies: string[] }>;
+    };
+
+    const tableRuleIds = [
+      "semantics/table-caption-missing",
+      "semantics/table-headers",
+      "semantics/table-th-scope-missing",
+    ];
+    for (const ruleId of tableRuleIds) {
+      const entry = data.rules.find((r) => r.id === ruleId);
+      expect(entry, `expected ${ruleId} in rules list`).toBeDefined();
+      const satisfies = entry?.satisfies ?? [];
+      expect(satisfies, `${ruleId} should resolve wcag22:1.3.1`).toContain("wcag22:1.3.1");
+      expect(satisfies, `${ruleId} should resolve wcag21:1.3.1`).toContain("wcag21:1.3.1");
+      expect(satisfies, `${ruleId} should resolve section508:1.3.1`).toContain("section508:1.3.1");
+      expect(satisfies, `${ruleId} should resolve en301549:9.1.3.1`).toContain("en301549:9.1.3.1");
+    }
+  });
+
+  it("standard filter matches rules through the equivalentTo-resolved set", async () => {
+    // A rule that declared only `wcag22:1.3.1` + `wcag21:1.3.1` must
+    // still appear under the `section508` filter because
+    // `section508:1.3.1` is reachable via the reciprocal equivalentTo
+    // index. Filtering on the raw declared shape would silently drop
+    // the rule and force agents auditing Section 508 to cross-read
+    // every rule's metadata against the standards registry.
+    const tool = findTool("list_rules");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "section508" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      rules: Array<{ id: string; satisfies: string[] }>;
+    };
+
+    const tableHeaders = data.rules.find((r) => r.id === "semantics/table-headers");
+    expect(tableHeaders).toBeDefined();
+    expect(tableHeaders?.satisfies).toContain("section508:1.3.1");
+  });
 });
 
 describe("MCP tool: explain_rule", () => {

@@ -142,7 +142,7 @@ const listRulesTool: McpTool = {
   def: {
     name: "list_rules",
     description:
-      "List all available accessibility rules with their ID, severity, and what criteria they satisfy. Call once to understand what ra11y checks.",
+      "List all available accessibility rules with their ID, severity, and what criteria they satisfy. Call once to understand what ra11y checks. Each rule's `satisfies` is the full cross-standard set — declared criteria first, then equivalents from every loaded standard via the `equivalentTo` reciprocal index — so adjacent same-family rules report the same shape regardless of how many standards their authors hand-listed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -173,8 +173,22 @@ const listRulesTool: McpTool = {
             "Pass `standard` with one of the loaded IDs, or omit to list rules from every loaded standard.",
         });
       }
+      // V1-LIST-RULES-SATISFIES-INCONSISTENT-ACROSS-FAMILY: filter on
+      // the equivalentTo-resolved set, not the rule's hand-curated
+      // `satisfies` array. Same-family rules currently declare
+      // different shapes (`semantics/table-caption-missing` lists all
+      // 4 standards, `semantics/table-headers` lists only 2) and a
+      // raw-prefix filter on `section508` would drop `table-headers`
+      // even though it satisfies `section508:1.3.1` via the
+      // reciprocal equivalentTo index. Expanding the declared set
+      // through `equivalenceClosure` collapses the inconsistency at
+      // display time without forcing every rule author to re-declare
+      // the same cross-standard fan-out (CLAUDE.md §6: thin standards
+      // get coverage for free via equivalence).
       const prefix = `${standardFilter}:`;
-      rules = rules.filter((r) => r.satisfies.some((s) => s.startsWith(prefix)));
+      rules = rules.filter((r) =>
+        expandSatisfies(r.satisfies, session).some((s) => s.startsWith(prefix)),
+      );
     }
 
     // V1-INFRA-RULE-ID-ALIAS-TABLE: surface active rule-ID aliases as
@@ -184,13 +198,15 @@ const listRulesTool: McpTool = {
     // `to` target's metadata (description, severity, satisfies) so the
     // old entry stays navigable — the user may already have
     // `keyboard/handler-missing` in their pragmas and needs to know it
-    // still works. The standard filter applies to the aliased-to
-    // rule's `satisfies`, matching the behavior above so agents
-    // scoping by framework see only relevant aliases.
+    // still works. The standard filter and the displayed `satisfies`
+    // both resolve through `expandSatisfies` so deprecated aliases
+    // share the same equivalentTo-resolved shape as their canonical
+    // targets.
     const aliasEntries = RULE_ALIASES.flatMap((alias) => {
       const target = session.registry.findRule(alias.to);
       if (target === undefined) return [];
-      if (standardFilter && !target.satisfies.some((s) => s.startsWith(`${standardFilter}:`))) {
+      const resolved = expandSatisfies(target.satisfies, session);
+      if (standardFilter && !resolved.some((s) => s.startsWith(`${standardFilter}:`))) {
         return [];
       }
       return [
@@ -198,7 +214,7 @@ const listRulesTool: McpTool = {
           id: alias.from,
           description: target.docs.description,
           severity: target.severity,
-          satisfies: [...target.satisfies],
+          satisfies: [...resolved],
           deprecated: true as const,
           replacedBy: alias.to,
           deprecatedSince: alias.deprecatedSince,
@@ -210,7 +226,7 @@ const listRulesTool: McpTool = {
       id: r.id,
       description: r.docs.description,
       severity: r.severity,
-      satisfies: [...r.satisfies],
+      satisfies: [...expandSatisfies(r.satisfies, session)],
     }));
 
     // Envelope parity with the other onboarding tools (propose_config,
