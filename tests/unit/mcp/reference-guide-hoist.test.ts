@@ -829,3 +829,215 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
     }
   });
 });
+
+
+/**
+ * Q7-FIXDESCRIPTIONREF-PAGINATION-DICT — per-page lookup completeness.
+ *
+ * The hash-dedup hoist saves bytes only if every `fixDescriptionRef.hash`
+ * a caller sees on a page can be resolved in THAT page's
+ * `referenceGuide.fixDescriptions`. The doctrine "Ambiguous field shapes
+ * are dishonest" applies: a finding carrying `fixDescriptionRef: { hash }`
+ * with no matching lookup entry forces the agent to disambiguate
+ * "missing prose" from "lookup table not yet retrieved" — the silent
+ * miss the doctrine warns against.
+ *
+ * `tool-scan-project.ts` runs `hoistAndBuildReferenceGuide` over the
+ * paged file slice (post-pagination), so each page recomputes its own
+ * `fixDescriptions`. The invariant below pins that contract: for any
+ * `(offset, limit)` window over a finding set, the hoist must produce a
+ * `fixDescriptions` map that resolves every `fixDescriptionRef.hash`
+ * the page's findings carry AND every `groupFixDescriptionRefs[].hash`
+ * any file on the page exposes. Out-of-order paged retrieval (offset-
+ * jump, parallel page fetch) must work — no page may depend on another
+ * page's lookup table. The bug as originally framed in the backlog
+ * ("dict only on the first page") doesn't reproduce in current code;
+ * per-page recomputation in `tool-scan-project.ts` was already in
+ * place. These tests pin the invariant so a future refactor can't
+ * silently regress to whole-set hoist + slice (which WOULD have the
+ * silent-miss failure mode the backlog described).
+ */
+describe("hoistAndBuildReferenceGuide — Q7 per-page lookup completeness invariant", () => {
+  /**
+   * Walks one page's hoisted output and asserts every hash referenced by
+   * findings (per-finding ref) or by file-level group refs is present in
+   * the page's fixDescriptions lookup.
+   */
+  function assertPageLookupComplete(
+    page: ReturnType<typeof hoistAndBuildReferenceGuide<AgentFinding>>,
+  ): void {
+    const lookup = page.referenceGuide?.fixDescriptions;
+    for (const file of page.files) {
+      for (const f of file.findings) {
+        const hash = f.fixDescriptionRef?.hash;
+        if (hash === undefined) continue;
+        const resolved = lookup?.[f.ruleId]?.[hash];
+        expect(
+          resolved,
+          `per-finding ref hash ${hash} on rule ${f.ruleId} (file ${file.path}) does not resolve in fixDescriptions`,
+        ).toBeDefined();
+      }
+      for (const groupRef of file.groupFixDescriptionRefs ?? []) {
+        // Group-level refs need a resolving entry under SOME rule in
+        // the lookup — the per-file group lift collapses siblings under
+        // a shared groupKey, and the rule the group sits under is the
+        // rule of the underlying findings (which kept their groupKey).
+        const ruleIdsInFile = new Set(file.findings.map((f) => f.ruleId));
+        let found = false;
+        for (const ruleId of ruleIdsInFile) {
+          if (lookup?.[ruleId]?.[groupRef.hash] !== undefined) {
+            found = true;
+            break;
+          }
+        }
+        expect(
+          found,
+          `group-level ref hash ${groupRef.hash} on file ${file.path} does not resolve in fixDescriptions for any rule on the file`,
+        ).toBe(true);
+      }
+    }
+  }
+
+  it("INVARIANT: page 1 lookup resolves every referenced hash (offset=0)", () => {
+    // Ten files, each with one finding under the same rule + same
+    // description — full-set hoist gives every finding a ref. Page 1
+    // (offset 0, limit 5) must carry a complete fixDescriptions table
+    // for the five findings on that page.
+    const desc = "Add an aria-label to the interactive element.";
+    const allFiles = Array.from({ length: 10 }, (_, i) => ({
+      path: `f${i}.tsx`,
+      findings: [
+        finding({
+          ruleId: "aria/label-required",
+          groupKey: `g-${i}`,
+          fix: { description: desc },
+        }),
+      ],
+    }));
+    const page1 = hoistAndBuildReferenceGuide(allFiles.slice(0, 5), {
+      suppressPlacement: { tsx: "place" },
+    });
+    assertPageLookupComplete(page1);
+  });
+
+  it("INVARIANT: page 2 lookup resolves every referenced hash (offset-jump, no dependency on page 1)", () => {
+    // Same setup as page 1 but with offset=5. The page must carry its
+    // OWN fixDescriptions for the five findings on this page; an agent
+    // hitting page 2 first (or in parallel with page 1) must see a
+    // complete lookup without page 1 in hand.
+    const desc = "Add an aria-label to the interactive element.";
+    const allFiles = Array.from({ length: 10 }, (_, i) => ({
+      path: `f${i}.tsx`,
+      findings: [
+        finding({
+          ruleId: "aria/label-required",
+          groupKey: `g-${i}`,
+          fix: { description: desc },
+        }),
+      ],
+    }));
+    const page2 = hoistAndBuildReferenceGuide(allFiles.slice(5, 10), {
+      suppressPlacement: { tsx: "place" },
+    });
+    assertPageLookupComplete(page2);
+  });
+
+  it("INVARIANT: singleton-on-page stays inline (no orphaned ref) even when whole-set has multiple", () => {
+    // Across the whole 10-file set, rule `r/dup` has 10 findings. But
+    // the last page (offset 9, limit 5) contains only ONE of them —
+    // the per-page tally sees one finding under `r/dup`, which is
+    // below the hoist threshold, so the description stays inline on
+    // that page. No orphan ref left dangling — the failure mode where
+    // a per-page hoist would emit a ref against a missing lookup.
+    const desc = "Cross-page repeat description.";
+    const allFiles = Array.from({ length: 10 }, (_, i) => ({
+      path: `f${i}.tsx`,
+      findings: [
+        finding({
+          ruleId: "r/dup",
+          groupKey: `g-${i}`,
+          fix: { description: desc },
+        }),
+      ],
+    }));
+    // offset 9, limit 5 → just one file (f9) on this last page.
+    const lastPage = hoistAndBuildReferenceGuide(allFiles.slice(9, 14), {
+      suppressPlacement: { tsx: "place" },
+    });
+    assertPageLookupComplete(lastPage);
+    // Belt-and-suspenders: that singleton finding must keep inline, no
+    // ref. Otherwise the lookup-completeness assertion would have to
+    // accept an empty lookup, which would be the dishonest shape this
+    // invariant guards against.
+    const onlyFinding = lastPage.files[0]?.findings[0];
+    expect(onlyFinding?.fix?.description).toBe(desc);
+    expect(onlyFinding?.fixDescriptionRef).toBeUndefined();
+  });
+
+  it("INVARIANT: every page over the same finding set is independently lookup-complete", () => {
+    // Sweep three windows over a 12-file set where the same description
+    // repeats — proves no page leaks a hash whose entry sits on another
+    // page only. Mirrors out-of-order or parallel page fetch.
+    const desc = "Ensure the form control has an associated label.";
+    const allFiles = Array.from({ length: 12 }, (_, i) => ({
+      path: `f${i}.html`,
+      findings: [
+        finding({
+          ruleId: "forms/labels-required",
+          groupKey: `g-${i}`,
+          fix: { description: desc },
+        }),
+      ],
+    }));
+    const windows: readonly { offset: number; limit: number }[] = [
+      { offset: 0, limit: 4 },
+      { offset: 4, limit: 4 },
+      { offset: 8, limit: 4 },
+    ];
+    for (const { offset, limit } of windows) {
+      const slice = allFiles.slice(offset, offset + limit);
+      const page = hoistAndBuildReferenceGuide(slice, {
+        suppressPlacement: { html: "place" },
+      });
+      assertPageLookupComplete(page);
+    }
+  });
+
+  it("INVARIANT: per-file group-lift hashes also resolve in the same page's fixDescriptions", () => {
+    // Six findings in one file share groupKey + description — the
+    // per-file group lift fires, file carries `groupFixDescriptionRefs`
+    // and per-finding refs are stripped. The group ref's hash MUST
+    // resolve in this same page's fixDescriptions; otherwise the agent
+    // walking from `groupFixDescriptionRefs[].hash` to the lookup hits
+    // the same dishonest "ref-without-resolution" shape this invariant
+    // guards against, just at the file level instead of the finding
+    // level.
+    const desc = "Associate every input with a label.";
+    const files = [
+      {
+        path: "verify-account-ui/index.html",
+        findings: Array.from({ length: 6 }, (_, i) =>
+          finding({
+            ruleId: "forms/labels-required",
+            groupKey: "grp-labels",
+            line: i + 1,
+            findingId: `id-${i}`,
+            fix: { description: desc },
+          }),
+        ),
+      },
+    ];
+    const page = hoistAndBuildReferenceGuide(files, {
+      suppressPlacement: { html: "place" },
+    });
+    assertPageLookupComplete(page);
+    // Belt-and-suspenders: the group lift actually fired (file-level
+    // entry present, per-finding refs stripped), so the invariant test
+    // above truly exercised the group-ref branch and not just the
+    // per-finding branch.
+    expect(page.files[0]?.groupFixDescriptionRefs?.length).toBe(1);
+    for (const f of page.files[0]?.findings ?? []) {
+      expect(f.fixDescriptionRef).toBeUndefined();
+    }
+  });
+});
