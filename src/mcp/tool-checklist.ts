@@ -17,17 +17,17 @@ import { buildCoverageReport, type PerStandardCoverage } from "../reports/covera
 import type { AttestationRecord } from "../types/evidence.ts";
 import type { ReviewCandidate, ReviewConfidence } from "../types/review.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
+import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import {
   type Applicability,
   detectApplicability,
   irrelevanceReason,
   isLikelyIrrelevant,
 } from "./manual-applicability.ts";
-import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
-import { scannedProject, type ScannedEnvelope } from "./scanned-envelope.ts";
+import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import { deriveTestableCriteria } from "./testable-criteria.ts";
