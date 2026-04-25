@@ -9,12 +9,12 @@
       <h1>Alert sample</h1>
       <p>The button below paints "Danger" semantics with the
         <code>btn-danger</code> contextual class. The visible text is
-        also the keyword "Danger" — color is not the only means of
-        conveying meaning to screen-reader users (they receive the
-        word as prose), but it remains the sole signal framing that
-        word as a status for users who cannot resolve the color
-        channel (colorblind users on monochrome rendering, color-
-        inverted themes, localized UIs).</p>
+        also the keyword "Danger" — color is therefore not the sole
+        signal of the danger status, because the prose itself names
+        it. The rule's text-containment gate recognises this and does
+        not fire, resolving the severity / reason mismatch the
+        doctrine flagged on the earlier emit-with-rephrased-reason
+        closure.</p>
       <button type="button" class="btn btn-danger">Danger</button>
     </main>
   </body>

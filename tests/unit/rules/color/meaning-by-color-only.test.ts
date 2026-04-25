@@ -41,7 +41,7 @@ describe("rule color/meaning-by-color-only", () => {
     it("a <span class='text-danger-emphasis'> (Bootstrap 5.3 emphasis variant) fires", () => {
       const violations = runRule(
         rule,
-        `<!doctype html><html><body><span class="text-danger-emphasis">Payment failed</span></body></html>`,
+        `<!doctype html><html><body><span class="text-danger-emphasis">Access denied</span></body></html>`,
         { filePath: "emphasis.html" },
       );
       expect(violations).toHaveLength(1);
@@ -118,7 +118,7 @@ describe("rule color/meaning-by-color-only", () => {
     it("<div className='alert alert-danger'>text</div> fires", () => {
       const violations = runRule(
         rule,
-        `export const X = () => <div className="alert alert-danger">Upload failed</div>;`,
+        `export const X = () => <div className="alert alert-danger">Upload rejected</div>;`,
       );
       expect(violations).toHaveLength(1);
     });
@@ -212,92 +212,36 @@ describe("rule color/meaning-by-color-only", () => {
     });
   });
 
-  describe("text already carries status word (reason/suggestion refinement)", () => {
-    // Real-world trigger: Bootstrap's own visual-test alert.html has
-    // `<button class="btn btn-danger">Danger</button>`. The rule still
-    // fires (color may be the *sole* meaning signal for colorblind
-    // users), but the reason text and fix ranker adapt so the agent
-    // doesn't act on advice that would produce "Danger: Danger".
-    it("HTML: bare-word 'Danger' text still fires the rule", () => {
+  describe("text already carries a status word (does not fire — prose is the second channel)", () => {
+    // Doctrine: "Reason text and severity must agree". The earlier
+    // closure rephrased the reason while still emitting; the durable
+    // closure suppresses emission entirely on this branch — the text-
+    // content whole-word match is deterministic evidence that color is
+    // NOT the sole channel (the prose itself names the status).
+    // Canonical real-world trigger: Bootstrap's own visual-test alert
+    // page has `<button class="btn btn-danger">Danger</button>`.
+
+    it("HTML: bare-word 'Danger' text passes (the prose IS the status word)", () => {
       const violations = runRule(
         rule,
         `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
         { filePath: "alert.html" },
       );
-      expect(violations).toHaveLength(1);
+      expect(violations).toHaveLength(0);
     });
 
-    it("HTML: reason switches to the 'text already carries status word' enrichment", () => {
-      const violations = runRule(
-        rule,
-        `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
-        { filePath: "alert.html" },
-      );
-      expect(violations[0]?.message).toMatch(/already carries a status word/);
-      expect(violations[0]?.message).toMatch(/sole.*meaning signal/);
-      // Must NOT claim "carries no status word" — that was the bug.
-      expect(violations[0]?.message).not.toMatch(/carries no status word/);
-    });
-
-    it("HTML: reason text and severity agree — no concession that 'screen-reader users get the word'", () => {
-      // Doctrine 2026-04-25 ("Reason text and severity must agree"):
-      // when the rule still emits at `error` on a case where the
-      // visible text carries the status word, the reason must not
-      // concede the predicate. The old phrasing — "screen-reader users
-      // reading prose get the word, but colorblind users may lose the
-      // association" — granted the rule's own predicate (the meaning
-      // is NOT color-only for SR users) while keeping severity at
-      // `error`, training the agent to mistrust the rule. The
-      // rewritten reason surfaces the *residual* concern: color may
-      // still be the sole signal that frames the word as a *status*
-      // (vs. ordinary prose) for users who cannot resolve the color
-      // channel.
-      const violations = runRule(
-        rule,
-        `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
-        { filePath: "alert.html" },
-      );
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.severity).toBe("error");
-      const msg = violations[0]?.message ?? "";
-      // No concession that the predicate is satisfied for SR users.
-      expect(msg).not.toMatch(/screen-reader users reading prose get the word/i);
-      // No phrase suggesting the visible text is absent.
-      expect(msg).not.toMatch(/no visible text/i);
-      // Residual concern is framed honestly.
-      expect(msg).toMatch(/color may still be the .?sole.? meaning signal/i);
-      expect(msg).toMatch(/status (rather than|vs\.?) ordinary prose|framing.*status/i);
-    });
-
-    it("HTML: fix suggestion demotes 'prefix with status word' and warns against the tautology", () => {
-      const violations = runRule(
-        rule,
-        `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
-        { filePath: "alert.html" },
-      );
-      const s = violations[0]?.suggestion ?? "";
-      // The demoted option is explicitly called out as a tautology.
-      expect(s).toMatch(/DO NOT prefix/);
-      expect(s).toMatch(/tautology/);
-      // The good paths (icon + sr-only, role=alert, aria-label) still appear.
-      expect(s).toMatch(/visually-hidden/);
-      expect(s).toMatch(/role="alert"/);
-    });
-
-    it("HTML: 'Upload failed' (status word mid-text) also triggers the enrichment", () => {
-      // "failed" is in STATUS_PREFIX_WORDS; the prefix regex misses it
-      // because the first word is "Upload", but the anywhere regex
-      // catches it.
+    it("HTML: 'Upload failed' (status word mid-text) passes", () => {
+      // "failed" is in the status-word list; the anywhere regex matches
+      // it as a whole word, so the prose-channel pass condition fires.
       const violations = runRule(
         rule,
         `<!doctype html><html><body><div class="alert alert-danger">Upload failed</div></body></html>`,
         { filePath: "upload.html" },
       );
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.message).toMatch(/already carries a status word/);
+      expect(violations).toHaveLength(0);
     });
 
-    it("HTML: 'Access denied' (no status word) keeps the original reason and 4-option suggestion", () => {
+    it("HTML: 'Access denied' (no status word) STILL fires — color is the sole channel", () => {
       const violations = runRule(
         rule,
         `<!doctype html><html><body><span class="text-danger">Access denied</span></body></html>`,
@@ -305,42 +249,48 @@ describe("rule color/meaning-by-color-only", () => {
       );
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toMatch(/carries no status word/);
-      // Original suggestion leads with "prefix the visible text".
+      // Suggestion leads with "prefix the visible text" — the text
+      // genuinely lacks a status word, so prefixing is non-tautological.
       expect(violations[0]?.suggestion).toMatch(/prefix the visible text/);
-      expect(violations[0]?.suggestion).not.toMatch(/tautology/);
     });
 
-    it("JSX: <button className='btn btn-danger'>Danger</button> fires with the enriched reason", () => {
+    it("JSX: <button className='btn btn-danger'>Danger</button> passes", () => {
       const violations = runRule(
         rule,
         `export const X = () => <button className="btn btn-danger">Danger</button>;`,
       );
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.message).toMatch(/already carries a status word/);
-      expect(violations[0]?.suggestion).toMatch(/DO NOT prefix/);
+      expect(violations).toHaveLength(0);
     });
 
-    it("JSX: mid-text status word ('Operation failed') triggers the enrichment", () => {
+    it("JSX: 'Operation failed' (mid-text status word) passes", () => {
       const violations = runRule(
         rule,
         `export const X = () => <span className="text-danger">Operation failed</span>;`,
       );
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.message).toMatch(/already carries a status word/);
+      expect(violations).toHaveLength(0);
     });
 
-    it("substring 'warningly' does NOT count as a status word (whole-word match)", () => {
-      // If we mis-coded the anywhere regex without \b, "warningly" would
-      // match "warning". Whole-word matching prevents that.
+    it("substring 'warningly' does NOT count as a status word (whole-word gate)", () => {
+      // If the anywhere regex omitted \b, "warningly" would match
+      // "warning" and the rule would mistakenly pass. The whole-word
+      // gate keeps the rule firing on text that lacks a real status
+      // keyword — color remains the sole channel.
       const violations = runRule(
         rule,
         `<!doctype html><html><body><span class="text-warning">Tread warningly</span></body></html>`,
         { filePath: "substring.html" },
       );
       expect(violations).toHaveLength(1);
-      // "warningly" contains "warning" but not as a whole word, so the
-      // original reason applies.
       expect(violations[0]?.message).toMatch(/carries no status word/);
+    });
+
+    it("'successor' substring does NOT pass the rule (whole-word gate)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><span class="text-success">Choose a successor</span></body></html>`,
+        { filePath: "successor.html" },
+      );
+      expect(violations).toHaveLength(1);
     });
   });
 

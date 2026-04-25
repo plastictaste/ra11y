@@ -32,16 +32,36 @@
  *   2. A screen-reader-only label inside the subtree — descendant with a
  *      class token `visually-hidden`, `sr-only`, `visuallyhidden`, or
  *      `screen-reader-only` that carries any non-empty text.
- *   3. A prose status-name prefix in the element's visible text — the
- *      rendered text starts with "Error:", "Success:", "Warning:",
- *      "Danger:", "Info:", case-insensitive, followed by a colon or a
- *      whitespace+word boundary.
+ *   3. A prose status word anywhere in the element's visible text as a
+ *      whole-word match — "Error", "Success", "Warning", "Danger",
+ *      "Info", "failed", "alert", "caution", "notice" etc., case-
+ *      insensitive. The prose channel carries the status, so color is
+ *      not the only signal.
  *   4. `aria-label` / `aria-labelledby` / `title` with non-empty value —
  *      the author is supplying an accessible name that can carry the
  *      status word even if the visible text doesn't.
  *   5. `role="alert"` or `role="status"` on the element — the ARIA live-
  *      region role already exposes the message as a status message
  *      (WCAG 4.1.3), so the color is no longer the only channel.
+ *
+ * Closure path: suppress emission on the "text already carries a
+ * status word" branch rather than emit-with-enriched-reason. The text-
+ * content whole-word match is deterministic evidence the parser already
+ * has; when it fires, color is provably NOT the sole channel — the prose
+ * itself names the status. Per the AI-first consumer doctrine on "Reason
+ * text and severity must agree", a non-emission decision grounded in
+ * deterministic evidence is consistent with surface-don't-suppress (the
+ * predicate's conditions for non-emission are provable from the code,
+ * not heuristic). Trade-off accepted: false negatives on coincidental
+ * keywords ("The success of the mission depended on…" inside a `text-
+ * success` element) — the whole-word regex picks them up but the
+ * authorial intent there is prose, not status. The agent reading the
+ * file can still flag those via `<!-- ra11y-disable -->` is unnecessary
+ * here because the rule simply does not fire; if we later observe field
+ * reports of true status messages mis-suppressed by accidental keyword
+ * presence, the durable answer is to tighten this gate (e.g., position
+ * within the text, surrounding punctuation), not to flip back to
+ * emit-with-enriched-reason.
  *
  * Flag conditions (all must be true):
  *   - The element has a class attribute containing a status-color token
@@ -138,8 +158,12 @@ const SR_ONLY_TOKENS: ReadonlySet<string> = new Set([
   "sr-only-focusable",
 ]);
 
-/** Status words that, when they open the visible text, satisfy the prose-prefix condition. */
-const STATUS_PREFIX_WORDS: readonly string[] = [
+/**
+ * Status words that, when present anywhere in the visible text as a
+ * whole-word match, satisfy the "prose carries the status" condition
+ * and pass the rule.
+ */
+const STATUS_WORDS: readonly string[] = [
   "error",
   "success",
   "warning",
@@ -155,31 +179,22 @@ const STATUS_PREFIX_WORDS: readonly string[] = [
 ];
 
 /**
- * Regex: starts (after leading whitespace) with a status word, followed
- * by `:` or whitespace. Case-insensitive. Anchored at string start so
- * "The success of the mission…" does NOT match.
+ * Regex: whole-word match of any status word anywhere in the text. The
+ * pass-condition gate — when the visible text contains a status keyword
+ * (e.g., the real-world `<button class="btn btn-danger">Danger</button>`
+ * or `<div class="alert-danger">Upload failed</div>`), the prose itself
+ * carries the status, so color is provably NOT the sole channel and the
+ * rule does not fire. Whole-word match (`\b` boundaries) keeps
+ * "warningly" from matching "warning" and "successor" from matching
+ * "success".
  */
-const STATUS_PREFIX_RE = new RegExp(`^\\s*(${STATUS_PREFIX_WORDS.join("|")})\\b[:\\s]`, "iu");
-
-/**
- * Regex: whole-word match of any status word anywhere in the text. Used
- * AFTER the rule has decided to fire (the prefix gate passed) to detect
- * the "text already carries the status word" case — e.g., the real-world
- * `<button class="btn btn-danger">Danger</button>`, where the visible
- * text IS the status word but without the trailing `:` / whitespace the
- * prefix regex requires. When this matches, the reason text flips to an
- * enrichment ("verify color is not the *sole* meaning signal") and the
- * fix ranker demotes "prefix with status word" (which would produce
- * `"Danger: Danger"` — the regression this branch exists to avoid).
- */
-const STATUS_ANYWHERE_RE = new RegExp(`\\b(${STATUS_PREFIX_WORDS.join("|")})\\b`, "iu");
+const STATUS_ANYWHERE_RE = new RegExp(`\\b(${STATUS_WORDS.join("|")})\\b`, "iu");
 
 /**
  * True when the element's visible text contains a status word anywhere
- * as a whole-word match (case-insensitive). Precondition: the caller
- * already confirmed no second channel is present, so the prefix regex
- * did NOT match — this catches the bare-word case (`"Danger"`, `"Upload
- * failed"`) the prefix regex misses.
+ * as a whole-word match (case-insensitive). Used as a pass condition:
+ * when this matches, the prose IS the second channel and the rule does
+ * not fire.
  */
 function textContainsStatusWord(text: string): boolean {
   return STATUS_ANYWHERE_RE.test(text);
@@ -251,7 +266,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
 function htmlHasSecondChannel(el: HtmlElement): boolean {
   if (htmlHasAccessibleName(el)) return true;
   if (htmlHasStatusRole(el)) return true;
-  if (htmlHasStatusTextPrefix(el)) return true;
+  if (textContainsStatusWord(htmlTextContent(el))) return true;
   for (const descendant of walkHtmlElements(el)) {
     if (isHtmlIcon(descendant)) return true;
     if (isHtmlSrOnlyWithText(descendant)) return true;
@@ -277,10 +292,6 @@ function htmlHasStatusRole(el: HtmlElement): boolean {
   const live = getHtmlAttribute(el, "aria-live");
   if (live !== null && live.trim().length > 0 && live !== "off") return true;
   return false;
-}
-
-function htmlHasStatusTextPrefix(el: HtmlElement): boolean {
-  return STATUS_PREFIX_RE.test(htmlTextContent(el));
 }
 
 function isHtmlIcon(el: HtmlElement): boolean {
@@ -318,7 +329,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
 function jsxHasSecondChannel(el: JsxElement): boolean {
   if (jsxHasAccessibleName(el)) return true;
   if (jsxHasStatusRole(el)) return true;
-  if (jsxHasStatusTextPrefix(el)) return true;
+  if (textContainsStatusWord(jsxTextContent(el))) return true;
   for (const descendant of walkJsxDescendants(el)) {
     if (isJsxIcon(descendant)) return true;
     if (isJsxSrOnlyWithText(descendant)) return true;
@@ -344,10 +355,6 @@ function jsxHasStatusRole(el: JsxElement): boolean {
   const live = getJsxAttributeString(el, "aria-live");
   if (live !== null && live.trim().length > 0 && live !== "off") return true;
   return false;
-}
-
-function jsxHasStatusTextPrefix(el: JsxElement): boolean {
-  return STATUS_PREFIX_RE.test(jsxTextContent(el));
 }
 
 function isJsxIcon(el: JsxElement): boolean {
@@ -466,9 +473,8 @@ function buildViolation(
 } {
   const descriptor = buildDescriptor(lang, tagName, classValue);
   const statusWord = statusWordForToken(token);
-  const textHasStatusWord = textContainsStatusWord(text);
-  const message = buildMessage(descriptor, token, statusWord, text, textHasStatusWord);
-  const suggestion = buildSuggestion(descriptor, token, statusWord, text, textHasStatusWord);
+  const message = buildMessage(descriptor, token, statusWord, text);
+  const suggestion = buildSuggestion(descriptor, token, statusWord);
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
@@ -499,51 +505,12 @@ function statusWordForToken(token: string): string {
   return withoutPrefix.replace(/-emphasis$/, "").replace(/-subtle$/, "");
 }
 
-function buildMessage(
-  descriptor: string,
-  token: string,
-  statusWord: string,
-  text: string,
-  textHasStatusWord: boolean,
-): string {
+function buildMessage(descriptor: string, token: string, statusWord: string, text: string): string {
   const textSample = text.length > 80 ? `${text.slice(0, 80)}…` : text;
-  if (textHasStatusWord) {
-    // The visible text already carries the status keyword, so the
-    // concern is not "no signal reaches the user." It is that *the
-    // framing of that keyword as a status* may be the sole meaning
-    // signal carried by color alone: a sighted user reads "Danger" and
-    // the red painting tells them this is an alert (not ordinary
-    // prose); strip the color and the same word reads as a label, a
-    // section heading, or generic copy. The residual concern survives
-    // for users who cannot resolve the color-emphasis channel —
-    // colorblind users on monochrome rendering, users under high-
-    // contrast or color-inverted themes, and users on a localized UI
-    // where the English keyword may not register as a status term.
-    // Doctrine: "Reason text and severity must agree" (2026-04-25) —
-    // do NOT concede that the keyword's presence resolves the rule.
-    return `${descriptor} conveys "${statusWord}" status via the ${token} class; the visible text "${textSample}" already carries a status word, but color may still be the *sole* meaning signal framing that word as a status rather than ordinary prose — users who cannot resolve the color channel (colorblind users on a monochrome rendering, high-contrast / color-inverted themes, localized UIs where "${statusWord}" is not a recognized status term) lose the status framing and read the word as plain copy.`;
-  }
   return `${descriptor} conveys "${statusWord}" status via the ${token} class alone — text content "${textSample}" carries no status word, no icon sibling, no sr-only label, and no ARIA live role. Screen-reader users, colorblind users, and anyone under a color-inverted theme receive the ${statusWord} text as plain prose with no indication that it is a status.`;
 }
 
-function buildSuggestion(
-  descriptor: string,
-  token: string,
-  statusWord: string,
-  text: string,
-  textHasStatusWord: boolean,
-): string {
+function buildSuggestion(descriptor: string, token: string, statusWord: string): string {
   const titleWord = statusWord.charAt(0).toUpperCase() + statusWord.slice(1);
-  if (textHasStatusWord) {
-    // Demote the "prefix with status word" alternative: on text that
-    // already carries the word, that fix produces a tautology like
-    // "Danger: Danger" on `<button class="btn-danger">Danger</button>`.
-    // Lead with the channels that don't duplicate the visible word.
-    // Frame the residual concern honestly — color is still the sole
-    // signal that this word is a *status* rather than ordinary prose
-    // for users who can't resolve the color-emphasis channel.
-    const textSample = text.length > 40 ? `${text.slice(0, 40)}…` : text;
-    return `The visible text "${textSample}" already names the "${statusWord}" status, but color is still the sole signal framing that word as a status (not ordinary prose) for users who cannot resolve the color channel — colorblind users on a monochrome rendering, users under high-contrast / color-inverted themes, and users on localized UIs where the English keyword may not register as a status term. Any of: (1) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\` — so the status is announced both in prose and as a glyph; (2) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (3) set \`aria-label="${titleWord}: ${textSample}"\` on the element so the accessible name is unambiguous. DO NOT prefix the visible text with "${titleWord}:" — the text already carries "${statusWord}" and the prefix would produce a tautology. Pick the channel that matches how the message reaches the page.`;
-  }
   return `Add a second channel for the "${statusWord}" status conveyed by ${token} on ${descriptor}. Any of: (1) prefix the visible text with the status word — e.g., "${titleWord}: <your text>" — so assistive tech reads the status as prose; (2) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\`; (3) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (4) set \`aria-label="${titleWord}: <your text>"\` on the element. Pick the one that matches how the message reaches the page.`;
 }
