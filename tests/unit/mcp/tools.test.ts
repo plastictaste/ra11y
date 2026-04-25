@@ -1542,7 +1542,10 @@ describe("MCP tool: detect_native_wrappers", () => {
       joinPath(dir, "index.html"),
       "<!doctype html><html><body><h1>Hi</h1></body></html>",
     );
-    await writeFile(joinPath(dir, "about.html"), "<!doctype html><html><body><p>About</p></body></html>");
+    await writeFile(
+      joinPath(dir, "about.html"),
+      "<!doctype html><html><body><p>About</p></body></html>",
+    );
     await writeFile(joinPath(dir, "styles.css"), "body { color: black; }");
 
     const tool = findTool("detect_native_wrappers");
