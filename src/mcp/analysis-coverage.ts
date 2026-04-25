@@ -80,7 +80,11 @@ import type { ParseErrorEntry } from "./analysis-coverage-types.ts";
 import { isBuildArtifact } from "./build-artifacts.ts";
 import type { Hint } from "./hint-codes.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
-import { extractComponentIdentifier, isJsxBearingFile } from "./opaque-tag-filter.ts";
+import {
+  extractComponentIdentifier,
+  filterEmittedComponentNames,
+  isJsxBearingFile,
+} from "./opaque-tag-filter.ts";
 
 /**
  * Storybook primitives that should render transparent under
@@ -587,10 +591,28 @@ function assembleOpaqueComponentBlock(
   verbose: boolean,
   coverage: CoverageBlock,
 ): void {
-  coverage.opaqueCustomComponents = opaque.size;
-  const ranked = rankOpaqueByCallSites(opaque);
+  // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK: belt-and-braces
+  // emission-time filter. `extractComponentIdentifier` is the canonical
+  // entry-point predicate — and it already rejects the same noise
+  // classes — but a regression upstream that lets a member-access path
+  // (`Math.abs`, `H.length`, `AG.y`), a JS global root (`Math`, `JSON`),
+  // or a single-letter+digits token (`A1`, `B2`) reach the
+  // accumulator would silently mislead agents reading the
+  // `opaqueCustomComponentNames` list (e.g. adding `Math.abs` to
+  // `nativeWrappers`). Filter the map keys here and rebuild a
+  // filtered view so count + ranked top + names array stay
+  // consistent — never an emission shape where `opaqueCustomComponents`
+  // and the names list disagree on cardinality.
+  const filteredKeys = new Set(filterEmittedComponentNames([...opaque.keys()]));
+  const filtered: Map<string, OpaqueComponentUsage> = new Map();
+  for (const [name, usage] of opaque) {
+    if (filteredKeys.has(name)) filtered.set(name, usage);
+  }
+  if (filtered.size === 0) return;
+  coverage.opaqueCustomComponents = filtered.size;
+  const ranked = rankOpaqueByCallSites(filtered);
   // `rankOpaqueByCallSites` filters for interactive components only, so
-  // the ranked list can be empty even when `opaque.size > 0` (all
+  // the ranked list can be empty even when `filtered.size > 0` (all
   // components are non-interactive). An empty array on a response where
   // `opaqueCustomComponents` is non-zero and `opaqueCustomComponentNames`
   // lists 15 entries reads as a dishonest shape — callers cannot tell
@@ -609,8 +631,8 @@ function assembleOpaqueComponentBlock(
   // entirely when neither condition applies — never shipped as a
   // partial or empty list (CLAUDE.md §1 "Ambiguous field shapes are
   // dishonest").
-  if (verbose || opaque.size <= OPAQUE_COMPONENT_INLINE_NAMES_MAX) {
-    coverage.opaqueCustomComponentNames = [...opaque.keys()].sort();
+  if (verbose || filtered.size <= OPAQUE_COMPONENT_INLINE_NAMES_MAX) {
+    coverage.opaqueCustomComponentNames = [...filtered.keys()].sort();
   }
 }
 

@@ -503,6 +503,62 @@ describe("buildAnalysisCoverage — hints", () => {
         const names = analysisCoverage?.["opaqueCustomComponentNames"] as string[] | undefined;
         expect(names).toEqual(["HeaderNav"]);
       });
+
+      // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK: through the
+      // full pipeline, mixing minified-noise tag text with real
+      // PascalCase components in a .tsx source confirms the layered
+      // filters cooperate. The upstream `extractComponentIdentifier`
+      // strips dots, rejects single chars, and now also rejects JS
+      // globals (`Math.abs`) and single-letter+digit tokens. The
+      // emission-time `filterEmittedComponentNames` is belt-and-
+      // braces — it catches anything that bypasses the extractor.
+      // `Math.abs` is rejected because `Math` is a global; `B` /
+      // `J` reject as single-char; `H.length` / `J.length` reject
+      // because root `H` / `J` is single-char; `Math.abs` rejects
+      // for the global-root reason. `AG.y` extracts to root `AG`,
+      // which is a two-char PascalCase identifier — neither the
+      // single-letter-digit nor the global-prototype filter
+      // matches, so `AG` is treated as a (plausibly short) real
+      // component name and survives. That preserves the existing
+      // namespaced-component behavior (`Motion.div` → `Motion`).
+      it("filters minified-noise tag text from a .tsx source through the full pipeline", () => {
+        const files = [
+          tsxFile(
+            "Mixed.tsx",
+            [
+              "MyComponent",
+              "AG.y",
+              "B",
+              "H.length",
+              "J",
+              "J.length",
+              "Math.abs",
+              "Box",
+              "ButtonGroup",
+            ],
+            { interactive: true },
+          ),
+        ];
+        const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+        const names = analysisCoverage?.["opaqueCustomComponentNames"] as string[] | undefined;
+        // Three genuinely-PascalCase multi-letter names plus `AG`
+        // (the dotted-stripped root of `AG.y` — extractor preserves
+        // the namespaced-root pattern for legitimate uses like
+        // `Motion.div`). The four leak-class names (`B`, `H.length`,
+        // `J`, `J.length`, `Math.abs`) are all dropped.
+        expect(names).toEqual(["AG", "Box", "ButtonGroup", "MyComponent"]);
+        expect(analysisCoverage?.["opaqueCustomComponents"]).toBe(4);
+      });
+
+      // The acceptance criterion in the backlog item — the exact
+      // input/output pair from the field report — is exercised at
+      // the unit level on `filterEmittedComponentNames`
+      // (tests/unit/mcp/opaque-tag-filter.test.ts) because the full
+      // pipeline's upstream root-extraction transforms the input
+      // (e.g. `Math.abs` → `Math` → reject). The unit test runs
+      // against the raw candidate list a regression-prone code path
+      // could theoretically populate; this test covers the realistic
+      // scan path where extraction has already normalized.
     });
 
     // Q6-OPAQUE-COMPONENTS-MINIFIED-JS-REGRESSION belt-and-braces:

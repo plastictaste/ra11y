@@ -69,6 +69,54 @@ export function isJsxBearingFile(filePath: string): boolean {
 }
 
 /**
+ * Well-known JS global / built-in constructor names whose member-access
+ * expressions are commonly mis-extracted as JSX phantoms in minified
+ * bundles (`Math.abs`, `Object.keys`, `JSON.parse`, `Array.from`). The
+ * dotted form's root identifier ({@link extractComponentIdentifier})
+ * is a global, not a React component — surfacing `Math` or `Object`
+ * in `opaqueCustomComponentNames` is the same dishonest-shape failure
+ * mode the broader filter exists to prevent: an agent reading the
+ * list might add `Math.abs` (or `Math`) to its `nativeWrappers`
+ * config. Exact-match exclusion is deterministic — not a heuristic on
+ * ambiguous territory — and the false-negative risk (a real React
+ * component literally named `Math` or `Date`) is vanishingly small.
+ */
+const JS_GLOBAL_PROTOTYPES: ReadonlySet<string> = new Set([
+  "Math",
+  "Object",
+  "Array",
+  "JSON",
+  "Reflect",
+  "Symbol",
+  "Proxy",
+  "Promise",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Date",
+  "RegExp",
+  "Error",
+  "Number",
+  "String",
+  "Boolean",
+]);
+
+/**
+ * Matches a single uppercase letter optionally followed by digits
+ * (`A`, `B`, `J`, `A1`, `B2`). Minified bundles produce these as
+ * variable names that defeat the JSX-vs-generic classifier and emerge
+ * as phantom tag positions. Real React components are meaningful
+ * words; the single-letter+digits class is a deterministic exclusion.
+ * The bare single-letter case (`A`, `B`) is also caught by the
+ * existing `root.length < 2` short-circuit in
+ * {@link extractComponentIdentifier} — the regex extends that
+ * coverage to the `A1` / `B2` case which would otherwise pass length
+ * and identifier-shape checks.
+ */
+const SINGLE_LETTER_NUMERIC_SUFFIX_RE = /^[A-Z]\d*$/;
+
+/**
  * Returns the root component identifier for a JSX tag name, or `null`
  * when the tag name is not a plausible React component reference.
  *
@@ -85,6 +133,19 @@ export function isJsxBearingFile(filePath: string): boolean {
  *     real components are meaningful words. Rejecting `X` as a
  *     component name is a rare false negative in exchange for a
  *     large reduction in expression-context noise.
+ *   - Single uppercase letter optionally followed by digits (`A1`,
+ *     `B2`) — minified-bundle variable names; same noise class as
+ *     bare single chars but with a numeric suffix that would
+ *     otherwise pass the length and identifier-shape checks.
+ *   - Member-access into a well-known JS global / built-in
+ *     (`Math.abs`, `Object.keys`, `JSON.parse`) — root extraction
+ *     would otherwise yield `Math` / `Object` / `JSON`, which are
+ *     globals and not React components. An agent reading those names
+ *     in `opaqueCustomComponentNames` might add them to
+ *     `nativeWrappers`. Exact-match exclusion against the curated
+ *     {@link JS_GLOBAL_PROTOTYPES} list is deterministic, with
+ *     vanishingly small false-negative risk against a real component
+ *     literally named `Math` / `Date`.
  *   - Empty string (parser artefact).
  *
  * Pure function of the tag text; makes no claim about the file extension
@@ -106,5 +167,53 @@ export function extractComponentIdentifier(tagName: string): string | null {
   // have been rejected above; this catches the remaining edge of a
   // root that isn't a plain identifier).
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(root)) return null;
+  // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK belt-and-braces
+  // filters. Each predicate excludes a deterministic minified-noise
+  // class that would otherwise pass the length and identifier-shape
+  // checks above. See JSDoc for the per-predicate rationale and the
+  // `JS_GLOBAL_PROTOTYPES` / `SINGLE_LETTER_NUMERIC_SUFFIX_RE`
+  // constants for the excluded sets.
+  if (SINGLE_LETTER_NUMERIC_SUFFIX_RE.test(root)) return null;
+  if (JS_GLOBAL_PROTOTYPES.has(root)) return null;
   return root;
+}
+
+/**
+ * Belt-and-braces filter applied at the emission boundary in
+ * {@link buildAnalysisCoverage}, defending against any code path that
+ * populates the opaque-component candidate list without first
+ * normalizing through {@link extractComponentIdentifier}. The field
+ * report driving V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK
+ * surfaced raw dotted forms (`Math.abs`, `H.length`, `AG.y`) and
+ * single-letter+digits noise (`A1`, `B2`) in
+ * `opaqueCustomComponentNames` — these readings would mislead an
+ * agent into adding `Math.abs` (or `Math`) to its `nativeWrappers`
+ * config. The three predicates here mirror the upstream extractor
+ * so any name that survives to emission is independently verified
+ * against the same rules before it ships:
+ *
+ *   (a) Contains `.` — a member-access path (`H.length`, `Math.abs`,
+ *       `AG.y`) escaped the root-extraction layer; drop.
+ *   (b) Exact match against a well-known JS global / built-in
+ *       constructor (`Math`, `Object`, `JSON`, …) — the root of a
+ *       member-access into a global was extracted but then reached
+ *       emission as a bare global; drop.
+ *   (c) Single uppercase letter optionally followed by digits (`A`,
+ *       `B`, `J`, `A1`, `B2`) — minified-bundle variable names;
+ *       drop.
+ *
+ * Returns the input list with rejections removed, in the original
+ * relative order. Callers that need a sorted output should sort
+ * after filtering. Pure function — no allocation when nothing is
+ * filtered.
+ */
+export function filterEmittedComponentNames(names: readonly string[]): readonly string[] {
+  return names.filter(isEmissionEligibleComponentName);
+}
+
+function isEmissionEligibleComponentName(name: string): boolean {
+  if (name.includes(".")) return false;
+  if (JS_GLOBAL_PROTOTYPES.has(name)) return false;
+  if (SINGLE_LETTER_NUMERIC_SUFFIX_RE.test(name)) return false;
+  return true;
 }

@@ -15,6 +15,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   extractComponentIdentifier,
+  filterEmittedComponentNames,
   isJsxBearingFile,
 } from "../../../src/mcp/opaque-tag-filter.ts";
 
@@ -125,5 +126,107 @@ describe("extractComponentIdentifier", () => {
         expect(out).not.toBe("");
       }
     });
+  });
+
+  // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK: minified-bundle
+  // tokens like `Math.abs`, `JSON.parse`, `Object.keys` were leaking
+  // into `opaqueCustomComponentNames` and reading as React components.
+  // The dotted form's root is a JS global / built-in, not a wrapper —
+  // surfacing it in the inventory misled agents into adding `Math.abs`
+  // (or `Math`) to their `nativeWrappers` config.
+  describe("rejects JS global / built-in roots (V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK)", () => {
+    it("rejects member-access into a JS global (Math.abs → null)", () => {
+      // The historical extractor returned `Math` for `Math.abs`. Now
+      // the global-prototype filter rejects it outright so neither
+      // the dotted form nor the bare `Math` can pollute the inventory.
+      expect(extractComponentIdentifier("Math.abs")).toBe(null);
+      expect(extractComponentIdentifier("JSON.parse")).toBe(null);
+      expect(extractComponentIdentifier("Object.keys")).toBe(null);
+      expect(extractComponentIdentifier("Array.from")).toBe(null);
+      expect(extractComponentIdentifier("Reflect.has")).toBe(null);
+      expect(extractComponentIdentifier("Symbol.for")).toBe(null);
+      expect(extractComponentIdentifier("Promise.all")).toBe(null);
+      expect(extractComponentIdentifier("Date.now")).toBe(null);
+    });
+
+    it("rejects bare JS global names (Math → null)", () => {
+      // Both the dotted and bare forms are rejected — minified
+      // bundles produce both shapes and neither is a React component.
+      expect(extractComponentIdentifier("Math")).toBe(null);
+      expect(extractComponentIdentifier("Object")).toBe(null);
+      expect(extractComponentIdentifier("Array")).toBe(null);
+      expect(extractComponentIdentifier("JSON")).toBe(null);
+      expect(extractComponentIdentifier("Promise")).toBe(null);
+      expect(extractComponentIdentifier("Map")).toBe(null);
+      expect(extractComponentIdentifier("Set")).toBe(null);
+    });
+
+    it("rejects single uppercase letter optionally followed by digits (A1 → null)", () => {
+      // The bare single-char form (`A`, `B`) is already caught by the
+      // `root.length < 2` branch; this filter extends coverage to
+      // identifiers that pass length/shape (`A1`, `B2`, `J7`) but are
+      // overwhelmingly minified-bundle variable names.
+      expect(extractComponentIdentifier("A1")).toBe(null);
+      expect(extractComponentIdentifier("B2")).toBe(null);
+      expect(extractComponentIdentifier("J7")).toBe(null);
+      expect(extractComponentIdentifier("Z99")).toBe(null);
+    });
+
+    it("does not regress valid PascalCase that happens to contain digits beyond the first char", () => {
+      // The single-letter+digits filter is anchored — a multi-letter
+      // root with digits (`Comp1`, `Panel2`, `MD3Card`) is unchanged.
+      expect(extractComponentIdentifier("Comp1")).toBe("Comp1");
+      expect(extractComponentIdentifier("Panel2")).toBe("Panel2");
+      expect(extractComponentIdentifier("MD3Card")).toBe("MD3Card");
+    });
+  });
+});
+
+describe("filterEmittedComponentNames (V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK)", () => {
+  it("matches the field-report acceptance: drops dotted, global, single-letter+digit; keeps PascalCase words", () => {
+    // Exact input/output pair from the V1-OPAQUE-COMPONENT-NAMES-
+    // MINIFIED-TOKEN-LEAK backlog item. The mixed list represents a
+    // candidate array a minified-bundle scan could populate if the
+    // upstream extractor regressed; the filter is the emission-time
+    // safety net that prevents `Math.abs` / `H.length` / `AG.y` from
+    // misleading an agent into wrapper-config noise.
+    const input = [
+      "MyComponent",
+      "AG.y",
+      "B",
+      "H.length",
+      "J",
+      "J.length",
+      "Math.abs",
+      "Box",
+      "ButtonGroup",
+    ];
+    const output = filterEmittedComponentNames(input);
+    expect([...output]).toEqual(["MyComponent", "Box", "ButtonGroup"]);
+  });
+
+  it("preserves input order (no implicit sort) so callers control ordering", () => {
+    // Filter is composable with subsequent `.sort()` — ordering
+    // discipline lives at the caller. Two valid names in
+    // descending-call-site order should remain in input order.
+    const output = filterEmittedComponentNames(["ZComponent", "AComponent"]);
+    expect([...output]).toEqual(["ZComponent", "AComponent"]);
+  });
+
+  it("returns an empty list when every input is filtered", () => {
+    // The all-noise case ships nothing rather than a partial / empty
+    // sentinel — callers above should omit the field entirely when
+    // the filter empties the list (CLAUDE.md §1 ambiguous-shape rule).
+    const output = filterEmittedComponentNames(["Math.abs", "B", "H.length", "A1"]);
+    expect([...output]).toEqual([]);
+  });
+
+  it("returns the input unchanged when nothing is filtered", () => {
+    // No-op path: the common case where the upstream extractor has
+    // already done its job — the emission filter sees a clean list
+    // and passes it through.
+    const input = ["HeaderNav", "Sidebar", "Button"];
+    const output = filterEmittedComponentNames(input);
+    expect([...output]).toEqual(input);
   });
 });
