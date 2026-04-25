@@ -1,17 +1,28 @@
 /**
- * Unit tests for `src/mcp/build-artifacts.ts` — the deterministic
+ * Unit tests for `src/mcp/build-artifacts.ts` — the
  * compiled-CSS / bundler-output classifier surfaced as
- * `meta.scannedBuildArtifacts: { path, reason }[]` on `scan_project`
- * responses.
+ * `meta.scannedBuildArtifacts: { path, classification, signal }[]`
+ * on `scan_project` responses.
+ *
+ * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: tests below pin the
+ * confidence-graded {@link BuildArtifactClassification} enum that
+ * replaced the previous deterministic-sounding `reason` token.
+ * Predicates whose verdict is provable from the path or live scan
+ * set alone emit `definite-*` (`definite-min-infix`,
+ * `definite-sourcemap-paired`); heuristic predicates emit `likely-*`
+ * (`likely-minified-by-line-stats`, `likely-hashed-bundle`,
+ * `likely-bundler-output-dir`, `likely-vendored-data-url-css`,
+ * `likely-compiled-tailwind`).
  *
  * Two directions:
  *   1. Each signal (`.min.` infix, long minified line, hashed-
  *      filename infix, bundler-output path ancestry, sibling `.map`
  *      sourcemap, `data:image/` data-URL inline, escaped-bracket
- *      Tailwind selector) maps to its named {@link
- *      BuildArtifactReason} AND only on its named condition. Over-
- *      labeling a hand-written stylesheet would push the agent to
- *      investigate non-generated code, the expensive failure mode.
+ *      Tailwind selector) maps to its named
+ *      {@link BuildArtifactClassification} AND only on its named
+ *      condition. Over-labeling a hand-written stylesheet would
+ *      push the agent to investigate non-generated code, the
+ *      expensive failure mode.
  *   2. Sass partials (`_variables.scss`, `_mixins.scss`) must NOT be
  *      labeled as artifacts — the leading `_` is the Sass partial
  *      convention for authored source, not a generated-artifact
@@ -23,16 +34,16 @@
  *      subtle "always return a list with one element" bug would
  *      silently emit `scannedBuildArtifacts: [{ path: "" }]`.
  *   4. First-match semantics: when two signals would match the same
- *      path, the documented evaluation order picks one reason and
- *      the entry appears once (not twice). The classifier's "label
- *      must survive inspection" doctrine bar requires a single
- *      falsifiable verdict per path.
+ *      path, the documented evaluation order picks one classification
+ *      and the entry appears once (not twice). The classifier's
+ *      "label must survive inspection" doctrine bar requires a
+ *      single falsifiable verdict per path.
  */
 
 import { describe, expect, it } from "bun:test";
 import {
   BASENAME_GROUP_THRESHOLD,
-  type BuildArtifactReason,
+  type BuildArtifactClassification,
   type BuildArtifactSignal,
   classifyBuildArtifact,
   classifyBuildArtifactDetailed,
@@ -40,6 +51,7 @@ import {
   detectVendorLibraries,
   groupBuildArtifactsByBasename,
   isBuildArtifact,
+  isDefiniteBuildArtifactClassification,
   type ScannedBuildArtifact,
 } from "../../../src/mcp/build-artifacts.ts";
 
@@ -47,10 +59,11 @@ import {
  * Stub signal used by `groupBuildArtifactsByBasename` tests that
  * exercise grouping/sorting/relativization logic — the signal field
  * is required by the {@link ScannedBuildArtifact} type but the group
- * helpers don't read its contents (only `path` + `reason` participate
- * in clustering and aggregate `reasons`). Centralized here so future
- * additions to the {@link BuildArtifactSignal} union don't force a
- * shotgun edit across the synthetic test entries.
+ * helpers don't read its contents (only `path` + `classification`
+ * participate in clustering and the aggregated `classifications`
+ * field). Centralized here so future additions to the
+ * {@link BuildArtifactSignal} union don't force a shotgun edit
+ * across the synthetic test entries.
  */
 const STUB_SIGNAL = {
   kind: "build-dir-segment",
@@ -58,21 +71,22 @@ const STUB_SIGNAL = {
 } as const satisfies BuildArtifactSignal;
 
 /**
- * Build a synthetic `{ path, reason, signal }` entry for the grouping
- * tests. The signal defaults to {@link STUB_SIGNAL} for `dist-path`
- * entries and to a `min-infix` placeholder for `minified` entries —
- * both are deterministic and inert as far as the grouping helper is
+ * Build a synthetic `{ path, classification, signal }` entry for the
+ * grouping tests. The signal defaults to {@link STUB_SIGNAL} for
+ * `likely-bundler-output-dir` entries and to a `min-infix`
+ * placeholder for `definite-min-infix` entries — both are
+ * deterministic and inert as far as the grouping helper is
  * concerned. Tests that assert on `signal` shape construct entries
  * inline; this helper is for cases where the signal is incidental.
  */
 function mkEntry(
   path: string,
-  reason: BuildArtifactReason,
-  signal: BuildArtifactSignal = reason === "minified"
+  classification: BuildArtifactClassification,
+  signal: BuildArtifactSignal = classification === "definite-min-infix"
     ? { kind: "min-infix", value: path.split("/").pop() ?? path }
     : STUB_SIGNAL,
 ): ScannedBuildArtifact {
-  return { path, reason, signal };
+  return { path, classification, signal };
 }
 
 describe("classifyBuildArtifact — Sass-partial NEGATIVE cases (regression guard)", () => {
@@ -103,25 +117,31 @@ describe("classifyBuildArtifact — Sass-partial NEGATIVE cases (regression guar
   });
 });
 
-describe("classifyBuildArtifact — `minified` reason", () => {
-  it("classifies `bootstrap.min.css` as a minified distribution bundle", () => {
-    expect(classifyBuildArtifact("vendor/bootstrap.min.css", ".a{}")).toBe("minified");
+describe("classifyBuildArtifact — minified-shaped classifications", () => {
+  it("classifies `bootstrap.min.css` as `definite-min-infix` (path-anchored)", () => {
+    expect(classifyBuildArtifact("vendor/bootstrap.min.css", ".a{}")).toBe("definite-min-infix");
   });
 
-  it("classifies `jquery.min.js` at the repo root", () => {
-    expect(classifyBuildArtifact("jquery.min.js", "!function(){}();")).toBe("minified");
+  it("classifies `jquery.min.js` at the repo root as `definite-min-infix`", () => {
+    expect(classifyBuildArtifact("jquery.min.js", "!function(){}();")).toBe("definite-min-infix");
   });
 
-  it("classifies `vendor.min.js` under an arbitrary directory", () => {
-    expect(classifyBuildArtifact("assets/js/vendor.min.js", "/* min */")).toBe("minified");
+  it("classifies `vendor.min.js` under an arbitrary directory as `definite-min-infix`", () => {
+    expect(classifyBuildArtifact("assets/js/vendor.min.js", "/* min */")).toBe(
+      "definite-min-infix",
+    );
   });
 
-  it("classifies a file whose source has a single line over the 500-char threshold", () => {
+  it("classifies a content-shape minified source as `likely-minified-by-line-stats`", () => {
     // Hand-authored stylesheets and scripts wrap lines for
     // readability; minified bundles emit one or a handful of long
-    // lines. A single 600-char run is unambiguous output.
+    // lines. A single ~700-char run with median = 700 corroborates,
+    // but the verdict is content-shaped (not path-anchored), so the
+    // confidence-graded classification carries a `likely-` prefix.
     const longLine = `.a{color:red;}`.repeat(50); // ~700 chars on one line
-    expect(classifyBuildArtifact("vendor/some-bundle.css", longLine)).toBe("minified");
+    expect(classifyBuildArtifact("vendor/some-bundle.css", longLine)).toBe(
+      "likely-minified-by-line-stats",
+    );
   });
 
   it("does NOT classify a file whose lines stay under the threshold even if total source is large", () => {
@@ -144,10 +164,13 @@ describe("classifyBuildArtifact — `minified` reason", () => {
 // Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE: the single-long-line
 // probe on its own mis-labeled authored Astro/Starlight template-literal
 // props, Google-Maps iframe URLs, SCSS type signatures, and MDX prop
-// bundles. The classifier now gates the `minified` verdict on a second-
-// tier corroborator (long-line ratio ≥ 25% OR median line length > 500).
-// These tests lock the NEGATIVE direction: one long line amid many short
-// lines must NOT label.
+// bundles. The classifier now gates the `likely-minified-by-line-stats`
+// verdict on a second-tier corroborator (long-line ratio ≥ 25% OR median
+// line length > 500). Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the
+// classification carries a `likely-` prefix because the predicate is
+// content-shape heuristic — even with the corroborator the verdict is
+// not path-anchored. These tests lock the NEGATIVE direction: one long
+// line amid many short lines must NOT label.
 describe("classifyBuildArtifact — single-long-line second-probe corroboration", () => {
   it("does NOT classify a TSX file whose ONE line over 500 chars sits amid ~50 short authored lines", () => {
     // Shape modeled on Astro `<Example code={`…`}/>` where a multi-tag
@@ -193,7 +216,9 @@ describe("classifyBuildArtifact — single-long-line second-probe corroboration"
     // Canonical minified-JS/CSS shape: one 700-char line, no newlines.
     // 1 line total, 1 long → median = 700, ratio = 100% → corroborated.
     const source = `.a{color:red;}`.repeat(50);
-    expect(classifyBuildArtifact("vendor/some-bundle.css", source)).toBe("minified");
+    expect(classifyBuildArtifact("vendor/some-bundle.css", source)).toBe(
+      "likely-minified-by-line-stats",
+    );
   });
 
   it("classifies a CSS bundle whose long-line ratio crosses 25% (multi-long-line shape)", () => {
@@ -206,7 +231,7 @@ describe("classifyBuildArtifact — single-long-line second-probe corroboration"
       (_, i) => `.rule-${i} { ${"color:red;".repeat(55)} }`,
     );
     const source = [...shortLines, ...longLines].join("\n");
-    expect(classifyBuildArtifact("vendor/multi.css", source)).toBe("minified");
+    expect(classifyBuildArtifact("vendor/multi.css", source)).toBe("likely-minified-by-line-stats");
   });
 
   it("does NOT classify a TSX file whose long-line ratio stays under 25% (just under the floor)", () => {
@@ -227,7 +252,9 @@ describe("classifyBuildArtifact — single-long-line second-probe corroboration"
     // same line stats as a POSIX one. Source is one 700-char run
     // plus a trailing CRLF — still one line, median 700, corroborates.
     const source = `${".a{color:red;}".repeat(50)}\r\n`;
-    expect(classifyBuildArtifact("vendor/windows-bundle.css", source)).toBe("minified");
+    expect(classifyBuildArtifact("vendor/windows-bundle.css", source)).toBe(
+      "likely-minified-by-line-stats",
+    );
   });
 
   it("does NOT classify a completely empty source (zero lines → no corroboration)", () => {
@@ -290,18 +317,22 @@ describe("classifyBuildArtifact — single-long-line second-probe corroboration"
   });
 });
 
-describe("classifyBuildArtifact — `hashed-filename` reason", () => {
+describe("classifyBuildArtifact — `likely-hashed-bundle` classification", () => {
   it("classifies `app.a1b2c3d4.js` (8-char hex hash between dots)", () => {
-    expect(classifyBuildArtifact("assets/app.a1b2c3d4.js", "// bundle")).toBe("hashed-filename");
+    expect(classifyBuildArtifact("assets/app.a1b2c3d4.js", "// bundle")).toBe(
+      "likely-hashed-bundle",
+    );
   });
 
   it("classifies `chunk.0123abcdef.css` (10-char hex hash)", () => {
-    expect(classifyBuildArtifact("assets/chunk.0123abcdef.css", ".a{}")).toBe("hashed-filename");
+    expect(classifyBuildArtifact("assets/chunk.0123abcdef.css", ".a{}")).toBe(
+      "likely-hashed-bundle",
+    );
   });
 
   it("classifies `vendor.deadbeefcafebabe.mjs` (long hex run)", () => {
     expect(classifyBuildArtifact("assets/vendor.deadbeefcafebabe.mjs", "export {};")).toBe(
-      "hashed-filename",
+      "likely-hashed-bundle",
     );
   });
 
@@ -323,45 +354,55 @@ describe("classifyBuildArtifact — `hashed-filename` reason", () => {
   });
 });
 
-describe("classifyBuildArtifact — `dist-path` reason (bundler-output path ancestry)", () => {
+describe("classifyBuildArtifact — `likely-bundler-output-dir` classification (path ancestry)", () => {
   it("classifies a path under `/dist/`", () => {
-    expect(classifyBuildArtifact("/proj/dist/main.css", ".a {}")).toBe("dist-path");
+    expect(classifyBuildArtifact("/proj/dist/main.css", ".a {}")).toBe("likely-bundler-output-dir");
   });
 
   it("classifies a path under `/build/`", () => {
-    expect(classifyBuildArtifact("/proj/build/out.css", ".a {}")).toBe("dist-path");
+    expect(classifyBuildArtifact("/proj/build/out.css", ".a {}")).toBe("likely-bundler-output-dir");
   });
 
   it("classifies a path under `/_site/` (Jekyll output)", () => {
-    expect(classifyBuildArtifact("/proj/_site/index.html", "<html></html>")).toBe("dist-path");
+    expect(classifyBuildArtifact("/proj/_site/index.html", "<html></html>")).toBe(
+      "likely-bundler-output-dir",
+    );
   });
 
   it("classifies a path under `/public/` (Hugo / Nuxt generated tree)", () => {
-    expect(classifyBuildArtifact("/proj/public/main.css", ".a {}")).toBe("dist-path");
+    expect(classifyBuildArtifact("/proj/public/main.css", ".a {}")).toBe(
+      "likely-bundler-output-dir",
+    );
   });
 
   it("classifies a path under `/node_modules/`", () => {
     expect(classifyBuildArtifact("/proj/node_modules/react/umd/react.js", "/* umd */")).toBe(
-      "dist-path",
+      "likely-bundler-output-dir",
     );
   });
 
   it("classifies a path under `/.next/`", () => {
-    expect(classifyBuildArtifact("/proj/.next/static/css/app.css", ".a {}")).toBe("dist-path");
+    expect(classifyBuildArtifact("/proj/.next/static/css/app.css", ".a {}")).toBe(
+      "likely-bundler-output-dir",
+    );
   });
 
   it("classifies a path under `/.svelte-kit/`", () => {
-    expect(classifyBuildArtifact("/proj/.svelte-kit/output/client.css", ".a {}")).toBe("dist-path");
+    expect(classifyBuildArtifact("/proj/.svelte-kit/output/client.css", ".a {}")).toBe(
+      "likely-bundler-output-dir",
+    );
   });
 
   it("classifies a path under `/.output/`", () => {
     expect(classifyBuildArtifact("/proj/.output/public/_nuxt/entry.css", ".a {}")).toBe(
-      "dist-path",
+      "likely-bundler-output-dir",
     );
   });
 
   it("classifies a path under `/static/assets/`", () => {
-    expect(classifyBuildArtifact("/proj/app/static/assets/index.css", ".a {}")).toBe("dist-path");
+    expect(classifyBuildArtifact("/proj/app/static/assets/index.css", ".a {}")).toBe(
+      "likely-bundler-output-dir",
+    );
   });
 
   it("does NOT classify a root-level file literally named `dist.ts`", () => {
@@ -377,21 +418,23 @@ describe("classifyBuildArtifact — `dist-path` reason (bundler-output path ance
   });
 
   it("normalizes Windows-style backslashes so `\\dist\\` is recognized", () => {
-    expect(classifyBuildArtifact("C:\\proj\\dist\\main.css", ".a {}")).toBe("dist-path");
+    expect(classifyBuildArtifact("C:\\proj\\dist\\main.css", ".a {}")).toBe(
+      "likely-bundler-output-dir",
+    );
   });
 });
 
-describe("classifyBuildArtifact — `contains-data-url-gradient` reason", () => {
+describe("classifyBuildArtifact — `likely-vendored-data-url-css` classification", () => {
   it("classifies a CSS file containing `url(data:image/svg+xml,...)`", () => {
     const source =
       ".bg-icon { background: url(data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F...%22%2F%3E); }";
-    expect(classifyBuildArtifact("vendor/styles.css", source)).toBe("contains-data-url-gradient");
+    expect(classifyBuildArtifact("vendor/styles.css", source)).toBe("likely-vendored-data-url-css");
   });
 
   it("classifies a `.scss` file containing `url(data:image/png;base64,...)`", () => {
     const source = ".gradient { background: url(data:image/png;base64,iVBORw0KGgoAAAA…); }";
     expect(classifyBuildArtifact("assets/scss/icons.scss", source)).toBe(
-      "contains-data-url-gradient",
+      "likely-vendored-data-url-css",
     );
   });
 
@@ -413,20 +456,20 @@ describe("classifyBuildArtifact — `contains-data-url-gradient` reason", () => 
   });
 });
 
-describe("classifyBuildArtifact — `tailwind-compiled-escape` reason", () => {
+describe("classifyBuildArtifact — `likely-compiled-tailwind` classification", () => {
   it("classifies a CSS file containing a `.w-\\[400px\\]` utility selector (pixel width)", () => {
     const source = ".w-\\[400px\\] { width: 400px; }\n";
-    expect(classifyBuildArtifact("app/styles.css", source)).toBe("tailwind-compiled-escape");
+    expect(classifyBuildArtifact("app/styles.css", source)).toBe("likely-compiled-tailwind");
   });
 
   it("classifies `.h-\\[2rem\\]` utility selector (rem height)", () => {
     const source = ".h-\\[2rem\\] { height: 2rem; }\n";
-    expect(classifyBuildArtifact("app/styles.css", source)).toBe("tailwind-compiled-escape");
+    expect(classifyBuildArtifact("app/styles.css", source)).toBe("likely-compiled-tailwind");
   });
 
   it("classifies `.w-\\[50%\\]` utility selector (percentage)", () => {
     const source = ".w-\\[50%\\] { width: 50%; }\n";
-    expect(classifyBuildArtifact("app/styles.css", source)).toBe("tailwind-compiled-escape");
+    expect(classifyBuildArtifact("app/styles.css", source)).toBe("likely-compiled-tailwind");
   });
 
   it("classifies `.focus-visible\\:ring-2` utility (escaped-colon form)", () => {
@@ -434,12 +477,12 @@ describe("classifyBuildArtifact — `tailwind-compiled-escape` reason", () => {
     // pattern probes for `\:focus-visible:` which matches the
     // compiler's actual output (`.group\:focus-visible:etc`).
     const source = ".group\\:focus-visible:before { outline: 2px solid blue; }\n";
-    expect(classifyBuildArtifact("app/styles.css", source)).toBe("tailwind-compiled-escape");
+    expect(classifyBuildArtifact("app/styles.css", source)).toBe("likely-compiled-tailwind");
   });
 
   it("classifies `.bg-\\[--color\\]` CSS-variable utility", () => {
     const source = ".bg-\\[--my-color\\] { background-color: var(--my-color); }\n";
-    expect(classifyBuildArtifact("app/styles.css", source)).toBe("tailwind-compiled-escape");
+    expect(classifyBuildArtifact("app/styles.css", source)).toBe("likely-compiled-tailwind");
   });
 
   it("does NOT classify hand-written CSS with a normal attribute selector like `[role='button']`", () => {
@@ -457,39 +500,65 @@ describe("classifyBuildArtifact — `tailwind-compiled-escape` reason", () => {
 });
 
 describe("classifyBuildArtifact — first-match evaluation order", () => {
-  it("prefers `minified` over `dist-path` when both signals fire", () => {
+  it("prefers `definite-min-infix` over `likely-bundler-output-dir` when both signals fire", () => {
     // `dist/jquery.min.js` matches both the `.min.` infix and the
-    // `dist/` directory marker. The documented order has `minified`
-    // first because it's the more specific verdict — the agent
-    // reading "minified" knows immediately why and doesn't need to
-    // reconcile two reasons.
-    expect(classifyBuildArtifact("dist/jquery.min.js", "/* min */")).toBe("minified");
+    // `dist/` directory marker. The documented order has min-infix
+    // first because it's the more specific (path-anchored) verdict —
+    // the agent reading "definite-min-infix" knows immediately why
+    // and doesn't need to reconcile two classifications.
+    expect(classifyBuildArtifact("dist/jquery.min.js", "/* min */")).toBe("definite-min-infix");
   });
 
-  it("prefers `hashed-filename` over `dist-path` when both signals fire", () => {
-    expect(classifyBuildArtifact("dist/app.a1b2c3d4.js", "// bundle")).toBe("hashed-filename");
+  it("prefers `likely-hashed-bundle` over `likely-bundler-output-dir` when both signals fire", () => {
+    expect(classifyBuildArtifact("dist/app.a1b2c3d4.js", "// bundle")).toBe("likely-hashed-bundle");
   });
 
-  it("prefers `dist-path` over `contains-data-url-gradient` when both signals fire", () => {
+  it("prefers `likely-bundler-output-dir` over `likely-vendored-data-url-css` when both signals fire", () => {
     // A file under `dist/` with a data URL is more usefully reported
-    // as a dist-path artifact (the directory tells the agent the
-    // entire tree is generated) than as a single-line content match.
+    // as a bundler-output-dir artifact (the directory tells the agent
+    // the entire tree is generated) than as a single-line content
+    // match.
     const source = ".bg { background: url(data:image/svg+xml,...); }";
-    expect(classifyBuildArtifact("dist/main.css", source)).toBe("dist-path");
+    expect(classifyBuildArtifact("dist/main.css", source)).toBe("likely-bundler-output-dir");
   });
 });
 
-// V1-BUILD-ARTIFACT-REASON-EXPLAIN: per-entry `signal` field carries
-// the deterministic predicate evidence so an agent verifying a label
-// has the falsifiable claim already in hand. Tests below pin one
-// signal shape per `BuildArtifactReason`. Each `value` is grep-able
-// (path substring, basename, marker text) — no derived numbers
-// except the line-length probe, where `value` is the longest line
-// observed and `threshold` is the 500-char floor.
+// Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the `definite-` /
+// `likely-` confidence prefix is the doctrine-aligned shape — agents
+// budget per-file investigation by reading the prefix without
+// reconciling individual variant strings. The helper exposes the
+// contract so future variants don't drift.
+describe("isDefiniteBuildArtifactClassification — confidence-prefix contract", () => {
+  it("returns true for `definite-min-infix` (path-anchored verdict)", () => {
+    expect(isDefiniteBuildArtifactClassification("definite-min-infix")).toBe(true);
+  });
+
+  it("returns true for `definite-sourcemap-paired` (paired-map verdict)", () => {
+    expect(isDefiniteBuildArtifactClassification("definite-sourcemap-paired")).toBe(true);
+  });
+
+  it("returns false for every `likely-*` heuristic classification", () => {
+    expect(isDefiniteBuildArtifactClassification("likely-minified-by-line-stats")).toBe(false);
+    expect(isDefiniteBuildArtifactClassification("likely-hashed-bundle")).toBe(false);
+    expect(isDefiniteBuildArtifactClassification("likely-bundler-output-dir")).toBe(false);
+    expect(isDefiniteBuildArtifactClassification("likely-vendored-data-url-css")).toBe(false);
+    expect(isDefiniteBuildArtifactClassification("likely-compiled-tailwind")).toBe(false);
+  });
+});
+
+// V1-BUILD-ARTIFACT-REASON-EXPLAIN +
+// Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: per-entry `signal`
+// field carries the deterministic predicate evidence so an agent
+// verifying a `classification` has the falsifiable claim already in
+// hand. Tests below pin one signal shape per
+// `BuildArtifactClassification`. Each `value` is grep-able (path
+// substring, basename, marker text) — no derived numbers except the
+// line-length probe, where `value` is the longest line observed and
+// `threshold` is the 500-char floor.
 describe("classifyBuildArtifactDetailed — structured per-entry signal", () => {
   it("stamps `min-infix` with the matched basename for `.min.` filenames", () => {
     expect(classifyBuildArtifactDetailed("vendor/bootstrap.min.css", ".a{}")).toEqual({
-      reason: "minified",
+      classification: "definite-min-infix",
       signal: { kind: "min-infix", value: "bootstrap.min.css" },
     });
   });
@@ -498,18 +567,18 @@ describe("classifyBuildArtifactDetailed — structured per-entry signal", () => 
     // The match `.a1b2c3d4.` is sliced to `a1b2c3d4` so the agent can
     // grep the literal hex run without re-deriving the dot convention.
     expect(classifyBuildArtifactDetailed("assets/app.a1b2c3d4.js", "// bundle")).toEqual({
-      reason: "hashed-filename",
+      classification: "likely-hashed-bundle",
       signal: { kind: "hex-segment-in-basename", value: "a1b2c3d4" },
     });
   });
 
-  it("stamps `build-dir-segment` with the matched marker for dist-path entries", () => {
+  it("stamps `build-dir-segment` with the matched marker for bundler-output-dir entries", () => {
     expect(classifyBuildArtifactDetailed("/proj/dist/main.css", ".a{}")).toEqual({
-      reason: "dist-path",
+      classification: "likely-bundler-output-dir",
       signal: { kind: "build-dir-segment", value: "dist/" },
     });
     expect(classifyBuildArtifactDetailed("/proj/.next/static/css/app.css", ".a{}")).toEqual({
-      reason: "dist-path",
+      classification: "likely-bundler-output-dir",
       signal: { kind: "build-dir-segment", value: ".next/" },
     });
   });
@@ -517,7 +586,7 @@ describe("classifyBuildArtifactDetailed — structured per-entry signal", () => 
   it("stamps `data-url-image-marker` with the canonical marker substring on CSS gradient files", () => {
     const source = ".bg { background: url(data:image/svg+xml,...); }";
     expect(classifyBuildArtifactDetailed("vendor/styles.css", source)).toEqual({
-      reason: "contains-data-url-gradient",
+      classification: "likely-vendored-data-url-css",
       signal: { kind: "data-url-image-marker", value: "url(data:image/" },
     });
   });
@@ -525,7 +594,7 @@ describe("classifyBuildArtifactDetailed — structured per-entry signal", () => 
   it("stamps `tailwind-escape-selector` with the first matched substring", () => {
     const source = ".w-\\[400px\\] { width: 400px; }\n";
     expect(classifyBuildArtifactDetailed("app/styles.css", source)).toEqual({
-      reason: "tailwind-compiled-escape",
+      classification: "likely-compiled-tailwind",
       signal: { kind: "tailwind-escape-selector", value: "\\[400px\\]" },
     });
   });
@@ -538,7 +607,7 @@ describe("classifyBuildArtifactDetailed — structured per-entry signal", () => 
     // by reading `value > threshold`.
     const source = `.a{color:red;}`.repeat(50);
     expect(classifyBuildArtifactDetailed("vendor/some-bundle.css", source)).toEqual({
-      reason: "minified",
+      classification: "likely-minified-by-line-stats",
       signal: {
         kind: "max-line-length-exceeds-threshold",
         value: source.length,
@@ -559,7 +628,7 @@ describe("classifyBuildArtifactDetailed — structured per-entry signal", () => 
     const longLines = Array.from({ length: 4 }, () => longLineText);
     const source = [...shortLines, ...longLines].join("\n");
     const out = classifyBuildArtifactDetailed("vendor/multi.css", source);
-    expect(out?.reason).toBe("minified");
+    expect(out?.classification).toBe("likely-minified-by-line-stats");
     expect(out?.signal).toEqual({
       kind: "max-line-length-exceeds-threshold",
       value: longLineText.length,
@@ -574,7 +643,7 @@ describe("classifyBuildArtifactDetailed — structured per-entry signal", () => 
 });
 
 describe("isBuildArtifact (convenience predicate)", () => {
-  it("returns true when classifyBuildArtifact returns a reason", () => {
+  it("returns true when classifyBuildArtifact returns a classification", () => {
     expect(isBuildArtifact("vendor/bootstrap.min.css", ".a{}")).toBe(true);
   });
 
@@ -584,7 +653,7 @@ describe("isBuildArtifact (convenience predicate)", () => {
 });
 
 describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
-  it("labels `app.js` with reason `sourcemap-sibling` when `app.js.map` is also in the scanned set", () => {
+  it("labels `app.js` with classification `definite-sourcemap-paired` when `app.js.map` is also in the scanned set", () => {
     const files = [
       { filePath: "dist-out/app.js", source: "// bundled code" },
       { filePath: "dist-out/app.js.map", source: '{"version":3}' },
@@ -592,11 +661,13 @@ describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
     // Both files sit outside the BUILD_DIR_MARKERS set ("dist-out/"
     // is not "dist/") so the label has to come from the sibling-map
     // signal, not a path probe. The signal carries the matched map
-    // path so the agent can grep for both halves of the pair.
+    // path so the agent can grep for both halves of the pair. The
+    // classification is `definite-` because pairing a `.map` against
+    // its source in the live scan set is path-anchored evidence.
     expect(collectBuildArtifacts(files)).toEqual([
       {
         path: "dist-out/app.js",
-        reason: "sourcemap-sibling",
+        classification: "definite-sourcemap-paired",
         signal: { kind: "sibling-map-file", value: "dist-out/app.js.map" },
       },
     ]);
@@ -622,11 +693,11 @@ describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
     expect(collectBuildArtifacts(files)).toEqual([]);
   });
 
-  it("prefers a per-file reason over `sourcemap-sibling` when both would fire on the same path", () => {
+  it("prefers a per-file classification over `definite-sourcemap-paired` when both would fire on the same path", () => {
     // `vendor/jquery.min.js` matches the `.min.` infix AND has a
     // sibling `.map`. The per-file classifier runs first, so the
-    // entry carries `minified` (the more specific verdict) and is
-    // not duplicated. The accompanying `signal` reflects the
+    // entry carries `definite-min-infix` (the more specific verdict)
+    // and is not duplicated. The accompanying `signal` reflects the
     // winning predicate (the `.min.` infix), not the sibling-map
     // pairing — invariant on the doctrine "label must survive
     // inspection" extended to its evidence sub-field.
@@ -638,7 +709,7 @@ describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
     expect(labeled).toEqual([
       {
         path: "vendor/jquery.min.js",
-        reason: "minified",
+        classification: "definite-min-infix",
         signal: { kind: "min-infix", value: "jquery.min.js" },
       },
     ]);
@@ -646,7 +717,7 @@ describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
 });
 
 describe("collectBuildArtifacts", () => {
-  it("returns the subset of files that match any signal as `{ path, reason, signal }` records, preserving input order", () => {
+  it("returns the subset of files that match any signal as `{ path, classification, signal }` records, preserving input order", () => {
     const files = [
       { filePath: "src/Component.tsx", source: "export const x = 1;" },
       { filePath: "app/styles.css", source: ".w-\\[400px\\] { width: 400px; }" },
@@ -657,17 +728,17 @@ describe("collectBuildArtifacts", () => {
     expect(collectBuildArtifacts(files)).toEqual([
       {
         path: "app/styles.css",
-        reason: "tailwind-compiled-escape",
+        classification: "likely-compiled-tailwind",
         signal: { kind: "tailwind-escape-selector", value: "\\[400px\\]" },
       },
       {
         path: "dist/main.css",
-        reason: "dist-path",
+        classification: "likely-bundler-output-dir",
         signal: { kind: "build-dir-segment", value: "dist/" },
       },
       {
         path: "vendor/jquery.min.js",
-        reason: "minified",
+        classification: "definite-min-infix",
         signal: { kind: "min-infix", value: "jquery.min.js" },
       },
     ]);
@@ -695,9 +766,9 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // shape the three collapse to one inspect-once row with a
     // `suggestedGlob` that covers every member.
     const entries = [
-      mkEntry("/root/dist/5.0/bootstrap.css", "dist-path"),
-      mkEntry("/root/dist/5.1/bootstrap.css", "dist-path"),
-      mkEntry("/root/dist/5.2/bootstrap.css", "dist-path"),
+      mkEntry("/root/dist/5.0/bootstrap.css", "likely-bundler-output-dir"),
+      mkEntry("/root/dist/5.1/bootstrap.css", "likely-bundler-output-dir"),
+      mkEntry("/root/dist/5.2/bootstrap.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([
@@ -705,35 +776,35 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
         basename: "bootstrap.css",
         count: 3,
         pathHint: "dist/",
-        reasons: ["dist-path"],
+        classifications: ["likely-bundler-output-dir"],
         suggestedGlob: "dist/**/bootstrap.css",
       },
     ]);
     expect(out.ungrouped).toEqual([]);
   });
 
-  it("keeps sub-threshold same-basename entries in `ungrouped` with reasons + signals preserved", () => {
+  it("keeps sub-threshold same-basename entries in `ungrouped` with classifications + signals preserved", () => {
     // Two paths share a basename but fall below the grouping
-    // threshold. Zero information loss: the full `{ path, reason,
-    // signal }` record survives under `ungrouped` so an agent can
-    // still read both the per-path classification and the
-    // deterministic predicate evidence
+    // threshold. Zero information loss: the full `{ path,
+    // classification, signal }` record survives under `ungrouped` so
+    // an agent can still read both the per-path classification and
+    // the deterministic predicate evidence
     // (V1-BUILD-ARTIFACT-REASON-EXPLAIN).
     const entries = [
-      mkEntry("/root/dist/a.min.css", "minified"),
-      mkEntry("/root/dist/other/a.min.css", "minified"),
+      mkEntry("/root/dist/a.min.css", "definite-min-infix"),
+      mkEntry("/root/dist/other/a.min.css", "definite-min-infix"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([]);
     expect(out.ungrouped).toEqual([
       {
         path: "dist/a.min.css",
-        reason: "minified",
+        classification: "definite-min-infix",
         signal: { kind: "min-infix", value: "a.min.css" },
       },
       {
         path: "dist/other/a.min.css",
-        reason: "minified",
+        classification: "definite-min-infix",
         signal: { kind: "min-infix", value: "a.min.css" },
       },
     ]);
@@ -744,7 +815,9 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // (app.css), one of size 3 (bootstrap.css). The size-5 leads;
     // the two size-3 groups appear in basename order.
     const mk = (name: string, n: number): readonly ScannedBuildArtifact[] =>
-      Array.from({ length: n }, (_, i) => mkEntry(`/root/dist/v${i}/${name}`, "dist-path"));
+      Array.from({ length: n }, (_, i) =>
+        mkEntry(`/root/dist/v${i}/${name}`, "likely-bundler-output-dir"),
+      );
     const entries = [...mk("bootstrap.css", 3), ...mk("font-awesome.css", 5), ...mk("app.css", 3)];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped.map((g) => g.basename)).toEqual([
@@ -759,26 +832,31 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // `ungrouped` and the output sorts deterministically regardless
     // of input order.
     const entries = [
-      mkEntry("/root/z/one.css", "dist-path"),
-      mkEntry("/root/a/two.css", "dist-path"),
-      mkEntry("/root/m/three.css", "dist-path"),
+      mkEntry("/root/z/one.css", "likely-bundler-output-dir"),
+      mkEntry("/root/a/two.css", "likely-bundler-output-dir"),
+      mkEntry("/root/m/three.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.ungrouped.map((e) => e.path)).toEqual(["a/two.css", "m/three.css", "z/one.css"]);
   });
 
-  it("dedupes and sorts `reasons` when members of one group carry multiple classifier reasons", () => {
-    // Mixed-reason group: `dist-path` and `minified` both fire
-    // across the three members. The `reasons` field surfaces both
-    // so the agent reading `reasons: ["dist-path", "minified"]`
-    // knows the group isn't monolithic.
+  it("dedupes and sorts `classifications` when members of one group carry multiple classifier verdicts", () => {
+    // Mixed-classification group: `likely-bundler-output-dir` and
+    // `definite-min-infix` both fire across the three members. The
+    // `classifications` field surfaces both so the agent reading
+    // `["definite-min-infix", "likely-bundler-output-dir"]` knows
+    // the group isn't monolithic and can budget the confidence-graded
+    // mix.
     const entries = [
-      mkEntry("/root/dist/a/lib.css", "dist-path"),
-      mkEntry("/root/dist/b/lib.css", "minified"),
-      mkEntry("/root/dist/c/lib.css", "dist-path"),
+      mkEntry("/root/dist/a/lib.css", "likely-bundler-output-dir"),
+      mkEntry("/root/dist/b/lib.css", "definite-min-infix"),
+      mkEntry("/root/dist/c/lib.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    expect(out.grouped[0]?.reasons).toEqual(["dist-path", "minified"]);
+    expect(out.grouped[0]?.classifications).toEqual([
+      "definite-min-infix",
+      "likely-bundler-output-dir",
+    ]);
   });
 
   it("computes a directory-boundary pathHint, never a partial-basename prefix", () => {
@@ -786,9 +864,9 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // The pathHint must stop at the last `/` so the suggestedGlob
     // stays a legal glob and never over-captures unrelated files.
     const entries = [
-      mkEntry("/root/vendor/bootstrap/x.css", "dist-path"),
-      mkEntry("/root/vendor/bose-theme/x.css", "dist-path"),
-      mkEntry("/root/vendor/boxy/x.css", "dist-path"),
+      mkEntry("/root/vendor/bootstrap/x.css", "likely-bundler-output-dir"),
+      mkEntry("/root/vendor/bose-theme/x.css", "likely-bundler-output-dir"),
+      mkEntry("/root/vendor/boxy/x.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped[0]?.pathHint).toBe("vendor/");
@@ -802,9 +880,9 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // just repo-wide. The agent sees this and can tighten the glob
     // manually if needed.
     const entries = [
-      mkEntry("/root/dist/a.css", "dist-path"),
-      mkEntry("/root/build/a.css", "dist-path"),
-      mkEntry("/root/public/a.css", "dist-path"),
+      mkEntry("/root/dist/a.css", "likely-bundler-output-dir"),
+      mkEntry("/root/build/a.css", "likely-bundler-output-dir"),
+      mkEntry("/root/public/a.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped[0]?.pathHint).toBe("");
@@ -826,8 +904,8 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // would leak `..` segments. The helper drops them rather than
     // surface a broken pattern.
     const entries = [
-      mkEntry("/outside/a.css", "dist-path"),
-      mkEntry("/root/dist/a/b.css", "dist-path"),
+      mkEntry("/outside/a.css", "likely-bundler-output-dir"),
+      mkEntry("/root/dist/a/b.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     const allPaths = [...out.grouped.map((g) => g.basename), ...out.ungrouped.map((e) => e.path)];
@@ -841,9 +919,9 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // same on macOS and Windows CI, matching the POSIX convention
     // `propose_config` uses downstream.
     const entries = [
-      mkEntry("C:\\root\\dist\\v1\\lib.css", "dist-path"),
-      mkEntry("C:\\root\\dist\\v2\\lib.css", "dist-path"),
-      mkEntry("C:\\root\\dist\\v3\\lib.css", "dist-path"),
+      mkEntry("C:\\root\\dist\\v1\\lib.css", "likely-bundler-output-dir"),
+      mkEntry("C:\\root\\dist\\v2\\lib.css", "likely-bundler-output-dir"),
+      mkEntry("C:\\root\\dist\\v3\\lib.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "C:\\root");
     expect(out.grouped[0]?.pathHint).toBe("dist/");
@@ -857,9 +935,12 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // constant ensures future edits stay aligned with the paired
     // exclude-collapse logic.
     expect(BASENAME_GROUP_THRESHOLD).toBe(3);
-    const two = [mkEntry("/root/a/x.css", "dist-path"), mkEntry("/root/b/x.css", "dist-path")];
+    const two = [
+      mkEntry("/root/a/x.css", "likely-bundler-output-dir"),
+      mkEntry("/root/b/x.css", "likely-bundler-output-dir"),
+    ];
     expect(groupBuildArtifactsByBasename(two, "/root").grouped).toEqual([]);
-    const three = [...two, mkEntry("/root/c/x.css", "dist-path")];
+    const three = [...two, mkEntry("/root/c/x.css", "likely-bundler-output-dir")];
     expect(groupBuildArtifactsByBasename(three, "/root").grouped.length).toBe(1);
   });
 });
@@ -875,7 +956,7 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
     // 120 unique basenames (no clusters form) → every entry lands in
     // `ungrouped`, which must cap to 50 with a sibling summary.
     const entries = Array.from({ length: 120 }, (_, i) =>
-      mkEntry(`/root/dist/f${String(i).padStart(3, "0")}.css`, "dist-path"),
+      mkEntry(`/root/dist/f${String(i).padStart(3, "0")}.css`, "likely-bundler-output-dir"),
     );
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([]);
@@ -888,7 +969,7 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
 
   it("omits ungroupedTruncated when the list fits under the cap", () => {
     const entries = Array.from({ length: 10 }, (_, i) =>
-      mkEntry(`/root/dist/f${i}.css`, "dist-path"),
+      mkEntry(`/root/dist/f${i}.css`, "likely-bundler-output-dir"),
     );
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.ungrouped.length).toBe(10);
@@ -900,7 +981,7 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
     // definition), ungrouped stays empty. The cap doesn't fire and
     // the grouped row's count stays honest.
     const entries = Array.from({ length: 60 }, (_, i) =>
-      mkEntry(`/root/d${i}/bootstrap.css`, "dist-path"),
+      mkEntry(`/root/d${i}/bootstrap.css`, "likely-bundler-output-dir"),
     );
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped.length).toBe(1);

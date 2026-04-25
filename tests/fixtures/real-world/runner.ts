@@ -1148,7 +1148,7 @@ function evalNoBuildArtifactLabel(
     return {
       expectation: exp,
       pass: false,
-      message: `real-world/${fixtureId}: '${exp.path}' was labeled build-artifact with reason '${hit.reason}' — fixture shape must not carry any build-artifact signal`,
+      message: `real-world/${fixtureId}: '${exp.path}' was labeled build-artifact with classification '${hit.classification}' — fixture shape must not carry any build-artifact signal`,
     };
   }
   return {

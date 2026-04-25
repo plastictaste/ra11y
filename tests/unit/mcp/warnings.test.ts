@@ -830,10 +830,12 @@ describe("warningsFromScanMeta", () => {
   // bytes (nearly always unreliable) without rereading every
   // flagged file. The predicate is "the caller-supplied list is
   // non-empty"; the cross-reference between
-  // `buildArtifacts.entries[].reason` and the `signal.kind`
-  // discriminators that produce `reason: "minified"` lives at
-  // the call site so this module stays decoupled from the
-  // build-artifact classifier internals.
+  // `buildArtifacts.entries[].classification` and the two
+  // minified-shaped variants (`definite-min-infix` and
+  // `likely-minified-by-line-stats` — the confidence-graded split
+  // introduced by Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL)
+  // lives at the call site so this module stays decoupled from
+  // the build-artifact classifier internals.
   it("fires `scanned_minified_file` when the caller-supplied list is non-empty", () => {
     const codes = computeScanWarnings({
       filesScanned: 42,

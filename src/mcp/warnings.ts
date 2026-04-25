@@ -247,15 +247,20 @@ export type ScanWarningCode =
   // `files[]` against `meta.scannedBuildArtifacts`.
   | "vendor_css_dominates_findings"
   // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: at least one file in the scan
-  // set was classified by `classifyBuildArtifact` with `reason: "minified"`
-  // — either the basename carries a `.min.` infix (path-deterministic) or
-  // the source text crosses the corroborated long-line probe (median or
-  // ratio second-tier signal in `src/mcp/build-artifacts.ts`). Pairs
-  // with `scanned_build_artifacts_present`, which signals "the scan
-  // touched at least one build artifact of any reason"; this finer code
-  // tells the agent specifically which files were classified as
-  // minified, so findings on those files can be triaged as low-confidence
-  // without rereading every flagged file. Surface-don't-suppress: the
+  // set was classified by `classifyBuildArtifact` with one of the two
+  // minified-shaped classifications (`definite-min-infix` —
+  // path-anchored .min. basename — or `likely-minified-by-line-stats` —
+  // corroborated long-line probe; see `src/mcp/build-artifacts.ts`).
+  // Pairs with `scanned_build_artifacts_present`, which signals "the
+  // scan touched at least one build artifact of any classification";
+  // this finer code tells the agent specifically which files were
+  // classified as minified, so findings on those files can be triaged
+  // as low-confidence without rereading every flagged file. The
+  // confidence-graded split surfaces in the underlying
+  // `meta.scannedBuildArtifacts` entries — agents reading
+  // `classification: "likely-minified-by-line-stats"` know the verdict
+  // is content-shaped (Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL).
+  // Surface-don't-suppress: the
   // findings stay in `files[]`, the warning is the additive label that
   // an agent reads to decide whether to skip per-file investigation.
   // Paired payload: `warningsDetails.scanned_minified_file` carries
@@ -481,17 +486,19 @@ export interface WarningInputs {
   readonly scssUnresolvedVariableFiles?: readonly string[];
   /**
    * V1-SCANNED-MINIFIED-FILE-WARNING-CODE: caller-supplied list of
-   * scanned files classified as `reason: "minified"` by
-   * `classifyBuildArtifact` (per `src/mcp/build-artifacts.ts`). Drives
-   * the `scanned_minified_file` code + its paired
+   * scanned files classified with one of the two minified-shaped
+   * `BuildArtifactClassification` variants (`definite-min-infix` —
+   * path-anchored — or `likely-minified-by-line-stats` — corroborated
+   * long-line probe; see `src/mcp/build-artifacts.ts`). Drives the
+   * `scanned_minified_file` code + its paired
    * `warningsDetails.scanned_minified_file: { files }` payload so an
    * agent reading the warning channel can triage findings on those
    * files without re-running the classifier. The detector lives at
    * the build-artifact seam (`collectBuildArtifacts`); the call site
-   * narrows the entries by `signal.kind` (the `min-infix` and
-   * `max-line-length-exceeds-threshold` variants are the two paths
-   * that produce `reason: "minified"`) so this module stays pure
-   * over its inputs.
+   * narrows by `classification` (Q7-SCANNED-BUILD-ARTIFACTS-REASON-
+   * MISLABEL renamed `reason` → `classification` and split `minified`
+   * into the two confidence-graded variants the union here recovers)
+   * so this module stays pure over its inputs.
    *
    * Pairs with `scannedBuildArtifactsPresent` — that flag signals
    * the broader "any build artifact in scan"; this list narrows to
@@ -882,7 +889,9 @@ export interface ScanWarningDetails {
   /**
    * V1-SCANNED-MINIFIED-FILE-WARNING-CODE: payload for
    * `scanned_minified_file`. Carries the deterministic-sorted list of
-   * scanned files classified as `reason: "minified"` so an agent can
+   * scanned files classified with one of the two minified-shaped
+   * `BuildArtifactClassification` variants (`definite-min-infix` or
+   * `likely-minified-by-line-stats`) so an agent can
    * branch on identity (which files? how many?) without re-running the
    * build-artifact classifier or descending into
    * `meta.scannedBuildArtifacts` to filter by reason. The list is the
@@ -1151,8 +1160,9 @@ function hasScssUnresolvedVariables(files: WarningInputs["scssUnresolvedVariable
 /**
  * Predicate for `scanned_minified_file`. Returns `true` when the
  * caller-supplied list is non-empty. Pure over its input; the
- * cross-reference between `buildArtifacts.entries` and the
- * `signal.kind` discriminators that produce `reason: "minified"`
+ * cross-reference between `buildArtifacts.entries` and the two
+ * minified-shaped `BuildArtifactClassification` variants
+ * (`definite-min-infix` and `likely-minified-by-line-stats`)
  * (`min-infix` and `max-line-length-exceeds-threshold`) lives at the
  * call site so this module stays decoupled from the build-artifact
  * classifier internals.

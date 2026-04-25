@@ -1,120 +1,190 @@
 /**
- * Deterministic detection of compiled-CSS / bundler-output files among
- * the set of files a scan has already parsed.
+ * Detection of compiled-CSS / bundler-output files among the set of
+ * files a scan has already parsed.
  *
  * Surfaces as `meta.scannedBuildArtifacts: BuildArtifactsGrouped` on
  * `scan_project` responses — a *labelled* grouped view, not a
- * filter. Each entry pairs the `path` with a `reason` string drawn
- * from a closed set, so the consuming agent can triage without
- * re-reading every flagged file. Findings on these files still
- * appear in `files`; the meta entry tells the agent "this finding
- * sits on a generated file, and here is *why* the scanner
- * classified it so." The on-wire shape collapses ≥3-entry same-
- * basename clusters into `grouped[i]` rows with paste-ready
- * `suggestedGlob`s; sub-threshold entries stay in `ungrouped` with
- * their `{ path, reason }` records intact. See {@link
- * groupBuildArtifactsByBasename}.
+ * filter. Each entry pairs the `path` with a confidence-graded
+ * {@link BuildArtifactClassification} so the consuming agent can
+ * triage without re-reading every flagged file. Findings on these
+ * files still appear in `files`; the meta entry tells the agent
+ * "this finding sits on a generated file, and here is *which
+ * predicate* the scanner matched on (with what confidence)." The
+ * on-wire shape collapses ≥3-entry same-basename clusters into
+ * `grouped[i]` rows with paste-ready `suggestedGlob`s; sub-threshold
+ * entries stay in `ungrouped` with their `{ path, classification,
+ * signal }` records intact. See {@link groupBuildArtifactsByBasename}.
  *
- * Per CLAUDE.md §1 "Labeled buckets are suppression too," a label
- * earns its place only when it is *provable from the code* rather
- * than heuristic. Each reason below clears that bar — the predicate
- * that produced it is a deterministic property of the path or source
- * text, not a guess.
+ * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the previous shape
+ * shipped a `reason: BuildArtifactReason` token (`"minified"`,
+ * `"hashed-filename"`, `"dist-path"`, `"contains-data-url-gradient"`,
+ * `"tailwind-compiled-escape"`, `"sourcemap-sibling"`) that read to
+ * the agent as a deterministic verdict. But four of those predicates
+ * (long-line corroboration, hex-segment, build-dir segment, data-url
+ * marker, tailwind-escape selector) are heuristics that fire on
+ * authored content with non-trivial frequency — a single long
+ * `calc()` line, an `app.a1b2c3d4.js` test artifact, an authored
+ * `dist/` source directory, a CSS file inlining a tiny SVG mask icon
+ * via `data:image/`, or a hand-authored `\:focus-visible:` rule. The
+ * deterministic-sounding label propagated the lie into the agent's
+ * downstream triage (skip the file, suppress findings, re-route
+ * fixes). Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest," the field
+ * was renamed `reason` → `classification` and the values were
+ * reshaped into a confidence-graded enum: `definite-*` for the two
+ * predicates whose verdict survives inspection of the path/scan-set
+ * alone (`.min.` infix, paired `.map` sibling) and `likely-*` for
+ * the five whose predicate is probabilistic. The agent reading
+ * `classification: "likely-minified-by-line-stats"` budgets
+ * correctly; reading `classification: "definite-min-infix"` knows
+ * the verdict is path-anchored.
  *
- * Reasons, in classifier evaluation order (first-match wins; the
- * comment block at {@link classifyBuildArtifact} restates the order
- * inline so future edits keep predicate ↔ reason aligned):
+ * Classifications, in classifier evaluation order (first-match wins;
+ * the comment block at {@link classifyBuildArtifactDetailed}
+ * restates the order inline so future edits keep predicate ↔
+ * classification aligned):
  *
- *   1. `minified`. Either the basename carries a `.min.` infix
- *      (canonical pre-minified bundle marker — `bootstrap.min.css`,
- *      `jquery.min.js`) OR the source text crosses the single-long-
- *      line probe (> {@link MINIFIED_LINE_THRESHOLD} chars on one
- *      line) AND a second-tier corroborator also fires: either the
- *      median line length itself exceeds the threshold OR the file
- *      carries ≥{@link MINIFIED_LONG_LINE_MIN_COUNT} long lines AND
- *      ≥25% of lines exceed the threshold. The standalone long-line
- *      probe used to be enough but mis-labeled authored files (Astro
- *      `<Example code={`…`}/>` template literals, Google-Maps iframe
- *      URLs, SCSS type-signature function bodies) that cross 500 chars
- *      on exactly one authored line — the single signal is too weak
- *      to be provable from file shape alone. The ratio's count floor
- *      (introduced 2026-04-24) tightens the corroborator further: a
- *      4-line authored file with one long line satisfies the ratio at
- *      `1/4 = 0.25` and the original predicate mis-labeled vanilla-JS
- *      pages with concatenated SRI preload links, landing pages with
- *      one inline-SVG path command, and design-system token modules
- *      with one long `calc()` value. A real minified bundle reads as
- *      either several long lines among few (ratio + count) or one
- *      enormous line (median); one long line among any number of
- *      short ones is not minification evidence.
- *   2. `sourcemap-sibling`. A sibling `.map` file is in the scanned
- *      set with the matching basename. Pairing a `.js` / `.css` with
- *      its `.map` is the signature of a compiled bundle. The `.map`
- *      file itself is *not* labelled here — agents don't author
- *      sourcemaps in-place and a manual-review prompt about one is
- *      noise.
- *   3. `hashed-filename`. An 8+ character lowercase-hex segment
+ *   1. `definite-min-infix`. The basename carries a `.min.` infix —
+ *      canonical pre-minified bundle marker (`bootstrap.min.css`,
+ *      `jquery.min.js`). Path-anchored and falsifiable from the
+ *      basename alone; survives the "provable from the code" bar.
+ *   2. `likely-hashed-bundle`. An 8+ character lowercase-hex segment
  *      flanked by dots in the basename, as emitted by
  *      Webpack/Rollup/Vite/esbuild for content-addressed output
- *      (`app.a1b2c3d4.js`, `chunk.0123abcdef.css`). Hand-authored
- *      filenames do not take this shape.
- *   4. `dist-path`. The path includes a canonical bundler-output
- *      directory segment — `dist/`, `build/`, `_site/`, `public/`,
- *      `node_modules/`, plus framework-specific output trees like
- *      `.next/`, `.svelte-kit/`, `.output/`, and `static/assets/`.
- *      A trailing `/` is required so a root-level file literally
- *      named `dist.ts` cannot confound the match.
- *   5. `contains-data-url-gradient`. A `.css` / `.scss` source whose
- *      text contains `url(data:image/` — vendored bundles frequently
- *      inline SVG/PNG gradient backgrounds via base64 data URLs;
- *      hand-authored stylesheets reach for external image references
- *      or CSS gradients instead. CSS-only because JSX strings can
- *      legitimately mention `data:image/` as an asset URL builder.
- *   6. `tailwind-compiled-escape`. A `.css` / `.scss` source whose
+ *      (`app.a1b2c3d4.js`, `chunk.0123abcdef.css`). Strongly
+ *      bundler-shaped, but a hand-authored test fixture or a git-
+ *      sha-stamped artifact can collide; the `likely-` prefix names
+ *      that residual uncertainty.
+ *   3. `likely-bundler-output-dir`. The path includes a canonical
+ *      bundler-output directory segment — `dist/`, `build/`,
+ *      `_site/`, `public/`, `node_modules/`, plus framework-specific
+ *      output trees like `.next/`, `.svelte-kit/`, `.output/`, and
+ *      `static/assets/`. A trailing `/` is required so a root-level
+ *      file literally named `dist.ts` cannot confound the match.
+ *      Authored projects do sometimes use these directory names for
+ *      hand-authored source (a `dist/` of vendored deps, a `public/`
+ *      of authored static assets a framework happens to serve), so
+ *      the verdict is `likely-`, not `definite-`.
+ *   4. `likely-vendored-data-url-css`. A `.css` / `.scss` source
+ *      whose text contains `url(data:image/` — vendored bundles
+ *      frequently inline SVG/PNG gradient backgrounds via base64
+ *      data URLs; hand-authored stylesheets reach for external
+ *      image references or CSS gradients instead. But authored CSS
+ *      sometimes inlines a tiny SVG mask icon, so the verdict is
+ *      `likely-`. CSS-only because JSX strings can legitimately
+ *      mention `data:image/` as an asset URL builder.
+ *   5. `likely-compiled-tailwind`. A `.css` / `.scss` source whose
  *      text contains an escape-bracket Tailwind utility selector
- *      (`\[400px\]`, `\:focus-visible:`, `\[--…]`). These are emitted
- *      by Tailwind's JIT compiler as the CSS-escaped form of utility
- *      class names like `w-[400px]` — a single occurrence proves the
- *      file came from the build pipeline.
+ *      (`\[400px\]`, `\:focus-visible:`, `\[--…]`). These are
+ *      typically emitted by Tailwind's JIT compiler as the CSS-
+ *      escaped form of utility class names like `w-[400px]`, but
+ *      a hand-authored stylesheet can produce the same selector
+ *      literally — the predicate is strong evidence, not a
+ *      guarantee.
+ *   6. `definite-sourcemap-paired`. A sibling `.map` file is in the
+ *      scanned set with the matching basename. Pairing a `.js` /
+ *      `.css` with its `.map` is unambiguous compiled-bundle
+ *      evidence — agents don't pair sourcemaps with hand-authored
+ *      sources. Path-anchored against the live scan set; survives
+ *      the "provable from the code" bar. The `.map` file itself is
+ *      *not* labelled here — agents don't author sourcemaps in-
+ *      place and a manual-review prompt about one is noise.
+ *   7. `likely-minified-by-line-stats`. The source text crosses the
+ *      single-long-line probe (> {@link MINIFIED_LINE_THRESHOLD}
+ *      chars on one line) AND a second-tier corroborator also
+ *      fires: either the median line length itself exceeds the
+ *      threshold OR the file carries ≥
+ *      {@link MINIFIED_LONG_LINE_MIN_COUNT} long lines AND ≥25% of
+ *      lines exceed the threshold. The standalone long-line probe
+ *      used to be enough but mis-labeled authored files (Astro
+ *      `<Example code={`…`}/>` template literals, Google-Maps
+ *      iframe URLs, SCSS type-signature function bodies) that cross
+ *      500 chars on exactly one authored line. Even with the count-
+ *      floor + ratio + median tightening, the predicate remains a
+ *      heuristic over content shape — the `likely-` prefix names
+ *      the residual uncertainty.
  *
  * What is *not* a signal: the `_` filename prefix. That prefix is the
  * Sass partial convention for authored source (`_variables.scss`,
  * `_mixins.scss`) — mis-labeling an authored partial as artifact
  * misleads the agent's triage. Likewise, raw line count is not a
  * signal: Bootstrap's `_variables.scss` is ~2000 lines of hand-
- * authored `$var` declarations across many short lines. The minified
- * detector requires a *single* line over the threshold so the same
- * partial does not get mislabelled.
+ * authored `$var` declarations across many short lines. The
+ * minified-by-line-stats detector requires a *single* line over the
+ * threshold AND a second-tier corroborator so the same partial does
+ * not get mislabelled.
  *
- * Single-reason output: each path is reported once, with the first
- * matching reason. Combining reasons would defeat the doctrine's
- * "label must survive inspection" bar — the agent reading
- * `reason: "minified"` is verifying one falsifiable claim, not
- * sorting through a bag.
+ * Single-classification output: each path is reported once, with the
+ * first matching classification. Combining classifications would
+ * defeat the doctrine's "label must survive inspection" bar — the
+ * agent reading `classification: "definite-min-infix"` is verifying
+ * one falsifiable claim, not sorting through a bag. The paired
+ * {@link BuildArtifactSignal} carries the underlying evidence
+ * (matched basename, hex segment, directory segment, longest line
+ * length, sibling map path) so the agent can re-derive the verdict
+ * without re-running our classifier.
  */
 
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 
-/** Closed set of classification reasons emitted on `ScannedBuildArtifact.reason`. */
-export type BuildArtifactReason =
-  | "minified"
-  | "sourcemap-sibling"
-  | "hashed-filename"
-  | "dist-path"
-  | "contains-data-url-gradient"
-  | "tailwind-compiled-escape";
+/**
+ * Confidence-graded classification emitted on
+ * `ScannedBuildArtifact.classification`. The `definite-*` prefix is
+ * reserved for predicates whose verdict is provable from the path
+ * or the live scan set alone (`.min.` infix in the basename, paired
+ * `.map` sibling); `likely-*` covers the heuristic predicates
+ * (corroborated long-line probe, hex-segment basename, build-dir
+ * segment, data-url marker, tailwind escape selector) that fire on
+ * authored content with non-trivial frequency. The agent reading
+ * `classification` budgets per the prefix — `definite-*` means
+ * "skip per-file investigation, route to vendor exclude," `likely-*`
+ * means "investigate to confirm before routing." See the file-level
+ * comment block for the per-variant predicate, the failure modes
+ * each one had under the previous deterministic-sounding `reason`
+ * shape (Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL), and the
+ * paired {@link BuildArtifactSignal} that carries the underlying
+ * evidence.
+ */
+export type BuildArtifactClassification =
+  | "definite-min-infix"
+  | "definite-sourcemap-paired"
+  | "likely-minified-by-line-stats"
+  | "likely-hashed-bundle"
+  | "likely-bundler-output-dir"
+  | "likely-vendored-data-url-css"
+  | "likely-compiled-tailwind";
 
 /**
- * Per-entry deterministic explanation of *which* heuristic predicate
- * fired for a {@link BuildArtifactReason}. The doctrine bar is
+ * Returns true when `classification` is a `definite-*` variant —
+ * the predicate's verdict is provable from the path or the live
+ * scan set alone (e.g. `.min.` infix, paired `.map` sibling). Used
+ * by callers that need to gate a downstream behavior on
+ * "confidence-grade is deterministic" without coupling to the full
+ * variant set; the per-variant `definite-` / `likely-` prefix is
+ * the contract the doctrine bar guarantees.
+ */
+export function isDefiniteBuildArtifactClassification(
+  classification: BuildArtifactClassification,
+): boolean {
+  return classification.startsWith("definite-");
+}
+
+/**
+ * Per-entry deterministic explanation of *which* predicate fired for
+ * a {@link BuildArtifactClassification}. The doctrine bar is
  * "provable from the code" — every variant below names a predicate
- * that already runs inside {@link classifyBuildArtifact}, so the
- * agent reading the response can verify the verdict without re-
+ * that already runs inside {@link classifyBuildArtifactDetailed}, so
+ * the agent reading the response can verify the verdict without re-
  * running our classifier or guessing what we matched on. Per
  * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
- * meta sub-fields are dishonest", this is additive evidence that
- * makes the existing `reason` label auditable; we do NOT introduce
- * new reasons or re-fire predicates here.
+ * meta sub-fields are dishonest" (V1-BUILD-ARTIFACT-REASON-EXPLAIN +
+ * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL), this is the structured
+ * evidence record that makes the {@link BuildArtifactClassification}
+ * label auditable: when the classification carries a `likely-` prefix,
+ * the signal explains *why* the heuristic fired so the agent can
+ * dismiss the false-positive shape (single long `calc()` line,
+ * `bootstrap.css` test fixture, authored `dist/` directory) by
+ * reading the evidence rather than re-opening the file.
  *
  * Numeric `value` / `threshold` siblings appear ONLY on signals where
  * the predicate is itself a numeric comparison (the long-line probe).
@@ -169,31 +239,33 @@ export type BuildArtifactSignal =
  * ride inside the grouped envelope —
  * `meta.scannedBuildArtifacts.ungrouped[]` — for any sub-threshold
  * basenames that didn't form a group of ≥
- * {@link BASENAME_GROUP_THRESHOLD}. The agent reads `reason` to
- * triage whether the file is worth investigating without opening it
- * and reads `signal` to verify *which* heuristic predicate fired
- * (V1-BUILD-ARTIFACT-REASON-EXPLAIN). The paired `path` is the same
- * path the rest of the response uses (root-relative POSIX after the
- * grouper's relativization), so a caller can join against the
- * `files[]` bucket directly.
+ * {@link BASENAME_GROUP_THRESHOLD}. The agent reads `classification`
+ * (with its `definite-*` / `likely-*` confidence prefix —
+ * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL) to budget per-file
+ * investigation and reads `signal` to verify *which* predicate
+ * fired (V1-BUILD-ARTIFACT-REASON-EXPLAIN). The paired `path` is
+ * the same path the rest of the response uses (root-relative POSIX
+ * after the grouper's relativization), so a caller can join against
+ * the `files[]` bucket directly.
  */
 export interface ScannedBuildArtifact {
   readonly path: string;
-  readonly reason: BuildArtifactReason;
+  readonly classification: BuildArtifactClassification;
   readonly signal: BuildArtifactSignal;
 }
 
 /**
  * Detailed per-file classification result returned by
- * {@link classifyBuildArtifactDetailed}: pairs the {@link
- * BuildArtifactReason} verdict with the deterministic
+ * {@link classifyBuildArtifactDetailed}: pairs the
+ * {@link BuildArtifactClassification} verdict with the deterministic
  * {@link BuildArtifactSignal} that fired, so callers can surface
- * both the label and its evidence on `ScannedBuildArtifact`. The
- * convenience boolean predicate {@link classifyBuildArtifact} drops
- * the signal for callers that only need the reason.
+ * both the confidence-graded label and its evidence on
+ * {@link ScannedBuildArtifact}. The convenience predicate
+ * {@link classifyBuildArtifact} returns just the classification for
+ * callers that only need the verdict.
  */
-export interface BuildArtifactClassification {
-  readonly reason: BuildArtifactReason;
+export interface BuildArtifactClassificationResult {
+  readonly classification: BuildArtifactClassification;
   readonly signal: BuildArtifactSignal;
 }
 
@@ -213,7 +285,7 @@ const TAILWIND_ESCAPED_SELECTOR =
   /\\\[\d+px\\?\]|\\\[\d+rem\\?\]|\\\[\d+%\\?\]|\\:focus-visible:|\\\[--/u;
 
 /**
- * Marker substring for the `contains-data-url-gradient` reason.
+ * Marker substring for the `likely-vendored-data-url-css` classification.
  * Hand-authored CSS rarely inlines raw image bytes via base64 data
  * URLs; vendored bundles (Bootstrap, Font Awesome, Tailwind plugins
  * with image presets) routinely do. The probe is intentionally
@@ -284,39 +356,42 @@ const MINIFIED_LINE_THRESHOLD = 500;
 const HASHED_FILENAME_RE = /\.[a-f0-9]{8,}\./u;
 
 /**
- * Pure per-file classifier: returns the matching {@link
- * BuildArtifactReason} or `null` when no signal fires.
+ * Pure per-file classifier: returns the matching
+ * {@link BuildArtifactClassification} or `null` when no signal
+ * fires.
  *
  * Evaluation order:
- *   1. `.min.` infix on the basename → `minified`. Canonical on pre-
- *      minified bundles, unambiguous.
- *   2. Hashed-filename segment (8+ hex between dots) → `hashed-filename`.
- *   3. Bundler-output path ancestry → `dist-path`.
- *   4. CSS-only: `data:image/` inline → `contains-data-url-gradient`.
+ *   1. `.min.` infix on the basename → `definite-min-infix`.
+ *      Canonical on pre-minified bundles, path-anchored.
+ *   2. Hashed-filename segment (8+ hex between dots) →
+ *      `likely-hashed-bundle`.
+ *   3. Bundler-output path ancestry → `likely-bundler-output-dir`.
+ *   4. CSS-only: `data:image/` inline → `likely-vendored-data-url-css`.
  *   5. CSS-only: Tailwind escape-bracket selector →
- *      `tailwind-compiled-escape`.
+ *      `likely-compiled-tailwind`.
  *   6. Single-line-over-threshold + second-tier corroboration →
- *      `minified`. The long-line probe alone is not enough: authored
- *      Astro/Starlight template-literal props, Google-Maps iframe URLs,
- *      SCSS type signatures, and MDX component prop bundles all cross
- *      the 500-char line cap once while the rest of the file reads
- *      short. At least one corroborator from {long-line ratio, median
- *      line length} must also fire for the bundle verdict (see
- *      {@link hasLongMinifiedLineCorroborated}). The path-based signals
- *      above (`.min.`, hashed, dist-path) already handle the cases
- *      where the single-long-line probe lines up with a deterministic
- *      filesystem marker; this final branch covers short-path bundles
- *      whose source text itself still proves minification.
+ *      `likely-minified-by-line-stats`. The long-line probe alone
+ *      is not enough: authored Astro/Starlight template-literal
+ *      props, Google-Maps iframe URLs, SCSS type signatures, and
+ *      MDX component prop bundles all cross the 500-char line cap
+ *      once while the rest of the file reads short. At least one
+ *      corroborator from {long-line ratio, median line length} must
+ *      also fire (see {@link detectLongMinifiedLine}). The path-
+ *      based signals above already handle the cases where the
+ *      single-long-line probe lines up with a path marker; this
+ *      final branch covers short-path bundles whose source text
+ *      itself still suggests minification.
  *
- * The `sourcemap-sibling` reason is NOT checked here because it
- * requires the full scanned set — use {@link collectBuildArtifacts}
- * for that branch (a sibling `.map` fills in as the corroborator for
- * files whose source-text alone is ambiguous). The path-based signals
- * are intentionally extension-agnostic: a file under `/dist/assets/`
- * is a build artifact regardless of whether it ends in `.css` or
- * `.html`. The Tailwind-escape and data-URL probes are gated to
- * `.css` / `.scss` (JSX sources can carry those patterns as string
- * literals, which are not compiled CSS).
+ * The `definite-sourcemap-paired` classification is NOT checked here
+ * because it requires the full scanned set — use
+ * {@link collectBuildArtifacts} for that branch (a sibling `.map`
+ * fills in as the corroborator for files whose source-text alone is
+ * ambiguous). The path-based signals are intentionally extension-
+ * agnostic: a file under `/dist/assets/` is a build artifact
+ * regardless of whether it ends in `.css` or `.html`. The Tailwind-
+ * escape and data-URL probes are gated to `.css` / `.scss` (JSX
+ * sources can carry those patterns as string literals, which are
+ * not compiled CSS).
  *
  * O(file size) — at most one linear pass on the source for the line-
  * statistics helper when the cheaper signals miss, plus a few O(1)
@@ -325,52 +400,61 @@ const HASHED_FILENAME_RE = /\.[a-f0-9]{8,}\./u;
 export function classifyBuildArtifact(
   filePath: string,
   source: string,
-): BuildArtifactReason | null {
-  return classifyBuildArtifactDetailed(filePath, source)?.reason ?? null;
+): BuildArtifactClassification | null {
+  return classifyBuildArtifactDetailed(filePath, source)?.classification ?? null;
 }
 
 /**
  * Detailed sibling of {@link classifyBuildArtifact}: returns the
- * matching {@link BuildArtifactClassification} (reason + signal) or
- * `null` when no signal fires.
+ * matching {@link BuildArtifactClassificationResult} (classification
+ * + signal) or `null` when no signal fires.
  *
  * Evaluation order matches the boolean predicate exactly so the
- * returned `reason` is identical for any input — the only difference
- * is the paired {@link BuildArtifactSignal} that names the predicate
- * which fired. Each per-signal helper is a pure function over its
- * inputs so the doctrine bar ("provable from the code") survives:
- * the agent reading `signal.kind` and `signal.value` can re-derive
- * the verdict without re-running our classifier.
+ * returned `classification` is identical for any input — the only
+ * difference is the paired {@link BuildArtifactSignal} that names
+ * the predicate which fired. Each per-signal helper is a pure
+ * function over its inputs so the agent reading `signal.kind` and
+ * `signal.value` can re-derive the verdict without re-running our
+ * classifier.
  *
- * Per V1-BUILD-ARTIFACT-REASON-EXPLAIN this is purely additive — no
- * new classification predicates were introduced, only structured
- * surfacing of the evidence the existing predicates already gather.
+ * Per V1-BUILD-ARTIFACT-REASON-EXPLAIN +
+ * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL the verdict is now
+ * confidence-graded: predicates that survive the "provable from the
+ * code" doctrine bar emit `definite-*` classifications; heuristic
+ * predicates emit `likely-*` so the agent budgets per-file
+ * investigation correctly.
  */
 export function classifyBuildArtifactDetailed(
   filePath: string,
   source: string,
-): BuildArtifactClassification | null {
+): BuildArtifactClassificationResult | null {
   // Sourcemap files are never classified as build artifacts in their
   // own right — agents don't author or hand-edit `.map` files, and
   // listing one under `scannedBuildArtifacts` would only add noise
-  // alongside the paired source. The `sourcemap-sibling` reason is
-  // attached to the *source* file in `collectBuildArtifacts`; the
-  // map itself stays out.
+  // alongside the paired source. The `definite-sourcemap-paired`
+  // classification is attached to the *source* file in
+  // `collectBuildArtifacts`; the map itself stays out.
   if (filePath.replace(/\\/g, "/").endsWith(".map")) return null;
   const minSignal = detectMinInfix(filePath);
-  if (minSignal !== null) return { reason: "minified", signal: minSignal };
+  if (minSignal !== null) {
+    return { classification: "definite-min-infix", signal: minSignal };
+  }
   const hashSignal = detectHashedFilename(filePath);
-  if (hashSignal !== null) return { reason: "hashed-filename", signal: hashSignal };
+  if (hashSignal !== null) {
+    return { classification: "likely-hashed-bundle", signal: hashSignal };
+  }
   const distSignal = detectBuildDirMarker(filePath);
-  if (distSignal !== null) return { reason: "dist-path", signal: distSignal };
+  if (distSignal !== null) {
+    return { classification: "likely-bundler-output-dir", signal: distSignal };
+  }
   if (isCssPath(filePath)) {
     const dataUrlSignal = detectDataUrlImageMarker(source);
     if (dataUrlSignal !== null) {
-      return { reason: "contains-data-url-gradient", signal: dataUrlSignal };
+      return { classification: "likely-vendored-data-url-css", signal: dataUrlSignal };
     }
     const tailwindSignal = detectTailwindEscape(source);
     if (tailwindSignal !== null) {
-      return { reason: "tailwind-compiled-escape", signal: tailwindSignal };
+      return { classification: "likely-compiled-tailwind", signal: tailwindSignal };
     }
   }
   // Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE: the standalone
@@ -379,9 +463,11 @@ export function classifyBuildArtifactDetailed(
   // templates scan — one long line in an Astro template literal, a
   // Google Maps iframe URL, or an MDX prop bundle is not minification
   // evidence. Require a corroborating content signal so the verdict
-  // stays provable from file shape.
+  // stays defensible.
   const longLineSignal = detectLongMinifiedLine(source);
-  if (longLineSignal !== null) return { reason: "minified", signal: longLineSignal };
+  if (longLineSignal !== null) {
+    return { classification: "likely-minified-by-line-stats", signal: longLineSignal };
+  }
   return null;
 }
 
@@ -694,7 +780,7 @@ function detectLongMinifiedLine(source: string): BuildArtifactSignal | null {
 
 /**
  * Convenience predicate retained for callers that only care about the
- * boolean "is this a build artifact" answer (not the reason). Wraps
+ * boolean "is this a build artifact" answer (not the classification). Wraps
  * {@link classifyBuildArtifact} so the predicate logic stays in one
  * place.
  */
@@ -704,24 +790,27 @@ export function isBuildArtifact(filePath: string, source: string): boolean {
 
 /**
  * Batch helper: classify each `(filePath, source)` pair and return
- * the subset that are build artifacts as `{ path, reason }` records.
- * Caller-side iteration is folded in so `tool-scan-project.ts` can
- * call once. Output order matches the input order — callers wanting
- * deterministic output sort upstream.
+ * the subset that are build artifacts as
+ * `{ path, classification, signal }` records. Caller-side iteration
+ * is folded in so `tool-scan-project.ts` can call once. Output order
+ * matches the input order — callers wanting deterministic output
+ * sort upstream.
  *
- * Additionally handles the `sourcemap-sibling` signal: if the
- * scanned set contains `app.js.map`, the paired `app.js` is labelled
- * with reason `"sourcemap-sibling"` even when neither of the per-
- * file signals would have matched. The `.map` file itself is
- * excluded from the returned set — agents don't author sourcemaps
- * in-place and don't need a manual-review prompt about one. The
- * pairing is by full path minus the trailing `.map`, so a `.map` in
- * one directory never pairs with a source in another.
+ * Additionally handles the `definite-sourcemap-paired` classification:
+ * if the scanned set contains `app.js.map`, the paired `app.js` is
+ * labelled with `classification: "definite-sourcemap-paired"` even
+ * when neither of the per-file signals would have matched. The
+ * `.map` file itself is excluded from the returned set — agents
+ * don't author sourcemaps in-place and don't need a manual-review
+ * prompt about one. The pairing is by full path minus the trailing
+ * `.map`, so a `.map` in one directory never pairs with a source in
+ * another.
  *
  * When per-file classification AND sourcemap-sibling both fire on
- * the same file, the per-file reason wins (first-match in
- * declaration order — `minified`, `hashed-filename`, `dist-path`
- * come before sibling-pairing in the documented evaluation order).
+ * the same file, the per-file classification wins (first-match in
+ * declaration order — `definite-min-infix`, `likely-hashed-bundle`,
+ * `likely-bundler-output-dir` etc. come before sibling-pairing in
+ * the documented evaluation order).
  */
 export function collectBuildArtifacts(
   files: readonly { readonly filePath: string; readonly source: string }[],
@@ -734,14 +823,18 @@ export function collectBuildArtifacts(
   for (const file of files) {
     const detail = classifyBuildArtifactDetailed(file.filePath, file.source);
     if (detail !== null) {
-      out.push({ path: file.filePath, reason: detail.reason, signal: detail.signal });
+      out.push({
+        path: file.filePath,
+        classification: detail.classification,
+        signal: detail.signal,
+      });
       continue;
     }
     const siblingMap = findSiblingSourcemap(file.filePath, pathsInSet);
     if (siblingMap !== null) {
       out.push({
         path: file.filePath,
-        reason: "sourcemap-sibling",
+        classification: "definite-sourcemap-paired",
         // `value` is the sibling map path so the agent can grep for
         // both halves of the pair without re-deriving the convention.
         signal: { kind: "sibling-map-file", value: siblingMap },
@@ -753,7 +846,7 @@ export function collectBuildArtifacts(
 
 /**
  * Returns the matched sibling `.map` path (the deterministic evidence
- * for the `sourcemap-sibling` reason) or `null` when the source has
+ * for the `definite-sourcemap-paired` classification) or `null` when the source has
  * no paired map in the scanned set. Replaces the boolean
  * `hasSiblingSourcemap` so the returned path can be stamped into the
  * structured signal — the agent reading
@@ -772,7 +865,7 @@ function findSiblingSourcemap(filePath: string, pathsInSet: ReadonlySet<string>)
 /**
  * Minimum number of paths that share a basename before the grouping
  * helper collapses them into one `{ basename, count, pathHint,
- * suggestedGlob, reasons }` entry. Below the threshold the entries
+ * suggestedGlob, classifications }` entry. Below the threshold the entries
  * stay in the `ungrouped` array so a single-file basename doesn't get
  * collapsed to an overreaching `**\/<name>` glob. Matches the
  * `EXCLUDE_GLOB_COLLAPSE_THRESHOLD` used by `tool-propose-config.ts`
@@ -790,25 +883,28 @@ export const BASENAME_GROUP_THRESHOLD = 3;
  * entries the group subsumes; `pathHint` is the longest directory
  * prefix shared by every member, so the agent sees "these all sit
  * under `vendor/bootstrap/5.x/`" without scanning the flat list;
- * `reasons` is the deduped set of classifier reasons fired across the
- * group (most groups carry a single reason — a vendor bundle shipped
- * via `dist-path` — but e.g. a `bootstrap.css` and `bootstrap.min.css`
- * mix would carry both `dist-path` and `minified`); `suggestedGlob`
- * is inline-ready for `propose_config`'s `exclude: [...]` entry —
- * root-relative POSIX, covers every member of the group (plus any
- * future same-basename file that lands under the same prefix).
+ * `classifications` is the deduped set of classifier verdicts fired
+ * across the group (most groups carry a single classification — a
+ * vendor bundle shipped via `likely-bundler-output-dir` — but e.g. a
+ * `bootstrap.css` and `bootstrap.min.css` mix would carry both
+ * `likely-bundler-output-dir` and `definite-min-infix`);
+ * `suggestedGlob` is inline-ready for `propose_config`'s
+ * `exclude: [...]` entry — root-relative POSIX, covers every member
+ * of the group (plus any future same-basename file that lands under
+ * the same prefix).
  *
  * Zero information loss vs. the flat form: the ungrouped sibling
- * field retains every sub-threshold entry as `{ path, reason }`
- * records, and `count` on a group equals the number of absorbed
- * paths — the agent can reconstruct the per-path view by reading
- * the group + the ungrouped list together.
+ * field retains every sub-threshold entry as
+ * `{ path, classification, signal }` records, and `count` on a
+ * group equals the number of absorbed paths — the agent can
+ * reconstruct the per-path view by reading the group + the ungrouped
+ * list together.
  */
 export interface BuildArtifactGroup {
   readonly basename: string;
   readonly count: number;
   readonly pathHint: string;
-  readonly reasons: readonly BuildArtifactReason[];
+  readonly classifications: readonly BuildArtifactClassification[];
   readonly suggestedGlob: string;
 }
 
@@ -818,7 +914,7 @@ export interface BuildArtifactGroup {
  * ("verbose meta is signal, not clutter"), the grouped form is a
  * strict information superset of the flat list: every same-basename
  * cluster of ≥ {@link BASENAME_GROUP_THRESHOLD} paths collapses to
- * one `{ basename, count, pathHint, suggestedGlob, reasons }` row
+ * one `{ basename, count, pathHint, suggestedGlob, classifications }` row
  * so a scan with 301 artifact paths across one `dist/bootstrap/`
  * tree surfaces as ~5 actionable group rows plus any
  * unclustered residue under `ungrouped`.
@@ -940,7 +1036,11 @@ function bucketByBasename(
   for (const e of entries) {
     const rel = relativizeToPosix(e.path, rootPosix);
     if (rel === null) continue;
-    const relativized: ScannedBuildArtifact = { path: rel, reason: e.reason, signal: e.signal };
+    const relativized: ScannedBuildArtifact = {
+      path: rel,
+      classification: e.classification,
+      signal: e.signal,
+    };
     const base = basenameOf(rel);
     const bucket = buckets.get(base);
     if (bucket === undefined) buckets.set(base, [relativized]);
@@ -965,12 +1065,12 @@ function partitionBuckets(buckets: ReadonlyMap<string, readonly ScannedBuildArti
   for (const [basename, members] of buckets) {
     if (members.length >= BASENAME_GROUP_THRESHOLD) {
       const pathHint = longestCommonDirPrefix(members.map((m) => m.path));
-      const reasons = dedupeReasonsSorted(members.map((m) => m.reason));
+      const classifications = dedupeClassificationsSorted(members.map((m) => m.classification));
       grouped.push({
         basename,
         count: members.length,
         pathHint,
-        reasons,
+        classifications,
         suggestedGlob: buildSuggestedGlob(pathHint, basename),
       });
     } else {
@@ -1069,18 +1169,20 @@ function buildSuggestedGlob(pathHint: string, basename: string): string {
 }
 
 /**
- * Dedup a list of {@link BuildArtifactReason} values and sort
- * alphabetically so the `reasons` field on a group is deterministic
- * across runs. Most groups carry a single reason; mixed-reason
- * groups exist (e.g. a `bootstrap.css` under `dist/` + a
- * `bootstrap.min.css` next to it), and the agent reads the array to
- * know which falsifiable claim covers each subset.
+ * Dedup a list of {@link BuildArtifactClassification} values and sort
+ * alphabetically so the `classifications` field on a group is
+ * deterministic across runs. Most groups carry a single
+ * classification; mixed-classification groups exist (e.g. a
+ * `bootstrap.css` under `dist/` + a `bootstrap.min.css` next to it
+ * yields both `likely-bundler-output-dir` and `definite-min-infix`),
+ * and the agent reads the array to know which falsifiable claim
+ * covers each subset and at what confidence grade.
  */
-function dedupeReasonsSorted(
-  reasons: readonly BuildArtifactReason[],
-): readonly BuildArtifactReason[] {
-  const seen = new Set<BuildArtifactReason>();
-  for (const r of reasons) seen.add(r);
+function dedupeClassificationsSorted(
+  classifications: readonly BuildArtifactClassification[],
+): readonly BuildArtifactClassification[] {
+  const seen = new Set<BuildArtifactClassification>();
+  for (const c of classifications) seen.add(c);
   return [...seen].sort();
 }
 
@@ -1322,7 +1424,7 @@ function firstNonBlankLine(source: string): string | null {
  * is *orthogonal* to build-artifact classification. A file matching a
  * banner is almost always also a build artifact (the bundle was
  * minified or shipped under `dist/`), but the two predicates are
- * independent — the agent can read the existing `signal` / `reason`
+ * independent — the agent can read the existing `signal` / `classification`
  * to confirm "this is generated bytes" AND the new `library` to
  * answer "which library is it." Adding a vendor-library label does
  * NOT alter the existing classifier verdict.

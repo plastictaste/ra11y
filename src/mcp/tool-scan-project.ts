@@ -617,17 +617,25 @@ function buildBaseWarningsForScanProject(args: {
       : undefined;
   // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: narrow the build-artifact
   // entries to the minified subset specifically. The classifier emits
-  // `reason: "minified"` from two predicate paths (`signal.kind`
-  // discriminator: `min-infix` for the `.min.` basename infix,
-  // `max-line-length-exceeds-threshold` for the corroborated long-line
-  // probe — see `src/mcp/build-artifacts.ts`); we filter by `reason`
-  // because the warning is about the per-file minification verdict,
-  // not which predicate fired. Pairs with the broader
-  // `scanned_build_artifacts_present` code: that names "any artifact";
-  // this names "specifically the files whose findings are nearly
-  // always unreliable because the source is minified bytes."
+  // two minified-shaped classifications (`definite-min-infix` for
+  // `.min.` basenames — path-anchored — and
+  // `likely-minified-by-line-stats` for the corroborated long-line
+  // probe; see `src/mcp/build-artifacts.ts`); we filter on both because
+  // the warning names "files whose findings are nearly always
+  // unreliable because the source is minified bytes" and the same
+  // triage applies whether the verdict is path-anchored or content-
+  // shaped. Pairs with the broader `scanned_build_artifacts_present`
+  // code (any classification); this finer code narrows to the two
+  // minified-shaped branches specifically.
+  // Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the previous shape
+  // filtered by `reason === "minified"` — equivalent to the union of
+  // these two classifications under the new confidence-graded enum.
   const scannedMinifiedFiles = buildArtifacts.entries
-    .filter((e) => e.reason === "minified")
+    .filter(
+      (e) =>
+        e.classification === "definite-min-infix" ||
+        e.classification === "likely-minified-by-line-stats",
+    )
     .map((e) => e.path);
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
