@@ -100,6 +100,7 @@ import { rule as svgTitleMissing } from "./semantics/svg-title-missing.ts";
 import { rule as tableCaptionMissing } from "./semantics/table-caption-missing.ts";
 import { rule as tableHeaders } from "./semantics/table-headers.ts";
 import { rule as tableThScopeMissing } from "./semantics/table-th-scope-missing.ts";
+import { rule as visualDisabledNonControl } from "./semantics/visual-disabled-non-control.ts";
 import { rule as tooltipDismissable } from "./tooltip/dismissable.ts";
 import { rule as wrapperDrift } from "./wrapper/drift.ts";
 
@@ -199,6 +200,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   validAttr,
   videoCaptionsMissing,
   viewportZoom,
+  visualDisabledNonControl,
   wrapperDrift,
 ];
 
@@ -298,5 +300,6 @@ export {
   validAttr,
   videoCaptionsMissing,
   viewportZoom,
+  visualDisabledNonControl,
   wrapperDrift,
 };
