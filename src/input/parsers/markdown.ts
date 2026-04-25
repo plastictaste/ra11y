@@ -21,8 +21,17 @@
  *      content is illustrative — CommonMark examples, API samples,
  *      shell snippets. Parsing their content as HTML would flag the
  *      very patterns the docs are demonstrating.
- *   3. Strip inline code spans (`` `…` ``). Same rationale at the
- *      paragraph-inline scale.
+ *   3. Strip indented code blocks (4-space- or tab-indented blocks
+ *      following a blank line). Same rationale as fenced — these are
+ *      illustrative HTML/code samples in docs, and CommonMark also
+ *      uses this form when a fence sits inside a list item past the
+ *      3-space fence-indent ceiling (the fence is then unrecognized
+ *      and the surrounding lines act as plain indented code). The
+ *      "must follow a blank line" guard protects HTML residue blocks
+ *      whose children are 4-space-indented (e.g. a `<table>` at
+ *      column 0 with `<tr>` at column 4 — those rows are part of an
+ *      HTML block, not a code block).
+ *      Spec: https://spec.commonmark.org/0.31.2/#indented-code-blocks
  *   4. Strip ATX headings (`# …`, `## …`, …). The heading text reaches
  *      rendered output as `<h1>`/`<h2>`/… but we don't synthesize the
  *      element — the line is blanked. A full CommonMark parser would
@@ -32,7 +41,9 @@
  *      rationale as ATX; additionally, the underline line uses the
  *      same character sequence that can appear in a thematic break,
  *      so we only strip when the preceding line is non-blank prose.
- *   6. Rewrite markdown image syntax `![alt](url)` in place to
+ *   6. Strip inline code spans (`` `…` ``). Same rationale as fenced
+ *      blocks at the paragraph-inline scale.
+ *   7. Rewrite markdown image syntax `![alt](url)` in place to
  *      `<img src="url" alt="alt">` so existing `media/alt-text-*`
  *      rules (and the rest of the alt-text rule family) evaluate the
  *      alt attribute the same way they would for an HTML `<img>`.
@@ -41,7 +52,7 @@
  *      `<img>` positions are line-accurate even if column offsets
  *      shift by a few characters. Findings on subsequent lines are
  *      unaffected.
- *   7. Hand the residue to `parseHtml`. Raw HTML blocks (tables,
+ *   8. Hand the residue to `parseHtml`. Raw HTML blocks (tables,
  *      iframes, admonition divs, inline `<a>` / `<img>`) pass through
  *      unchanged.
  *
@@ -83,6 +94,13 @@ export function parseMarkdown(source: string): HtmlParseResult {
   const buf = source.split("");
   stripFrontmatter(source, buf);
   stripFencedCodeBlocks(source, buf);
+  // Indented-code-block strip runs AFTER fenced strip so a fence's
+  // own 4-space-indented content lines aren't subjected to the
+  // indented-code rules; runs BEFORE heading strip so the
+  // "previous line is blank" guard can use the original heading lines
+  // (a heading line is non-blank → following indented content stays
+  // unmolested, matching CommonMark's behaviour).
+  stripIndentedCodeBlocks(source, buf);
   stripAtxHeadings(source, buf);
   stripSetextHeadings(source, buf);
   stripInlineCodeSpans(source, buf);
@@ -212,7 +230,151 @@ function isClosingFence(line: string, open: CodeFenceInfo): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Pass 3 — inline code span strip
+// Pass 3 — indented code block strip
+// ---------------------------------------------------------------------------
+
+/**
+ * Blanks CommonMark indented code blocks: runs of lines that begin
+ * with at least four spaces (or a tab) and follow a blank line. The
+ * "follows a blank line" guard is the load-bearing protection for raw
+ * HTML residue — when a `<table>` at column 0 contains `<tr>` lines
+ * indented four or more spaces, those rows belong to the HTML block,
+ * NOT to a code block, because the preceding `<table>` / `<thead>`
+ * line is non-blank. Without that guard, this pass would clobber
+ * legitimate embedded HTML structure.
+ *
+ * Why this matters in real-world docs:
+ *
+ *   1. Authors write indented HTML examples without fences (Bootstrap,
+ *      MkDocs Material, Jekyll docs all use this idiom):
+ *
+ *          <div class="alert">
+ *            <p>This is example markup.</p>
+ *          </div>
+ *
+ *   2. Authors put a fenced code block inside a list item past the
+ *      3-space fence-indent ceiling. CommonMark requires the fence
+ *      itself be indented ≤3 spaces; once it sits at 4+ spaces, the
+ *      fence isn't recognized as a fence and the surrounding lines
+ *      fall back to indented-code-block semantics:
+ *
+ *          - List item with code:
+ *
+ *                ```html
+ *                <div class="alert">…</div>
+ *                ```
+ *
+ *      The opening `` ```html `` at column 8 is not detected by the
+ *      fenced-strip pass; this indent-strip pass picks up the same
+ *      block via the indented-code-block path.
+ *
+ * The block extends until a non-blank line that is NOT indented ≥4
+ * spaces. Blank lines INSIDE the block (CommonMark's "lazy
+ * continuation") are tolerated — the algorithm extends across blank
+ * lines as long as the next non-blank line resumes the indentation.
+ * Reads `buf` rather than `source` for the "previous line is blank"
+ * test so that already-blanked regions (frontmatter, fence) act as
+ * blank for the purposes of starting a new indented code block.
+ *
+ * Spec: https://spec.commonmark.org/0.31.2/#indented-code-blocks
+ */
+function stripIndentedCodeBlocks(source: string, buf: string[]): void {
+  let p = 0;
+  let prevLineWasBlank = true; // start-of-file counts as blank
+  while (p < source.length) {
+    const lineEnd = findLineEnd(source, p);
+    const isBlank = isBlankLineInBuf(buf, p, lineEnd);
+    if (isBlank) {
+      prevLineWasBlank = true;
+      p = advancePastNewline(source, lineEnd);
+      continue;
+    }
+    if (prevLineWasBlank && isIndentedCodeLine(buf, p, lineEnd)) {
+      // Opening line of an indented code block. Extend through trailing
+      // indented-or-blank lines until we hit a non-indented non-blank
+      // line. Blank lines run-of-the-mill inside the block stay
+      // tolerated (CommonMark lazy continuation).
+      const blockEnd = findIndentedCodeBlockEnd(source, buf, lineEnd);
+      blankRange(source, buf, p, blockEnd);
+      p = blockEnd;
+      prevLineWasBlank = false;
+      continue;
+    }
+    prevLineWasBlank = false;
+    p = advancePastNewline(source, lineEnd);
+  }
+}
+
+/**
+ * Returns true when `[start, end)` in `buf` contains only spaces,
+ * tabs, and carriage returns. Reads from `buf` so already-blanked
+ * regions count as blank.
+ */
+function isBlankLineInBuf(buf: string[], start: number, end: number): boolean {
+  for (let i = start; i < end; i += 1) {
+    const ch = buf[i];
+    if (ch !== " " && ch !== "\t" && ch !== "\r") return false;
+  }
+  return true;
+}
+
+/**
+ * Returns true when the `buf` slice `[start, end)` starts with at
+ * least 4 spaces or a single tab AND has at least one non-whitespace
+ * character past the indent. Reads from `buf` so that lines blanked
+ * by an earlier pass (which become all-spaces) don't qualify.
+ */
+function isIndentedCodeLine(buf: string[], start: number, end: number): boolean {
+  // Tab first — a single tab opens an indented code block.
+  if (buf[start] === "\t") {
+    return hasNonWhitespaceInRange(buf, start + 1, end);
+  }
+  let spaces = 0;
+  while (spaces < 4 && start + spaces < end && buf[start + spaces] === " ") spaces += 1;
+  if (spaces < 4) return false;
+  return hasNonWhitespaceInRange(buf, start + spaces, end);
+}
+
+function hasNonWhitespaceInRange(buf: string[], start: number, end: number): boolean {
+  for (let i = start; i < end; i += 1) {
+    const ch = buf[i];
+    if (ch !== " " && ch !== "\t" && ch !== "\r") return true;
+  }
+  return false;
+}
+
+/**
+ * Walks forward from `startLineEnd` (the `\n` ending the opening
+ * indented line) extending the block over indented and blank lines
+ * until a non-indented non-blank line — that line ends the block and
+ * is itself NOT included. Returns the offset just past the trailing
+ * newline of the last line that belongs to the block.
+ *
+ * Per CommonMark, blank lines inside the block stay part of it as
+ * long as the block resumes; the trailing blank lines are NOT part of
+ * the block (so we trim them off the returned span).
+ */
+function findIndentedCodeBlockEnd(source: string, buf: string[], startLineEnd: number): number {
+  let lastIndentedLineEnd = advancePastNewline(source, startLineEnd);
+  let p = lastIndentedLineEnd;
+  while (p < source.length) {
+    const lineEnd = findLineEnd(source, p);
+    if (isBlankLineInBuf(buf, p, lineEnd)) {
+      p = advancePastNewline(source, lineEnd);
+      continue;
+    }
+    if (!isIndentedCodeLine(buf, p, lineEnd)) {
+      // First non-indented non-blank line — stop.
+      return lastIndentedLineEnd;
+    }
+    p = advancePastNewline(source, lineEnd);
+    lastIndentedLineEnd = p;
+  }
+  return lastIndentedLineEnd;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 4 — inline code span strip
 // ---------------------------------------------------------------------------
 
 /**
@@ -226,8 +388,9 @@ function isClosingFence(line: string, open: CodeFenceInfo): boolean {
  * Operates on `source` (not the buffer) because fenced-code-block
  * regions were replaced in `buf` with spaces but `source` still has
  * the backticks — we don't want to re-match a span that was already
- * subsumed by a fence. The caller ensures pass 2 runs before pass 3,
- * and we read `buf` to skip already-blanked regions.
+ * subsumed by a fence. The caller ensures the fenced and indented
+ * code-block strips run before this pass, and we read `buf` to skip
+ * already-blanked regions.
  */
 function stripInlineCodeSpans(source: string, buf: string[]): void {
   let p = 0;
@@ -271,7 +434,7 @@ function findMatchingBacktickClose(source: string, startPos: number, runLen: num
 }
 
 // ---------------------------------------------------------------------------
-// Pass 4 — ATX heading strip
+// Pass 5 — ATX heading strip
 // ---------------------------------------------------------------------------
 
 /**
@@ -312,7 +475,7 @@ function isAtxHeading(line: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Pass 5 — Setext heading strip
+// Pass 6 — Setext heading strip
 // ---------------------------------------------------------------------------
 
 /**
@@ -382,7 +545,7 @@ function isNonBlankProseLine(source: string, buf: string[], start: number, end: 
 }
 
 // ---------------------------------------------------------------------------
-// Pass 6 — markdown image rewrite `![alt](url)` → `<img src="url" alt="alt">`
+// Pass 7 — markdown image rewrite `![alt](url)` → `<img src="url" alt="alt">`
 // ---------------------------------------------------------------------------
 
 /**
@@ -502,7 +665,7 @@ function escapeAttr(value: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Pass 7 — kramdown IAL — implementation lives in `./markdown-ial.ts`.
+// Pass 8 — kramdown IAL — implementation lives in `./markdown-ial.ts`.
 // ---------------------------------------------------------------------------
 // See `applyKramdownIal` imported at the top of this file.
 

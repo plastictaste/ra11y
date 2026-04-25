@@ -158,6 +158,161 @@ describe("parseMarkdown — fenced code block strip", () => {
   });
 });
 
+describe("parseMarkdown — indented code block strip", () => {
+  it("strips a 4-space-indented code block so embedded `<div>` does not surface as a real element", () => {
+    const src = `# Docs
+
+Here is an example:
+
+    <div class="alert">
+      <p>Example markup</p>
+    </div>
+
+After the example.
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    // The block is illustrative — no <div> or <p> should reach the HTML AST.
+    expect(findFirstElement(root.children, "div")).toBeUndefined();
+    expect(findFirstElement(root.children, "p")).toBeUndefined();
+  });
+
+  it("strips a tab-indented code block (CommonMark treats one tab as four columns)", () => {
+    const src = `# Title
+
+Code follows:
+
+\t<div class="alert">should be hidden</div>
+
+After.
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    expect(findFirstElement(root.children, "div")).toBeUndefined();
+  });
+
+  it("strips a fenced code block sitting inside a list item past the 3-space fence-indent ceiling", () => {
+    // Real-world docs idiom: a fenced block nested in a list item ends
+    // up indented 6+ columns. The fence-strip pass requires ≤3-space
+    // indent, so it doesn't recognize this as a fence — but the
+    // indented-code-block strip catches the content via the indent path.
+    const src = `# List
+
+- Item one
+- Item two with code:
+
+      \`\`\`html
+      <div class="alert">should be hidden</div>
+      \`\`\`
+
+After list.
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    expect(findFirstElement(root.children, "div")).toBeUndefined();
+  });
+
+  it("does NOT strip 4-space-indented children of an HTML block (e.g. <tr> inside <table>)", () => {
+    // The "previous line is blank" guard keeps an HTML block's indented
+    // children from being mis-classified as code. The <tbody>/<tr> lines
+    // sit four+ spaces deep but follow non-blank parent lines.
+    const src = `# Docs
+
+<table>
+  <thead>
+    <tr><th scope="col">Name</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>A</td></tr>
+  </tbody>
+</table>
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    expect(findFirstElement(root.children, "table")).toBeDefined();
+    const ths = findAllElements(root.children, "th");
+    expect(ths).toHaveLength(1);
+    expect(getAttr(ths[0]!, "scope")).toBe("col");
+    const trs = findAllElements(root.children, "tr");
+    expect(trs).toHaveLength(2);
+  });
+
+  it("does NOT strip a paragraph continuation line indented to 4 spaces (cannot interrupt a paragraph)", () => {
+    // Inline HTML on a wrapped paragraph line must survive — the
+    // continuation line follows a non-blank prose line so it is part of
+    // the paragraph, not an indented code block.
+    const src = `# Title
+
+Some paragraph that continues
+    with <a href="/x">a link</a> indented on this wrapped line.
+
+End.
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    const a = findFirstElement(root.children, "a");
+    expect(a).toBeDefined();
+    expect(getAttr(a!, "href")).toBe("/x");
+  });
+
+  it("preserves real embedded HTML alongside an indented code block", () => {
+    const src = `# Mixed
+
+<img src="/real.png" alt="real-image">
+
+Example below:
+
+    <img src="/example.png" alt="should-not-extract">
+
+End.
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    const imgs = findAllElements(root.children, "img");
+    // Only the un-indented <img> at column 0 is real residue; the
+    // indented one is illustrative and was stripped.
+    expect(imgs).toHaveLength(1);
+    expect(getAttr(imgs[0]!, "alt")).toBe("real-image");
+  });
+
+  it("extends an indented block across blank interior lines (CommonMark lazy continuation)", () => {
+    // The blank line in the middle of the block is part of the block.
+    // Both indented `<p>` lines must be stripped.
+    const src = `# Title
+
+Code:
+
+    <p>line one</p>
+
+    <p>line three after blank</p>
+
+Paragraph after.
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    expect(findFirstElement(root.children, "p")).toBeUndefined();
+  });
+
+  it("preserves line numbers for HTML following an indented code block", () => {
+    // Stripping must blank with whitespace so subsequent line numbers
+    // do not shift. The <iframe> on line 8 must still report line 8.
+    const src = `# Title
+
+Indented block:
+
+    <p>hidden</p>
+    <p>also hidden</p>
+
+<iframe src="x" title="visible"></iframe>
+`;
+    const { root, errors } = parseMarkdown(src);
+    expect(errors).toHaveLength(0);
+    const iframe = findFirstElement(root.children, "iframe");
+    expect(iframe).toBeDefined();
+    expect(iframe!.loc.start.line).toBe(8);
+  });
+});
+
 describe("parseMarkdown — ATX heading strip", () => {
   it("strips `# Heading` so the text doesn't reach HTML as stray content", () => {
     const src = `# A Top Heading
