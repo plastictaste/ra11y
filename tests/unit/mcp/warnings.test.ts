@@ -782,6 +782,52 @@ describe("warningsFromScanMeta", () => {
     });
     expect(codesFalse).not.toContain("redundant_additional_paths");
   });
+
+  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: the broader
+  // `scanned_build_artifacts_present` already labels artifact
+  // presence; this finer code names the minified subset
+  // specifically, so an agent can triage findings on minified
+  // bytes (nearly always unreliable) without rereading every
+  // flagged file. The predicate is "the caller-supplied list is
+  // non-empty"; the cross-reference between
+  // `buildArtifacts.entries[].reason` and the `signal.kind`
+  // discriminators that produce `reason: "minified"` lives at
+  // the call site so this module stays decoupled from the
+  // build-artifact classifier internals.
+  it("fires `scanned_minified_file` when the caller-supplied list is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 2 },
+      scannedMinifiedFiles: ["dist/bootstrap.min.css"],
+    });
+    expect(codes).toContain("scanned_minified_file");
+  });
+
+  it("does NOT fire `scanned_minified_file` when the list is empty (no minified entries in scan)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 2 },
+      scannedMinifiedFiles: [],
+    });
+    expect(codes).not.toContain("scanned_minified_file");
+  });
+
+  it("does NOT fire `scanned_minified_file` when the list is omitted (tool didn't run the detector)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 2 },
+    });
+    expect(codes).not.toContain("scanned_minified_file");
+  });
 });
 
 describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)", () => {
@@ -1566,5 +1612,55 @@ describe("computeScanWarnings — scss_unresolved_variables", () => {
     });
     expect(fields.warnings ?? []).not.toContain("scss_unresolved_variables");
     expect(fields.warningsDetails?.scss_unresolved_variables).toBeUndefined();
+  });
+});
+
+// V1-SCANNED-MINIFIED-FILE-WARNING-CODE: parallel coverage for the
+// `scanned_minified_file` code's `warningsDetails` payload + the
+// payload-vs-binary contract. Mirrors the `scss_unresolved_variables`
+// pattern because both codes carry the same shape (`{ files: string[] }`)
+// and the same emission predicate ("non-empty caller-supplied list").
+describe("computeScanWarnings — scanned_minified_file payload + warningsField wiring", () => {
+  it("emits the file list under warningsDetails.scanned_minified_file (sorted alphabetically for deterministic wire output)", () => {
+    const fields = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 3 },
+      // Intentionally unsorted on input so the test locks the
+      // call-site sort that keeps the wire shape stable across
+      // discovery-order changes.
+      scannedMinifiedFiles: ["dist/jquery.min.js", "dist/bootstrap.min.css"],
+    });
+    expect(fields.warnings).toContain("scanned_minified_file");
+    expect(fields.warningsDetails?.scanned_minified_file).toEqual({
+      files: ["dist/bootstrap.min.css", "dist/jquery.min.js"],
+    });
+  });
+
+  it("omits warningsDetails.scanned_minified_file when the code did not fire (payload-vs-binary contract)", () => {
+    const fields = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 3 },
+      // No scannedMinifiedFiles supplied — no code, no payload.
+    });
+    expect(fields.warnings ?? []).not.toContain("scanned_minified_file");
+    expect(fields.warningsDetails?.scanned_minified_file).toBeUndefined();
+  });
+
+  it("omits the payload when scannedMinifiedFiles is supplied but empty (degenerate-payload guard)", () => {
+    const details = computeScanWarningDetails(["scanned_minified_file"], {
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      scannedMinifiedFiles: [],
+    });
+    expect(details.scanned_minified_file).toBeUndefined();
   });
 });

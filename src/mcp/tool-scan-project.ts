@@ -581,6 +581,20 @@ function buildBaseWarningsForScanProject(args: {
             : { topPath: buildArtifacts.entries[0].path }),
         }
       : undefined;
+  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: narrow the build-artifact
+  // entries to the minified subset specifically. The classifier emits
+  // `reason: "minified"` from two predicate paths (`signal.kind`
+  // discriminator: `min-infix` for the `.min.` basename infix,
+  // `max-line-length-exceeds-threshold` for the corroborated long-line
+  // probe — see `src/mcp/build-artifacts.ts`); we filter by `reason`
+  // because the warning is about the per-file minification verdict,
+  // not which predicate fired. Pairs with the broader
+  // `scanned_build_artifacts_present` code: that names "any artifact";
+  // this names "specifically the files whose findings are nearly
+  // always unreliable because the source is minified bytes."
+  const scannedMinifiedFiles = buildArtifacts.entries
+    .filter((e) => e.reason === "minified")
+    .map((e) => e.path);
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -605,6 +619,7 @@ function buildBaseWarningsForScanProject(args: {
     }),
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
     ...(scssUnresolvedVariableFiles.length === 0 ? {} : { scssUnresolvedVariableFiles }),
+    ...(scannedMinifiedFiles.length === 0 ? {} : { scannedMinifiedFiles }),
   });
   return warningsFieldsForAssembler(warningsFromMeta);
 }

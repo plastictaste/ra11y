@@ -229,6 +229,23 @@ export type ScanWarningCode =
   // so the agent branches on the dominance without recounting
   // `files[]` against `meta.scannedBuildArtifacts`.
   | "vendor_css_dominates_findings"
+  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: at least one file in the scan
+  // set was classified by `classifyBuildArtifact` with `reason: "minified"`
+  // — either the basename carries a `.min.` infix (path-deterministic) or
+  // the source text crosses the corroborated long-line probe (median or
+  // ratio second-tier signal in `src/mcp/build-artifacts.ts`). Pairs
+  // with `scanned_build_artifacts_present`, which signals "the scan
+  // touched at least one build artifact of any reason"; this finer code
+  // tells the agent specifically which files were classified as
+  // minified, so findings on those files can be triaged as low-confidence
+  // without rereading every flagged file. Surface-don't-suppress: the
+  // findings stay in `files[]`, the warning is the additive label that
+  // an agent reads to decide whether to skip per-file investigation.
+  // Paired payload: `warningsDetails.scanned_minified_file` carries
+  // `{ files: string[] }` — the deterministic-sorted paths of every
+  // minified file in the scan so the agent branches on identity, not
+  // count alone.
+  | "scanned_minified_file"
   // Q7-CRITERION-ID-FIELD-NAME-DRIFT: `coverage` entries (failingAutomatedCriteria,
   // manualWithCandidates, likelyIrrelevantCriteria, untestableCriteria,
   // untargetedCriteriaList) historically named the criterion field `id` —
@@ -415,6 +432,29 @@ export interface WarningInputs {
    */
   readonly scssUnresolvedVariableFiles?: readonly string[];
   /**
+   * V1-SCANNED-MINIFIED-FILE-WARNING-CODE: caller-supplied list of
+   * scanned files classified as `reason: "minified"` by
+   * `classifyBuildArtifact` (per `src/mcp/build-artifacts.ts`). Drives
+   * the `scanned_minified_file` code + its paired
+   * `warningsDetails.scanned_minified_file: { files }` payload so an
+   * agent reading the warning channel can triage findings on those
+   * files without re-running the classifier. The detector lives at
+   * the build-artifact seam (`collectBuildArtifacts`); the call site
+   * narrows the entries by `signal.kind` (the `min-infix` and
+   * `max-line-length-exceeds-threshold` variants are the two paths
+   * that produce `reason: "minified"`) so this module stays pure
+   * over its inputs.
+   *
+   * Pairs with `scannedBuildArtifactsPresent` — that flag signals
+   * the broader "any build artifact in scan"; this list narrows to
+   * the minified subset specifically, which carries asymmetric
+   * triage value (findings on minified bytes are nearly always
+   * unreliable). Omit (or pass `undefined`) when no scanned file
+   * matched. Empty array is treated identically to `undefined` —
+   * neither fires the code.
+   */
+  readonly scannedMinifiedFiles?: readonly string[];
+  /**
    * Q-SHARED-META-ARRAY-BUDGET-CAP: true when at least one of the
    * path-list meta arrays (`scannedBuildArtifacts.ungrouped`,
    * `analysisCoverage.parseErrorFiles`,
@@ -564,8 +604,9 @@ const VENDOR_CSS_DOMINATES_SHARE_THRESHOLD = 0.5;
  *     scope without descending into `meta`. The current set is
  *     `extensions_skipped_no_parser`, `response_token_budget_truncated`,
  *     `content_files_skipped`, `source_language_unsupported`,
- *     `vendor_css_dominates_findings`, `parse_errors_present`, and
- *     `scanned_build_artifacts_present`. Each carries a `summarize*`
+ *     `vendor_css_dominates_findings`, `parse_errors_present`,
+ *     `scanned_build_artifacts_present`, and `scanned_minified_file`.
+ *     Each carries a `summarize*`
  *     helper that returns `undefined` if the predicate fired but the
  *     payload would be degenerate (e.g. zero counts, missing pivot) —
  *     the call site conditional-spreads, so a degenerate payload is
@@ -789,6 +830,24 @@ export interface ScanWarningDetails {
   readonly scss_unresolved_variables?: {
     readonly files: readonly string[];
   };
+  /**
+   * V1-SCANNED-MINIFIED-FILE-WARNING-CODE: payload for
+   * `scanned_minified_file`. Carries the deterministic-sorted list of
+   * scanned files classified as `reason: "minified"` so an agent can
+   * branch on identity (which files? how many?) without re-running the
+   * build-artifact classifier or descending into
+   * `meta.scannedBuildArtifacts` to filter by reason. The list is the
+   * full identity surface — same pattern as `scss_unresolved_variables`
+   * — because the per-file decision (skip findings? widen scope?
+   * suppress? raise an exclude?) needs the path. Pairs with the broader
+   * `scanned_build_artifacts_present` payload's `count` + `topPath`:
+   * the broader code reports total artifact mass, this narrower code
+   * names the minified subset whose findings are nearly always
+   * unreliable.
+   */
+  readonly scanned_minified_file?: {
+    readonly files: readonly string[];
+  };
 }
 
 function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
@@ -938,6 +997,20 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // into meta.
     out.push("response_meta_truncated");
   }
+  if (hasScannedMinifiedFiles(inputs.scannedMinifiedFiles)) {
+    // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: at least one scanned file
+    // was classified as `reason: "minified"` by `classifyBuildArtifact`.
+    // The broader `scanned_build_artifacts_present` already labels the
+    // presence of any build artifact; this narrower code names the
+    // minified subset specifically — findings on minified bytes are
+    // nearly always unreliable, and the agent reading the warnings
+    // channel needs to triage them without descending into
+    // `meta.scannedBuildArtifacts` to filter by reason. Surface-don't-
+    // suppress: findings (if any) stay in `files[]` unmodified; the
+    // warning + paired `warningsDetails.scanned_minified_file: { files }`
+    // payload is the additive label.
+    out.push("scanned_minified_file");
+  }
   if (hasScssUnresolvedVariables(inputs.scssUnresolvedVariableFiles)) {
     // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: at least one scanned
     // `.scss` file declared top-level `$variable: …;` statements but
@@ -984,6 +1057,19 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
  * module stays decoupled from the parser-AST traversal.
  */
 function hasScssUnresolvedVariables(files: WarningInputs["scssUnresolvedVariableFiles"]): boolean {
+  return files !== undefined && files.length > 0;
+}
+
+/**
+ * Predicate for `scanned_minified_file`. Returns `true` when the
+ * caller-supplied list is non-empty. Pure over its input; the
+ * cross-reference between `buildArtifacts.entries` and the
+ * `signal.kind` discriminators that produce `reason: "minified"`
+ * (`min-infix` and `max-line-length-exceeds-threshold`) lives at the
+ * call site so this module stays decoupled from the build-artifact
+ * classifier internals.
+ */
+function hasScannedMinifiedFiles(files: WarningInputs["scannedMinifiedFiles"]): boolean {
   return files !== undefined && files.length > 0;
 }
 
@@ -1262,6 +1348,7 @@ type ScanMetaWarningArgs = {
   readonly configSearchSawProjectMarker?: boolean;
   readonly metaArrayTruncated?: boolean;
   readonly scssUnresolvedVariableFiles?: readonly string[];
+  readonly scannedMinifiedFiles?: readonly string[];
 };
 
 function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
@@ -1299,6 +1386,9 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.scssUnresolvedVariableFiles === undefined
       ? {}
       : { scssUnresolvedVariableFiles: args.scssUnresolvedVariableFiles }),
+    ...(args.scannedMinifiedFiles === undefined
+      ? {}
+      : { scannedMinifiedFiles: args.scannedMinifiedFiles }),
   };
 }
 
@@ -1357,6 +1447,10 @@ export function computeScanWarningDetails(
     {
       code: "scss_unresolved_variables",
       summarize: () => summarizeScssUnresolvedVariables(inputs.scssUnresolvedVariableFiles),
+    },
+    {
+      code: "scanned_minified_file",
+      summarize: () => summarizeScannedMinifiedFiles(inputs.scannedMinifiedFiles),
     },
   ];
   for (const row of dispatch) {
@@ -1433,6 +1527,23 @@ function summarizeScssUnresolvedVariables(
 ): NonNullable<ScanWarningDetails["scss_unresolved_variables"]> | undefined {
   if (files === undefined || files.length === 0) return undefined;
   return { files };
+}
+
+/**
+ * Builds the `scanned_minified_file` payload from the caller-supplied
+ * file list. Returns `undefined` when the list is missing or empty so
+ * the dispatch table conditional-spreads the entry away
+ * (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION payload-vs-binary
+ * contract). The list is sorted alphabetically here so the wire shape
+ * stays deterministic across runs even if the call-site iteration
+ * order changes (the build-artifact pipeline emits in discovery order,
+ * which is not guaranteed stable across filesystems).
+ */
+function summarizeScannedMinifiedFiles(
+  files: WarningInputs["scannedMinifiedFiles"],
+): NonNullable<ScanWarningDetails["scanned_minified_file"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  return { files: [...files].sort() };
 }
 
 /**

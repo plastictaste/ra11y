@@ -137,6 +137,91 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
     }
   });
 
+  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: end-to-end confirmation
+  // that scan_project emits the new `scanned_minified_file` warning
+  // code (and its paired `warningsDetails.scanned_minified_file:
+  // { files: [paths] }` payload) when at least one classified-minified
+  // file is in the scan set. Pairs with `scanned_build_artifacts_present`
+  // — that label fires for any artifact reason; this finer label names
+  // the minified subset specifically so an agent can triage findings on
+  // minified bytes without rereading every flagged file. The fixture
+  // here uses a `.min.` infix (path-deterministic minified marker) so
+  // the assertion locks against the cheaper of the two minified
+  // predicate paths in `classifyBuildArtifact`.
+  it("emits warnings[scanned_minified_file] + warningsDetails.scanned_minified_file when the scan touches a .min file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ra11y-scanned-minified-warning-"));
+    try {
+      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
+      // Build artifact with the canonical `.min.` infix — classifier
+      // returns `reason: "minified"`, `signal: { kind: "min-infix", … }`.
+      writeFileSync(
+        join(root, "vendor.min.css"),
+        ".faded { color: #444444; background-color: #5a5a5a; }\n",
+      );
+      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
+      const scan = responses.find((r) => r.id === 2);
+      expect(scan).toBeDefined();
+      const body = bodyOf(scan as JsonRpcResponse);
+      const warnings = body["warnings"] as readonly string[] | undefined;
+      expect(warnings).toBeDefined();
+      // The new code fires alongside the broader presence label.
+      expect(warnings).toContain("scanned_minified_file");
+      expect(warnings).toContain("scanned_build_artifacts_present");
+      // The paired payload carries the file identity so the agent can
+      // act on the per-file decision without descending into
+      // `meta.scannedBuildArtifacts`.
+      const details = body["warningsDetails"] as
+        | { scanned_minified_file?: { files: readonly string[] } }
+        | undefined;
+      expect(details?.scanned_minified_file).toBeDefined();
+      const files = details?.scanned_minified_file?.files ?? [];
+      expect(files.length).toBeGreaterThan(0);
+      // Path is repo-relative POSIX (the build-artifact pipeline
+      // emits the same path shape the rest of the response uses).
+      expect(files.some((p) => p.endsWith("vendor.min.css"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: the broader artifact label
+  // can fire WITHOUT this finer label — a CSS file that inlines a
+  // `data:image/...` gradient (canonical vendored-bundle marker) lands
+  // as `reason: "contains-data-url-gradient"`, NOT `reason: "minified"`.
+  // Lock the per-reason narrowing so the new code doesn't silently
+  // fire on every artifact regime.
+  it("does NOT emit warnings[scanned_minified_file] when the only artifact is non-minified (data-url-gradient classified)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ra11y-scanned-minified-negative-"));
+    try {
+      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
+      // Hand-shaped CSS with an inlined data:image/ gradient — the
+      // classifier emits `reason: "contains-data-url-gradient"`. The
+      // broader presence code still fires; the narrower minified code
+      // must not.
+      writeFileSync(
+        join(root, "vendor-icons.css"),
+        ".icon { background: url(data:image/svg+xml;base64,PHN2Zy8+) center; }\n",
+      );
+      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
+      const scan = responses.find((r) => r.id === 2);
+      const body = bodyOf(scan as JsonRpcResponse);
+      const warnings = body["warnings"] as readonly string[] | undefined;
+      // Sanity — the broader presence label fires off the dist-path
+      // classifier, so the test isn't vacuously true (it would also
+      // pass if the artifact pipeline never ran).
+      expect(warnings ?? []).toContain("scanned_build_artifacts_present");
+      // The narrower minified label must NOT fire — `dist-path` is
+      // not minification evidence.
+      expect(warnings ?? []).not.toContain("scanned_minified_file");
+      const details = body["warningsDetails"] as
+        | { scanned_minified_file?: unknown }
+        | undefined;
+      expect(details?.scanned_minified_file).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("omits plan.violationsByScanKind on a scan with no build artifacts (present-when-meaningful)", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-violations-by-scan-kind-clean-"));
     try {
