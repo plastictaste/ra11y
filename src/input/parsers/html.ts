@@ -56,6 +56,14 @@ import type {
   SourcePosition,
   SourceRange,
 } from "../../types/ast.ts";
+import { decodeEntities } from "./html-entities.ts";
+import {
+  IMPLICIT_CLOSE_ON_OPEN,
+  IMPLIED_END_TAG_ELEMENTS,
+  peekClosingTagName,
+  peekOpeningTagName,
+} from "./html-implicit-close.ts";
+import { detectLiquidIncludeHead, strayClosingTagMessage } from "./html-layout-tail.ts";
 import {
   matchesTemplateEndTag,
   OPAQUE_BLOCK_DIRECTIVES,
@@ -63,6 +71,11 @@ import {
   stripTemplateDirectives,
 } from "./html-template-directives.ts";
 import { looksLikeUrlSchemeOpener } from "./html-url-scheme.ts";
+
+// Re-exported so the existing test surface stays at the parser entry
+// point even though the detector itself lives in a sibling module
+// (extracted to keep `html.ts` under the file-LOC budget).
+export { detectLiquidIncludeHead };
 
 /** HTML void elements that must not have closing tags. */
 const VOID_ELEMENTS: ReadonlySet<string> = new Set([
@@ -83,138 +96,6 @@ const VOID_ELEMENTS: ReadonlySet<string> = new Set([
 
 /** Elements whose content is treated as raw text (no nested parsing). */
 const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set(["script", "style", "textarea", "title"]);
-
-/**
- * Root-document tags that a Liquid-composed layout routinely closes on
- * behalf of a sibling partial. Jekyll's canonical pattern splits the
- * document across `_includes/top.html` (opens `<html>` / `<body>`) and
- * a `_layouts/*.html` wrapper (closes `</body></html>`); the wrapper
- * therefore ends with a bare `</html>` / `</body>` that has no matching
- * open inside the same file. Matching on a closed set keeps the
- * recognition precise — we rename the diagnostic for the documented
- * layout-tail shape, not arbitrary stray closers that might mask a real
- * structural bug.
- */
-const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"]);
-
-/**
- * HTML5 elements whose end tag is optional under the spec — the
- * parser must allow the close to be inferred when an ancestor's
- * close tag arrives or a sibling that triggers implicit close
- * opens. Without this set, hand-authored browser-renderable HTML
- * (every `<p>` without an explicit `</p>`, every `<li>` whose
- * sibling `<li>` opens, every `<tr>` followed by another `<tr>`)
- * surfaces as "Unclosed <p>" / "Unclosed <li>" recoverable errors
- * AND a downstream "Stray closing tag at top level" once the
- * unclosed descendants steal the `</body></html>` closers — routing
- * the file into `analysisCoverage.partialParseFiles` with reasons
- * that read as parser failures.
- *
- * Source: HTML Living Standard §4 "The elements of HTML" — every
- * element listed here has a normative "Tag omission in text/html"
- * note that allows the end tag to be omitted under the conditions
- * implemented in {@link IMPLICIT_CLOSE_ON_OPEN} and the ancestor-
- * closer recovery in `#consumeChildren`.
- */
-const IMPLIED_END_TAG_ELEMENTS: ReadonlySet<string> = new Set([
-  "p",
-  "li",
-  "dt",
-  "dd",
-  "option",
-  "optgroup",
-  "rb",
-  "rp",
-  "rt",
-  "rtc",
-  "thead",
-  "tbody",
-  "tfoot",
-  "tr",
-  "td",
-  "th",
-  "colgroup",
-]);
-
-/**
- * Opening-tag implicit-close map: when one of these tags opens
- * while a key element is the current parent, the parent closes
- * implicitly before the new sibling is parsed. Encoded as a
- * `currentParent → openers-that-close-it` table; the closed set on
- * each row mirrors the HTML Living Standard's "Tag omission" notes
- * for that element.
- *
- *   - `<p>` is closed by the standard block-level openers (the
- *     "p-closer" set per the spec) so that `<p>foo<p>bar` and
- *     `<p>foo<ul>` both parse the way browsers render them.
- *   - `<li>` is closed by another `<li>`.
- *   - `<dt>` / `<dd>` close on each other.
- *   - `<option>` closes on `<option>` or `<optgroup>`.
- *   - `<tr>` closes on `<tr>`.
- *   - `<td>` / `<th>` close on `<td>`, `<th>`, `<tr>`.
- *   - `<thead>` / `<tbody>` / `<tfoot>` close on each other.
- *   - `<rt>` / `<rp>` close on each other.
- *
- * Lookups use lowercased tag names; populated once at module load
- * so `#consumeChildren` does an O(1) check on every open tag.
- */
-const IMPLICIT_CLOSE_ON_OPEN: ReadonlyMap<string, ReadonlySet<string>> = new Map<
-  string,
-  ReadonlySet<string>
->([
-  [
-    "p",
-    new Set([
-      "address",
-      "article",
-      "aside",
-      "blockquote",
-      "details",
-      "div",
-      "dl",
-      "fieldset",
-      "figcaption",
-      "figure",
-      "footer",
-      "form",
-      "h1",
-      "h2",
-      "h3",
-      "h4",
-      "h5",
-      "h6",
-      "header",
-      "hgroup",
-      "hr",
-      "main",
-      "menu",
-      "nav",
-      "ol",
-      "p",
-      "pre",
-      "search",
-      "section",
-      "table",
-      "ul",
-    ]),
-  ],
-  ["li", new Set(["li"])],
-  ["dt", new Set(["dt", "dd"])],
-  ["dd", new Set(["dt", "dd"])],
-  ["option", new Set(["option", "optgroup"])],
-  ["optgroup", new Set(["optgroup"])],
-  ["tr", new Set(["tr"])],
-  ["td", new Set(["td", "th", "tr"])],
-  ["th", new Set(["td", "th", "tr"])],
-  ["thead", new Set(["tbody", "tfoot"])],
-  ["tbody", new Set(["tbody", "tfoot"])],
-  ["tfoot", new Set(["tbody"])],
-  ["rt", new Set(["rt", "rp"])],
-  ["rp", new Set(["rt", "rp"])],
-  ["rb", new Set(["rb", "rt", "rp", "rtc"])],
-  ["rtc", new Set(["rb", "rtc"])],
-  ["colgroup", new Set(["colgroup"])],
-]);
 
 export interface HtmlParseResult {
   readonly root: HtmlDocument;
@@ -322,6 +203,48 @@ class HtmlParser {
     const startPos = this.#position();
     this.#advance(1); // "<"
     const tagName = this.#readTagName();
+    const { attributes, selfClosing: explicitSelfClose, terminated } = this.#consumeStartTagBody();
+
+    if (!terminated) {
+      this.#errors.push({
+        message: `Unterminated start tag <${tagName}>`,
+        position: startPos,
+        recoverable: true,
+      });
+    }
+
+    const isVoid = VOID_ELEMENTS.has(tagName.toLowerCase());
+    const selfClosing = explicitSelfClose || isVoid;
+
+    let children: HtmlNode[] = [];
+    if (!selfClosing && terminated) {
+      children = this.#consumeChildren(tagName);
+    }
+
+    return {
+      kind: "HtmlElement",
+      range: this.#range(start, this.#pos),
+      loc: { start: startPos, end: this.#position() },
+      tagName,
+      attributes,
+      children,
+      selfClosing,
+    };
+  }
+
+  /**
+   * Consumes a start tag's attribute list and the trailing `>` or
+   * `/>`. Returns a `terminated` flag distinguishing "closed
+   * normally" from "EOF before close", so `#consumeElement` can
+   * surface a single recoverable error for the unterminated case
+   * (covering both `<p` and `<img src=` shapes) and skip
+   * `#consumeChildren` on the broken tag.
+   */
+  #consumeStartTagBody(): {
+    attributes: HtmlAttribute[];
+    selfClosing: boolean;
+    terminated: boolean;
+  } {
     const attributes: HtmlAttribute[] = [];
     let selfClosing = false;
     let terminated = false;
@@ -344,9 +267,7 @@ class HtmlParser {
         this.#advance(1); // stray /
         continue;
       }
-      if (ch === undefined) {
-        break;
-      }
+      if (ch === undefined) break;
       // Progress guarantee: consumeAttribute advances on any valid
       // attribute. If it stalls (empty name, no `=`), fall through
       // and advance one character so the loop always makes progress.
@@ -359,37 +280,7 @@ class HtmlParser {
       attributes.push(attr);
     }
 
-    // If the start tag wasn't terminated by `>` or `/>` (EOF arrived
-    // before the close), surface a recoverable error. Emitted here
-    // (post-loop, single site) so the EOF-immediately-after-tag-name
-    // case (`<p` with no following whitespace) is covered alongside
-    // the EOF-mid-attribute case (`<img src=`).
-    if (!terminated) {
-      this.#errors.push({
-        message: `Unterminated start tag <${tagName}>`,
-        position: startPos,
-        recoverable: true,
-      });
-    }
-
-    const isVoid = VOID_ELEMENTS.has(tagName.toLowerCase());
-    if (isVoid) selfClosing = true;
-
-    let children: HtmlNode[] = [];
-    if (!selfClosing && terminated) {
-      children = this.#consumeChildren(tagName);
-    }
-
-    const end = this.#pos;
-    return {
-      kind: "HtmlElement",
-      range: this.#range(start, end),
-      loc: { start: startPos, end: this.#position() },
-      tagName,
-      attributes,
-      children,
-      selfClosing,
-    };
+    return { attributes, selfClosing, terminated };
   }
 
   #consumeChildren(parentTag: string): HtmlNode[] {
@@ -397,51 +288,22 @@ class HtmlParser {
     const parentLower = parentTag.toLowerCase();
     const isRawText = RAW_TEXT_ELEMENTS.has(parentLower);
     const hasImpliedEnd = IMPLIED_END_TAG_ELEMENTS.has(parentLower);
-    // Track nesting depth so `#strayClosingTagMessage` can scope the
+    // Track nesting depth so `strayClosingTagMessage` can scope the
     // Liquid layout-tail rename to document-top (`depth === 0`).
     this.#depth += 1;
     this.#openStack.push(parentLower);
     while (!this.#eof()) {
       if (this.#startsWithClosingTag(parentTag)) {
         this.#consumeClosingTag();
-        this.#depth -= 1;
-        this.#openStack.pop();
-        return children;
+        return this.#exitChildren(children);
       }
       if (isRawText) {
         children.push(this.#consumeRawText(parentTag));
         if (!this.#eof()) this.#consumeClosingTag();
-        this.#depth -= 1;
-        this.#openStack.pop();
-        return children;
+        return this.#exitChildren(children);
       }
-      // HTML5 implicit-close: when the current parent is in the
-      // implied-end-tag set and the next token is either (a) a closing
-      // tag for an ancestor or (b) an opening tag in the parent's
-      // implicit-close-on-open set, return early WITHOUT consuming the
-      // token and WITHOUT recording an "Unclosed" error. The outer
-      // `#consumeChildren` call will see the same token and either
-      // match the ancestor closer or treat the opener as a sibling.
-      // This is the spec-correct behavior for `<p>foo<p>bar`,
-      // `<li>one<li>two`, `<tr>...<tr>...`, and `<p>foo</body>`.
-      if (hasImpliedEnd) {
-        const closerName = this.#peekClosingTagName();
-        if (closerName !== null && closerName !== parentLower) {
-          if (this.#openStack.includes(closerName)) {
-            this.#depth -= 1;
-            this.#openStack.pop();
-            return children;
-          }
-        }
-        const openerName = this.#peekOpeningTagName();
-        if (openerName !== null) {
-          const closersForParent = IMPLICIT_CLOSE_ON_OPEN.get(parentLower);
-          if (closersForParent?.has(openerName)) {
-            this.#depth -= 1;
-            this.#openStack.pop();
-            return children;
-          }
-        }
+      if (hasImpliedEnd && this.#shouldImplicitlyClose(parentLower)) {
+        return this.#exitChildren(children);
       }
       const node = this.#consumeNode();
       if (node) children.push(node);
@@ -460,53 +322,44 @@ class HtmlParser {
         recoverable: true,
       });
     }
+    return this.#exitChildren(children);
+  }
+
+  /**
+   * Pop the current parent off the open-element stack and return
+   * `children` to the caller. Centralised so every early-return path
+   * out of `#consumeChildren` decrements `#depth` and the stack
+   * symmetrically — a missed pop would leak the parent name into
+   * later implicit-close ancestor checks and silently mis-route
+   * subsequent stray closers.
+   */
+  #exitChildren(children: HtmlNode[]): HtmlNode[] {
     this.#depth -= 1;
     this.#openStack.pop();
     return children;
   }
 
   /**
-   * Returns the lowercased tag name at the current `</tag>` closer
-   * position without advancing. Returns null when the cursor is not
-   * at a closing tag. Used by the implicit-close logic to recognise
-   * an ancestor closer before {@link #consumeStrayClosingTag} would
-   * otherwise consume it as a stray.
+   * HTML5 implicit-close check, called from `#consumeChildren` when
+   * the current parent is in the implied-end-tag set. Returns true
+   * when the next token is either (a) a closing tag for an ancestor
+   * or (b) an opening tag in the parent's implicit-close-on-open
+   * set. The outer `#consumeChildren` call will see the same token
+   * and either match the ancestor closer or treat the opener as a
+   * sibling. Spec-correct for `<p>foo<p>bar`, `<li>one<li>two`,
+   * `<tr>...<tr>...`, and `<p>foo</body>`.
    */
-  #peekClosingTagName(): string | null {
-    if (this.#peek() !== "<" || this.#peek(1) !== "/") return null;
-    let i = this.#pos + 2;
-    const start = i;
-    while (i < this.#source.length) {
-      const c = this.#source[i];
-      if (c === undefined) break;
-      if (!isNameChar(c)) break;
-      i += 1;
+  #shouldImplicitlyClose(parentLower: string): boolean {
+    const closerName = peekClosingTagName(this.#source, this.#pos);
+    if (closerName !== null && closerName !== parentLower && this.#openStack.includes(closerName)) {
+      return true;
     }
-    if (i === start) return null;
-    return this.#source.slice(start, i).toLowerCase();
-  }
-
-  /**
-   * Returns the lowercased tag name at the current `<tag>` opener
-   * position without advancing. Returns null when the cursor is not
-   * at an opening tag, at a comment / doctype / closing tag, or
-   * when the would-be tag name is empty.
-   */
-  #peekOpeningTagName(): string | null {
-    if (this.#peek() !== "<") return null;
-    const next = this.#peek(1);
-    if (next === undefined || next === "/" || next === "!" || next === "?") return null;
-    if (!isNameStart(next)) return null;
-    let i = this.#pos + 1;
-    const start = i;
-    while (i < this.#source.length) {
-      const c = this.#source[i];
-      if (c === undefined) break;
-      if (!isNameChar(c)) break;
-      i += 1;
+    const openerName = peekOpeningTagName(this.#source, this.#pos);
+    if (openerName !== null) {
+      const closersForParent = IMPLICIT_CLOSE_ON_OPEN.get(parentLower);
+      if (closersForParent?.has(openerName)) return true;
     }
-    if (i === start) return null;
-    return this.#source.slice(start, i).toLowerCase();
+    return false;
   }
 
   /**
@@ -567,7 +420,7 @@ class HtmlParser {
     this.#readUntil(">");
     if (this.#peek() === ">") this.#advance(1);
     this.#errors.push({
-      message: this.#strayClosingTagMessage(closerName),
+      message: strayClosingTagMessage(closerName, this.#depth, this.#hasLiquidIncludeHead()),
       position: startPos,
       recoverable: true,
     });
@@ -779,44 +632,6 @@ class HtmlParser {
   }
 
   /**
-   * Chooses the message for a stray closing tag. The generic message
-   * ("Stray closing tag at top level") is preserved for the majority
-   * case; the Liquid-composed-layout case earns a shape-naming
-   * message so the `partialParseFiles[].reason` an agent reads on
-   * the MCP response routes to the composition chain in one read.
-   *
-   * Recognition gates (all must hold) — intentionally narrow so the
-   * rename is precise and real parser bugs keep the generic wording:
-   *
-   *   - `#depth === 0` — the closer is tailing the whole document,
-   *     not orphaned inside an unclosed element body. Without this
-   *     guard a nested recovered close on a Liquid-opened file would
-   *     be mis-labeled as a layout tail.
-   *   - Closer name is one of `html` / `body` / `head` — the three
-   *     tags a sibling partial plausibly closes on our behalf. Any
-   *     other closer (`</div>`, `</section>`, …) is a real
-   *     structural bug, not the documented layout-tail shape.
-   *   - First non-whitespace content in the source is a Liquid
-   *     `{% include %}` / `{% render %}` directive — the partial
-   *     that contributes the opening root tag. See
-   *     {@link detectLiquidIncludeHead} for the exact detector.
-   *
-   * The rename is a reason-string enrichment — not a suppression.
-   * The recoverable error still fires so `partialParseFiles` still
-   * ships the file to an agent; only the `reason` surface changes.
-   * Per the AI-first consumer doctrine (surface, don't suppress),
-   * the right move when a heuristic is too coarse is to enrich the
-   * text an agent reads, not to hide the signal.
-   */
-  #strayClosingTagMessage(closerName: string): string {
-    const lower = closerName.toLowerCase();
-    if (this.#depth === 0 && LAYOUT_TAIL_CLOSERS.has(lower) && this.#hasLiquidIncludeHead()) {
-      return `Elided layout-tail </${lower}> — file opens with a Liquid {% include %} directive whose sibling partial closes this root tag`;
-    }
-    return "Stray closing tag at top level";
-  }
-
-  /**
    * True when the file's first non-whitespace content is a Liquid
    * `{%- include ... -%}` / `{% render ... %}` directive. Cached on
    * first call so repeated stray-closer checks on the same document
@@ -931,70 +746,3 @@ function isNameStart(ch: string): boolean {
 function isNameChar(ch: string): boolean {
   return /[a-zA-Z0-9\-_:]/.test(ch);
 }
-
-/**
- * Returns true when `source` begins (after optional BOM + whitespace)
- * with a Liquid `{% include %}` / `{% render %}` directive, permitting
- * both plain and whitespace-control (`{%-` / `-%}`) delimiters. The
- * parser uses this to distinguish a legitimate Liquid-composed layout
- * wrapper (whose sibling partial contributes the opening root tag)
- * from a structurally broken HTML file, so a trailing bare `</html>`
- * gets an honest "layout-tail" diagnostic instead of the generic
- * "stray closing tag" wording.
- *
- * Exported for unit testing so the detector's acceptance surface is
- * visible as a pure function; the parser consumes it through the
- * `#hasLiquidIncludeHead` cache. Intentionally narrow: `include` /
- * `render` are the Liquid tags that pull in a sibling's markup;
- * `{% extends %}` / `{% block %}` (Jinja-style) do not currently
- * participate in the layout-tail rename — widening the list without
- * a matching fixture would re-hide the silent-miss failure mode on
- * every template shape we haven't verified.
- */
-export function detectLiquidIncludeHead(source: string): boolean {
-  // Strip optional UTF-8 BOM, then anchor a single regex at the start.
-  // `^\s*` tolerates leading whitespace / blank lines; `\{%-?` accepts
-  // the whitespace-control (`{%-`) variant; `\b(include|render)\b`
-  // binds on the two Liquid tags that pull in a sibling partial. Any
-  // other head — `{% if %}`, `{% capture %}`, bare `{{ content }}` —
-  // falls through and keeps the parser's generic stray-close wording.
-  const head = source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
-  return /^\s*\{%-?\s*(?:include|render)\b/.test(head);
-}
-
-/** Decodes HTML entities in attribute values and text nodes. */
-function decodeEntities(text: string): string {
-  return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, entity: string) => {
-    if (entity.startsWith("#x") || entity.startsWith("#X")) {
-      const code = Number.parseInt(entity.slice(2), 16);
-      if (Number.isFinite(code)) return String.fromCodePoint(code);
-      return match;
-    }
-    if (entity.startsWith("#")) {
-      const code = Number.parseInt(entity.slice(1), 10);
-      if (Number.isFinite(code)) return String.fromCodePoint(code);
-      return match;
-    }
-    const named = NAMED_ENTITIES[entity];
-    return named ?? match;
-  });
-}
-
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-  copy: "©",
-  reg: "®",
-  trade: "™",
-  hellip: "…",
-  mdash: "—",
-  ndash: "–",
-  lsquo: "‘",
-  rsquo: "’",
-  ldquo: "“",
-  rdquo: "”",
-};

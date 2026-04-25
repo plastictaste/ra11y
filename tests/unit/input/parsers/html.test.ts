@@ -508,9 +508,7 @@ describe("parseHtml", () => {
   // mirror the spec's tag-omission notes for each element.
 
   it("closes <p> implicitly when </body> arrives", () => {
-    const { errors } = parseHtml(
-      "<!DOCTYPE html><html><body><p>hello</body></html>\n",
-    );
+    const { errors } = parseHtml("<!DOCTYPE html><html><body><p>hello</body></html>\n");
     expect(errors).toEqual([]);
   });
 
@@ -540,9 +538,7 @@ describe("parseHtml", () => {
   });
 
   it("closes <li> implicitly when a sibling <li> opens or </ul> arrives", () => {
-    const { root, errors } = parseHtml(
-      "<ul><li>one<li>two<li>three</ul>",
-    );
+    const { root, errors } = parseHtml("<ul><li>one<li>two<li>three</ul>");
     expect(errors).toEqual([]);
     const ul = findFirst(root, "ul");
     const lis = (ul?.children ?? []).filter(
@@ -552,9 +548,7 @@ describe("parseHtml", () => {
   });
 
   it("closes <dt> / <dd> implicitly on each other and on </dl>", () => {
-    const { root, errors } = parseHtml(
-      "<dl><dt>term1<dd>def1<dt>term2<dd>def2</dl>",
-    );
+    const { root, errors } = parseHtml("<dl><dt>term1<dd>def1<dt>term2<dd>def2</dl>");
     expect(errors).toEqual([]);
     const dl = findFirst(root, "dl");
     const tags = (dl?.children ?? [])
@@ -571,9 +565,7 @@ describe("parseHtml", () => {
   });
 
   it("closes <option> implicitly on sibling <option>", () => {
-    const { errors } = parseHtml(
-      "<select><option>a<option>b<option>c</select>",
-    );
+    const { errors } = parseHtml("<select><option>a<option>b<option>c</select>");
     expect(errors).toEqual([]);
   });
 
@@ -608,7 +600,7 @@ describe("parseHtml", () => {
     const src =
       "<!DOCTYPE html>\n" +
       '<html lang="en">\n' +
-      "<head><meta charset=\"utf-8\"><title>x</title></head>\n" +
+      '<head><meta charset="utf-8"><title>x</title></head>\n' +
       "<body>\n" +
       "<main><h1>Hi</h1><p>one<p>two</main>\n" +
       "</body></html>\n\n";
