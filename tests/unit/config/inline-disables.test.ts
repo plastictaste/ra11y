@@ -462,4 +462,70 @@ describe("parseInlineDisables", () => {
       expect(declarations).toHaveLength(0);
     });
   });
+
+  // V1-RULE-NAVIGATION-HREF-VOID-RENAME wiring: a pragma using the
+  // deprecated rule ID `navigation/href-javascript-void` still suppresses
+  // the canonical ID `navigation/href-placeholder` at runtime, AND the
+  // detailed parser reports the alias on `aliasHits` so the tool
+  // assembling the response can emit the
+  // `deprecated_rule_id:navigation/href-javascript-void:navigation/href-placeholder`
+  // warning. The user-typed token stays verbatim on `declarations` so
+  // audit surfaces (list_suppressions, suppression-audit) preserve the
+  // source spelling; only the `disableMap` (the runtime-match channel)
+  // carries the rewritten form. This asserts the end-to-end contract
+  // the alias seam was built to support.
+  describe("rule-ID aliases (deprecated-old-ID pragmas)", () => {
+    it("an old ID in a pragma rewrites to the canonical ID in the disableMap", () => {
+      const src = [
+        "<!-- ra11y-disable-next-line navigation/href-javascript-void -->",
+        '<a href="javascript:void(0)">Click</a>',
+      ].join("\n");
+      const { disableMap } = parseInlineDisablesDetailed(src);
+      // Runtime check uses the canonical ID — rules fire with the new
+      // name, so the disableMap must also key on the new name.
+      expect(disableMap.get(2)?.has("navigation/href-placeholder")).toBe(true);
+      // The old ID is NOT present under its own token — the alias
+      // rewrites at parse time; if the runtime queried the old ID it
+      // would skip the suppression.
+      expect(disableMap.get(2)?.has("navigation/href-javascript-void")).toBe(false);
+    });
+
+    it("collects the alias hit on aliasHits so callers can emit the deprecated_rule_id warning", () => {
+      const src = [
+        "<!-- ra11y-disable-next-line navigation/href-javascript-void -->",
+        '<a href="javascript:void(0)">Click</a>',
+      ].join("\n");
+      const { aliasHits } = parseInlineDisablesDetailed(src);
+      expect(aliasHits).toHaveLength(1);
+      expect(aliasHits[0]).toEqual({
+        from: "navigation/href-javascript-void",
+        to: "navigation/href-placeholder",
+        deprecatedSince: "0.2.0",
+        removeIn: "0.3.0",
+      });
+    });
+
+    it("preserves the source spelling verbatim on declarations so audit surfaces don't lose the user-typed token", () => {
+      const src = [
+        "<!-- ra11y-disable-next-line navigation/href-javascript-void -->",
+        '<a href="javascript:void(0)">Click</a>',
+      ].join("\n");
+      const { declarations } = parseInlineDisablesDetailed(src);
+      expect(declarations).toHaveLength(1);
+      expect(declarations[0]?.ruleIds).toEqual(["navigation/href-javascript-void"]);
+    });
+
+    it("does not fire on a canonical-ID pragma (no spurious aliasHit)", () => {
+      // Guard against a regression where the resolver mistakenly
+      // matches the `to` side or otherwise populates aliasHits when
+      // the user already wrote the canonical form.
+      const src = [
+        "<!-- ra11y-disable-next-line navigation/href-placeholder -->",
+        '<a href="javascript:void(0)">Click</a>',
+      ].join("\n");
+      const { disableMap, aliasHits } = parseInlineDisablesDetailed(src);
+      expect(disableMap.get(2)?.has("navigation/href-placeholder")).toBe(true);
+      expect(aliasHits).toHaveLength(0);
+    });
+  });
 });

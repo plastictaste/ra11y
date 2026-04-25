@@ -523,17 +523,17 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple (Q6-SUGGEST-FIX-
   // path in principle." That signal is `meta.mechanicalInPrinciple:
   // true`, present-when-true only (conditional-spread).
   //
-  // Concrete case that motivated this: `navigation/href-javascript-void`
+  // Concrete case that motivated this: `navigation/href-placeholder`
   // is `fixClass: "verify-in-source"` and ships no `fixPaths`, so
   // `suggest_fix` falls into the prose-only guidance branch. The rule
   // lives in a source-edit lane in principle; agents need that signal
   // so they don't read "guidance" as "nothing mechanical is possible."
 
   it("no-fixPaths guidance: emits meta.mechanicalInPrinciple when match.fixClass is 'verify-in-source'", () => {
-    // Concrete navigation/href-javascript-void case — prose-only
+    // Concrete navigation/href-placeholder case — prose-only
     // suggestion, rule lane is verify-in-source.
     const match = violationGuidanceOnly({
-      ruleId: "navigation/href-javascript-void",
+      ruleId: "navigation/href-placeholder",
       fixClass: "verify-in-source",
       suggestion:
         'change `<a href="javascript:void(0)">` to `<button type="button">` — this control does not navigate, so it should announce as a button.',

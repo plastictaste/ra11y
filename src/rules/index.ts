@@ -59,7 +59,7 @@ import { rule as autoplaySound } from "./media/autoplay-sound.ts";
 import { rule as videoCaptionsMissing } from "./media/video-captions-missing.ts";
 import { rule as animationFromInteractions } from "./motion/animation-from-interactions.ts";
 import { rule as pauseStopHide } from "./motion/pause-stop-hide.ts";
-import { rule as hrefJavascriptVoid } from "./navigation/href-javascript-void.ts";
+import { rule as hrefPlaceholder } from "./navigation/href-placeholder.ts";
 import { rule as linkDescriptiveText } from "./navigation/link-descriptive-text.ts";
 import { rule as linkNoHref } from "./navigation/link-no-href.ts";
 import { rule as linkTargetBlankAnnouncement } from "./navigation/link-target-blank-announcement.ts";
@@ -116,7 +116,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   headingClassOnNonheading,
   headingHierarchy,
   hiddenFocus,
-  hrefJavascriptVoid,
+  hrefPlaceholder,
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
@@ -200,7 +200,7 @@ export {
   headingClassOnNonheading,
   headingHierarchy,
   hiddenFocus,
-  hrefJavascriptVoid,
+  hrefPlaceholder,
   htmlHasLang,
   iconFontHidden,
   iframeTitle,

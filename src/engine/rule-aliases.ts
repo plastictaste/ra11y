@@ -53,7 +53,19 @@ export interface RuleAlias {
  * itself renamed to C, change A's `to` to C in the same commit that
  * retires B so the alias table stays a one-hop map.
  */
-export const RULE_ALIASES: readonly RuleAlias[] = Object.freeze([]);
+export const RULE_ALIASES: readonly RuleAlias[] = Object.freeze([
+  // V1-RULE-NAVIGATION-HREF-VOID-RENAME: the rule name promised detection
+  // of `href="javascript:void(0)"` only, but the check always also fired
+  // on bare `href="#"`, whitespace-only, and `href=""` — every shape of
+  // placeholder href. Rename to the honest name; the alias keeps existing
+  // pragmas, config keys, and CLI flags resolving for one minor cycle.
+  {
+    from: "navigation/href-javascript-void",
+    to: "navigation/href-placeholder",
+    deprecatedSince: "0.2.0",
+    removeIn: "0.3.0",
+  },
+]);
 
 /**
  * Result of a rule-ID resolution. `resolved` is the ID callers should

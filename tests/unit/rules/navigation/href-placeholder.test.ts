@@ -1,15 +1,15 @@
 import { describe, expect, it } from "bun:test";
-import { rule } from "../../../../src/rules/navigation/href-javascript-void.ts";
+import { rule } from "../../../../src/rules/navigation/href-placeholder.ts";
 import { runRule } from "../../../helpers/run-rule.ts";
 
-describe("rule navigation/href-javascript-void", () => {
+describe("rule navigation/href-placeholder", () => {
   describe("HTML: fires on javascript: scheme variants", () => {
     it('href="javascript:void(0)" (canonical form)', () => {
       const violations = runRule(rule, `<a href="javascript:void(0)">Click</a>`, {
         filePath: "index.html",
       });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
       expect(violations[0]?.severity).toBe("error");
       expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
       expect(violations[0]?.criteria).toContain("wcag22:2.1.1");
@@ -71,7 +71,7 @@ describe("rule navigation/href-javascript-void", () => {
     it('href="#" (bare placeholder)', () => {
       const violations = runRule(rule, `<a href="#">Click</a>`, { filePath: "index.html" });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
     });
 
     it('href="  #  " (whitespace trimmed before comparison)', () => {
@@ -95,7 +95,7 @@ describe("rule navigation/href-javascript-void", () => {
         filePath: "signin.html",
       });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
       expect(violations[0]?.severity).toBe("error");
       expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
     });
@@ -103,7 +103,7 @@ describe("rule navigation/href-javascript-void", () => {
     it('href="   " (whitespace-only collapses to empty after trim)', () => {
       const violations = runRule(rule, `<a href="   ">Click</a>`, { filePath: "index.html" });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
     });
   });
 
@@ -156,7 +156,7 @@ describe("rule navigation/href-javascript-void", () => {
     it('href="javascript:void(0)"', () => {
       const violations = runRule(rule, `const X = <a href="javascript:void(0)">Click</a>;`);
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
     });
 
     it('href="javascript:;"', () => {
@@ -176,7 +176,7 @@ describe("rule navigation/href-javascript-void", () => {
     it('href="" (empty placeholder, no onClick)', () => {
       const violations = runRule(rule, `const X = <a href="">Forgot password?</a>;`);
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-javascript-void");
+      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
     });
   });
 
