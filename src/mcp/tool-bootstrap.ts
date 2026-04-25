@@ -147,10 +147,21 @@ export const bootstrapTool: McpTool = {
 
     const scanSubset = extractScanSubset(scan);
     const scanWarnings = readStringArray(scan, "warnings");
+    // V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN: fire the deprecation
+    // code whenever the alias is emitted (gated on suggestedConfig
+    // being non-null — same predicate as `configPair` below). Surfaces
+    // alongside the alias so agents reading the warnings channel know
+    // to drop their `proposedConfig` reads on the next call without
+    // having to diff the response shape across releases. The
+    // `### Deprecated` CHANGELOG entry tracks the removal window;
+    // when the alias goes away the emit drops with it.
+    const proposedConfigDeprecationCode: string[] =
+      suggestedConfig === null ? [] : ["proposed_config_deprecated_use_suggested_config"];
     const warnings: string[] = [
       ...scanWarnings,
       ...failedLegs.map((leg) => `bootstrap_${leg}_failed`),
       ...(writeBaseline ? [] : ["baseline_dry_run"]),
+      ...proposedConfigDeprecationCode,
     ];
 
     // Snippet content tracks actual baseline-existence on disk: pasting
@@ -188,9 +199,11 @@ export const bootstrapTool: McpTool = {
     // Canonical key is `suggestedConfig` (matches `propose_config` +
     // `detect_native_wrappers.suggestedConfigSnippet`). `proposedConfig`
     // is emitted alongside for one release as a transition alias so
-    // agents that learned the old name keep working — silent, lossless,
-    // compatible (no input-side warning needed; this is output-side
-    // aliasing). Removed in the next minor release.
+    // agents that learned the old name keep working. Removed in the
+    // next minor release. The alias-deprecation warning code below
+    // (V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN) tells the agent to
+    // drop reads of `proposedConfig` on the next call so the
+    // double-payload cost goes away ahead of the removal.
     const configPair =
       suggestedConfig === null ? {} : { suggestedConfig, proposedConfig: suggestedConfig };
     return textResult({

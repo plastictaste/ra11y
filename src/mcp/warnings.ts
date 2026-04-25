@@ -163,6 +163,19 @@ export type ScanWarningCode =
   // explicit and lets the failure path stay distinct (it surfaces as
   // `bootstrap_baseline_failed` from the partial-failure pipeline).
   | "baseline_dry_run"
+  // V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN: `bootstrap` is shipping
+  // both `suggestedConfig` (canonical) and `proposedConfig` (transition
+  // alias) in this release. Without this code, an agent reading the
+  // response sees two fields with identical contents and pays the
+  // double-payload cost on every bootstrap call without any signal that
+  // the alias is going away. The warning fires whenever `proposedConfig`
+  // is emitted so agents drop reads of the alias on the next call.
+  // Emitted alongside `proposedConfig` until the alias is removed in
+  // the next minor release; the `### Deprecated` CHANGELOG entry tracks
+  // the removal window. Surface-don't-suppress: the alias still ships
+  // unchanged; the warning is the additive signal that lets callers
+  // self-migrate without a hidden break.
+  | "proposed_config_deprecated_use_suggested_config"
   // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS build artifacts
   // (bootstrap.css, font-awesome.css, jquery-era bundles) dominate
   // the finding set so heavily that the response's file budget is

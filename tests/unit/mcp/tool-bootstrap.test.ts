@@ -558,6 +558,59 @@ describe("bootstrap: suggestedConfig/proposedConfig null-case parity", () => {
   });
 });
 
+describe("bootstrap: proposedConfig deprecation warning", () => {
+  // V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN. `bootstrap` ships the
+  // canonical `suggestedConfig` and a transition-alias `proposedConfig`
+  // with identical contents for one release. Without a structured
+  // warning, agents have no signal that the alias is going away and
+  // pay the double-payload cost on every call. The dedicated code
+  // fires whenever `proposedConfig` is in the response so agents drop
+  // their alias reads on the next tool call. Removed in lockstep with
+  // the alias itself in the next minor release.
+  it("fires proposed_config_deprecated_use_suggested_config alongside the alias", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body><p>x</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      // Sanity: the alias is on the response.
+      expect(typeof response.proposedConfig).toBe("string");
+      expect(response.proposedConfig).toBe(response.suggestedConfig);
+      // Deprecation code rides alongside.
+      expect(response.warnings).toBeDefined();
+      expect(response.warnings).toContain("proposed_config_deprecated_use_suggested_config");
+    });
+  });
+
+  // Pair: when the propose_config leg fails and the alias is omitted,
+  // the deprecation code MUST also drop. Emitting the warning without
+  // the alias would direct agents at a non-existent migration —
+  // ambiguous-shape territory.
+  it("omits the deprecation code when proposedConfig is not emitted", async () => {
+    const originalPropose = proposeConfigTool.handler;
+    (proposeConfigTool as { handler: unknown }).handler = () => {
+      throw new Error("forced-propose-failure");
+    };
+    try {
+      await withScratch(async (dir) => {
+        await writeFile(
+          join(dir, "index.html"),
+          '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
+        );
+        const { response } = await callBootstrap({ cwd: dir });
+        expect(response.suggestedConfig).toBeUndefined();
+        expect(response.proposedConfig).toBeUndefined();
+        expect(response.warnings ?? []).not.toContain(
+          "proposed_config_deprecated_use_suggested_config",
+        );
+      });
+    } finally {
+      (proposeConfigTool as { handler: unknown }).handler = originalPropose;
+    }
+  });
+});
+
 describe("bootstrap: empty project edge case", () => {
   // Zero parseable files is the canonical ambiguity-risk CLAUDE.md §1
   // warns against. The scan leg emits `scanned_zero_files`; the

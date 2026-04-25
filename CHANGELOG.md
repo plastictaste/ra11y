@@ -32,7 +32,7 @@ All notable changes to ra11y are documented in this file. The format is based on
 
 ### Deprecated
 
-- **MCP `bootstrap` response now emits `suggestedConfig` as canonical; `proposedConfig` remains for one release as a transition alias** (identical value; both emitted together when a suggestion is available, both omitted when the `propose_config` leg degrades). Matches `propose_config.suggestedConfig` and `detect_native_wrappers.suggestedConfigSnippet` — cross-surface drift resolved. The `proposedConfig` alias will be removed in the next minor release.
+- **MCP `bootstrap` response now emits `suggestedConfig` as canonical; `proposedConfig` remains for one release as a transition alias** (identical value; both emitted together when a suggestion is available, both omitted when the `propose_config` leg degrades). Matches `propose_config.suggestedConfig` and `detect_native_wrappers.suggestedConfigSnippet` — cross-surface drift resolved. The `proposedConfig` alias will be removed in the next minor release. A new structured `warnings: ["proposed_config_deprecated_use_suggested_config"]` code now fires whenever the alias is emitted so agents reading the warnings channel can drop their `proposedConfig` reads on the next call without paying the double-payload cost (V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN).
 
 ### Breaking
 
