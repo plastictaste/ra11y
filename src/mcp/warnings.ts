@@ -1,4 +1,10 @@
 // MARKER_Q4_PROBE_001
+// ra11y-limits-exempt: warnings + paired warningsDetails apparatus is one
+// cohesive doctrine surface (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION
+// payload-vs-binary contract). Splitting `ScanWarningDetails` and the
+// `summarize*` helpers into a sibling file scatters the membership-vs-
+// payload invariant across files and breaks the docblock that keeps the
+// contract auditable in one read; keep the apparatus together.
 /**
  * Top-level `warnings: string[]` codes for MCP scan responses.
  *
@@ -250,6 +256,22 @@ export interface WarningInputs {
    */
   readonly scannedBuildArtifactsPresent?: boolean;
   /**
+   * V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION: optional summary of
+   * the build-artifact tally so `scanned_build_artifacts_present` can
+   * carry a quantitative `warningsDetails` payload the agent branches
+   * on without descending into `meta.scannedBuildArtifacts`. `count`
+   * is the total entry count across grouped + ungrouped buckets;
+   * `topPath` (when present) is the densest single artifact path the
+   * agent can use as a first triage pivot. Omit when the caller does
+   * not run the build-artifact detector — the bare presence label
+   * still fires off `scannedBuildArtifactsPresent`, just without the
+   * payload mirror.
+   */
+  readonly scannedBuildArtifactsSummary?: {
+    readonly count: number;
+    readonly topPath?: string;
+  };
+  /**
    * True when the resolved project config has `preset: "storybook"`.
    * Drives the `storybook_preset_active` warning — an honest label
    * that framework-aware transparency engaged for this scan (story
@@ -466,11 +488,53 @@ const VENDOR_CSS_DOMINATES_SHARE_THRESHOLD = 0.5;
 /**
  * Structured sibling to the bare-string `warnings[]` channel — see
  * ADR 0023. Keyed by `ScanWarningCode`; only codes whose signal is
- * enriched by a payload appear here. Codes whose presence alone is
- * the signal (`no_config_found`, `scanned_zero_files`, etc.) have no
- * entry and the map may be empty as a whole — in which case
- * `warningsDetailsField` omits the field entirely per
+ * enriched by a quantitative payload appear here. Codes whose presence
+ * alone is the signal have no entry and the map may be empty as a whole
+ * — in which case `warningsDetailsField` omits the field entirely per
  * "present-when-meaningful."
+ *
+ * Payload-vs-binary contract (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION):
+ * the doctrine is "warningsDetails carries quantitative signal the agent
+ * uses to decide what next; bare codes carry binary signal." Both honest;
+ * the schema must document which kind each code is. Concretely:
+ *
+ *   - PAYLOAD-BEARING (an entry on this interface): the code's "fired"
+ *     state is enriched by a count, list, ratio, language enum, or
+ *     other quantity the agent reads to branch on severity / kind /
+ *     scope without descending into `meta`. The current set is
+ *     `extensions_skipped_no_parser`, `response_token_budget_truncated`,
+ *     `content_files_skipped`, `source_language_unsupported`,
+ *     `vendor_css_dominates_findings`, `parse_errors_present`, and
+ *     `scanned_build_artifacts_present`. Each carries a `summarize*`
+ *     helper that returns `undefined` if the predicate fired but the
+ *     payload would be degenerate (e.g. zero counts, missing pivot) —
+ *     the call site conditional-spreads, so a degenerate payload is
+ *     never on the wire.
+ *
+ *   - BINARY-PRESENCE (no entry on this interface): the code's "fired"
+ *     state is the entire signal; there is no follow-on quantity the
+ *     agent would branch on differently. The current set is
+ *     `scanned_zero_files`, `root_source_defaulted`, `no_config_found`,
+ *     `tailwind_detected_css_undercounted`, `template_files_parsed_as_literal`,
+ *     `no_hunks_in_comparison`, `storybook_preset_active`,
+ *     `session_wrappers_configured_for_different_cwd`,
+ *     `redundant_additional_paths`, `response_meta_truncated`,
+ *     `baseline_dry_run`, and
+ *     `proposed_config_deprecated_use_suggested_config`. Each names a
+ *     condition whose remediation is documented in the code's prose
+ *     comment alongside its declaration; meta sub-fields named there
+ *     carry any incidental detail (paths, ext maps, directive lists)
+ *     that an agent might want for triage. Adding a payload to a
+ *     binary code is the same mistake as adding `newText: ""` under
+ *     `kind: "edit"` — an ambiguous shape that forces the agent to
+ *     re-read, not new signal.
+ *
+ * Membership-vs-payload invariant: every key on this interface MUST
+ * correspond to a {@link ScanWarningCode} member that fired in the
+ * paired `codes[]` array. The {@link computeScanWarningDetails} helper
+ * gates entry emission on `codes.includes(...)` so a payload never
+ * lands without its corresponding code; the regression test in
+ * `tests/unit/mcp/warnings.test.ts` locks the contract.
  */
 export interface ScanWarningDetails {
   /**
@@ -576,6 +640,43 @@ export interface ScanWarningDetails {
       readonly path: string;
       readonly findingsCount: number;
     };
+  };
+  /**
+   * Payload for `parse_errors_present`. Splits the affected file count
+   * into the two buckets the warning's prose describes: total-failure
+   * (`parseErrorFileCount` — file invisible to rules, AST empty) vs.
+   * partial-parse (`partialParseFileCount` — rules fired on the
+   * recovered slice, but findings below the parse-error point may be
+   * missing). Without the split, an agent sees the bare code and has
+   * to descend into `meta.analysisCoverage` to know whether the gap
+   * is "files invisible" (high-severity silent miss) or "partial
+   * recall" (lower-severity gap). Both counts are always present so
+   * consumers never disambiguate "absent" from "zero" on a known
+   * dimension — same reasoning as the per-extension keys on
+   * `content_files_skipped.exts`.
+   */
+  readonly parse_errors_present?: {
+    readonly parseErrorFileCount: number;
+    readonly partialParseFileCount: number;
+  };
+  /**
+   * Payload for `scanned_build_artifacts_present`. `count` is the
+   * total artifact-file count across the grouped + ungrouped buckets
+   * surfaced under `meta.scannedBuildArtifacts`; `topPath` (when
+   * present) names the densest single artifact path the agent can
+   * use as a first triage pivot for vendor filtering (exclude glob,
+   * pragma, additionalPaths re-target). Without this payload, an
+   * agent reading the bare code cannot tell whether `files[]` carries
+   * one inadvertently-included `dist/foo.min.css` or a 200-file
+   * vendor dump — two distinct triage regimes with identical
+   * top-level shape. Pairs with `vendor_css_dominates_findings` when
+   * the artifact mass is also dominating the finding budget; either
+   * code can fire alone (a vendored stylesheet with zero findings
+   * still trips this code without dominance).
+   */
+  readonly scanned_build_artifacts_present?: {
+    readonly count: number;
+    readonly topPath?: string;
   };
 }
 
@@ -1016,6 +1117,7 @@ type ScanMetaWarningArgs = {
   readonly rootSource: WarningInputs["rootSource"];
   readonly configSource: string | null | undefined;
   readonly scannedBuildArtifactsPresent?: boolean;
+  readonly scannedBuildArtifactsSummary?: WarningInputs["scannedBuildArtifactsSummary"];
   readonly storybookPresetActive?: boolean;
   readonly sessionWrappersMismatchCwd?: boolean;
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
@@ -1035,6 +1137,9 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.scannedBuildArtifactsPresent === undefined
       ? {}
       : { scannedBuildArtifactsPresent: args.scannedBuildArtifactsPresent }),
+    ...(args.scannedBuildArtifactsSummary === undefined
+      ? {}
+      : { scannedBuildArtifactsSummary: args.scannedBuildArtifactsSummary }),
     ...(args.storybookPresetActive === undefined
       ? {}
       : { storybookPresetActive: args.storybookPresetActive }),
@@ -1073,31 +1178,100 @@ export function computeScanWarningDetails(
   codes: readonly ScanWarningCode[],
   inputs: WarningInputs,
 ): ScanWarningDetails {
-  const details: {
-    extensions_skipped_no_parser?: NonNullable<ScanWarningDetails["extensions_skipped_no_parser"]>;
-    content_files_skipped?: NonNullable<ScanWarningDetails["content_files_skipped"]>;
-    source_language_unsupported?: NonNullable<ScanWarningDetails["source_language_unsupported"]>;
-    vendor_css_dominates_findings?: NonNullable<
-      ScanWarningDetails["vendor_css_dominates_findings"]
-    >;
-  } = {};
-  if (codes.includes("extensions_skipped_no_parser")) {
-    const summary = summarizeSkippedExtensions(inputs.analysisCoverage);
-    if (summary !== undefined) details.extensions_skipped_no_parser = summary;
+  // Code → summarizer dispatch table. Each row pairs a payload-bearing
+  // code with the helper that produces its `warningsDetails` entry —
+  // rows are checked in declaration order so the resulting record
+  // preserves a stable key ordering across runs (V1-WARNINGS-DETAILS-
+  // CROSS-SURFACE-REGRESSION). The list-driven shape keeps the
+  // function's cognitive complexity flat as new payload codes accrete:
+  // adding one is +1 row, not +1 conditional branch on the orchestrator.
+  const details: Record<string, unknown> = {};
+  const dispatch: ReadonlyArray<{
+    readonly code: ScanWarningCode;
+    readonly summarize: () => unknown;
+  }> = [
+    {
+      code: "extensions_skipped_no_parser",
+      summarize: () => summarizeSkippedExtensions(inputs.analysisCoverage),
+    },
+    {
+      code: "content_files_skipped",
+      summarize: () => summarizeContentFiles(inputs.analysisCoverage),
+    },
+    {
+      code: "source_language_unsupported",
+      summarize: () => summarizeDominantLanguage(inputs.analysisCoverage),
+    },
+    {
+      code: "vendor_css_dominates_findings",
+      summarize: () => summarizeVendorCssDominance(inputs.vendorCssNoise),
+    },
+    {
+      code: "parse_errors_present",
+      summarize: () => summarizeParseErrors(inputs.analysisCoverage),
+    },
+    {
+      code: "scanned_build_artifacts_present",
+      summarize: () => summarizeScannedBuildArtifacts(inputs.scannedBuildArtifactsSummary),
+    },
+  ];
+  for (const row of dispatch) {
+    if (!codes.includes(row.code)) continue;
+    const summary = row.summarize();
+    if (summary !== undefined) details[row.code] = summary;
   }
-  if (codes.includes("content_files_skipped")) {
-    const summary = summarizeContentFiles(inputs.analysisCoverage);
-    if (summary !== undefined) details.content_files_skipped = summary;
-  }
-  if (codes.includes("source_language_unsupported")) {
-    const summary = summarizeDominantLanguage(inputs.analysisCoverage);
-    if (summary !== undefined) details.source_language_unsupported = summary;
-  }
-  if (codes.includes("vendor_css_dominates_findings")) {
-    const summary = summarizeVendorCssDominance(inputs.vendorCssNoise);
-    if (summary !== undefined) details.vendor_css_dominates_findings = summary;
-  }
-  return details;
+  return details as ScanWarningDetails;
+}
+
+/**
+ * Builds the `parse_errors_present` payload from the coverage block's
+ * split counts. Returns `undefined` when both buckets are zero — the
+ * code's predicate guarantees at least one is non-zero when the code
+ * fired, but the helper stays defensive (a payload claiming
+ * `0 / 0` would be weaker than the bare code). Both buckets are
+ * always present in the returned shape so consumers never have to
+ * disambiguate "absent" from "zero" on a known dimension — same
+ * reasoning as the per-extension keys on `content_files_skipped.exts`.
+ */
+function summarizeParseErrors(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly parseErrorFileCount: number;
+      readonly partialParseFileCount: number;
+    }
+  | undefined {
+  if (coverage === undefined) return undefined;
+  const full = coverage["parseErrorFileCount"];
+  const partial = coverage["partialParseFileCount"];
+  const parseErrorFileCount = typeof full === "number" && full > 0 ? full : 0;
+  const partialParseFileCount = typeof partial === "number" && partial > 0 ? partial : 0;
+  if (parseErrorFileCount === 0 && partialParseFileCount === 0) return undefined;
+  return { parseErrorFileCount, partialParseFileCount };
+}
+
+/**
+ * Builds the `scanned_build_artifacts_present` payload from the
+ * caller-supplied summary. Returns `undefined` when the input is
+ * omitted (caller didn't run the build-artifact detector — the bare
+ * code can still fire off `scannedBuildArtifactsPresent: true` when
+ * a downstream tool only knows the binary signal) or when the count
+ * is zero (defensive — if `count` is zero the predicate that fires
+ * the code shouldn't have triggered, so the payload would be a
+ * degenerate shape). `topPath` is included only when supplied — a
+ * payload without a concrete pivot is still useful because the
+ * `count` carries the dominant-noise signal on its own.
+ */
+function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArtifactsSummary"]):
+  | {
+      readonly count: number;
+      readonly topPath?: string;
+    }
+  | undefined {
+  if (summary === undefined) return undefined;
+  if (summary.count <= 0) return undefined;
+  return {
+    count: summary.count,
+    ...(summary.topPath === undefined ? {} : { topPath: summary.topPath }),
+  };
 }
 
 /**

@@ -533,11 +533,29 @@ function buildBaseWarningsForScanProject(args: {
     ),
     sourcesByPath: new Map(parsedFiles.map((f) => [f.filePath, f.source])),
   });
+  // V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION: derive the
+  // `scanned_build_artifacts_present` payload here so the warning code
+  // ships with quantitative signal (count + first-pivot path). Without
+  // the payload, an agent reading the bare code can't tell whether the
+  // scan included one stray `dist/foo.min.css` or a 200-file vendor
+  // dump — two distinct triage regimes with identical top-level shape.
+  // The full per-path detail still lives in `meta.scannedBuildArtifacts`
+  // (grouped + ungrouped); this summary is the dense top-level pivot.
+  const scannedBuildArtifactsSummary =
+    buildArtifacts.entries.length > 0
+      ? {
+          count: buildArtifacts.entries.length,
+          ...(buildArtifacts.entries[0]?.path === undefined
+            ? {}
+            : { topPath: buildArtifacts.entries[0].path }),
+        }
+      : undefined;
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
     configSource,
     scannedBuildArtifactsPresent: buildArtifacts.present,
+    ...(scannedBuildArtifactsSummary === undefined ? {} : { scannedBuildArtifactsSummary }),
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     templateDirectivesOverlap,

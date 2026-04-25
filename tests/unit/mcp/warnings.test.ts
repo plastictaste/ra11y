@@ -1296,3 +1296,200 @@ describe("computeScanWarnings — response_meta_truncated", () => {
     expect(codes).not.toContain("response_meta_truncated");
   });
 });
+
+// V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION: the payload-vs-binary
+// contract on `ScanWarningDetails` says every fired warning code is
+// either payload-bearing (its slot on the interface is populated when
+// the code fires AND the predicate's data is non-degenerate) OR
+// binary-presence (no slot on the interface; the bare code carries
+// the entire signal). The doctrine line in
+// `docs/kb/architecture/ai-first-consumer.md`: "warningsDetails
+// carries quantitative signal the agent uses to decide what next.
+// Bare codes carry binary signal. Both honest; the schema must
+// document which."
+//
+// This block exercises the contract on the full set of codes flagged
+// in the originating field report (`response_token_budget_truncated`,
+// `no_config_found`, `scanned_build_artifacts_present`,
+// `extensions_skipped_no_parser`, `parse_errors_present`,
+// `source_language_unsupported`, `template_files_parsed_as_literal`)
+// — half the report's claim was that only one of seven carried a
+// payload; the contract now is "three carry quantitative payloads
+// from the start (tokens / extensions / source-language), two more
+// were enriched here (build-artifacts / parse-errors), and two are
+// honestly binary (no-config / template-literal)." Together they
+// pin the cross-surface invariant so the regression cannot reopen
+// silently.
+describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary contract", () => {
+  it("payload-bearing codes always emit a `warningsDetails` entry on a fire — `parse_errors_present`", () => {
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 3, partialParseFileCount: 1 },
+      filesByExtension: { ".tsx": 42 },
+    });
+    expect(out.warnings).toContain("parse_errors_present");
+    expect(out.warningsDetails?.parse_errors_present).toBeDefined();
+    expect(out.warningsDetails?.parse_errors_present?.parseErrorFileCount).toBe(3);
+    expect(out.warningsDetails?.parse_errors_present?.partialParseFileCount).toBe(1);
+  });
+
+  it("payload-bearing codes always emit a `warningsDetails` entry on a fire — `scanned_build_artifacts_present`", () => {
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsSummary: {
+        count: 17,
+        topPath: "vendor/bootstrap/bootstrap.css",
+      },
+    });
+    expect(out.warnings).toContain("scanned_build_artifacts_present");
+    expect(out.warningsDetails?.scanned_build_artifacts_present).toBeDefined();
+    expect(out.warningsDetails?.scanned_build_artifacts_present?.count).toBe(17);
+    expect(out.warningsDetails?.scanned_build_artifacts_present?.topPath).toBe(
+      "vendor/bootstrap/bootstrap.css",
+    );
+  });
+
+  it("`scanned_build_artifacts_present` fires bare without a payload when only the binary flag is supplied (caller can't compute the count)", () => {
+    // Derivative tools that know "at least one artifact was scanned"
+    // but didn't materialize the entries list still emit the bare
+    // code — surface-don't-suppress doctrine. The payload is
+    // present-when-meaningful; absence here means "caller didn't
+    // know, not zero." The bare code keeps the agent honest about
+    // the presence; the count just isn't lifted onto the top-level
+    // channel until a caller wires the summary.
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      scannedBuildArtifactsPresent: true,
+    });
+    expect(out.warnings).toContain("scanned_build_artifacts_present");
+    expect(out.warningsDetails?.scanned_build_artifacts_present).toBeUndefined();
+  });
+
+  it("binary-presence codes never emit a `warningsDetails` entry — `no_config_found`", () => {
+    // `no_config_found` is the canonical binary code: the bare
+    // emission IS the entire signal — `meta.configSource: null`
+    // already carries the same bit, and the warning's prose names
+    // the remediation. There's no follow-on quantity an agent
+    // would branch on differently. The contract: never a slot on
+    // `ScanWarningDetails`, never an entry on the wire.
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(out.warnings).toContain("no_config_found");
+    expect(out.warningsDetails).toBeUndefined();
+  });
+
+  it("binary-presence codes never emit a `warningsDetails` entry — `template_files_parsed_as_literal`", () => {
+    // `template_files_parsed_as_literal` is binary too: the
+    // directive list lives in `meta.analysisCoverage.templateDirectivesFound`
+    // and the code's prose names the dispatch (overlap or
+    // frontmatter fence). A count of directives or fence presence
+    // bit doesn't change the agent's next action — read the file,
+    // confirm the parse-as-literal regime, decide whether to add a
+    // pragma — the bare code IS the entire top-level signal.
+    const out = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        templateDirectivesFound: ["jinja-or-liquid"],
+      },
+      filesByExtension: { ".html": 5 },
+      templateDirectivesOverlap: true,
+    });
+    expect(out.warnings).toContain("template_files_parsed_as_literal");
+    expect(
+      (out.warningsDetails as Record<string, unknown> | undefined)?.[
+        "template_files_parsed_as_literal"
+      ],
+    ).toBeUndefined();
+  });
+
+  it("the membership-vs-payload invariant holds when the seven canonical regression codes all fire on one response", () => {
+    // Construct a Frankenstein response that fires every code from
+    // the regression item (minus the density-cap code which only
+    // the budget pipeline triggers). Asserts the three payload-
+    // bearing codes get their slots populated and the two binary
+    // codes get NO slot — the contract is symmetric: payload-bearing
+    // codes carry their slot on every fire, binary codes never do.
+    const out = warningsField({
+      filesScanned: 250,
+      rootSource: "explicit",
+      configSource: null,
+      configSearchSawProjectMarker: true,
+      analysisCoverage: {
+        parseErrorFileCount: 4,
+        partialParseFileCount: 2,
+        skippedByExtension: { ".astro": 80, ".rb": 120, ".haml": 60, ".md": 5 },
+        templateDirectivesFound: ["jinja-or-liquid"],
+      },
+      filesByExtension: { ".tsx": 250, ".css": 4 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsSummary: {
+        count: 17,
+        topPath: "vendor/bootstrap/bootstrap.css",
+      },
+      templateDirectivesOverlap: true,
+    });
+    // All seven codes from the regression item are in `warnings[]`.
+    const codes = out.warnings ?? [];
+    expect(codes).toContain("no_config_found");
+    expect(codes).toContain("extensions_skipped_no_parser");
+    expect(codes).toContain("parse_errors_present");
+    expect(codes).toContain("source_language_unsupported");
+    expect(codes).toContain("scanned_build_artifacts_present");
+    expect(codes).toContain("template_files_parsed_as_literal");
+    // Payload-bearing slots populated for every fired code that has
+    // a slot.
+    expect(out.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
+    expect(out.warningsDetails?.parse_errors_present).toBeDefined();
+    expect(out.warningsDetails?.source_language_unsupported).toBeDefined();
+    expect(out.warningsDetails?.scanned_build_artifacts_present).toBeDefined();
+    // Binary codes never produce a slot — explicit absence check
+    // against the payload map keys keeps the contract symmetric
+    // (no stray `no_config_found` / `template_files_parsed_as_literal`
+    // shape ever leaks through).
+    const detailsKeys = Object.keys(out.warningsDetails ?? {});
+    expect(detailsKeys).not.toContain("no_config_found");
+    expect(detailsKeys).not.toContain("template_files_parsed_as_literal");
+  });
+
+  it("the membership-vs-payload invariant: every key on `warningsDetails` corresponds to a fired code in `warnings[]`", () => {
+    // Drives `computeScanWarningDetails` directly with codes that
+    // were NOT emitted (empty `codes` arg) — the helper must NOT
+    // leak any payload, even when the inputs would otherwise let
+    // a `summarize*` helper succeed. Prevents a refactor from
+    // detaching the gate that keeps the two channels in lock-step.
+    const details = computeScanWarningDetails([], {
+      filesScanned: 250,
+      rootSource: "explicit",
+      configSource: null,
+      configSearchSawProjectMarker: true,
+      analysisCoverage: {
+        parseErrorFileCount: 4,
+        partialParseFileCount: 2,
+        skippedByExtension: { ".astro": 80, ".rb": 120 },
+      },
+      filesByExtension: { ".tsx": 250 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsSummary: { count: 17, topPath: "vendor/x.css" },
+    });
+    expect(Object.keys(details)).toHaveLength(0);
+  });
+});
