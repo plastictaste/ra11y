@@ -64,7 +64,15 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlAttribute,
+  HtmlDocument,
+  HtmlElement,
+  JsxAttribute,
+  JsxElement,
+  TsxModule,
+} from "../../types/ast.ts";
+import type { FixPaths } from "../../types/violation.ts";
 
 export const rule = defineRule({
   id: "aria/redundant-role-on-host-element",
@@ -102,14 +110,14 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      checkHtml(ctx.ast as HtmlDocument, ctx.source, (v) => ctx.emit(v));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
+      checkJsx(ctx.ast as TsxModule, ctx.source, (v) => ctx.emit(v));
     }
   },
 });
@@ -119,6 +127,7 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths: FixPaths;
 }) => void;
 
 /**
@@ -133,7 +142,7 @@ const ALWAYS_REDUNDANT: ReadonlyMap<string, string> = new Map([
   ["form", "form"],
 ]);
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
+function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
     const role = getHtmlAttribute(element, "role");
     if (!role || role.trim().length === 0) continue;
@@ -143,11 +152,13 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     const implicit = htmlImplicitRole(tag, element);
     if (implicit === null) continue;
     if (explicit !== implicit) continue;
-    emit(buildViolation(tag, implicit, element.loc.start));
+    const roleAttr = getHtmlRoleAttribute(element);
+    const edit = roleAttr === null ? null : buildHtmlRoleRemovalEdit(roleAttr, source);
+    emit(buildViolation(tag, implicit, element.loc.start, edit));
   }
 }
 
-function checkJsx(module: TsxModule, emit: Emit): void {
+function checkJsx(module: TsxModule, source: string, emit: Emit): void {
   for (const element of walkJsxElements(module)) {
     const role = getJsxAttributeString(element, "role");
     if (!role || role.trim().length === 0) continue;
@@ -157,8 +168,68 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     const implicit = jsxImplicitRole(tag, element);
     if (implicit === null) continue;
     if (explicit !== implicit) continue;
-    emit(buildViolation(tag, implicit, element.loc.start));
+    const roleAttr = getJsxRoleAttribute(element);
+    const edit = roleAttr === null ? null : buildJsxRoleRemovalEdit(roleAttr, source);
+    emit(buildViolation(tag, implicit, element.loc.start, edit));
   }
+}
+
+/**
+ * Deterministic mechanical-edit pair for removing the redundant `role`
+ * attribute. `oldText` captures the attribute *with* its single leading
+ * whitespace character so the replacement leaves the remainder of the
+ * open tag cleanly spaced (`<nav role="navigation">` → `<nav>`, not
+ * `<nav >`). When the leading byte is not ASCII whitespace (e.g. the
+ * role attribute sits immediately after `<tag`), we fall back to the
+ * attribute range alone and let `widenToUniqueAnchor` pick up the rest
+ * in the suggest_fix assembly layer.
+ *
+ * Shared by the HTML and JSX branches — the extraction shape is the
+ * same for both parsers because `HtmlAttribute` and `JsxAttribute`
+ * both carry a `range: { start, end }` byte-offset pair.
+ */
+function buildHtmlRoleRemovalEdit(
+  attr: HtmlAttribute,
+  source: string,
+): { readonly oldText: string; readonly newText: string } {
+  return buildAttributeRemovalEditFromRange(attr.range.start, attr.range.end, source);
+}
+
+function buildJsxRoleRemovalEdit(
+  attr: JsxAttribute,
+  source: string,
+): { readonly oldText: string; readonly newText: string } {
+  return buildAttributeRemovalEditFromRange(attr.range.start, attr.range.end, source);
+}
+
+function buildAttributeRemovalEditFromRange(
+  start: number,
+  end: number,
+  source: string,
+): { readonly oldText: string; readonly newText: string } {
+  const prevChar = start > 0 ? source.charCodeAt(start - 1) : -1;
+  const isPrevAsciiWs =
+    prevChar === 0x20 /* space */ ||
+    prevChar === 0x09 /* tab */ ||
+    prevChar === 0x0a /* LF */ ||
+    prevChar === 0x0d; /* CR */
+  const widenStart = isPrevAsciiWs ? start - 1 : start;
+  const oldText = source.slice(widenStart, end);
+  return { oldText, newText: "" };
+}
+
+function getHtmlRoleAttribute(element: HtmlElement): HtmlAttribute | null {
+  for (const attr of element.attributes) {
+    if (attr.name.toLowerCase() === "role") return attr;
+  }
+  return null;
+}
+
+function getJsxRoleAttribute(element: JsxElement): JsxAttribute | null {
+  for (const attr of element.attributes) {
+    if (attr.name.toLowerCase() === "role") return attr;
+  }
+  return null;
 }
 
 /**
@@ -218,17 +289,34 @@ function buildViolation(
   tag: string,
   implicit: string,
   loc: { line: number; column: number },
+  edit: { readonly oldText: string; readonly newText: string } | null,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths: FixPaths;
 } {
+  // Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: emit `fixPaths.primary.edit`
+  // so `suggest_fix` returns `kind: "edit"` with a concrete
+  // oldText/newText pair. The edit is deterministic — we have the
+  // attribute's byte range, the target value is empty, and removal is
+  // safe for every pair in the `ALWAYS_REDUNDANT` table. When the
+  // edit couldn't be synthesized (shouldn't happen in practice but
+  // defensive), the primary path ships guidance only.
+  const fixPaths: FixPaths = {
+    primary: {
+      label: `remove redundant role="${implicit}" from <${tag}>`,
+      ...(edit === null ? {} : { edit }),
+    },
+    alternatives: [],
+  };
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<${tag}> already has implicit role="${implicit}"; the explicit role="${implicit}" is redundant.`,
     suggestion: remediationSuggestion(tag, implicit),
+    fixPaths,
   };
 }
 

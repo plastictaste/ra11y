@@ -197,4 +197,56 @@ describe("rule aria/redundant-role-on-host-element", () => {
       expect(rule.docs.references[0]).toContain("WCAG22");
     });
   });
+
+  describe("Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: fixPaths.primary.edit", () => {
+    // Doctrine: a `fixClass: "mechanical"` rule must populate
+    // `fixPaths.primary.edit` so `suggest_fix` returns `kind: "edit"`
+    // with a concrete oldText/newText pair. This rule's fix is a pure
+    // deletion — the attribute range is known from the AST — so the
+    // edit is deterministic and ships on every finding.
+    it("HTML: populates a deterministic oldText/newText removing the redundant role attribute", () => {
+      const source = `<button type="button" role="button">Save</button>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      // The oldText includes one leading whitespace byte so the
+      // replacement leaves `<button type="button">` cleanly spaced.
+      expect(edit?.oldText).toBe(' role="button"');
+      expect(edit?.newText).toBe("");
+      // The edit literal must exist in the scanned source so
+      // `apply_fix`'s find-and-replace resolves deterministically.
+      expect(source.indexOf(edit?.oldText ?? "")).toBeGreaterThanOrEqual(0);
+    });
+
+    it("HTML: removes role when it is the first attribute too (no leading whitespace caveat)", () => {
+      const source = `<nav role="navigation" class="x">Links</nav>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(' role="navigation"');
+      expect(edit?.newText).toBe("");
+    });
+
+    it("JSX: populates the same oldText/newText shape as HTML", () => {
+      const source = `const X = <button type="button" role="button">Save</button>;`;
+      const violations = runRule(rule, source);
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(' role="button"');
+      expect(edit?.newText).toBe("");
+    });
+
+    it("JSX: single-quoted role attribute", () => {
+      const source = `const X = <nav role='navigation'>x</nav>;`;
+      const violations = runRule(rule, source);
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(" role='navigation'");
+      expect(edit?.newText).toBe("");
+    });
+  });
 });
