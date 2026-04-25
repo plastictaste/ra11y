@@ -367,6 +367,46 @@ describe("computeScanWarnings", () => {
     expect(absent).not.toContain("extensions_skipped_no_parser");
   });
 
+  it("does NOT fire `extensions_skipped_no_parser` when the skipped map is binary assets only (Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER)", () => {
+    // A scan whose only "skipped" extensions are images / fonts / media
+    // is not a parser-coverage gap an agent needs to triage. Filter
+    // them out so the warning channel stays focused on text-source
+    // candidates the agent might re-route via additionalPaths.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".png": 10,
+          ".jpg": 5,
+          ".woff2": 3,
+          ".mp4": 1,
+          ".eot": 2,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).not.toContain("extensions_skipped_no_parser");
+  });
+
+  it("fires `extensions_skipped_no_parser` when at least one TEXT-format extension is in the map alongside binary assets (filter passes the text exts through)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".vue": 12,
+          ".png": 200, // dwarfs the text exts — must NOT silence the code
+          ".woff2": 30,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("extensions_skipped_no_parser");
+  });
+
   it("fires `parse_errors_present` when parseErrorFileCount is non-zero (partial AST, findings undercounted on those files)", () => {
     const codes = computeScanWarnings({
       filesScanned: 42,
@@ -426,6 +466,70 @@ describe("computeScanWarnings", () => {
       filesByExtension: { ".tsx": 42 },
     });
     expect(codes.filter((c) => c === "parse_errors_present").length).toBe(1);
+  });
+
+  it("fires `partial_parse_files_present` when partialParseFileCount > 0 (V1-PARTIAL-PARSE-FILES-WARNING-CODE binary presence bit)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { partialParseFileCount: 3 },
+      filesByExtension: { ".mdx": 1, ".tsx": 9 },
+    });
+    expect(codes).toContain("partial_parse_files_present");
+    // Pairs with the broader `parse_errors_present` (union code) —
+    // both fire so the agent gets both the broad presence and the
+    // partial-parse subset signal.
+    expect(codes).toContain("parse_errors_present");
+  });
+
+  it("does NOT fire `partial_parse_files_present` when only parseErrorFileCount fires (total-failure bucket without partial parses)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 5 },
+      filesByExtension: { ".tsx": 10 },
+    });
+    expect(codes).not.toContain("partial_parse_files_present");
+    expect(codes).toContain("parse_errors_present");
+  });
+
+  it("fires `parser_bailed_zero_findings` when parseErrorFileCount > 0 AND totalFindings === 0 (Q8-PARSE-ERRORS-PRESENT-SUBCODE)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 538,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 538 },
+      filesByExtension: { ".js": 538 },
+      totalFindings: 0,
+    });
+    expect(codes).toContain("parser_bailed_zero_findings");
+  });
+
+  it("does NOT fire `parser_bailed_zero_findings` when totalFindings > 0 (parse errors present, but findings still surfaced)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".tsx": 42 },
+      totalFindings: 14,
+    });
+    expect(codes).not.toContain("parser_bailed_zero_findings");
+  });
+
+  it("does NOT fire `parser_bailed_zero_findings` when totalFindings is undefined (drops conservatively without evidence)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 5 },
+      filesByExtension: { ".tsx": 42 },
+      // no totalFindings — derivative tools that don't compute the
+      // total should never speculatively fire the bailed-zero code.
+    });
+    expect(codes).not.toContain("parser_bailed_zero_findings");
   });
 
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
@@ -1038,6 +1142,80 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.source_language_unsupported?.fileCount).toBe(200);
     // 200 / 205 = 0.97560... → 97.6 (rounded to one decimal).
     expect(details.source_language_unsupported?.percentageOfSkipped).toBe(97.6);
+  });
+
+  it("emits a `parse_errors_present` payload with `parseErrorsByParser` map (Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT)", () => {
+    const codes = ["parse_errors_present"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 552,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        parseErrorFileCount: 552,
+        parseErrorsByParser: { tsx: 538, css: 12, html: 2 },
+      },
+      filesByExtension: { ".js": 538, ".css": 12, ".html": 2 },
+    });
+    expect(details.parse_errors_present?.parseErrorFileCount).toBe(552);
+    expect(details.parse_errors_present?.parseErrorsByParser).toEqual({
+      tsx: 538,
+      css: 12,
+      html: 2,
+    });
+  });
+
+  it("emits the partialParseByParser payload mirror for the partial-parse bucket", () => {
+    const codes = ["parse_errors_present"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        partialParseFileCount: 5,
+        partialParseByParser: { html: 5 },
+      },
+      filesByExtension: { ".html": 50 },
+    });
+    expect(details.parse_errors_present?.partialParseByParser).toEqual({ html: 5 });
+  });
+
+  it("omits `parseErrorsByParser` when the coverage block doesn't carry the map (derivative tools that ship only the count scalar)", () => {
+    const codes = ["parse_errors_present"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 5 },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(details.parse_errors_present?.parseErrorFileCount).toBe(5);
+    expect(details.parse_errors_present?.parseErrorsByParser).toBeUndefined();
+  });
+
+  it("filters binary-asset extensions out of the `extensions_skipped_no_parser` payload (Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER)", () => {
+    const codes = ["extensions_skipped_no_parser"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".vue": 12,
+          ".png": 200, // largest count but binary — must be filtered
+          ".woff2": 30, // also binary
+          ".scss": 8,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // `.png` would be the dominant entry but must be filtered out;
+    // text-format `.vue` becomes the new top.
+    expect(details.extensions_skipped_no_parser?.topExtension).toBe(".vue");
+    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".vue", ".scss"]);
+    // `totalSkipped` only counts the surviving text-format entries —
+    // mixing in binary counts would inflate the agent's triage signal
+    // and re-introduce the noise the filter exists to remove.
+    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(20);
   });
 
   it("returns no `source_language_unsupported` entry when the code did NOT fire", () => {

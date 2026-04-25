@@ -394,11 +394,63 @@ export type ScanWarningCode =
   // half. Without that detector, the file-side identification would
   // have to fall back to path or basename heuristics — the canonical
   // mistake the labeled-buckets doctrine warns against.
-  | "animation_library_without_reduced_motion_guard";
+  | "animation_library_without_reduced_motion_guard"
+  // V1-PARTIAL-PARSE-FILES-WARNING-CODE: at least one file the parser
+  // emitted errors on still contributed findings to `formatted.files`
+  // — the recovered AST was usable but findings below the parse-error
+  // point may be missing. Distinct from the broader `parse_errors_present`
+  // (which is union-keyed across both total-failure and partial-parse
+  // buckets) because the partial-parse regime has a different triage
+  // signature: the file's findings ARE in the response with live line
+  // numbers, so an agent must read the surrounding source to decide
+  // whether the post-parse-error tail plausibly carried more
+  // violations. Without the dedicated code, an agent reading
+  // `parse_errors_present` alone cannot distinguish "files invisible"
+  // (no findings on the affected paths) from "partial recall"
+  // (findings present, recall degraded). Pairs with the existing
+  // `warningsDetails.parse_errors_present.partialParseFileCount` —
+  // that count is the quantitative signal; this code is the binary
+  // presence bit an agent can branch on without descending into the
+  // payload. Surface-don't-suppress: findings stay in `files[]`
+  // unchanged; the warning is additive routing telemetry.
+  | "partial_parse_files_present"
+  // Q8-PARSE-ERRORS-PRESENT-SUBCODE: the parser bailed on at least
+  // one file in this scan AND the response carries zero findings
+  // overall — the canonical "parser silenced everything" silent-miss
+  // shape. Distinct from `parse_errors_present` (which fires on any
+  // parse error in either bucket): this finer code names the subset
+  // where `parseErrorFileCount > 0` AND `totalFindings === 0`, so an
+  // agent reading the bare `parse_errors_present` code cannot
+  // otherwise distinguish "parse errors but findings still surfaced"
+  // from "parse errors silenced everything." Without the dedicated
+  // code, a 538-entry `parseErrorFiles[]` flood with `totalFindings: 0`
+  // reads as "tool ran clean on the scannable subset" when the
+  // reality is "the parser bailed on the dominant set of files the
+  // tool considered and the empty findings list is a parse-failure
+  // shadow." Pairs with `parse_errors_present` (broader union code);
+  // this code is the more specific predicate that fires when the bail
+  // dominates the outcome. Surface-don't-suppress: findings stay
+  // empty by definition; the warning is the routing signal that lets
+  // the agent decide whether to widen scope, switch parsers, or
+  // re-route via `additionalPaths`.
+  | "parser_bailed_zero_findings";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
   readonly filesScanned: number;
+  /**
+   * Q8-PARSE-ERRORS-PRESENT-SUBCODE: total finding count across every
+   * scanned file. Used by the `parser_bailed_zero_findings` predicate
+   * to distinguish "parse errors but findings still surfaced" from
+   * "parse errors silenced everything." Pass `0` when the scan
+   * produced no findings; pass `undefined` when the caller has no way
+   * to compute the total (in which case the bailed-zero predicate
+   * drops conservatively — never fires without evidence). The bailed-
+   * zero predicate combines this with the coverage block's
+   * `parseErrorFileCount` so the warnings module stays pure over its
+   * inputs.
+   */
+  readonly totalFindings?: number;
   /**
    * How the scan root was resolved. "explicit" (caller passed `cwd`) and
    * "host-root" (MCP host declared a root) are deliberate. "git" and
@@ -685,6 +737,85 @@ const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
  * we've seen (bootstrap: 3 distinct extensions; typical monorepo: ≤5).
  */
 const WARNING_DETAILS_TOP_EXTENSIONS = 5;
+
+/**
+ * Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER: extensions for binary
+ * assets — images, fonts, audio, video, archives, miscellaneous
+ * vendor blobs — that should not surface under
+ * `extensions_skipped_no_parser`. The warning code names "text-source
+ * files the walker considered but rejected on the parseable-extension
+ * check"; binary assets cleared the same dir-ignore filters but
+ * carry no parseable-source-text signal and inflating the warning
+ * payload with `.png` / `.woff2` / `.mp4` clouds the actually-
+ * actionable subset (e.g. `.vue`, `.svelte`, `.md`). The full ext
+ * distribution still lives in `meta.analysisCoverage.skippedByExtension`
+ * for callers that want the long tail (the doctrine surface for
+ * `verbose` meta is signal); only the `extensions_skipped_no_parser`
+ * predicate + payload narrow to text-format extensions. Doctrine pivot:
+ * surface signal the agent will act on, not raw bytes-on-disk telemetry.
+ */
+const BINARY_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
+  // Raster + vector images. `.svg` is intentionally excluded — SVG is
+  // text-source XML markup that ra11y already parses (and is the
+  // canonical example of a text format that ships under common
+  // image-asset directories) so it stays surfaced under the warning.
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".bmp",
+  ".heif",
+  ".heic",
+  ".tiff",
+  ".tif",
+  ".ico",
+  ".cur",
+  // Web fonts.
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".eot",
+  // Audio.
+  ".mp3",
+  ".wav",
+  ".flac",
+  ".aac",
+  ".ogg",
+  ".m4a",
+  ".oga",
+  // Video.
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".avi",
+  ".mkv",
+  ".m4v",
+  ".ogv",
+  // Archives + binary blobs commonly committed under public/ assets.
+  ".zip",
+  ".gz",
+  ".tar",
+  ".tgz",
+  ".7z",
+  ".rar",
+  ".pdf",
+  ".bin",
+  ".dat",
+]);
+
+/**
+ * Predicate for {@link BINARY_ASSET_EXTENSIONS} membership. Centralized
+ * so the predicate logic doesn't drift between the warning's emission
+ * gate and its payload summary — both routes call this helper. Lower-
+ * cases the input so a `.PNG` from a Windows-authored repo classifies
+ * the same as `.png`.
+ */
+function isBinaryAssetExtension(ext: string): boolean {
+  return BINARY_ASSET_EXTENSIONS.has(ext.toLowerCase());
+}
 
 /**
  * Extensions counted toward the {@link CONTENT_FILES_SKIPPED_THRESHOLD}
@@ -1014,6 +1145,26 @@ export interface ScanWarningDetails {
   readonly parse_errors_present?: {
     readonly parseErrorFileCount: number;
     readonly partialParseFileCount: number;
+    /**
+     * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: per-parser breakdown of the
+     * `parseErrorFiles` count so an agent reading the warning channel
+     * can answer "is every .js file failing under tsx?" without paging
+     * through a 538-entry list. Keyed by the in-house parser name
+     * (`tsx`, `html`, `css`, `jsx`, `ts`, `js`) — the same alphabet
+     * `parseErrorFiles[].parser` uses, so cross-referencing the count
+     * map against the per-entry parser tag is unambiguous. Includes
+     * only parsers that actually contributed errored entries (no
+     * zero-valued keys) so the shape stays compact on small scans.
+     * Always present alongside the count scalars when the code fires,
+     * so consumers never have to disambiguate "absent" from "zero" on
+     * a known dimension. Pairs with the existing per-entry `parser`
+     * tag on `analysisCoverage.parseErrorFiles[]` — that surface
+     * carries identity (which path failed?), this surface carries
+     * dominance (which parser owns the failure mass?).
+     */
+    readonly parseErrorsByParser?: Readonly<Record<string, number>>;
+    /** Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT mirror for `partialParseFiles`. */
+    readonly partialParseByParser?: Readonly<Record<string, number>>;
   };
   /**
    * Payload for `scanned_build_artifacts_present`. `count` is the
@@ -1263,6 +1414,39 @@ function pathShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
 }
 
 /**
+ * Parse-error code family extracted from {@link computeScanWarnings} so
+ * the orchestrator stays under the cognitive-complexity cap as parse-
+ * error subcodes accrete (same pattern as {@link contentDistributionCodes}
+ * and {@link pathShapeCodes}).
+ *
+ * Three branches in declaration order:
+ *
+ *   1. `parse_errors_present` — broad union code firing on any non-zero
+ *      `parseErrorFileCount` OR `partialParseFileCount`. Existed before
+ *      the subcodes; kept as the load-bearing signal so derivative
+ *      tools that don't compute the totalFindings axis still get a
+ *      bare presence flag.
+ *   2. `partial_parse_files_present` — V1-PARTIAL-PARSE-FILES-WARNING-CODE.
+ *      Binary presence bit naming the partial-parse subset
+ *      specifically; pairs with the existing
+ *      `warningsDetails.parse_errors_present.partialParseFileCount`
+ *      payload as the agent's branching surface without descending
+ *      into the payload.
+ *   3. `parser_bailed_zero_findings` — Q8-PARSE-ERRORS-PRESENT-SUBCODE.
+ *      Names the "parser silenced everything" shape:
+ *      `parseErrorFileCount > 0` AND `totalFindings === 0`. Drops
+ *      conservatively when `totalFindings` is `undefined` so derivative
+ *      tools never speculatively fire it.
+ */
+function parseErrorCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (hasParseErrors(inputs.analysisCoverage)) out.push("parse_errors_present");
+  if (hasPartialParseFiles(inputs.analysisCoverage)) out.push("partial_parse_files_present");
+  if (parserBailedZeroFindings(inputs)) out.push("parser_bailed_zero_findings");
+  return out;
+}
+
+/**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
  */
@@ -1341,18 +1525,13 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // `sessionConfigure({ cwd })` or ignore after confirming.
     out.push("session_wrappers_configured_for_different_cwd");
   }
-  if (hasParseErrors(inputs.analysisCoverage)) {
-    // Coverage block reports a non-zero `parseErrorFileCount` OR
-    // `partialParseFileCount` — the scanner either couldn't see at
-    // least one file (invisible bucket) or ran on a partial AST with
-    // degraded recall (partial bucket). Either way, findings on the
-    // affected paths are undercounted and the agent needs to know.
-    // The warning is union-keyed so splitting the coverage fields
-    // didn't silently demote the signal when the bug is a partial
-    // parse (the original motivating case: modal.mdx emitting 14
-    // findings while also landing in `parseErrorFiles`).
-    out.push("parse_errors_present");
-  }
+  // Parse-error code family — see `parseErrorCodes`. Three branches
+  // extracted into the helper so the main function's cognitive
+  // complexity stays under the lint cap (same pattern as
+  // `contentDistributionCodes` and `pathShapeCodes`); the emitted
+  // order is unchanged because the helper preserves the original
+  // sequence and runs at the original insertion point.
+  out.push(...parseErrorCodes(inputs));
   if (hasDeprecatedRulesByExtensionAlias(inputs.analysisCoverage)) {
     // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the legacy
     // `rulesByExtension` alias rode on `meta.analysisCoverage`
@@ -1491,6 +1670,39 @@ function hasParseErrors(coverage: Record<string, unknown> | undefined): boolean 
 }
 
 /**
+ * V1-PARTIAL-PARSE-FILES-WARNING-CODE predicate: returns `true` when the
+ * coverage block reports `partialParseFileCount > 0` (independent of
+ * `parseErrorFileCount`). Pure over its input; the broader
+ * `parse_errors_present` code stays union-keyed via {@link hasParseErrors}.
+ */
+function hasPartialParseFiles(coverage: Record<string, unknown> | undefined): boolean {
+  if (coverage === undefined) return false;
+  const partial = coverage["partialParseFileCount"];
+  return typeof partial === "number" && partial > 0;
+}
+
+/**
+ * Q8-PARSE-ERRORS-PRESENT-SUBCODE predicate: returns `true` when at
+ * least one file landed in the total-failure parse-error bucket AND the
+ * scan as a whole produced zero findings. The combined predicate names
+ * the "parser silenced everything" shape the bare `parse_errors_present`
+ * code can't otherwise distinguish from "parse errors but findings
+ * still surfaced." Drops conservatively when `totalFindings` is
+ * `undefined` so derivative tools that don't compute the total never
+ * fire the code without evidence (the silent-miss failure mode of a
+ * speculative emission would invert the doctrine: this code names a
+ * specific subset of the broader signal, not a guess).
+ */
+function parserBailedZeroFindings(inputs: WarningInputs): boolean {
+  if (inputs.totalFindings === undefined) return false;
+  if (inputs.totalFindings > 0) return false;
+  const coverage = inputs.analysisCoverage;
+  if (coverage === undefined) return false;
+  const full = coverage["parseErrorFileCount"];
+  return typeof full === "number" && full > 0;
+}
+
+/**
  * Predicate for `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`.
  * Returns `true` whenever the coverage block carries the deprecated
  * alias `rulesByExtension`. The builder in `analysis-coverage.ts`
@@ -1512,13 +1724,19 @@ function hasDeprecatedRulesByExtensionAlias(
 }
 
 function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {
-  if (coverage === undefined) return false;
-  const skipped = coverage["skippedByExtension"];
-  return (
-    skipped !== null &&
-    typeof skipped === "object" &&
-    Object.keys(skipped as Record<string, unknown>).length > 0
-  );
+  // Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER: emission gate fires
+  // only when at least one TEXT-format extension is in the skipped
+  // map. A scan that skipped only `.png` / `.woff` / `.mp4` no longer
+  // trips the warning — those are binary assets the agent doesn't
+  // need to triage as a parser-coverage gap. The full
+  // skippedByExtension distribution still lives on
+  // `meta.analysisCoverage.skippedByExtension` for any caller that
+  // wants the binary tail.
+  const skipped = readSkippedMap(coverage);
+  for (const ext of skipped.keys()) {
+    if (!isBinaryAssetExtension(ext)) return true;
+  }
+  return false;
 }
 
 /**
@@ -1775,6 +1993,16 @@ type ScanMetaWarningArgs = {
   readonly scannedMinifiedFiles?: readonly string[];
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
   readonly animationLibraryGuardCandidates?: WarningInputs["animationLibraryGuardCandidates"];
+  /**
+   * Q8-PARSE-ERRORS-PRESENT-SUBCODE: total finding count across every
+   * scanned file. Threaded explicitly because `formatted.meta` does not
+   * (and per the `plan.totalFindings` deletion precedent should not)
+   * carry a denormalized total — the call site sums
+   * `formatted.files[].findings.length` once and passes the value
+   * through here so the warnings module stays pure over its inputs.
+   * Drives the `parser_bailed_zero_findings` predicate.
+   */
+  readonly totalFindings?: number;
 };
 
 function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
@@ -1824,6 +2052,7 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.animationLibraryGuardCandidates === undefined
       ? {}
       : { animationLibraryGuardCandidates: args.animationLibraryGuardCandidates }),
+    ...(args.totalFindings === undefined ? {} : { totalFindings: args.totalFindings }),
   };
 }
 
@@ -1918,6 +2147,8 @@ function summarizeParseErrors(coverage: Record<string, unknown> | undefined):
   | {
       readonly parseErrorFileCount: number;
       readonly partialParseFileCount: number;
+      readonly parseErrorsByParser?: Readonly<Record<string, number>>;
+      readonly partialParseByParser?: Readonly<Record<string, number>>;
     }
   | undefined {
   if (coverage === undefined) return undefined;
@@ -1926,7 +2157,42 @@ function summarizeParseErrors(coverage: Record<string, unknown> | undefined):
   const parseErrorFileCount = typeof full === "number" && full > 0 ? full : 0;
   const partialParseFileCount = typeof partial === "number" && partial > 0 ? partial : 0;
   if (parseErrorFileCount === 0 && partialParseFileCount === 0) return undefined;
-  return { parseErrorFileCount, partialParseFileCount };
+  // Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: lift the per-parser count
+  // maps out of the coverage block (populated by the parse-error
+  // assembler from each entry's `parser` tag). Conditional-spread so
+  // the payload shape stays present-when-meaningful — absent when the
+  // coverage block is producer-side stale (e.g. derivative tools that
+  // only ship the scalar counts).
+  const parseErrorsByParser = readNonEmptyParserMap(coverage, "parseErrorsByParser");
+  const partialParseByParser = readNonEmptyParserMap(coverage, "partialParseByParser");
+  return {
+    parseErrorFileCount,
+    partialParseFileCount,
+    ...(parseErrorsByParser === undefined ? {} : { parseErrorsByParser }),
+    ...(partialParseByParser === undefined ? {} : { partialParseByParser }),
+  };
+}
+
+/**
+ * Reads a `Record<parser, count>` field off the coverage block, dropping
+ * non-positive counts and rejecting non-string keys. Returns `undefined`
+ * when the field is absent, malformed, or empty after filtering so the
+ * caller can conditional-spread the payload entry away.
+ */
+function readNonEmptyParserMap(
+  coverage: Record<string, unknown>,
+  key: string,
+): Readonly<Record<string, number>> | undefined {
+  const raw = coverage[key];
+  if (raw === null || typeof raw !== "object") return undefined;
+  const out: Record<string, number> = {};
+  for (const [parser, count] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof parser === "string" && parser.length > 0 && typeof count === "number" && count > 0) {
+      out[parser] = count;
+    }
+  }
+  if (Object.keys(out).length === 0) return undefined;
+  return out;
 }
 
 /**
@@ -2152,7 +2418,19 @@ function summarizeSkippedExtensions(coverage: Record<string, unknown> | undefine
   if (skipped === null || typeof skipped !== "object") return undefined;
   const entries: Array<[string, number]> = [];
   for (const [ext, count] of Object.entries(skipped as Record<string, unknown>)) {
-    if (typeof count === "number" && count > 0 && typeof ext === "string" && ext.length > 0) {
+    if (
+      typeof count === "number" &&
+      count > 0 &&
+      typeof ext === "string" &&
+      ext.length > 0 &&
+      // Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER: drop binary asset
+      // exts (images, fonts, audio, video, archives) from the payload
+      // so the agent reading the warning's `topExtension` and
+      // `extensions[]` slice sees text-format candidates only —
+      // matches the predicate gate above so emission and payload don't
+      // disagree on what counts as a meaningful skip.
+      !isBinaryAssetExtension(ext)
+    ) {
       entries.push([ext, count]);
     }
   }

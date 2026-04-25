@@ -52,7 +52,7 @@ export const PARSE_ERROR_TOP_REASONS_N = 5;
 
 /**
  * Narrow structural-typed view of the coverage record this module
- * mutates — only the six fields the parse-error assembler writes.
+ * mutates — only the eight fields the parse-error assembler writes.
  * The parent's `CoverageBlock` interface is structurally compatible
  * (every field below is declared optional on `CoverageBlock`), so
  * call sites pass the full coverage block without a cast.
@@ -61,9 +61,25 @@ export interface ParseErrorCoverageView {
   parseErrorFileCount?: number;
   parseErrorFiles?: readonly ParseErrorEntry[];
   parseErrorTopReasons?: readonly { readonly reason: string; readonly count: number }[];
+  /**
+   * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: per-parser count map for the
+   * `parseErrorFiles` bucket — keyed by the in-house parser name
+   * (`tsx`, `html`, `css`, `jsx`, `ts`, `js`) and valued by the count
+   * of errored files that parser owns. Lets the warnings layer surface
+   * `parseErrorsByParser: { tsx: 538, css: 12, html: 2 }` on the
+   * `parse_errors_present` payload so an agent can answer "is every
+   * .js file failing under tsx?" without paging through a
+   * threshold-rolled inventory. Includes only parsers that actually
+   * contributed errored entries (no zero-valued keys) so the shape
+   * stays compact on small scans. Sorted by parser key for
+   * deterministic wire output across runs.
+   */
+  parseErrorsByParser?: Readonly<Record<string, number>>;
   partialParseFileCount?: number;
   partialParseFiles?: readonly ParseErrorEntry[];
   partialParseTopReasons?: readonly { readonly reason: string; readonly count: number }[];
+  /** Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT mirror for `partialParseFiles`. */
+  partialParseByParser?: Readonly<Record<string, number>>;
 }
 
 /**
@@ -144,6 +160,7 @@ export function assembleParseErrorBlocks(
   }
   if (totalFailure.length > 0) {
     coverage.parseErrorFileCount = totalFailure.length;
+    coverage.parseErrorsByParser = countByParser(totalFailure);
     assignParseErrorList(
       totalFailure,
       verbose,
@@ -154,8 +171,25 @@ export function assembleParseErrorBlocks(
   }
   if (partial.length > 0) {
     coverage.partialParseFileCount = partial.length;
+    coverage.partialParseByParser = countByParser(partial);
     assignParseErrorList(partial, verbose, coverage, "partialParseFiles", "partialParseTopReasons");
   }
+}
+
+/**
+ * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: aggregates a parse-error bucket
+ * into a `{ [parser]: count }` map keyed by the in-house parser name
+ * each entry's `parser` tag carries. Pure over its input; sorted by
+ * parser key for deterministic wire output across runs.
+ */
+function countByParser(entries: readonly ParseErrorEntry[]): Readonly<Record<string, number>> {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    counts.set(entry.parser, (counts.get(entry.parser) ?? 0) + 1);
+  }
+  return Object.fromEntries(
+    [...counts.entries()].sort(([aParser], [bParser]) => aParser.localeCompare(bParser)),
+  );
 }
 
 /**

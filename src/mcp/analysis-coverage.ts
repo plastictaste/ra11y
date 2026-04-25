@@ -172,6 +172,18 @@ interface CoverageBlock {
    * carries the `topN` rollup.
    */
   parseErrorTopReasons?: readonly { readonly reason: string; readonly count: number }[];
+  /**
+   * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: per-parser count map for the
+   * `parseErrorFiles` bucket — keyed by the in-house parser name
+   * (`tsx`, `html`, `css`, `jsx`, `ts`, `js`) and valued by the count
+   * of errored files that parser owns. Surfaces dominance ("is every
+   * .js file failing under tsx?") on every scan, regardless of the
+   * inline-vs-rollup gate that governs `parseErrorFiles`. Same map is
+   * lifted onto `warningsDetails.parse_errors_present.parseErrorsByParser`
+   * so an agent reading the warning channel branches on the
+   * distribution without descending into `meta`.
+   */
+  parseErrorsByParser?: Readonly<Record<string, number>>;
   partialParseFileCount?: number;
   partialParseFiles?: readonly ParseErrorEntry[];
   /**
@@ -184,6 +196,8 @@ interface CoverageBlock {
    * Jekyll-class corpora).
    */
   partialParseTopReasons?: readonly { readonly reason: string; readonly count: number }[];
+  /** Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT mirror for `partialParseFiles`. */
+  partialParseByParser?: Readonly<Record<string, number>>;
   /**
    * V1-RULES-BY-EXTENSION-LABELING (ADR 0028): for each extension that
    * had files in this scan, the list of active rule IDs eligible to

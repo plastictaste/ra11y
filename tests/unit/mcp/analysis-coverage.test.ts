@@ -2326,6 +2326,29 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(coverage?.["fragmentFilesTruncated"]).toEqual({ shown: 50, total: 75 });
       expect(result.metaArrayTruncated).toBe(true);
     });
+
+    it("emits parseErrorsByParser map keyed by in-house parser name (Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT)", () => {
+      // Mix of HTML errored files (every one routed to total-failure
+      // bucket because findingFilePaths is empty) so the per-parser
+      // count map carries `{ html: N }` — agent reading the warning
+      // payload sees parser-attribution dominance without descending
+      // into per-entry `parseErrorFiles[].parser`.
+      const paths = Array.from({ length: 25 }, (_, i) => `f${String(i).padStart(3, "0")}.html`);
+      const files = paths.map(htmlFileWithErrorsAt);
+      const result = buildAnalysisCoverage(
+        files,
+        [],
+        [],
+        false,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      const coverage = result.analysisCoverage;
+      expect(coverage?.["parseErrorFileCount"]).toBe(25);
+      expect(coverage?.["parseErrorsByParser"]).toEqual({ html: 25 });
+    });
   });
 });
 

@@ -725,6 +725,14 @@ function buildBaseWarningsForScanProject(args: {
     // detector did not fire.
     ...(bulkCatalogDetection === undefined ? {} : { bulkCatalogDetection }),
     ...(animationLibraryGuardCandidates.length === 0 ? {} : { animationLibraryGuardCandidates }),
+    // Q8-PARSE-ERRORS-PRESENT-SUBCODE: thread the total finding count
+    // so the warnings module can fire `parser_bailed_zero_findings`
+    // on the canonical "parse errors present + zero findings overall"
+    // shape. Computed by summing per-file findings off `formatted.files`
+    // — `plan.totalFindings` was deliberately removed (composite
+    // headline doctrine) so the value is not on `meta` and we
+    // accumulate locally instead.
+    totalFindings: formatted.files.reduce((acc, f) => acc + f.findings.length, 0),
   });
   return warningsFieldsForAssembler(warningsFromMeta);
 }
