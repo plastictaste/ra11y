@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Quarterly figures</title></head>
+  <body>
+    <main>
+      <!--
+        A real data table: <caption>, <thead> with scope="col"
+        headers, scope="row" row headers in <tbody>. The rule does
+        not fire — every signal that distinguishes a data table is
+        present, so the "this is layout" predicate is unsatisfied.
+        (Other rules like table-th-scope-missing handle correctness
+        within the data-table contract.)
+      -->
+      <table>
+        <caption>Quarterly sales by region</caption>
+        <thead>
+          <tr><th scope="col">Region</th><th scope="col">Q1</th><th scope="col">Q2</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">North</th><td>$100</td><td>$120</td></tr>
+          <tr><th scope="row">South</th><td>$80</td><td>$95</td></tr>
+        </tbody>
+      </table>
+    </main>
+  </body>
+</html>

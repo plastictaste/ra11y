@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Welcome email</title></head>
+  <body>
+    <!--
+      Classic layout table from an email-template builder. There is no
+      <th>, no <thead>, no <tfoot>, no <caption>, no scope= / headers=
+      attribute, and no role="presentation" / role="none". A screen
+      reader will announce "table, 2 rows, 2 columns" and read each
+      cell as a data cell, which makes the email feel like a
+      spreadsheet rather than a message.
+    -->
+    <table width="600" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td width="120"><img src="logo.png" alt="Acme" width="120" height="40"></td>
+        <td>Welcome to Acme — your account is ready.</td>
+      </tr>
+      <tr>
+        <td colspan="2">
+          <p>Click the link below to confirm your email address.</p>
+          <a href="https://example.com/confirm">Confirm email</a>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

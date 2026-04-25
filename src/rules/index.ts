@@ -87,6 +87,7 @@ import { rule as headingClassOnNonheading } from "./semantics/heading-class-on-n
 import { rule as headingHierarchy } from "./semantics/heading-hierarchy.ts";
 import { rule as labelInName } from "./semantics/label-in-name.ts";
 import { rule as landmarkMain } from "./semantics/landmark-main.ts";
+import { rule as layoutTableNoPresentationRole } from "./semantics/layout-table-no-presentation-role.ts";
 import { rule as listStructure } from "./semantics/list-structure.ts";
 import { rule as nestedInteractive } from "./semantics/nested-interactive.ts";
 import { rule as sectionAccessibleNameMissing } from "./semantics/section-accessible-name-missing.ts";
@@ -145,6 +146,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   landmarkMain,
   langAttribute,
   langOnParts,
+  layoutTableNoPresentationRole,
   linkDescriptiveText,
   linkNameOnlySymbol,
   linkNoHref,
@@ -238,6 +240,7 @@ export {
   landmarkMain,
   langAttribute,
   langOnParts,
+  layoutTableNoPresentationRole,
   linkDescriptiveText,
   linkNameOnlySymbol,
   linkNoHref,

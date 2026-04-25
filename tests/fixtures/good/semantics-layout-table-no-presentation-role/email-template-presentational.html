@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Welcome email</title></head>
+  <body>
+    <!--
+      Same layout-table structure as the bad fixture, but the author
+      has correctly declared role="presentation" so screen readers
+      treat the <table> as a generic container — the cells are read
+      as flow content, not as a 2-row × 2-column data grid.
+    -->
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td width="120"><img src="logo.png" alt="Acme" width="120" height="40"></td>
+        <td>Welcome to Acme — your account is ready.</td>
+      </tr>
+      <tr>
+        <td colspan="2">
+          <p>Click the link below to confirm your email address.</p>
+          <a href="https://example.com/confirm">Confirm email</a>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
