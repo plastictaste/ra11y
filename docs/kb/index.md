@@ -176,6 +176,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [semantics/button-name](./rules/semantics__button-name.md)
 - [semantics/duplicate-landmark-unlabeled](./rules/semantics__duplicate-landmark-unlabeled.md)
 - [semantics/empty-heading](./rules/semantics__empty-heading.md)
+- [semantics/form-landmark-name-missing](./rules/semantics__form-landmark-name-missing.md)
 - [semantics/heading-class-on-nonheading](./rules/semantics__heading-class-on-nonheading.md)
 - [semantics/heading-hierarchy](./rules/semantics__heading-hierarchy.md)
 - [semantics/label-in-name](./rules/semantics__label-in-name.md)
