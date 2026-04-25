@@ -195,7 +195,7 @@ The `ruleId` prefix ensures that two different rules firing on the same node alw
 **Same rule, AST-equivalent nodes, any number of files → same `groupKey`.**
 
 ```jsonc
-// navigation/href-placeholder fires on <a href="javascript:void(0)">
+// navigation/href-javascript-scheme fires on <a href="javascript:void(0)">
 // in login.html AND checkout.tsx — both findings share one groupKey.
 // Fix once, grep groupKey to find every site.
 { "groupKey": "a3f1b2c4d5e6" }
@@ -216,7 +216,7 @@ The `ruleId` prefix ensures that two different rules firing on the same node alw
 
 The normalization rules above are universal. The practical effect differs by rule family:
 
-**`navigation/link-descriptive-text` and `navigation/href-placeholder`**
+**`navigation/link-descriptive-text`, `navigation/href-javascript-scheme`, `navigation/href-empty-fragment`**
 
 These fire on `<a>` elements. The `href` *value* is stripped by normalization; only whether the `href` attribute is present feeds the shape. Two `<a href="javascript:void(0)">` elements in two separate files share a `groupKey` — the rule is keyed on the presence of `href`, not the specific placeholder string used. Cross-file aggregation is the intended use case.
 

@@ -1,0 +1,18 @@
+<!--
+  Bad: <a href=""> with no value. Per HTML spec, an empty href resolves
+  to the current document URL — activating reloads the page rather than
+  navigating. The anchor announces as a link but its destination is broken.
+  Common in legacy form pages: "Forgot password?" links the author meant
+  to wire up later.
+  Expect: rule navigation/href-empty-fragment fires once at severity "error".
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <form>
+      <label for="pwd">Password</label>
+      <input id="pwd" type="password" />
+      <a href="">Forgot password?</a>
+    </form>
+  </body>
+</html>

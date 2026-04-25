@@ -1,0 +1,15 @@
+<!--
+  Good: real in-page navigation — `<a href="#section-id">` lands on a
+  matching id and scrolls/focuses it. The fragment is meaningful, not a
+  placeholder.
+  Expect: rule navigation/href-empty-fragment does not fire.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="#main-content">Skip to main content</a>
+    <main id="main-content">
+      <h1>Page title</h1>
+    </main>
+  </body>
+</html>

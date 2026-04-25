@@ -1,77 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { rule } from "../../../../src/rules/navigation/href-placeholder.ts";
+import { rule } from "../../../../src/rules/navigation/href-empty-fragment.ts";
 import { runRule } from "../../../helpers/run-rule.ts";
 
-describe("rule navigation/href-placeholder", () => {
-  describe("HTML: fires on javascript: scheme variants", () => {
-    it('href="javascript:void(0)" (canonical form)', () => {
-      const violations = runRule(rule, `<a href="javascript:void(0)">Click</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
-      expect(violations[0]?.severity).toBe("error");
-      expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
-      expect(violations[0]?.criteria).toContain("wcag22:2.1.1");
-    });
-
-    it('href="javascript:void 0" (no parens, legal JS)', () => {
-      const violations = runRule(rule, `<a href="javascript:void 0">Click</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-    });
-
-    it('href="javascript: void(0)" (whitespace after colon)', () => {
-      const violations = runRule(rule, `<a href="javascript: void(0)">Click</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-    });
-
-    it('href="javascript:;" (empty statement)', () => {
-      const violations = runRule(rule, `<a href="javascript:;">Click</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-    });
-
-    it('href="javascript:" (scheme with empty body)', () => {
-      const violations = runRule(rule, `<a href="javascript:">Click</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-    });
-
-    it('href="javascript" (no colon — typo shape)', () => {
-      const violations = runRule(rule, `<a href="javascript">Click</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-    });
-
-    it('href="JAVASCRIPT:void(0)" (case-insensitive scheme)', () => {
-      // RFC 3986 §3.1 makes URL schemes case-insensitive; browsers
-      // honor that. Our detection must match.
-      const violations = runRule(rule, `<a href="JAVASCRIPT:void(0)">Click</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-    });
-
-    it('href="javascript:alert(1)" (arbitrary expression, still non-navigating)', () => {
-      const violations = runRule(rule, `<a href="javascript:alert(1)">Hi</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-    });
-  });
-
+describe("rule navigation/href-empty-fragment", () => {
   describe("HTML: fires on bare fragment #", () => {
     it('href="#" (bare placeholder)', () => {
       const violations = runRule(rule, `<a href="#">Click</a>`, { filePath: "index.html" });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
+      expect(violations[0]?.ruleId).toBe("navigation/href-empty-fragment");
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
+      expect(violations[0]?.criteria).toContain("wcag22:2.1.1");
     });
 
     it('href="  #  " (whitespace trimmed before comparison)', () => {
@@ -95,7 +34,7 @@ describe("rule navigation/href-placeholder", () => {
         filePath: "signin.html",
       });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
+      expect(violations[0]?.ruleId).toBe("navigation/href-empty-fragment");
       expect(violations[0]?.severity).toBe("error");
       expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
     });
@@ -103,11 +42,18 @@ describe("rule navigation/href-placeholder", () => {
     it('href="   " (whitespace-only collapses to empty after trim)', () => {
       const violations = runRule(rule, `<a href="   ">Click</a>`, { filePath: "index.html" });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
+      expect(violations[0]?.ruleId).toBe("navigation/href-empty-fragment");
     });
   });
 
-  describe("HTML: does not fire on navigating hrefs", () => {
+  describe("HTML: does not fire on javascript: schemes or real URLs", () => {
+    it('href="javascript:void(0)" — handled by navigation/href-javascript-scheme', () => {
+      const violations = runRule(rule, `<a href="javascript:void(0)">Click</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
     it("real URL path", () => {
       const violations = runRule(rule, `<a href="/dashboard">Dashboard</a>`, {
         filePath: "index.html",
@@ -136,32 +82,9 @@ describe("rule navigation/href-placeholder", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("tel: URL", () => {
-      const violations = runRule(rule, `<a href="tel:+15551234">Call</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(0);
-    });
-
     it("bare <a> with no href attribute (not this rule's concern)", () => {
-      // A bare anchor without href is inert; link-no-href handles the
-      // click-handler variant. This rule only classifies existing href
-      // values, so it stays silent.
       const violations = runRule(rule, `<a>plain text</a>`, { filePath: "index.html" });
       expect(violations).toHaveLength(0);
-    });
-  });
-
-  describe("JSX: fires on javascript: scheme variants", () => {
-    it('href="javascript:void(0)"', () => {
-      const violations = runRule(rule, `const X = <a href="javascript:void(0)">Click</a>;`);
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
-    });
-
-    it('href="javascript:;"', () => {
-      const violations = runRule(rule, `const X = <a href="javascript:;">Click</a>;`);
-      expect(violations).toHaveLength(1);
     });
   });
 
@@ -169,6 +92,7 @@ describe("rule navigation/href-placeholder", () => {
     it('href="#"', () => {
       const violations = runRule(rule, `const X = <a href="#">Click</a>;`);
       expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("navigation/href-empty-fragment");
     });
   });
 
@@ -176,7 +100,7 @@ describe("rule navigation/href-placeholder", () => {
     it('href="" (empty placeholder, no onClick)', () => {
       const violations = runRule(rule, `const X = <a href="">Forgot password?</a>;`);
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/href-placeholder");
+      expect(violations[0]?.ruleId).toBe("navigation/href-empty-fragment");
     });
   });
 
@@ -192,30 +116,17 @@ describe("rule navigation/href-placeholder", () => {
     });
 
     it("expression-form href={url} (opaque — agent investigates if suspicious)", () => {
-      // Static analysis can't resolve the expression; the AI-first
-      // consumer model says "surface deterministic evidence, don't
-      // guess." We stay silent.
       const violations = runRule(rule, `const X = <a href={url}>Go</a>;`);
       expect(violations).toHaveLength(0);
     });
 
     it("PascalCase Link component is not a bare <a>", () => {
-      const violations = runRule(rule, `const X = <Link href="javascript:void(0)">Go</Link>;`);
+      const violations = runRule(rule, `const X = <Link href="#">Go</Link>;`);
       expect(violations).toHaveLength(0);
     });
   });
 
   describe("context-aware fix suggestion", () => {
-    it('javascript: scheme → suggests <button type="button">', () => {
-      const violations = runRule(rule, `<a href="javascript:void(0)">x</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations).toHaveLength(1);
-      const sugg = violations[0]?.suggestion ?? "";
-      expect(sugg).toContain(`<button type="button"`);
-      expect(sugg).toContain("javascript:void(0)");
-    });
-
     it('bare # → suggests <button type="button"> or a real fragment id', () => {
       const violations = runRule(rule, `<a href="#">x</a>`, { filePath: "index.html" });
       expect(violations).toHaveLength(1);
@@ -235,23 +146,14 @@ describe("rule navigation/href-placeholder", () => {
       expect(sugg).toContain('href="/real/path"');
       expect(sugg).toContain(`<button type="button"`);
     });
-
-    it("message echoes the offending href literal", () => {
-      const violations = runRule(rule, `<a href="javascript:alert(1)">x</a>`, {
-        filePath: "index.html",
-      });
-      expect(violations[0]?.message).toContain("javascript:alert(1)");
-    });
   });
 
   describe("edge cases", () => {
     it("multiple offending anchors fire once each", () => {
-      const violations = runRule(
-        rule,
-        `<a href="javascript:void(0)">A</a><a href="#">B</a><a href="">C</a><a href="/real">D</a>`,
-        { filePath: "index.html" },
-      );
-      expect(violations).toHaveLength(3);
+      const violations = runRule(rule, `<a href="#">A</a><a href="">B</a><a href="/real">C</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(2);
     });
 
     it('fragment-nav case `<a href="#non-empty-id">` still does NOT fire', () => {

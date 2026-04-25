@@ -463,31 +463,53 @@ describe("parseInlineDisables", () => {
     });
   });
 
-  // V1-RULE-NAVIGATION-HREF-VOID-RENAME wiring: a pragma using the
-  // deprecated rule ID `navigation/href-javascript-void` still suppresses
-  // the canonical ID `navigation/href-placeholder` at runtime, AND the
-  // detailed parser reports the alias on `aliasHits` so the tool
-  // assembling the response can emit the
-  // `deprecated_rule_id:navigation/href-javascript-void:navigation/href-placeholder`
-  // warning. The user-typed token stays verbatim on `declarations` so
-  // audit surfaces (list_suppressions, suppression-audit) preserve the
+  // Q7-NAVIGATION-HREF-RULE-RENAME wiring: pragmas using the deprecated
+  // rule IDs `navigation/href-javascript-void` (the original umbrella
+  // name) and `navigation/href-placeholder` (the intermediate umbrella
+  // rename) both rewrite to the canonical split-target ID
+  // `navigation/href-javascript-scheme` at parse time. The detailed
+  // parser reports each alias on `aliasHits` so the tool assembling
+  // the response can emit the `deprecated_rule_id:<from>:<to>` warning.
+  // The user-typed token stays verbatim on `declarations` so audit
+  // surfaces (list_suppressions, suppression-audit) preserve the
   // source spelling; only the `disableMap` (the runtime-match channel)
-  // carries the rewritten form. This asserts the end-to-end contract
-  // the alias seam was built to support.
+  // carries the rewritten form. The alias-target choice and the
+  // surface-don't-suppress trade-off are documented in
+  // `src/engine/rule-aliases.ts`.
   describe("rule-ID aliases (deprecated-old-ID pragmas)", () => {
-    it("an old ID in a pragma rewrites to the canonical ID in the disableMap", () => {
+    it("an old umbrella ID in a pragma rewrites to the canonical split-target ID in the disableMap", () => {
       const src = [
         "<!-- ra11y-disable-next-line navigation/href-javascript-void -->",
         '<a href="javascript:void(0)">Click</a>',
       ].join("\n");
       const { disableMap } = parseInlineDisablesDetailed(src);
-      // Runtime check uses the canonical ID — rules fire with the new
-      // name, so the disableMap must also key on the new name.
-      expect(disableMap.get(2)?.has("navigation/href-placeholder")).toBe(true);
-      // The old ID is NOT present under its own token — the alias
+      // Runtime check uses the canonical split-target ID — the
+      // javascript-scheme rule fires under the new name, so the
+      // disableMap must key on the new name.
+      expect(disableMap.get(2)?.has("navigation/href-javascript-scheme")).toBe(true);
+      // The old IDs are NOT present under their own tokens — the alias
       // rewrites at parse time; if the runtime queried the old ID it
       // would skip the suppression.
       expect(disableMap.get(2)?.has("navigation/href-javascript-void")).toBe(false);
+      expect(disableMap.get(2)?.has("navigation/href-placeholder")).toBe(false);
+    });
+
+    it("the intermediate umbrella ID `href-placeholder` also rewrites to the canonical split-target", () => {
+      // Q7 split: the older `href-javascript-void` rename hop
+      // (V1-RULE-NAVIGATION-HREF-VOID-RENAME) was an intermediate
+      // umbrella; both legacy IDs (the original `href-javascript-void`
+      // and the intermediate `href-placeholder`) now fold to
+      // `href-javascript-scheme`. Pragmas under either legacy spelling
+      // survive the split with the deprecation warning attached.
+      const src = [
+        "<!-- ra11y-disable-next-line navigation/href-placeholder -->",
+        '<a href="javascript:void(0)">Click</a>',
+      ].join("\n");
+      const { disableMap, aliasHits } = parseInlineDisablesDetailed(src);
+      expect(disableMap.get(2)?.has("navigation/href-javascript-scheme")).toBe(true);
+      expect(aliasHits).toHaveLength(1);
+      expect(aliasHits[0]?.from).toBe("navigation/href-placeholder");
+      expect(aliasHits[0]?.to).toBe("navigation/href-javascript-scheme");
     });
 
     it("collects the alias hit on aliasHits so callers can emit the deprecated_rule_id warning", () => {
@@ -499,7 +521,7 @@ describe("parseInlineDisables", () => {
       expect(aliasHits).toHaveLength(1);
       expect(aliasHits[0]).toEqual({
         from: "navigation/href-javascript-void",
-        to: "navigation/href-placeholder",
+        to: "navigation/href-javascript-scheme",
         deprecatedSince: "0.2.0",
         removeIn: "0.3.0",
       });
@@ -520,11 +542,11 @@ describe("parseInlineDisables", () => {
       // matches the `to` side or otherwise populates aliasHits when
       // the user already wrote the canonical form.
       const src = [
-        "<!-- ra11y-disable-next-line navigation/href-placeholder -->",
+        "<!-- ra11y-disable-next-line navigation/href-javascript-scheme -->",
         '<a href="javascript:void(0)">Click</a>',
       ].join("\n");
       const { disableMap, aliasHits } = parseInlineDisablesDetailed(src);
-      expect(disableMap.get(2)?.has("navigation/href-placeholder")).toBe(true);
+      expect(disableMap.get(2)?.has("navigation/href-javascript-scheme")).toBe(true);
       expect(aliasHits).toHaveLength(0);
     });
   });

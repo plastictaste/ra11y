@@ -12,8 +12,9 @@
  *
  * Matches the shape every mainstream linter settled on (ESLint, Biome,
  * Stylelint, axe-core) — a tiny frozen table of `{ from, to,
- * deprecatedSince, removeIn }` records. The table is empty until the
- * first rename; the first consumer is V1-RULE-NAVIGATION-HREF-VOID-RENAME.
+ * deprecatedSince, removeIn }` records. The table grew with V1-RULE-
+ * NAVIGATION-HREF-VOID-RENAME (the original umbrella rename) and then
+ * Q7-NAVIGATION-HREF-RULE-RENAME (the umbrella split into two rules).
  *
  * The resolver is a pure function over its input + the frozen table.
  * Callers branch on the optional `deprecated` field to decide whether
@@ -54,14 +55,46 @@ export interface RuleAlias {
  * retires B so the alias table stays a one-hop map.
  */
 export const RULE_ALIASES: readonly RuleAlias[] = Object.freeze([
-  // V1-RULE-NAVIGATION-HREF-VOID-RENAME: the rule name promised detection
-  // of `href="javascript:void(0)"` only, but the check always also fired
-  // on bare `href="#"`, whitespace-only, and `href=""` — every shape of
-  // placeholder href. Rename to the honest name; the alias keeps existing
-  // pragmas, config keys, and CLI flags resolving for one minor cycle.
+  // Q7-NAVIGATION-HREF-RULE-RENAME: the umbrella `navigation/href-placeholder`
+  // rule (itself a rename from the older `navigation/href-javascript-void`)
+  // covered three distinct placeholder shapes — `javascript:` schemes,
+  // bare `#`, and empty `href=""` — under one ID. A pragma/config entry
+  // suppressing the umbrella ID silenced ALL three shapes; agents
+  // triaging by ID could not distinguish "we know this jQuery toggle
+  // uses javascript:void" from "we know this Forgot-password? link
+  // is intentionally a placeholder." Split into two rules:
+  //
+  //   - navigation/href-javascript-scheme  (matches `javascript:…` only)
+  //   - navigation/href-empty-fragment     (matches `href="#"` and `href=""`)
+  //
+  // Both legacy IDs (`href-javascript-void`, `href-placeholder`) resolve
+  // through the alias table; both point at `href-javascript-scheme` because
+  // (a) the original `href-javascript-void` literal name unambiguously
+  // names that shape, and (b) the umbrella rename's primary continuity
+  // line was the JS-scheme heir — pointing the umbrella legacy ID at the
+  // empty-fragment heir would silently flip suppression intent for the
+  // most common legacy callers. The deprecation warning is the migration
+  // signal: agents reading `deprecated_rule_id:navigation/href-placeholder:
+  // navigation/href-javascript-scheme` learn the umbrella was split and
+  // that the second new ID (`href-empty-fragment`) may also need explicit
+  // suppression. The chained-alias invariant (B in `from` ≠ another entry's
+  // `to`) is preserved: neither legacy ID's `from` is another entry's `to`.
+  //
+  // Doctrine: surface, don't suppress. The alias resolves to one ID by
+  // contract; the previously-too-broad umbrella suppression now catches
+  // one shape and the other shape resurfaces (with the deprecation warning
+  // pointing at the rewrite). That's an honest "your old pragma was
+  // doing more than you asked for" signal rather than the silent
+  // continuation of a labeled-bucket-style umbrella.
   {
     from: "navigation/href-javascript-void",
-    to: "navigation/href-placeholder",
+    to: "navigation/href-javascript-scheme",
+    deprecatedSince: "0.2.0",
+    removeIn: "0.3.0",
+  },
+  {
+    from: "navigation/href-placeholder",
+    to: "navigation/href-javascript-scheme",
     deprecatedSince: "0.2.0",
     removeIn: "0.3.0",
   },
