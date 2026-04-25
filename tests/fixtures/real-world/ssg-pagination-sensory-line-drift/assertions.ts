@@ -21,9 +21,11 @@
  * directive, every `\n` after the stripped span undercounted the source
  * line by N (where N = newlines stripped).
  *
- * Same class of bug as Q4-LIQUID-LINE-DRIFT-SASS-SELECTOR (closed) which
- * surfaced on `.scss` rulesets; this one is the Markdown-body / HTML-
- * residue variant of the same line-mapping anti-pattern.
+ * Same class of bug as the SCSS-selector line-drift fixture (cited the
+ * `animation:` declaration line instead of the ruleset opener); this
+ * one is the Markdown-body / HTML-residue variant of the same line-
+ * mapping anti-pattern. See the `jekyll-docsearch-scss-line-drift`
+ * sibling fixture for the CSS variant.
  *
  * Captured as `.html` so the fixture harness's `parseHtml` path
  * exercises the exact post-residue shape an `.md` file produces after

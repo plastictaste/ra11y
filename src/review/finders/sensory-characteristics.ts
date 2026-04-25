@@ -11,7 +11,10 @@
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
 import { walkHtmlElements, walkJsxElements } from "../../engine/ast-helpers.ts";
-import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
+import {
+  mapValueOffsetToSourcePosition,
+  stripTemplateDirectives,
+} from "../../input/parsers/html-template-directives.ts";
 import type {
   HtmlDocument,
   HtmlElement,
@@ -232,9 +235,9 @@ export const finder = defineCandidateFinder({
   find(ctx) {
     const candidates: ReviewCandidate[] = [];
     if (ctx.language === "html")
-      findHtmlCandidates(ctx.ast as HtmlDocument, ctx.filePath, candidates);
+      findHtmlCandidates(ctx.ast as HtmlDocument, ctx.filePath, ctx.source, candidates);
     else if (ctx.language === "tsx" || ctx.language === "jsx")
-      findJsxCandidates(ctx.ast as TsxModule, ctx.filePath, candidates);
+      findJsxCandidates(ctx.ast as TsxModule, ctx.filePath, ctx.source, candidates);
     return candidates;
   },
 });
@@ -246,15 +249,24 @@ export const finder = defineCandidateFinder({
  * so we can cite the exact line of the matched phrase rather than the
  * opening tag of the enclosing element.
  *
- * Without this mapping, a match on line N of a multi-line element body
- * is reported at the parent element's `loc.start.line` (the off-by-N
- * citation real-world fixture surfaced as `modal.mdx:78` pointing at
- * line 73's opening tag).
+ * `rangeStart` / `rangeEnd` are source-byte offsets so the position
+ * mapper can slice the original raw text out of `ctx.source` and walk
+ * it directly — necessary because `node.value` is post-`stripTemplate
+ * Directives` (and post-entity-decode), so newlines that lived inside
+ * a stripped multi-line `{% include … %}` span are missing from the
+ * value. Without anchoring on the raw source, the line counter
+ * undercounts the source line by N for every match that sits past a
+ * stripped span (the regression captured by the `ssg-pagination-
+ * sensory-line-drift` real-world fixture).
  */
 interface TextSpan {
   readonly value: string;
   readonly concatStart: number;
   readonly start: { readonly line: number; readonly column: number };
+  /** Source-byte offset where the underlying text node begins. */
+  readonly rangeStart: number;
+  /** Source-byte offset where the underlying text node ends (exclusive). */
+  readonly rangeEnd: number;
 }
 
 function collectHtmlTextSpans(element: HtmlElement): readonly TextSpan[] {
@@ -262,7 +274,13 @@ function collectHtmlTextSpans(element: HtmlElement): readonly TextSpan[] {
   let concatLen = 0;
   const visit = (node: HtmlNode): void => {
     if (node.kind === "HtmlText") {
-      spans.push({ value: node.value, concatStart: concatLen, start: node.loc.start });
+      spans.push({
+        value: node.value,
+        concatStart: concatLen,
+        start: node.loc.start,
+        rangeStart: node.range.start,
+        rangeEnd: node.range.end,
+      });
       concatLen += node.value.length;
       return;
     }
@@ -278,7 +296,13 @@ function collectJsxTextSpans(element: JsxElement): readonly TextSpan[] {
   let concatLen = 0;
   const visit = (node: JsxNode): void => {
     if (node.kind === "JsxText") {
-      spans.push({ value: node.value, concatStart: concatLen, start: node.loc.start });
+      spans.push({
+        value: node.value,
+        concatStart: concatLen,
+        start: node.loc.start,
+        rangeStart: node.range.start,
+        rangeEnd: node.range.end,
+      });
       concatLen += node.value.length;
       return;
     }
@@ -298,30 +322,33 @@ function concatSpans(spans: readonly TextSpan[]): string {
 /**
  * Maps a byte offset in the concatenated body text back to a 1-based
  * (line, column) in the source. Walks the spans to locate the owning
- * text node, then advances line/col through `node.value.slice(0, dx)`
- * counting newlines. Falls back to the element's own location when no
- * span owns the offset (shouldn't happen for matches found inside
- * concatenated text, but defensive).
+ * text node, slices the original raw text out of `source`, and hands
+ * that slice to `mapValueOffsetToSourcePosition` so newlines that
+ * lived inside stripped template-directive spans (e.g. multi-line
+ * `{% include …\n   … %}`) are counted into the line cursor — without
+ * that, walking the post-strip `node.value` undercounts the source
+ * line by N for every match that sits past a stripped span.
+ *
+ * Falls back to the element's own location when no span owns the
+ * offset (shouldn't happen for matches found inside concatenated
+ * text, but defensive).
  */
 function precisePositionForOffset(
   spans: readonly TextSpan[],
   concatOffset: number,
+  source: string,
   fallback: { readonly line: number; readonly column: number },
 ): { line: number; column: number } {
   for (const span of spans) {
     const localOffset = concatOffset - span.concatStart;
     if (localOffset < 0 || localOffset > span.value.length) continue;
-    let line = span.start.line;
-    let column = span.start.column;
-    for (let i = 0; i < localOffset; i++) {
-      if (span.value.charCodeAt(i) === 0x0a) {
-        line += 1;
-        column = 1;
-      } else {
-        column += 1;
-      }
-    }
-    return { line, column };
+    const rawText = source.slice(span.rangeStart, span.rangeEnd);
+    return mapValueOffsetToSourcePosition(
+      rawText,
+      span.start.line,
+      span.start.column,
+      localOffset,
+    );
   }
   return { line: fallback.line, column: fallback.column };
 }
@@ -382,6 +409,7 @@ function firstSentenceBoundary(text: string): number {
 function findHtmlCandidates(
   root: HtmlDocument,
   filePath: string,
+  source: string,
   candidates: ReviewCandidate[],
 ): void {
   for (const el of walkHtmlElements(root)) {
@@ -399,12 +427,17 @@ function findHtmlCandidates(
     // with span concatStart values.
     const concatOffset = concat.indexOf(hit.phrase);
     if (concatOffset === -1) continue;
-    const precise = precisePositionForOffset(spans, concatOffset, el.loc.start);
+    const precise = precisePositionForOffset(spans, concatOffset, source, el.loc.start);
     emitSensoryCandidates(filePath, precise, concat, concatOffset, hit.phrase, candidates);
   }
 }
 
-function findJsxCandidates(root: TsxModule, filePath: string, candidates: ReviewCandidate[]): void {
+function findJsxCandidates(
+  root: TsxModule,
+  filePath: string,
+  source: string,
+  candidates: ReviewCandidate[],
+): void {
   for (const el of walkJsxElements(root)) {
     const spans = collectJsxTextSpans(el);
     if (spans.length === 0) continue;
@@ -418,7 +451,7 @@ function findJsxCandidates(root: TsxModule, filePath: string, candidates: Review
     if (!hasDirectText) continue;
     const concatOffset = concat.indexOf(hit.phrase);
     if (concatOffset === -1) continue;
-    const precise = precisePositionForOffset(spans, concatOffset, el.loc.start);
+    const precise = precisePositionForOffset(spans, concatOffset, source, el.loc.start);
     emitSensoryCandidates(filePath, precise, concat, concatOffset, hit.phrase, candidates);
   }
 }

@@ -61,6 +61,95 @@ export function stripTemplateDirectives(text: string): {
 }
 
 /**
+ * Maps a 0-based offset in a text node's post-strip `value` back to
+ * a 1-based (line, column) in the original source. Necessary because
+ * `stripTemplateDirectives` collapses multi-line directive spans
+ * (`{% include … %}` spread across N lines) to zero `value` chars,
+ * so a naive newline-count walk through `node.value` undercounts the
+ * source line by N for every match that sits past a stripped span.
+ *
+ * Algorithm: walk the original raw text node; non-directive chars
+ * advance both the (line, column) cursor and the value-character
+ * count one-for-one; directive spans advance only line/column —
+ * counting newlines inside the stripped span — without consuming
+ * any value chars. Stop when we've consumed `valueOffset`
+ * value-chars; the (line, column) cursor at that point is the
+ * source position the value-offset maps to.
+ *
+ * Caveat: HTML-entity decoding (e.g. `&amp;` → `&`) is also part of
+ * the parser's text-value transformation but is NOT modelled here —
+ * entities don't contain newlines, so the line number stays correct
+ * even when this helper over-counts a column position by a few
+ * characters in entity-heavy text. Real-world finder citations are
+ * line-anchored, so the column drift is acceptable; the directive-
+ * span line drift is not.
+ *
+ * Used by review finders (e.g. `review/sensory-characteristics`)
+ * that match phrases against the post-strip concat-text of an
+ * element's body and need to map matches back to the source line of
+ * the originating text node — without this helper a phrase that sits
+ * past a multi-line `{% include … %}` block lands N lines too high
+ * (see `tests/fixtures/real-world/ssg-pagination-sensory-line-drift`
+ * for the regression guard).
+ */
+export function mapValueOffsetToSourcePosition(
+  rawText: string,
+  startLine: number,
+  startColumn: number,
+  valueOffset: number,
+): { line: number; column: number } {
+  let line = startLine;
+  let column = startColumn;
+  let valueChars = 0;
+  let i = 0;
+  while (i < rawText.length && valueChars < valueOffset) {
+    const span = detectDirectiveSpan(rawText, i);
+    if (span === null) {
+      // Non-directive char: advance line/col AND consume one value char.
+      if (rawText.charCodeAt(i) === 0x0a) {
+        line += 1;
+        column = 1;
+      } else {
+        column += 1;
+      }
+      valueChars += 1;
+      i += 1;
+      continue;
+    }
+    if (span.end === -1) {
+      // Unclosed directive: `stripTemplateDirectives` preserves the
+      // remainder verbatim as value, so mirror that — every char from
+      // here on counts as a value char too.
+      while (i < rawText.length && valueChars < valueOffset) {
+        if (rawText.charCodeAt(i) === 0x0a) {
+          line += 1;
+          column = 1;
+        } else {
+          column += 1;
+        }
+        valueChars += 1;
+        i += 1;
+      }
+      break;
+    }
+    // Closed directive span: advance line/col through every char in
+    // the span (so newlines inside `{% include …\n   … %}` count) but
+    // do NOT consume any value chars — the strip removed them.
+    const endExclusive = span.end + 2;
+    while (i < endExclusive && i < rawText.length) {
+      if (rawText.charCodeAt(i) === 0x0a) {
+        line += 1;
+        column = 1;
+      } else {
+        column += 1;
+      }
+      i += 1;
+    }
+  }
+  return { line, column };
+}
+
+/**
  * At position `i`, returns the closer offset of a directive span
  * starting here, or `null` if `i` does not open one. `end === -1`
  * signals an unclosed span (caller should preserve the remainder
