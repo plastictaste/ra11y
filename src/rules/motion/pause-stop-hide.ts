@@ -29,8 +29,18 @@
  *      a reduced-motion query, so a qualifying inline declaration is
  *      flagged. Inline styles aren't gated by a pseudo-class, so they
  *      always live in the 2.2.2 lane.
- *   5. Bootstrap data-bs-ride="carousel" — a static signal of auto-
- *      advancing content (5-second default cycle).
+ *   5. Auto-playing carousel/slider markers — a static signal of
+ *      auto-advancing content (typically a 5-second default cycle):
+ *        - Bootstrap 5: `data-bs-ride="carousel"` / `="true"`.
+ *        - Bootstrap 4 (legacy): `data-ride="carousel"` / `="true"`.
+ *        - jQuery slider plugins that auto-init from a documented class
+ *          on page load: `flexslider` (jQuery FlexSlider), `camera_wrap`
+ *          (Camera slideshow), `sl-slider-wrapper` (Slicebox / sl-slider).
+ *      These three classes are the plugins' published auto-init markers
+ *      — the plugin's bundled JS scans the DOM for the class and starts
+ *      a timer without requiring user interaction. Per the AI-first
+ *      doctrine, we match only *documented* class shapes (not arbitrary
+ *      `.slider`, `.carousel`) so the signal is provable from the code.
  *
  * Spec-mandated 5-second / repetition gate: WCAG 2.2.2 only mandates a
  * pause/stop/hide mechanism when motion "starts automatically, lasts
@@ -67,6 +77,7 @@ import type {
   HtmlDocument,
   HtmlElement,
 } from "../../types/ast.ts";
+import { detectAutoplaySignal } from "./_carousel-signals.ts";
 import {
   ANIMATION_PROPERTIES,
   anyPartHasUserInteractionPseudoClass,
@@ -247,12 +258,22 @@ function inlineMaxTransitionMs(decls: readonly InlineDecl[]): number | null {
 }
 
 /**
- * Flags every element with `data-bs-ride="carousel"` (Bootstrap's static
- * marker for auto-advancing carousels). Pause-on-hover is Bootstrap's
- * default but it is an incidental pause, not a user-operable mechanism
- * under WCAG 2.2.2. The scanner cannot prove from the attribute alone
- * that visible pause/prev/next controls are present, so each occurrence
- * is surfaced for verification.
+ * Flags every element carrying a documented auto-play carousel/slider
+ * marker. The matched shapes are:
+ *   - Bootstrap 5: `data-bs-ride="carousel"` or `="true"`.
+ *   - Bootstrap 4 (legacy, still common in older themes):
+ *     `data-ride="carousel"` or `="true"`.
+ *   - jQuery slider plugins that auto-initialize from a published
+ *     class on page load: `flexslider` (jQuery FlexSlider),
+ *     `camera_wrap` (Camera slideshow), `sl-slider-wrapper`
+ *     (Slicebox / sl-slider).
+ *
+ * Pause-on-hover (Bootstrap's default) is an incidental pause, not a
+ * user-operable mechanism under WCAG 2.2.2. The scanner cannot prove
+ * from the marker alone that visible pause/prev/next controls are
+ * present, so each occurrence is surfaced for verification. The reason
+ * text names the matched signal so the agent can confirm without
+ * guessing.
  */
 function checkHtmlCarouselAutoplay(doc: HtmlDocument, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
@@ -261,16 +282,15 @@ function checkHtmlCarouselAutoplay(doc: HtmlDocument, emit: Emit): void {
 }
 
 function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
-  const ride = getHtmlAttribute(element, "data-bs-ride");
-  if (ride === null) return;
-  const rideTrimmed = ride.trim().toLowerCase();
-  if (rideTrimmed !== "carousel" && rideTrimmed !== "true") return;
+  const signal = detectAutoplaySignal(element);
+  if (signal === null) return;
   const pause = getHtmlAttribute(element, "data-bs-pause");
   const pauseNote =
     pause === null
       ? "no data-bs-pause attribute present"
       : `data-bs-pause="${truncateForEcho(pause)}"`;
   const controlsNote = describeDescendantControls(element);
+  const tag = element.tagName.toLowerCase();
   emit({
     severity: "warning",
     location: {
@@ -278,9 +298,9 @@ function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
       line: element.loc.start.line,
       column: element.loc.start.column,
     },
-    message: `<${element.tagName.toLowerCase()} data-bs-ride="${rideTrimmed}"> auto-advances on page load (Bootstrap's default cycle is 5 seconds) — WCAG 2.2.2 requires a user-operable pause/stop/hide mechanism; ${pauseNote}${controlsNote}.`,
+    message: `<${tag}> matches ${signal.origin} (${signal.marker}) — auto-advances on page load (default cycle ${signal.defaultCycle}); WCAG 2.2.2 requires a user-operable pause/stop/hide mechanism; ${pauseNote}${controlsNote}.`,
     suggestion:
-      "Verify that the carousel ships visible prev/next and pause/play buttons (not just pause-on-hover, which is incidental), or remove data-bs-ride so the carousel does not auto-advance until the user activates it.",
+      "Verify that the carousel/slider ships visible prev/next and pause/play buttons (not just pause-on-hover, which is incidental), or remove the auto-init marker so the slider does not advance until the user activates it.",
   });
 }
 

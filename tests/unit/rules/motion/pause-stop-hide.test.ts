@@ -489,8 +489,9 @@ describe("rule motion/pause-stop-hide", () => {
       const v = runRule(rule, src, { filePath: "carousel.html" });
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("warning");
-      expect(v[0]?.message).toContain("data-bs-ride");
+      expect(v[0]?.message).toContain(`data-bs-ride="carousel"`);
       expect(v[0]?.message).toContain("auto-advance");
+      expect(v[0]?.message).toContain("Bootstrap 5");
       expect(v[0]?.suggestion).toContain("pause");
     });
 
@@ -573,6 +574,105 @@ describe("rule motion/pause-stop-hide", () => {
     it("data-bs-ride is some unrelated value", () => {
       const v = runRule(rule, `<div data-bs-ride="manual-only"></div>`, { filePath: "c.html" });
       expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("legacy Bootstrap 4 data-ride attribute: fires when", () => {
+    // Legacy BS4 carousels use `data-ride="carousel"` (no `bs` prefix).
+    // The same auto-advance semantics apply, so they belong in the
+    // 2.2.2 lane alongside the BS5 marker. Documented signal — no
+    // heuristic guessing.
+    it("data-ride='carousel' on the legacy attribute fires", () => {
+      const v = runRule(
+        rule,
+        `<div id="myCarousel" class="carousel slide" data-ride="carousel"></div>`,
+        { filePath: "c.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(`data-ride="carousel"`);
+      expect(v[0]?.message).toContain("Bootstrap 4");
+    });
+
+    it("data-ride='true' fires (BS4 manual + autoplay variant)", () => {
+      const v = runRule(rule, `<div data-ride="true"></div>`, { filePath: "c.html" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("data-ride is unrelated value does NOT fire", () => {
+      const v = runRule(rule, `<div data-ride="manual"></div>`, { filePath: "c.html" });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("JS-init slider plugin classes: fires when", () => {
+    // FlexSlider / Camera / Slicebox bundle JS that scans for these
+    // exact class names on page load and starts a timer. The class is
+    // a documented auto-init marker, not a generic styling hook —
+    // matched literally so the signal stays provable from the code.
+    it("'flexslider' class (jQuery FlexSlider plugin) fires", () => {
+      const v = runRule(rule, `<div class="flexslider"><ul class="slides"></ul></div>`, {
+        filePath: "slider.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("flexslider");
+      expect(v[0]?.message).toContain("FlexSlider");
+    });
+
+    it("'camera_wrap' class (Camera slideshow plugin) fires", () => {
+      const v = runRule(rule, `<div class="camera_wrap camera_emboss"></div>`, {
+        filePath: "camera.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("camera_wrap");
+      expect(v[0]?.message).toContain("Camera");
+    });
+
+    it("'sl-slider-wrapper' class (Slicebox / sl-slider) fires", () => {
+      const v = runRule(rule, `<div class="sl-slider-wrapper"></div>`, {
+        filePath: "slicebox.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("sl-slider-wrapper");
+      expect(v[0]?.message).toContain("Slicebox");
+    });
+
+    it("class with extra tokens still matches the documented marker", () => {
+      const v = runRule(rule, `<div class="container flexslider js-mod"></div>`, {
+        filePath: "slider.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+  });
+
+  describe("JS-init slider plugin classes: does NOT fire when", () => {
+    it("substring containment of marker token is not a whole-token match", () => {
+      // `myflexslider2` is NOT FlexSlider's auto-init class. Class
+      // matching is whole-token — substring containment is heuristic
+      // and forbidden by the AI-first doctrine.
+      const v = runRule(rule, `<div class="myflexslider2 js-thing"></div>`, {
+        filePath: "x.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("generic '.slider' / '.carousel' classes alone do NOT fire (no documented auto-init)", () => {
+      const v = runRule(rule, `<div class="slider carousel my-component"></div>`, {
+        filePath: "x.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("a single carousel emits one finding even when both data-bs-ride and a slider class are present", () => {
+      // The element-level walk emits one finding per element regardless
+      // of how many auto-play markers it carries — the `detectAutoplaySignal`
+      // helper picks the highest-precedence match (BS5 first).
+      const v = runRule(rule, `<div data-bs-ride="carousel" class="flexslider"></div>`, {
+        filePath: "combo.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("Bootstrap 5");
     });
   });
 
