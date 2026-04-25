@@ -98,6 +98,47 @@ function buildDenseFixture(fileCount: number): string {
   return root;
 }
 
+/**
+ * Variant of {@link buildDenseFixture} where one file carries a
+ * uniquely-large message-bearing finding via an inline-style attribute
+ * with a long literal-color value (forcing a contrast finding whose
+ * `snippet` and `message` carry the verbose color triple). Most other
+ * findings repeat byte-for-byte across the fixture's 50 files so the
+ * heavy finding stands alone as the largest by serialized byte count
+ * — giving the top-contributor analyzer an unambiguous winner.
+ *
+ * Why a fully-unique rule rather than the same rule fired with extra
+ * data: identical findings on identical AST shapes serialize to the
+ * same byte count after the response-builder's hoist passes (e.g.
+ * `fixDescriptionRef`), so per-element attribute drift on a shared
+ * rule may not produce the per-finding byte difference the analyzer
+ * needs.
+ */
+function buildAsymmetricFixture(fileCount: number): string {
+  const root = mkdtempSync(join(tmpdir(), "ra11y-tokenbudget-asym-"));
+  const src = join(root, "src");
+  mkdirSync(src);
+  const baselineForm = Array.from(
+    { length: 10 },
+    (_, i) => `  <input type="text" name="f${i}">`,
+  ).join("\n");
+  const baselineBody = `<html><body>\n  <img src="/p.png">\n  <form>\n${baselineForm}\n  </form>\n</body></html>\n`;
+  // Heavy file carries a contrast-failing inline-style block with a
+  // long color triple — fires a contrast/minimum finding that doesn't
+  // exist on any other file in the fixture, guaranteeing it has the
+  // unique top byte count.
+  const heavyExtra =
+    '\n  <p style="color: rgb(200,200,200); background-color: rgb(220,220,220);">' +
+    "Sample paragraph rendered with a low-contrast color pair so contrast/minimum fires." +
+    "</p>";
+  const heavyBody = `<html><body>\n  <img src="/p.png">${heavyExtra}\n  <form>\n${baselineForm}\n  </form>\n</body></html>\n`;
+  for (let i = 0; i < fileCount; i += 1) {
+    const body = i === 0 ? heavyBody : baselineBody;
+    writeFileSync(join(src, `page-${i}.html`), body);
+  }
+  return root;
+}
+
 describe("scan_project token-density budget (ADR 0021 amendment)", () => {
   it("passes through unchanged when the response fits under the default budget", async () => {
     // Small fixture, small limit → response well under ~88 KB. The
@@ -193,6 +234,66 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
       // vocabulary so consumers branching on either surface read the
       // same enum.
       expect(details?.reason).toBe("token_density");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("Q7-RESPONSE-TOKEN-BUDGET-DETAIL: density-cap warningsDetails carries the top-contributor triple end-to-end", async () => {
+    // Asymmetric fixture: one file's image element carries 80 extra
+    // data-* attributes so its snippet (and serialized finding) is
+    // measurably wider than every other file's. Guarantees the
+    // top-contributor analyzer has an unambiguous winner — the
+    // uniform-fixture path correctly hits the analyzer's tie-detection
+    // branch (no triple emitted; that case is exercised in unit tests).
+    // We don't pin the exact rule (rule churn would break the test) —
+    // just verify the triple is structurally present and self-consistent
+    // so an agent reading the warning can branch on the contributor
+    // signal.
+    const root = buildAsymmetricFixture(50);
+    try {
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_project", { cwd: root, limit: 50 }),
+      ]);
+      const body = bodyOf(responses[1]) as {
+        warnings?: readonly string[];
+        warningsDetails?: {
+          response_token_budget_truncated?: {
+            requestedLimit: number;
+            effectiveLimit: number;
+            reason?: string;
+            topContributorRule?: string;
+            topContributorByteCount?: number;
+            dominantContributor?: string;
+          };
+        };
+      };
+      const warnings = body.warnings ?? [];
+      expect(warnings).toContain("response_token_budget_truncated");
+      const details = body.warningsDetails?.response_token_budget_truncated;
+      expect(details).toBeDefined();
+      // Triple is present-when-meaningful — on this fixture there is
+      // a clear largest-byte finding (label-heavy forms produce
+      // findings with long fix descriptions), so all three fields
+      // populate. If the analyzer ever can't pick a winner the fields
+      // would omit entirely; that case is exercised in the unit tests
+      // for `analyzeTopContributor`.
+      expect(typeof details?.topContributorRule).toBe("string");
+      expect((details?.topContributorRule ?? "").length).toBeGreaterThan(0);
+      expect(typeof details?.topContributorByteCount).toBe("number");
+      expect(details?.topContributorByteCount ?? 0).toBeGreaterThan(0);
+      expect(typeof details?.dominantContributor).toBe("string");
+      // The `dominantContributor` is one of the canonical bucket
+      // names — the wire vocabulary the agent branches on.
+      expect([
+        "fix_description",
+        "criteria",
+        "snippet",
+        "vendor_occurrences",
+        "message",
+        "other",
+      ]).toContain(details?.dominantContributor);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

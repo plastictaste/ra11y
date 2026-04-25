@@ -171,4 +171,96 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
     expect(details?.requestedLimit).toBe(100);
     expect(details?.effectiveLimit).toBe(5);
   });
+
+  it("Q7-RESPONSE-TOKEN-BUDGET-DETAIL: tokenBudgetTruncatedDetailsField conditional-spreads the contributor triple — present when meaningful, absent on ambiguity", () => {
+    // Without a contributor argument the helper must omit the triple
+    // entirely (no empty/zero sentinel keys) so the wire shape stays
+    // honest per "ambiguous field shapes are dishonest."
+    const bare = tokenBudgetTruncatedDetailsField({
+      requestedLimit: 50,
+      effectiveLimit: 10,
+    });
+    const bareDetails = bare.warningsDetails.response_token_budget_truncated;
+    expect(bareDetails).toBeDefined();
+    expect(Object.keys(bareDetails ?? {})).toEqual([
+      "requestedLimit",
+      "effectiveLimit",
+      "reason",
+    ]);
+
+    // With an unambiguous winner the triple appears alongside the
+    // request/effective numbers.
+    const withTriple = tokenBudgetTruncatedDetailsField({
+      requestedLimit: 50,
+      effectiveLimit: 10,
+      topContributor: {
+        topContributorRule: "contrast/minimum",
+        topContributorByteCount: 4096,
+        dominantContributor: "fix_description",
+      },
+    });
+    const tripleDetails = withTriple.warningsDetails.response_token_budget_truncated;
+    expect(tripleDetails?.topContributorRule).toBe("contrast/minimum");
+    expect(tripleDetails?.topContributorByteCount).toBe(4096);
+    expect(tripleDetails?.dominantContributor).toBe("fix_description");
+
+    // Partial contributor (e.g. unranked classifier) — fields stay
+    // independent so a future analyzer that can name the rule but not
+    // classify the field can still surface the rule alone.
+    const partial = tokenBudgetTruncatedDetailsField({
+      requestedLimit: 50,
+      effectiveLimit: 10,
+      topContributor: {
+        topContributorRule: "alt-text/missing",
+        topContributorByteCount: 2048,
+      },
+    });
+    const partialDetails = partial.warningsDetails.response_token_budget_truncated;
+    expect(partialDetails?.topContributorRule).toBe("alt-text/missing");
+    expect(partialDetails?.topContributorByteCount).toBe(2048);
+    expect(partialDetails?.dominantContributor).toBeUndefined();
+  });
+
+  it("Q7-RESPONSE-TOKEN-BUDGET-DETAIL: mergeScanTokenBudget surfaces the contributor triple under warningsDetails when the tentative carries findings", () => {
+    // Build a tentative whose `files[]` carries one clearly-largest
+    // finding so the analyzer picks an unambiguous winner. The merge
+    // helper inspects `tentative.files`, runs the analyzer, and threads
+    // the result through to the wire payload.
+    const heavyFix = "y".repeat(2000);
+    const tentative = {
+      plan: {},
+      files: [
+        {
+          path: "page.tsx",
+          findings: [
+            { ruleId: "contrast/minimum", message: "x", fix: { description: heavyFix } },
+            { ruleId: "alt-text/missing", message: "y" },
+          ],
+        },
+      ],
+      meta: {},
+    };
+    const budgeted = fakeBudgeted([tentative.files[0]], 0);
+    // Force the merge path even though our fake "dropped" 0 — the
+    // merge helper assumes the caller already decided to merge, so
+    // it always emits the warning regardless of `droppedCount`.
+    const merged = mergeScanTokenBudget({
+      tentative,
+      budgeted,
+      baseWarnings: [],
+      totalFilesWithFindings: 1,
+      requestedLimit: 1,
+      effectiveLimit: 1,
+    });
+    const details = (merged["warningsDetails"] as Record<string, unknown>)[
+      "response_token_budget_truncated"
+    ] as {
+      readonly topContributorRule?: string;
+      readonly topContributorByteCount?: number;
+      readonly dominantContributor?: string;
+    };
+    expect(details.topContributorRule).toBe("contrast/minimum");
+    expect(typeof details.topContributorByteCount).toBe("number");
+    expect(details.dominantContributor).toBe("fix_description");
+  });
 });

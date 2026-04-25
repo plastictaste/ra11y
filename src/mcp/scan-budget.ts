@@ -15,6 +15,7 @@
  */
 
 import type { applyTokenBudget } from "./token-budget.ts";
+import { analyzeTopContributor } from "./token-budget-contributor.ts";
 import { type ScanWarningCode, tokenBudgetTruncatedDetailsField } from "./warnings.ts";
 
 /**
@@ -40,6 +41,18 @@ export function mergeScanTokenBudget<TFile>(args: {
   readonly requestedLimit: number;
   readonly effectiveLimit: number;
 }): Record<string, unknown> {
+  // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: analyze the pre-trim files list
+  // from the tentative response so the top-contributor triple reflects
+  // the full population the density cap saw entering the guard, not
+  // just the tail-trimmed survivors. Pulling from `tentative.files` is
+  // safe — `mergeScanTokenBudget` runs after the tentative is fully
+  // assembled, before the merge replaces `files` with the budgeted
+  // (trimmed) array.
+  const tentativeFiles = (args.tentative as Record<string, unknown>)["files"];
+  const filesForAnalysis = Array.isArray(tentativeFiles)
+    ? (tentativeFiles as readonly { readonly findings?: readonly Record<string, unknown>[] }[])
+    : [];
+  const topContributor = analyzeTopContributor(filesForAnalysis);
   return {
     ...args.tentative,
     files: args.budgeted.files,
@@ -52,6 +65,7 @@ export function mergeScanTokenBudget<TFile>(args: {
     ...tokenBudgetTruncatedDetailsField({
       requestedLimit: args.requestedLimit,
       effectiveLimit: args.effectiveLimit,
+      topContributor,
     }),
   };
 }

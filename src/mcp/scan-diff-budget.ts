@@ -12,6 +12,7 @@
  */
 
 import { applyTokenBudget } from "./token-budget.ts";
+import { analyzeTopContributor } from "./token-budget-contributor.ts";
 import { tokenBudgetTruncatedDetailsField } from "./warnings.ts";
 
 /**
@@ -49,9 +50,21 @@ export function applyScanDiffTokenBudget<TFile>(
   // and `effectiveLimit` is what survived the trim. Agents branching
   // on `response_token_budget_truncated` can tell aggressive trims
   // from marginal ones without a re-page.
+  // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: analyze the pre-trim file list so
+  // the top-contributor triple reflects which finding actually pushed
+  // the response over budget (the dropped tail or the kept head — the
+  // analyzer doesn't care which side of the cap a finding ended up on,
+  // only its byte count). The duck-type cast tolerates whatever
+  // surface-specific wrapper shape the file entries carry; only
+  // `findings[]` matters to the analyzer.
+  const filesForAnalysis = files as readonly {
+    readonly findings?: readonly Record<string, unknown>[];
+  }[];
+  const topContributor = analyzeTopContributor(filesForAnalysis);
   const detailsField = tokenBudgetTruncatedDetailsField({
     requestedLimit: files.length,
     effectiveLimit: budgeted.files.length,
+    topContributor,
   });
   return {
     ...tentative,

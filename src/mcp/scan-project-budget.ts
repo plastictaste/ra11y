@@ -15,6 +15,7 @@ import { ruleCatalogField } from "./rule-catalog.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
 import type { McpSession } from "./session.ts";
 import { applyTokenBudget } from "./token-budget.ts";
+import { analyzeTopContributor } from "./token-budget-contributor.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
 import {
   type ScanWarningCode,
@@ -252,9 +253,21 @@ function mergeBudgetedFields(args: {
     topLevelEffectiveLimit,
   } = args;
   const warnings: ScanWarningCode[] = warningsWithDensityCode(baseWarnings);
+  // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: analyze the PRE-TRIM files list
+  // (the full hoisted set the density cap saw entering the guard) so
+  // the contributor triple reflects which finding was actually the
+  // budget-blower, not whichever finding happened to survive the
+  // tail-drop. Honest framing: the agent learns "rule X had a 4 KB
+  // payload" regardless of whether rule X's file was kept or dropped.
+  const tentativeFiles = (tentative as Record<string, unknown>)["files"];
+  const filesForAnalysis = Array.isArray(tentativeFiles)
+    ? (tentativeFiles as readonly { readonly findings?: readonly Record<string, unknown>[] }[])
+    : [];
+  const topContributor = analyzeTopContributor(filesForAnalysis);
   const densityDetails = tokenBudgetTruncatedDetailsField({
     requestedLimit: densityRequestedLimit,
     effectiveLimit: densityEffectiveLimit,
+    topContributor,
   }).warningsDetails;
   // Merge the density-cap payload with the pre-existing
   // `baseWarningsDetails` so codes like

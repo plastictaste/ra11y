@@ -642,11 +642,43 @@ export interface ScanWarningDetails {
    * and `scan` / `scan_diff` have no `limit` axis at all. Emitted only
    * when `response_token_budget_truncated` fires; omitted otherwise
    * via conditional spread at the call site per "present-when-meaningful."
+   *
+   * Top-contributor triple
+   * (`topContributorRule` + `topContributorByteCount` +
+   * `dominantContributor`) is added per Q7-RESPONSE-TOKEN-BUDGET-DETAIL.
+   * Without it, the bare requested/effective numbers tell the agent
+   * "we trimmed N files" but not WHICH finding pushed the response
+   * over budget — so the agent can't decide between "retry with a
+   * narrower scope," "switch surfaces," or "suppress this one rule."
+   * The triple is computed by exact byte count on the pre-trim
+   * findings list (no thresholds, no fuzzy matching) and is
+   * present-when-meaningful: omitted entirely when no single finding
+   * wins by byte count (ties at the top, no findings at all). See
+   * `src/mcp/token-budget-contributor.ts` for the analyzer.
+   *
+   * - `topContributorRule` is the rule ID of the single largest-byte
+   *   finding in the pre-trim files list.
+   * - `topContributorByteCount` is its serialized byte count.
+   * - `dominantContributor` classifies which sub-field on that finding
+   *   consumed the most bytes — a coarse vocabulary the agent can
+   *   branch on without re-reading the response. `"other"` is the
+   *   explicit "no field crossed 50% of the finding's payload"
+   *   sentinel so consumers never have to disambiguate "no winner"
+   *   from "unsupported field combo."
    */
   readonly response_token_budget_truncated?: {
     readonly requestedLimit: number;
     readonly effectiveLimit: number;
     readonly reason: "token_density";
+    readonly topContributorRule?: string;
+    readonly topContributorByteCount?: number;
+    readonly dominantContributor?:
+      | "fix_description"
+      | "criteria"
+      | "snippet"
+      | "vendor_occurrences"
+      | "message"
+      | "other";
   };
   /**
    * Payload for `content_files_skipped`. Carries the aggregate
@@ -1556,11 +1588,32 @@ export function warningsField(inputs: WarningInputs): {
  * responsible for combining with any pre-existing `warningsDetails`
  * from the scan-meta warnings channel (object spread wins last-write,
  * which is safe because the two codes never share a key).
+ *
+ * Q7-RESPONSE-TOKEN-BUDGET-DETAIL: when the call site runs
+ * `analyzeTopContributor` (in `token-budget-contributor.ts`) over the
+ * pre-trim files list and gets back an unambiguous winner, it passes
+ * `topContributor` through here so the wire payload carries
+ * `topContributorRule` + `topContributorByteCount` +
+ * `dominantContributor` alongside the requested/effective numbers.
+ * The contributor fields conditional-spread per "present-when-
+ * meaningful" — omitted entirely on ties / no findings.
  */
 export function tokenBudgetTruncatedDetailsField(args: {
   readonly requestedLimit: number;
   readonly effectiveLimit: number;
+  readonly topContributor?: {
+    readonly topContributorRule?: string;
+    readonly topContributorByteCount?: number;
+    readonly dominantContributor?:
+      | "fix_description"
+      | "criteria"
+      | "snippet"
+      | "vendor_occurrences"
+      | "message"
+      | "other";
+  };
 }): { readonly warningsDetails: ScanWarningDetails } {
+  const contributor = args.topContributor ?? {};
   return {
     warningsDetails: {
       response_token_budget_truncated: {
@@ -1573,6 +1626,19 @@ export function tokenBudgetTruncatedDetailsField(args: {
         // use the same vocabulary on either surface. Q-SHARED-LIMIT-
         // REQUEST-VS-EFFECTIVE.
         reason: "token_density" as const,
+        // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: present-when-meaningful
+        // top-contributor triple. Omitted entirely when the analyzer
+        // could not pick a single winner (ties, no findings) so the
+        // shape never carries empty/zero sentinels.
+        ...(contributor.topContributorRule === undefined
+          ? {}
+          : { topContributorRule: contributor.topContributorRule }),
+        ...(contributor.topContributorByteCount === undefined
+          ? {}
+          : { topContributorByteCount: contributor.topContributorByteCount }),
+        ...(contributor.dominantContributor === undefined
+          ? {}
+          : { dominantContributor: contributor.dominantContributor }),
       },
     },
   };
