@@ -67,6 +67,39 @@ export interface RuleDocs {
   readonly badExample: string;
   readonly normativeQuote?: string;
   readonly references: readonly string[];
+  /**
+   * Patterns the rule is known to flag where the agent should expect to
+   * dismiss after reading the source. Surfaces the rule's own scope-vs-
+   * implementation gap honestly so `explain_rule` callers can calibrate
+   * their dismissal logic before triaging findings, rather than learning
+   * the limits via a sample of false-positive findings. Each entry is a
+   * one-line natural-language description (e.g. "fires on every CSS
+   * `animation:` declaration regardless of `infinite` vs one-shot",
+   * "matches container-level `data-bs-toggle="buttons"` even though the
+   * toggle pattern only applies to descendant buttons"). Present-when-
+   * meaningful — rules without known FPs omit the field; an empty array
+   * is still treated as meaningful (`"we have audited and none are
+   * known"` reads differently than `"we haven't audited"`).
+   *
+   * Doctrine: an `explain_rule` response that lies about behavior
+   * mis-calibrates the agent's dismissal logic — surfacing known FPs
+   * up front lets the agent triage faster and avoids the silent-miss
+   * failure mode of the agent trusting clean-scan signal that the
+   * rule doesn't actually deserve. See
+   * `docs/kb/architecture/ai-first-consumer.md` for the full doctrine.
+   */
+  readonly knownFalsePositives?: readonly string[];
+  /**
+   * Cases the rule's implementation can't currently distinguish, where
+   * the agent should expect under-detection rather than over-detection.
+   * Companion to {@link knownFalsePositives} on the false-negative
+   * axis (e.g. "defers to ancestor naming when ancestor has no name —
+   * unlabeled-button cases pass undetected", "single-file scope: cross-
+   * file event handler attachments via addEventListener are not
+   * resolved"). Present-when-meaningful with the same semantics as
+   * {@link knownFalsePositives}.
+   */
+  readonly knownLimitations?: readonly string[];
 }
 
 /** The executable accessibility check. */

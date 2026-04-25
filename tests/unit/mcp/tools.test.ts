@@ -8,6 +8,8 @@
 
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
+import { defineRule } from "../../../src/api/plugin.ts";
+import { createRegistry } from "../../../src/engine/registry/registry.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
 
@@ -287,6 +289,116 @@ describe("MCP tool: explain_rule", () => {
     const result = await tool.handler({}, session);
 
     expect(result.isError).toBe(true);
+  });
+
+  /**
+   * Affordance test: the optional `knownFalsePositives` /
+   * `knownLimitations` fields on `RuleDocs` flow through `explain_rule`
+   * present-when-meaningful — populated when the rule declares them,
+   * omitted otherwise. Existing built-in rules don't declare these fields
+   * yet (Phase 3 is per-rule follow-up work); this regression pins the
+   * affordance via a fixture rule wired through a registry override so
+   * the absence of the fields on built-ins doesn't mask a wiring break.
+   */
+  it("surfaces knownFalsePositives + knownLimitations when the rule declares them", async () => {
+    const fixtureRule = defineRule({
+      id: "example/known-fps-affordance",
+      satisfies: ["wcag22:1.1.1"],
+      severity: "warning",
+      scope: "node",
+      fixClass: "mechanical",
+      docs: {
+        description: "Fixture rule pinning the explain_rule affordance.",
+        rationale: "Affordance test only.",
+        goodExample: "",
+        badExample: "",
+        references: [],
+        knownFalsePositives: [
+          "fires on every CSS animation: declaration regardless of infinite vs one-shot",
+        ],
+        knownLimitations: [
+          "single-file scope: cross-file addEventListener attachments are not resolved",
+        ],
+      },
+      check() {
+        return undefined;
+      },
+    });
+    const registry = createRegistry({ rules: [fixtureRule] });
+    const session = new McpSession(registry);
+
+    const tool = findTool("explain_rule");
+    const result = await tool.handler({ ruleId: "example/known-fps-affordance" }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      knownFalsePositives?: readonly string[];
+      knownLimitations?: readonly string[];
+    };
+    expect(data.knownFalsePositives).toEqual([
+      "fires on every CSS animation: declaration regardless of infinite vs one-shot",
+    ]);
+    expect(data.knownLimitations).toEqual([
+      "single-file scope: cross-file addEventListener attachments are not resolved",
+    ]);
+  });
+
+  it("omits knownFalsePositives + knownLimitations when the rule does not declare them", async () => {
+    // Built-in rules don't declare these fields yet; the response should
+    // simply not contain the keys (present-when-meaningful), distinct from
+    // emitting `[]`. An agent reading "no `knownFalsePositives` key" treats
+    // it as "the rule author hasn't audited" rather than "audited and none
+    // known", which is the honest signal until per-rule population lands.
+    const tool = findTool("explain_rule");
+    const session = new McpSession();
+    const result = await tool.handler({ ruleId: "media/alt-text-missing" }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect("knownFalsePositives" in data).toBe(false);
+    expect("knownLimitations" in data).toBe(false);
+  });
+
+  /**
+   * Empty-array honesty: a rule that *has* been audited declares `[]`
+   * deliberately ("we checked and there are no known FPs") — distinct
+   * from the omit case ("we haven't checked yet"). The handler must
+   * preserve that distinction by emitting the empty array rather than
+   * collapsing it to omitted.
+   */
+  it("emits empty arrays verbatim when the rule declares them deliberately", async () => {
+    const fixtureRule = defineRule({
+      id: "example/audited-no-fps",
+      satisfies: ["wcag22:1.1.1"],
+      severity: "warning",
+      scope: "node",
+      fixClass: "mechanical",
+      docs: {
+        description: "Fixture rule pinning empty-array honesty.",
+        rationale: "Affordance test only.",
+        goodExample: "",
+        badExample: "",
+        references: [],
+        knownFalsePositives: [],
+        knownLimitations: [],
+      },
+      check() {
+        return undefined;
+      },
+    });
+    const registry = createRegistry({ rules: [fixtureRule] });
+    const session = new McpSession(registry);
+
+    const tool = findTool("explain_rule");
+    const result = await tool.handler({ ruleId: "example/audited-no-fps" }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      knownFalsePositives?: readonly string[];
+      knownLimitations?: readonly string[];
+    };
+    expect(data.knownFalsePositives).toEqual([]);
+    expect(data.knownLimitations).toEqual([]);
   });
 
   it("expands satisfies through the equivalentTo reciprocal index", async () => {

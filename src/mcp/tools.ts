@@ -132,6 +132,23 @@ const explainRuleTool: McpTool = {
       goodExample: rule.docs.goodExample,
       badExample: rule.docs.badExample,
       references: [...rule.docs.references],
+      // Present-when-meaningful: rules that haven't declared their FP/limit
+      // patterns omit these fields rather than emit `[]`. An agent reading
+      // "no `knownFalsePositives` declared" treats it as "the rule author
+      // hasn't audited" — distinct from `[]` which would read "audited and
+      // none known". This affordance lets rule authors progressively
+      // populate the fields without forcing every existing rule to declare
+      // an empty array. Doctrine: `explain_rule` lying about behavior
+      // mis-calibrates the agent's dismissal logic; surfacing declared FPs
+      // / limits up front lets the agent triage faster
+      // (`docs/kb/architecture/ai-first-consumer.md` "Surface, don't
+      // suppress" + the heuristic-mislabeling cluster).
+      ...(rule.docs.knownFalsePositives !== undefined
+        ? { knownFalsePositives: [...rule.docs.knownFalsePositives] }
+        : {}),
+      ...(rule.docs.knownLimitations !== undefined
+        ? { knownLimitations: [...rule.docs.knownLimitations] }
+        : {}),
     });
   },
 };
