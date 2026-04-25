@@ -18,6 +18,7 @@ import {
   findHtmlElementsByTag,
   getHtmlAttribute,
   htmlTextContent,
+  walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
 import { htmlSubtreeHasStrippedDirective } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
@@ -74,7 +75,25 @@ export const rule = defineRule({
     // See docs/adr/0009-violation-could-be-wrong-because.md.
     const fragmentShape = findHtmlElementsByTag(doc, "body").length === 0;
 
+    // Q7-OPAQUE-COMPONENT-HEAD-DELEGATION. Layouts in component
+    // frameworks (Next.js `<Head>`, react-helmet `<Helmet>`, Gatsby
+    // `<DocumentHead>`, custom `<Title>`/`<Meta>` wrappers) inject the
+    // document <title> at render time. The literal JSX tag is in the
+    // file we're scanning — its presence is provable from the code in
+    // this file alone, the same evidence model as detecting `<form>`.
+    // When such a delegation component is present and there is no
+    // literal <title>, asserting "title is missing" would be false:
+    // the rendered output WILL have a title supplied by the named
+    // component. Suppression here is deterministic, not heuristic —
+    // per docs/kb/architecture/ai-first-consumer.md §"No heuristic
+    // suppression": the carve-out is a code-provable fact, not a
+    // guess about composition. The emit-path message on the
+    // remaining (no-delegation) branch reminds the agent that this
+    // case was already accounted for.
+    const delegation = findHeadDelegationComponent(doc);
+
     if (docTitles.length === 0) {
+      if (delegation !== null) return;
       const htmlEl = htmlElements[0];
       ctx.emit(
         buildEmit(
@@ -202,6 +221,50 @@ function buildTemplateInterpolatedEmit(
     suggestion: buildSuggestion(doc),
     couldBeWrongBecause: [TITLE_IS_TEMPLATE_INTERPOLATED],
   };
+}
+
+/**
+ * PascalCase component names that read like document-head delegation
+ * wrappers — Next.js `<Head>`, react-helmet `<Helmet>`/`<HelmetProvider>`,
+ * Gatsby `<DocumentHead>`, generic `<NextHead>`/`<Meta>`/`<Title>`.
+ * When any such element appears anywhere in the parsed tree, the file
+ * is programmatically — not speculatively — handing title rendering
+ * to the named component. Detection is by tag-name match on a closed
+ * vocabulary so the false-positive surface is bounded: a custom
+ * `<Helmet>` named for the Greek goddess of war is vanishingly rare
+ * compared to react-helmet usage, and would still resolve correctly
+ * via the source-level disable pragma if it ever fires.
+ */
+const HEAD_DELEGATION_COMPONENT_NAMES: ReadonlySet<string> = new Set([
+  "Head",
+  "Helmet",
+  "HelmetProvider",
+  "DocumentHead",
+  "NextHead",
+  "Title",
+  "Meta",
+  "Metadata",
+  "PageHead",
+  "SEO",
+  "Seo",
+]);
+
+/**
+ * Returns the first PascalCase opaque-component element whose tag is
+ * a recognized document-head delegation wrapper, or `null` when no
+ * such element is present in the parsed tree. Detection is shape-only:
+ * we walk every `HtmlElement` and match against the closed vocabulary.
+ * Walking the whole tree (rather than scoping to `<head>` / `<body>`)
+ * mirrors how component frameworks place these wrappers — Next.js's
+ * `<Head>` lives inside the page body in `pages/_document.tsx`-style
+ * layouts; Gatsby's `<DocumentHead>` is component-scoped; react-helmet
+ * places `<Helmet>` anywhere in the render tree.
+ */
+function findHeadDelegationComponent(doc: HtmlDocument): HtmlElement | null {
+  for (const el of walkHtmlElements(doc)) {
+    if (HEAD_DELEGATION_COMPONENT_NAMES.has(el.tagName)) return el;
+  }
+  return null;
 }
 
 function isInsideHead(doc: HtmlDocument, target: { range: { start: number } }): boolean {
