@@ -110,7 +110,7 @@ function buildDenseFixture(fileCount: number): string {
  * Why a fully-unique rule rather than the same rule fired with extra
  * data: identical findings on identical AST shapes serialize to the
  * same byte count after the response-builder's hoist passes (e.g.
- * `fixDescriptionRef`), so per-element attribute drift on a shared
+ * `fix.descriptionRef`), so per-element attribute drift on a shared
  * rule may not produce the per-finding byte difference the analyzer
  * needs.
  */

@@ -10,8 +10,8 @@
  *   - `oldText` + `newText` populated (mechanical edit — the agent can
  *     apply verbatim), OR
  *   - `description` populated (prose guidance, with or without text), OR
- *   - the finding itself carries a sibling `fixDescriptionRef` (the
- *     description was hoisted into `referenceGuide.fixDescriptions` —
+ *   - the fix carries a nested `descriptionRef` (the description was
+ *     hoisted into `referenceGuide.fixDescriptions` —
  *     see `src/mcp/reference-guide.ts`), OR
  *   - the finding's `groupKey` is covered by a file-level
  *     `groupFixDescriptionRefs` entry (same hoist, one level up).
@@ -38,7 +38,7 @@
  *     `v.suggestion` by construction (see `hasGuidance`).
  *   - `buildFix` Branch 3 returns `undefined` — no fix emitted.
  *   - `rewriteFinding` in reference-guide.ts strips `description` and
- *     adds `fixDescriptionRef` atomically (both happen, or neither).
+ *     adds `fix.descriptionRef` atomically (both happen, or neither).
  *
  * The invariant therefore already holds by construction; these tests
  * lock it down against refactor drift.
@@ -51,6 +51,17 @@
  * The field was dropped; the parent finding's `fixClass` already
  * distinguishes the remediation lane. Tests that previously asserted
  * `fix.safety === "safe"` were updated to assert its absence.
+ *
+ * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+ * description-hoist pointer used to ride as a SIBLING field
+ * (`fixDescriptionRef`) on the finding, while the inline prose lived
+ * at `fix.description`. Two locations for the same prose meant
+ * surfaces that hoisted (`scan_project`) and surfaces that didn't
+ * (`scan_file` on a single-finding rule) handed the agent
+ * structurally different shapes for the same `findingId` — `undefined`
+ * reads on `fix.description` were a silent miss. The pointer is now
+ * nested: `fix: { descriptionRef: { hash } }`, so the agent reads
+ * prose at one path on every surface.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -68,26 +79,30 @@ import { withFindingId } from "../../../helpers/make-violation.ts";
  * Shape invariant: a finding with a `fix` object must carry meaningful
  * payload. Returns `true` when the finding either has no fix at all,
  * or its fix is honest (any of `oldText` / `newText` / `description`
- * present, or sits next to a `fixDescriptionRef`, or its groupKey is
+ * present, or carries a nested `descriptionRef`, or its groupKey is
  * covered by the file-level `groupFixDescriptionRefs` — the
  * Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE lift branch).
  *
  * Post V1-FIX-SAFETY-CONSTANT-FIELD: `safety` no longer rides on the
  * fix object, so an empty `fix: {}` is now the canonical dishonest
  * shape the invariant must catch.
+ *
+ * Post V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+ * hoist pointer is nested at `fix.descriptionRef`, not a sibling field
+ * on the finding.
  */
 function fixShapeIsHonest(
   finding: AgentFinding,
   fileGroupRefs?: readonly { readonly groupKey: string; readonly hash: string }[],
 ): boolean {
   if (finding.fix === undefined) return true;
-  const { oldText, newText, description } = finding.fix;
+  const { oldText, newText, description, descriptionRef } = finding.fix;
   const hasPayload =
     (typeof oldText === "string" && oldText.length > 0) ||
     (typeof newText === "string" && newText.length > 0) ||
     (typeof description === "string" && description.length > 0);
   if (hasPayload) return true;
-  if (finding.fixDescriptionRef !== undefined) return true;
+  if (descriptionRef !== undefined) return true;
   if (fileGroupRefs?.some((e) => e.groupKey === finding.groupKey)) return true;
   return false;
 }
@@ -179,11 +194,13 @@ describe("AgentFix shape invariant — never empty payload", () => {
 });
 
 describe("AgentFix shape invariant — honest after the fix-description hoist", () => {
-  it("after hoist, stripped description is always paired with a fixDescriptionRef on the finding", () => {
-    // Classic guidance-only hoist case. Pre-hoist shape:
+  it("after hoist, stripped description is replaced by a nested fix.descriptionRef on the finding", () => {
+    // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+    // pointer rides INSIDE `fix` (not as a sibling on the finding).
+    // Pre-hoist shape:
     //   fix: { description }
-    // Post-hoist shape (when siblings do NOT share a groupKey):
-    //   fix: {} — BUT finding.fixDescriptionRef is populated.
+    // Post-hoist shape (per-finding ref, distinct groupKeys):
+    //   fix: { descriptionRef: { hash } }
     //
     // These two findings are on the same rule but different AST
     // targets, so we force distinct groupKeys to exercise the
@@ -221,14 +238,12 @@ describe("AgentFix shape invariant — honest after the fix-description hoist", 
     const rewrittenFindings = result.files[0]?.findings ?? [];
     expect(rewrittenFindings.length).toBe(2);
     for (const f of rewrittenFindings) {
-      // Post V1-FIX-SAFETY-CONSTANT-FIELD, the hoist drops the `fix`
-      // object entirely when stripping `description` would leave it
-      // empty (no oldText/newText siblings for guidance-only findings).
-      // `fixDescriptionRef` now carries the prose pointer; an empty
-      // `fix: {}` alongside it would be ambiguous dead-weight per
-      // docs/kb/architecture/ai-first-consumer.md.
-      expect(f.fix).toBeUndefined();
-      expect(f.fixDescriptionRef?.hash).toBe(hash);
+      // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT:
+      // pointer is nested under `fix`, not on the finding directly.
+      expect(f.fix).toBeDefined();
+      expect(f.fix?.description).toBeUndefined();
+      expect(f.fix?.descriptionRef?.hash).toBe(hash);
+      expect((f as unknown as Record<string, unknown>).fixDescriptionRef).toBeUndefined();
       expect(fixShapeIsHonest(f)).toBe(true);
     }
   });
@@ -289,7 +304,10 @@ describe("AgentFix shape invariant — honest after the fix-description hoist", 
       // noise. Assert the field never reaches the wire.
       expect((f.fix as Record<string, unknown>)?.safety).toBeUndefined();
       expect(f.fix?.description).toBeUndefined();
-      expect(f.fixDescriptionRef?.hash).toBe(hash);
+      // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT:
+      // pointer is nested under `fix`, not on the finding.
+      expect(f.fix?.descriptionRef?.hash).toBe(hash);
+      expect((f as unknown as Record<string, unknown>).fixDescriptionRef).toBeUndefined();
       expect(fixShapeIsHonest(f)).toBe(true);
     }
   });
@@ -361,10 +379,11 @@ describe("AgentFix shape invariant — direct-construction corner case", () => {
   it("a caller-synthesized empty fix {} with no ref fails the invariant", () => {
     // Belt-and-braces: if a future caller ever constructs an
     // AgentFinding literal directly (bypassing buildFix) with an
-    // empty-payload fix and no fixDescriptionRef, the helper catches
-    // it. Post V1-FIX-SAFETY-CONSTANT-FIELD this is the canonical
-    // dishonest shape — previously the same corner case carried a
-    // constant `safety: "safe"` sibling that conveyed no signal.
+    // empty-payload fix and no nested descriptionRef, the helper
+    // catches it. Post V1-FIX-SAFETY-CONSTANT-FIELD this is the
+    // canonical dishonest shape — previously the same corner case
+    // carried a constant `safety: "safe"` sibling that conveyed no
+    // signal.
     const hollow: AgentFinding = {
       findingId: "f0",
       groupKey: "g0",
@@ -387,7 +406,7 @@ describe("AgentFix shape invariant — direct-construction corner case", () => {
   it("the hoist leaves a pre-existing empty {} fix untouched (no ref synthesized)", () => {
     // If a finding somehow arrived at the hoist with an already-empty
     // fix (no description), rewriteFinding's early returns pass it
-    // through unchanged — it does NOT invent a fixDescriptionRef out
+    // through unchanged — it does NOT invent a fix.descriptionRef out
     // of thin air. The invariant helper then catches the shape, which
     // is the behavior we want: hollow-in → hollow-out, and the test
     // surfaces it rather than a field report.
@@ -412,7 +431,7 @@ describe("AgentFix shape invariant — direct-construction corner case", () => {
     });
     const f = result.files[0]?.findings[0];
     expect(f?.fix).toEqual({});
-    expect(f?.fixDescriptionRef).toBeUndefined();
+    expect(f?.fix?.descriptionRef).toBeUndefined();
     // The helper correctly flags the pre-existing dishonest shape —
     // ensuring the invariant test would catch a regression upstream
     // if any production caller ever produced this shape.

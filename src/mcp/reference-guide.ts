@@ -13,11 +13,13 @@
  * (~150 chars x 31 findings) emit the same paragraph verbatim on every
  * finding. V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist those into
  * `referenceGuide.fixDescriptions[ruleId][hash]` and replace the inline
- * `fix.description` with `fixDescriptionRef: { hash }`. Keyed by a
- * stable 12-hex-char SHA-256 so a rule that legitimately emits two
- * distinct descriptions (label-in-name does: 466-char and 1970-char
- * verdicts) keeps both in the map — picking only one would be a silent
- * miss. Singletons (unique-in-response) stay inline.
+ * `fix.description` with a nested `fix.descriptionRef: { hash }` (NOT a
+ * sibling on the finding — V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-
+ * SHAPE-DRIFT). Keyed by a stable 12-hex-char SHA-256 so a rule that
+ * legitimately emits two distinct descriptions (label-in-name does:
+ * 466-char and 1970-char verdicts) keeps both in the map — picking
+ * only one would be a silent miss. Singletons (unique-in-response)
+ * stay inline.
  *
  * Shape matches the `referenceGuide` field on `ScanFormatted`. Kept in
  * its own module so `tools-helpers.ts` can stay under the 500-line file
@@ -54,9 +56,10 @@ const PLACEMENT_DEFAULT = "Place on the line immediately above the flagged state
  * `(ruleId, hash)` bucket. A rule with ≥2 findings carrying descriptions
  * hoists ALL of them — each distinct description still earns its own
  * hash entry in `fixDescriptions[ruleId]`, but every finding under that
- * rule is guaranteed to ship as `fix: {safety} + fixDescriptionRef`
- * rather than inline. A rule with exactly one finding carrying a
- * description leaves it inline (singleton indirection is pure overhead).
+ * rule is guaranteed to ship `fix.descriptionRef` (the nested pointer)
+ * rather than the inline `fix.description`. A rule with exactly one
+ * finding carrying a description leaves it inline (singleton
+ * indirection is pure overhead).
  *
  * Result: for any given ruleId in a response, every finding uses the
  * same shape. The agent learns the join once per rule, not once per
@@ -99,11 +102,11 @@ export interface ReferenceGuide {
    * rule in the response has ≥
    * {@link FIX_DESCRIPTION_PER_RULE_HOIST_THRESHOLD} findings carrying a
    * description. When present, EVERY finding under a hoisted rule carries
-   * `fixDescriptionRef: { hash }` and omits `fix.description` — the shape
-   * is deterministic per-rule so the agent learns the join convention
-   * once per rule instead of once per finding (V1-FIX-DESCRIPTION-
-   * PRESENCE-INCONSISTENCY). Findings under rules whose total description
-   * count is 1 keep the inline `fix.description`.
+   * a nested `fix.descriptionRef: { hash }` and omits `fix.description`
+   * — the shape is deterministic per-rule so the agent learns the join
+   * convention once per rule instead of once per finding (V1-FIX-
+   * DESCRIPTION-PRESENCE-INCONSISTENCY). Findings under rules whose
+   * total description count is 1 keep the inline `fix.description`.
    */
   readonly fixDescriptions?: FixDescriptions;
 }
@@ -184,7 +187,9 @@ export function referenceGuideField(formatted: { readonly referenceGuide?: Refer
 
 /**
  * Describes a rewrite of a single {@link AgentFinding} to drop its
- * inline `fix.description` in favor of a `fixDescriptionRef` pointer.
+ * inline `fix.description` in favor of a nested `fix.descriptionRef`
+ * pointer (V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT
+ * — pointer lives INSIDE `fix`, never as a sibling on the finding).
  * Rewrites are applied in {@link applyFixDescriptionHoist} — the split
  * lets the hoister stay a pure function over file entries while the
  * rewrite walk happens inside the runScan pipeline.
@@ -321,7 +326,7 @@ function buildHoistResult(byRule: Map<string, Map<string, TallyEntry>>): HoistRe
 /**
  * Per-file group-level hoist entry. Surfaces on the file bucket as
  * `groupFixDescriptionRefs` when ≥2 findings in the same `groupKey`
- * share the same post-hoist `fixDescriptionRef.hash`.
+ * share the same post-hoist `fix.descriptionRef.hash`.
  */
 export interface GroupFixDescriptionRef {
   readonly groupKey: string;
@@ -342,17 +347,17 @@ const GROUP_FIX_DESC_REF_HOIST_THRESHOLD = 2;
 /**
  * Second pass: walk every finding and — for those whose description
  * was hoisted in the first pass — replace the inline `fix.description`
- * with `fixDescriptionRef: { hash }`. Findings whose description was
- * unique in the response (or whose description is absent entirely)
- * pass through unchanged.
+ * with a nested `fix.descriptionRef: { hash }`. Findings whose
+ * description was unique in the response (or whose description is
+ * absent entirely) pass through unchanged.
  *
  * Then — Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE — walk each
  * file's findings and collapse any `(groupKey, hash)` cohort of ≥2
  * findings into a single file-level `groupFixDescriptionRefs` entry,
- * stripping `fixDescriptionRef` from each sibling finding in that
- * cohort. Findings with no `groupKey` pair, or whose cohort is a
- * singleton within the file, pass through with their inline
- * `fixDescriptionRef` unchanged.
+ * stripping the nested `fix.descriptionRef` from each sibling finding
+ * in that cohort. Findings with no `groupKey` pair, or whose cohort
+ * is a singleton within the file, pass through with their nested
+ * `fix.descriptionRef` unchanged.
  *
  * Returns a new file-entries array; does not mutate the input. Returned
  * entries may carry an optional `groupFixDescriptionRefs: readonly
@@ -381,7 +386,7 @@ export function applyFixDescriptionHoist<T extends AgentFinding>(
 /**
  * Third pass, per-file: tally `(groupKey, hash)` cohorts across the
  * already-rewritten findings. For any cohort that meets
- * {@link GROUP_FIX_DESC_REF_HOIST_THRESHOLD}, strip `fixDescriptionRef`
+ * {@link GROUP_FIX_DESC_REF_HOIST_THRESHOLD}, strip nested `fix.descriptionRef`
  * from each sibling and emit a single file-level entry pointing at the
  * shared hash. Cohorts that don't cross the threshold pass through
  * unchanged so a group of 1 keeps its inline pointer.
@@ -423,7 +428,7 @@ interface GroupRefTally {
 
 /**
  * Counts (groupKey, hash) cohorts across the POST-rewrite findings in
- * one file. Only findings that actually carry a `fixDescriptionRef`
+ * one file. Only findings that actually carry a `fix.descriptionRef`
  * contribute — a finding that kept its inline description (singleton
  * across the response) has no ref to lift.
  */
@@ -432,7 +437,7 @@ function tallyGroupRefCohorts<T extends AgentFinding>(
 ): Map<string, GroupRefTally> {
   const cohorts = new Map<string, GroupRefTally>();
   for (const f of findings) {
-    const hash = f.fixDescriptionRef?.hash;
+    const hash = f.fix?.descriptionRef?.hash;
     if (hash === undefined) continue;
     const { groupKey } = f;
     if (groupKey === undefined || groupKey.length === 0) continue;
@@ -448,29 +453,42 @@ function tallyGroupRefCohorts<T extends AgentFinding>(
 }
 
 /**
- * Drops `fixDescriptionRef` from a finding whose (groupKey, hash)
- * cohort was lifted to the file-level. Never emits both per-finding
- * and group-level refs for the same cohort — doctrine in
- * `docs/kb/architecture/ai-first-consumer.md` under "Ambiguous field
- * shapes are dishonest."
+ * Drops the nested `fix.descriptionRef` from a finding whose
+ * (groupKey, hash) cohort was lifted to the file-level. Never emits
+ * both per-finding and group-level refs for the same cohort —
+ * doctrine in `docs/kb/architecture/ai-first-consumer.md` under
+ * "Ambiguous field shapes are dishonest."
+ *
+ * If stripping `fix.descriptionRef` would leave `fix` empty (the
+ * guidance-only post-hoist case where the only payload was the
+ * pointer), drop the entire `fix` wrapper so the response shape stays
+ * honest — an empty `fix: {}` is the canonical dishonest shape per
+ * the V1-FIX-SAFETY-CONSTANT-FIELD precedent. Mechanical-edit
+ * findings keep `fix` (their `oldText` / `newText` payload remains
+ * meaningful even after the ref lifts).
  */
 function stripRefIfLifted<T extends AgentFinding>(
   finding: T,
   liftedCohorts: ReadonlySet<string>,
 ): T {
-  const hash = finding.fixDescriptionRef?.hash;
+  const hash = finding.fix?.descriptionRef?.hash;
   if (hash === undefined) return finding;
   const { groupKey } = finding;
   if (groupKey === undefined || groupKey.length === 0) return finding;
   if (!liftedCohorts.has(compositeKey(groupKey, hash))) return finding;
-  const { fixDescriptionRef: _omitted, ...rest } = finding;
-  return rest as T;
+  if (finding.fix === undefined) return finding;
+  const { descriptionRef: _omitted, ...fixRest } = finding.fix;
+  if (Object.keys(fixRest).length === 0) {
+    const { fix: _droppedFix, ...findingRest } = finding;
+    return findingRest as T;
+  }
+  return { ...finding, fix: fixRest };
 }
 
 /**
  * One-call hoist: counts `(ruleId, hash)` duplicates across the given
  * file entries, rewrites hoisted findings to carry
- * `fixDescriptionRef` pointers, and returns both the rewritten entries
+ * `fix.descriptionRef` pointers, and returns both the rewritten entries
  * and a `referenceGuide` object that merges the pre-existing
  * suppressPlacement (from {@link buildReferenceGuide}) with the new
  * `fixDescriptions` map.
@@ -522,29 +540,22 @@ function rewriteFinding<T extends AgentFinding>(finding: T, hoistedKeys: Readonl
   if (description === undefined || description.length === 0) return finding;
   const hash = hashFixDescription(description);
   if (!hoistedKeys.has(compositeKey(finding.ruleId, hash))) return finding;
+  // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+  // pointer lives INSIDE `fix` (nested `fix.descriptionRef`) — not as
+  // a sibling on the finding. The single-path read for prose
+  // (`fix.description ?? lookup(fix.descriptionRef.hash)`) keeps
+  // surfaces in lockstep: an agent pivoting from `scan_file` to
+  // `scan_project` reads from the same key path on both responses for
+  // the same `findingId`.
+  //
   // Strip `description` from the emitted AgentFix; keep every other
-  // field (oldText, newText when present). Never emit BOTH the pointer
-  // and the inline description — doctrine in
+  // field (oldText, newText when present). Never emit BOTH the
+  // pointer and the inline description on the same fix — doctrine in
   // `docs/kb/architecture/ai-first-consumer.md` under "Ambiguous field
   // shapes are dishonest."
-  //
-  // Post V1-FIX-SAFETY-CONSTANT-FIELD: if the stripped fix has no
-  // sibling payload (guidance-only case — no oldText/newText), drop
-  // the entire `fix` object. `fixDescriptionRef` now carries the
-  // prose pointer; an empty `fix: {}` alongside it is ambiguous
-  // dead-weight per the same doctrine rule.
   const { description: _omitted, ...fixRest } = finding.fix;
-  const fixHasPayload = Object.keys(fixRest).length > 0;
-  if (fixHasPayload) {
-    return {
-      ...finding,
-      fix: fixRest,
-      fixDescriptionRef: { hash },
-    };
-  }
-  const { fix: _droppedFix, ...findingRest } = finding;
   return {
-    ...(findingRest as T),
-    fixDescriptionRef: { hash },
+    ...finding,
+    fix: { ...fixRest, descriptionRef: { hash } },
   };
 }

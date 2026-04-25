@@ -39,14 +39,25 @@ export type Confidence = "high" | "medium" | "low" | "inherited";
  *
  * `description` is present on every newly-built fix, but **optional**
  * on the wire: in MCP scan-family responses (scan, scan_file,
- * scan_project, scan_diff) `description` is stripped when the same
- * `(ruleId, description)` pair appears ≥2 times in a response — the
- * prose hoists into top-level `referenceGuide.fixDescriptions`
- * (V1-SIZE-RESPONSE-BUDGET-DENSITY option b) and the finding gains a
- * `fixDescriptionRef: { hash }` pointer. Never emit BOTH the pointer
- * and the inline description; the two shapes are alternatives. On CLI
- * `--format agent` output and tools that don't hoist (apply_fix,
+ * scan_project, scan_diff) `description` is stripped when the rule has
+ * ≥2 findings carrying descriptions in a response — the prose hoists
+ * into top-level `referenceGuide.fixDescriptions` (V1-SIZE-RESPONSE-
+ * BUDGET-DENSITY option b) and the finding's `fix` object gains a
+ * nested `descriptionRef: { hash }` pointer in place of the inline
+ * `description`. Never emit BOTH the pointer and the inline
+ * description on the same fix; the two shapes are alternatives. On
+ * CLI `--format agent` output and tools that don't hoist (apply_fix,
  * baseline), `description` stays inline.
+ *
+ * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT:
+ * `descriptionRef` lives INSIDE `fix` — never as a sibling on
+ * {@link AgentFinding}. The agent reads prose at one path
+ * (`finding.fix.description ?? lookup(finding.fix.descriptionRef.hash)`)
+ * regardless of which surface emitted the response. Shipping the ref
+ * as a sibling field on the finding ("ref-only") forced the agent's
+ * fallback to fork — the same finding hit `undefined` on `fix.description`
+ * when surfaces disagreed about the hoist decision. Keeping the ref
+ * nested keeps the join site uniform.
  *
  * Confidence lives on the parent {@link AgentFinding} — one confidence
  * per finding, derived from severity. A separate per-fix confidence
@@ -66,6 +77,30 @@ export interface AgentFix {
   readonly oldText?: string;
   readonly newText?: string;
   readonly description?: string;
+  /**
+   * Pointer into `referenceGuide.fixDescriptions[ruleId][hash]` on the
+   * top-level scan response. Present-when-meaningful: emitted only when
+   * the prose that would otherwise live at `fix.description` was
+   * hoisted out of this finding because the rule had ≥2 findings
+   * carrying descriptions in the response (V1-SIZE-RESPONSE-BUDGET-
+   * DENSITY option b). Mutually exclusive with `description` on the
+   * same fix — the response shape never carries both at once.
+   *
+   * Hash is a 12-hex-char truncated SHA-256 of the description — same
+   * recipe as `findingId` — so it reads cleanly in agent transcripts.
+   *
+   * Tools that don't hoist (apply_fix, baseline, CLI `--format agent`)
+   * never emit this field; their responses carry descriptions inline.
+   *
+   * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the ref
+   * lives INSIDE `fix` (never as a sibling on the finding). Shipping
+   * it at two locations forced agents pivoting between `scan_file`
+   * (inline) and `scan_project` (hoisted) to read different join
+   * paths for the same `findingId`; nesting unifies the path.
+   */
+  readonly descriptionRef?: {
+    readonly hash: string;
+  };
 }
 
 export interface AgentFinding {
@@ -148,44 +183,31 @@ export interface AgentFinding {
    * docs/kb/architecture/ai-first-consumer.md.
    */
   readonly snippet?: string;
-  /** Present when the violation has a mechanical edit or prose guidance; absent otherwise. */
-  readonly fix?: AgentFix;
   /**
-   * Pointer into `referenceGuide.fixDescriptions[ruleId][hash]` on the
-   * top-level scan response, present only when the prose that would
-   * otherwise live at `fix.description` was hoisted out of this finding
-   * because the same `(ruleId, description)` pair appears on two or
-   * more findings in the same response (V1-SIZE-RESPONSE-BUDGET-DENSITY
-   * option b).
+   * Present when the violation has a mechanical edit or prose guidance;
+   * absent otherwise.
    *
-   * Contract — the hoist shape must never be ambiguous per
-   * `docs/kb/architecture/ai-first-consumer.md`:
+   * Description prose lives at one path on the wire:
+   * `fix.description` (inline) or `fix.descriptionRef.hash` (hoisted
+   * pointer into `referenceGuide.fixDescriptions[ruleId][hash]`).
+   * Mutually exclusive within a single `fix` object — never both at
+   * once. The two-level group-lift path (Q-SHARED-FIXDESCREF-SAME-
+   * GROUP-INLINE-DEDUPE) drops `fix` from the sibling findings under
+   * the lifted cohort and instead surfaces the pointer on
+   * {@link AgentFile#groupFixDescriptionRefs} keyed by `groupKey`.
    *
-   *   - When `fixDescriptionRef` is present, `fix.description` is
-   *     absent on this finding. Resolve the prose via
-   *     `referenceGuide.fixDescriptions[ruleId][hash]`.
-   *   - When `fixDescriptionRef` is absent and `fix.description` is
-   *     present, the prose is unique-in-response and stays inline.
-   *   - When `fixDescriptionRef` is absent but the finding's
-   *     `groupKey` appears in `file.groupFixDescriptionRefs`, the ref
-   *     was hoisted one more level (Q-SHARED-FIXDESCREF-SAME-GROUP-
-   *     INLINE-DEDUPE) — resolve via
-   *     `file.groupFixDescriptionRefs[groupKey].hash` →
-   *     `referenceGuide.fixDescriptions[ruleId][hash]`.
-   *   - Never emit both the per-finding ref and the per-finding
-   *     description; never emit both the per-finding ref and a
-   *     group-level ref for the same groupKey.
-   *
-   * The hash is a 12-hex-char truncated SHA-256 of the description —
-   * same recipe as `findingId` — so it reads cleanly in agent
-   * transcripts.
-   *
-   * Tools that don't hoist (apply_fix, baseline, CLI `--format agent`)
-   * never emit this field; their responses carry descriptions inline.
+   * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+   * single-finding ref previously rode as a sibling field
+   * (`fixDescriptionRef`) on this interface. Moved inside `fix` so the
+   * agent reads prose at one path regardless of which surface
+   * emitted the response. Shipping the ref at the finding level (a
+   * sibling) forced the agent's fallback to fork: surfaces that
+   * hoisted produced `fix.description = undefined` + sibling
+   * `fixDescriptionRef`, while surfaces that didn't hoist produced an
+   * inline `fix.description` — same `findingId`, different read
+   * paths, silent `undefined`-read hazard.
    */
-  readonly fixDescriptionRef?: {
-    readonly hash: string;
-  };
+  readonly fix?: AgentFix;
   readonly effort: Effort;
   readonly category: Category;
   readonly suppressWith: string;
@@ -277,12 +299,12 @@ export interface AgentFile {
   /**
    * Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE: file-level pointer
    * into `referenceGuide.fixDescriptions` for cases where ≥2 findings
-   * in this file share the same `(groupKey, fixDescriptionRef.hash)`
-   * pair. The ref hoists out of each sibling finding and rides once
-   * on the file bucket, indexed by `groupKey`; per-finding
-   * `fixDescriptionRef` is omitted on those siblings.
+   * in this file share the same `(groupKey, fix.descriptionRef.hash)`
+   * pair. The ref hoists out of each sibling finding's `fix` object
+   * and rides once on the file bucket, indexed by `groupKey`; the
+   * per-finding `fix.descriptionRef` is omitted on those siblings.
    *
-   * The per-finding `fixDescriptionRef` already collapses N identical
+   * The per-finding `fix.descriptionRef` already collapses N identical
    * prose descriptions into a single `referenceGuide.fixDescriptions`
    * entry, but V1-REF-DEDUPE still re-inlined the pointer (`{ hash }`)
    * on every finding. On the 50projects50days `verify-account-ui`
@@ -300,8 +322,8 @@ export interface AgentFile {
    *
    * Present-when-meaningful (CLAUDE.md §1): omitted when no group in
    * this file has ≥2 findings sharing a ref. Findings whose ref was
-   * unique within their group keep the inline `fixDescriptionRef` as
-   * before — hoisting a singleton would be pure overhead.
+   * unique within their group keep the per-finding `fix.descriptionRef`
+   * as before — hoisting a singleton would be pure overhead.
    */
   readonly groupFixDescriptionRefs?: readonly {
     readonly groupKey: string;

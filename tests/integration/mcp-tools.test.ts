@@ -76,11 +76,15 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 
 /**
  * Shape expected by {@link assertHoistShape}. Narrow projection of a
- * scan-family response — only the fields the fixDescriptionRef hoist
+ * scan-family response — only the fields the fix.descriptionRef hoist
  * test reads. Kept module-local so the test body stays under the
  * cognitive-complexity cap (the integration test only cares about a
  * subset of fields but biome counts every nested loop + conditional
  * against the test function).
+ *
+ * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the hoist
+ * pointer is nested at `fix.descriptionRef`; the legacy sibling field
+ * `fixDescriptionRef` on the finding is no longer emitted.
  */
 interface FixDescriptionHoistBody {
   readonly files: readonly {
@@ -88,8 +92,10 @@ interface FixDescriptionHoistBody {
     readonly findings: readonly {
       readonly ruleId: string;
       readonly groupKey: string;
-      readonly fix?: { readonly description?: string };
-      readonly fixDescriptionRef?: { readonly hash: string };
+      readonly fix?: {
+        readonly description?: string;
+        readonly descriptionRef?: { readonly hash: string };
+      };
     }[];
   }[];
   readonly referenceGuide?: {
@@ -99,12 +105,12 @@ interface FixDescriptionHoistBody {
 
 /**
  * Walks a scan-family response body and asserts the invariant that
- * (a) every per-finding `fixDescriptionRef` resolves to a string in
+ * (a) every per-finding `fix.descriptionRef` resolves to a string in
  * `referenceGuide.fixDescriptions` and no inline `fix.description`
  * rides beside it, and (b) every file-level
  * `groupFixDescriptionRefs` entry points at a hash that resolves in
  * the guide, with every sibling finding in that `groupKey` stripped
- * of its own `fixDescriptionRef` (Q-SHARED-FIXDESCREF-SAME-GROUP-
+ * of its own `fix.descriptionRef` (Q-SHARED-FIXDESCREF-SAME-GROUP-
  * INLINE-DEDUPE).
  *
  * Returns the per-lane counts so the caller can assert "at least one
@@ -118,9 +124,9 @@ function assertHoistShape(body: FixDescriptionHoistBody): {
   let liftedGroupRefs = 0;
   for (const file of body.files) {
     for (const f of file.findings) {
-      if (f.fixDescriptionRef === undefined) continue;
+      if (f.fix?.descriptionRef === undefined) continue;
       hoistedFindings += 1;
-      const desc = body.referenceGuide?.fixDescriptions?.[f.ruleId]?.[f.fixDescriptionRef.hash];
+      const desc = body.referenceGuide?.fixDescriptions?.[f.ruleId]?.[f.fix.descriptionRef.hash];
       expect(typeof desc).toBe("string");
       expect(f.fix?.description).toBeUndefined();
     }
@@ -134,8 +140,50 @@ function assertHoistShape(body: FixDescriptionHoistBody): {
 }
 
 /**
+ * Discriminator for the cross-surface fix-shape invariant
+ * (V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT). Returns
+ * the shape category of a finding's `fix` so two surfaces (scan_file,
+ * scan_project) can be compared without depending on the inline-vs-
+ * hoisted decision — only on the shape contract holding (prose lives
+ * at one of the two nested fields, never both, never as a sibling).
+ *
+ * The three legitimate shapes:
+ *   - `"fix-omitted"`: finding has no `fix` (no remediation lane).
+ *   - `"fix-with-description"`: prose is inline at `fix.description`.
+ *   - `"fix-with-descriptionRef"`: prose is hoisted, pointer nested
+ *     at `fix.descriptionRef.hash`.
+ *
+ * `"fix-empty"` and `"fix-with-both"` are dishonest shapes the
+ * invariant rejects; the helper returns them so callers can diff
+ * against their own surface and surface the failure mode.
+ */
+function describeShape(
+  f: { readonly fix?: { description?: string; descriptionRef?: { hash: string } } } | undefined,
+): {
+  readonly shape:
+    | "fix-omitted"
+    | "fix-with-description"
+    | "fix-with-descriptionRef"
+    | "fix-empty"
+    | "fix-with-both";
+} {
+  if (f === undefined || f.fix === undefined) return { shape: "fix-omitted" };
+  const hasInline = typeof f.fix.description === "string" && f.fix.description.length > 0;
+  const hasRef = f.fix.descriptionRef !== undefined;
+  if (hasInline && hasRef) return { shape: "fix-with-both" };
+  if (hasInline) return { shape: "fix-with-description" };
+  if (hasRef) return { shape: "fix-with-descriptionRef" };
+  // `fix` is present but empty — could legitimately occur for a fix
+  // that carries only `oldText`/`newText` (mechanical edit with no
+  // prose); the invariant doesn't probe that branch here. Return a
+  // distinct token so the cross-surface comparison still detects
+  // surface drift on the prose lane.
+  return { shape: "fix-empty" };
+}
+
+/**
  * Every finding sharing the lifted groupKey must have neither its own
- * `fixDescriptionRef` nor an inline `fix.description` — the file-level
+ * `fix.descriptionRef` nor an inline `fix.description` — the file-level
  * ref is the single source of truth for that cohort's prose.
  */
 function assertGroupRefStripsSiblings(
@@ -144,7 +192,7 @@ function assertGroupRefStripsSiblings(
 ): void {
   for (const f of findings) {
     if (f.groupKey !== g.groupKey) continue;
-    expect(f.fixDescriptionRef).toBeUndefined();
+    expect(f.fix?.descriptionRef).toBeUndefined();
     expect(f.fix?.description).toBeUndefined();
   }
 }
@@ -752,7 +800,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // `(ruleId, description)` pair appears on ≥2 findings, the
     // description hoists into `referenceGuide.fixDescriptions[ruleId]
     // [hash]` and each affected finding drops inline `fix.description`
-    // in favour of `fixDescriptionRef: { hash }`. Findings whose
+    // in favour of a nested `fix.descriptionRef: { hash }`. Findings whose
     // description is unique-in-response stay inline.
     //
     // Three orphan inputs fire `forms/labels-required` with the
@@ -795,6 +843,117 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       // either per-finding (distinct groupKeys) or at the group level
       // (shared groupKey).
       expect(hoistedFindings + liftedGroupRefs).toBeGreaterThanOrEqual(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: same finding has same fix shape on scan_file and scan_project", async () => {
+    // Cross-surface invariant: pivoting from `scan_project` to
+    // `scan_file` (or back) must surface the SAME `fix` shape for the
+    // SAME `findingId`. Before the fix, hoist decisions were per-
+    // response: a single-file `scan_file` rarely met the per-rule
+    // hoist threshold (one finding per rule), shipping inline
+    // `fix.description`; the same rule fired multiple times in a
+    // `scan_project` would cross the threshold and ship `fix: {…}`
+    // alongside a SIBLING `fixDescriptionRef`. Same `findingId`,
+    // structurally different reads — `fix.description` was undefined
+    // on the second surface, a silent-miss that broke fallback chains
+    // like `f.fix?.description ?? lookupRef(f.fixDescriptionRef.hash)`.
+    //
+    // The fix nests the pointer at `fix.descriptionRef`. The wire
+    // contract is now: prose lives at one path —
+    // `f.fix?.description ?? f.fix?.descriptionRef?.hash`. The hoist
+    // decision can still differ per surface (single-file vs. project
+    // hit different threshold counts), but the SHAPE of `fix` no
+    // longer forks: every surface emits the description-bearing field
+    // INSIDE `fix`, never as a sibling on the finding.
+    //
+    // Setup: a single HTML file with two `<input>` elements that
+    // share a rule firing pattern. Run scan_file (single file) and
+    // scan_project (full directory) against it; for each finding
+    // present on both surfaces (matched by `findingId`), assert no
+    // sibling `fixDescriptionRef` rides anywhere and the prose-bearing
+    // field on `fix` is one of `description` (string) or
+    // `descriptionRef.hash` (12-hex), never both, never neither.
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-cross-surface-fix-shape-"));
+    try {
+      const fixturePath = join(dir, "form.html");
+      await writeFile(
+        fixturePath,
+        `<!DOCTYPE html>
+<html lang="en">
+<head><title>Form</title></head>
+<body>
+  <input type="text">
+  <input type="email">
+  <input type="search">
+</body>
+</html>
+`,
+      );
+      // scan_file uses an absolute path; scan_project uses cwd.
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_file", { path: fixturePath }),
+        toolCall(3, "scan_project", { cwd: dir }),
+      ]);
+
+      type CrossSurfaceFinding = {
+        readonly findingId: string;
+        readonly fix?: {
+          readonly description?: string;
+          readonly descriptionRef?: { readonly hash: string };
+        };
+      };
+
+      // scan_file ships a flat `findings` array; scan_project ships
+      // the grouped `files[].findings` shape. Normalize both into a
+      // findingId → finding lookup so the per-finding shape compare
+      // is symmetrical.
+      const fileBody = bodyOf(responses[1]) as {
+        findings: readonly CrossSurfaceFinding[];
+      };
+      const projectBody = bodyOf(responses[2]) as {
+        files: readonly { findings: readonly CrossSurfaceFinding[] }[];
+      };
+      const byIdFile = new Map<string, CrossSurfaceFinding>();
+      for (const f of fileBody.findings) byIdFile.set(f.findingId, f);
+      const byIdProject = new Map<string, CrossSurfaceFinding>();
+      for (const file of projectBody.files) {
+        for (const f of file.findings) byIdProject.set(f.findingId, f);
+      }
+      const sharedIds = [...byIdFile.keys()].filter((id) => byIdProject.has(id));
+      // Fixture must yield at least one finding on both surfaces;
+      // otherwise the invariant trivially "holds" against empty input.
+      expect(sharedIds.length).toBeGreaterThan(0);
+
+      for (const findingId of sharedIds) {
+        const fileF = byIdFile.get(findingId);
+        const projectF = byIdProject.get(findingId);
+        const filePromise = describeShape(fileF);
+        const projectPromise = describeShape(projectF);
+        // The shape descriptor abstracts whether the prose is inline
+        // or hoisted — both must yield the same SHAPE ("fix-omitted",
+        // "fix-with-description", or "fix-with-descriptionRef") for
+        // the cross-surface contract to hold. The agent reads prose
+        // at the same key path on either surface.
+        expect(
+          filePromise.shape,
+          `findingId ${findingId}: scan_file shape ${filePromise.shape} vs scan_project shape ${projectPromise.shape}`,
+        ).toBe(projectPromise.shape);
+        // Belt-and-suspenders: NO finding on either surface may carry
+        // a sibling `fixDescriptionRef` field. The legacy two-location
+        // shape is the one this fix exterminates.
+        expect(
+          (fileF as unknown as Record<string, unknown>).fixDescriptionRef,
+          `findingId ${findingId} on scan_file emitted a legacy sibling fixDescriptionRef`,
+        ).toBeUndefined();
+        expect(
+          (projectF as unknown as Record<string, unknown>).fixDescriptionRef,
+          `findingId ${findingId} on scan_project emitted a legacy sibling fixDescriptionRef`,
+        ).toBeUndefined();
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

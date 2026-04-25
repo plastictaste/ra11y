@@ -391,15 +391,16 @@ export interface ScanFormatted {
    * placement variant — today that's `.ts` / `.js` / anything else.
    *
    * `fixDescriptions` rides in the same block — a nested
-   * `{ [ruleId]: { [hash]: description } }` map populated when the same
-   * `(ruleId, fix.description)` pair appears on ≥2 findings in the
-   * response, so the prose hoists once to the top level instead of
-   * repeating per-finding. Hoisted findings carry
-   * `fixDescriptionRef: { hash }` and omit `fix.description`; findings
-   * with unique-in-response descriptions keep the inline text. Omitted
-   * entirely when no duplicates cross the threshold (present-when-
-   * meaningful per CLAUDE.md §1). See
-   * V1-SIZE-RESPONSE-BUDGET-DENSITY and the
+   * `{ [ruleId]: { [hash]: description } }` map populated when a rule
+   * has ≥2 findings carrying descriptions in the response, so the
+   * prose hoists once to the top level instead of repeating per-
+   * finding. Hoisted findings carry the nested
+   * `fix.descriptionRef: { hash }` (NOT a sibling on the finding —
+   * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT) and
+   * omit `fix.description`; findings with unique-in-response
+   * descriptions keep the inline text. Omitted entirely when no
+   * duplicates cross the threshold (present-when-meaningful per
+   * CLAUDE.md §1). See V1-SIZE-RESPONSE-BUDGET-DENSITY and the
    * `src/mcp/reference-guide.ts` implementation.
    */
   readonly referenceGuide?: import("./reference-guide.ts").ReferenceGuide;

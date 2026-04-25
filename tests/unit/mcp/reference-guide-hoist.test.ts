@@ -4,8 +4,11 @@
  * invariants that survive the next refactor of the module:
  *   - Descriptions duplicated ≥2× in a response hoist into
  *     `referenceGuide.fixDescriptions[ruleId][hash]`.
- *   - Hoisted findings drop inline `fix.description` and gain
- *     `fixDescriptionRef: { hash }`. Never emit both.
+ *   - Hoisted findings drop inline `fix.description` and gain a nested
+ *     `fix.descriptionRef: { hash }`. Never emit both. Per V1-FIX-
+ *     DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT, the pointer
+ *     lives INSIDE `fix` (not as a sibling on the finding) so the
+ *     agent reads prose at one path on every surface.
  *   - Singleton (unique-in-response) descriptions stay inline.
  *   - Two distinct descriptions under the same `ruleId` both survive —
  *     the hash-keying prevents one verdict from silently replacing the
@@ -43,10 +46,12 @@ function finding(overrides: Partial<AgentFinding> & Pick<AgentFinding, "ruleId">
 
 /**
  * Walks a file's post-hoist findings and tallies, per ruleId, how many
- * findings ship an inline description vs. a `fixDescriptionRef`. Extracted
- * so the V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY invariant test stays
- * readable; also asserts the pre-existing invariant that no single
- * finding carries both inline + ref.
+ * findings ship an inline description vs. a nested `fix.descriptionRef`.
+ * Extracted so the V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY invariant
+ * test stays readable; also asserts the pre-existing invariant that no
+ * single finding carries both inline + ref. Per V1-FIX-DESCRIPTION-
+ * INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT the ref lives nested under
+ * `fix` (never as a sibling on the finding).
  */
 function tallyShapePerRule(
   findings: readonly AgentFinding[],
@@ -54,7 +59,7 @@ function tallyShapePerRule(
   const byRule = new Map<string, { inline: number; ref: number }>();
   for (const f of findings) {
     const hasInline = typeof f.fix?.description === "string" && f.fix.description.length > 0;
-    const hasRef = f.fixDescriptionRef !== undefined;
+    const hasRef = f.fix?.descriptionRef !== undefined;
     // No finding may carry both inline + ref (pre-existing invariant).
     expect(hasInline && hasRef).toBe(false);
     if (!(hasInline || hasRef)) continue; // no description at all
@@ -116,7 +121,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     expect(fixDescs?.["forms/autocomplete-missing"]?.[hash]).toBe(desc);
     // Each hoisted finding gets a ref, no inline description.
     for (const f of result.files[0]?.findings ?? []) {
-      expect(f.fixDescriptionRef?.hash).toBe(hash);
+      expect(f.fix?.descriptionRef?.hash).toBe(hash);
       expect(f.fix?.description).toBeUndefined();
     }
     // No group-level lift because groupKeys differ.
@@ -141,7 +146,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     expect(result.referenceGuide?.fixDescriptions).toBeUndefined();
     const f = result.files[0]?.findings[0];
     expect(f?.fix?.description).toBe("Raise contrast ratio to 4.5:1");
-    expect(f?.fixDescriptionRef).toBeUndefined();
+    expect(f?.fix?.descriptionRef).toBeUndefined();
   });
 
   it("keys by (ruleId, hash) so two distinct descriptions under one rule both survive", () => {
@@ -192,13 +197,13 @@ describe("hoistAndBuildReferenceGuide", () => {
     // Findings carry the hash matching their own description — no
     // cross-contamination.
     const findings = result.files[0]?.findings ?? [];
-    expect(findings[0]?.fixDescriptionRef?.hash).toBe(hashA);
-    expect(findings[1]?.fixDescriptionRef?.hash).toBe(hashA);
-    expect(findings[2]?.fixDescriptionRef?.hash).toBe(hashB);
-    expect(findings[3]?.fixDescriptionRef?.hash).toBe(hashB);
+    expect(findings[0]?.fix?.descriptionRef?.hash).toBe(hashA);
+    expect(findings[1]?.fix?.descriptionRef?.hash).toBe(hashA);
+    expect(findings[2]?.fix?.descriptionRef?.hash).toBe(hashB);
+    expect(findings[3]?.fix?.descriptionRef?.hash).toBe(hashB);
   });
 
-  it("never emits both fixDescriptionRef and fix.description on the same finding", () => {
+  it("never emits both fix.descriptionRef and fix.description on the same finding", () => {
     const desc = "Add alt text";
     const files = [
       {
@@ -211,7 +216,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     ];
     const result = hoistAndBuildReferenceGuide(files, { suppressPlacement: { tsx: "place" } });
     for (const f of result.files[0]?.findings ?? []) {
-      const hasRef = f.fixDescriptionRef !== undefined;
+      const hasRef = f.fix?.descriptionRef !== undefined;
       const hasDesc = typeof f.fix?.description === "string";
       expect(hasRef && hasDesc).toBe(false);
     }
@@ -266,7 +271,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     const result = hoistAndBuildReferenceGuide(files, { suppressPlacement: { tsx: "place" } });
     expect(result.referenceGuide?.fixDescriptions).toBeUndefined();
     for (const f of result.files[0]?.findings ?? []) {
-      expect(f.fixDescriptionRef).toBeUndefined();
+      expect(f.fix?.descriptionRef).toBeUndefined();
     }
   });
 
@@ -307,7 +312,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     const hash = hashFixDescription(desc);
     expect(result.referenceGuide?.fixDescriptions?.["a/b"]?.[hash]).toBe(desc);
     for (const file of result.files) {
-      expect(file.findings[0]?.fixDescriptionRef?.hash).toBe(hash);
+      expect(file.findings[0]?.fix?.descriptionRef?.hash).toBe(hash);
     }
   });
 
@@ -316,8 +321,8 @@ describe("hoistAndBuildReferenceGuide", () => {
     // spelled out in docs/kb/architecture/ai-first-consumer.md under
     // "Ambiguous field shapes are dishonest." After any hoist pass,
     // every finding with a `fix` must carry a non-empty key set
-    // (oldText/newText or description inline) OR sit alongside a
-    // `fixDescriptionRef` that resolves in the returned reference
+    // (oldText/newText or description inline) OR carry a nested
+    // `fix.descriptionRef` that resolves in the returned reference
     // guide OR (per Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE) share
     // a `groupKey` with a file-level `groupFixDescriptionRefs` entry
     // that resolves. An empty `fix: {}` with no inline ref AND no
@@ -388,14 +393,14 @@ describe("hoistAndBuildReferenceGuide", () => {
     for (const f of result.files[0]?.findings ?? []) {
       if (f.fix === undefined) continue;
       const keyCount = Object.keys(f.fix).length;
-      const hasRef = f.fixDescriptionRef !== undefined;
+      const hasRef = f.fix?.descriptionRef !== undefined;
       // The AgentFix is honest when it carries at least one payload
-      // key (oldText/newText/description) or sits next to a ref.
-      // Never an empty `{}` without a ref.
+      // key (oldText/newText/description/descriptionRef). Never an
+      // empty `{}`.
       expect(keyCount > 0 || hasRef).toBe(true);
       // When a ref is present, it must resolve in the reference guide.
       if (hasRef) {
-        const resolved = fixDescs?.[f.ruleId]?.[f.fixDescriptionRef?.hash ?? ""];
+        const resolved = fixDescs?.[f.ruleId]?.[f.fix?.descriptionRef?.hash ?? ""];
         expect(resolved).toBeDefined();
       }
     }
@@ -410,7 +415,7 @@ describe("hoistAndBuildReferenceGuide", () => {
  * disambiguation. The repro that put this on the backlog:
  * `motion/pause-stop-hide` fired twice in a bootstrap scan — one
  * finding shipped an inline `fix.description`, the other shipped
- * `fix: {safety}` with only a `fixDescriptionRef.hash`, because the
+ * `fix: {safety}` with only a `fix.descriptionRef.hash`, because the
  * two findings carried DIFFERENT descriptions and the old threshold
  * was keyed per `(ruleId, hash)`.
  */
@@ -454,12 +459,12 @@ describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DES
     // Every finding under the rule carries a ref and no inline description.
     for (const f of result.files[0]?.findings ?? []) {
       expect(f.fix?.description).toBeUndefined();
-      expect(f.fixDescriptionRef).toBeDefined();
+      expect(f.fix?.descriptionRef).toBeDefined();
     }
     // Each finding's ref resolves to its OWN description (no
     // cross-contamination).
-    expect(result.files[0]?.findings[0]?.fixDescriptionRef?.hash).toBe(hashA);
-    expect(result.files[0]?.findings[1]?.fixDescriptionRef?.hash).toBe(hashB);
+    expect(result.files[0]?.findings[0]?.fix?.descriptionRef?.hash).toBe(hashA);
+    expect(result.files[0]?.findings[1]?.fix?.descriptionRef?.hash).toBe(hashB);
   });
 
   it("INVARIANT: rules with exactly one description-carrying finding stay inline — singleton indirection is overhead", () => {
@@ -501,12 +506,12 @@ describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DES
     const findings = result.files[0]?.findings ?? [];
     // Singleton rule keeps inline.
     expect(findings[0]?.fix?.description).toBe(singletonDesc);
-    expect(findings[0]?.fixDescriptionRef).toBeUndefined();
+    expect(findings[0]?.fix?.descriptionRef).toBeUndefined();
     // Duplicate rule uses refs.
     expect(findings[1]?.fix?.description).toBeUndefined();
-    expect(findings[1]?.fixDescriptionRef?.hash).toBe(hashFixDescription(dupDescA));
+    expect(findings[1]?.fix?.descriptionRef?.hash).toBe(hashFixDescription(dupDescA));
     expect(findings[2]?.fix?.description).toBeUndefined();
-    expect(findings[2]?.fixDescriptionRef?.hash).toBe(hashFixDescription(dupDescB));
+    expect(findings[2]?.fix?.descriptionRef?.hash).toBe(hashFixDescription(dupDescB));
   });
 
   it("INVARIANT: shape is uniform per ruleId — no response emits both inline-desc and ref-only under one ruleId", () => {
@@ -576,7 +581,7 @@ describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DES
 /**
  * Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE — per-file group-level
  * hoist. When ≥2 findings in one file share the same
- * `(groupKey, fixDescriptionRef.hash)` pair, the pointer rides once at
+ * `(groupKey, fix.descriptionRef.hash)` pair, the pointer rides once at
  * the file level under `groupFixDescriptionRefs` instead of being
  * re-inlined on every sibling. Motivating case: 50projects50days
  * `verify-account-ui/index.html` emitted six adjacent
@@ -613,11 +618,11 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
     // File carries exactly one group-level ref — not six.
     const file = result.files[0];
     expect(file?.groupFixDescriptionRefs).toEqual([{ groupKey: "grp-labels", hash }]);
-    // Every sibling finding has NO per-finding fixDescriptionRef — the
+    // Every sibling finding has NO per-finding fix.descriptionRef — the
     // file-level ref covers them. groupKey stays on each sibling so the
     // agent can walk from finding → file.groupFixDescriptionRefs.
     for (const f of file?.findings ?? []) {
-      expect(f.fixDescriptionRef).toBeUndefined();
+      expect(f.fix?.descriptionRef).toBeUndefined();
       expect(f.groupKey).toBe("grp-labels");
     }
   });
@@ -653,7 +658,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
     expect(file?.groupFixDescriptionRefs?.[0]).toEqual({ groupKey: "k-shared", hash });
     // 0 per-finding refs across all N findings.
     const perFindingRefCount =
-      file?.findings.filter((f) => f.fixDescriptionRef !== undefined).length ?? -1;
+      file?.findings.filter((f) => f.fix?.descriptionRef !== undefined).length ?? -1;
     expect(perFindingRefCount).toBe(0);
   });
 
@@ -689,7 +694,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
     const file = result.files[0];
     expect(file?.groupFixDescriptionRefs).toBeUndefined();
     for (const f of file?.findings ?? []) {
-      expect(f.fixDescriptionRef?.hash).toBe(hash);
+      expect(f.fix?.descriptionRef?.hash).toBe(hash);
     }
   });
 
@@ -740,7 +745,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
     expect(file?.groupFixDescriptionRefs?.[0]).toEqual({ groupKey: "alpha", hash: hashA });
     expect(file?.groupFixDescriptionRefs?.[1]).toEqual({ groupKey: "beta", hash: hashB });
     for (const f of file?.findings ?? []) {
-      expect(f.fixDescriptionRef).toBeUndefined();
+      expect(f.fix?.descriptionRef).toBeUndefined();
     }
   });
 
@@ -780,14 +785,14 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
     });
     for (const file of result.files) {
       expect(file.groupFixDescriptionRefs).toBeUndefined();
-      expect(file.findings[0]?.fixDescriptionRef?.hash).toBe(hashFixDescription(desc));
+      expect(file.findings[0]?.fix?.descriptionRef?.hash).toBe(hashFixDescription(desc));
     }
   });
 
   it("invariant: no finding carries a per-finding ref when a group-level ref covers its (groupKey, hash)", () => {
     // The response shape must never emit both. Agent reading the file
     // bucket's `groupFixDescriptionRefs` plus a sibling's
-    // `fixDescriptionRef` for the same (groupKey, hash) would have to
+    // `fix.descriptionRef` for the same (groupKey, hash) would have to
     // disambiguate which is authoritative — silent-miss territory.
     const desc = "x";
     const files = [
@@ -823,8 +828,8 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
       (file?.groupFixDescriptionRefs ?? []).map((e) => `${e.groupKey} ${e.hash}`),
     );
     for (const f of file?.findings ?? []) {
-      if (f.fixDescriptionRef === undefined) continue;
-      const key = `${f.groupKey} ${f.fixDescriptionRef.hash}`;
+      if (f.fix?.descriptionRef === undefined) continue;
+      const key = `${f.groupKey} ${f.fix?.descriptionRef.hash}`;
       expect(liftedPairs.has(key)).toBe(false);
     }
   });
@@ -833,10 +838,10 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
 /**
  * Q7-FIXDESCRIPTIONREF-PAGINATION-DICT — per-page lookup completeness.
  *
- * The hash-dedup hoist saves bytes only if every `fixDescriptionRef.hash`
+ * The hash-dedup hoist saves bytes only if every `fix.descriptionRef.hash`
  * a caller sees on a page can be resolved in THAT page's
  * `referenceGuide.fixDescriptions`. The doctrine "Ambiguous field shapes
- * are dishonest" applies: a finding carrying `fixDescriptionRef: { hash }`
+ * are dishonest" applies: a finding carrying `fix.descriptionRef: { hash }`
  * with no matching lookup entry forces the agent to disambiguate
  * "missing prose" from "lookup table not yet retrieved" — the silent
  * miss the doctrine warns against.
@@ -845,7 +850,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
  * paged file slice (post-pagination), so each page recomputes its own
  * `fixDescriptions`. The invariant below pins that contract: for any
  * `(offset, limit)` window over a finding set, the hoist must produce a
- * `fixDescriptions` map that resolves every `fixDescriptionRef.hash`
+ * `fixDescriptions` map that resolves every `fix.descriptionRef.hash`
  * the page's findings carry AND every `groupFixDescriptionRefs[].hash`
  * any file on the page exposes. Out-of-order paged retrieval (offset-
  * jump, parallel page fetch) must work — no page may depend on another
@@ -856,13 +861,13 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
  * silently regress to whole-set hoist + slice (which WOULD have the
  * silent-miss failure mode the backlog described).
  */
-/** Asserts every per-finding `fixDescriptionRef.hash` in `file` resolves under `lookup[ruleId][hash]`. */
+/** Asserts every per-finding `fix.descriptionRef.hash` in `file` resolves under `lookup[ruleId][hash]`. */
 function assertPerFindingRefsResolve(
   file: { readonly path: string; readonly findings: readonly AgentFinding[] },
   lookup: Readonly<Record<string, Readonly<Record<string, string>>>> | undefined,
 ): void {
   for (const f of file.findings) {
-    const hash = f.fixDescriptionRef?.hash;
+    const hash = f.fix?.descriptionRef?.hash;
     if (hash === undefined) continue;
     const resolved = lookup?.[f.ruleId]?.[hash];
     expect(
@@ -990,7 +995,7 @@ describe("hoistAndBuildReferenceGuide — Q7 per-page lookup completeness invari
     // invariant guards against.
     const onlyFinding = lastPage.files[0]?.findings[0];
     expect(onlyFinding?.fix?.description).toBe(desc);
-    expect(onlyFinding?.fixDescriptionRef).toBeUndefined();
+    expect(onlyFinding?.fix?.descriptionRef).toBeUndefined();
   });
 
   it("INVARIANT: every page over the same finding set is independently lookup-complete", () => {
@@ -1056,7 +1061,7 @@ describe("hoistAndBuildReferenceGuide — Q7 per-page lookup completeness invari
     // per-finding branch.
     expect(page.files[0]?.groupFixDescriptionRefs?.length).toBe(1);
     for (const f of page.files[0]?.findings ?? []) {
-      expect(f.fixDescriptionRef).toBeUndefined();
+      expect(f.fix?.descriptionRef).toBeUndefined();
     }
   });
 });
