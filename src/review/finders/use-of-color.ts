@@ -147,11 +147,30 @@ function getHtmlClass(el: HtmlElement): string | null {
   return null;
 }
 
+/**
+ * Deterministic non-color-signal evidence: the agent does not need to
+ * re-read the file to know an `aria-label`, `title`, recognized shape
+ * glyph, or icon-sibling is present. These suppressions are anchored on
+ * provable evidence the static parser already has, so the AI-first rule
+ * "labeled buckets must be provable from the code" is satisfied.
+ *
+ * Status-word text containment is deliberately NOT in this set: it is
+ * weaker evidence (the prose word may appear coincidentally — "the
+ * success of the mission depended on…" inside a `text-success` element
+ * — and the static parser cannot tell coincidence from intent). On the
+ * rule surface (`color/meaning-by-color-only`) the rule suppresses
+ * emission on this branch because a rule emits at `error` severity and
+ * the AI-first doctrine "reason text and severity must agree" forbids
+ * a contradicting reason; the finder surface is review candidates
+ * whose framing is "please verify," so the doctrine direction is
+ * inverted: surface the candidate and enrich the reason with the
+ * textContent-containment evidence so the agent dismisses with one
+ * read, instead of dropping the candidate and risking a silent miss.
+ */
 function htmlElementHasNonColorSignal(el: HtmlElement): boolean {
   if (hasHtmlAttribute(el, "aria-label")) return true;
   if (hasHtmlAttribute(el, "title")) return true;
   const text = visibleHtmlText(el);
-  if (text && STATUS_WORD_TEXT.test(text)) return true;
   if (text && SHAPE_SIGNAL_GLYPH.test(text.trim())) return true;
   for (const child of el.children) {
     if (child.kind === "HtmlElement") {
@@ -166,7 +185,6 @@ function jsxElementHasNonColorSignal(el: JsxElement): boolean {
   if (hasJsxAttribute(el, "aria-label")) return true;
   if (hasJsxAttribute(el, "title")) return true;
   const text = visibleJsxText(el);
-  if (text && STATUS_WORD_TEXT.test(text)) return true;
   if (text && SHAPE_SIGNAL_GLYPH.test(text.trim())) return true;
   for (const child of el.children) {
     if (child.kind === "JsxElement" && ICON_COMPONENT_TAG.test(child.tagName)) return true;
@@ -263,17 +281,38 @@ function emit(
   candidates: ReviewCandidate[],
 ): void {
   // The element has already been filtered for aria-label, title,
-  // status-word text, shape-signal glyph, icon-sibling, and zero-length
-  // body. So at emit time we know there IS visible text in the body.
-  // Quote it back so the agent can see what color may be styling
-  // without re-reading the file just to triage the candidate.
+  // shape-signal glyph, icon-sibling, and zero-length body. So at emit
+  // time we know there IS visible text in the body. Quote it back so
+  // the agent can see what color may be styling without re-reading the
+  // file just to triage the candidate.
   //
   // Per V1-FINDER-1.4.1-COLOR-READ-ELEMENT-BODY: the reason text must
   // reflect the actual content, not claim "no visible text."
   const echoed = collapseWhitespace(visibleText);
   const trimmed =
     echoed.length > REASON_TEXT_BUDGET ? `${echoed.slice(0, REASON_TEXT_BUDGET)}…` : echoed;
-  const reason = `className uses status color "${matched}" on an element with visible text "${trimmed}" -- color-only indicator check: verify the state is not conveyed by "${matched}" alone; ensure a non-color affordance (icon, label, underline) is present`;
+  // Status-word containment is per-candidate enrichment, not
+  // suppression. When the visible text already names a status word
+  // (`Error`, `Warning`, `Success`, `Danger`, `Failed`, `Required`…),
+  // the prose IS the second channel for users who can read the text —
+  // BUT color may still be the sole signal for a screen-reader user
+  // hearing the prose without status framing, or for a user under a
+  // color-inverted theme. Surface the evidence so the agent dismisses
+  // with one read on the common case, and still investigates when the
+  // prose framing is too generic ("Failed" alone vs. "Upload failed:
+  // network error"). Per AI-first doctrine: finders surface; agents
+  // dismiss. The rule-side closure (Q7-RULE-COLOR-TEXT-CONTAINMENT-
+  // CHECK) suppresses on this branch instead, because the rule emits
+  // at `error` severity and the doctrine "reason text and severity
+  // must agree" forbids a self-contradicting reason; the finder
+  // surface is review candidates ("please verify"), so enrichment is
+  // the consistent direction.
+  const statusWordMatch = STATUS_WORD_TEXT.exec(echoed);
+  const enrichment =
+    statusWordMatch !== null
+      ? ` -- visible text already carries status word "${statusWordMatch[0]}", so a sighted reader of the prose has the second channel; verify the status is also reachable for screen-reader users (consider role="alert"/role="status" or an sr-only label) and for users under color-inverted themes`
+      : "";
+  const reason = `className uses status color "${matched}" on an element with visible text "${trimmed}" -- color-only indicator check: verify the state is not conveyed by "${matched}" alone; ensure a non-color affordance (icon, label, underline) is present${enrichment}`;
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": className-regex on status-color utility
     // tokens (red/green/danger/success…) combined with an absence-

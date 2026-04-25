@@ -32,10 +32,46 @@ describe("review/use-of-color", () => {
     expect(out).toEqual([]);
   });
 
-  it("does not flag when a status word appears in the text", () => {
+  it("still surfaces the candidate when visible text carries a status word, with enriched reason", () => {
+    // Finder doctrine differs from rule doctrine. The rule suppresses
+    // emission on this branch because the rule's `error` severity must
+    // agree with its reason; the finder is a "please verify" candidate
+    // surface, so enrichment is the consistent direction. Color may
+    // still be the sole signal for a screen-reader user (no audible
+    // status framing) or under a color-inverted theme — the agent
+    // reads the enriched reason and dismisses (or doesn't) per case.
     const source = `const x = <span className="text-red-600">Error</span>;`;
     const out = runFinder(finder, source);
-    expect(out).toEqual([]);
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).toContain("visible text already carries status word");
+      expect(c.reason).toContain('"Error"');
+    }
+  });
+
+  it("enriches reason on HTML elements whose visible text carries a status word", () => {
+    // Finder's status-color-class regex matches `bg-`/`text-`/`border-`
+    // and friends with hue/keyword suffixes; `btn-danger` is the rule's
+    // shape, not the finder's. Use `bg-danger` here.
+    const source = `<span class="bg-danger">Danger</span>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).toContain("visible text already carries status word");
+      expect(c.reason).toContain('"Danger"');
+      expect(c.reason).toContain("color-inverted");
+    }
+  });
+
+  it("does not enrich when visible text contains no status word", () => {
+    // "Design" is not in the status-word set; reason should not claim
+    // status-word containment when none is present.
+    const source = `const x = <strong className="text-success-emphasis">Design</strong>;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    for (const c of out) {
+      expect(c.reason).not.toContain("visible text already carries status word");
+    }
   });
 
   it("does not flag when an Icon sibling is present", () => {
