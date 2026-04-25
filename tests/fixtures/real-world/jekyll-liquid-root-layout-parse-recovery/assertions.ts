@@ -42,9 +42,18 @@
  *      bucket must still flag it so the agent knows parsing degraded).
  *   2. The first parse-error reason names the layout-tail shape — the
  *      substring an agent routes on lives at the head of the message.
- *   3. The recovered `<main>` subtree is visible to rules (asserted via
- *      the absence of `semantics/landmark-main` — the `<main>` is
- *      present, so the rule does not fire).
+ *   3. `semantics/landmark-main` does not fire on the recovered file.
+ *      Pre-Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION the rule emitted a
+ *      `partial_or_layout_file_requires_composed_check`-enriched
+ *      "missing <main>" finding via the bodyless-partial branch — the
+ *      composition directive `{% include top.html %}` qualified the
+ *      file as a layout/partial. After Q8 the file has none of
+ *      `<html>` / `<body>` / `<head>` (the parser only recovered the
+ *      `<main>` subtree and the trailing stray `</html>`), so the
+ *      shared `isFragmentFile` predicate's branch (a) classifies it as
+ *      a fragment whose composed parent supplies the landmark, and the
+ *      gate suppresses the missing-<main> emit outright. The fixture
+ *      asserts the absence to lock in the suppression contract.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
@@ -87,17 +96,20 @@ export const assertions: FixtureAssertions = {
       predicate: { contains: "Elided layout-tail" },
     },
 
-    // Silent-miss regression guard: the parsed partial AST must still
-    // reach `semantics/landmark-main`'s bodyless-partial path, so an
-    // agent sees the recognised layout shape alongside its enriched
-    // `couldBeWrongBecause` message. A parser regression that bailed
-    // on first error (dropping the recovered subtree) would stop
-    // emitting here, silently hiding the composition-level gap.
-    // Parallels the jekyll-default-layout fixture's `top.html` guard.
+    // Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION: the file has none of
+    // <html>/<body>/<head> (only the recovered <main> subtree and the
+    // trailing stray </html>). The shared `isFragmentFile` predicate's
+    // branch (a) classifies it as a fragment whose composed parent
+    // supplies the landmark, so the gate suppresses the missing-<main>
+    // emit outright. The duplicate-<main> emit (the other observable
+    // bug landmark-main checks) is not relevant here — the recovered
+    // subtree carries exactly one <main>. Source-level disable pragmas
+    // remain the deterministic escape hatch for any consumer that
+    // disagrees with the suppression. Parser-recovery telemetry stays
+    // visible via the meta-field assertion above.
     {
-      kind: "violation-present",
+      kind: "no-violation",
       ruleId: "semantics/landmark-main",
-      reasonIncludes: "layout wrapper or template partial",
     },
   ],
 };

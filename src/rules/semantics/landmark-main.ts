@@ -34,7 +34,11 @@ import {
   getHtmlAttribute,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
-import { isHtmlLayoutOrPartial, looksLikeFullPage } from "../../engine/layout-partial.ts";
+import {
+  isFragmentFile,
+  isHtmlLayoutOrPartial,
+  looksLikeFullPage,
+} from "../../engine/layout-partial.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
 
@@ -66,6 +70,25 @@ export const rule = defineRule({
     const doc = ctx.ast as HtmlDocument;
     const bodies = findHtmlElementsByTag(doc, "body");
 
+    // Fragment-file gate (Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION).
+    // Component-fragment files without root <html>/<body>/<head>,
+    // content-fragment files with `---` front-matter, and partials under
+    // `_includes/`, `_layouts/`, `_partials/`, `partials/`, `components/`
+    // do not own the document envelope — the composed parent layout
+    // supplies <main>. The "missing <main>" emit is suppressed outright
+    // on these files; the duplicate-<main> emit continues to fire because
+    // multiple <main> elements in the same file is a real observable
+    // ordering bug regardless of whether the envelope is supplied
+    // elsewhere. Per docs/kb/architecture/ai-first-consumer.md, this
+    // suppression is honest because fragment classification is structural
+    // evidence (root-tag absence, front-matter delimiter, fragment-path
+    // segment) — not a heuristic guess about composition. Pairs with the
+    // matching gate on `semantics/heading-hierarchy`
+    // (Q7-FRAGMENT-FILE-HEADING-HIERARCHY); the shared `isFragmentFile`
+    // helper in `src/engine/layout-partial.ts` is the single source of
+    // truth for both rules.
+    const fragment = isFragmentFile(doc, ctx.source, ctx.filePath);
+
     // Layout / partial detection. Jekyll / Hugo / ERB / Razor layouts
     // compose the rendered page from this file's markup PLUS another
     // file's content (`{{ content }}`, `<%= yield %>`, `@RenderBody()`,
@@ -78,13 +101,19 @@ export const rule = defineRule({
     // `couldBeWrongBecause` + a fragment-shape message suffix so an
     // agent routes to the parent/partial chain in one read. The
     // deterministic escape hatch is the source-level disable pragma.
+    // Layout-partial enrichment fires only on files that are partials
+    // BUT NOT fragments — fragment-shaped files are suppressed by the
+    // gate above (the stronger signal).
     const layoutOrPartial = isHtmlLayoutOrPartial(doc, ctx.source);
 
     // Bodyless files that also don't look like layout partials are
     // just fragments (alt-text snippet, test-rule fixture, component
     // sketch) — skip as before. Bodyless files that DO look like
-    // partials get the enriched emit.
+    // partials get the enriched emit, unless the file is also classified
+    // as a fragment (front-matter, fragment-path) in which case the
+    // gate above suppresses the emit outright.
     if (bodies.length === 0) {
+      if (fragment) return;
       if (!layoutOrPartial) return;
       emitBodylessPartial(ctx, doc);
       return;
@@ -98,9 +127,16 @@ export const rule = defineRule({
 
     const mains = collectMainLandmarks(doc);
     if (mains.length === 0) {
+      // Fragment-file gate: suppress the missing-<main> emit on files
+      // whose composed parent supplies the landmark.
+      if (fragment) return;
       emitMissingMain(ctx, bodies[0], doc, layoutOrPartial);
       return;
     }
+    // Multiple-<main> emits fire even on fragment-classified files —
+    // declaring two <main> landmarks in the same file is a real
+    // observable ordering bug regardless of whether the file is
+    // composed into a parent layout.
     if (mains.length > 1) emitDuplicateMains(ctx, mains);
   },
 });

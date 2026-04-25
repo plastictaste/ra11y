@@ -442,13 +442,16 @@ describe("rule semantics/landmark-main", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("fires on a page with Jekyll layout: front-matter even when <main> would otherwise clear it", () => {
-      // Page with `layout:` front-matter declares that it is composed
-      // INTO a parent layout — even if the page itself contains a
-      // <main>, the composed page might duplicate landmarks. But this
-      // test exercises the missing-<main> path: page declares a
-      // layout, has body+h1+content shape, no <main>. Firing is
-      // correct; the partial-tag reflects the composition.
+    it("does NOT fire on a page with `---` front-matter (fragment-file gate)", () => {
+      // Front-matter at the top of the file is conclusive evidence the
+      // file is content composed into a parent layout — the parent
+      // supplies the <main> landmark. Per Q8-HEADING-HIERARCHY-FRAGMENT-
+      // EMISSION, the fragment-file gate suppresses the missing-<main>
+      // emit on these files outright (the previous "enriched fire"
+      // shape over-surfaced — the agent had to re-read each cited file
+      // to learn the composition was intentional). The dedicated
+      // fragment-file gate block below covers the three branches of
+      // `isFragmentFile` exhaustively.
       const v = runRule(
         rule,
         [
@@ -468,8 +471,7 @@ describe("rule semantics/landmark-main", () => {
         ].join("\n"),
         { filePath: "about.html" },
       );
-      expect(v).toHaveLength(1);
-      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+      expect(v).toHaveLength(0);
     });
 
     it("does NOT count <head> children toward body descendants", () => {
@@ -823,6 +825,217 @@ describe("rule semantics/landmark-main", () => {
       expect(message).toContain("layout wrapper or template partial");
       expect(message).toContain("Body has");
       expect(message).toContain("Other landmark elements present");
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Fragment-file gate (Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION).
+  //
+  // Component-fragment files (no root <html>/<body>/<head>), content-
+  // fragment files (`---` front-matter), and partials under conventional
+  // fragment paths (`_includes/`, `_layouts/`, `_partials/`, `partials/`,
+  // `components/`) do not own the document envelope — the composed parent
+  // layout supplies <main>. The "missing <main>" emit is suppressed
+  // outright on these files; the duplicate-<main> emit continues to fire
+  // because multiple <main> elements in the same file is a real
+  // observable bug regardless of envelope composition.
+  //
+  // Per docs/kb/architecture/ai-first-consumer.md, this suppression is
+  // honest because fragment classification is structural evidence
+  // (root-tag absence, front-matter delimiter, fragment-path segment) —
+  // not a heuristic guess about composition. Mirrors the matching gate
+  // on `semantics/heading-hierarchy` (Q7-FRAGMENT-FILE-HEADING-
+  // HIERARCHY); the shared `isFragmentFile` helper in
+  // `src/engine/layout-partial.ts` is the single source of truth.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("fragment-file gate", () => {
+    describe("branch (a) — no <html>/<body>/<head> envelope", () => {
+      it("suppresses missing-<main> on a bodyless component fragment with composition directive", () => {
+        // Pre-Q8 this shape would have surfaced via the bodyless-partial
+        // enrichment branch ({% include %} + no body close = layout
+        // partial). Under Q8 the file has none of <html>/<body>/<head>
+        // and qualifies as a fragment by branch (a) — the stronger
+        // signal — so the rule suppresses outright.
+        const v = runRule(
+          rule,
+          ["{%- include header.html -%}", "<div>partial body content</div>"].join("\n"),
+          { filePath: "fragment.html" },
+        );
+        expect(v).toHaveLength(0);
+      });
+
+      it("does NOT suppress when <html> + <head> are present (head-only is not a fragment)", () => {
+        // Branch (a) requires ALL of <html>/<body>/<head> absent. A
+        // bodyless layout file with <html> + <head> still gets the
+        // bodyless-partial enrichment — guards the
+        // jekyll-default-layout/top.html fixture invariant.
+        const v = runRule(
+          rule,
+          [
+            "<!DOCTYPE html>",
+            "<html>",
+            "  <head>",
+            "    <meta charset='utf-8'>",
+            "    {% seo %}",
+            "  </head>",
+            "</html>",
+          ].join("\n"),
+          { filePath: "top.html" },
+        );
+        expect(v).toHaveLength(1);
+        expect(v[0]?.couldBeWrongBecause).toEqual([
+          "partial_or_layout_file_requires_composed_check",
+        ]);
+      });
+    });
+
+    describe("branch (b) — `---` front-matter delimiter", () => {
+      it("suppresses missing-<main> on a file beginning with `---` front-matter", () => {
+        const source = [
+          "---",
+          "title: Foo",
+          "---",
+          "<html>",
+          "  <body>",
+          "    <h1>About</h1>",
+          "    <p>Body content.</p>",
+          "    <p>More body content.</p>",
+          "    <p>Even more body content.</p>",
+          "    <p>Yet more body content.</p>",
+          "  </body>",
+          "</html>",
+        ].join("\n");
+        const v = runRule(rule, source, { filePath: "post.html" });
+        expect(v).toHaveLength(0);
+      });
+
+      it("does NOT classify a file with stray `---` mid-source as a fragment", () => {
+        // The opener must be at the very top of the file. A horizontal
+        // rule mid-document is not a front-matter signal — the rule
+        // continues to fire as before.
+        const source = [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <h1>Page</h1>",
+          "    <p>Some prose.</p>",
+          "    <p>",
+          "---",
+          "    </p>",
+          "    <p>More prose.</p>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n");
+        const v = runRule(rule, source, { filePath: "page.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("no <main>");
+      });
+    });
+
+    describe("branch (c) — fragment-convention path", () => {
+      const envelopedSource = [
+        "<html>",
+        "  <body>",
+        "    <header>h</header>",
+        "    <h1>Title</h1>",
+        "    <p>Some content.</p>",
+        "    <p>More content.</p>",
+        "    <p>Even more content.</p>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+
+      it("suppresses missing-<main> on `_includes/` path", () => {
+        const v = runRule(rule, envelopedSource, { filePath: "site/_includes/header.html" });
+        expect(v).toHaveLength(0);
+      });
+
+      it("suppresses missing-<main> on `_layouts/` path", () => {
+        const v = runRule(rule, envelopedSource, { filePath: "_layouts/default.html" });
+        expect(v).toHaveLength(0);
+      });
+
+      it("suppresses missing-<main> on `_partials/` path", () => {
+        const v = runRule(rule, envelopedSource, { filePath: "src/_partials/sidebar.html" });
+        expect(v).toHaveLength(0);
+      });
+
+      it("suppresses missing-<main> on `partials/` path (no leading underscore)", () => {
+        const v = runRule(rule, envelopedSource, { filePath: "templates/partials/header.html" });
+        expect(v).toHaveLength(0);
+      });
+
+      it("suppresses missing-<main> on `components/` path", () => {
+        const v = runRule(rule, envelopedSource, { filePath: "src/components/card.html" });
+        expect(v).toHaveLength(0);
+      });
+
+      it("requires segment-flanked match — `mycomponents/` does NOT trigger", () => {
+        const v = runRule(rule, envelopedSource, { filePath: "src/mycomponents/page.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("no <main>");
+      });
+
+      it("does NOT classify `_docs/` as a fragment path (still emits)", () => {
+        // `_docs/` is in PARTIAL_PATH_SEGMENTS but NOT
+        // FRAGMENT_PATH_SEGMENTS — the file is not gated as a fragment
+        // and still surfaces the missing-<main> finding. (Unlike
+        // `semantics/heading-hierarchy`, this rule's layout-partial
+        // enrichment predicate is `isHtmlLayoutOrPartial` — composition
+        // directives or asymmetric root tags or `layout:` front-matter
+        // — and does not include the `_docs/` path-only branch, so
+        // `_docs/` files emit at full confidence here.)
+        const v = runRule(rule, envelopedSource, { filePath: "_docs/intro.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("no <main>");
+        expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+      });
+    });
+
+    describe("duplicate-<main> emits keep firing on fragments", () => {
+      // Multiple <main> elements in the same file is a real observable
+      // ordering bug — composition can't supply additional landmarks
+      // that contradict ARIA. The fragment gate must NOT suppress these.
+      // The body must still clear `looksLikeFullPage` (a duplicate-<main>
+      // test on a fragmentary body would short-circuit on the page-shape
+      // gate before reaching the duplicate check); these fixtures pair
+      // the duplicate landmarks with sibling structure (header / footer)
+      // so the page-shape predicate resolves true.
+      it("emits duplicate-<main> on a `_includes/` partial with two <main>", () => {
+        const source = [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <main>one</main>",
+          "    <main>two</main>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n");
+        const v = runRule(rule, source, { filePath: "_includes/widget.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("2 <main>");
+      });
+
+      it("emits duplicate-<main> on a front-matter file with two <main>", () => {
+        const source = [
+          "---",
+          "title: Foo",
+          "---",
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <main>one</main>",
+          "    <main>two</main>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n");
+        const v = runRule(rule, source, { filePath: "post.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("2 <main>");
+      });
     });
   });
 });
