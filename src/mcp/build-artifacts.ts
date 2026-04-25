@@ -29,17 +29,24 @@
  *      (canonical pre-minified bundle marker — `bootstrap.min.css`,
  *      `jquery.min.js`) OR the source text crosses the single-long-
  *      line probe (> {@link MINIFIED_LINE_THRESHOLD} chars on one
- *      line) AND a second-tier corroborator also fires: either ≥25%
- *      of lines exceed the threshold or the median line length itself
- *      exceeds it. The standalone long-line probe used to be enough
- *      but mis-labeled authored files (Astro `<Example code={`…`}/>`
- *      template literals, Google-Maps iframe URLs, SCSS type-signature
- *      function bodies) that happen to cross 500 chars on exactly one
- *      authored line — the single signal is too weak to be provable
- *      from file shape alone. A real minified bundle reads as
- *      either several long lines among few (ratio) or one enormous
- *      line (median); one long line among fifty short is not
- *      minification evidence.
+ *      line) AND a second-tier corroborator also fires: either the
+ *      median line length itself exceeds the threshold OR the file
+ *      carries ≥{@link MINIFIED_LONG_LINE_MIN_COUNT} long lines AND
+ *      ≥25% of lines exceed the threshold. The standalone long-line
+ *      probe used to be enough but mis-labeled authored files (Astro
+ *      `<Example code={`…`}/>` template literals, Google-Maps iframe
+ *      URLs, SCSS type-signature function bodies) that cross 500 chars
+ *      on exactly one authored line — the single signal is too weak
+ *      to be provable from file shape alone. The ratio's count floor
+ *      (introduced 2026-04-24) tightens the corroborator further: a
+ *      4-line authored file with one long line satisfies the ratio at
+ *      `1/4 = 0.25` and the original predicate mis-labeled vanilla-JS
+ *      pages with concatenated SRI preload links, landing pages with
+ *      one inline-SVG path command, and design-system token modules
+ *      with one long `calc()` value. A real minified bundle reads as
+ *      either several long lines among few (ratio + count) or one
+ *      enormous line (median); one long line among any number of
+ *      short ones is not minification evidence.
  *   2. `sourcemap-sibling`. A sibling `.map` file is in the scanned
  *      set with the matching basename. Pairing a `.js` / `.css` with
  *      its `.map` is the signature of a compiled bundle. The `.map`
@@ -320,6 +327,36 @@ function isCssPath(filePath: string): boolean {
 const MINIFIED_LONG_LINE_RATIO = 0.25;
 
 /**
+ * Absolute floor on the long-line *count* before the ratio corroborator
+ * is allowed to fire. Without this floor a 4-line authored file with
+ * one >500-char line satisfies the ratio at exactly `1/4 = 0.25` —
+ * the canonical small-file false-positive shape: vanilla-JS pages
+ * concatenating SRI-hashed preload links into one `<head>` line,
+ * landing pages inlining SVG `<path d="...">` commands on one line,
+ * design-system token modules with one long `calc()` value, SCSS
+ * partials with one long `@function` type signature. One long line
+ * is the same evidence that already failed to corroborate on its
+ * own at the {@link hasLongMinifiedLine} probe; the ratio
+ * corroborator must carry independent weight, so it requires
+ * *several* long lines (the canonical minified-CSS shape — one rule
+ * per line with every line long).
+ *
+ * The pure-one-line minified-bundle case (canonical minified JS with
+ * the whole bundle on a single unwrapped line) is still covered by
+ * the median-line-length conjunct in
+ * {@link hasLongMinifiedLineCorroborated}: a 1-of-1 long-line file
+ * yields median = long, not median = short, so that branch fires
+ * regardless of this count floor.
+ *
+ * Three is the smallest count that survives the observed false-
+ * positive shapes — tiny authored files top out at one-or-two long
+ * lines (one SVG path, one iframe URL, one calc(), plus at most one
+ * prop-bundle wrapper on a sibling line); real bundle output runs
+ * many more.
+ */
+const MINIFIED_LONG_LINE_MIN_COUNT = 3;
+
+/**
  * Returns true when any single contiguous line in `source` exceeds
  * {@link MINIFIED_LINE_THRESHOLD} characters. The probe scans the
  * source linearly tracking inter-newline run length so the helper
@@ -394,13 +431,22 @@ function computeLineStats(source: string): {
  * character length. CRLF sequences fold to a single line break so
  * Windows-authored or Windows-checked-out files report the same line
  * count as POSIX ones. A trailing line without a terminator still
- * counts as one line. The helper allocates exactly the returned
+ * counts as one line. A trailing line break does NOT spawn a phantom
+ * zero-length line entry — `wc -l + 1` semantics for unterminated
+ * input, `wc -l` semantics for terminated. (Without this skip, a
+ * `.js` minified bundle that ends with a Windows-style trailing
+ * `\r\n` after one 700-char run would report `[700, 0]`, dragging
+ * the median to 350 and silently dropping the corroborator's median
+ * conjunct on the file. The skip-trailing-empty rule keeps the line
+ * stats faithful to the source's actual line count regardless of
+ * terminator habits.) The helper allocates exactly the returned
  * array — no intermediate splits.
  */
 function collectLineLengths(source: string): readonly number[] {
   const lengths: number[] = [];
   let runLength = 0;
   let lastWasCR = false;
+  let lastWasTerminator = false;
   for (let i = 0; i < source.length; i++) {
     const ch = source.charCodeAt(i);
     if (ch === 10 || ch === 13) {
@@ -409,18 +455,24 @@ function collectLineLengths(source: string): readonly number[] {
       // recording a zero-length line.
       if (ch === 10 && lastWasCR) {
         lastWasCR = false;
+        lastWasTerminator = true;
         continue;
       }
       lengths.push(runLength);
       runLength = 0;
       lastWasCR = ch === 13;
+      lastWasTerminator = true;
       continue;
     }
     runLength++;
     lastWasCR = false;
+    lastWasTerminator = false;
   }
-  // Flush the final line (unterminated file).
-  lengths.push(runLength);
+  // Flush only the final unterminated line — a terminator at end of
+  // input has already pushed its line, and re-emitting a zero-length
+  // entry here would inflate `totalLines` and pull `medianLineLength`
+  // toward zero on otherwise-bundle-shaped files.
+  if (!lastWasTerminator) lengths.push(runLength);
   return lengths;
 }
 
@@ -441,7 +493,8 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
 /**
  * Returns true when the single-long-line probe fires AND at least one
  * second-tier corroborator also fires:
- *   (a) ≥{@link MINIFIED_LONG_LINE_RATIO} of lines exceed
+ *   (a) ≥{@link MINIFIED_LONG_LINE_MIN_COUNT} long lines AND ≥
+ *       {@link MINIFIED_LONG_LINE_RATIO} of lines exceed
  *       {@link MINIFIED_LINE_THRESHOLD}, OR
  *   (b) the median line length itself exceeds the threshold.
  *
@@ -450,6 +503,17 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
  * but every line long), while (b) covers "one enormous line file"
  * (canonical minified JS bundle with everything on a single unwrapped
  * line).
+ *
+ * The count floor on (a) is load-bearing: without it a 4-line
+ * authored file with a single >500-char line satisfies the ratio at
+ * exactly `1/4 = 0.25` even though one long line is exactly the
+ * shape the upstream {@link hasLongMinifiedLine} probe fired on. The
+ * ratio corroborator only carries independent weight when *several*
+ * long lines exist; one long line in a tiny authored file is the
+ * canonical false-positive shape and must not corroborate. See
+ * {@link MINIFIED_LONG_LINE_MIN_COUNT} for the worked field-report
+ * cases (vanilla-JS SRI preloads, inline SVG paths, design-system
+ * `calc()` token modules, SCSS function signatures).
  *
  * The `.min.` infix, hashed filenames, bundler-output path ancestry,
  * and `.map` sibling signals are already deterministic standalone
@@ -463,6 +527,7 @@ function hasLongMinifiedLineCorroborated(source: string): boolean {
   const { totalLines, longLineCount, medianLineLength } = computeLineStats(source);
   if (totalLines === 0) return false;
   if (medianLineLength > MINIFIED_LINE_THRESHOLD) return true;
+  if (longLineCount < MINIFIED_LONG_LINE_MIN_COUNT) return false;
   return longLineCount / totalLines >= MINIFIED_LONG_LINE_RATIO;
 }
 

@@ -35,7 +35,7 @@ import type { FixtureAssertions } from "../runner.ts";
 export const assertions: FixtureAssertions = {
   description:
     "A 4-line hand-authored landing page whose single inline-SVG line carries a >500-char " +
-    "`<path d=\"...\">` command set must NOT receive a `scannedBuildArtifacts` label. " +
+    '`<path d="...">` command set must NOT receive a `scannedBuildArtifacts` label. ' +
     "Under the previous predicate the 1-of-4 long-line ratio hit 25% and labeled the file " +
     "`minified`; under the fix the ratio corroborator requires ≥3 long lines so a single " +
     "inline-SVG line in an otherwise-short authored page stays unlabeled.",

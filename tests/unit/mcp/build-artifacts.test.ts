@@ -199,6 +199,58 @@ describe("classifyBuildArtifact — single-long-line second-probe corroboration"
     // evidence" rather than dividing by zero.
     expect(classifyBuildArtifact("src/empty.css", "")).toBe(null);
   });
+
+  // V1-BUILD-ARTIFACT-REGRESSION-AUDIT-MINIFIED: the ratio corroborator
+  // requires ≥3 long lines, not just `longLineCount/totalLines >= 0.25`.
+  // Without the count floor, a tiny authored file with one >500-char
+  // line satisfies the ratio at exactly `1/4 = 0.25` and gets
+  // mis-labeled `minified`, training agents to skip authored source.
+  // The four shapes below are the canonical small-file false-positive
+  // cases (real-world fixtures pin the same invariant at the harness
+  // layer; these unit tests pin the predicate boundary).
+  it("does NOT classify a 4-line HTML whose ONE >500-char line concatenates SRI preload links (1/4 ratio FP)", () => {
+    // Vanilla-JS shape: a 4-line authored page where the `<head>` line
+    // concatenates several `<link rel="preload" integrity="sha512-...">`
+    // tags. One long line out of 4 = 25% ratio — must NOT corroborate
+    // under the count-floor predicate.
+    const long = `<link integrity="sha512-${"A".repeat(120)}"><link integrity="sha512-${"B".repeat(120)}"><link integrity="sha512-${"C".repeat(120)}">`;
+    const source = ["<!doctype html>", "<html><head>", long, "</head></html>"].join("\n");
+    expect(classifyBuildArtifact("index.html", source)).toBe(null);
+  });
+
+  it("does NOT classify a 4-line HTML whose ONE >500-char line is an inline-SVG path (1/4 ratio FP)", () => {
+    // Landing-page shape: a 4-line authored file where the `<svg>` line
+    // carries a long `<path d="...">` command sequence. One long line
+    // out of 4 = 25% ratio — must NOT corroborate.
+    const long = `<svg><path d="M${"1.234,5.678 ".repeat(60)}Z"/></svg>`;
+    const source = ["<!doctype html>", "<html><body>", long, "</body></html>"].join("\n");
+    expect(classifyBuildArtifact("logo.html", source)).toBe(null);
+  });
+
+  it("does NOT classify a 4-line CSS file whose ONE >500-char line is a long calc()/var() bundle (1/4 ratio FP)", () => {
+    // Design-system token-module shape (also covers SCSS function-body
+    // type signatures, since the harness reads source content + path,
+    // not extension semantics). One long line out of 4 = 25% ratio —
+    // must NOT corroborate.
+    const long = `.scale { --x: calc(${Array.from({ length: 30 }, (_, i) => `var(--v${i}) * 1px`).join(" + ")}); }`;
+    const source = [
+      ":root { --a: 1; }",
+      long,
+      ".token-a { color: red; }",
+      ".token-b { color: blue; }",
+    ].join("\n");
+    expect(classifyBuildArtifact("tokens.css", source)).toBe(null);
+  });
+
+  it("does NOT classify a 4-line file with TWO long lines (2/4 ratio = 50% but still under the count floor)", () => {
+    // Even at 50% ratio, two long lines is below the count floor of 3.
+    // The pure-one-line minified-JS bundle case is still covered by the
+    // median check; the ratio predicate only carries weight when several
+    // long lines exist (canonical minified-CSS shape).
+    const long = `${"a".repeat(600)}`;
+    const source = [".btn { padding: 0.5rem; }", long, ".x { color: red; }", long].join("\n");
+    expect(classifyBuildArtifact("src/prefs.css", source)).toBe(null);
+  });
 });
 
 describe("classifyBuildArtifact — `hashed-filename` reason", () => {
