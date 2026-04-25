@@ -37,6 +37,7 @@ import {
   classifyBuildArtifact,
   classifyBuildArtifactDetailed,
   collectBuildArtifacts,
+  detectVendorLibraries,
   groupBuildArtifactsByBasename,
   isBuildArtifact,
   type ScannedBuildArtifact,
@@ -906,5 +907,196 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
     expect(out.grouped[0]?.count).toBe(60);
     expect(out.ungrouped).toEqual([]);
     expect(out.ungroupedTruncated).toBeUndefined();
+  });
+});
+
+// V1-VENDOR-LIBRARY-BANNER-DETECTION: deterministic identification of
+// well-known vendor libraries from their first-line banner comment.
+// The doctrine bar is "labeled buckets are only honest when provable
+// from the code" — these tests pin the positive direction (each
+// curated banner matches the right library + extracts the version
+// when carried), the negative direction (a hand-authored file with a
+// brand name in a comment but the wrong banner shape stays
+// unlabeled), and the present-when-meaningful shape (`version` is
+// omitted, not sentinel-empty, when the banner doesn't carry one).
+describe("detectVendorLibraries — positive direction (curated banners)", () => {
+  it("identifies Bootstrap 5 from its single-line banner with version capture", () => {
+    const source =
+      "/*! Bootstrap v5.3.0 (https://getbootstrap.com/) Copyright 2011-2023 The Bootstrap Authors */\n.btn{}";
+    expect(detectVendorLibraries([{ filePath: "vendor/bootstrap.min.css", source }])).toEqual([
+      { path: "vendor/bootstrap.min.css", library: "bootstrap", version: "5.3.0" },
+    ]);
+  });
+
+  it("identifies Bootstrap 3 from its multi-line banner — version on the opener line", () => {
+    // The Bootstrap 3.x distribution emits `/*!\n * Bootstrap v3.3.7 ...`
+    // — the leading non-blank line is `/*!`, but the regex's leading-`*`
+    // tolerance can't reach into the second line of a multi-line banner.
+    // Older bundles that fold the version onto the opener line still
+    // match; bundles that defer to a follow-up line surface as no-match
+    // (documented limitation in `firstNonBlankLine`).
+    const source = "/*! * Bootstrap v3.3.7 (http://getbootstrap.com) */\n.btn{}";
+    const result = detectVendorLibraries([{ filePath: "bootstrap.min.css", source }]);
+    expect(result).toEqual([{ path: "bootstrap.min.css", library: "bootstrap", version: "3.3.7" }]);
+  });
+
+  it("identifies jQuery from its canonical banner with version capture", () => {
+    const source =
+      "/*! jQuery v3.6.0 | (c) OpenJS Foundation and other contributors | jquery.org/license */\n!function(){}();";
+    expect(detectVendorLibraries([{ filePath: "vendor/jquery.min.js", source }])).toEqual([
+      { path: "vendor/jquery.min.js", library: "jquery", version: "3.6.0" },
+    ]);
+  });
+
+  it("identifies jQuery UI from its canonical banner with version capture", () => {
+    const source =
+      "/*! jQuery UI - v1.12.1 - 2016-09-14 http://jqueryui.com */\n.ui-helper-clearfix{}";
+    expect(detectVendorLibraries([{ filePath: "vendor/jquery-ui.min.css", source }])).toEqual([
+      { path: "vendor/jquery-ui.min.css", library: "jquery-ui", version: "1.12.1" },
+    ]);
+  });
+
+  it("identifies Font Awesome 6 (Free) from its banner with version capture", () => {
+    const source =
+      "/*! Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com */\n.fa{}";
+    expect(detectVendorLibraries([{ filePath: "css/font-awesome.min.css", source }])).toEqual([
+      { path: "css/font-awesome.min.css", library: "font-awesome", version: "6.4.0" },
+    ]);
+  });
+
+  it("identifies Font Awesome Pro from the same banner shape", () => {
+    const source = "/*! Font Awesome Pro 6.4.0 by @fontawesome - https://fontawesome.com */\n.fa{}";
+    expect(detectVendorLibraries([{ filePath: "css/fontawesome.css", source }])).toEqual([
+      { path: "css/fontawesome.css", library: "font-awesome", version: "6.4.0" },
+    ]);
+  });
+
+  it("identifies Animate.css with version omitted (banner does not carry version)", () => {
+    // animate.css's classic banner is `@license animate.css - http://daneden.me/animate ...`
+    // with no parseable version slot. Per the present-when-meaningful
+    // rule, `version` is omitted entirely (not `""`, not `null`).
+    const source =
+      "/*! @license animate.css - http://daneden.me/animate Copyright (c) 2017 Daniel Eden */\n.fadeIn{}";
+    expect(detectVendorLibraries([{ filePath: "css/animate.css", source }])).toEqual([
+      { path: "css/animate.css", library: "animate.css" },
+    ]);
+  });
+
+  it("identifies Modernizr from its banner with version capture", () => {
+    const source =
+      "/*! modernizr 3.6.0 (Custom Build) | MIT * https://modernizr.com/download/?-flexbox */\n;!function(){}();";
+    expect(detectVendorLibraries([{ filePath: "js/modernizr-custom.js", source }])).toEqual([
+      { path: "js/modernizr-custom.js", library: "modernizr", version: "3.6.0" },
+    ]);
+  });
+
+  it("identifies normalize.css from its banner with version capture", () => {
+    const source =
+      "/*! normalize.css v8.0.1 | MIT License | github.com/necolas/normalize.css */\nhtml{}";
+    expect(detectVendorLibraries([{ filePath: "css/normalize.css", source }])).toEqual([
+      { path: "css/normalize.css", library: "normalize.css", version: "8.0.1" },
+    ]);
+  });
+
+  it("identifies Eric Meyer reset.css from its URL-bearing banner (no version)", () => {
+    // Meyer's reset.css banner cites the URL in lieu of a version — the
+    // URL is the unique identifying token. `version` stays absent.
+    const source = "/* http://meyerweb.com/eric/tools/css/reset/\n   v2.0 | 20110126 */\nhtml{}";
+    expect(detectVendorLibraries([{ filePath: "css/reset.css", source }])).toEqual([
+      { path: "css/reset.css", library: "reset.css" },
+    ]);
+  });
+
+  it("identifies fancyBox from its banner with version capture", () => {
+    const source =
+      "/*! fancyBox v3.5.7 fancyapps.com | fancyapps.com/fancybox/3/docs/#license */\n.fancybox{}";
+    expect(detectVendorLibraries([{ filePath: "vendor/fancybox.min.css", source }])).toEqual([
+      { path: "vendor/fancybox.min.css", library: "fancybox", version: "3.5.7" },
+    ]);
+  });
+
+  it("identifies fancyBox from its `// fancyBox v...` line-comment banner (script form)", () => {
+    const source = "// fancyBox v3.5.7\n// http://fancyapps.com/fancybox/\n!function(){}();";
+    expect(detectVendorLibraries([{ filePath: "js/fancybox.js", source }])).toEqual([
+      { path: "js/fancybox.js", library: "fancybox", version: "3.5.7" },
+    ]);
+  });
+
+  it("tolerates leading whitespace and a UTF-8 BOM before the banner", () => {
+    // Some build pipelines and editors prepend a BOM (0xFEFF) or leading
+    // blank lines / indentation. The first-line probe skips both so the
+    // banner regex still anchors at `/*!`.
+    const source = `﻿\n  /*! Bootstrap v5.3.0 (https://getbootstrap.com/) */\n.btn{}`;
+    expect(detectVendorLibraries([{ filePath: "vendor/bootstrap.min.css", source }])).toEqual([
+      { path: "vendor/bootstrap.min.css", library: "bootstrap", version: "5.3.0" },
+    ]);
+  });
+});
+
+describe("detectVendorLibraries — negative direction (no false positives)", () => {
+  it("does NOT label a hand-authored CSS file that mentions Bootstrap in a non-banner comment", () => {
+    // The first non-whitespace line is a normal CSS comment, not the
+    // canonical `/*! Bootstrap v...` banner. The library name appears
+    // elsewhere — that is not enough.
+    const source = "/* App styles, inspired by Bootstrap. */\n.app-btn { padding: 0.5rem; }\n";
+    expect(detectVendorLibraries([{ filePath: "src/styles/app.css", source }])).toEqual([]);
+  });
+
+  it("does NOT label a file whose first line is empty / pure whitespace with no banner", () => {
+    const source = "\n\n.btn { color: red; }\n";
+    expect(detectVendorLibraries([{ filePath: "src/styles/buttons.css", source }])).toEqual([]);
+  });
+
+  it("does NOT label a file whose path contains `bootstrap` but whose source has no banner", () => {
+    // Path-based matching is suppression in disguise (see backlog).
+    // Only the deterministic banner regex earns the label — a vendor
+    // directory name cannot.
+    const source = ".my-styles { color: blue; }\n";
+    expect(
+      detectVendorLibraries([{ filePath: "vendor/bootstrap-themes/custom.css", source }]),
+    ).toEqual([]);
+  });
+
+  it("does NOT label a hand-authored JS file whose first line mentions jQuery in prose", () => {
+    const source = "// This module wraps jQuery for our internal API.\nexport function foo() {}";
+    expect(detectVendorLibraries([{ filePath: "src/utils/jquery-wrapper.js", source }])).toEqual(
+      [],
+    );
+  });
+
+  it("returns an empty array on a fully empty file (no banner to read)", () => {
+    expect(detectVendorLibraries([{ filePath: "empty.css", source: "" }])).toEqual([]);
+  });
+});
+
+describe("detectVendorLibraries — batch + ordering", () => {
+  it("returns one entry per matched file, sorted by path ascending (deterministic across runs)", () => {
+    const files = [
+      {
+        filePath: "z/jquery.min.js",
+        source: "/*! jQuery v3.6.0 | (c) OpenJS Foundation */\n!function(){}();",
+      },
+      {
+        filePath: "a/bootstrap.min.css",
+        source: "/*! Bootstrap v5.3.0 (https://getbootstrap.com/) */\n.btn{}",
+      },
+      {
+        filePath: "m/fontawesome.css",
+        source: "/*! Font Awesome Free 6.4.0 by @fontawesome */\n.fa{}",
+      },
+    ];
+    expect(detectVendorLibraries(files)).toEqual([
+      { path: "a/bootstrap.min.css", library: "bootstrap", version: "5.3.0" },
+      { path: "m/fontawesome.css", library: "font-awesome", version: "6.4.0" },
+      { path: "z/jquery.min.js", library: "jquery", version: "3.6.0" },
+    ]);
+  });
+
+  it("returns an empty array when no file in the batch matches a curated banner", () => {
+    const files = [
+      { filePath: "src/a.css", source: ".x{}" },
+      { filePath: "src/b.js", source: "console.log(1);" },
+    ];
+    expect(detectVendorLibraries(files)).toEqual([]);
   });
 });
