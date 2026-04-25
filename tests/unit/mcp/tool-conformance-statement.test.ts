@@ -377,18 +377,23 @@ describe("conformance_statement: signing flow", () => {
   });
 });
 
-describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-CAP)", () => {
+describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-ARRAY-UNCAPPED)", () => {
   it("returns the full file manifest inline with no truncation warning when the scope fits under the cap", async () => {
     await withScratch(async (cwd) => {
-      // Three TSX files — well under the default 100 cap. Expect the
+      // Three TSX files — well under the default 50 cap. Expect the
       // full list to ship inline and no truncation warning.
       await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
       await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
       await writeFile(join(cwd, "c.tsx"), "export const C = () => null;\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
-      const scope = body["scope"] as { readonly filesCount: number; readonly files?: string[] };
+      const scope = body["scope"] as {
+        readonly filesCount: number;
+        readonly root: string;
+        readonly files?: string[];
+      };
       expect(scope.filesCount).toBe(3);
+      expect(scope.root).toBe(cwd);
       expect(Array.isArray(scope.files)).toBe(true);
       expect(scope.files?.length).toBe(3);
       const warnings = (body["warnings"] as string[] | undefined) ?? [];
@@ -412,9 +417,14 @@ describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-CAP
         cwd,
         scopeFilesCap: 2,
       });
-      const scope = body["scope"] as { readonly filesCount: number; readonly files?: string[] };
+      const scope = body["scope"] as {
+        readonly filesCount: number;
+        readonly root: string;
+        readonly files?: string[];
+      };
       // Real count stays honest; the list is gone.
       expect(scope.filesCount).toBe(3);
+      expect(scope.root).toBe(cwd);
       expect(scope.files).toBeUndefined();
       const warnings = (body["warnings"] as string[] | undefined) ?? [];
       expect(warnings).toContain("scope_files_truncated_count_exceeded");
@@ -425,7 +435,7 @@ describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-CAP
     });
   });
 
-  it("verboseScope: true bypasses the cap and returns the full manifest with no truncation warning", async () => {
+  it("verboseMeta: true bypasses the cap and returns the full manifest with no truncation warning", async () => {
     await withScratch(async (cwd) => {
       await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
       await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
@@ -436,7 +446,7 @@ describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-CAP
         level: "AA",
         cwd,
         scopeFilesCap: 2,
-        verboseScope: true,
+        verboseMeta: true,
       });
       const scope = body["scope"] as { readonly filesCount: number; readonly files?: string[] };
       expect(scope.filesCount).toBe(3);
@@ -446,15 +456,63 @@ describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-CAP
     });
   });
 
-  it("documents the default cap (100) via the conformance_statement tool schema", () => {
+  it("default response on >50-file corpus omits the file array; verboseMeta: true re-includes it", async () => {
+    // V1-CONFORMANCE-SCOPE-FILES-ARRAY-UNCAPPED regression: a >50-file
+    // corpus should NOT inline the path manifest by default; the agent
+    // can flip `verboseMeta: true` when the full list is load-bearing.
+    // The original failure shipped 4043 paths × ~90 chars = 360KB on the
+    // templates corpus, 16.8× the typical MCP token ceiling.
+    await withScratch(async (cwd) => {
+      // 51 files trips the default cap of 50.
+      const fileCount = 51;
+      for (let i = 0; i < fileCount; i++) {
+        await writeFile(join(cwd, `f${i}.tsx`), `export const F${i} = () => null;\n`);
+      }
+      const session = new McpSession();
+      const { body: defaultBody } = await call(session, {
+        standard: "wcag22",
+        level: "AA",
+        cwd,
+      });
+      const defaultScope = defaultBody["scope"] as {
+        readonly filesCount: number;
+        readonly root: string;
+        readonly files?: readonly string[];
+      };
+      expect(defaultScope.filesCount).toBe(fileCount);
+      expect(defaultScope.root).toBe(cwd);
+      expect(defaultScope.files).toBeUndefined();
+      const defaultWarnings = (defaultBody["warnings"] as string[] | undefined) ?? [];
+      expect(defaultWarnings).toContain("scope_files_truncated_count_exceeded");
+
+      const { body: verboseBody } = await call(session, {
+        standard: "wcag22",
+        level: "AA",
+        cwd,
+        verboseMeta: true,
+      });
+      const verboseScopeBody = verboseBody["scope"] as {
+        readonly filesCount: number;
+        readonly files?: readonly string[];
+      };
+      expect(verboseScopeBody.filesCount).toBe(fileCount);
+      expect(verboseScopeBody.files?.length).toBe(fileCount);
+      const verboseWarnings = (verboseBody["warnings"] as string[] | undefined) ?? [];
+      expect(verboseWarnings).not.toContain("scope_files_truncated_count_exceeded");
+    });
+  });
+
+  it("documents the verboseMeta knob + default cap via the conformance_statement tool schema", () => {
     const schema = conformanceStatementTool.def.inputSchema as {
       readonly properties: Record<string, { readonly description?: string }>;
     };
-    expect(schema.properties["verboseScope"]).toBeDefined();
+    expect(schema.properties["verboseMeta"]).toBeDefined();
     expect(schema.properties["scopeFilesCap"]).toBeDefined();
     // The schema description names the default so callers don't have to
     // read source to pick a sensible override.
-    expect(schema.properties["scopeFilesCap"]?.description).toContain("100");
-    expect(schema.properties["verboseScope"]?.description).toContain("scope_files_truncated");
+    expect(schema.properties["scopeFilesCap"]?.description).toContain("50");
+    expect(schema.properties["verboseMeta"]?.description).toContain("scope_files_truncated");
+    // Schema names the doctrine-aligned knob name (parallel to scan_*).
+    expect(schema.properties["verboseMeta"]?.description).toContain("verboseMeta");
   });
 });

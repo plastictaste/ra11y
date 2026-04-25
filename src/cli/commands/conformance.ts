@@ -127,6 +127,7 @@ async function runEmit(options: CliOptions, registry: Registry): Promise<ScanExi
     profile,
     standards: registry.standards,
     files: parsed.map((f) => f.filePath),
+    root: cwd,
     ...(commitHash !== null && { commitHash }),
     configSnapshot: {
       standard: standardId,

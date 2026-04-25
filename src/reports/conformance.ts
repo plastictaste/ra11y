@@ -175,11 +175,17 @@ export interface ConformanceStatementScope {
    */
   readonly filesCount: number;
   /**
+   * Scan root — typically the caller's `cwd`. Always present so a
+   * statement bundle dropped into release notes names the subtree the
+   * claim covers without cross-referencing the original tool call.
+   */
+  readonly root: string;
+  /**
    * File paths included in the scan. Paths are mirrored verbatim from
    * the caller; the builder does not normalize. Present-when-meaningful:
    * the tool layer elides this array when it would exceed its configured
    * cap (emitting the `scope_files_truncated_count_exceeded` warning in
-   * its stead). Callers wanting the full list flip `verboseScope: true`
+   * its stead). Callers wanting the full list flip `verboseMeta: true`
    * on the MCP tool. When absent, rely on {@link filesCount} for size.
    */
   readonly files?: readonly string[];
@@ -363,6 +369,13 @@ export interface BuildConformanceStatementInputs {
    * reconcile.
    */
   readonly filesCount?: number;
+  /**
+   * Scan root — typically the caller's `cwd`. Forwarded into
+   * `statement.scope.root`. When omitted, the builder defaults to `"."`
+   * so the output field stays schema-required; both real callers
+   * (CLI + MCP tool) pass `cwd`.
+   */
+  readonly root?: string;
   /**
    * Web content technologies the claim relies upon (WCAG §5.3.1(5)).
    * When omitted, {@link DEFAULT_TECHNOLOGIES_RELIED_UPON} is used so
@@ -852,11 +865,10 @@ function buildStaleBlocker(
  */
 function buildStatementScope(inputs: BuildConformanceStatementInputs): ConformanceStatementScope {
   const hasCommit = inputs.commitHash !== undefined && inputs.commitHash.length > 0;
-  const hasSnapshot =
-    inputs.configSnapshot !== undefined && Object.keys(inputs.configSnapshot).length > 0;
-  const filesCount = inputs.filesCount ?? inputs.files?.length ?? 0;
+  const hasSnapshot = Object.keys(inputs.configSnapshot ?? {}).length > 0;
   return {
-    filesCount,
+    filesCount: inputs.filesCount ?? inputs.files?.length ?? 0,
+    root: inputs.root ?? ".",
     ...(inputs.files !== undefined && { files: inputs.files }),
     ...(hasCommit && { commitHash: inputs.commitHash }),
     ...(hasSnapshot && { configSnapshot: inputs.configSnapshot }),

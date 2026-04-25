@@ -54,13 +54,18 @@ import {
 } from "./tools-helpers.ts";
 
 /**
- * Default cap on `scope.files[]` entries when `verboseScope` is false.
- * Chosen to accommodate a small service repo's full manifest while
- * keeping a 10k-file monorepo's response under typical MCP host token
- * ceilings (V1-CONFORMANCE-SCOPE-FILES-CAP). Callers override via the
- * tool's `scopeFilesCap` input.
+ * Default cap on `scope.files[]` entries when `verboseMeta` is false.
+ * Chosen tight enough that a >50-file corpus elides the full path
+ * manifest by default — on the templates corpus that one array alone
+ * was 360KB / 16.8× the typical MCP token ceiling
+ * (V1-CONFORMANCE-SCOPE-FILES-ARRAY-UNCAPPED). The number is small
+ * enough that any non-trivial repo trips the elide path, large enough
+ * that single-file or tiny-fixture statements still ship the manifest
+ * inline (load-bearing for "what did the claim cover?" debugging).
+ * Callers needing the full list flip `verboseMeta: true`; callers
+ * needing a different cap override via `scopeFilesCap`.
  */
-export const DEFAULT_SCOPE_FILES_CAP = 100;
+export const DEFAULT_SCOPE_FILES_CAP = 50;
 
 export const conformanceStatementTool: McpTool = {
   def: {
@@ -108,15 +113,15 @@ export const conformanceStatementTool: McpTool = {
           description:
             "Technologies explicitly excluded from the claim — useful for e.g. no-JS fallback claims. Defaults to `[]`.",
         },
-        verboseScope: {
+        verboseMeta: {
           type: "boolean",
           description:
-            "When true, `scope.files[]` enumerates every scanned file path regardless of count. Off by default: responses cap the enumerated list at `scopeFilesCap` (default 100) and emit `warnings: [scope_files_truncated_count_exceeded]` plus `warningsDetails.scope_files_truncated_count_exceeded: { totalCount, cap }` when the manifest exceeds the cap. `scope.filesCount` always reflects the real count so a reader can tell success-with-truncation from success-complete. Enable when auditing a large repo and the full manifest is load-bearing.",
+            "When true, `scope.files[]` enumerates every scanned file path regardless of count. Off by default: responses cap the enumerated list at `scopeFilesCap` (default 50) and emit `warnings: [scope_files_truncated_count_exceeded]` plus `warningsDetails.scope_files_truncated_count_exceeded: { totalCount, cap }` when the manifest exceeds the cap. `scope.filesCount` and `scope.root` always reflect the real count + scan root so a reader can tell success-with-truncation from success-complete. Enable when auditing a large repo and the full manifest is load-bearing — without it, on a >50-file corpus the array would dominate the response budget (verified at 360KB on a 4043-file template corpus). Parallels the `verboseMeta` knob on `scan_project` / `scan` / `scan_file`.",
         },
         scopeFilesCap: {
           type: "number",
           description:
-            "Maximum entries retained in `scope.files[]` when `verboseScope` is false. Defaults to 100 — enough for a small service repo's full manifest, small enough that a 10k-file monorepo's response stays under typical MCP host token ceilings. Raise for domain-specific audits, or flip `verboseScope: true` to bypass the cap entirely.",
+            "Maximum entries retained in `scope.files[]` when `verboseMeta` is false. Defaults to 50 — small enough that any non-trivial repo's response stays under typical MCP host token ceilings, large enough that single-file or tiny-fixture statements still ship the manifest inline. Raise for domain-specific audits, or flip `verboseMeta: true` to bypass the cap entirely.",
         },
       },
     },
@@ -189,7 +194,7 @@ export const conformanceStatementTool: McpTool = {
     const stalenessProbe = createGitStalenessProbe(cwd);
     const scopeFilesView = resolveScopeFilesView({
       filePaths: files.map((f) => f.filePath),
-      verboseScope: params["verboseScope"] === true,
+      verboseMeta: params["verboseMeta"] === true,
       cap: numParam(params, "scopeFilesCap") ?? DEFAULT_SCOPE_FILES_CAP,
     });
     const statement = buildConformanceStatement(
@@ -204,6 +209,7 @@ export const conformanceStatementTool: McpTool = {
         signing: signingContext.signing,
         stalenessProbe,
         loadedConfig,
+        root: cwd,
       }),
     );
 
@@ -347,6 +353,7 @@ function assembleBuilderInputs(ctx: {
     | NonNullable<Parameters<typeof buildConformanceStatement>[0]["stalenessProbe"]>
     | undefined;
   readonly loadedConfig: LoadedConfig | null;
+  readonly root: string;
 }): Parameters<typeof buildConformanceStatement>[0] {
   const technologiesReliedUpon = strArrayParam(ctx.params, "technologiesReliedUpon");
   const technologiesNotReliedUpon = strArrayParam(ctx.params, "technologiesNotReliedUpon");
@@ -364,6 +371,7 @@ function assembleBuilderInputs(ctx: {
     rulesForCriterion: (criterionId: string) =>
       satisfyingRulesForCriterion(criterionId, ctx.session),
     filesCount: ctx.scopeFilesView.totalCount,
+    root: ctx.root,
     ...(ctx.scopeFilesView.files !== undefined && { files: ctx.scopeFilesView.files }),
     ...(ctx.signing !== undefined && { commitHash: ctx.signing.commitHash }),
     configSnapshot,
@@ -381,7 +389,7 @@ function assembleBuilderInputs(ctx: {
  * applied. `totalCount` is the ground truth (always the real count,
  * even when the list is truncated). `files` is the (possibly elided)
  * manifest passed to the builder — `undefined` when truncation happened
- * under `verboseScope: false`. `truncated` flips the
+ * under `verboseMeta: false`. `truncated` flips the
  * `scope_files_truncated_count_exceeded` warning at the handler layer;
  * `cap` mirrors what was used so the warning payload can name it.
  */
@@ -394,8 +402,8 @@ interface ScopeFilesView {
 
 /**
  * Resolves the scope-files view from the parsed manifest + the caller's
- * `verboseScope` / `scopeFilesCap` params. When the caller explicitly
- * flips `verboseScope: true`, the full list flows through regardless of
+ * `verboseMeta` / `scopeFilesCap` params. When the caller explicitly
+ * flips `verboseMeta: true`, the full list flows through regardless of
  * size. Otherwise the cap gates: under → full list ships inline; at/over
  * → files elided, truncation warning fires at the handler layer.
  * `scope.filesCount` in the response always reflects `totalCount` so an
@@ -403,11 +411,11 @@ interface ScopeFilesView {
  */
 function resolveScopeFilesView(args: {
   readonly filePaths: readonly string[];
-  readonly verboseScope: boolean;
+  readonly verboseMeta: boolean;
   readonly cap: number;
 }): ScopeFilesView {
   const totalCount = args.filePaths.length;
-  if (args.verboseScope || totalCount <= args.cap) {
+  if (args.verboseMeta || totalCount <= args.cap) {
     return {
       totalCount,
       cap: args.cap,
