@@ -8,7 +8,7 @@ satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.1.1", "wcag21:2.1.1"]
 - **Severity:** error
 - **Scope:** node
 - **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.1.1`, `wcag21:2.1.1`
-- **Applies to:** .html, .htm, .tsx, .jsx
+- **Applies to:** .html, .htm, .tsx, .jsx, .vue, .svelte
 ## What it checks
 Flags <a href="javascript:..."> in any of its forms — `javascript:void(0)`, `javascript:void 0`, `javascript:;`, `javascript:` (empty body), `javascript:alert(1)` and other arbitrary expressions, plus `JAVASCRIPT:…` and other case-insensitive variants (RFC 3986 §3.1). The bare token `javascript` (no colon — almost always an author typo for `javascript:void(0)`) is also flagged. Whitespace is trimmed before matching, so `"  javascript: void(0)  "` matches. Companion rule `navigation/href-empty-fragment` covers the non-scheme placeholder shapes (`href="#"`, `href=""`). Use `<button type="button">` for actions, or put a real URL in href for navigation. JSX expression-form `href={…}` is opaque at static time and intentionally not flagged — the agent reads the source if the call site looks suspicious.
 ## Why it matters

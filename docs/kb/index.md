@@ -144,6 +144,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [media/alt-text-missing](./rules/media__alt-text-missing.md)
 - [media/alt-text-placeholder](./rules/media__alt-text-placeholder.md)
 - [media/autoplay-sound](./rules/media__autoplay-sound.md)
+- [media/svg-accessible-name](./rules/media__svg-accessible-name.md)
 - [media/video-captions-missing](./rules/media__video-captions-missing.md)
 - [motion/animation-from-interactions](./rules/motion__animation-from-interactions.md)
 - [motion/pause-stop-hide](./rules/motion__pause-stop-hide.md)

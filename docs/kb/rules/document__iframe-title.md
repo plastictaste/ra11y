@@ -8,7 +8,7 @@ satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.4.1", "wcag21:2.4.1"]
 - **Severity:** error
 - **Scope:** node
 - **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.4.1`, `wcag21:2.4.1`
-- **Applies to:** .html, .htm, .tsx, .jsx
+- **Applies to:** .html, .htm, .tsx, .jsx, .vue, .svelte
 ## What it checks
 <iframe> elements must have a non-empty title, aria-label, or aria-labelledby so assistive technology can announce what the embedded frame contains.
 ## Why it matters

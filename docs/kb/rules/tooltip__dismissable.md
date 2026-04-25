@@ -8,7 +8,7 @@ satisfies: ["wcag22:1.4.13", "wcag21:1.4.13"]
 - **Severity:** warning
 - **Scope:** node
 - **Satisfies:** `wcag22:1.4.13`, `wcag21:1.4.13`
-- **Applies to:** .html, .htm, .tsx, .jsx
+- **Applies to:** .html, .htm, .tsx, .jsx, .vue, .svelte
 ## What it checks
 Native title attributes on interactive elements produce browser tooltips that are not dismissable, hoverable, or persistent — failing WCAG 1.4.13.
 ## Why it matters

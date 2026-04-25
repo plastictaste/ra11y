@@ -8,7 +8,7 @@ satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.1.1", "wcag21:2.1.1"]
 - **Severity:** error
 - **Scope:** node
 - **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.1.1`, `wcag21:2.1.1`
-- **Applies to:** .html, .htm, .tsx, .jsx
+- **Applies to:** .html, .htm, .tsx, .jsx, .vue, .svelte
 ## What it checks
 Flags <a> elements with placeholder href values that announce as links but do not navigate meaningfully: bare `href="#"` (no fragment id, nothing to scroll to) and empty `href=""` (which the HTML spec resolves to the current document URL — activating reloads the page rather than navigating). Whitespace is trimmed before matching, so `"  #  "` and `"   "` are flagged. Companion rule `navigation/href-javascript-scheme` covers the `javascript:` scheme variants. Use <button type="button"> for actions, or put a real URL in href for navigation.
 ## Why it matters
