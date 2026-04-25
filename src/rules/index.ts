@@ -88,6 +88,7 @@ import { rule as targetSize } from "./pointer/target-size.ts";
 import { rule as buttonName } from "./semantics/button-name.ts";
 import { rule as duplicateLandmarkUnlabeled } from "./semantics/duplicate-landmark-unlabeled.ts";
 import { rule as emptyHeading } from "./semantics/empty-heading.ts";
+import { rule as formLandmarkNameMissing } from "./semantics/form-landmark-name-missing.ts";
 import { rule as headingClassOnNonheading } from "./semantics/heading-class-on-nonheading.ts";
 import { rule as headingHierarchy } from "./semantics/heading-hierarchy.ts";
 import { rule as labelInName } from "./semantics/label-in-name.ts";
@@ -133,6 +134,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   errorMessageNotAssociated,
   expandedOnDisclosure,
   fieldsetLegend,
+  formLandmarkNameMissing,
   handlerMissing,
   headingClassOnNonheading,
   headingHierarchy,
@@ -233,6 +235,7 @@ export {
   errorMessageNotAssociated,
   expandedOnDisclosure,
   fieldsetLegend,
+  formLandmarkNameMissing,
   handlerMissing,
   headingClassOnNonheading,
   headingHierarchy,

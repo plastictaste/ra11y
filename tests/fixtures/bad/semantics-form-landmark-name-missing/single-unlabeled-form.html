@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Site search</title>
+  </head>
+  <body>
+    <header>
+      <h1>Welcome</h1>
+    </header>
+    <main>
+      <!-- Single <form> with no aria-label, aria-labelledby, or
+           title. ARIA strips the form landmark role, so a
+           screen-reader user cursoring landmarks (NVDA D, JAWS R,
+           VoiceOver VO+U) cannot reach the search at all. -->
+      <form action="/search" method="get">
+        <label for="q">Search</label>
+        <input type="search" id="q" name="q">
+        <button type="submit">Go</button>
+      </form>
+    </main>
+  </body>
+</html>

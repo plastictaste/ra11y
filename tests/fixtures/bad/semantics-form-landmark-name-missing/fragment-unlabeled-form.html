@@ -1,0 +1,16 @@
+<!-- Jekyll/Astro/Handlebars partial — the file has no <html> or
+     <body> wrapper, but the <form>'s missing accessible name is
+     attribute-level evidence and fires regardless of composition.
+     The form will not surface as a landmark in any rendered context. -->
+<form action="/contact" method="post">
+  <h2>Get in touch</h2>
+  <label>
+    Name
+    <input type="text" name="name">
+  </label>
+  <label>
+    Email
+    <input type="email" name="email">
+  </label>
+  <button type="submit">Send</button>
+</form>

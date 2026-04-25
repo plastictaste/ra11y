@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Multi-form page</title>
+  </head>
+  <body>
+    <main>
+      <h1>Stay in touch</h1>
+      <!-- Two <form> elements in one document. This rule deliberately
+           stays quiet; semantics/duplicate-landmark-unlabeled owns the
+           multi-form case with sibling-disambiguation framing in its
+           message. Splitting ownership prevents double-firing on the
+           same elements. -->
+      <form action="/search">
+        <input type="search" name="q">
+        <button>Search</button>
+      </form>
+      <form action="/subscribe">
+        <input type="email" name="email">
+        <button>Subscribe</button>
+      </form>
+    </main>
+  </body>
+</html>

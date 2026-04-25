@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Site search</title>
+  </head>
+  <body>
+    <header>
+      <h1>Welcome</h1>
+    </header>
+    <main>
+      <!-- aria-label gives the form an accessible name; ARIA exposes
+           it as the "form" landmark so screen-reader users can jump
+           to it via the landmark list. -->
+      <form aria-label="Search the site" action="/search" method="get">
+        <label for="q">Search</label>
+        <input type="search" id="q" name="q">
+        <button type="submit">Go</button>
+      </form>
+    </main>
+  </body>
+</html>

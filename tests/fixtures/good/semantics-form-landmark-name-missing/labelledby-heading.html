@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Sign in</title>
+  </head>
+  <body>
+    <main>
+      <!-- aria-labelledby points at an existing heading on the page.
+           We don't resolve the target id (that's aria/labelledby-
+           target-exists's job); presence of any token is enough to
+           consider the form named for landmark purposes. -->
+      <h2 id="signin-heading">Sign in to your account</h2>
+      <form aria-labelledby="signin-heading" action="/login" method="post">
+        <label for="user">Username</label>
+        <input type="text" id="user" name="user">
+        <label for="pw">Password</label>
+        <input type="password" id="pw" name="pw">
+        <button type="submit">Sign in</button>
+      </form>
+    </main>
+  </body>
+</html>
