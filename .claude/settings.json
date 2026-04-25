@@ -68,6 +68,11 @@
             "if": "Bash(git commit*)",
             "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit.ts\"",
             "timeout": 180
+          },
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree-guards.ts\"",
+            "timeout": 5
           }
         ]
       },
@@ -85,6 +90,11 @@
             "if": "Edit(.claude/settings.json)",
             "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-use.ts\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree-guards.ts\"",
+            "timeout": 5
           }
         ]
       }
@@ -97,6 +107,11 @@
             "type": "command",
             "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit.ts\"",
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree-guards.ts\"",
+            "timeout": 5
           }
         ]
       }

@@ -18,7 +18,7 @@
 // Never --no-verify.
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { audit } from "./lib/audit.ts";
 import { readHookInput } from "./lib/input.ts";
@@ -93,6 +93,46 @@ const checks: Check[] = [
     required: () => existsSync(join(projectDir, "scripts", "check-commit.ts")),
   },
 ];
+
+// Backlog-ID grep across staged source/test files. PM trace (V1-…, Q7-…,
+// R/…, P3-…) belongs in commit messages and .claude/backlog.md, not
+// committed code where it rots once items get renumbered or closed.
+const BACKLOG_ID_REGEX =
+  /\b(?:V\d+-[A-Z][A-Z0-9_-]+|Q\d+-[A-Z][A-Z0-9_-]+|P\d+-[A-Z][A-Z0-9_-]+|R\/[a-z][a-z0-9-]+)\b/;
+const BACKLOG_GREP_SCOPED = /^(src|tests|scripts)\//;
+const BACKLOG_GREP_EXTENSIONS = /\.(ts|tsx|cts|mts|js|jsx|html|css|md)$/;
+const stagedBacklogTargets = stagedFiles.filter(
+  (f) => BACKLOG_GREP_SCOPED.test(f) && BACKLOG_GREP_EXTENSIONS.test(f),
+);
+const backlogIdHits: Array<{ file: string; line: number; text: string }> = [];
+for (const file of stagedBacklogTargets) {
+  const abs = join(projectDir, file);
+  if (!existsSync(abs)) continue;
+  const lines = readFileSync(abs, "utf8").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === undefined) continue;
+    const match = BACKLOG_ID_REGEX.exec(line);
+    if (match) {
+      backlogIdHits.push({ file, line: i + 1, text: match[0] });
+    }
+  }
+}
+if (backlogIdHits.length > 0) {
+  audit({
+    event: "PreToolUse:git-commit",
+    action: "block-backlog-id-in-source",
+    detail: { hits: backlogIdHits.slice(0, 10) },
+  });
+  const lines = backlogIdHits
+    .slice(0, 10)
+    .map((h) => `  ${h.file}:${h.line}  ${h.text}`)
+    .join("\n");
+  const more = backlogIdHits.length > 10 ? `\n  ... and ${backlogIdHits.length - 10} more` : "";
+  block(
+    `pre-commit verification failed — backlog IDs in source/test code (PM trace belongs in commit messages and .claude/backlog.md, not committed code where it rots):\n${lines}${more}\n\nIf the token is genuinely meant as code (rare — e.g. matching against backlog IDs in a tool), confirm by editing the file once more after this rejection.`,
+  );
+}
 
 const failures: string[] = [];
 for (const check of checks) {
