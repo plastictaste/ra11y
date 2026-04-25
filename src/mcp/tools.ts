@@ -240,7 +240,13 @@ const listRulesTool: McpTool = {
       // apart from a filter that actually narrowed the list.
       ...(standardFilter ? { filter: { standard: standardFilter } } : {}),
       matchedOf: { total, matched: rules.length },
-      rules: [...ruleEntries, ...aliasEntries],
+      rules: ruleEntries,
+      // Deprecated aliases live in a separate labeled bucket: they aren't
+      // independent evaluation targets, and inflating `rules.length` with
+      // them would force `rules.length !== matchedOf.matched` and turn the
+      // per-bucket signal into a composite. Present-when-meaningful: omit
+      // when no aliases survived the standard filter.
+      ...(aliasEntries.length > 0 ? { deprecatedAliases: aliasEntries } : {}),
       meta,
       nextStep: nextStep.prose,
       nextStepStructured: nextStep.structured,
