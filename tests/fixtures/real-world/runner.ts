@@ -33,7 +33,13 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type ParsedFile, runScan } from "../../../src/engine/scanner.ts";
-import { parseCss, parseHtml, parseTsx } from "../../../src/input/parsers/index.ts";
+import {
+  parseCss,
+  parseHtml,
+  parseMarkdown,
+  parseMdx,
+  parseTsx,
+} from "../../../src/input/parsers/index.ts";
 import { collectBuildArtifacts } from "../../../src/mcp/build-artifacts.ts";
 import { detectCatalogShape, withCatalogHint } from "../../../src/mcp/catalog-detect.ts";
 import {
@@ -430,6 +436,14 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     const r = parseTsx(source, { filePath });
     return { language: "tsx", root: r.root, errors: r.errors };
   }
+  if (ext === ".mdx") {
+    const r = parseMdx(source);
+    return { language: "tsx", root: r.root, errors: r.errors };
+  }
+  if (ext === ".md" || ext === ".markdown") {
+    const r = parseMarkdown(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
   return null;
 }
 
@@ -481,6 +495,9 @@ const SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   ".html",
   ".htm",
   ".css",
+  ".mdx",
+  ".md",
+  ".markdown",
 ]);
 
 // ---------------------------------------------------------------------------

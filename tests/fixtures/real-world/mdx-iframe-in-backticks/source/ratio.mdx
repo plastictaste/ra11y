@@ -1,0 +1,37 @@
+---
+title: Aspect Ratio Helpers
+description: Maintain consistent media ratios across breakpoints.
+---
+
+import Example from "../../../components/Example.astro";
+
+# Aspect Ratio Helpers
+
+Use the helpers to maintain consistent ratios across breakpoints.
+
+## Pro-tips
+
+The helpers wrap embedded media. The `<iframe>` tag is the primary
+target; authors usually copy a vendor embed snippet and drop it
+inside the wrapper. Skip the `frameborder="0"` attribute on your
+`<iframe>`s — the helper applies the modern equivalent.
+
+## Live example
+
+The wrapper preserves the aspect ratio of the embedded `<iframe>`:
+
+<Example code={`<div class="ratio ratio-16x9">
+  <iframe src="/intro.mp4" allowfullscreen></iframe>
+</div>`} />
+
+## Reference snippets
+
+The pattern looks like this in raw HTML:
+
+```html
+<div class="ratio ratio-16x9">
+  <iframe src="/intro.mp4"></iframe>
+</div>
+```
+
+That snippet shows an `<iframe>` rendered inside the wrapper.
