@@ -50,10 +50,10 @@ import {
   formatCandidate,
   formatSlice,
   parseErrorEnvelope,
-  parseFor,
   preflightValidate,
   resolveLevelParam,
   runSingleFileScan,
+  spliceWithNativeLineEndings,
 } from "./tool-apply-fix-internals.ts";
 import {
   applyRuleSettings,
@@ -124,8 +124,7 @@ export const applyFixTool: McpTool = {
     if ("error" in preflight) return preflight.error;
     const { resolved, cwd, edit, ext, original, dryRun } = preflight;
 
-    const newSource = original.source.replace(edit.oldText, edit.newText);
-    const newAst = parseFor(ext, newSource);
+    const { newSource, newAst } = spliceWithNativeLineEndings(original.source, edit, ext);
     const originalErrorCount = original.ast.errors.length;
     const newErrorCount = newAst.errors.length;
     if (newErrorCount > originalErrorCount) {

@@ -389,6 +389,60 @@ export function resolveLevelParam(
   return sessionLevel;
 }
 
+/**
+ * Splice `edit.newText` into `source` while keeping the source file's
+ * native line ending intact. `suggest_fix` and most agents emit
+ * LF-only `newText`; if the source is CRLF (common on Windows-
+ * authored or git-autocrlf'd repos), an unconditional splice would
+ * mix endings — `\r\n` outside the edit window, `\n` inside — and
+ * write a silently-corrupted file.
+ *
+ * The probe inspects the FIRST line break in `source`: if it's `\r\n`
+ * the file is treated as CRLF and any bare `\n` in `newText` is
+ * rewritten to `\r\n` before the splice. `oldText` is used verbatim —
+ * `preflightValidate` already verified it matches the source exactly
+ * once, so renormalizing it here could break that contract.
+ *
+ * Source files with no line breaks at all fall through as LF —
+ * there's no signal to do otherwise, and line-internal edits are a
+ * no-op for the rewriter anyway.
+ *
+ * Used by `apply_fix` to keep on-disk byte-content honest when an
+ * agent's `newText` arrives LF-normalized but the file is CRLF
+ * (V1-SOURCECONTEXT-LINE-ENDING-NORMALIZE).
+ */
+export function spliceWithNativeLineEndings(
+  source: string,
+  edit: ResolvedEdit,
+  ext: Ext,
+): { readonly newSource: string; readonly newAst: Ast } {
+  const normalizedNewText = isCrlfSource(source) ? rewriteBareLfToCrlf(edit.newText) : edit.newText;
+  const newSource = source.replace(edit.oldText, normalizedNewText);
+  const newAst = parseFor(ext, newSource);
+  return { newSource, newAst };
+}
+
+function isCrlfSource(source: string): boolean {
+  const firstLf = source.indexOf("\n");
+  return firstLf > 0 && source.charCodeAt(firstLf - 1) === 0x0d;
+}
+
+function rewriteBareLfToCrlf(text: string): string {
+  // Rewrite bare LF (not preceded by CR) to CRLF. A CRLF in `text`
+  // stays as-is; only the LF half of an existing CRLF would be
+  // touched, but its preceding CR keeps it out of the bare-LF set.
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i);
+    if (ch === 0x0a && (i === 0 || text.charCodeAt(i - 1) !== 0x0d)) {
+      out += "\r\n";
+    } else {
+      out += text[i];
+    }
+  }
+  return out;
+}
+
 export function buildNextStep(args: {
   applied: boolean;
   dryRun: boolean;
