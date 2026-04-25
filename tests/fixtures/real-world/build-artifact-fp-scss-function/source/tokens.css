@@ -1,0 +1,3 @@
+:root { --primary: #0d6efd; --secondary: #6c757d; }
+.scale-tokens { --token-grid: calc(var(--alpha) * 1px + var(--beta) * 1px + var(--gamma) * 1px + var(--delta) * 1px + var(--epsilon) * 1px + var(--zeta) * 1px + var(--eta) * 1px + var(--theta) * 1px + var(--iota) * 1px + var(--kappa) * 1px + var(--lambda) * 1px + var(--mu) * 1px + var(--nu) * 1px + var(--xi) * 1px + var(--omicron) * 1px + var(--pi) * 1px + var(--rho) * 1px + var(--sigma) * 1px + var(--tau) * 1px + var(--upsilon) * 1px + var(--phi) * 1px + var(--chi) * 1px + var(--psi) * 1px + var(--omega) * 1px); }
+.token-primary { color: var(--primary); }
