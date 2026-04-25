@@ -1493,3 +1493,78 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
     expect(Object.keys(details)).toHaveLength(0);
   });
 });
+
+// V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT
+//
+// Doctrine: zero-output success is ambiguous failure. Token-only
+// `.scss` partials (`_variables.scss`, Font Awesome theme files,
+// Bootstrap-style design-system roots) parse to zero CSS rules — and
+// `contrast/minimum`'s per-rule coverage row would silently surface as
+// `findings: 0, coverageConfidence: "high"` without the warning + the
+// per-row downgrade. The detector lives in `src/mcp/scan-assembly.ts`;
+// these tests rehearse the wire shape after the call site has handed
+// the file list to the warnings module.
+describe("computeScanWarnings — scss_unresolved_variables", () => {
+  it("fires when scssUnresolvedVariableFiles is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".scss": 3, ".tsx": 2 },
+      scssUnresolvedVariableFiles: ["theme/_variables.scss"],
+    });
+    expect(codes).toContain("scss_unresolved_variables");
+  });
+
+  it("does NOT fire when scssUnresolvedVariableFiles is empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".scss": 3 },
+      scssUnresolvedVariableFiles: [],
+    });
+    expect(codes).not.toContain("scss_unresolved_variables");
+  });
+
+  it("does NOT fire when the field is omitted entirely", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".scss": 3 },
+    });
+    expect(codes).not.toContain("scss_unresolved_variables");
+  });
+
+  it("emits the file list verbatim under warningsDetails.scss_unresolved_variables", () => {
+    const fields = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".scss": 3 },
+      scssUnresolvedVariableFiles: ["a/_variables.scss", "b/_tokens.scss"],
+    });
+    expect(fields.warnings).toContain("scss_unresolved_variables");
+    expect(fields.warningsDetails?.scss_unresolved_variables).toEqual({
+      files: ["a/_variables.scss", "b/_tokens.scss"],
+    });
+  });
+
+  it("omits warningsDetails.scss_unresolved_variables when the code did not fire (payload-vs-binary contract)", () => {
+    const fields = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".scss": 3 },
+      // No scssUnresolvedVariableFiles supplied — no code, no payload.
+    });
+    expect(fields.warnings ?? []).not.toContain("scss_unresolved_variables");
+    expect(fields.warningsDetails?.scss_unresolved_variables).toBeUndefined();
+  });
+});

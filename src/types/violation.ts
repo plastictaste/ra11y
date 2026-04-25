@@ -428,12 +428,27 @@ export interface PerRuleCoverage {
    *     but the evidence horizon is degraded — confidence drops to
    *     `"low"` so the agent reads the cited file rather than trusting
    *     the clean tally.
+   *   - `"scss-unresolved-variables"` — at least one `.scss` file
+   *     matching the rule's extension gate carried `$variable: …`
+   *     declarations whose substitution pass produced zero literal-color
+   *     usages downstream (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT). The
+   *     file parsed cleanly; the SCSS preprocessor cannot statically
+   *     resolve mixin bodies / `@function` / cross-file `@use` /
+   *     interpolation — so a token-only theme partial like
+   *     `_variables.scss` produces an empty AST and contrast-rule
+   *     coverage on that substrate is honestly bounded. Confidence drops
+   *     to `"medium"` (not `"low"` — the rule did run; the substrate's
+   *     variable layer was outside the static scanner's reach), with a
+   *     `reason` telling the agent to scan the compiled CSS output for
+   *     full coverage. Pairs with the response-level
+   *     `scss_unresolved_variables` warning code carrying the file list.
    *
    * Stamped by the MCP assembly layer (`src/mcp/scan-assembly.ts`), not
    * by the engine — rules and the per-rule-coverage builder stay pure
    * over the scanner's evaluation tracker. Present-when-meaningful per
    * CLAUDE.md §1 "Ambiguous field shapes are dishonest": absent when no
-   * parse-error / partial-parse files contributed to this rule's gate.
+   * parse-error / partial-parse / unresolved-variable files contributed
+   * to this rule's gate.
    *
    * Doctrine: zero-output success is ambiguous failure. Without this
    * field, a rule whose only eligible files all failed to parse would
@@ -441,7 +456,10 @@ export interface PerRuleCoverage {
    * agent reads "ran clean" when the truth is "rules never saw the
    * file" (V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS).
    */
-  readonly coverageConfidenceReason?: "file-parse-error" | "partial-parse";
+  readonly coverageConfidenceReason?:
+    | "file-parse-error"
+    | "partial-parse"
+    | "scss-unresolved-variables";
   /**
    * Honest per-rule file-concentration hint: when a rule's findings
    * cluster on one file (total > {@link findingsEmitted} threshold AND

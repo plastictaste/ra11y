@@ -182,6 +182,27 @@ export type ScanWarningCode =
   // unchanged; the warning is the additive signal that lets callers
   // self-migrate without a hidden break.
   | "proposed_config_deprecated_use_suggested_config"
+  // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: at least one scanned `.scss`
+  // file declared top-level `$variable: …;` statements but the SCSS
+  // preprocessor's substitution pass produced zero literal-color
+  // usages downstream — the canonical token-only theme partial /
+  // `_variables.scss` shape. Without this code, a Font Awesome SCSS
+  // file or a Bootstrap theme partial reads as `findings: []` with
+  // `perRuleCoverage.contrast/minimum.coverageConfidence: "high"` —
+  // the silent-miss "clean on this file" signal when reality is "no
+  // color pairs resolvable to literals." Fires off the response-
+  // assembly cross-reference between scanned files and the parser's
+  // SCSS-substitution diagnostics; pairs with the per-row
+  // `coverageConfidenceReason: "scss-unresolved-variables"` downgrade
+  // that drops `contrast/minimum`'s confidence to `"medium"` with a
+  // structured remediation pointer. Paired payload:
+  // `warningsDetails.scss_unresolved_variables` carries
+  // `{ files: string[] }` so the agent branches on the specific
+  // partials without descending into `meta.perRuleCoverage` to read
+  // their identity. Surface-don't-suppress: findings (if any) are
+  // unaffected; the warning is the additive signal that the
+  // contrast scan's substrate had a known-unresolved layer.
+  | "scss_unresolved_variables"
   // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS build artifacts
   // (bootstrap.css, font-awesome.css, jquery-era bundles) dominate
   // the finding set so heavily that the response's file budget is
@@ -354,6 +375,29 @@ export interface WarningInputs {
    * parent repo's `package.json` reachable still drop the warning.
    */
   readonly configSearchSawProjectMarker?: boolean;
+  /**
+   * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: caller-supplied list of
+   * `.scss` files in this scan that declare top-level `$variable: …`
+   * statements but produced zero literal-color usages downstream after
+   * the SCSS preprocessor's substitution pass. Drives the
+   * `scss_unresolved_variables` code + its `warningsDetails` payload.
+   *
+   * The detector lives in `src/mcp/scan-assembly.ts`
+   * (`detectScssUnresolvedVariableFiles`) so the warnings module stays
+   * pure over its inputs. Callers run the detector against the
+   * `parsedFiles` list once and pass the path subset here — the same
+   * subset feeds the per-rule
+   * `coverageConfidenceReason: "scss-unresolved-variables"` downgrade
+   * via `applyScssUnresolvedVariablesAdjustment` so the meta and the
+   * top-level warning agree on the file list.
+   *
+   * Omit (or pass `undefined`) when the caller didn't run the
+   * detector (e.g. `scan` against arbitrary paths where SCSS may not
+   * be in scope) or no files matched. The code drops conservatively in
+   * that case. Empty array is acceptable and treated identically to
+   * `undefined` — neither fires the code.
+   */
+  readonly scssUnresolvedVariableFiles?: readonly string[];
   /**
    * Q-SHARED-META-ARRAY-BUDGET-CAP: true when at least one of the
    * path-list meta arrays (`scannedBuildArtifacts.ungrouped`,
@@ -678,6 +722,25 @@ export interface ScanWarningDetails {
     readonly count: number;
     readonly topPath?: string;
   };
+  /**
+   * Payload for `scss_unresolved_variables`. Carries the deterministic
+   * sorted list of `.scss` files whose top-level `$variable: …`
+   * declarations produced zero literal-color usages downstream — the
+   * agent reads the file list and decides whether to scan the
+   * compiled CSS output for full coverage. Without this payload, a
+   * caller branching on the bare code can't tell whether the gap is
+   * one stray `_variables.scss` partial or every `.scss` file in the
+   * scan. The full identity (path-by-path) lives here rather than at
+   * `meta.perRuleCoverage` so an agent acting on the warning channel
+   * doesn't need to cross-reference a per-row reason map. Same pattern
+   * as `vendor_css_dominates_findings.topVendorFile` and
+   * `parse_errors_present.parseErrorFileCount` — quantitative signal
+   * that lets the agent branch on severity / scope without descending
+   * into `meta`.
+   */
+  readonly scss_unresolved_variables?: {
+    readonly files: readonly string[];
+  };
 }
 
 function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
@@ -827,6 +890,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // into meta.
     out.push("response_meta_truncated");
   }
+  if (hasScssUnresolvedVariables(inputs.scssUnresolvedVariableFiles)) {
+    // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: at least one scanned
+    // `.scss` file declared top-level `$variable: …;` statements but
+    // its CSS output carried zero literal-color usages. The
+    // `contrast/minimum` per-rule row is downgraded to `"medium"`
+    // with `coverageConfidenceReason: "scss-unresolved-variables"` in
+    // the response-assembly layer; this top-level code is the
+    // presence bit + paired `warningsDetails.scss_unresolved_variables`
+    // payload (file list) the agent can read without descending into
+    // `meta.perRuleCoverage`. Surface-don't-suppress: findings (if
+    // any) stay in `files[]`; the warning tells the agent to scan
+    // the compiled CSS output for full coverage when the static
+    // SCSS substitution couldn't resolve them here.
+    out.push("scss_unresolved_variables");
+  }
   if (vendorCssDominates(inputs.vendorCssNoise)) {
     // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS bundles
     // (bootstrap.css, font-awesome.css, jquery-era distributions)
@@ -851,6 +929,16 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
  * vendor tally is empty / below either threshold. Pure over its
  * inputs; the call site computes the cross-reference.
  */
+/**
+ * Predicate for `scss_unresolved_variables`. Returns `true` when the
+ * caller-supplied list is non-empty. Pure over its input; the
+ * detector lives in `src/mcp/scan-assembly.ts` so the warnings
+ * module stays decoupled from the parser-AST traversal.
+ */
+function hasScssUnresolvedVariables(files: WarningInputs["scssUnresolvedVariableFiles"]): boolean {
+  return files !== undefined && files.length > 0;
+}
+
 function vendorCssDominates(noise: WarningInputs["vendorCssNoise"]): boolean {
   if (noise === undefined) return false;
   if (noise.totalFindingsCount < VENDOR_CSS_DOMINATES_FINDINGS_FLOOR) return false;
@@ -1125,6 +1213,7 @@ type ScanMetaWarningArgs = {
   readonly additionalPathsRedundant?: boolean;
   readonly configSearchSawProjectMarker?: boolean;
   readonly metaArrayTruncated?: boolean;
+  readonly scssUnresolvedVariableFiles?: readonly string[];
 };
 
 function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
@@ -1159,6 +1248,9 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.metaArrayTruncated === undefined
       ? {}
       : { metaArrayTruncated: args.metaArrayTruncated }),
+    ...(args.scssUnresolvedVariableFiles === undefined
+      ? {}
+      : { scssUnresolvedVariableFiles: args.scssUnresolvedVariableFiles }),
   };
 }
 
@@ -1213,6 +1305,10 @@ export function computeScanWarningDetails(
     {
       code: "scanned_build_artifacts_present",
       summarize: () => summarizeScannedBuildArtifacts(inputs.scannedBuildArtifactsSummary),
+    },
+    {
+      code: "scss_unresolved_variables",
+      summarize: () => summarizeScssUnresolvedVariables(inputs.scssUnresolvedVariableFiles),
     },
   ];
   for (const row of dispatch) {
@@ -1272,6 +1368,23 @@ function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArti
     count: summary.count,
     ...(summary.topPath === undefined ? {} : { topPath: summary.topPath }),
   };
+}
+
+/**
+ * Builds the `scss_unresolved_variables` payload from the caller-
+ * supplied file list. Returns `undefined` when the list is missing
+ * or empty so the dispatch table conditional-spreads the entry away
+ * (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION payload-vs-binary
+ * contract). The list is already deterministic-sorted at the
+ * detector seam (`detectScssUnresolvedVariableFiles` in
+ * `src/mcp/scan-assembly.ts`), so this helper is a pure
+ * shape-builder — no re-sort, no decisions.
+ */
+function summarizeScssUnresolvedVariables(
+  files: WarningInputs["scssUnresolvedVariableFiles"],
+): NonNullable<ScanWarningDetails["scss_unresolved_variables"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  return { files };
 }
 
 /**
