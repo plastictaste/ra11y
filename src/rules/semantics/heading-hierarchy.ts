@@ -70,13 +70,15 @@ const HEADING_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5",
 /**
  * True when `filePath` is a markdown source file whose ATX / Setext
  * headings get stripped by `parseMarkdown` before the rule runs. The
- * extension list mirrors the EXTENSION_ALIASES entry in
- * `src/utils/path.ts` that routes `.md` / `.markdown` into the
- * HTML-family rule gate.
+ * `.md` / `.markdown` extensions mirror the EXTENSION_ALIASES entry in
+ * `src/utils/path.ts` that routes them into the HTML-family rule gate;
+ * `.mkdn` is included defensively so any future PARSEABLE_EXTENSIONS
+ * widening (or third-party adapter routing through parseMarkdown) keeps
+ * the rule's residue-aware framing intact.
  */
 function isMarkdownSourceFile(filePath: string): boolean {
   const ext = extension(filePath);
-  return ext === ".md" || ext === ".markdown";
+  return ext === ".md" || ext === ".markdown" || ext === ".mkdn";
 }
 
 export const rule = defineRule({
@@ -105,23 +107,29 @@ export const rule = defineRule({
   },
   afterFile(ctx) {
     if (ctx.language !== "html") return;
-    // Markdown ingestion gap (V1-HEADING-HIERARCHY-MARKDOWN-SELF-CONTRADICTION).
-    // `.md` / `.markdown` files route through `parseMarkdown`, which
-    // strips ATX (`# …`) and Setext headings before the residue reaches
-    // `parseHtml` — see `src/input/parsers/markdown.ts` §"Passes" and
-    // ADR 0025 which names heading hierarchy as an accepted residue gap.
-    // The rule then only sees whatever HTML `<h1>`-`<h6>` tags survived
-    // in embedded blocks (admonition divs, callout widgets, etc.),
-    // which is systematically a *partial* view of the file's real
-    // outline: a README whose sole heading is `# Bootstrap` presents to
-    // this rule as zero headings, and a Jekyll doc whose top-level
-    // outline is ATX but whose only embedded HTML is an admonition
-    // `<h5>` presents as "no <h1>, first heading is <h5>". Emitting
-    // against that residue contradicts the scanner's own
-    // `analysisCoverage` hint ("Markdown files parsed as HTML residue:
-    // … heading hierarchy … [is] not [checked]"). Skip on `.md` /
-    // `.markdown` so the rule's behavior matches what we tell agents.
-    if (isMarkdownSourceFile(ctx.filePath)) return;
+    // Markdown-residue enrichment (V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT).
+    // `.md` / `.markdown` / `.mkdn` files route through `parseMarkdown`,
+    // which strips ATX (`# …`) and Setext headings before the residue
+    // reaches `parseHtml` — see `src/input/parsers/markdown.ts` §"Passes"
+    // and ADR 0025 which names heading hierarchy as an accepted residue
+    // gap. The rule then sees only whatever HTML `<h1>`-`<h6>` tags
+    // survived in embedded blocks (admonition divs, callout widgets,
+    // etc.). The embedded headings really ARE part of the rendered
+    // output — a `<div class="admonition"><h5>Note</h5></div>` ships to
+    // every reader as a level-5 heading — so the predicate may still
+    // hold and silent suppression is a real-violation miss waiting to
+    // happen. But the rule's residue view is systematically *partial*:
+    // a Jekyll doc whose top-level outline is ATX but whose only
+    // embedded HTML is an admonition `<h5>` would emit "no <h1>, first
+    // heading is <h5>" against a residue that omits the ATX outline.
+    // The honest call (per docs/kb/architecture/ai-first-consumer.md
+    // "surface, don't suppress" + "per-finding confidence must reflect
+    // per-rule coverage limitations") is to surface AND enrich each
+    // finding's reason text with a partial-document-view note pointing
+    // the agent at the markdown source — the agent reading the whole
+    // file is the correct arbiter of whether the rendered outline is
+    // well-formed once the ATX headings come back.
+    const markdownResidue = isMarkdownSourceFile(ctx.filePath);
     const doc = ctx.ast as HtmlDocument;
     const headings = collectHeadings(doc);
 
@@ -174,14 +182,14 @@ export const rule = defineRule({
     if (!(hasH1 || fragment)) {
       const fullPageMissingH1 = !partialShape && isFullPageBody(doc);
       if (fullPageMissingH1) {
-        reportMissingH1OnFullPage(doc, headings, (v) => ctx.emit(v));
+        reportMissingH1OnFullPage(doc, headings, markdownResidue, (v) => ctx.emit(v));
       } else if (headings.length > 0) {
-        reportMissingH1(headings, partialShape, (v) => ctx.emit(v));
+        reportMissingH1(headings, partialShape, markdownResidue, (v) => ctx.emit(v));
       }
     }
 
     if (headings.length > 0) {
-      reportSkippedLevels(headings, partialShape, (v) => ctx.emit(v));
+      reportSkippedLevels(headings, partialShape, markdownResidue, (v) => ctx.emit(v));
     }
 
     // Variant: multiple-h1. Emits one finding per extra <h1> beyond the
@@ -194,7 +202,7 @@ export const rule = defineRule({
     // Keeps firing on fragments because the composed page inherits the
     // duplicate; the partial enrichment still applies because a partial
     // may legitimately render its <h1> down to <h2> via composition.
-    reportMultipleH1(headings, partialShape, (v) => ctx.emit(v));
+    reportMultipleH1(headings, partialShape, markdownResidue, (v) => ctx.emit(v));
   },
 });
 
@@ -262,6 +270,9 @@ function isFullPageBody(doc: HtmlDocument): boolean {
 const PARTIAL_OR_LAYOUT_CODE = "partial_or_layout_file_requires_composed_check";
 const PARTIAL_NOTE_SUFFIX =
   " Note: this file looks like a partial / layout (path under _docs/_includes/_layouts/_posts/_partials, or starts with a Liquid / ERB template directive) — the composed page's heading hierarchy depends on the parent layout. Verify the rendered page has <h1> before acting, or add a source-level disable pragma if the composition is intentional.";
+const MARKDOWN_RESIDUE_CODE = "markdown_atx_headings_stripped_only_html_residue_visible";
+const MARKDOWN_RESIDUE_NOTE_SUFFIX =
+  " Note: this file is markdown source (.md/.markdown/.mkdn). Markdown ATX-syntax headings (e.g. `# Title`) and Setext underlines were stripped by the markdown adapter before this rule ran, so the rule sees only whatever <h1>-<h6> tags survived in embedded HTML blocks (admonition divs, callout widgets). The rendered document outline may be well-formed once the ATX headings come back — read the markdown source itself to verify, or add a source-level disable pragma if the embedded heading is intentional.";
 
 /**
  * Emits the `missing-h1-on-full-page` variant. Anchored at the `<body>`
@@ -274,6 +285,7 @@ const PARTIAL_NOTE_SUFFIX =
 function reportMissingH1OnFullPage(
   doc: HtmlDocument,
   headings: readonly HeadingEntry[],
+  markdownResidue: boolean,
   emit: Emit,
 ): void {
   const body = findHtmlElementsByTag(doc, "body")[0];
@@ -285,20 +297,23 @@ function reportMissingH1OnFullPage(
   const headingHint = first
     ? ` The first heading in the document is <${first.element.tagName}> at line ${first.element.loc.start.line} — promote it to <h1> if it names the page, or insert a new <h1> above it.`
     : " The document has no headings at all; add an <h1> that names the page.";
+  const baseMessage = `Page contains no <h1> heading; the document outline lacks a top-level title for screen reader users.${headingHint}`;
   emit({
     severity: "warning",
     location: { filePath: "", line, column },
-    message: `Page contains no <h1> heading; the document outline lacks a top-level title for screen reader users.${headingHint}`,
+    message: markdownResidue ? `${baseMessage}${MARKDOWN_RESIDUE_NOTE_SUFFIX}` : baseMessage,
     suggestion: first
       ? `Insert an <h1> at the top of <body> that names the page, or change the existing <${first.element.tagName}> at line ${first.element.loc.start.line} to <h1> if it serves as the page title. Screen readers expose <h1> as the document's primary landmark; without one, the user has no anchor for "what is this page about".`
       : 'Insert an <h1> at the top of <body> that names the page. Screen readers expose <h1> as the document\'s primary landmark; without one, the user has no anchor for "what is this page about". If this page is rendered inside a parent layout that supplies the title, suppress with <!-- ra11y-disable wcag22:1.3.1 -->.',
     variantKey: "missing-h1-on-full-page",
+    ...(markdownResidue ? { couldBeWrongBecause: [MARKDOWN_RESIDUE_CODE] } : {}),
   });
 }
 
 function reportMissingH1(
   headings: readonly HeadingEntry[],
   partialShape: boolean,
+  markdownResidue: boolean,
   emit: Emit,
 ): void {
   if (headings.some((h) => h.level === 1)) return;
@@ -312,16 +327,17 @@ function reportMissingH1(
       line: first.element.loc.start.line,
       column: first.element.loc.start.column,
     },
-    message: partialShape ? `${baseMessage}${PARTIAL_NOTE_SUFFIX}` : baseMessage,
+    message: composeMessage(baseMessage, partialShape, markdownResidue),
     suggestion:
       'A document without an <h1> loses the single top-of-document landmark AT relies on; verify the page has a designated main heading via <h1> or role="heading" aria-level="1". If this page is a fragment or layout intentionally rendered inside a parent with its own <h1>, suppress with <!-- ra11y-disable wcag22:1.3.1 -->.',
-    ...(partialShape ? { couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE] } : {}),
+    ...wrongBecause(partialShape, markdownResidue),
   });
 }
 
 function reportSkippedLevels(
   headings: readonly HeadingEntry[],
   partialShape: boolean,
+  markdownResidue: boolean,
   emit: Emit,
 ): void {
   let previous: HeadingEntry | undefined = headings[0];
@@ -343,9 +359,9 @@ function reportSkippedLevels(
         },
         // Inline the previous heading's line so an agent can verify
         // intent without re-walking the file.
-        message: partialShape ? `${baseMessage}${PARTIAL_NOTE_SUFFIX}` : baseMessage,
+        message: composeMessage(baseMessage, partialShape, markdownResidue),
         suggestion: `Change this to <h${previous.level + 1}> so the hierarchy is continuous, or add intermediate headings between the previous <h${previous.level}> (line ${previousLine}) and this one.`,
-        ...(partialShape ? { couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE] } : {}),
+        ...wrongBecause(partialShape, markdownResidue),
       });
     }
     previous = current;
@@ -365,6 +381,7 @@ function reportSkippedLevels(
 function reportMultipleH1(
   headings: readonly HeadingEntry[],
   partialShape: boolean,
+  markdownResidue: boolean,
   emit: Emit,
 ): void {
   const h1s = headings.filter((h) => h.level === 1);
@@ -383,10 +400,39 @@ function reportMultipleH1(
         line: extra.element.loc.start.line,
         column: extra.element.loc.start.column,
       },
-      message: partialShape ? `${baseMessage}${PARTIAL_NOTE_SUFFIX}` : baseMessage,
+      message: composeMessage(baseMessage, partialShape, markdownResidue),
       suggestion: `Change this <h1> to <h2> if it names a section under the page-title <h1> at line ${firstLine}, or wrap it in a <section> element to scope a new outline. Browsers and assistive tech ignore the HTML5 outline algorithm — every <h1> is exposed as a top-level heading regardless of nesting, so multiple <h1>s read to a screen reader user as multiple page titles.`,
       variantKey: "multiple-h1",
-      ...(partialShape ? { couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE] } : {}),
+      ...wrongBecause(partialShape, markdownResidue),
     });
   }
+}
+
+/**
+ * Appends partial-or-layout and/or markdown-residue notes to the base
+ * emit message. Both can apply (e.g. a `_docs/intro.md` that is BOTH
+ * under a partial path AND a markdown source) — the notes stack so the
+ * agent reads both signals.
+ */
+function composeMessage(base: string, partialShape: boolean, markdownResidue: boolean): string {
+  let out = base;
+  if (partialShape) out += PARTIAL_NOTE_SUFFIX;
+  if (markdownResidue) out += MARKDOWN_RESIDUE_NOTE_SUFFIX;
+  return out;
+}
+
+/**
+ * Builds the `couldBeWrongBecause` payload, conditional-spread style.
+ * Returns an empty object when neither flag applies so the field stays
+ * omitted (per CLAUDE.md §1 "Ambiguous field shapes are dishonest" —
+ * empty arrays are sentinel-empty, omission is honest).
+ */
+function wrongBecause(
+  partialShape: boolean,
+  markdownResidue: boolean,
+): { couldBeWrongBecause?: readonly string[] } {
+  const codes: string[] = [];
+  if (partialShape) codes.push(PARTIAL_OR_LAYOUT_CODE);
+  if (markdownResidue) codes.push(MARKDOWN_RESIDUE_CODE);
+  return codes.length > 0 ? { couldBeWrongBecause: codes } : {};
 }

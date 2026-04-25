@@ -560,59 +560,109 @@ describe("rule semantics/heading-hierarchy", () => {
     });
   });
 
-  // V1-HEADING-HIERARCHY-MARKDOWN-SELF-CONTRADICTION — `parseMarkdown`
+  // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT — `parseMarkdown`
   // strips ATX (`# …`) and Setext headings before the residue reaches
   // `parseHtml`, so the rule sees only whatever HTML headings survived
-  // in embedded blocks (admonition divs, callout widgets). That residue
-  // is a systematically partial view: the file's real outline lived in
-  // stripped ATX syntax. Emitting against it contradicts the scanner's
-  // own `analysisCoverage` hint ("heading hierarchy … [is] not
-  // [checked]"). Skip on `.md` / `.markdown` so the rule's behavior
-  // matches what the tool tells agents.
-  describe("markdown ingestion skip", () => {
-    it("does not fire on a README.md whose only heading is ATX `# Bootstrap`", () => {
-      // Bootstrap README repro (bootstrap-05 §B1): the real `<h1>` is
-      // ATX syntax that `parseMarkdown` blanks. If the rule ran on the
-      // residue it would emit the page-level missing-h1 variant or the
-      // first-heading emit, contradicting the residue-coverage hint.
-      const source = "# Bootstrap\n\nA toolkit for building things.\n";
-      const v = runRule(rule, source, { filePath: "README.md" });
-      expect(v).toHaveLength(0);
-    });
+  // in embedded blocks (admonition divs, callout widgets). The residue
+  // view is a *partial* view of the file's real outline, but the
+  // embedded headings ARE part of the rendered output — silently
+  // suppressing every emit on `.md` files would silently miss real
+  // structural problems in the embedded HTML. Per
+  // docs/kb/architecture/ai-first-consumer.md "surface, don't suppress"
+  // and "per-finding confidence must reflect per-rule coverage
+  // limitations": fire each emit AND enrich the message + add the
+  // structured `markdown_atx_headings_stripped_only_html_residue_visible`
+  // code to `couldBeWrongBecause` so the agent reads the markdown
+  // source itself before acting.
+  describe("markdown-residue enrichment", () => {
+    const MARKDOWN_RESIDUE_CODE = "markdown_atx_headings_stripped_only_html_residue_visible";
 
-    it("does not fire on a Jekyll doc whose only embedded HTML heading is an admonition h5", () => {
-      // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT repro (jekyll-v3
-      // §bug-3): ATX headings carry the real outline, and a single
-      // admonition `<h5>` is the only HTML heading that survives the
-      // markdown strip. The pre-fix rule fired "no <h1>, first heading
-      // is <h5>" — dishonest because the `# Getting started` /
-      // `## Install` ATX headings were the top of the outline.
+    it("enriches missing-h1-on-full-page on a .md file with markdown-residue note", () => {
+      // Full-page envelope + the only embedded heading is an admonition
+      // <h5> — the variant fires (correct: residue lacks <h1>) AND the
+      // message + couldBeWrongBecause point the agent at the markdown
+      // source where the ATX `#`-headings live.
       const source =
-        "# Getting started\n\n## Install\n\n" +
-        '<div class="admonition note"><h5>Note</h5>\nHeads up.</div>\n';
+        "<html>\n  <body>\n    <header>nav</header>\n" +
+        '    <div class="admonition"><h5>Note</h5></div>\n' +
+        "  </body>\n</html>\n";
+      const v = runRule(rule, source, { filePath: "page.md" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeDefined();
+      expect(variant?.message).toContain("Markdown ATX-syntax headings");
+      expect(variant?.couldBeWrongBecause).toContain(MARKDOWN_RESIDUE_CODE);
+    });
+
+    it("enriches the legacy first-heading missing-h1 emit on a _docs/*.md file with envelope", () => {
+      // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT closure: ATX
+      // headings carry the real outline, and a single admonition `<h5>`
+      // is the only HTML heading that survives the markdown strip. The
+      // pre-fix behaviour skipped outright; the new behaviour fires
+      // (the embedded <h5> is real) AND notes the residue limitation
+      // alongside the partial-path enrichment (`_docs/` is a partial
+      // path). The agent reads BOTH signals: composed-elsewhere AND
+      // markdown-residue. Wrap in <html><body> so the fragment-file
+      // gate doesn't classify the file as a composed fragment — `_docs/`
+      // is a partial path but NOT a fragment path, so a full-envelope
+      // residue file emits with both notes stacked.
+      const source =
+        "<html>\n<body>\n" +
+        '<div class="admonition note"><h5>Note</h5>\nHeads up.</div>\n' +
+        "</body>\n</html>\n";
       const v = runRule(rule, source, { filePath: "_docs/intro.md" });
-      expect(v).toHaveLength(0);
+      const missing = v.find((x) => x.message.includes("Document has no <h1>"));
+      expect(missing).toBeDefined();
+      expect(missing?.message).toContain("Markdown ATX-syntax headings");
+      expect(missing?.couldBeWrongBecause).toContain(MARKDOWN_RESIDUE_CODE);
+      // Partial path enrichment also applies — both codes stack.
+      expect(missing?.couldBeWrongBecause).toContain(
+        "partial_or_layout_file_requires_composed_check",
+      );
     });
 
-    it("does not fire on a .markdown file with embedded heading residue", () => {
-      // Guards the `.markdown` extension alongside `.md` — both route
-      // through `parseMarkdown` per PARSEABLE_EXTENSIONS and the
-      // extension-alias table in `src/utils/path.ts`.
-      const source = "# Page\n\n<section><h3>Embedded</h3></section>\n";
+    it("enriches the skipped-level emit on a .markdown file with embedded headings", () => {
+      // Two embedded headings with a level skip — the skipped-level
+      // emit fires because the skip is a real ordering bug in the
+      // rendered output regardless of what ATX headings did or did not
+      // strip. Reason text + couldBeWrongBecause carry the markdown
+      // residue note.
+      const source = "<section><h2>A</h2></section>\n<section><h4>Skipped</h4></section>\n";
       const v = runRule(rule, source, { filePath: "post.markdown" });
-      expect(v).toHaveLength(0);
+      const skipped = v.find((x) => x.message.includes("skipped"));
+      expect(skipped).toBeDefined();
+      expect(skipped?.message).toContain("Markdown ATX-syntax headings");
+      expect(skipped?.couldBeWrongBecause).toContain(MARKDOWN_RESIDUE_CODE);
     });
 
-    it("still fires on sibling .html files in the same scan", () => {
-      // Narrow the skip to the markdown extensions only — an HTML file
-      // whose ATX syntax is NOT stripped must continue to surface the
-      // missing-h1 / skipped-level emits. Wrap in <html><body> so the
-      // fragment-file gate doesn't classify the file as a composed
-      // fragment (a bare <h2> is now a fragment per branch (a)).
+    it("enriches the multiple-h1 emit on a .md file with two embedded <h1>s", () => {
+      const source = "<h1>Embedded one</h1>\n<h1>Embedded two</h1>\n";
+      const v = runRule(rule, source, { filePath: "README.md" });
+      const multi = v.find((x) => x.message.includes("expected exactly 1 page-title"));
+      expect(multi).toBeDefined();
+      expect(multi?.message).toContain("Markdown ATX-syntax headings");
+      expect(multi?.couldBeWrongBecause).toContain(MARKDOWN_RESIDUE_CODE);
+    });
+
+    // `.mkdn` is included in `isMarkdownSourceFile` defensively so any
+    // future PARSEABLE_EXTENSIONS widening or third-party adapter
+    // routing through `parseMarkdown` keeps the residue framing intact.
+    // No content-based test here: `.mkdn` is not currently parseable
+    // (PARSEABLE_EXTENSIONS doesn't list it), so the rule's `appliesTo`
+    // filter would block it from the production rule-runner before the
+    // residue branch could fire. The predicate's `.mkdn` check is a
+    // forward-compatibility hedge, not a runtime gate that exists today.
+
+    it("does NOT enrich sibling .html files (extension is the gate)", () => {
+      // Narrow the residue framing to the markdown extensions only —
+      // an HTML file whose ATX syntax was never stripped must surface
+      // the standard missing-h1 emit without the markdown-residue note.
       const v = runRule(rule, `<html><body><h2>Section</h2></body></html>`, {
         filePath: "sibling.html",
       });
-      expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      const missing = v.find((x) => x.message.includes("no <h1>"));
+      expect(missing).toBeDefined();
+      expect(missing?.message).not.toContain("Markdown ATX-syntax headings");
+      expect(missing?.couldBeWrongBecause ?? []).not.toContain(MARKDOWN_RESIDUE_CODE);
     });
   });
 
@@ -725,16 +775,21 @@ describe("rule semantics/heading-hierarchy", () => {
       expect(v.some((x) => x.message.includes("skipped"))).toBe(true);
     });
 
-    it("does not fire on `.md` files (markdown ingestion skip)", () => {
-      // Markdown extension routes through parseMarkdown which strips ATX
-      // headings; the rule body returns early before any branch runs.
-      // A Markdown file with two embedded `<h1>` HTML tags would still
-      // be a multiple-h1 case in the rendered output, but the residue
-      // can't be honestly emitted on per the V1 markdown skip — same
-      // reason the missing-h1 branch returns early.
-      const source = "# Real title\n\n<h1>Embedded one</h1>\n<h1>Embedded two</h1>\n";
+    it("fires on `.md` files with embedded duplicate <h1>s and enriches with residue note", () => {
+      // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT closure: the
+      // markdown adapter strips ATX headings, but two embedded HTML
+      // <h1> tags really do compose into two top-level headings in the
+      // rendered output. The multiple-h1 emit fires (correct), and the
+      // reason text + couldBeWrongBecause carry the residue note so the
+      // agent reads the markdown source itself before acting.
+      const source = "<h1>Embedded one</h1>\n<h1>Embedded two</h1>\n";
       const v = runRule(rule, source, { filePath: "README.md" });
-      expect(v).toHaveLength(0);
+      const multi = v.find((x) => x.message.includes(MARKER));
+      expect(multi).toBeDefined();
+      expect(multi?.message).toContain("Markdown ATX-syntax headings");
+      expect(multi?.couldBeWrongBecause).toContain(
+        "markdown_atx_headings_stripped_only_html_residue_visible",
+      );
     });
   });
 

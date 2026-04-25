@@ -664,10 +664,12 @@ function buildHints(files: readonly ParsedFile[], acc: CoverageAccumulator): rea
         "Markdown files parsed as HTML residue: embedded HTML, image alt-text, and " +
         "kramdown IAL are checked; link text and prose are not. ATX (`# …`) and " +
         "Setext headings are stripped before the residue reaches `parseHtml`, so " +
-        "`semantics/heading-hierarchy` is skipped on `.md` / `.markdown` files to " +
-        "avoid emits that contradict this coverage gap. For full coverage, build " +
-        "the site and point `scan_project` at the rendered output (`_site/`, " +
-        "`public/`, `dist/`) via `additionalPaths`.",
+        "`semantics/heading-hierarchy` emits on `.md` / `.markdown` files carry a " +
+        "`markdown_atx_headings_stripped_only_html_residue_visible` " +
+        "`couldBeWrongBecause` code — the rendered outline may be well-formed once " +
+        "the ATX headings come back, so read the markdown source itself before " +
+        "acting. For full coverage, build the site and point `scan_project` at the " +
+        "rendered output (`_site/`, `public/`, `dist/`) via `additionalPaths`.",
     });
   }
   return hints;
