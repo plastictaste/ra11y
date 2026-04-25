@@ -31,9 +31,11 @@ import {
   applyScssUnresolvedVariablesAdjustment,
   buildCountsBySurface,
   detectScssUnresolvedVariableFiles,
+  splitViolationsByScanKind,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
   withCountsBySurface,
+  withViolationsByScanKind,
 } from "../../../src/mcp/scan-assembly.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { runScanAndFormat } from "../../../src/mcp/tools-helpers.ts";
@@ -765,5 +767,154 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
     );
     expect(out[0]?.reason).toBe("previous prose from another axis");
     expect(out[0]?.coverageConfidence).toBe("medium");
+  });
+});
+
+describe("splitViolationsByScanKind — V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
+  // Doctrine: the per-kind tally is the load-bearing surface so an
+  // agent budgeting against `plan.violations` can tell at a glance
+  // how many findings sit in vendor / build-artifact files (often
+  // un-editable; the productive triage is `propose_config` exclude
+  // or source-level disable). The split is deterministic from the
+  // build-artifact classifier path set, not a heuristic.
+  function f(severity: string) {
+    return { severity };
+  }
+  const E = f("error");
+  const W = f("warning");
+  const I = f("info");
+
+  it("routes error/warning findings by exact path membership in the vendor set", () => {
+    const files = [
+      { path: "src/page.tsx", findings: [E, W] },
+      { path: "vendor/bootstrap.min.css", findings: [E, E, E, W, W] },
+      { path: "src/components/button.tsx", findings: [E] },
+    ];
+    const vendorPaths = new Set(["vendor/bootstrap.min.css"]);
+    expect(splitViolationsByScanKind(files, vendorPaths)).toEqual({
+      source: 3,
+      buildArtifact: 5,
+    });
+  });
+
+  it("excludes info-severity notes from both lanes — mirrors plan.violations semantics", () => {
+    // `plan.violations` is the error+warning count; `plan.notes` is
+    // info-severity. The per-kind sibling must split the same axis,
+    // not a different one — otherwise the lanes wouldn't sum to the
+    // headline they're splitting.
+    const files = [
+      { path: "src/page.tsx", findings: [E, I, W] }, // 2 violations, 1 note
+      { path: "vendor/lib.min.js", findings: [I, I, E] }, // 1 violation, 2 notes
+    ];
+    expect(splitViolationsByScanKind(files, new Set(["vendor/lib.min.js"]))).toEqual({
+      source: 2,
+      buildArtifact: 1,
+    });
+  });
+
+  it("routes every violation into `source` when the vendor path set is empty", () => {
+    // The classifier produced no build artifacts — every file is
+    // authored source. The lane stays honest at zero, never
+    // misclassifying.
+    const files = [
+      { path: "src/page.tsx", findings: [E, E, W] },
+      { path: "src/styles.css", findings: [E] },
+    ];
+    expect(splitViolationsByScanKind(files, new Set())).toEqual({
+      source: 4,
+      buildArtifact: 0,
+    });
+  });
+
+  it("returns zero-zero on empty file input", () => {
+    // A clean scan with no findings carries no per-file buckets to
+    // route — both lanes settle at zero. Caller upstream
+    // (`withViolationsByScanKind`) drops the field on the wire when
+    // no artifacts were classified, so this output is internal
+    // (consistency with the helper's contract).
+    expect(splitViolationsByScanKind([], new Set())).toEqual({ source: 0, buildArtifact: 0 });
+    expect(splitViolationsByScanKind([], new Set(["x"]))).toEqual({
+      source: 0,
+      buildArtifact: 0,
+    });
+  });
+
+  it("counts a file with zero violations as zero on its lane (no off-by-one)", () => {
+    // Defensive: `formatted.files` should never carry empty buckets in
+    // production (the assembler trims them) but the helper must be
+    // honest if they slip through. A file with only info-severity
+    // notes on an artifact path also stays at zero on the
+    // buildArtifact lane.
+    const files = [
+      { path: "vendor/lib.min.js", findings: [] },
+      { path: "vendor/notes-only.min.css", findings: [I, I] },
+      { path: "src/app.tsx", findings: [E, W] },
+    ];
+    expect(
+      splitViolationsByScanKind(files, new Set(["vendor/lib.min.js", "vendor/notes-only.min.css"])),
+    ).toEqual({
+      source: 2,
+      buildArtifact: 0,
+    });
+  });
+});
+
+describe("withViolationsByScanKind — plan-stamping helper", () => {
+  function f(severity: string) {
+    return { severity };
+  }
+  const E = f("error");
+  const W = f("warning");
+
+  it("stamps `plan.violationsByScanKind` when the vendor path set is non-empty", () => {
+    const plan = { violations: 8, notes: 0 } satisfies Record<string, unknown>;
+    const files = [
+      { path: "src/page.tsx", findings: [E, E, W] },
+      { path: "vendor/bootstrap.min.css", findings: [E, E, E, W, W] },
+    ];
+    const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
+    expect(out["violationsByScanKind"]).toEqual({ source: 3, buildArtifact: 5 });
+    // Existing fields preserved — additive enrichment only.
+    expect(out["violations"]).toBe(8);
+    expect(out["notes"]).toBe(0);
+  });
+
+  it("returns the input plan by identity (no shallow copy) when no artifacts were classified", () => {
+    // Common-case fast path: the no-artifacts scan pays nothing for
+    // the helper; the conditional-spread doctrine keeps the field off
+    // the wire entirely.
+    const plan = { violations: 4, notes: 1 } satisfies Record<string, unknown>;
+    const out = withViolationsByScanKind(plan, [{ path: "x", findings: [E] }], new Set());
+    expect(out).toBe(plan);
+    expect(out["violationsByScanKind"]).toBeUndefined();
+  });
+
+  it("preserves the input plan's other fields verbatim — additive only", () => {
+    const plan = {
+      violations: 2,
+      notes: 0,
+      fixesByClass: { mechanical: 1, guidance: 1 },
+      summary: "x",
+    } satisfies Record<string, unknown>;
+    const files = [{ path: "vendor/a.min.css", findings: [E, W] }];
+    const out = withViolationsByScanKind(plan, files, new Set(["vendor/a.min.css"]));
+    expect(out["violations"]).toBe(2);
+    expect(out["fixesByClass"]).toEqual({ mechanical: 1, guidance: 1 });
+    expect(out["summary"]).toBe("x");
+    expect(out["violationsByScanKind"]).toEqual({ source: 0, buildArtifact: 2 });
+  });
+
+  it("emits the field even when the buildArtifact lane is zero, as long as artifacts were classified", () => {
+    // The presence of `vendorPaths` is the trigger — if the classifier
+    // labelled at least one file in the scan, the agent benefits from
+    // the per-lane signal even when this particular response has no
+    // findings on those files. Honest shape: the agent reads
+    // "0 buildArtifact, 5 source" and trusts the split, vs. an absent
+    // field that conflates "no artifacts in the scan" with "no
+    // findings on artifacts."
+    const plan = { violations: 5 } satisfies Record<string, unknown>;
+    const files = [{ path: "src/app.tsx", findings: [E, E, E, W, W] }];
+    const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
+    expect(out["violationsByScanKind"]).toEqual({ source: 5, buildArtifact: 0 });
   });
 });

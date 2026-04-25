@@ -33,6 +33,7 @@ import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
+import { withViolationsByScanKind } from "./scan-assembly.ts";
 import { assembleScanProjectResponse } from "./scan-project-budget.ts";
 import {
   buildScanProjectReviewCandidates,
@@ -256,6 +257,24 @@ export const scanProjectTool: McpTool = {
     // `files[].findings` (surface-don't-suppress). Helper returns the
     // input meta by identity when no row was rewritten.
     const formattedMetaWithVendor = withVendorEnrichedPerRuleCoverage(formatted.meta, vendorPaths);
+    // V1-MINIFIED-FILE-SCAN-KIND-SPLIT: stamp the per-scan-kind
+    // violation tally on `plan.violationsByScanKind` so the agent can
+    // tell at a glance how many of `plan.violations` sit in vendor /
+    // build-artifact files (often un-editable; the productive triage
+    // is `propose_config` exclude or source-level disable, not a fix
+    // attempt) vs. authored source. Conditional-spread on `vendorPaths`
+    // emptiness — the no-artifacts common case omits the field per
+    // CLAUDE.md §1 "Ambiguous field shapes are dishonest." Per-lane
+    // structured tally keeps the doctrine: `plan.violations` stays
+    // flat, no composite headline disagrees with the per-lane sibling.
+    // The shared `formatted.plan` reference is reused below in
+    // `assembleScanProjectResponse`; rebinding here propagates the
+    // enriched plan through the rest of the assembly chain without
+    // forcing a second pass through the helper.
+    const formattedWithScanKind: ScanFormatted = {
+      ...formatted,
+      plan: withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+    };
     const nextStep = buildNextStep(formatted, {
       iterativeTip:
         actualMode === "full"
@@ -387,7 +406,12 @@ export const scanProjectTool: McpTool = {
       assembleScanProjectResponse({
         params,
         session,
-        formatted,
+        // V1-MINIFIED-FILE-SCAN-KIND-SPLIT: pass the scan-kind-enriched
+        // `formatted` (its `plan.violationsByScanKind` sibling lands
+        // on the wire) into the assembler. Identity-stable when no
+        // build artifacts were classified — `withViolationsByScanKind`
+        // returns the input plan unchanged in that case.
+        formatted: formattedWithScanKind,
         hoisted: hoistedWithLimitations,
         page,
         pageOffset: pageParams.offset,

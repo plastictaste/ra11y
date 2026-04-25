@@ -101,6 +101,16 @@ export function buildScanPlan(args: {
     // `fixesByClass.mechanical + fixesByClass.verifyInSource` — which
     // the agent can read directly off the structured tally without
     // needing a second overlapping composite on the wire.
+    //
+    // `violationsByScanKind` is stamped one layer up by
+    // {@link withViolationsByScanKind} (called from `tool-scan-project.ts`
+    // after the build-artifact classifier resolves) — the split between
+    // `source` and `buildArtifact` lanes needs the vendor path set,
+    // which is only available post-classification. Same per-lane
+    // doctrine: `plan.violations` stays a flat counter; consumers
+    // that need to know "of these N, how many sit in vendor code"
+    // read the structured `violationsByScanKind` sibling. No
+    // composite headline is added that would disagree.
     violations,
     notes,
     ...(emitFixesByClass ? { fixesByClass } : {}),
@@ -631,4 +641,119 @@ export function sumFindingsEmitted(rows: readonly PerRuleCoverage[]): number {
   let total = 0;
   for (const r of rows) total += r.findingsEmitted;
   return total;
+}
+
+/**
+ * Per-scan-kind violation tally surfaced as `plan.violationsByScanKind`
+ * on `scan_project` responses. Splits the flat `plan.violations`
+ * counter by whether the violation's source file was classified as a
+ * deterministic build artifact (compiled CSS, vendor bundle, hashed
+ * webpack chunk, etc.) by the {@link
+ * ./build-artifacts.ts!collectBuildArtifacts} pass.
+ *
+ * Why split: an agent reading "187 violations" against a
+ * vendor-heavy template catalog has no way to tell that 41 of those
+ * 187 sit in `css/bootstrap.min.css` — files the user cannot edit,
+ * for which the productive triage is a `propose_config` exclude
+ * rather than a fix attempt. The honest budget is 146 source +
+ * 41 buildArtifact, not a flat 187. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Composite headline counts are dishonest" and the 2026-04-24
+ * `plan.totalFindings` precedent, the per-kind structured tally is
+ * the load-bearing surface; consumers that want the flat number
+ * sum the two lanes themselves.
+ *
+ * Surface-don't-suppress: every violation continues to ride in
+ * `files[]` regardless of which lane it lands in — this counter is
+ * additive triage signal only. The `kind: "buildArtifact"`
+ * classification reuses the existing {@link ScannedBuildArtifact}
+ * path set (V1-BUILD-ARTIFACT-REASON-EXPLAIN sha a5b07d28); a
+ * violation's file qualifies as `buildArtifact` iff its path is in
+ * `vendorPaths`. Everything else — including findings on files the
+ * scanner couldn't classify either way — counts as `source` so the
+ * default-honest behavior is "the file you wrote." This avoids the
+ * silent-miss failure mode where a misclassified vendor file silently
+ * routes a real authored-code finding into the dismissable bucket.
+ */
+export interface ViolationsByScanKind {
+  readonly source: number;
+  readonly buildArtifact: number;
+}
+
+/**
+ * Computes {@link ViolationsByScanKind} from per-file finding buckets
+ * and the build-artifact path set. Iterates the file entries once,
+ * routing each finding into the `buildArtifact` lane when its file
+ * path is in `vendorPaths` and the `source` lane otherwise.
+ *
+ * Severity filter — info-severity findings (`notes` in the plan
+ * vocabulary) are excluded from both lanes so the per-kind tally
+ * mirrors the headline `plan.violations` (which already excludes
+ * notes). Without the filter, a vendor file with one info-severity
+ * note would inflate the `buildArtifact` lane and the lanes would
+ * sum to `violations + notes` instead of just `violations` — a
+ * cross-surface drift the doctrine explicitly warns against
+ * ("composite headline counts are dishonest" applies symmetrically
+ * to the per-lane split). Callers that want the per-lane note count
+ * read it off `files[]` themselves; encoding it in this helper
+ * would re-create the multi-axis composite the split exists to kill.
+ *
+ * Pure over its inputs; takes a readonly shape that exposes
+ * `path` + per-finding `severity` so CLI / MCP / report callers can
+ * pass their own bucket types without an adapter. Empty input yields
+ * `{ source: 0, buildArtifact: 0 }`; an empty `vendorPaths` set
+ * routes every finding into `source` (the no-build-artifacts common
+ * case) without per-file work besides the set membership check.
+ */
+export function splitViolationsByScanKind(
+  files: readonly {
+    readonly path: string;
+    readonly findings: readonly { readonly severity: string }[];
+  }[],
+  vendorPaths: ReadonlySet<string>,
+): ViolationsByScanKind {
+  let source = 0;
+  let buildArtifact = 0;
+  for (const f of files) {
+    let count = 0;
+    for (const finding of f.findings) {
+      if (finding.severity !== "info") count += 1;
+    }
+    if (vendorPaths.has(f.path)) buildArtifact += count;
+    else source += count;
+  }
+  return { source, buildArtifact };
+}
+
+/**
+ * Stamps `plan.violationsByScanKind` onto a `plan` record produced by
+ * {@link buildScanPlan}. Conditional-spread per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest": when no build artifacts
+ * were classified for the scan (the `vendorPaths` set is empty), the
+ * split would always read `{ source: <total>, buildArtifact: 0 }` —
+ * a field whose only signal is "no artifacts," which the existing
+ * `meta.scannedBuildArtifacts` absence already conveys honestly.
+ * Omitting in the no-artifacts case keeps the present-when-meaningful
+ * shape and avoids two fields telling the same story.
+ *
+ * Identity-stable when the spread is a no-op (no artifacts), so
+ * callers can route through this helper unconditionally without
+ * paying for a shallow copy on the common case.
+ *
+ * Designed to run AFTER {@link buildScanPlan} produced the `plan`
+ * record but BEFORE the `plan` reaches the wire — `tool-scan-project.ts`
+ * calls this between the build-artifact classification pass and
+ * `assembleScanProjectResponse`, which is the only seam where both
+ * the per-file finding buckets and the vendor path set are in scope.
+ */
+export function withViolationsByScanKind(
+  plan: Record<string, unknown>,
+  files: readonly {
+    readonly path: string;
+    readonly findings: readonly { readonly severity: string }[];
+  }[],
+  vendorPaths: ReadonlySet<string>,
+): Record<string, unknown> {
+  if (vendorPaths.size === 0) return plan;
+  const split = splitViolationsByScanKind(files, vendorPaths);
+  return { ...plan, violationsByScanKind: split };
 }
