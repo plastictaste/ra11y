@@ -105,19 +105,96 @@ export type BuildArtifactReason =
   | "tailwind-compiled-escape";
 
 /**
+ * Per-entry deterministic explanation of *which* heuristic predicate
+ * fired for a {@link BuildArtifactReason}. The doctrine bar is
+ * "provable from the code" — every variant below names a predicate
+ * that already runs inside {@link classifyBuildArtifact}, so the
+ * agent reading the response can verify the verdict without re-
+ * running our classifier or guessing what we matched on. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+ * meta sub-fields are dishonest", this is additive evidence that
+ * makes the existing `reason` label auditable; we do NOT introduce
+ * new reasons or re-fire predicates here.
+ *
+ * Numeric `value` / `threshold` siblings appear ONLY on signals where
+ * the predicate is itself a numeric comparison (the long-line probe).
+ * Path-based signals carry the matched substring as `value` so the
+ * agent can grep for it directly. The conditional-spread doctrine
+ * applies: callers spread `value`/`threshold` only when the producing
+ * predicate emitted them.
+ *
+ * Variants, paired one-to-one with the predicates inside
+ * {@link classifyBuildArtifact}:
+ *
+ *   - `min-infix` — the basename matches {@link MIN_INFIX_RE}; `value`
+ *     is the matched basename so the agent can confirm the literal
+ *     `.min.` substring.
+ *   - `hex-segment-in-basename` — the basename matches
+ *     {@link HASHED_FILENAME_RE}; `value` is the matched hex segment
+ *     (without flanking dots) so the agent can grep for it.
+ *   - `build-dir-segment` — a {@link BUILD_DIR_MARKERS} entry sits in
+ *     the path; `value` is the matched marker (e.g. `dist/`).
+ *   - `data-url-image-marker` — the source contains the literal
+ *     `url(data:image/` substring; `value` echoes the marker so the
+ *     agent can grep for it.
+ *   - `tailwind-escape-selector` — the source matches
+ *     {@link TAILWIND_ESCAPED_SELECTOR}; `value` is the matched
+ *     substring (the first hit) so the agent can locate it.
+ *   - `max-line-length-exceeds-threshold` — the long-line probe fired
+ *     AND a second-tier corroborator (`median` line length, or `ratio`
+ *     of long lines) also fired. `value` is the longest line length
+ *     observed, `threshold` is {@link MINIFIED_LINE_THRESHOLD},
+ *     `corroborator` names which conjunct of
+ *     {@link hasLongMinifiedLineCorroborated} carried the verdict.
+ *   - `sibling-map-file` — a paired `.map` file is in the scanned
+ *     set; `value` is the sibling map's path so the agent can grep
+ *     for both halves of the pair.
+ */
+export type BuildArtifactSignal =
+  | { readonly kind: "min-infix"; readonly value: string }
+  | { readonly kind: "hex-segment-in-basename"; readonly value: string }
+  | { readonly kind: "build-dir-segment"; readonly value: string }
+  | { readonly kind: "data-url-image-marker"; readonly value: string }
+  | { readonly kind: "tailwind-escape-selector"; readonly value: string }
+  | {
+      readonly kind: "max-line-length-exceeds-threshold";
+      readonly value: number;
+      readonly threshold: number;
+      readonly corroborator: "median" | "ratio";
+    }
+  | { readonly kind: "sibling-map-file"; readonly value: string };
+
+/**
  * One classified artifact entry. On `scan_project`, these records
  * ride inside the grouped envelope —
  * `meta.scannedBuildArtifacts.ungrouped[]` — for any sub-threshold
  * basenames that didn't form a group of ≥
  * {@link BASENAME_GROUP_THRESHOLD}. The agent reads `reason` to
- * triage whether the file is worth investigating without opening
- * it. The paired `path` is the same path the rest of the response
- * uses (root-relative POSIX after the grouper's relativization),
- * so a caller can join against the `files[]` bucket directly.
+ * triage whether the file is worth investigating without opening it
+ * and reads `signal` to verify *which* heuristic predicate fired
+ * (V1-BUILD-ARTIFACT-REASON-EXPLAIN). The paired `path` is the same
+ * path the rest of the response uses (root-relative POSIX after the
+ * grouper's relativization), so a caller can join against the
+ * `files[]` bucket directly.
  */
 export interface ScannedBuildArtifact {
   readonly path: string;
   readonly reason: BuildArtifactReason;
+  readonly signal: BuildArtifactSignal;
+}
+
+/**
+ * Detailed per-file classification result returned by
+ * {@link classifyBuildArtifactDetailed}: pairs the {@link
+ * BuildArtifactReason} verdict with the deterministic
+ * {@link BuildArtifactSignal} that fired, so callers can surface
+ * both the label and its evidence on `ScannedBuildArtifact`. The
+ * convenience boolean predicate {@link classifyBuildArtifact} drops
+ * the signal for callers that only need the reason.
+ */
+export interface BuildArtifactClassification {
+  readonly reason: BuildArtifactReason;
+  readonly signal: BuildArtifactSignal;
 }
 
 /**
@@ -249,6 +326,30 @@ export function classifyBuildArtifact(
   filePath: string,
   source: string,
 ): BuildArtifactReason | null {
+  return classifyBuildArtifactDetailed(filePath, source)?.reason ?? null;
+}
+
+/**
+ * Detailed sibling of {@link classifyBuildArtifact}: returns the
+ * matching {@link BuildArtifactClassification} (reason + signal) or
+ * `null` when no signal fires.
+ *
+ * Evaluation order matches the boolean predicate exactly so the
+ * returned `reason` is identical for any input — the only difference
+ * is the paired {@link BuildArtifactSignal} that names the predicate
+ * which fired. Each per-signal helper is a pure function over its
+ * inputs so the doctrine bar ("provable from the code") survives:
+ * the agent reading `signal.kind` and `signal.value` can re-derive
+ * the verdict without re-running our classifier.
+ *
+ * Per V1-BUILD-ARTIFACT-REASON-EXPLAIN this is purely additive — no
+ * new classification predicates were introduced, only structured
+ * surfacing of the evidence the existing predicates already gather.
+ */
+export function classifyBuildArtifactDetailed(
+  filePath: string,
+  source: string,
+): BuildArtifactClassification | null {
   // Sourcemap files are never classified as build artifacts in their
   // own right — agents don't author or hand-edit `.map` files, and
   // listing one under `scannedBuildArtifacts` would only add noise
@@ -256,12 +357,21 @@ export function classifyBuildArtifact(
   // attached to the *source* file in `collectBuildArtifacts`; the
   // map itself stays out.
   if (filePath.replace(/\\/g, "/").endsWith(".map")) return null;
-  if (matchesMinInfix(filePath)) return "minified";
-  if (matchesHashedFilename(filePath)) return "hashed-filename";
-  if (matchesBuildDirMarker(filePath)) return "dist-path";
+  const minSignal = detectMinInfix(filePath);
+  if (minSignal !== null) return { reason: "minified", signal: minSignal };
+  const hashSignal = detectHashedFilename(filePath);
+  if (hashSignal !== null) return { reason: "hashed-filename", signal: hashSignal };
+  const distSignal = detectBuildDirMarker(filePath);
+  if (distSignal !== null) return { reason: "dist-path", signal: distSignal };
   if (isCssPath(filePath)) {
-    if (source.includes(DATA_URL_IMAGE_MARKER)) return "contains-data-url-gradient";
-    if (TAILWIND_ESCAPED_SELECTOR.test(source)) return "tailwind-compiled-escape";
+    const dataUrlSignal = detectDataUrlImageMarker(source);
+    if (dataUrlSignal !== null) {
+      return { reason: "contains-data-url-gradient", signal: dataUrlSignal };
+    }
+    const tailwindSignal = detectTailwindEscape(source);
+    if (tailwindSignal !== null) {
+      return { reason: "tailwind-compiled-escape", signal: tailwindSignal };
+    }
   }
   // Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE: the standalone
   // single-long-line probe was the root cause of 54 authored files
@@ -270,11 +380,12 @@ export function classifyBuildArtifact(
   // Google Maps iframe URL, or an MDX prop bundle is not minification
   // evidence. Require a corroborating content signal so the verdict
   // stays provable from file shape.
-  if (hasLongMinifiedLineCorroborated(source)) return "minified";
+  const longLineSignal = detectLongMinifiedLine(source);
+  if (longLineSignal !== null) return { reason: "minified", signal: longLineSignal };
   return null;
 }
 
-function matchesBuildDirMarker(filePath: string): boolean {
+function detectBuildDirMarker(filePath: string): BuildArtifactSignal | null {
   // Normalize backslashes so Windows-style paths ("C:\proj\dist\…")
   // are handled. The matcher accepts a marker either preceded by `/`
   // anywhere in the path OR sitting at the very start — that covers
@@ -282,19 +393,37 @@ function matchesBuildDirMarker(filePath: string): boolean {
   // without mislabeling a root-level file literally named "dist.ts".
   const normalized = filePath.replace(/\\/g, "/");
   for (const marker of BUILD_DIR_MARKERS) {
-    if (normalized.startsWith(marker) || normalized.includes(`/${marker}`)) return true;
+    if (normalized.startsWith(marker) || normalized.includes(`/${marker}`)) {
+      return { kind: "build-dir-segment", value: marker };
+    }
   }
-  return false;
+  return null;
 }
 
-function matchesMinInfix(filePath: string): boolean {
+function detectMinInfix(filePath: string): BuildArtifactSignal | null {
   const basename = basenameOf(filePath);
-  return MIN_INFIX_RE.test(basename);
+  return MIN_INFIX_RE.test(basename) ? { kind: "min-infix", value: basename } : null;
 }
 
-function matchesHashedFilename(filePath: string): boolean {
+function detectHashedFilename(filePath: string): BuildArtifactSignal | null {
   const basename = basenameOf(filePath);
-  return HASHED_FILENAME_RE.test(basename);
+  const match = basename.match(HASHED_FILENAME_RE);
+  if (match === null) return null;
+  // Strip the flanking dots so `value` carries just the hex segment
+  // the agent can grep for (the dots are part of the filename around
+  // it). `match[0]` shape is `.<hex>.`; slice(1, -1) returns `<hex>`.
+  return { kind: "hex-segment-in-basename", value: match[0].slice(1, -1) };
+}
+
+function detectDataUrlImageMarker(source: string): BuildArtifactSignal | null {
+  return source.includes(DATA_URL_IMAGE_MARKER)
+    ? { kind: "data-url-image-marker", value: DATA_URL_IMAGE_MARKER }
+    : null;
+}
+
+function detectTailwindEscape(source: string): BuildArtifactSignal | null {
+  const match = source.match(TAILWIND_ESCAPED_SELECTOR);
+  return match === null ? null : { kind: "tailwind-escape-selector", value: match[0] };
 }
 
 function basenameOf(filePath: string): string {
@@ -393,36 +522,47 @@ export function hasLongMinifiedLine(source: string): boolean {
 /**
  * One contiguous line-statistics scan returning both corroboration
  * predicates in a single pass: the count of long lines (over
- * {@link MINIFIED_LINE_THRESHOLD}), the total line count, and the
- * median line length. Splitting into two separate loops would double
- * the hot-path work on every parsed file; folding them here keeps the
- * helper O(N) with one pass (median is computed on a single
- * line-length array allocated only when we actually need the stats,
- * i.e. only once the single-long-line probe already fired).
+ * {@link MINIFIED_LINE_THRESHOLD}), the total line count, the
+ * median line length, and the maximum line length observed.
+ * Splitting into separate loops would double the hot-path work on
+ * every parsed file; folding them here keeps the helper O(N) with
+ * one pass (median is computed on a single line-length array
+ * allocated only when we actually need the stats, i.e. only once
+ * the single-long-line probe already fired).
+ *
+ * `maxLineLength` rides along (zero extra work — it's a running max
+ * over the same lengths) so {@link detectLongMinifiedLine} can
+ * stamp it into the structured signal as the deterministic
+ * `value`: the agent reading `value: 712, threshold: 500` knows
+ * exactly which line shape carried the verdict.
  *
  * Line semantics match {@link hasLongMinifiedLine}: a trailing line
  * without a terminator counts as one line; CRLF / LF are treated
  * identically. Empty input returns zeroed stats (total = 0, median =
- * 0, longLines = 0) — the caller must treat a zero-line file as "no
- * corroboration" to avoid a degenerate median.
+ * 0, longLines = 0, max = 0) — the caller must treat a zero-line
+ * file as "no corroboration" to avoid a degenerate median.
  */
 function computeLineStats(source: string): {
   readonly totalLines: number;
   readonly longLineCount: number;
   readonly medianLineLength: number;
+  readonly maxLineLength: number;
 } {
   if (source.length === 0) {
-    return { totalLines: 0, longLineCount: 0, medianLineLength: 0 };
+    return { totalLines: 0, longLineCount: 0, medianLineLength: 0, maxLineLength: 0 };
   }
   const lengths = collectLineLengths(source);
   let longLineCount = 0;
+  let maxLineLength = 0;
   for (const l of lengths) {
     if (l > MINIFIED_LINE_THRESHOLD) longLineCount += 1;
+    if (l > maxLineLength) maxLineLength = l;
   }
   return {
     totalLines: lengths.length,
     longLineCount,
     medianLineLength: medianOfUnsortedLengths(lengths),
+    maxLineLength,
   };
 }
 
@@ -523,12 +663,47 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
  * before the corroborated-long-line branch runs.
  */
 function hasLongMinifiedLineCorroborated(source: string): boolean {
-  if (!hasLongMinifiedLine(source)) return false;
-  const { totalLines, longLineCount, medianLineLength } = computeLineStats(source);
-  if (totalLines === 0) return false;
-  if (medianLineLength > MINIFIED_LINE_THRESHOLD) return true;
-  if (longLineCount < MINIFIED_LONG_LINE_MIN_COUNT) return false;
-  return longLineCount / totalLines >= MINIFIED_LONG_LINE_RATIO;
+  return detectLongMinifiedLine(source) !== null;
+}
+
+/**
+ * Detailed sibling of {@link hasLongMinifiedLineCorroborated}:
+ * returns the structured `max-line-length-exceeds-threshold` signal
+ * when both the single-long-line probe and a second-tier
+ * corroborator fire, or `null` otherwise. The returned signal carries
+ * the longest observed line length as `value`, the
+ * {@link MINIFIED_LINE_THRESHOLD} as `threshold`, and the
+ * `corroborator` discriminator that names which conjunct (`median`
+ * or `ratio`) carried the verdict — the agent reading the signal
+ * can re-verify either branch without re-running the scanner.
+ *
+ * Per V1-BUILD-ARTIFACT-REASON-EXPLAIN: this surfaces ONLY evidence
+ * the existing `hasLongMinifiedLineCorroborated` already gathered;
+ * no new predicate fires here. Both helpers stay aligned because
+ * the boolean wrapper now delegates to this one.
+ */
+function detectLongMinifiedLine(source: string): BuildArtifactSignal | null {
+  if (!hasLongMinifiedLine(source)) return null;
+  const { totalLines, longLineCount, medianLineLength, maxLineLength } = computeLineStats(source);
+  if (totalLines === 0) return null;
+  if (medianLineLength > MINIFIED_LINE_THRESHOLD) {
+    return {
+      kind: "max-line-length-exceeds-threshold",
+      value: maxLineLength,
+      threshold: MINIFIED_LINE_THRESHOLD,
+      corroborator: "median",
+    };
+  }
+  if (longLineCount < MINIFIED_LONG_LINE_MIN_COUNT) return null;
+  if (longLineCount / totalLines >= MINIFIED_LONG_LINE_RATIO) {
+    return {
+      kind: "max-line-length-exceeds-threshold",
+      value: maxLineLength,
+      threshold: MINIFIED_LINE_THRESHOLD,
+      corroborator: "ratio",
+    };
+  }
+  return null;
 }
 
 /**
@@ -571,27 +746,44 @@ export function collectBuildArtifacts(
   }
   const out: ScannedBuildArtifact[] = [];
   for (const file of files) {
-    const reason = classifyBuildArtifact(file.filePath, file.source);
-    if (reason !== null) {
-      out.push({ path: file.filePath, reason });
+    const detail = classifyBuildArtifactDetailed(file.filePath, file.source);
+    if (detail !== null) {
+      out.push({ path: file.filePath, reason: detail.reason, signal: detail.signal });
       continue;
     }
-    if (hasSiblingSourcemap(file.filePath, pathsInSet)) {
-      out.push({ path: file.filePath, reason: "sourcemap-sibling" });
+    const siblingMap = findSiblingSourcemap(file.filePath, pathsInSet);
+    if (siblingMap !== null) {
+      out.push({
+        path: file.filePath,
+        reason: "sourcemap-sibling",
+        // `value` is the sibling map path so the agent can grep for
+        // both halves of the pair without re-deriving the convention.
+        signal: { kind: "sibling-map-file", value: siblingMap },
+      });
     }
   }
   return out;
 }
 
-function hasSiblingSourcemap(filePath: string, pathsInSet: ReadonlySet<string>): boolean {
-  // A sourcemap itself is never a build artifact from ra11y's
-  // perspective — we don't scan map contents for a11y signal, and
-  // labelling one would only add noise. The sibling probe is only
-  // meaningful for the *source* file, so short-circuit when the
-  // input is the `.map`.
+/**
+ * Returns the matched sibling `.map` path (the deterministic evidence
+ * for the `sourcemap-sibling` reason) or `null` when the source has
+ * no paired map in the scanned set. Replaces the boolean
+ * `hasSiblingSourcemap` so the returned path can be stamped into the
+ * structured signal — the agent reading
+ * `signal: { kind: "sibling-map-file", value: "dist/app.js.map" }`
+ * can grep for the literal map path without re-deriving the
+ * convention. A sourcemap itself is never classified, so the probe
+ * short-circuits on `.map` input.
+ */
+function findSiblingSourcemap(
+  filePath: string,
+  pathsInSet: ReadonlySet<string>,
+): string | null {
   const normalized = filePath.replace(/\\/g, "/");
-  if (normalized.endsWith(".map")) return false;
-  return pathsInSet.has(`${normalized}.map`);
+  if (normalized.endsWith(".map")) return null;
+  const candidate = `${normalized}.map`;
+  return pathsInSet.has(candidate) ? candidate : null;
 }
 
 /**
@@ -743,7 +935,7 @@ function bucketByBasename(
   for (const e of entries) {
     const rel = relativizeToPosix(e.path, rootPosix);
     if (rel === null) continue;
-    const relativized: ScannedBuildArtifact = { path: rel, reason: e.reason };
+    const relativized: ScannedBuildArtifact = { path: rel, reason: e.reason, signal: e.signal };
     const base = basenameOf(rel);
     const bucket = buckets.get(base);
     if (bucket === undefined) buckets.set(base, [relativized]);

@@ -32,11 +32,45 @@
 import { describe, expect, it } from "bun:test";
 import {
   BASENAME_GROUP_THRESHOLD,
+  type BuildArtifactReason,
+  type BuildArtifactSignal,
+  type ScannedBuildArtifact,
   classifyBuildArtifact,
+  classifyBuildArtifactDetailed,
   collectBuildArtifacts,
   groupBuildArtifactsByBasename,
   isBuildArtifact,
 } from "../../../src/mcp/build-artifacts.ts";
+
+/**
+ * Stub signal used by `groupBuildArtifactsByBasename` tests that
+ * exercise grouping/sorting/relativization logic — the signal field
+ * is required by the {@link ScannedBuildArtifact} type but the group
+ * helpers don't read its contents (only `path` + `reason` participate
+ * in clustering and aggregate `reasons`). Centralized here so future
+ * additions to the {@link BuildArtifactSignal} union don't force a
+ * shotgun edit across the synthetic test entries.
+ */
+const STUB_SIGNAL = { kind: "build-dir-segment", value: "dist/" } as const satisfies
+  BuildArtifactSignal;
+
+/**
+ * Build a synthetic `{ path, reason, signal }` entry for the grouping
+ * tests. The signal defaults to {@link STUB_SIGNAL} for `dist-path`
+ * entries and to a `min-infix` placeholder for `minified` entries —
+ * both are deterministic and inert as far as the grouping helper is
+ * concerned. Tests that assert on `signal` shape construct entries
+ * inline; this helper is for cases where the signal is incidental.
+ */
+function mkEntry(
+  path: string,
+  reason: BuildArtifactReason,
+  signal: BuildArtifactSignal = reason === "minified"
+    ? { kind: "min-infix", value: path.split("/").pop() ?? path }
+    : STUB_SIGNAL,
+): ScannedBuildArtifact {
+  return { path, reason, signal };
+}
 
 describe("classifyBuildArtifact — Sass-partial NEGATIVE cases (regression guard)", () => {
   it("does NOT classify `_variables.scss` just because the filename starts with `_`", () => {
@@ -442,6 +476,100 @@ describe("classifyBuildArtifact — first-match evaluation order", () => {
   });
 });
 
+// V1-BUILD-ARTIFACT-REASON-EXPLAIN: per-entry `signal` field carries
+// the deterministic predicate evidence so an agent verifying a label
+// has the falsifiable claim already in hand. Tests below pin one
+// signal shape per `BuildArtifactReason`. Each `value` is grep-able
+// (path substring, basename, marker text) — no derived numbers
+// except the line-length probe, where `value` is the longest line
+// observed and `threshold` is the 500-char floor.
+describe("classifyBuildArtifactDetailed — structured per-entry signal", () => {
+  it("stamps `min-infix` with the matched basename for `.min.` filenames", () => {
+    expect(classifyBuildArtifactDetailed("vendor/bootstrap.min.css", ".a{}")).toEqual({
+      reason: "minified",
+      signal: { kind: "min-infix", value: "bootstrap.min.css" },
+    });
+  });
+
+  it("stamps `hex-segment-in-basename` with the matched hex segment (no flanking dots)", () => {
+    // The match `.a1b2c3d4.` is sliced to `a1b2c3d4` so the agent can
+    // grep the literal hex run without re-deriving the dot convention.
+    expect(classifyBuildArtifactDetailed("assets/app.a1b2c3d4.js", "// bundle")).toEqual({
+      reason: "hashed-filename",
+      signal: { kind: "hex-segment-in-basename", value: "a1b2c3d4" },
+    });
+  });
+
+  it("stamps `build-dir-segment` with the matched marker for dist-path entries", () => {
+    expect(classifyBuildArtifactDetailed("/proj/dist/main.css", ".a{}")).toEqual({
+      reason: "dist-path",
+      signal: { kind: "build-dir-segment", value: "dist/" },
+    });
+    expect(classifyBuildArtifactDetailed("/proj/.next/static/css/app.css", ".a{}")).toEqual({
+      reason: "dist-path",
+      signal: { kind: "build-dir-segment", value: ".next/" },
+    });
+  });
+
+  it("stamps `data-url-image-marker` with the canonical marker substring on CSS gradient files", () => {
+    const source = ".bg { background: url(data:image/svg+xml,...); }";
+    expect(classifyBuildArtifactDetailed("vendor/styles.css", source)).toEqual({
+      reason: "contains-data-url-gradient",
+      signal: { kind: "data-url-image-marker", value: "url(data:image/" },
+    });
+  });
+
+  it("stamps `tailwind-escape-selector` with the first matched substring", () => {
+    const source = ".w-\\[400px\\] { width: 400px; }\n";
+    expect(classifyBuildArtifactDetailed("app/styles.css", source)).toEqual({
+      reason: "tailwind-compiled-escape",
+      signal: { kind: "tailwind-escape-selector", value: "\\[400px\\]" },
+    });
+  });
+
+  it("stamps `max-line-length-exceeds-threshold` with the median corroborator on a one-enormous-line bundle", () => {
+    // Canonical minified-CSS shape: one ~700-char line. Median = 700,
+    // ratio = 100% — but median fires first by evaluation order.
+    // `value` is the longest line length observed (700 here), not the
+    // median — the agent verifies "this file has a ≥500-char line"
+    // by reading `value > threshold`.
+    const source = `.a{color:red;}`.repeat(50);
+    expect(classifyBuildArtifactDetailed("vendor/some-bundle.css", source)).toEqual({
+      reason: "minified",
+      signal: {
+        kind: "max-line-length-exceeds-threshold",
+        value: source.length,
+        threshold: 500,
+        corroborator: "median",
+      },
+    });
+  });
+
+  it("stamps `max-line-length-exceeds-threshold` with the ratio corroborator on a multi-long-line bundle", () => {
+    // 4 long lines out of 16 → 25% ratio fires; median sits below
+    // threshold (12 of 16 lines are short) so the discriminator is
+    // `ratio`, not `median`. Lock both halves of the discriminator
+    // so a future refactor can't silently flip the corroborator
+    // attribution.
+    const shortLines = Array.from({ length: 12 }, () => ".btn { padding: 0.5rem; }");
+    const longLineText = `.rule { ${"color:red;".repeat(55)} }`;
+    const longLines = Array.from({ length: 4 }, () => longLineText);
+    const source = [...shortLines, ...longLines].join("\n");
+    const out = classifyBuildArtifactDetailed("vendor/multi.css", source);
+    expect(out?.reason).toBe("minified");
+    expect(out?.signal).toEqual({
+      kind: "max-line-length-exceeds-threshold",
+      value: longLineText.length,
+      threshold: 500,
+      corroborator: "ratio",
+    });
+  });
+
+  it("returns `null` for files that match no signal — no signal field to disambiguate against", () => {
+    expect(classifyBuildArtifactDetailed("scss/_variables.scss", "$primary: #0d6efd;")).toBe(null);
+  });
+});
+
 describe("isBuildArtifact (convenience predicate)", () => {
   it("returns true when classifyBuildArtifact returns a reason", () => {
     expect(isBuildArtifact("vendor/bootstrap.min.css", ".a{}")).toBe(true);
@@ -460,9 +588,14 @@ describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
     ];
     // Both files sit outside the BUILD_DIR_MARKERS set ("dist-out/"
     // is not "dist/") so the label has to come from the sibling-map
-    // signal, not a path probe.
+    // signal, not a path probe. The signal carries the matched map
+    // path so the agent can grep for both halves of the pair.
     expect(collectBuildArtifacts(files)).toEqual([
-      { path: "dist-out/app.js", reason: "sourcemap-sibling" },
+      {
+        path: "dist-out/app.js",
+        reason: "sourcemap-sibling",
+        signal: { kind: "sibling-map-file", value: "dist-out/app.js.map" },
+      },
     ]);
   });
 
@@ -490,18 +623,27 @@ describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
     // `vendor/jquery.min.js` matches the `.min.` infix AND has a
     // sibling `.map`. The per-file classifier runs first, so the
     // entry carries `minified` (the more specific verdict) and is
-    // not duplicated.
+    // not duplicated. The accompanying `signal` reflects the
+    // winning predicate (the `.min.` infix), not the sibling-map
+    // pairing — invariant on the doctrine "label must survive
+    // inspection" extended to its evidence sub-field.
     const files = [
       { filePath: "vendor/jquery.min.js", source: "!function(){}();" },
       { filePath: "vendor/jquery.min.js.map", source: '{"version":3}' },
     ];
     const labeled = collectBuildArtifacts(files);
-    expect(labeled).toEqual([{ path: "vendor/jquery.min.js", reason: "minified" }]);
+    expect(labeled).toEqual([
+      {
+        path: "vendor/jquery.min.js",
+        reason: "minified",
+        signal: { kind: "min-infix", value: "jquery.min.js" },
+      },
+    ]);
   });
 });
 
 describe("collectBuildArtifacts", () => {
-  it("returns the subset of files that match any signal as `{ path, reason }` records, preserving input order", () => {
+  it("returns the subset of files that match any signal as `{ path, reason, signal }` records, preserving input order", () => {
     const files = [
       { filePath: "src/Component.tsx", source: "export const x = 1;" },
       { filePath: "app/styles.css", source: ".w-\\[400px\\] { width: 400px; }" },
@@ -510,9 +652,21 @@ describe("collectBuildArtifacts", () => {
       { filePath: "vendor/jquery.min.js", source: "!function(){}();" },
     ];
     expect(collectBuildArtifacts(files)).toEqual([
-      { path: "app/styles.css", reason: "tailwind-compiled-escape" },
-      { path: "dist/main.css", reason: "dist-path" },
-      { path: "vendor/jquery.min.js", reason: "minified" },
+      {
+        path: "app/styles.css",
+        reason: "tailwind-compiled-escape",
+        signal: { kind: "tailwind-escape-selector", value: "\\[400px\\]" },
+      },
+      {
+        path: "dist/main.css",
+        reason: "dist-path",
+        signal: { kind: "build-dir-segment", value: "dist/" },
+      },
+      {
+        path: "vendor/jquery.min.js",
+        reason: "minified",
+        signal: { kind: "min-infix", value: "jquery.min.js" },
+      },
     ]);
   });
 
@@ -538,9 +692,9 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // shape the three collapse to one inspect-once row with a
     // `suggestedGlob` that covers every member.
     const entries = [
-      { path: "/root/dist/5.0/bootstrap.css", reason: "dist-path" as const },
-      { path: "/root/dist/5.1/bootstrap.css", reason: "dist-path" as const },
-      { path: "/root/dist/5.2/bootstrap.css", reason: "dist-path" as const },
+      mkEntry("/root/dist/5.0/bootstrap.css", "dist-path"),
+      mkEntry("/root/dist/5.1/bootstrap.css", "dist-path"),
+      mkEntry("/root/dist/5.2/bootstrap.css", "dist-path"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([
@@ -555,20 +709,26 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     expect(out.ungrouped).toEqual([]);
   });
 
-  it("keeps sub-threshold same-basename entries in `ungrouped` with reasons preserved", () => {
+  it("keeps sub-threshold same-basename entries in `ungrouped` with reasons + signals preserved", () => {
     // Two paths share a basename but fall below the grouping
-    // threshold. Zero information loss: the full `{ path, reason }`
-    // record survives under `ungrouped` so an agent can still read
-    // the per-path classification.
+    // threshold. Zero information loss: the full `{ path, reason,
+    // signal }` record survives under `ungrouped` so an agent can
+    // still read both the per-path classification and the
+    // deterministic predicate evidence
+    // (V1-BUILD-ARTIFACT-REASON-EXPLAIN).
     const entries = [
-      { path: "/root/dist/a.min.css", reason: "minified" as const },
-      { path: "/root/dist/other/a.min.css", reason: "minified" as const },
+      mkEntry("/root/dist/a.min.css", "minified"),
+      mkEntry("/root/dist/other/a.min.css", "minified"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([]);
     expect(out.ungrouped).toEqual([
-      { path: "dist/a.min.css", reason: "minified" },
-      { path: "dist/other/a.min.css", reason: "minified" },
+      { path: "dist/a.min.css", reason: "minified", signal: { kind: "min-infix", value: "a.min.css" } },
+      {
+        path: "dist/other/a.min.css",
+        reason: "minified",
+        signal: { kind: "min-infix", value: "a.min.css" },
+      },
     ]);
   });
 
@@ -576,11 +736,8 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // Three groups: one of size 5 (font-awesome.css), one of size 3
     // (app.css), one of size 3 (bootstrap.css). The size-5 leads;
     // the two size-3 groups appear in basename order.
-    const mk = (name: string, n: number): ReadonlyArray<{ path: string; reason: "dist-path" }> =>
-      Array.from({ length: n }, (_, i) => ({
-        path: `/root/dist/v${i}/${name}`,
-        reason: "dist-path" as const,
-      }));
+    const mk = (name: string, n: number): readonly ScannedBuildArtifact[] =>
+      Array.from({ length: n }, (_, i) => mkEntry(`/root/dist/v${i}/${name}`, "dist-path"));
     const entries = [...mk("bootstrap.css", 3), ...mk("font-awesome.css", 5), ...mk("app.css", 3)];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped.map((g) => g.basename)).toEqual([
@@ -595,9 +752,9 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // `ungrouped` and the output sorts deterministically regardless
     // of input order.
     const entries = [
-      { path: "/root/z/one.css", reason: "dist-path" as const },
-      { path: "/root/a/two.css", reason: "dist-path" as const },
-      { path: "/root/m/three.css", reason: "dist-path" as const },
+      mkEntry("/root/z/one.css", "dist-path"),
+      mkEntry("/root/a/two.css", "dist-path"),
+      mkEntry("/root/m/three.css", "dist-path"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.ungrouped.map((e) => e.path)).toEqual(["a/two.css", "m/three.css", "z/one.css"]);
@@ -609,12 +766,12 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // so the agent reading `reasons: ["dist-path", "minified"]`
     // knows the group isn't monolithic.
     const entries = [
-      { path: "/root/dist/a/lib.css", reason: "dist-path" as const },
-      { path: "/root/dist/b/lib.css", reason: "minified" as const },
-      { path: "/root/dist/c/lib.css", reason: "dist-path" as const },
+      mkEntry("/root/dist/a/lib.css", "dist-path"),
+      mkEntry("/root/dist/b/lib.css", "minified"),
+      mkEntry("/root/dist/c/lib.css", "dist-path"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    expect(out.grouped[0].reasons).toEqual(["dist-path", "minified"]);
+    expect(out.grouped[0]?.reasons).toEqual(["dist-path", "minified"]);
   });
 
   it("computes a directory-boundary pathHint, never a partial-basename prefix", () => {
@@ -622,13 +779,13 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // The pathHint must stop at the last `/` so the suggestedGlob
     // stays a legal glob and never over-captures unrelated files.
     const entries = [
-      { path: "/root/vendor/bootstrap/x.css", reason: "dist-path" as const },
-      { path: "/root/vendor/bose-theme/x.css", reason: "dist-path" as const },
-      { path: "/root/vendor/boxy/x.css", reason: "dist-path" as const },
+      mkEntry("/root/vendor/bootstrap/x.css", "dist-path"),
+      mkEntry("/root/vendor/bose-theme/x.css", "dist-path"),
+      mkEntry("/root/vendor/boxy/x.css", "dist-path"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    expect(out.grouped[0].pathHint).toBe("vendor/");
-    expect(out.grouped[0].suggestedGlob).toBe("vendor/**/x.css");
+    expect(out.grouped[0]?.pathHint).toBe("vendor/");
+    expect(out.grouped[0]?.suggestedGlob).toBe("vendor/**/x.css");
   });
 
   it("emits empty `pathHint` + repo-wide suggestedGlob when group members share no directory", () => {
@@ -638,13 +795,13 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // just repo-wide. The agent sees this and can tighten the glob
     // manually if needed.
     const entries = [
-      { path: "/root/dist/a.css", reason: "dist-path" as const },
-      { path: "/root/build/a.css", reason: "dist-path" as const },
-      { path: "/root/public/a.css", reason: "dist-path" as const },
+      mkEntry("/root/dist/a.css", "dist-path"),
+      mkEntry("/root/build/a.css", "dist-path"),
+      mkEntry("/root/public/a.css", "dist-path"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    expect(out.grouped[0].pathHint).toBe("");
-    expect(out.grouped[0].suggestedGlob).toBe("**/a.css");
+    expect(out.grouped[0]?.pathHint).toBe("");
+    expect(out.grouped[0]?.suggestedGlob).toBe("**/a.css");
   });
 
   it("returns an empty envelope on zero input (honest shape on clean scans)", () => {
@@ -662,8 +819,8 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // would leak `..` segments. The helper drops them rather than
     // surface a broken pattern.
     const entries = [
-      { path: "/outside/a.css", reason: "dist-path" as const },
-      { path: "/root/dist/a/b.css", reason: "dist-path" as const },
+      mkEntry("/outside/a.css", "dist-path"),
+      mkEntry("/root/dist/a/b.css", "dist-path"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     const allPaths = [...out.grouped.map((g) => g.basename), ...out.ungrouped.map((e) => e.path)];
@@ -677,13 +834,13 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // same on macOS and Windows CI, matching the POSIX convention
     // `propose_config` uses downstream.
     const entries = [
-      { path: "C:\\root\\dist\\v1\\lib.css", reason: "dist-path" as const },
-      { path: "C:\\root\\dist\\v2\\lib.css", reason: "dist-path" as const },
-      { path: "C:\\root\\dist\\v3\\lib.css", reason: "dist-path" as const },
+      mkEntry("C:\\root\\dist\\v1\\lib.css", "dist-path"),
+      mkEntry("C:\\root\\dist\\v2\\lib.css", "dist-path"),
+      mkEntry("C:\\root\\dist\\v3\\lib.css", "dist-path"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "C:\\root");
-    expect(out.grouped[0].pathHint).toBe("dist/");
-    expect(out.grouped[0].suggestedGlob).toBe("dist/**/lib.css");
+    expect(out.grouped[0]?.pathHint).toBe("dist/");
+    expect(out.grouped[0]?.suggestedGlob).toBe("dist/**/lib.css");
   });
 
   it("uses the shared 3-entry threshold — a 2-entry cluster stays ungrouped, a 3-entry cluster groups", () => {
@@ -694,11 +851,11 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // exclude-collapse logic.
     expect(BASENAME_GROUP_THRESHOLD).toBe(3);
     const two = [
-      { path: "/root/a/x.css", reason: "dist-path" as const },
-      { path: "/root/b/x.css", reason: "dist-path" as const },
+      mkEntry("/root/a/x.css", "dist-path"),
+      mkEntry("/root/b/x.css", "dist-path"),
     ];
     expect(groupBuildArtifactsByBasename(two, "/root").grouped).toEqual([]);
-    const three = [...two, { path: "/root/c/x.css", reason: "dist-path" as const }];
+    const three = [...two, mkEntry("/root/c/x.css", "dist-path")];
     expect(groupBuildArtifactsByBasename(three, "/root").grouped.length).toBe(1);
   });
 });
@@ -713,10 +870,9 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
   it("caps ungrouped at 50 entries and emits ungroupedTruncated with the pre-cap total", () => {
     // 120 unique basenames (no clusters form) → every entry lands in
     // `ungrouped`, which must cap to 50 with a sibling summary.
-    const entries = Array.from({ length: 120 }, (_, i) => ({
-      path: `/root/dist/f${String(i).padStart(3, "0")}.css`,
-      reason: "dist-path" as const,
-    }));
+    const entries = Array.from({ length: 120 }, (_, i) =>
+      mkEntry(`/root/dist/f${String(i).padStart(3, "0")}.css`, "dist-path"),
+    );
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([]);
     expect(out.ungrouped.length).toBe(50);
@@ -727,10 +883,9 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
   });
 
   it("omits ungroupedTruncated when the list fits under the cap", () => {
-    const entries = Array.from({ length: 10 }, (_, i) => ({
-      path: `/root/dist/f${i}.css`,
-      reason: "dist-path" as const,
-    }));
+    const entries = Array.from({ length: 10 }, (_, i) =>
+      mkEntry(`/root/dist/f${i}.css`, "dist-path"),
+    );
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.ungrouped.length).toBe(10);
     expect(out.ungroupedTruncated).toBeUndefined();
@@ -740,10 +895,9 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
     // 60 entries sharing one basename → one grouped row (compact by
     // definition), ungrouped stays empty. The cap doesn't fire and
     // the grouped row's count stays honest.
-    const entries = Array.from({ length: 60 }, (_, i) => ({
-      path: `/root/d${i}/bootstrap.css`,
-      reason: "dist-path" as const,
-    }));
+    const entries = Array.from({ length: 60 }, (_, i) =>
+      mkEntry(`/root/d${i}/bootstrap.css`, "dist-path"),
+    );
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped.length).toBe(1);
     expect(out.grouped[0]?.count).toBe(60);
