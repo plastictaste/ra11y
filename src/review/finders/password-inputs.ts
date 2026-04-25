@@ -54,7 +54,14 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement, HtmlNode, JsxElement, JsxNode, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlDocument,
+  HtmlElement,
+  HtmlNode,
+  JsxElement,
+  JsxNode,
+  TsxModule,
+} from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 
 const CRITERION_IDS = ["wcag22:3.3.8"] as const;
@@ -66,9 +73,9 @@ export const finder = defineCandidateFinder({
   appliesTo: { fileExtensions: [".html", ".htm", ".tsx", ".jsx"] },
   docs: {
     description:
-      "Finds <input type=\"password\"> elements — every password field is a review location for WCAG 3.3.8 Accessible Authentication (Minimum), which forbids sole reliance on a cognitive function test unless an accessible alternative is provided.",
+      'Finds <input type="password"> elements — every password field is a review location for WCAG 3.3.8 Accessible Authentication (Minimum), which forbids sole reliance on a cognitive function test unless an accessible alternative is provided.',
     reviewPrompt:
-      "At each candidate, verify that the authentication form offers at least one accessible alternative that does not require a cognitive function test: (1) passkey / WebAuthn button on the same screen or clearly linked; (2) magic-link or OTP option; (3) social login bridged to a non-cognitive authenticator; OR (4) the password field enables copy-paste and has autocomplete=\"current-password\" or \"new-password\" so a password manager can fill it without memorisation. Also check that `autocomplete` is not set to \"off\" and that no JavaScript blocks paste events on the field.",
+      'At each candidate, verify that the authentication form offers at least one accessible alternative that does not require a cognitive function test: (1) passkey / WebAuthn button on the same screen or clearly linked; (2) magic-link or OTP option; (3) social login bridged to a non-cognitive authenticator; OR (4) the password field enables copy-paste and has autocomplete="current-password" or "new-password" so a password manager can fill it without memorisation. Also check that `autocomplete` is not set to "off" and that no JavaScript blocks paste events on the field.',
     references: [
       "https://www.w3.org/TR/WCAG22/#accessible-authentication-minimum",
       "https://www.w3.org/WAI/WCAG22/Understanding/accessible-authentication-minimum.html",
@@ -194,11 +201,7 @@ function collectSiblingNames(
 // JSX branch
 // ---------------------------------------------------------------------------
 
-function findJsxCandidates(
-  root: TsxModule,
-  filePath: string,
-  candidates: ReviewCandidate[],
-): void {
+function findJsxCandidates(root: TsxModule, filePath: string, candidates: ReviewCandidate[]): void {
   // Build sibling maps for JSX <form> elements.
   const formInputs = new Map<JsxElement, JsxElement[]>();
   const inputToForm = new Map<JsxElement, JsxElement>();
@@ -306,8 +309,7 @@ function collectJsxSiblingNames(
   const names: string[] = [];
   for (const sibling of allInputs) {
     if (sibling === self) continue;
-    const val =
-      getJsxAttributeString(sibling, "name") ?? getJsxAttributeString(sibling, "id");
+    const val = getJsxAttributeString(sibling, "name") ?? getJsxAttributeString(sibling, "id");
     if (val) names.push(val);
   }
   return names;
@@ -336,11 +338,7 @@ function buildReason(
 
   // Field identity.
   const identity = fieldId ? `id="${fieldId}"` : fieldName ? `name="${fieldName}"` : null;
-  parts.push(
-    identity
-      ? `<input type="password" ${identity}>`
-      : "<input type=\"password\">",
-  );
+  parts.push(identity ? `<input type="password" ${identity}>` : '<input type="password">');
 
   // Autocomplete note — flag if missing or off.
   if (autocomplete) {
@@ -353,7 +351,7 @@ function buildReason(
     }
   } else {
     parts.push(
-      "no autocomplete attribute — consider autocomplete=\"current-password\" or \"new-password\" to enable password-manager autofill",
+      'no autocomplete attribute — consider autocomplete="current-password" or "new-password" to enable password-manager autofill',
     );
   }
 

@@ -82,7 +82,7 @@ describe("review/password-inputs", () => {
     const source = `<form><input type="password" id="p" autocomplete="off"></form>`;
     const out = runFinder(finder, source, { filePath: "login.html" });
     expect(out.length).toBeGreaterThan(0);
-    expect(out[0]?.reason).toContain("autocomplete=\"off\"");
+    expect(out[0]?.reason).toContain('autocomplete="off"');
   });
 
   it("notes missing autocomplete in the reason text", () => {
