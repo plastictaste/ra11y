@@ -52,6 +52,13 @@ interface ChecklistEnvelope {
   readonly warnings?: readonly string[];
 }
 
+interface StructuredErrorPayload {
+  readonly code?: string;
+  readonly message?: string;
+  readonly details?: { readonly field?: string; readonly value?: number };
+  readonly remediation?: string;
+}
+
 function parseEnvelope(text: string): ChecklistEnvelope {
   return JSON.parse(text) as ChecklistEnvelope;
 }
@@ -145,5 +152,91 @@ describe("checklist tool: automated-coverage shape (Q7-CHECKLIST-PASS-RATE-COMPO
       expect(entry.criteriaWithRulesAllClean).toBe(0);
       expect(entry.criteriaWithoutEligibleInputs).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("checklist tool: input bound validation (V1-CHECKLIST-LIMIT-NEGATIVE-VALIDATION)", () => {
+  // Doctrine (ai-first-consumer.md §"Ambiguous field shapes are
+  // dishonest"): `limit: -1` was previously coerced to 1 by the silent
+  // pagination clamp and returned a paginated-to-one-entry response.
+  // The caller passed a clearly-invalid value and got success-shaped
+  // output that masked the input bug. The fix rejects any value below
+  // the documented floor of [1, 2000] (limit) / [1, 100]
+  // (maxCandidatesPerCriterion) with the structured `invalid-param`
+  // envelope so an agent can branch on `code` + `details.field` and
+  // re-issue with a sane bound.
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkTmp();
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects `limit: -1` with the structured invalid-param envelope", async () => {
+    const tool = findTool("checklist");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir, limit: -1 }, session);
+
+    expect(result.isError).toBe(true);
+    const structured = result.structuredContent as StructuredErrorPayload | undefined;
+    expect(structured?.code).toBe("invalid-param");
+    expect(structured?.details?.field).toBe("limit");
+    expect(structured?.details?.value).toBe(-1);
+    expect(structured?.remediation).toContain("[1, 2000]");
+  });
+
+  it("rejects `limit: 0` (the boundary value, also below the documented floor)", async () => {
+    // Zero is the sneakier failure: it reads as "no work" but the
+    // pre-existing clamp coerced it to 1, so callers asking for an
+    // empty page were getting one anyway. Same hard reject as -1.
+    const tool = findTool("checklist");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir, limit: 0 }, session);
+
+    expect(result.isError).toBe(true);
+    const structured = result.structuredContent as StructuredErrorPayload | undefined;
+    expect(structured?.code).toBe("invalid-param");
+    expect(structured?.details?.field).toBe("limit");
+  });
+
+  it("rejects `maxCandidatesPerCriterion: -5` with the structured invalid-param envelope", async () => {
+    const tool = findTool("checklist");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir, maxCandidatesPerCriterion: -5 }, session);
+
+    expect(result.isError).toBe(true);
+    const structured = result.structuredContent as StructuredErrorPayload | undefined;
+    expect(structured?.code).toBe("invalid-param");
+    expect(structured?.details?.field).toBe("maxCandidatesPerCriterion");
+    expect(structured?.details?.value).toBe(-5);
+    expect(structured?.remediation).toContain("[1, 100]");
+  });
+
+  it("accepts in-range values without erroring (limit=1, maxCandidatesPerCriterion=1 — the valid floor)", async () => {
+    // Boundary inputs at the documented floor must still succeed —
+    // the validator rejects strictly below the floor, not at it.
+    const tool = findTool("checklist");
+    const session = new McpSession();
+    const result = await tool.handler(
+      { cwd: dir, limit: 1, maxCandidatesPerCriterion: 1 },
+      session,
+    );
+
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("preserves the silent upper-bound clamp on `limit` (over-2000 is not a hard reject)", async () => {
+    // Per backlog scope: only the `< 1` rail flips from silent clamp to
+    // hard reject. The over-2000 rail keeps the existing clamp
+    // behavior; callers paginate via `nextOffset` instead. This guards
+    // against the validator over-reaching into the upper bound.
+    const tool = findTool("checklist");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir, limit: 50000 }, session);
+
+    expect(result.isError).toBeUndefined();
   });
 });

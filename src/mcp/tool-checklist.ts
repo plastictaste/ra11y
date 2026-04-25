@@ -205,6 +205,47 @@ function priorityFor(level: string, hasCandidates: boolean): ChecklistPriority {
 }
 
 /**
+ * V1-CHECKLIST-LIMIT-NEGATIVE-VALIDATION: validates the bounded
+ * pagination params before the handler does any work. Negative
+ * (and zero) values are clearly-invalid caller bugs that the
+ * pre-existing silent clamp would mask — `limit: -1` was being
+ * coerced to 1, returning a paginated-to-one-entry response that
+ * looked like a successful narrow scan rather than the validation
+ * error the caller's input deserves. Per CLAUDE.md §1 / `ai-first-
+ * consumer.md` "ambiguous field shapes are dishonest": silent
+ * coercion on invalid input reads as success-with-data when the
+ * input never described real work. Reject with the structured
+ * `invalid-param` envelope so the agent can branch on `code` +
+ * `details.field` and re-issue with a sane bound.
+ *
+ * Upper-bound behavior is unchanged: `limit > 2000` still silently
+ * clamps to 2000 (the existing pattern; callers paginate via
+ * `nextOffset`), and `maxCandidatesPerCriterion > 100` still clamps
+ * to 100 with a paired `max_candidates_per_criterion_clamped`
+ * warning narrated through `detectPerCriterionClamp` below. Only
+ * the `< 1` rail is converted from silent clamp to hard reject —
+ * that's the side where the caller is asking for "no work" and
+ * a one-row response is actively misleading.
+ */
+function validateChecklistBounds(
+  params: Record<string, unknown>,
+): { readonly code: "invalid-param"; readonly field: string; readonly value: number } | undefined {
+  const rawLimit = params["limit"];
+  if (typeof rawLimit === "number" && Number.isFinite(rawLimit) && Math.floor(rawLimit) < 1) {
+    return { code: "invalid-param", field: "limit", value: rawLimit };
+  }
+  const rawPerCriterion = params["maxCandidatesPerCriterion"];
+  if (
+    typeof rawPerCriterion === "number" &&
+    Number.isFinite(rawPerCriterion) &&
+    Math.floor(rawPerCriterion) < 1
+  ) {
+    return { code: "invalid-param", field: "maxCandidatesPerCriterion", value: rawPerCriterion };
+  }
+  return undefined;
+}
+
+/**
  * V1-CHECKLIST-MAX-CANDIDATES-PER-CRITERION-CLAMP: detects whether
  * the caller-supplied `maxCandidatesPerCriterion` was clamped by the
  * [1, 100] bounds so the handler can narrate it via a structured
@@ -316,6 +357,26 @@ export const checklistTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // V1-CHECKLIST-LIMIT-NEGATIVE-VALIDATION: reject clearly-invalid
+    // pagination inputs (`limit < 1`, `maxCandidatesPerCriterion < 1`)
+    // up front, before any I/O. The previous silent clamp would coerce
+    // `limit: -1` to 1 and return a paginated-to-one-entry response —
+    // success-shaped output for input that never described real work.
+    // See `validateChecklistBounds` above for the rationale; upper-
+    // bound clamps stay silent (limit) / warning-narrated
+    // (maxCandidatesPerCriterion) per the existing pattern.
+    const boundsError = validateChecklistBounds(params);
+    if (boundsError !== undefined) {
+      return errorResult({
+        code: boundsError.code,
+        message: `\`${boundsError.field}\` must be >= 1, got ${boundsError.value}.`,
+        details: { field: boundsError.field, value: boundsError.value },
+        remediation:
+          boundsError.field === "limit"
+            ? "limit must be in [1, 2000]."
+            : "maxCandidatesPerCriterion must be in [1, 100].",
+      });
+    }
     const cwd = strParam(params, "cwd") ?? process.cwd();
     const paths = strArrayParam(params, "paths") ?? [cwd];
 
