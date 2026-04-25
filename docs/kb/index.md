@@ -147,7 +147,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [media/video-captions-missing](./rules/media__video-captions-missing.md)
 - [motion/animation-from-interactions](./rules/motion__animation-from-interactions.md)
 - [motion/pause-stop-hide](./rules/motion__pause-stop-hide.md)
-- [navigation/href-javascript-void](./rules/navigation__href-javascript-void.md)
+- [navigation/href-placeholder](./rules/navigation__href-placeholder.md)
 - [navigation/link-descriptive-text](./rules/navigation__link-descriptive-text.md)
 - [navigation/link-no-href](./rules/navigation__link-no-href.md)
 - [navigation/link-target-blank-announcement](./rules/navigation__link-target-blank-announcement.md)
@@ -223,6 +223,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 
 - [Biome quirks](./gotchas/biome-quirks.md)
 - [Bun vs Node differences that have bitten us](./gotchas/bun-vs-node-differences.md)
+- [Cross-file handler resolution](./gotchas/cross-file-handler-resolution.md)
 - [Test flakiness](./gotchas/test-flakiness.md)
 - [TypeScript compiler-API gotchas](./gotchas/typescript-compiler-gotchas.md)
 - [WCAG edge cases](./gotchas/wcag-edge-cases.md)

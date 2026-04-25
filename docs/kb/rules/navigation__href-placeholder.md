@@ -1,16 +1,16 @@
 ---
-title: "navigation/href-javascript-void"
+title: "navigation/href-placeholder"
 severity: "error"
 scope: "node"
 satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.1.1", "wcag21:2.1.1"]
 ---
-# `navigation/href-javascript-void`
+# `navigation/href-placeholder`
 - **Severity:** error
 - **Scope:** node
 - **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`, `wcag22:2.1.1`, `wcag21:2.1.1`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
-Flags <a> elements whose href value announces as a link but does not navigate. Despite the rule ID naming the canonical `javascript:void(0)` case, the rule fires on every non-navigating href shape: any `javascript:` scheme (`javascript:void(0)`, `javascript:void 0`, `javascript:;`, `javascript:`, `javascript:alert(1)`, the case-insensitive `JAVASCRIPT:…` variants, plus the bare-`javascript`-no-colon typo), bare `href="#"` with no fragment id, and empty `href=""` (which the HTML spec resolves to the current page URL — activating the link reloads the page). Whitespace is trimmed before matching, so `"  #  "` and `"   "` are flagged the same way. Suppressing this rule ID by name silences ALL of the above shapes — register the suppression with that surface in mind. Use <button type="button"> for actions, or put a real URL in href for navigation.
+Flags <a> elements whose href value announces as a link but does not navigate — the "placeholder href" family. The rule spans every non-navigating href shape: any `javascript:` scheme (`javascript:void(0)`, `javascript:void 0`, `javascript:;`, `javascript:`, `javascript:alert(1)`, the case-insensitive `JAVASCRIPT:…` variants, plus the bare-`javascript`-no-colon typo), bare `href="#"` with no fragment id, and empty `href=""` (which the HTML spec resolves to the current page URL — activating the link reloads the page). Whitespace is trimmed before matching, so `"  #  "` and `"   "` are flagged the same way. Suppressing this rule ID by name silences ALL of the above shapes — register the suppression with that surface in mind. Use <button type="button"> for actions, or put a real URL in href for navigation.
 ## Why it matters
 Assistive technology decides how to announce a control from its role: `<a>` with an href maps to the link role. The browser treats every shape this rule catches as a link, but none of them navigate meaningfully — the user hears 'link,' activates it, and nothing happens (or worse, loses form state from a surprise reload). Concretely, the matched shapes are:
 
