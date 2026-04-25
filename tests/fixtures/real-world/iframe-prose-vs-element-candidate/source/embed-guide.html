@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+  Sanitized excerpt of a developer documentation page explaining
+  how to embed media. The page contains:
+    1. Prose code examples that mention <iframe> in <code> blocks —
+       these are TEXT CONTENT, not actual iframe elements in the DOM.
+    2. A real <video> element (a live demo in the guide).
+
+  The fixture guards the invariant that review/media-alternatives does
+  NOT emit 1.2.x candidates from prose text that contains the string
+  "<iframe>" — only actual DOM element nodes (parsed by the HTML
+  parser, not matched by substring) are evidence for 1.2.x criteria.
+
+  A regex-based implementation would fire on the text content of the
+  <code> blocks below. An AST-based implementation fires only on
+  element nodes of type "video" or "audio", which is correct behavior.
+  Iframes are excluded from 1.2.x evidence entirely per the
+  likelyIrrelevant-bucket consistency contract (see the finder header).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Media Embedding Guide</title>
+</head>
+<body>
+  <main>
+    <h1>Embedding Media in Your Pages</h1>
+
+    <p>
+      This guide covers three ways to embed media content: native HTML elements,
+      third-party player iframes, and platform-specific embed codes.
+    </p>
+
+    <h2>Using the iframe element</h2>
+
+    <p>
+      Many video platforms provide an embed code that uses
+      <code>&lt;iframe&gt;</code> to load a player from their servers:
+    </p>
+
+    <pre><code>&lt;iframe
+  src="https://example-player.test/embed/abc123"
+  title="Introduction video"
+  width="640"
+  height="360"
+  allowfullscreen
+&gt;&lt;/iframe&gt;</code></pre>
+
+    <p>
+      Note that the <code>&lt;iframe&gt;</code> element requires a descriptive
+      <code>title</code> attribute so screen reader users can identify the
+      embedded content before navigating into it.
+    </p>
+
+    <h2>Using the native video element</h2>
+
+    <p>
+      For self-hosted files, use the native <code>&lt;video&gt;</code> element.
+      Unlike an <code>&lt;iframe&gt;</code>, the native element gives you direct
+      control over track elements, captions, and audio descriptions.
+    </p>
+
+    <p>Live example:</p>
+
+    <video src="/assets/sample-intro.mp4" controls width="640">
+      <track kind="captions" src="/assets/sample-intro.vtt" srclang="en" label="English">
+    </video>
+
+    <p>
+      Verify that this video has a transcript and, if it contains
+      dialogue or important audio, synchronized captions are provided.
+    </p>
+
+    <h2>Choosing between iframe and native video</h2>
+
+    <ul>
+      <li>
+        Use an <code>&lt;iframe&gt;</code> when you want to delegate player
+        controls, progress tracking, and CDN delivery to a third-party platform.
+      </li>
+      <li>
+        Use <code>&lt;video&gt;</code> for direct control over accessibility
+        features — captions (<code>&lt;track kind="captions"&gt;</code>) and
+        audio descriptions are easiest to manage natively.
+      </li>
+    </ul>
+  </main>
+</body>
+</html>
