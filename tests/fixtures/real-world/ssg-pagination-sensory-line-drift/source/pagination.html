@@ -1,0 +1,42 @@
+<!--
+  Sanitized excerpt of an SSG (Jekyll-style) pagination docs page.
+  The original was a `.md` file routed through parseMarkdown, which
+  strips frontmatter / fenced-code / headings and hands the residue
+  to parseHtml. Liquid directives (`{% include … %}`, `{{ … }}`) live
+  inside `<div>` blocks alongside prose. The HTML parser collapses
+  multi-line directive spans on a text-node's `value`, which throws
+  off the sensory-characteristics finder's line counting when it
+  walks the post-strip `value` to locate a matched phrase. Captured
+  here as `.html` so the fixture harness's `parseHtml` path exercises
+  the exact post-residue shape (mirrors the `.css`-encoded
+  jekyll-docsearch-scss-line-drift fixture rather than asking the
+  harness to parse `.md`).
+-->
+
+<h1>Pagination</h1>
+
+<p>
+  The pagination component renders a numbered nav with previous and
+  next links. It pages through a sorted index built at site-build
+  time, not at request time.
+</p>
+
+<h2>Live demo</h2>
+
+<div class="example">
+
+  {% include pagination.html
+     paginator=paginator
+     window=2 %}
+
+  See below for the rendered output.
+
+</div>
+
+<h2>Customizing the window</h2>
+
+<p>
+  The <code>window</code> argument controls how many adjacent page
+  numbers surround the current page in the rendered nav. Use a
+  smaller value on narrow viewports.
+</p>
