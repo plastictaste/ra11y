@@ -84,6 +84,7 @@ interface ScanBody {
 }
 interface CoverageBody {
   readonly criteriaManualReviewRequired: number;
+  readonly untargetedCriteria: number;
 }
 interface ChecklistBody {
   readonly summary: {
@@ -98,6 +99,9 @@ async function gatherCounts(cwd: string): Promise<{
   checklist: number;
   scanActionable: number;
   checklistActionable: number;
+  scanUntargeted: number;
+  coverageUntargeted: number;
+  checklistUntargeted: number;
 }> {
   const responses = await mcpSession([
     initMsg(1),
@@ -120,7 +124,37 @@ async function gatherCounts(cwd: string): Promise<{
     checklist: checklistBody.summary.actionable + checklistBody.summary.untargetedCriteria,
     scanActionable: scanBody.plan.actionableManualItems,
     checklistActionable: checklistBody.summary.actionable,
+    scanUntargeted: scanBody.plan.untargetedCriteria,
+    coverageUntargeted: coverageBody.untargetedCriteria,
+    checklistUntargeted: checklistBody.summary.untargetedCriteria,
   };
+}
+
+/**
+ * Builds a fixture that fires a rule (`color/meaning-by-color-only`)
+ * which satisfies a metadata-manual criterion (`wcag22:1.4.1`,
+ * `automatable: "manual"`). This is the canonical shape the
+ * `untargetedCriteria` cross-surface invariant exists to guard:
+ * pre-helper, `scan_project` counted such criteria as still-needing-
+ * manual-review (because `collectManualCriteria` filtered only on
+ * metadata, not on whether a rule had fired) while `coverage` and
+ * `checklist` correctly routed them into the failing-automated lane.
+ * The integration test below asserts all three surfaces report the
+ * same `untargetedCriteria` count on this fixture — drift here means
+ * the helper has been bypassed somewhere.
+ */
+async function makeFiredManualCriterionFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-counts-fired-manual-"));
+  // `btn-danger` is a status-color class; "Submit" carries no status
+  // keyword to satisfy the prose-channel pass condition; no icon /
+  // sr-only / aria-label / role. The rule fires, emits a violation
+  // against `wcag22:1.4.1`, and the criterion drops out of the
+  // manual-review queue on the helper-aware surfaces.
+  await writeFile(
+    join(dir, "page.html"),
+    `<html><body><button class="btn-danger">Submit</button></body></html>`,
+  );
+  return dir;
 }
 
 describe("MCP invariant: manual-review count agrees across surfaces", () => {
@@ -153,6 +187,42 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     const mediaFree = await gatherCounts(await makeMediaFreeFixture());
     const mediaPresent = await gatherCounts(await makeMediaPresentFixture());
     expect(mediaPresent.checklist).toBeGreaterThan(mediaFree.checklist);
+  });
+});
+
+// Q8: the untargetedCriteria sub-counter must agree across surfaces too,
+// not just the totals. The pre-helper drift between
+// `scan_project.plan.untargetedCriteria`,
+// `coverage[].untargetedCriteria`, and
+// `checklist.summary.untargetedCriteria` was off-by-N on every cwd that
+// fired any metadata-manual criterion (e.g. `wcag22:1.4.1` via
+// `color/meaning-by-color-only`) — `scan_project` kept the fired
+// criterion in the manual queue because `collectManualCriteria` only
+// filtered on metadata; `coverage` and `checklist` routed it into the
+// failing lane via `buildCoverageReport`. Now all three surfaces share
+// `tallyManualCriteria` / `tallyManualCriteriaFromCoverage` so the
+// counts are derived once and the cross-surface agreement is mechanical.
+describe("MCP invariant: untargetedCriteria agrees across surfaces", () => {
+  it("agrees on a media-free fixture (no fired manual criteria)", async () => {
+    const counts = await gatherCounts(await makeMediaFreeFixture());
+    expect(counts.scanUntargeted).toBe(counts.coverageUntargeted);
+    expect(counts.coverageUntargeted).toBe(counts.checklistUntargeted);
+  });
+
+  it("agrees on a media-present fixture (likelyIrrelevant = 0)", async () => {
+    const counts = await gatherCounts(await makeMediaPresentFixture());
+    expect(counts.scanUntargeted).toBe(counts.coverageUntargeted);
+    expect(counts.coverageUntargeted).toBe(counts.checklistUntargeted);
+  });
+
+  it("agrees on a fixture that fires a metadata-manual criterion", async () => {
+    // The canonical drift case: a fired wcag22:1.4.1 violation. Pre-helper,
+    // scan_project.plan.untargetedCriteria over-counted by 1 vs
+    // coverage/checklist on this shape because the manual-set filter on
+    // scan_project's side didn't subtract fired criteria.
+    const counts = await gatherCounts(await makeFiredManualCriterionFixture());
+    expect(counts.scanUntargeted).toBe(counts.coverageUntargeted);
+    expect(counts.coverageUntargeted).toBe(counts.checklistUntargeted);
   });
 });
 

@@ -23,12 +23,13 @@ import type { ConfigPreset, Process } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { detectApplicability } from "./manual-applicability.ts";
+import { tallyManualCriteria } from "./manual-criteria-tally.ts";
 import type { McpSession } from "./session.ts";
 import { type SuppressionAuditEntry, suppressionAudit } from "./suppression-audit.ts";
 import {
   applyCriterionSkip,
   applyRuleSettings,
-  collectManualCriteria,
   dropWrapperNoise,
   filterBySeverity,
   loadDurableAttestations,
@@ -134,17 +135,26 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
   const filtered = applyCriterionSkip(severityFiltered, skipCriteria);
   const suppressions = suppressionAudit(files);
   const rawCandidates = report.candidates ?? [];
-  const manualIds = collectManualCriteria(enabled, session, session.config.level, files);
   // Plan-side split: grounded candidates (file:line) vs.
-  // bare-criterion prompts. Same recipe runScanAndFormat uses — keeps
-  // headline honest (CLAUDE.md §1 "Composite headline counts are
-  // dishonest").
-  const actionableManualIds = new Set<string>();
-  for (const c of rawCandidates) {
-    if (manualIds.has(c.criterionId)) actionableManualIds.add(c.criterionId);
-  }
-  const actionableManual = actionableManualIds.size;
-  const untargetedCriteria = manualIds.size - actionableManual;
+  // bare-criterion prompts. Routes through `tallyManualCriteria` so
+  // the count agrees with `coverage[].untargetedCriteria` and
+  // `checklist.summary.untargetedCriteria` on the same input — see
+  // `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface count
+  // invariant" and `tests/integration/mcp-counts-agree.test.ts`. The
+  // pre-helper recipe used `collectManualCriteria` which kept fired
+  // metadata-manual criteria in the manual queue; coverage and checklist
+  // route them into the failing lane, and the off-by-N drift was
+  // exactly that asymmetry.
+  const tally = tallyManualCriteria({
+    standards: session.registry.standards,
+    enabledStandards: enabled,
+    level: session.config.level,
+    scanResult: result,
+    applicability: detectApplicability(files),
+    candidates: rawCandidates,
+  });
+  const actionableManual = tally.actionable;
+  const untargetedCriteria = tally.untargeted;
 
   return {
     violations: filtered,

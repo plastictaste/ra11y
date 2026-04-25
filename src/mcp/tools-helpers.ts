@@ -25,6 +25,7 @@ import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
 import type { Violation } from "../types/violation.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
+import { tallyManualCriteria } from "./manual-criteria-tally.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
@@ -619,23 +620,30 @@ export async function runScanAndFormat(
     "verify-in-source": fixesByClass.verifyInSource,
   };
 
-  const manualIds = collectManualCriteria(enabled, session, session.config.level, files);
-  const manualCount = manualIds.size;
-  // Actionable = manual criteria that a finder grounded in a concrete
-  // file:line. Before the split, `plan.manualReviewRequired` summed
-  // grounded candidates and bare-criterion prompts into a single
-  // inflated headline (e.g. 21), forcing agents to budget against the
-  // bigger number when only the actionable subset (e.g. 5) was real
-  // work. Per CLAUDE.md §1 "Composite headline counts are dishonest,"
-  // we ship two top-level counters so the budget lands honestly:
+  // Plan-side split: grounded candidates (file:line) vs.
+  // bare-criterion prompts. Routes through `tallyManualCriteria` so the
+  // count agrees with `coverage[].untargetedCriteria` and
+  // `checklist.summary.untargetedCriteria` on the same input — see
+  // `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface count
+  // invariant" and `tests/integration/mcp-counts-agree.test.ts`. Per
+  // CLAUDE.md §1 "Composite headline counts are dishonest" we ship two
+  // top-level counters so the budget lands honestly:
   //   - actionableManualItems: candidates with file:line
   //   - untargetedCriteria:    bare-criterion prompts (no grounding)
-  const actionableManualIds = new Set<string>();
-  for (const c of report.candidates ?? []) {
-    if (manualIds.has(c.criterionId)) actionableManualIds.add(c.criterionId);
-  }
-  const actionableManual = actionableManualIds.size;
-  const untargetedCriteria = manualCount - actionableManual;
+  // The pre-helper recipe used `collectManualCriteria` which kept fired
+  // metadata-manual criteria in the manual queue; coverage and checklist
+  // route them into the failing lane, and the off-by-N drift was
+  // exactly that asymmetry.
+  const tally = tallyManualCriteria({
+    standards: session.registry.standards,
+    enabledStandards: enabled,
+    level: session.config.level,
+    scanResult: result,
+    applicability: detectApplicability(files),
+    candidates: report.candidates ?? [],
+  });
+  const actionableManual = tally.actionable;
+  const untargetedCriteria = tally.untargeted;
   const suppressions = suppressionAudit(files);
   // Findings keep their `fix.description` inline here. The optional
   // V1-SIZE-RESPONSE-BUDGET-DENSITY hoist (see
