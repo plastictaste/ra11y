@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Browser-renderable HTML5 with implicit closes</title>
+</head>
+<body>
+<main>
+<h1>Implicit-close patterns</h1>
+<p>HTML5 lets a paragraph end implicitly when a sibling block opens.
+<p>This second paragraph is valid HTML5 — no explicit </p> on the first.
+<p>So is this third one.
+
+<ul>
+<li>List items also auto-close
+<li>when the next li opens
+<li>or when the parent ul closes
+</ul>
+
+<table>
+<thead>
+<tr><th>name<th>value
+</thead>
+<tbody>
+<tr><td>a<td>1
+<tr><td>b<td>2
+</tbody>
+</table>
+
+<dl>
+<dt>term one
+<dd>definition one
+<dt>term two
+<dd>definition two
+</dl>
+</main>
+</body>
+</html>
+
