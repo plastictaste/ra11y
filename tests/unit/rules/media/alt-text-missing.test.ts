@@ -136,6 +136,107 @@ describe("rule media/alt-text-missing", () => {
     });
   });
 
+  describe("placeholder-shaped URL basenames (anti-pattern guard)", () => {
+    // The dimensions-as-alt antipattern: an `<img src=".../700x400">`
+    // would have `guessSubject` return "700x400", which the suggestion
+    // would echo as `alt="700x400"`. ra11y's own
+    // `media/alt-text-placeholder` rule warns on bare-numeric / role-
+    // word alt values — `suggest_fix` (and the rule's own suggestion)
+    // must not teach a pattern its sibling rule would then flag. The
+    // guard falls back to the generic "describe what this image
+    // communicates" prose for each placeholder-shape on the sieve.
+
+    it("does not echo a NxN dimensions basename as alt (placehold.it shape)", () => {
+      const violations = runRule(rule, `<img src="https://placehold.it/700x400">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="700x400"`);
+      expect(violations[0]?.suggestion).toContain("describing what the image communicates");
+      expect(violations[0]?.suggestion).toContain("not the URL or its dimensions");
+    });
+
+    it("does not echo a NxN dimensions basename with a file extension", () => {
+      const violations = runRule(rule, `<img src="/cdn/img/1920x1080.png">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="1920x1080"`);
+    });
+
+    it("does not echo a `placeholder.png` basename as alt", () => {
+      const violations = runRule(rule, `<img src="/assets/placeholder.png">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="placeholder"`);
+    });
+
+    it("does not echo a `placehold.jpg` basename as alt", () => {
+      const violations = runRule(rule, `<img src="/img/placehold.jpg">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="placehold"`);
+    });
+
+    it("does not echo a bare-numeric basename (`1234.png`)", () => {
+      const violations = runRule(rule, `<img src="/uploads/1234.png">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="1234"`);
+    });
+
+    it("does not echo a camera-default `IMG_2026.jpg` basename", () => {
+      const violations = runRule(rule, `<img src="/photos/IMG_2026.jpg">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="IMG 2026"`);
+      expect(violations[0]?.suggestion).not.toContain(`alt="2026"`);
+    });
+
+    it("strips query strings before sieving (`/700x400?v=2`)", () => {
+      // Without the query-strip, `guessSubject` would derive
+      // `700x400?v=2` and the placeholder sieve would miss it.
+      const violations = runRule(rule, `<img src="https://cdn.example.com/700x400?v=2">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="700x400`);
+    });
+
+    it("still echoes a real descriptive basename (`revenue-chart-2026.png`)", () => {
+      // Negative control: a real descriptive filename with embedded
+      // year is NOT placeholder-shaped — the leading alphabetic words
+      // carry information. Subject echo is preserved.
+      const violations = runRule(rule, `<img src="/assets/revenue-chart-2026.png">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("revenue chart 2026");
+    });
+
+    it("guards the SVG <image> branch too (does not echo placeholder basename in <title> example)", () => {
+      // Same antipattern surface in the SVG branch: the example
+      // `<title>${subject}</title>` would otherwise echo back
+      // `<title>700x400</title>` for a placeholder-shaped href.
+      const violations = runRule(rule, `<svg><image href="/icons/700x400.svg"/></svg>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain("<title>700x400</title>");
+      expect(violations[0]?.suggestion).toContain("what the image shows");
+    });
+
+    it("JSX path also strips placeholder basenames", () => {
+      const violations = runRule(rule, `const X = <img src="https://placehold.it/300x300" />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`alt="300x300"`);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares both wcag22:1.1.1 and wcag21:1.1.1", () => {
       expect(rule.satisfies).toContain("wcag22:1.1.1");

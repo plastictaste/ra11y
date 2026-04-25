@@ -515,10 +515,16 @@ function buildMessage(kind: SurfaceKind, tagName: string, src: string | null): s
 function buildSuggestion(kind: SurfaceKind, tagName: string, src: string | null): string {
   if (kind === "svg-image") {
     // `subject` is filename-derived and echoed inside an example
-    // `<title>` value — same blow-up risk as above.
-    const subject = src
-      ? truncateForEcho(guessSubject(filenameFromPath(src)))
-      : "what the image shows";
+    // `<title>` value — same blow-up risk as above. Same dimensions-
+    // as-alt antipattern guard as the `<img>` branch below: when the
+    // basename is placeholder-shaped (`700x400.svg`, `placeholder.svg`,
+    // `IMG_2026.svg`), echoing it back as a `<title>` example would
+    // teach the very pattern `media/alt-text-placeholder` warns on.
+    const placeholderShape = src ? isPlaceholderBasename(filenameFromPath(src)) : false;
+    const subject =
+      src && !placeholderShape
+        ? truncateForEcho(guessSubject(filenameFromPath(src)))
+        : "what the image shows";
     return `Add a <title> child with descriptive text (e.g., <title>${subject}</title>), or set aria-label / aria-labelledby on the <image>. If purely decorative, set role="presentation" or aria-hidden="true".`;
   }
   if (kind === "role-img") {
@@ -528,15 +534,32 @@ function buildSuggestion(kind: SurfaceKind, tagName: string, src: string | null)
     return `Put descriptive fallback text inside the <canvas> element (assistive tech exposes canvas children when the bitmap is unreachable) and / or add aria-label describing what the canvas renders. If the canvas is purely decorative, mark it aria-hidden="true".`;
   }
   if (src) {
-    const subject = truncateForEcho(guessSubject(filenameFromPath(src)));
+    // When the URL basename is itself placeholder-shaped (dimensions
+    // like `700x400`, placehold filenames like `placeholder.png` /
+    // `placehold.jpg`, bare numeric shapes like `1234` or
+    // `IMG_2026.png`), the derived "subject" would round-trip into
+    // `alt="700x400"` — the exact dimensions-as-alt antipattern that
+    // ra11y's own `media/alt-text-placeholder` rule would flag.
+    // Surface the generic prose form instead so we never teach a
+    // pattern our own rules catch.
+    const filename = filenameFromPath(src);
+    if (isPlaceholderBasename(filename)) {
+      return `Add alt describing what the image communicates — not the URL or its dimensions. If the image is purely decorative — the surrounding text already conveys the same information — mark it with alt="" instead.`;
+    }
+    const subject = truncateForEcho(guessSubject(filename));
     return `Add alt describing what the image communicates (e.g., alt="${subject}"). If the image is purely decorative — the surrounding text already conveys the same information — mark it with alt="" instead.`;
   }
   return `Add an alt attribute describing what the ${tagName} communicates. If the image is decorative, mark it with alt="" explicitly.`;
 }
 
 function filenameFromPath(src: string): string {
-  const slash = Math.max(src.lastIndexOf("/"), src.lastIndexOf("\\"));
-  return slash === -1 ? src : src.slice(slash + 1);
+  // Strip query string + fragment so a URL like
+  // `https://cdn.example.com/700x400?v=2#hero` resolves to `700x400`,
+  // not `700x400?v=2#hero`. Both are URL grammar — the basename is
+  // everything after the last path separator and before `?` / `#`.
+  const noQuery = src.split(/[?#]/)[0] ?? src;
+  const slash = Math.max(noQuery.lastIndexOf("/"), noQuery.lastIndexOf("\\"));
+  return slash === -1 ? noQuery : noQuery.slice(slash + 1);
 }
 
 function guessSubject(filename: string): string {
@@ -546,4 +569,53 @@ function guessSubject(filename: string): string {
     .replace(/\.[a-zA-Z0-9]+$/, "")
     .replace(/[-_]+/g, " ")
     .trim();
+}
+
+/**
+ * Sieves matching URL basenames whose derived "subject" would echo as
+ * the dimensions-as-alt antipattern (`alt="700x400"`), the placeholder-
+ * filename antipattern (`alt="placeholder"`), or a bare numeric blob
+ * with no descriptive content (`alt="1234"`, `alt="IMG_2026"`).
+ *
+ * Patterns are evaluated against the basename WITH its extension
+ * stripped — `placehold.it/700x400.png` → `700x400`. Each shape
+ * documented inline.
+ *
+ * Doctrine: ra11y's own `media/alt-text-placeholder` rule warns on
+ * `alt="placeholder"`, `alt="image"`, etc. — `suggest_fix` must not
+ * teach an alt value its sibling rule would then flag. Generic
+ * fallback prose ("describe what this image communicates") is the
+ * honest answer; the agent reads the surrounding code to author the
+ * real description.
+ */
+const PLACEHOLDER_BASENAME_PATTERNS: readonly RegExp[] = [
+  // Dimensions: `700x400`, `1920X1080`, `48x48` — the canonical
+  // placeholder-image-service shape (placehold.it, placeholder.com,
+  // placehold.co, picsum.photos size suffixes). Whole-token match to
+  // avoid catching subjects that happen to contain a dimension blob.
+  /^\d+\s*[xX×]\s*\d+$/,
+  // Placeholder-filename: `placeholder`, `placehold`, `placeholder1`,
+  // `placehold-bg`. Word-prefix match — `placeholder-bg-blue` is
+  // still placeholder filler regardless of suffix.
+  /^placehold(?:er)?\b/i,
+  // Bare numeric blob: `1234`, `2026`, `12-34`, `1234.56` — the
+  // subject is just digits + light separators. `IMG_2026` and
+  // `DSC04321` (camera-default filenames) match because the
+  // descriptive payload is zero. The leading prefix is bounded to a
+  // short alphabetic run so genuine names with embedded numbers
+  // ("chart-2026") don't false-positive.
+  /^(?:img|dsc|dscn|p|pic|photo|image|screenshot|screen|capture|untitled)?[\s_-]*\d{2,}[\s_.-]*\d*$/i,
+  // Lorem-ipsum-shaped placeholders authored by mock data tools:
+  // `lorem`, `ipsum`, `loremipsum`, `lorempixel-100x100`. Word-prefix
+  // match.
+  /^lorem(?:ipsum)?\b/i,
+];
+
+function isPlaceholderBasename(filename: string): boolean {
+  const stripped = filename.replace(/\.[a-zA-Z0-9]+$/, "").trim();
+  if (stripped.length === 0) return true;
+  for (const pattern of PLACEHOLDER_BASENAME_PATTERNS) {
+    if (pattern.test(stripped)) return true;
+  }
+  return false;
 }
