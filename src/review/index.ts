@@ -6,6 +6,7 @@
 import type { CandidateFinder } from "../types/review.ts";
 import { finder as captcha } from "./finders/captcha.ts";
 import { finder as carouselPattern } from "./finders/carousel-pattern.ts";
+import { finder as colorClassCrossref } from "./finders/color-class-crossref.ts";
 import { finder as consistentIdentification } from "./finders/consistent-identification.ts";
 import { finder as consistentNavigation } from "./finders/consistent-navigation.ts";
 import { finder as decorativeImgWithAdjacentMeaning } from "./finders/decorative-img-with-adjacent-meaning.ts";
@@ -43,6 +44,7 @@ import { finder as validationTiming } from "./finders/validation-timing.ts";
 export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   captcha,
   carouselPattern,
+  colorClassCrossref,
   consistentIdentification,
   consistentNavigation,
   decorativeImgWithAdjacentMeaning,

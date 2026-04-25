@@ -1,0 +1,25 @@
+/* This class adds both color AND a non-color visual property */
+.active {
+  color: blue;
+  font-weight: bold;
+}
+
+/* No color property at all */
+.large {
+  font-size: 1.5em;
+}
+
+/* Compound selector — not a simple class selector */
+.item.selected {
+  color: green;
+}
+
+/* Descendant selector — not a simple class selector */
+.list .item {
+  color: red;
+}
+
+/* Pseudo-class — context-dependent, skip */
+.button:hover {
+  color: blue;
+}
