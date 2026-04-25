@@ -148,7 +148,7 @@ function shapeViolation(
       : {}),
     // Mirror `stampViolation`'s per-finding `confidence` plumbing so
     // unit tests see the same shape the engine ships.
-    ...(v.confidence !== undefined ? { confidence: v.confidence } : {}),
+    ...(v.confidence !== undefined && { confidence: v.confidence }),
     // Mirror the engine's `stampViolation` conditional spread for the
     // in-file rule-emitted sibling rollup (Q7-DUPLICATE-INPUT-SIBLING-
     // COLLAPSE) so unit tests see the same shape the engine ships.

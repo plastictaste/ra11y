@@ -221,7 +221,7 @@ function stampViolation(
     // mirrors the per-rule `coverageConfidence` so an agent reading
     // both surfaces gets the same signal. Conditional spread keeps
     // `confidence: undefined` off the wire.
-    ...(emitted.confidence !== undefined ? { confidence: emitted.confidence } : {}),
+    ...(emitted.confidence !== undefined && { confidence: emitted.confidence }),
     // `classEvidence` is populated only by rules whose detection keys
     // off a class attribute (currently `aria/icon-font-hidden`). The
     // scanner surfaces it onto the Violation so the per-rule-coverage
