@@ -213,9 +213,7 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
       // The narrower minified label must NOT fire — `dist-path` is
       // not minification evidence.
       expect(warnings ?? []).not.toContain("scanned_minified_file");
-      const details = body["warningsDetails"] as
-        | { scanned_minified_file?: unknown }
-        | undefined;
+      const details = body["warningsDetails"] as { scanned_minified_file?: unknown } | undefined;
       expect(details?.scanned_minified_file).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });

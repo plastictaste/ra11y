@@ -878,6 +878,32 @@ function contentDistributionCodes(inputs: WarningInputs): readonly ScanWarningCo
 }
 
 /**
+ * Sub-chain extracted from {@link computeScanWarnings} to keep its
+ * cognitive complexity under the lint cap (same pattern as
+ * {@link contentDistributionCodes}). These are the codes whose
+ * predicate is "the caller supplied a non-empty file list" — the
+ * cross-reference work happens at the call site (the build-artifact
+ * pipeline narrows entries by `reason`, the SCSS detector folds the
+ * preprocessor output) and this module stays pure over its inputs.
+ *
+ * Order matches the original if-chain in {@link computeScanWarnings}
+ * verbatim for this subset so consumers reading `warnings[]` see a
+ * stable code sequence: `scanned_minified_file` first (V1-SCANNED-
+ * MINIFIED-FILE-WARNING-CODE), then `scss_unresolved_variables`
+ * (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT).
+ */
+function fileListDrivenCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (hasScannedMinifiedFiles(inputs.scannedMinifiedFiles)) {
+    out.push("scanned_minified_file");
+  }
+  if (hasScssUnresolvedVariables(inputs.scssUnresolvedVariableFiles)) {
+    out.push("scss_unresolved_variables");
+  }
+  return out;
+}
+
+/**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
  */
@@ -997,35 +1023,13 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // into meta.
     out.push("response_meta_truncated");
   }
-  if (hasScannedMinifiedFiles(inputs.scannedMinifiedFiles)) {
-    // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: at least one scanned file
-    // was classified as `reason: "minified"` by `classifyBuildArtifact`.
-    // The broader `scanned_build_artifacts_present` already labels the
-    // presence of any build artifact; this narrower code names the
-    // minified subset specifically — findings on minified bytes are
-    // nearly always unreliable, and the agent reading the warnings
-    // channel needs to triage them without descending into
-    // `meta.scannedBuildArtifacts` to filter by reason. Surface-don't-
-    // suppress: findings (if any) stay in `files[]` unmodified; the
-    // warning + paired `warningsDetails.scanned_minified_file: { files }`
-    // payload is the additive label.
-    out.push("scanned_minified_file");
-  }
-  if (hasScssUnresolvedVariables(inputs.scssUnresolvedVariableFiles)) {
-    // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: at least one scanned
-    // `.scss` file declared top-level `$variable: …;` statements but
-    // its CSS output carried zero literal-color usages. The
-    // `contrast/minimum` per-rule row is downgraded to `"medium"`
-    // with `coverageConfidenceReason: "scss-unresolved-variables"` in
-    // the response-assembly layer; this top-level code is the
-    // presence bit + paired `warningsDetails.scss_unresolved_variables`
-    // payload (file list) the agent can read without descending into
-    // `meta.perRuleCoverage`. Surface-don't-suppress: findings (if
-    // any) stay in `files[]`; the warning tells the agent to scan
-    // the compiled CSS output for full coverage when the static
-    // SCSS substitution couldn't resolve them here.
-    out.push("scss_unresolved_variables");
-  }
+  // Caller-supplied file-list codes — see `fileListDrivenCodes`.
+  // Two branches extracted into the helper so the main function's
+  // cognitive complexity stays under the lint cap (same pattern as
+  // `contentDistributionCodes` above); the emitted order is
+  // unchanged because the helper preserves the original sequence
+  // and runs at the original insertion point.
+  out.push(...fileListDrivenCodes(inputs));
   if (vendorCssDominates(inputs.vendorCssNoise)) {
     // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS bundles
     // (bootstrap.css, font-awesome.css, jquery-era distributions)
