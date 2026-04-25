@@ -152,6 +152,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [motion/pause-stop-hide](./rules/motion__pause-stop-hide.md)
 - [navigation/href-empty-fragment](./rules/navigation__href-empty-fragment.md)
 - [navigation/href-javascript-scheme](./rules/navigation__href-javascript-scheme.md)
+- [navigation/in-page-link-fragment-missing](./rules/navigation__in-page-link-fragment-missing.md)
 - [navigation/link-descriptive-text](./rules/navigation__link-descriptive-text.md)
 - [navigation/link-name-only-symbol](./rules/navigation__link-name-only-symbol.md)
 - [navigation/link-no-href](./rules/navigation__link-no-href.md)

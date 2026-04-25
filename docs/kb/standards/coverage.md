@@ -82,7 +82,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag22:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | — | **rule** |
-| `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
+| `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `wcag22:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
@@ -177,7 +177,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag21:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | — | **rule** |
-| `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
+| `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `wcag21:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
 | `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
@@ -241,7 +241,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
 | `section508:2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
 | `section508:2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
-| `section508:2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
+| `section508:2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `section508:2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
@@ -295,7 +295,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
 | `en301549:9.2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
 | `en301549:9.2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
-| `en301549:9.2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
+| `en301549:9.2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `en301549:9.2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
 | `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
