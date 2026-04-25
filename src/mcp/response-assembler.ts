@@ -81,6 +81,7 @@ import {
   buildScanMeta,
   buildScanPlan,
   detectScssUnresolvedVariableFiles,
+  outputFilePathSet,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
   withCountsBySurface,
@@ -168,14 +169,19 @@ export interface ScanFamilyResponse {
 }
 
 /**
- * Set of file paths that produced at least one finding in `violations`.
- * Feeds the parse-error split in `analysisCoverage` — errored files
- * whose path appears here land in `partialParseFiles` (rules fired on
- * the recovered slice); the rest land in `parseErrorFiles`
- * (invisible-to-rules). Extracted so {@link assembleScanFamilyResponse}
- * stays under the cognitive-complexity cap.
+ * Set of file paths that produced at least one violation in `violations`
+ * (rules-only — review candidates go through {@link outputFilePathSet}
+ * separately). Feeds {@link applyParseErrorAdjustment}, which downgrades
+ * a per-rule coverage row's confidence based on whether the rule's
+ * eligible files include parse-error / partial-parse paths; finder-emitted
+ * candidates would unfoundedly downgrade rule rows so they stay out of
+ * this set. The doctrine-distinct "did anything emerge from this file?"
+ * set used by `analysisCoverage`'s `parseErrorFiles` vs `partialParseFiles`
+ * split lives in {@link outputFilePathSet} (V1-PARSE-ERROR-LIVERELOAD-
+ * MIXED-SIGNAL). Extracted so {@link assembleScanFamilyResponse} stays
+ * under the cognitive-complexity cap.
  */
-function findingFilePathSet(violations: readonly Violation[]): Set<string> {
+function violationFilePathSet(violations: readonly Violation[]): Set<string> {
   const out = new Set<string>();
   for (const v of violations) out.add(v.location.filePath);
   return out;
@@ -375,12 +381,21 @@ export function assembleScanFamilyResponse(
     fixesByClass,
   });
 
-  // (4) Meta. `findingFilePaths` is derived from the ALL violations
-  // input (pre-note-split) so a file that produced only info-severity
-  // notes still counts as "rules fired on it" — the point of the
-  // partial-parse bucket is to distinguish "rules ran" from "rules
-  // couldn't see anything," not to filter by severity.
-  const findingFilePaths = findingFilePathSet(violations);
+  // (4) Meta. Two distinct path sets — the doctrine difference is
+  // load-bearing.
+  // `violationFilePaths` (rules-only, pre-note-split so info-severity
+  // notes still count as "rules fired") feeds
+  // {@link applyParseErrorAdjustment}: a per-rule coverage row's
+  // confidence may only be downgraded by evidence the same rule would
+  // have produced (review candidates come from finders, not rules).
+  // `outputFilePaths` (rules ∪ finders) feeds the `parseErrorFiles`
+  // vs `partialParseFiles` split in {@link buildAnalysisCoverage}: that
+  // bucket is doctrine for "did anything emerge from this file?", and
+  // a file with grounded review candidates from a source-text finder
+  // must NOT land in the `invisible-to-rules` bucket
+  // (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
+  const violationFilePaths = violationFilePathSet(violations);
+  const outputFilePaths = outputFilePathSet(violations, reviewCandidates);
   // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS: route the rows
   // through the parse-error adjustment once so the meta block and the
   // top-level `ruleCoverage` derivative agree on which rules
@@ -399,7 +414,7 @@ export function assembleScanFamilyResponse(
     perRuleCoverage,
     parsedFiles,
     activeRules,
-    findingFilePaths,
+    violationFilePaths,
   );
   const adjustedPerRuleCoverage = applyScssUnresolvedVariablesAdjustment(
     parseErrorAdjusted,
@@ -422,7 +437,7 @@ export function assembleScanFamilyResponse(
     preset,
     suppressions,
     perRuleCoverage: adjustedPerRuleCoverage,
-    findingFilePaths,
+    findingFilePaths: outputFilePaths,
     ...(discoveryDiagnostics !== undefined &&
     Object.keys(discoveryDiagnostics.skippedByExtension).length > 0
       ? { discoveryDiagnostics }

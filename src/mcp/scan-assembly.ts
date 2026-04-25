@@ -12,8 +12,9 @@ import type { DiscoveryDiagnostics } from "../input/discover.ts";
 import { scssVariableDeclarationsLikelyUnresolved } from "../input/parsers/scss-internals.ts";
 import type { FixesByClass } from "../output/agent-response/index.ts";
 import type { ConfigPreset } from "../types/config.ts";
+import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
-import type { PerRuleCoverage } from "../types/violation.ts";
+import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { buildPlanSummary, type FixClassCounts } from "./plan-summary.ts";
@@ -134,6 +135,39 @@ export function buildScanPlan(args: {
 }
 
 /**
+ * Computes the set of file paths from which ANY scanner output emerged
+ * — violations OR review candidates. Drives the
+ * `analysisCoverage.parseErrorFiles` vs `partialParseFiles` split in
+ * {@link buildAnalysisCoverage}: the doctrine for the former is
+ * "no findings emerged" (CLAUDE.md §1 "Ambiguous field shapes are
+ * dishonest"), so a file that emitted a grounded review candidate from
+ * a source-text-driven finder (e.g. `review/timing` regex-scanning
+ * `ctx.source` even when the AST parse failed) MUST land in
+ * `partialParseFiles`. Building the set from violations alone — the
+ * historical bug under V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL — left
+ * such files in `parseErrorFiles`, which agents read as
+ * "invisible-to-rules"; downstream triage of the live grounded
+ * candidates was silently misled.
+ *
+ * Distinct from the `findingFilePaths` argument {@link applyParseErrorAdjustment}
+ * consumes — that one is per-rule and stays violation-only because
+ * review candidates are emitted by finders, not rules; downgrading a
+ * rule's `coverageConfidence` on the strength of a finder's output
+ * would be unfounded. The two sets coincide on most scans (a finder
+ * almost always shares its file with at least one rule emit), but
+ * the small mixed-signal cases are exactly where the dishonesty bites.
+ */
+export function outputFilePathSet(
+  violations: readonly Violation[],
+  reviewCandidates: readonly ReviewCandidate[],
+): Set<string> {
+  const out = new Set<string>();
+  for (const v of violations) out.add(v.location.filePath);
+  for (const c of reviewCandidates) out.add(c.location.filePath);
+  return out;
+}
+
+/**
  * Packs the `meta` block for `ScanFormatted`. Tool handlers layer the
  * response-level fields (scanned, scanMode, configSource, etc.) on
  * top — this helper only emits the scan-derived fields every caller
@@ -170,14 +204,19 @@ export function buildScanMeta(args: {
    */
   readonly discoveryDiagnostics?: DiscoveryDiagnostics;
   /**
-   * Set of file paths that produced at least one finding in this scan
-   * (violation OR info-severity note). Threaded to
+   * Set of file paths from which ANY scanner output emerged — violations
+   * (including info-severity notes) OR review candidates. Threaded to
    * {@link buildAnalysisCoverage} so parse-error files can be split
-   * into total-failure (`parseErrorFiles` — zero findings emitted) and
-   * partial-parse (`partialParseFiles` — rules fired on the recovered
-   * slice) buckets. Omitted = caller hasn't wired findings yet, in
-   * which case every errored file routes into `parseErrorFiles`
-   * (historical behavior — safe default, never silently demotes).
+   * into total-failure (`parseErrorFiles` — zero output emitted) and
+   * partial-parse (`partialParseFiles` — rules / finders produced output
+   * on the recovered slice) buckets. Use {@link outputFilePathSet} to
+   * compute it from the scan's violations + review-candidate arrays —
+   * the union semantic is load-bearing per V1-PARSE-ERROR-LIVERELOAD-
+   * MIXED-SIGNAL (a file with grounded review candidates but zero
+   * violations must NOT land in the "invisible-to-rules" bucket).
+   * Omitted = caller hasn't wired output yet, in which case every
+   * errored file routes into `parseErrorFiles` (historical behavior —
+   * safe default, never silently demotes).
    */
   readonly findingFilePaths?: ReadonlySet<string>;
 }): Record<string, unknown> {

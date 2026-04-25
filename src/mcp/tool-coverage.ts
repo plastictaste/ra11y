@@ -13,6 +13,7 @@ import { detectApplicability, splitManualCriteria } from "./manual-applicability
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
+import { outputFilePathSet } from "./scan-assembly.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import type { McpSession } from "./session.ts";
 import { deriveTestableCriteria } from "./testable-criteria.ts";
@@ -250,11 +251,17 @@ export const coverageTool: McpTool = {
       undefined,
       discoveryDiagnostics,
       // Parse-error split by same rule as the scan surfaces: files
-      // that produced at least one violation land in
-      // `partialParseFiles` (findings present, recall degraded);
-      // files whose parser errored without emitting anything stay
-      // in `parseErrorFiles` (invisible to rules).
-      new Set(result.violations.map((v) => v.location.filePath)),
+      // that produced at least one violation OR review candidate land
+      // in `partialParseFiles` (output present, recall degraded); files
+      // whose parser errored without emitting anything stay in
+      // `parseErrorFiles` (invisible to rules and finders alike). The
+      // candidate union is load-bearing per V1-PARSE-ERROR-LIVERELOAD-
+      // MIXED-SIGNAL — a source-text finder (e.g. `review/timing`
+      // regex-scanning `ctx.source` even when the AST parse failed) can
+      // surface grounded candidates from a file that produced zero
+      // rule violations; without the union those files would mis-bucket
+      // as `invisible-to-rules` while live candidates reach the caller.
+      outputFilePathSet(result.violations, report.candidates ?? []),
     );
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
     // a coverage response with `criteriaAutomatable: 0` etc. is

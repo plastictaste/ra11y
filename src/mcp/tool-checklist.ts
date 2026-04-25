@@ -27,6 +27,7 @@ import {
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
+import { outputFilePathSet } from "./scan-assembly.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
@@ -579,11 +580,18 @@ export const checklistTool: McpTool = {
       undefined,
       discoveryDiagnostics,
       // Parse-error split by same rule as the scan surfaces: files
-      // that produced at least one violation land in
-      // `partialParseFiles` (findings present, recall degraded);
-      // files whose parser errored without emitting anything stay
-      // in `parseErrorFiles` (invisible to rules). Mirrors `coverage`.
-      new Set(result.violations.map((v) => v.location.filePath)),
+      // that produced at least one violation OR review candidate land
+      // in `partialParseFiles` (output present, recall degraded); files
+      // whose parser errored without emitting anything stay in
+      // `parseErrorFiles` (invisible to rules and finders alike). The
+      // candidate union is load-bearing per V1-PARSE-ERROR-LIVERELOAD-
+      // MIXED-SIGNAL — a source-text finder (e.g. `review/timing`
+      // regex-scanning `ctx.source` even when the AST parse failed) can
+      // surface grounded candidates from a file that produced zero
+      // rule violations; without the union those files would mis-bucket
+      // as `invisible-to-rules` while live candidates reach the caller.
+      // Mirrors `coverage`.
+      outputFilePathSet(result.violations, report.candidates ?? []),
     );
     const filesByExtension = countFilesByExtension(files);
     // Q7-CHECKLIST-META-PARITY: emit the same `scanned` envelope

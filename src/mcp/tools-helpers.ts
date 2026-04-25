@@ -34,6 +34,7 @@ import {
   buildScanMeta,
   buildScanPlan,
   detectScssUnresolvedVariableFiles,
+  outputFilePathSet,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
   withCountsBySurface,
@@ -647,7 +648,19 @@ export async function runScanAndFormat(
   // drift the AI-first doctrine warns against. The helper is a no-op
   // fast path when the scan has no parse-error / partial-parse files,
   // so the common case pays nothing.
-  const findingFilePaths = new Set(filtered.map((v) => v.location.filePath));
+  // Two distinct path sets — the doctrine difference is load-bearing.
+  // `violationFilePaths` (rules-only) feeds {@link applyParseErrorAdjustment}:
+  // a per-rule coverage row's confidence may only be downgraded by
+  // evidence the same rule would have produced (review candidates come
+  // from finders, not rules — including them here would unfoundedly
+  // downgrade rule rows). `outputFilePaths` (rules ∪ finders) feeds the
+  // `parseErrorFiles` vs `partialParseFiles` split in
+  // {@link buildAnalysisCoverage}: that bucket is doctrine for "did
+  // anything emerge from this file?", and a file with grounded review
+  // candidates from a source-text finder must NOT land in the
+  // `invisible-to-rules` bucket (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
+  const violationFilePaths = new Set(filtered.map((v) => v.location.filePath));
+  const outputFilePaths = outputFilePathSet(filtered, report.candidates ?? []);
   // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: detect token-only `.scss`
   // partials so the per-rule coverage downgrade and the response-level
   // `scss_unresolved_variables` warning agree on the same file list.
@@ -656,7 +669,7 @@ export async function runScanAndFormat(
     perRuleCoverage,
     files,
     activeRules,
-    findingFilePaths,
+    violationFilePaths,
   );
   const adjustedPerRuleCoverage = applyScssUnresolvedVariablesAdjustment(
     parseErrorAdjusted,
@@ -689,15 +702,19 @@ export async function runScanAndFormat(
     preset,
     suppressions,
     perRuleCoverage: adjustedPerRuleCoverage,
-    // Derived from the post-filter violation set (same view the
-    // consumer sees on `files`/`plan`). Threads into the parse-error
-    // split so a file that emitted findings lands in
+    // Derived from the post-filter violation set ∪ review-candidate
+    // file paths (same view the consumer sees on `files`/`plan` plus
+    // the grounded candidates that surface alongside). Threads into the
+    // parse-error split so a file that emitted ANY output (rule
+    // violation OR source-text finder candidate) lands in
     // `partialParseFiles` rather than the invisible `parseErrorFiles`
     // bucket — otherwise a file like `modal.mdx` that produced 14
-    // findings with live line numbers would also appear in
-    // `parseErrorFiles`, reading to the agent as "invisible" and
-    // the findings are silently ignored.
-    findingFilePaths,
+    // findings with live line numbers OR a `livereload.js` whose only
+    // surfaced output is `wcag22:2.2.1` setTimeout candidates from
+    // `review/timing` would appear in `parseErrorFiles`, reading to the
+    // agent as "invisible" and the live output silently ignored
+    // (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
+    findingFilePaths: outputFilePaths,
     ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
   });
   // V1-META-COUNTS-BY-SURFACE-REGRESSION: every scan-family consumer
