@@ -992,7 +992,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.meta).not.toHaveProperty("skippedByCaller");
   });
 
-  it("checklist returns actionable items and omits untargetedCriteriaList by default", async () => {
+  it("checklist returns actionable items and ships bare-ID untargetedCriteriaList by default", async () => {
+    // V1-UNTARGETED-CRITERIA-DEFAULT-EMIT: default behavior inverts —
+    // the full list used to be gated behind `showUntargeted: true`,
+    // but per `ai-first-consumer.md` ("surface, don't suppress") the
+    // default now ships a bare criterion-ID array so an agent
+    // preparing a VPAT or running a formal audit enumerates the
+    // criteria without a second call.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR] }),
@@ -1013,7 +1019,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     };
     expect(Array.isArray(body.items)).toBe(true);
     expect(Array.isArray(body.likelyIrrelevant)).toBe(true);
-    expect(body.untargetedCriteriaList).toBeUndefined();
+    // Default-emit: a bare criterion-ID array; length matches the
+    // summary count. Full items are opt-in via `showUntargeted: true`.
+    expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
+    const untargetedIds = body.untargetedCriteriaList as readonly unknown[];
+    expect(untargetedIds.every((id) => typeof id === "string")).toBe(true);
+    expect(untargetedIds.length).toBe(body.summary.untargetedCriteria);
     expect(body.items.every((i) => i.candidates.length > 0)).toBe(true);
     expect(body.summary.actionable).toBe(body.items.length);
     expect(body.summary.likelyIrrelevant).toBe(body.likelyIrrelevant.length);
@@ -1022,6 +1033,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // example in docs/kb/architecture/ai-first-consumer.md. It is now
     // absent; callers read the two split counters separately.
     expect(body.summary).not.toHaveProperty("manualReviewRequired");
+    // V1-CHECKLIST-PRIORITY-AXIS-DEGENERATE: the `byPriority`
+    // composite shipped `{high: N, medium: 0, low: 0}` on every
+    // corpus because `priorityFor()` returned `"high"` for every
+    // A/AA criterion. The field is dropped — confidence is the
+    // honest signal-bearing axis.
+    expect(body.summary).not.toHaveProperty("byPriority");
     // WCAG principle is spec-defined data derived from criterionId;
     // surfacing it lets the agent sort beyond level without us
     // inventing a priority ranking.
@@ -1065,7 +1082,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ).toBeUndefined();
   });
 
-  it("checklist includes untargetedCriteriaList when showUntargeted: true", async () => {
+  it("checklist upgrades untargetedCriteriaList to full items when showUntargeted: true", async () => {
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR], showUntargeted: true }),
@@ -1076,7 +1093,136 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     };
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
     expect(body.untargetedCriteriaList.every((i) => i.candidates.length === 0)).toBe(true);
+    // Full-item shape: each entry carries criterionId + empty candidates array.
+    expect(body.untargetedCriteriaList.every((i) => typeof i.criterionId === "string")).toBe(true);
     expect(body.summary.untargetedCriteria).toBe(body.untargetedCriteriaList.length);
+  });
+
+  it("checklist omits untargetedCriteriaList entirely when showUntargeted: false (size-pressure escape)", async () => {
+    // V1-UNTARGETED-CRITERIA-DEFAULT-EMIT: opt-out preserved. The
+    // default now ships bare IDs, but callers under a tight token
+    // budget can drop the list entirely while the summary counter
+    // keeps the enumeration visible.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "checklist", { paths: [BAD_ALT_DIR], showUntargeted: false }),
+    ]);
+    const body = bodyOf(responses[1]) as {
+      untargetedCriteriaList?: unknown;
+      summary: { untargetedCriteria: number };
+    };
+    expect(body.untargetedCriteriaList).toBeUndefined();
+    expect(typeof body.summary.untargetedCriteria).toBe("number");
+  });
+
+  it("checklist annotates candidates that span multiple criteria with criteriaIds", async () => {
+    // V1-CHECKLIST-CRITERION-GROUP-DEDUP: a <video> element surfaces
+    // under wcag22:1.2.1 / 1.2.3 / 1.2.5 as separate items. Previously
+    // the same file:line was re-read three times. The candidate now
+    // carries `criteriaIds: [...]` listing every criterion it covers
+    // so an agent walks the group once. Items stay per-criterion
+    // (ADR 0010 cross-tool invariant); the annotation is the dedup
+    // signal the agent consumes.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir: _tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(_tmpdir(), "ra11y-criteriaIds-"));
+    await writeFile(
+      join(dir, "page.html"),
+      `<html><body><video src="x.mp4"></video></body></html>`,
+    );
+    const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
+    const bodyData = bodyOf(responses[1]) as {
+      items: Array<{
+        criterionId: string;
+        candidates: Array<{
+          path: string;
+          line: number;
+          criteriaIds?: readonly string[];
+        }>;
+      }>;
+    };
+    // At least one candidate should carry criteriaIds spanning the
+    // 1.2.x family the media fixture surfaces.
+    const annotated = bodyData.items
+      .flatMap((i) => i.candidates)
+      .filter((c) => Array.isArray(c.criteriaIds));
+    expect(annotated.length).toBeGreaterThan(0);
+    for (const c of annotated) {
+      expect((c.criteriaIds ?? []).length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("checklist candidates carry suppressWith pragma spellings for all four comment dialects", async () => {
+    // V1-CHECKLIST-PRAGMA-IN-CANDIDATE: workflow tells agents to
+    // suppress at source via `<!-- ra11y-disable -->` / `{/* ra11y-
+    // disable */}`. Every checklist candidate now ships the ready-
+    // to-paste pragma in all four dialects the inline-disable parser
+    // recognizes, scoped to the owning criterion ID.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "checklist", { paths: [BAD_ALT_DIR] }),
+    ]);
+    const body = bodyOf(responses[1]) as {
+      items: Array<{
+        criterionId: string;
+        candidates: Array<{
+          suppressWith?: {
+            html?: string;
+            jsx?: string;
+            liquid?: string;
+            hugo?: string;
+          };
+        }>;
+      }>;
+    };
+    expect(body.items.length).toBeGreaterThan(0);
+    for (const item of body.items) {
+      for (const c of item.candidates) {
+        expect(typeof c.suppressWith?.html).toBe("string");
+        expect(typeof c.suppressWith?.jsx).toBe("string");
+        expect(typeof c.suppressWith?.liquid).toBe("string");
+        expect(typeof c.suppressWith?.hugo).toBe("string");
+        expect(c.suppressWith?.html).toContain("ra11y-disable");
+        expect(c.suppressWith?.jsx).toContain("ra11y-disable");
+        expect(c.suppressWith?.liquid).toContain("ra11y-disable");
+        expect(c.suppressWith?.hugo).toContain("ra11y-disable");
+        // Scoped to the owning criterion ID.
+        expect(c.suppressWith?.html).toContain(item.criterionId);
+        expect(c.suppressWith?.jsx).toContain(item.criterionId);
+      }
+    }
+  });
+
+  it("checklist narrates maxCandidatesPerCriterion clamps via a structured warning", async () => {
+    // V1-CHECKLIST-MAX-CANDIDATES-PER-CRITERION-CLAMP: caller-supplied
+    // values outside [1, 100] are clamped, and the response carries a
+    // paired warning + warningsDetails payload so the clamp is narrated.
+    // Silent clamps would be the ambiguous-failure pattern — the caller
+    // asked for 500 and got 100 back with no signal.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "checklist", { paths: [BAD_ALT_DIR], maxCandidatesPerCriterion: 500 }),
+    ]);
+    const body = bodyOf(responses[1]) as {
+      warnings?: readonly string[];
+      warningsDetails?: {
+        max_candidates_per_criterion_clamped?: { requested: number; applied: number };
+      };
+    };
+    expect(body.warnings ?? []).toContain("max_candidates_per_criterion_clamped");
+    expect(body.warningsDetails?.max_candidates_per_criterion_clamped).toEqual({
+      requested: 500,
+      applied: 100,
+    });
+  });
+
+  it("checklist does not emit the clamp warning when maxCandidatesPerCriterion is in range", async () => {
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "checklist", { paths: [BAD_ALT_DIR], maxCandidatesPerCriterion: 5 }),
+    ]);
+    const body = bodyOf(responses[1]) as { warnings?: readonly string[] };
+    expect(body.warnings ?? []).not.toContain("max_candidates_per_criterion_clamped");
   });
 
   it("review_candidates returns a candidateCount with the active level echoed", async () => {

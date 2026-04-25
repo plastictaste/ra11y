@@ -37,6 +37,12 @@ function makeItem(
     line: i + 1,
     reason: "manual review candidate",
     confidence,
+    suppressWith: {
+      html: `<!-- ra11y-disable ${criterionId} -->`,
+      jsx: `{/* ra11y-disable ${criterionId} */}`,
+      liquid: `{% comment %}ra11y-disable ${criterionId}{% endcomment %}`,
+      hugo: `{{/* ra11y-disable ${criterionId} */}}`,
+    },
   }));
   return {
     criterionId,

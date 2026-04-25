@@ -44,12 +44,66 @@ import {
 } from "./tools-helpers.ts";
 import { computeTemplateDirectiveOverlap } from "./warnings.ts";
 
+/**
+ * Per-criterion-group disable-pragma spellings for the four comment
+ * dialects ra11y's inline-disable parser accepts today. Shipped on
+ * every candidate so an agent dismissing in source has the ready-to-
+ * paste form for every file type without cross-referencing rule IDs.
+ *
+ * Mirrors `src/config/inline-disables.ts` recognized forms: HTML
+ * comments, JSX JavaScript-comment expressions, Liquid
+ * `{% comment %}` blocks, and Hugo `{{/_ _/}}` templates (the pragma
+ * uses `/*` / `*` / `/` delimiters at emission time — stylized here
+ * to keep this docstring a valid block comment). The `<id>` token is
+ * the criterion ID (e.g. `wcag22:1.4.5`) — same granularity the
+ * disable parser scopes against. Present always on every candidate
+ * (schema-required, not optional): agents that open the cited file
+ * and decide to suppress need the spelling regardless of file type,
+ * so conditional-spread would just force a per-candidate lookup.
+ */
+interface SuppressWith {
+  readonly html: string;
+  readonly jsx: string;
+  readonly liquid: string;
+  readonly hugo: string;
+}
+
+function buildSuppressWith(id: string): SuppressWith {
+  return {
+    html: `<!-- ra11y-disable ${id} -->`,
+    jsx: `{/* ra11y-disable ${id} */}`,
+    liquid: `{% comment %}ra11y-disable ${id}{% endcomment %}`,
+    hugo: `{{/* ra11y-disable ${id} */}}`,
+  };
+}
+
 interface ChecklistCandidateOut {
   readonly path: string;
   readonly line: number;
   readonly reason: string;
   readonly confidence: ReviewConfidence;
   readonly snippet?: string;
+  /**
+   * Source-level `ra11y-disable` pragma spellings for the four comment
+   * dialects the inline-disable parser accepts. Scoped to the owning
+   * criterion ID (or, when {@link ChecklistCandidateOut#criteriaIds}
+   * lists multiple criteria, to the first criterion — see that field's
+   * note on dedup). Always present so an agent dismissing in source
+   * has the ready-to-paste form regardless of file type.
+   */
+  readonly suppressWith: SuppressWith;
+  /**
+   * Extra criterion IDs this candidate also covers (beyond the owning
+   * item's `criterionId`). Present when the scanner emits the same
+   * file:line + reason under multiple criteria — e.g. a `<video>` at
+   * `Home.tsx:42` that surfaces under `wcag22:1.2.1` / `1.2.3` /
+   * `1.2.5` once each. Previously three separate item entries sharing
+   * one line; now one emitted candidate + `criteriaIds: [...ids...]`.
+   * Always populated with at least the owning `criterionId` when ≥1
+   * extra criterion shares the location. Omitted (present-when-
+   * meaningful per CLAUDE.md §1) when the candidate is single-criterion.
+   */
+  readonly criteriaIds?: readonly string[];
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -147,11 +201,58 @@ function priorityFor(level: string, hasCandidates: boolean): ChecklistPriority {
   return "medium";
 }
 
+/**
+ * V1-CHECKLIST-MAX-CANDIDATES-PER-CRITERION-CLAMP: detects whether
+ * the caller-supplied `maxCandidatesPerCriterion` was clamped by the
+ * [1, 100] bounds so the handler can narrate it via a structured
+ * `warnings: ["max_candidates_per_criterion_clamped"]` + paired
+ * `warningsDetails.max_candidates_per_criterion_clamped: { requested,
+ * applied }` payload. Silent clamps are the canonical "ambiguous
+ * field shapes are dishonest" failure mode — a caller asking for 500
+ * and getting back 100 with no signal.
+ *
+ * Returns `undefined` when the caller omitted the param or passed a
+ * non-numeric value (fall back to default, no clamp to narrate) or
+ * when the floor of the caller's value equals the applied value (the
+ * clamp was a no-op). Extracted to a helper to keep the handler's
+ * cognitive complexity under the lint ceiling.
+ */
+function detectPerCriterionClamp(
+  params: Record<string, unknown>,
+  applied: number,
+): { readonly requested: number; readonly applied: number } | undefined {
+  const raw = params["maxCandidatesPerCriterion"];
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  const requested = Math.floor(raw);
+  if (requested === applied) return undefined;
+  return { requested, applied };
+}
+
+/**
+ * V1-UNTARGETED-CRITERIA-DEFAULT-EMIT: builds the conditional-spread
+ * fragment for `untargetedCriteriaList` based on the tri-state
+ * `showUntargeted` input. Default (unset) emits a bare criterion-ID
+ * array (cheap enumeration for VPAT prep); `true` upgrades to full
+ * items (title + level + principle + empty candidates); `false`
+ * omits the list entirely as a size-pressure escape hatch. Extracted
+ * to a helper to keep the handler under the lint's cognitive-
+ * complexity ceiling.
+ */
+function buildUntargetedField(
+  params: Record<string, unknown>,
+  untargeted: readonly ChecklistItemOut[],
+): { readonly untargetedCriteriaList?: readonly ChecklistItemOut[] | readonly string[] } {
+  const raw = params["showUntargeted"];
+  if (raw === true) return { untargetedCriteriaList: untargeted };
+  if (raw === false) return {};
+  return { untargetedCriteriaList: untargeted.map((i) => i.criterionId) };
+}
+
 export const checklistTool: McpTool = {
   def: {
     name: "checklist",
     description:
-      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. Pass `showUntargeted: true` to include the full list (`untargetedCriteriaList`) in the response when you're preparing a VPAT or running a formal audit — by default they're counted but not returned, since 18 bare WCAG titles will drown 3 real finds.",
+      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: { html, jsx, liquid, hugo }` — ready-to-paste `ra11y-disable` pragma spellings scoped to the owning criterion. When one file:line covers multiple criteria, it ships once with `criteriaIds: [...]` instead of repeating as separate item entries.",
     inputSchema: {
       type: "object",
       properties: {
@@ -171,7 +272,7 @@ export const checklistTool: McpTool = {
         showUntargeted: {
           type: "boolean",
           description:
-            "Include the full list of manual criteria without candidates (pure WCAG prompts). Default false; the summary still reports the count.",
+            "Tri-state controller for `untargetedCriteriaList`. Default (unset) emits bare criterion IDs so enumeration is cheap. `true` upgrades to full items (title + level + principle + empty candidates) for VPAT drafting. `false` omits the list entirely — size-pressure escape hatch. The summary always reports `untargetedCriteria` (count) regardless.",
         },
         limit: {
           type: "number",
@@ -186,7 +287,7 @@ export const checklistTool: McpTool = {
         maxCandidatesPerCriterion: {
           type: "number",
           description:
-            "Caps candidates per criterion within the returned page — orthogonal to `limit`. Defaults to 10, clamped to [1, 100]. Prevents one noisy criterion from consuming the whole page without hiding it. When any criterion is clipped, the response carries `perCriterionClipped: true`; `totalCandidates` still reports the pre-clip tally so the agent can see what was elided. The response also carries an opaque `nextCursor` the caller can pass back to fetch the elided per-criterion tail.",
+            'Caps candidates per criterion within the returned page — orthogonal to `limit`. Defaults to 10, clamped to [1, 100]. When the caller\'s value is outside that range the response carries `warnings: ["max_candidates_per_criterion_clamped"]` + `warningsDetails.max_candidates_per_criterion_clamped: { requested, applied }` so the clamp is narrated, not silent. Prevents one noisy criterion from consuming the whole page without hiding it. When any criterion is clipped, the response carries `perCriterionClipped: true`; `totalCandidates` still reports the pre-clip tally so the agent can see what was elided. The response also carries an opaque `nextCursor` the caller can pass back to fetch the elided per-criterion tail.',
         },
         cursor: {
           type: "object",
@@ -310,8 +411,15 @@ export const checklistTool: McpTool = {
     const skipSet = skipCriterion && skipCriterion.length > 0 ? new Set(skipCriterion) : undefined;
     const keep = (i: { criterionId: string }) =>
       skipSet === undefined || !skipSet.has(i.criterionId);
-    const actionable = needsReview.filter((i) => i.candidates.length > 0 && keep(i));
-    const untargeted = needsReview.filter((i) => i.candidates.length === 0 && keep(i));
+    // V1-CHECKLIST-CRITERION-GROUP-DEDUP: annotate candidates whose
+    // (file, line, reason) surfaces under ≥2 items with `criteriaIds:
+    // [...]` so an agent walking a shared candidate reads one entry
+    // per location and knows which criteria it covers. Items stay
+    // per-criterion (ADR 0010 cross-tool invariant) — the annotation
+    // is the dedup signal the agent consumes.
+    const annotatedNeedsReview = annotateSharedCandidates(needsReview);
+    const actionable = annotatedNeedsReview.filter((i) => i.candidates.length > 0 && keep(i));
+    const untargeted = annotatedNeedsReview.filter((i) => i.candidates.length === 0 && keep(i));
     const filteredIrrelevant = likelyIrrelevant.filter(keep);
     // Q2-CHECKLIST-LIMIT: pagination over the candidate stream. The
     // scan still evaluates every criterion — this caps response size
@@ -329,13 +437,15 @@ export const checklistTool: McpTool = {
     // branch on presence, not on a sentinel false/0.
     const pageParams = readChecklistPageParams(params);
     const page = paginateChecklistItems(actionable, pageParams);
-    // `byPriority` counts the full actionable inventory (not just the
-    // current page) so the summary stays a stable project-level
-    // number across paging calls. Page-scoped counts would force the
-    // agent to sum them manually, which is the dishonest-composite
-    // failure mode (CLAUDE.md §1).
-    const byPriority = { high: 0, medium: 0, low: 0 };
-    for (const item of actionable) byPriority[item.priority] += 1;
+    const perCriterionClamp = detectPerCriterionClamp(params, pageParams.maxCandidatesPerCriterion);
+    // The previous `summary.byPriority: { high, medium, low }` was
+    // degenerate — `priorityFor()` returns `"high"` for every A/AA
+    // criterion, so the field shipped `{ high: N, medium: 0, low: 0 }`
+    // on every corpus. The confidence axis carries the honest per-
+    // item signal (an item's `confidence` is the highest-ranked
+    // candidate confidence, `"low"` for bare-criterion items). The
+    // byPriority composite is dropped per V1-CHECKLIST-PRIORITY-AXIS-
+    // DEGENERATE; dishonest-counter doctrine (CLAUDE.md §1) applies.
     // The previous `manualReviewRequired = actionable + untargeted`
     // headline summed two categorically different work kinds (grounded
     // file:line candidates vs. bare-criterion WCAG prompts) into a
@@ -397,19 +507,18 @@ export const checklistTool: McpTool = {
         `${actionable.length} actionable · ${untargeted.length} untargeted · ` +
         `${filteredIrrelevant.length} likely irrelevant`,
       actionable: actionable.length,
-      byPriority,
       untargetedCriteria: untargeted.length,
       // One-line gloss: untargeted count is cryptic on its own — the
       // agent's read-order goes summary → items, so the definition
       // belongs here, not buried in the tool docstring.
       untargetedCriteriaMeaning:
-        "manual-review criteria whose candidate finder could not ground them in code; pass `showUntargeted: true` to see the full WCAG prompts for them (emitted as `untargetedCriteriaList`).",
+        "manual-review criteria whose candidate finder could not ground them in code. By default `untargetedCriteriaList` ships as a bare criterion-ID array; pass `showUntargeted: true` for full items (title + level + principle + empty candidates), or `showUntargeted: false` to omit the list entirely under size pressure.",
       likelyIrrelevant: filteredIrrelevant.length,
       automatedCoverage,
       ...(skipSet === undefined ? {} : { skippedByCaller: [...skipSet].sort() }),
     };
 
-    const showUntargeted = params["showUntargeted"] === true;
+    const untargetedField = buildUntargetedField(params, untargeted);
     // ADR 0010 cross-pointing: the `checklist` tool answers "what
     // should I manually review next, and where?" — its `nextStep`
     // routes callers onward to the matching companion surface:
@@ -493,13 +602,14 @@ export const checklistTool: McpTool = {
       filesByExtension,
       violations: result.violations,
       nextCursor: page.paginationFields.nextCursor,
+      ...(perCriterionClamp ? { perCriterionClamp } : {}),
     });
     return textResult({
       summary,
       items: page.items,
       totalCandidates: page.totalCandidates,
       ...page.paginationFields,
-      ...(showUntargeted ? { untargetedCriteriaList: untargeted } : {}),
+      ...untargetedField,
       likelyIrrelevant: filteredIrrelevant,
       ...checklistNextStep,
       ...metaField,
@@ -529,6 +639,7 @@ function buildChecklistWarnings(args: {
   readonly filesByExtension: Record<string, number>;
   readonly violations: ReturnType<typeof runScan>["result"]["violations"];
   readonly nextCursor: ChecklistCursor | undefined;
+  readonly perCriterionClamp?: { readonly requested: number; readonly applied: number };
 }): { readonly warnings?: readonly string[]; readonly warningsDetails?: unknown } {
   const derivative = buildDerivativeScanWarnings({
     filesScanned: args.files.length,
@@ -555,12 +666,32 @@ function buildChecklistWarnings(args: {
   });
   const merged = new Set<string>(derivative.warnings ?? []);
   if (args.nextCursor !== undefined) merged.add("results_truncated_use_nextcursor");
+  if (args.perCriterionClamp !== undefined) {
+    merged.add("max_candidates_per_criterion_clamped");
+  }
   const sorted = [...merged].sort();
+  // Checklist owns the `max_candidates_per_criterion_clamped` code +
+  // its paired `{ requested, applied }` payload — shape is local to
+  // this tool (no other surface has the same per-criterion axis), so
+  // the payload is merged directly onto the derivative details rather
+  // than routed through `ScanWarningDetails`. Per CLAUDE.md §1
+  // "Ambiguous field shapes are dishonest": the warning code alone
+  // would leave the caller unable to tell "clamped from 500 to 100"
+  // from "clamped from 101 to 100."
+  const mergedDetails: Record<string, unknown> = {
+    ...(derivative.warningsDetails === undefined ? {} : { ...derivative.warningsDetails }),
+    ...(args.perCriterionClamp
+      ? {
+          max_candidates_per_criterion_clamped: {
+            requested: args.perCriterionClamp.requested,
+            applied: args.perCriterionClamp.applied,
+          },
+        }
+      : {}),
+  };
   return {
     ...(sorted.length > 0 ? { warnings: sorted } : {}),
-    ...(derivative.warningsDetails === undefined
-      ? {}
-      : { warningsDetails: derivative.warningsDetails }),
+    ...(Object.keys(mergedDetails).length > 0 ? { warningsDetails: mergedDetails } : {}),
   };
 }
 
@@ -640,6 +771,7 @@ function mapCandidates(
         line: c.location.line,
         reason: c.reason,
         confidence: c.confidence,
+        suppressWith: buildSuppressWith(criterionId),
         ...(snippet === undefined ? {} : { snippet }),
         // Pass aggregated siblingOccurrences through to the checklist
         // surface so an agent paginating the checklist sees the full
@@ -651,6 +783,59 @@ function mapCandidates(
           }),
       };
     });
+}
+
+/**
+ * V1-CHECKLIST-CRITERION-GROUP-DEDUP: when a candidate's
+ * `(file, line, reason)` surfaces under multiple checklist items,
+ * annotate every instance with `criteriaIds: string[]` listing every
+ * criterion the same location satisfies. This is the agent's signal
+ * to dedup downstream: a candidate ships on every owning item (so the
+ * per-criterion shape stays intact — `items.length` matches
+ * `coverage.manualWithCandidates.length` across tools), but repeated
+ * reads of "same file:line under wcag22:1.2.1, then 1.2.3, then 1.2.5"
+ * carry the `criteriaIds: [1.2.1, 1.2.3, 1.2.5]` badge so the agent
+ * walks the group once rather than three times.
+ *
+ * Per CLAUDE.md §1 "Ambiguous field shapes are dishonest": the field
+ * is present-when-meaningful — omitted on single-criterion candidates
+ * (an always-present length-1 array would be low-signal noise) and
+ * populated with ≥2 IDs, in deterministic ranker order, when ≥2
+ * criteria share the location.
+ *
+ * Why not collapse across items: the cross-tool invariant
+ * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].id`)
+ * is load-bearing — it's how the two tools read as one surface per
+ * ADR 0010. Dropping secondary items would silently re-classify a
+ * shared-candidate criterion as untargeted on checklist while
+ * coverage still counts it as grounded; that drift is the canonical
+ * "cross-surface drift forces wasted round trips" failure mode the
+ * AI-first doctrine warns against. Annotating every instance
+ * preserves the invariant AND gives the agent the dedup tool.
+ */
+function annotateSharedCandidates(items: readonly ChecklistItemOut[]): ChecklistItemOut[] {
+  // Map dedup-key → every criterion ID that owns this location.
+  const byKey = new Map<string, string[]>();
+  for (const item of items) {
+    for (const c of item.candidates) {
+      const key = `${c.path}\x00${c.line}\x00${c.reason}`;
+      const existing = byKey.get(key);
+      if (existing === undefined) {
+        byKey.set(key, [item.criterionId]);
+      } else if (!existing.includes(item.criterionId)) {
+        existing.push(item.criterionId);
+      }
+    }
+  }
+  return items.map((item) => ({
+    ...item,
+    candidates: item.candidates.map((c) => {
+      const key = `${c.path}\x00${c.line}\x00${c.reason}`;
+      const ids = byKey.get(key);
+      if (ids === undefined || ids.length <= 1) return c;
+      return { ...c, criteriaIds: [...ids] };
+    }),
+  }));
 }
 
 function finderOrBuiltSnippet(
