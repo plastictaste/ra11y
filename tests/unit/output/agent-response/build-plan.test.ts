@@ -181,20 +181,76 @@ describe("buildAgentPlan: dropped safeEditsAvailable composite", () => {
   });
 });
 
+describe("buildAgentPlan: dropped violations composite (Q7-PLAN-VIOLATIONS-COMPOSITE)", () => {
+  // The former `plan.violations` summed across the four `fixesByClass`
+  // lanes (mechanical + verify-in-source + guidance + runtimeOnly)
+  // under one top-level integer. Agents budgeted against it as if
+  // every entry were an actionable edit when in reality two of the
+  // four lanes are prose-only. Same shape as the deleted
+  // `plan.totalFindings` (severity-distinct lanes) and
+  // `plan.safeEditsAvailable` (two editable lanes) precedents — per
+  // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+  // counts are dishonest," the structured `fixesByClass` is the
+  // honest tally and the composite was deleted (not renamed) so the
+  // silent-miss failure mode of two disagreeing siblings can't
+  // reopen.
+
+  it("does NOT surface a `violations` field on the plan", () => {
+    const plan = buildAgentPlan(makeViolations(), []);
+    expect((plan as unknown as Record<string, unknown>)["violations"]).toBeUndefined();
+  });
+
+  it("does NOT surface a `violations` field even when no violations exist (clean scan)", () => {
+    const plan = buildAgentPlan([], []);
+    expect((plan as unknown as Record<string, unknown>)["violations"]).toBeUndefined();
+  });
+
+  it("does NOT surface a renamed `violationsComposite` field (deletion is durable, not relabeled)", () => {
+    // Per the precedent established for `plan.totalFindings` (deleted
+    // 2026-04-24, NOT renamed to `totalFindingsComposite`): a renamed-
+    // but-retained sibling still occupies the "first thing the agent
+    // reads" slot — the silent-miss failure mode is identical to the
+    // original. This guard ensures we don't reintroduce the same
+    // shape under a new name.
+    const plan = buildAgentPlan(makeViolations(), []);
+    const record = plan as unknown as Record<string, unknown>;
+    expect(record["violationsComposite"]).toBeUndefined();
+    expect(record["totalViolations"]).toBeUndefined();
+  });
+
+  it("the structured per-lane `fixesByClass` carries the honest tally callers sum themselves", () => {
+    // The signal a former `plan.violations` consumer wanted is now a
+    // trivial sum of the four per-lane keys, each of which names
+    // exactly what it measures.
+    const plan = buildAgentPlan(makeViolations(), []);
+    const flatTotal =
+      plan.fixesByClass.mechanical +
+      plan.fixesByClass.guidance +
+      plan.fixesByClass.runtimeOnly +
+      plan.fixesByClass.verifyInSource;
+    // makeViolations() seeds one violation per lane.
+    expect(flatTotal).toBe(4);
+  });
+});
+
 describe("buildAgentPlan: summary string", () => {
-  it("breaks the violations parenthetical down by fixClass lane (not by suggestion presence)", () => {
+  it("emits the per-lane breakdown without a composite 'N findings' headline", () => {
     const files: AgentFile[] = [];
     const plan = buildAgentPlan(makeViolations(), files);
-    // Lane order per `buildFixClassBreakdown`:
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the prose drops the leading
+    // composite total that summed across the four lanes. The lane
+    // fragments still ride in the same stable order:
     // mechanical → guidance → runtime-only → verify-in-source.
-    expect(plan.summary).toContain("4 findings");
     expect(plan.summary).toContain("1 mechanical");
     expect(plan.summary).toContain("1 guidance");
     expect(plan.summary).toContain("1 runtime-only");
     expect(plan.summary).toContain("1 verify-in-source");
-    // The former "N guidance fixes" composite no longer appears —
-    // that label summed runtime-only and verify-in-source under
-    // "guidance" and was the exact dishonesty this change removes.
+    // The former "N findings (...)" composite no longer appears —
+    // see Q7-PLAN-VIOLATIONS-COMPOSITE for rationale (same shape as
+    // the deleted `plan.totalFindings` and `plan.safeEditsAvailable`
+    // precedents).
+    expect(plan.summary).not.toMatch(/\b4\s+(findings?|violations?)\b/);
+    // The earlier "N guidance fixes" composite is also gone.
     expect(plan.summary).not.toMatch(/\d+ guidance fixes/);
   });
 

@@ -369,32 +369,31 @@ export interface FixesByClass {
 /**
  * Executive summary for the agent: counts, effort, and a natural-language blurb.
  *
- * `violations` and `notes` are the honest split of what `result.violations`
- * carries. `violations` counts findings with `severity` of `error` or
- * `warning` — real WCAG impact the agent is expected to triage. `notes`
- * counts `severity: "info"` findings — additive context (e.g. labeled
- * parents, deprecation hints) that share the violations array but do not
- * represent failure. The former `totalFindings` counter summed both lanes
- * under one headline (`plan.totalFindings: 24772` buried `notes: 1079`
- * under `violations: 23693` on the website-templates field test); per
- * CLAUDE.md §1 "Composite headline counts are dishonest," the split
- * matches the MCP `scan_project` plan shape (`buildScanPlan`) and the
- * `--format agent` summary prose ("N findings (… mechanical, …)") which
- * already breaks the two lanes out — agents reading either surface get
- * one shape to budget against.
+ * `notes` counts `severity: "info"` findings — additive context
+ * (e.g. labeled parents, deprecation hints) that share the violations
+ * array but do not represent failure. There is no top-level
+ * `violations` counter: a flat `violations: N` headline summed
+ * categorically different `fixesByClass` lanes (mechanical edits +
+ * verify-in-source prose + guidance rewrites + runtime-only) under
+ * one number, and agents budgeted against it as if it were N
+ * actionable edits. Same shape as the dropped `plan.totalFindings`
+ * (severity-distinct lanes under one name) and `plan.safeEditsAvailable`
+ * (two editable lanes under one name) precedents — per
+ * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest," the structured per-lane `fixesByClass` is
+ * the honest tally and the composite was deleted (not renamed) so
+ * the silent-miss failure mode of two siblings disagreeing on the
+ * same response can't reopen.
  *
  * `fixesByClass` is the structured per-{@link FixClass} tally — one count
  * per remediation lane (`mechanical` / `guidance` / `runtimeOnly` /
- * `verifyInSource`). It replaced the former `guidanceFixesAvailable`
- * composite, which summed four categorically different lanes (anything
- * with a prose `suggestion` but no mechanical edit) under one headline.
- * Agents that previously budgeted against `guidanceFixesAvailable` read
- * `fixesByClass.guidance` (prose-rewrite work) or
- * `fixesByClass.mechanical + fixesByClass.guidance` (anything
- * `suggest_fix` can act on) instead. For the "apply-fix can batch-apply
- * this without a round-trip" slice, callers sum
+ * `verifyInSource`). Callers that want the former flat-violations
+ * count sum the four lanes themselves; callers that want the
+ * "apply-fix can batch-apply this without a round-trip" slice sum
  * `fixesByClass.mechanical + fixesByClass.verifyInSource` — the two
- * remediation lanes whose edit lands in source.
+ * remediation lanes whose edit lands in source. Callers that want
+ * the "anything `suggest_fix` can act on" slice sum
+ * `fixesByClass.mechanical + fixesByClass.guidance`.
  *
  * The former `safeEditsAvailable` headline (which counted the two
  * editable lanes under a single composite number) was dropped per
@@ -402,14 +401,11 @@ export interface FixesByClass {
  * to `fixesByClass.mechanical` under names that both framed as "how
  * many fixes an agent can apply," but measured different slices
  * (payload-availability vs. rule-demanded lane) and disagreed by up to
- * 18× on real field-report responses. Per CLAUDE.md §1 "Composite
- * headline counts are dishonest," the structured per-lane tally
- * (`fixesByClass`) is the honest shape; the two editable lanes are
- * adjacent keys the caller sums when they want the combined apply-now
- * count.
+ * 18× on real field-report responses. The same disagreement-with-itself
+ * pattern (Q7-PLAN-VIOLATIONS-COMPOSITE) drove the deletion of the
+ * top-level `violations` counter.
  */
 export interface AgentPlan {
-  readonly violations: number;
   readonly notes: number;
   readonly fixesByClass: FixesByClass;
   readonly reviewNeeded: number;

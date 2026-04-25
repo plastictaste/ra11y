@@ -10,7 +10,7 @@
  * CLAUDE.md §1 "Composite headline counts are dishonest," the count
  * consumers read first must match the count agents budget against.
  *
- * V1-SHAPE-FIXCLASS-HEADLINE: the violations parenthetical now breaks
+ * V1-SHAPE-FIXCLASS-HEADLINE: the violations parenthetical breaks
  * down by the rule-level `fixClass` lane (`mechanical` / `guidance` /
  * `runtime-only` / `verify-in-source`) rather than summing prose-only
  * items under a single "guidance fixes" label. The old label collided
@@ -19,16 +19,21 @@
  * `runtime-only` and `verify-in-source` items counted as "guidance"
  * without a way to split them back out from the prose.
  *
- * The leading noun for the lane breakdown is `"N finding(s)"`, not
- * `"N violation(s)"`. Two of the four lanes (`guidance`,
- * `verify-in-source`) are prose-only — "please verify / please rewrite"
- * signals that aren't directly actionable in the way `mechanical`
- * edits are. Labeling the composite total as "violations" promises one
- * kind of work, then delivers four under the same noun — the exact
- * "composite headline counts are dishonest" mismatch flagged in the
- * AI-first consumer doctrine. "Findings" is the honest umbrella noun
- * and matches the CLI agent surface in `build-plan.ts`, so both
- * summary formatters emit the same shape.
+ * Q7-PLAN-VIOLATIONS-COMPOSITE: the lane breakdown is no longer
+ * preceded by an "N findings" composite total. Two of the four
+ * `fixClass` lanes (`guidance`, `verify-in-source`) are prose-only —
+ * "please verify / please rewrite" signals that aren't directly
+ * actionable in the way `mechanical` edits are. Leading with a
+ * single composite headline that sums them under any noun
+ * ("findings" / "violations") promises one kind of work and delivers
+ * four — the exact "composite headline counts are dishonest"
+ * mismatch flagged in the AI-first consumer doctrine, and the same
+ * shape as the `plan.totalFindings` and `plan.safeEditsAvailable`
+ * precedents that were dropped (not renamed). The summary now emits
+ * the per-lane breakdown directly (e.g. `"2 mechanical, 1
+ * verify-in-source"`) so each fragment names exactly what it
+ * measures. Callers that want the flat count sum the four lanes
+ * themselves.
  */
 
 import {
@@ -70,17 +75,41 @@ function buildFindingParts(
   if (violations === 0 && notes === 0) return ["No automated findings"];
   const parts: string[] = [];
   if (violations > 0) {
-    // Noun is "finding", not "violation": the lane breakdown mixes
-    // directly-actionable (`mechanical`) with prose-only
-    // (`guidance`, `verify-in-source`, `runtime-only`) lanes, so
-    // summing them under "violations" promises work the breakdown
-    // doesn't deliver. See the module docblock for rationale.
-    parts.push(
-      `${violations} finding${violations === 1 ? "" : "s"}${buildFixClassBreakdown(fixClassCounts)}`,
-    );
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the per-lane breakdown is the
+    // honest signal; no leading composite "N findings" headline
+    // wrapping the four lanes. `buildFixClassBreakdown` returns a
+    // space-prefixed parenthetical (e.g. " (2 mechanical, 1
+    // verify-in-source)") — strip the wrapper so the fragment reads
+    // as a comma-separated lane list ("2 mechanical, 1
+    // verify-in-source"). Defensive fallback: when the breakdown is
+    // empty (no rule with a `fixClass` produced a violation — should
+    // never happen on real scans) the lane fragment drops; downstream
+    // fragments (notes, manual review) still ride on the wire.
+    const breakdown = buildFixClassBreakdown(fixClassCounts);
+    if (breakdown.length > 0) {
+      parts.push(stripLeadingParens(breakdown));
+    }
   }
   if (notes > 0) parts.push(`${notes} note${notes === 1 ? "" : "s"} to review`);
   return parts;
+}
+
+/**
+ * Strips the leading " (" and trailing ")" from a parenthetical
+ * fragment produced by {@link buildFixClassBreakdown}, so the lane
+ * list reads as a flat fragment (`"2 mechanical, 1 verify-in-source"`)
+ * rather than a parenthetical attached to a now-deleted composite
+ * headline. Defensive: returns the input unchanged if the wrapper
+ * is missing (the breakdown helper is the only caller, but
+ * keeping the helper tolerant means the summary never emits a
+ * malformed sentence on an unexpected input).
+ */
+function stripLeadingParens(parenthetical: string): string {
+  const trimmed = parenthetical.trimStart();
+  if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 /**

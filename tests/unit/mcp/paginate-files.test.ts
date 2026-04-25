@@ -283,17 +283,30 @@ describe("scan_project pagination (P1-OVF)", () => {
         toolCall(2, "scan_project", { cwd: root, limit: 2 }),
       ]);
       const body = bodyOf(responses[1]) as {
-        plan: { violations: number; notes: number };
+        plan: {
+          notes: number;
+          fixesByClass?: {
+            mechanical: number;
+            guidance: number;
+            runtimeOnly: number;
+            verifyInSource: number;
+          };
+        };
       };
       // Each fixture file has one <img> without alt; the alt-text
       // rule fires under multiple criteria (WCAG 2.2, 2.1, etc.), so
       // the total finding count is >= file count. What matters for
       // P1-OVF is that the plan reports the PRE-TRUNCATION tally —
-      // limit:2 must not cut the split counters down to the page-1
+      // limit:2 must not cut the per-lane counters down to the page-1
       // subset, otherwise the agent reads "found 2" when there's more
-      // work. `totalFindings` was removed (composite headline); the
-      // honest check is violations + notes.
-      const total = body.plan.violations + body.plan.notes;
+      // work. Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat
+      // `plan.violations` headline is gone; sum the four
+      // `fixesByClass` lanes for the error+warning total.
+      const lanes = body.plan.fixesByClass;
+      const errorWarning = lanes
+        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        : 0;
+      const total = errorWarning + body.plan.notes;
       expect(total).toBeGreaterThanOrEqual(6);
     } finally {
       rmSync(root, { recursive: true, force: true });

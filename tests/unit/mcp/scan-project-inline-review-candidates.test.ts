@@ -44,8 +44,18 @@ async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 
 interface ScanProjectResponse {
   readonly plan: {
-    readonly violations: number;
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat top-level
+    // `violations` integer was deleted; the honest shape carries
+    // `notes` (severity-info) plus an optional `fixesByClass`
+    // per-lane tally (present-when-meaningful, omitted on
+    // clean scans).
     readonly notes: number;
+    readonly fixesByClass?: {
+      readonly mechanical: number;
+      readonly guidance: number;
+      readonly runtimeOnly: number;
+      readonly verifyInSource: number;
+    };
     readonly actionableManualItems: number;
   };
   readonly files: ReadonlyArray<{ readonly path: string }>;
@@ -92,7 +102,12 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
       );
       const session = new McpSession();
       const res = await callScanProject({ cwd: dir }, session);
-      expect(res.plan.violations).toBe(0);
+      // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // headline is gone; the no-violations signal is the absence
+      // of the per-lane `fixesByClass` field (omitted when
+      // violations === 0 per the present-when-meaningful gate).
+      expect((res.plan as unknown as Record<string, unknown>)["violations"]).toBeUndefined();
+      expect((res.plan as unknown as Record<string, unknown>)["fixesByClass"]).toBeUndefined();
       expect(res.files.length).toBe(0);
       expect(res.plan.actionableManualItems).toBeGreaterThan(0);
 

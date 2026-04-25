@@ -107,10 +107,25 @@ describe("MCP session: full agent workflow", () => {
     expect(scan.id).toBe(3);
     const scanResult = (scan.result as { content: Array<{ text: string }> }).content[0];
     const scanData = JSON.parse(scanResult.text) as {
-      plan: { violations: number; notes: number };
+      plan: {
+        notes: number;
+        fixesByClass?: {
+          mechanical: number;
+          guidance: number;
+          runtimeOnly: number;
+          verifyInSource: number;
+        };
+      };
       files: Array<{ findings: Array<{ ruleId: string; line: number }> }>;
     };
-    expect(scanData.plan.violations + scanData.plan.notes).toBeGreaterThan(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline is gone; sum the per-lane tally for the error+warning
+    // total alongside `plan.notes`.
+    const lanes = scanData.plan.fixesByClass;
+    const errorWarning = lanes
+      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      : 0;
+    expect(errorWarning + scanData.plan.notes).toBeGreaterThan(0);
 
     // 4. Explain rule response
     const explain = responses[3];

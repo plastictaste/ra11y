@@ -272,11 +272,26 @@ describe("MCP tool: scan", () => {
 
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text) as {
-      plan: { violations: number; notes: number };
+      plan: {
+        notes: number;
+        fixesByClass?: {
+          mechanical: number;
+          guidance: number;
+          runtimeOnly: number;
+          verifyInSource: number;
+        };
+      };
       files: Array<{ path: string; findings: unknown[] }>;
       meta: { filesScanned: number };
     };
-    expect(data.plan.violations + data.plan.notes).toBeGreaterThan(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline is gone; sum the four `fixesByClass` lanes for the
+    // error+warning total alongside `plan.notes`.
+    const lanes = data.plan.fixesByClass;
+    const errorWarning = lanes
+      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      : 0;
+    expect(errorWarning + data.plan.notes).toBeGreaterThan(0);
     expect(data.files.length).toBeGreaterThan(0);
     expect(data.meta.filesScanned).toBe(1);
   });
@@ -371,7 +386,6 @@ describe("MCP tool: scan_project", () => {
       const result = await tool.handler({ cwd: fixtureDir }, session);
       const data = JSON.parse(result.content[0].text) as {
         plan: {
-          violations?: number;
           fixesByClass?: {
             mechanical?: number;
             guidance?: number;
@@ -382,7 +396,15 @@ describe("MCP tool: scan_project", () => {
         nextStep: string;
       };
       // The fixture at tests/fixtures/bad/alt-text-missing/ has violations.
-      expect(data.plan.violations).toBeGreaterThan(0);
+      // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // counter is gone — sum the per-lane tally instead.
+      const lanes = data.plan.fixesByClass;
+      const errorWarning =
+        (lanes?.mechanical ?? 0) +
+        (lanes?.guidance ?? 0) +
+        (lanes?.runtimeOnly ?? 0) +
+        (lanes?.verifyInSource ?? 0);
+      expect(errorWarning).toBeGreaterThan(0);
       // Directive guidance: names something concrete the agent can
       // follow. Three shapes the response can take, all valid:
       //   1. `suggest_fix` hop on a file:line — fires when the violation's

@@ -84,35 +84,51 @@ export function buildScanPlan(args: {
   // is "no violations." Conditional-spread per CLAUDE.md §1 keeps the
   // present-when-meaningful shape honest.
   const emitFixesByClass = violations > 0;
+  // `totalFindings` was removed — it summed severity-distinct lanes
+  // (violations + info-severity notes) under a single composite
+  // headline and inflated the work an agent budgeted against.
+  //
+  // `safeEditsAvailable` was removed for the same reason
+  // (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT): it summed the
+  // two editable `fixClass` lanes (mechanical + verify-in-source)
+  // under a single headline and disagreed with the per-lane
+  // `fixesByClass.mechanical` counter sitting next to it. The
+  // structured `fixesByClass` sibling carries the honest per-lane
+  // signal; callers that want the apply-now subset sum
+  // `fixesByClass.mechanical + fixesByClass.verifyInSource` — which
+  // the agent can read directly off the structured tally without
+  // needing a second overlapping composite on the wire.
+  //
+  // `violations` (the flat error+warning count) was removed for the
+  // same reason (Q7-PLAN-VIOLATIONS-COMPOSITE): it summed all four
+  // `fixesByClass` lanes (mechanical + verify-in-source + guidance
+  // + runtimeOnly) under a single headline, and agents budgeted
+  // against the composite as if every entry were an actionable
+  // edit. Per `docs/kb/architecture/ai-first-consumer.md` "Composite
+  // headline counts are dishonest" the structured `fixesByClass`
+  // sibling carries the honest per-lane signal; callers that want
+  // the flat error+warning total sum the four lanes themselves.
+  // The composite was deleted (not renamed to `violationsComposite`)
+  // because a renamed-but-retained sibling still occupies the
+  // "first thing the agent reads" slot — the silent-miss failure
+  // mode is identical, so deletion is the durable answer.
+  //
+  // `violationsByScanKind` is stamped one layer up by
+  // {@link withViolationsByScanKind} (called from `tool-scan-project.ts`
+  // after the build-artifact classifier resolves) — the split between
+  // `source` and `buildArtifact` lanes needs the vendor path set,
+  // which is only available post-classification. The per-kind
+  // structured tally is itself a valid honest split (not a
+  // composite); consumers that need to know "of these N, how many
+  // sit in vendor code" read the structured `violationsByScanKind`
+  // sibling.
+  //
+  // `violations` is still consumed inside this function (for the
+  // `emitFixesByClass` gate above and the summary-prose builder
+  // below) but is NOT emitted onto the wire — it's the upstream
+  // count the consumer-visible `fixesByClass` sums to, kept
+  // local-only so the public shape stays honest.
   return {
-    // `totalFindings` was removed — it summed severity-distinct lanes
-    // (violations + info-severity notes) under a single composite
-    // headline and inflated the work an agent budgeted against. Per
-    // CLAUDE.md §1 "Composite headline counts are dishonest," the
-    // honest shape keeps `violations` and `notes` as split siblings
-    // and trusts consumers to add them when they truly want a total.
-    //
-    // `safeEditsAvailable` was removed for the same reason
-    // (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT): it summed the
-    // two editable `fixClass` lanes (mechanical + verify-in-source)
-    // under a single headline and disagreed with the per-lane
-    // `fixesByClass.mechanical` counter sitting next to it. The
-    // structured `fixesByClass` sibling carries the honest per-lane
-    // signal; callers that want the apply-now subset sum
-    // `fixesByClass.mechanical + fixesByClass.verifyInSource` — which
-    // the agent can read directly off the structured tally without
-    // needing a second overlapping composite on the wire.
-    //
-    // `violationsByScanKind` is stamped one layer up by
-    // {@link withViolationsByScanKind} (called from `tool-scan-project.ts`
-    // after the build-artifact classifier resolves) — the split between
-    // `source` and `buildArtifact` lanes needs the vendor path set,
-    // which is only available post-classification. Same per-lane
-    // doctrine: `plan.violations` stays a flat counter; consumers
-    // that need to know "of these N, how many sit in vendor code"
-    // read the structured `violationsByScanKind` sibling. No
-    // composite headline is added that would disagree.
-    violations,
     notes,
     ...(emitFixesByClass ? { fixesByClass } : {}),
     ...(violationsWithoutAnyFix > 0
@@ -572,10 +588,13 @@ function countByExtension(files: readonly ParsedFile[]): Record<string, number> 
  * Three totals `scan_project` consumers have reported reading from the
  * same response and found disagreeing on the same wire:
  *
- *   - `plan` — `plan.violations + plan.notes`, the post-filter total
- *     computed from the `filtered` violation stream (post wrapper-noise
- *     drop, post severity filter, post criterion-skip). This is what
- *     `buildScanPlan`'s two counters sum to.
+ *   - `plan` — `sum(plan.fixesByClass) + plan.notes`, the post-filter
+ *     total computed from the `filtered` violation stream (post
+ *     wrapper-noise drop, post severity filter, post criterion-skip).
+ *     This is what `buildScanPlan`'s structured per-lane tally and
+ *     the `notes` counter sum to. Per Q7-PLAN-VIOLATIONS-COMPOSITE
+ *     the flat `plan.violations` headline was deleted; consumers that
+ *     want the error+warning count sum the four `fixesByClass` lanes.
  *   - `perRuleCoverage` — `sum(perRuleCoverage[*].findingsEmitted)`, the
  *     scanner-raw total computed by {@link buildPerRuleCoverage} over
  *     every violation the engine emitted. Runs BEFORE wrapper-noise
@@ -691,22 +710,25 @@ export function sumFindingsEmitted(rows: readonly PerRuleCoverage[]): number {
 
 /**
  * Per-scan-kind violation tally surfaced as `plan.violationsByScanKind`
- * on `scan_project` responses. Splits the flat `plan.violations`
- * counter by whether the violation's source file was classified as a
- * deterministic build artifact (compiled CSS, vendor bundle, hashed
- * webpack chunk, etc.) by the {@link
- * ./build-artifacts.ts!collectBuildArtifacts} pass.
+ * on `scan_project` responses. Splits error+warning findings by
+ * whether the source file was classified as a deterministic build
+ * artifact (compiled CSS, vendor bundle, hashed webpack chunk, etc.)
+ * by the {@link ./build-artifacts.ts!collectBuildArtifacts} pass.
  *
- * Why split: an agent reading "187 violations" against a
- * vendor-heavy template catalog has no way to tell that 41 of those
- * 187 sit in `css/bootstrap.min.css` — files the user cannot edit,
- * for which the productive triage is a `propose_config` exclude
- * rather than a fix attempt. The honest budget is 146 source +
- * 41 buildArtifact, not a flat 187. Per `docs/kb/architecture/ai-first-consumer.md`
- * "Composite headline counts are dishonest" and the 2026-04-24
- * `plan.totalFindings` precedent, the per-kind structured tally is
- * the load-bearing surface; consumers that want the flat number
- * sum the two lanes themselves.
+ * Why split: an agent reading aggregate finding counts against a
+ * vendor-heavy template catalog has no way to tell that 41 of 187
+ * findings sit in `css/bootstrap.min.css` — files the user cannot
+ * edit, for which the productive triage is a `propose_config`
+ * exclude rather than a fix attempt. The honest budget is 146
+ * source + 41 buildArtifact, not a flat 187. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest" and the 2026-04-24 `plan.totalFindings` /
+ * 2026-04-25 `plan.violations` precedents, the per-kind structured
+ * tally is the load-bearing surface; consumers that want the flat
+ * number sum the two lanes themselves (or sum the four
+ * `plan.fixesByClass` lanes — both produce the same total). Each
+ * per-kind lane (`source`, `buildArtifact`) names exactly one kind
+ * of thing, so the split itself is honest, not composite.
  *
  * Surface-don't-suppress: every violation continues to ride in
  * `files[]` regardless of which lane it lands in — this counter is
@@ -733,15 +755,16 @@ export interface ViolationsByScanKind {
  *
  * Severity filter — info-severity findings (`notes` in the plan
  * vocabulary) are excluded from both lanes so the per-kind tally
- * mirrors the headline `plan.violations` (which already excludes
- * notes). Without the filter, a vendor file with one info-severity
- * note would inflate the `buildArtifact` lane and the lanes would
- * sum to `violations + notes` instead of just `violations` — a
- * cross-surface drift the doctrine explicitly warns against
- * ("composite headline counts are dishonest" applies symmetrically
- * to the per-lane split). Callers that want the per-lane note count
- * read it off `files[]` themselves; encoding it in this helper
- * would re-create the multi-axis composite the split exists to kill.
+ * splits the same error+warning axis the structured `plan.fixesByClass`
+ * tally counts. Without the filter, a vendor file with one
+ * info-severity note would inflate the `buildArtifact` lane and the
+ * lanes would sum to `error+warning + notes` instead of just
+ * `error+warning` — a cross-surface drift the doctrine explicitly
+ * warns against ("composite headline counts are dishonest" applies
+ * symmetrically to the per-lane split). Callers that want the
+ * per-lane note count read it off `files[]` themselves; encoding it
+ * in this helper would re-create the multi-axis composite the split
+ * exists to kill.
  *
  * Pure over its inputs; takes a readonly shape that exposes
  * `path` + per-finding `severity` so CLI / MCP / report callers can

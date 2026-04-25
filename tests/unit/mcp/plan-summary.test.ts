@@ -2,21 +2,23 @@
  * Unit tests for buildPlanSummary — the human-readable `plan.summary`
  * string on `scan_project` responses.
  *
- * Load-bearing invariant: the lane-breakdown parenthetical is headed
- * by "N finding(s)", not "N violation(s)". The breakdown mixes
- * directly-actionable (`mechanical`) with prose-only
- * (`guidance` / `verify-in-source` / `runtime-only`) lanes — labeling
- * the composite as "violations" promises one kind of work and
- * delivers four. "Findings" is the honest umbrella noun and matches
- * the CLI agent surface (`src/output/agent-response/build-plan.ts`),
- * so both summary formatters emit aligned phrasing.
+ * Load-bearing invariant (Q7-PLAN-VIOLATIONS-COMPOSITE): the lane
+ * breakdown emits as a flat fragment (`"266 mechanical, 616 guidance,
+ * …"`) with no leading "N findings" composite headline. A composite
+ * total summed across categorically different lanes (mechanical
+ * edits + verify-in-source prose + guidance rewrites + runtime-only)
+ * is the same shape as the deleted `plan.totalFindings` and
+ * `plan.safeEditsAvailable` precedents — agents budget against the
+ * composite as if every entry were an actionable edit when in
+ * reality two of the four lanes are prose-only. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest," the per-lane breakdown is the honest
+ * signal. Callers that want the flat count sum the four lanes
+ * themselves.
  *
- * This invariant closes Q-SHARED-PLAN-SUMMARY-VERIFY-IN-SOURCE-INFLATION:
- * a real-world Bootstrap scan returned
- * `"2273 violations (266 mechanical, 616 guidance, 57 runtime-only, 1334 verify-in-source)"`
- * where 59% of the "violations" total was `verify-in-source`
- * (prose-only guidance). The new shape drops the "violations" noun
- * from the lane-breakdown headline.
+ * This invariant supersedes the earlier Q-SHARED-PLAN-SUMMARY-VERIFY-IN-SOURCE-INFLATION
+ * fix (which renamed "violations" to "findings"): the noun was a
+ * partial fix, the deletion is the durable one.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -30,9 +32,11 @@ const EMPTY_LANES = {
 } as const;
 
 describe("buildPlanSummary", () => {
-  it("uses 'findings' (not 'violations') as the lane-breakdown headline noun", () => {
-    // Shape reproducing the Bootstrap repro in Q-SHARED-PLAN-SUMMARY-VERIFY-IN-SOURCE-INFLATION:
-    // most of the total is `verify-in-source` (prose-only guidance).
+  it("emits the per-lane breakdown without a composite 'N findings' headline", () => {
+    // Shape reproducing the Bootstrap repro: most of the total is
+    // `verify-in-source` (prose-only guidance). Per
+    // Q7-PLAN-VIOLATIONS-COMPOSITE the flat headline is gone; the
+    // honest signal is the per-lane fragment.
     const summary = buildPlanSummary({
       violations: 2273,
       notes: 0,
@@ -45,19 +49,19 @@ describe("buildPlanSummary", () => {
       actionableManual: 0,
       untargetedCriteria: 0,
     });
-    // Headline noun: "findings", never "violations", when a lane
-    // breakdown is present. The old shape read `"2273 violations (...)"`
-    // which sums prose-only lanes under an actionable-sounding label.
-    expect(summary).toContain("2273 findings");
-    expect(summary).not.toMatch(/\d+ violations?\b/);
-    // Lane breakdown still lands verbatim.
+    // Lane breakdown lands as a flat fragment.
     expect(summary).toContain("266 mechanical");
     expect(summary).toContain("616 guidance");
     expect(summary).toContain("57 runtime-only");
     expect(summary).toContain("1334 verify-in-source");
+    // The flat composite total — under any noun — is gone. The
+    // exact 2273 is the sum of the four lanes; it must NOT appear
+    // as a standalone headline followed by "findings" or
+    // "violations" (the precedents the deletion supersedes).
+    expect(summary).not.toMatch(/\b2273\s+(findings?|violations?)\b/);
   });
 
-  it("uses singular 'finding' when violations === 1", () => {
+  it("emits a single-lane fragment when only one lane has violations", () => {
     const summary = buildPlanSummary({
       violations: 1,
       notes: 0,
@@ -65,16 +69,12 @@ describe("buildPlanSummary", () => {
       actionableManual: 0,
       untargetedCriteria: 0,
     });
-    expect(summary).toContain("1 finding (1 mechanical)");
-    expect(summary).not.toMatch(/\d+ violations?\b/);
+    expect(summary).toContain("1 mechanical");
+    // No leading composite headline.
+    expect(summary).not.toMatch(/\b1\s+(findings?|violations?)\b/);
   });
 
-  it("uses plural 'findings' when violations > 1 with only mechanical lane", () => {
-    // Verifies the rename is unconditional — even when the breakdown
-    // is 100% mechanical (i.e. fully actionable), the noun stays
-    // "findings" so both summary surfaces (CLI agent + MCP) emit one
-    // shape. Mixed-noun conditional would force consumers to parse
-    // either word, which the doctrine names as dishonest.
+  it("emits the per-lane fragment when every violation lands in one lane", () => {
     const summary = buildPlanSummary({
       violations: 4,
       notes: 0,
@@ -82,8 +82,8 @@ describe("buildPlanSummary", () => {
       actionableManual: 0,
       untargetedCriteria: 0,
     });
-    expect(summary).toContain("4 findings (4 mechanical)");
-    expect(summary).not.toMatch(/\d+ violations?\b/);
+    expect(summary).toContain("4 mechanical");
+    expect(summary).not.toMatch(/\b4\s+(findings?|violations?)\b/);
   });
 
   it("emits 'No automated findings' when both violations and notes are zero", () => {
@@ -97,7 +97,7 @@ describe("buildPlanSummary", () => {
     expect(summary).toBe("No automated findings.");
   });
 
-  it("keeps notes and manual-review fragments intact alongside the finding count", () => {
+  it("keeps notes and manual-review fragments intact alongside the lane breakdown", () => {
     const summary = buildPlanSummary({
       violations: 3,
       notes: 2,
@@ -105,9 +105,12 @@ describe("buildPlanSummary", () => {
       actionableManual: 5,
       untargetedCriteria: 7,
     });
-    expect(summary).toContain("3 findings (2 mechanical, 1 verify-in-source)");
+    expect(summary).toContain("2 mechanical");
+    expect(summary).toContain("1 verify-in-source");
     expect(summary).toContain("2 notes to review");
     expect(summary).toContain("5 actionable manual review items");
     expect(summary).toContain("+ 7 untargeted criteria");
+    // No composite headline summing the lanes.
+    expect(summary).not.toMatch(/\b3\s+(findings?|violations?)\b/);
   });
 });

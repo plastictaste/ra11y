@@ -5,18 +5,25 @@
  * files (compiled CSS, minified bundles, etc.) classified by the
  * `collectBuildArtifacts` pass.
  *
- * The bug this guards: `plan.violations` is a flat counter that sums
- * findings across categorically different file kinds — authored source
- * (the user can edit) and build artifacts (often un-editable; the
- * productive triage is `propose_config` exclude or source-level
- * disable). On a vendor-heavy template catalog, "187 violations" with
- * 41 sitting in `css/bootstrap.min.css` reads to the agent as 187 fix
- * candidates when the honest budget is 146 source + 41 buildArtifact.
+ * The bug this guards: violations summed across categorically different
+ * file kinds — authored source (the user can edit) and build
+ * artifacts (often un-editable; the productive triage is
+ * `propose_config` exclude or source-level disable). On a vendor-heavy
+ * template catalog, "187 violations" with 41 sitting in
+ * `css/bootstrap.min.css` reads to the agent as 187 fix candidates
+ * when the honest budget is 146 source + 41 buildArtifact.
  *
  * Doctrine: `docs/kb/architecture/ai-first-consumer.md` "Composite
  * headline counts are dishonest." The structured per-kind tally is
  * the load-bearing surface; consumers that want the flat number sum
  * the two lanes themselves.
+ *
+ * Per Q7-PLAN-VIOLATIONS-COMPOSITE (2026-04-25) the flat
+ * `plan.violations` headline was deleted entirely — the test now
+ * derives the error+warning total from `plan.fixesByClass` and
+ * checks that the per-kind lanes sum to it. The
+ * `violationsByScanKind` field itself remains valid because each
+ * lane (source, buildArtifact) names exactly one kind of thing.
  *
  * End-to-end through the MCP server (stdio JSON-RPC) so the assertion
  * exercises the full response-assembly path — `runScanAndFormat` +
@@ -106,11 +113,19 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
       const body = bodyOf(scan as JsonRpcResponse);
       const plan = body.plan as Record<string, unknown>;
       expect(plan).toBeDefined();
-      // The flat violations counter remains — surface-don't-suppress;
-      // every finding still rides in `files[]` regardless of lane.
-      const totalViolations = plan["violations"] as number;
+      // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // headline was deleted; the per-kind sibling remains because
+      // each lane (`source`, `buildArtifact`) names exactly one kind
+      // of thing. Surface-don't-suppress still holds: every finding
+      // rides in `files[]` regardless of lane.
+      const lanes = plan["fixesByClass"] as
+        | { mechanical: number; guidance: number; runtimeOnly: number; verifyInSource: number }
+        | undefined;
+      const totalViolations = lanes
+        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        : 0;
       expect(totalViolations).toBeGreaterThan(0);
-      // The new structured per-kind sibling.
+      // The structured per-kind sibling.
       const split = plan["violationsByScanKind"] as
         | { source: number; buildArtifact: number }
         | undefined;
@@ -121,15 +136,13 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
       // The source lane must carry at least one finding (the page.html
       // missing-alt + the site.css contrast violation).
       expect(split?.source).toBeGreaterThan(0);
-      // The two lanes must sum to the flat `plan.violations` counter
-      // — invariant of the honest split: no finding gets
-      // double-counted, no violation is dropped between the per-lane
-      // tally and the headline. The split filters info-severity
-      // notes (counted in `plan.notes`, not `plan.violations`) so the
-      // axes match — without the filter, an info-severity finding on
-      // a vendor file would inflate the buildArtifact lane and
-      // produce silent disagreement against the `violations`
-      // headline.
+      // The two per-kind lanes must sum to the flat error+warning
+      // count derived from `plan.fixesByClass`. Invariant of the
+      // honest split: no finding gets double-counted, no violation
+      // is dropped between the per-lane tally and the per-kind
+      // sibling. Both surfaces split the same error+warning axis;
+      // info-severity notes (`plan.notes`) sit on a different axis
+      // and stay out of the per-kind lanes.
       const lanesSum = (split?.source ?? 0) + (split?.buildArtifact ?? 0);
       expect(lanesSum).toBe(totalViolations);
     } finally {
@@ -234,9 +247,18 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
       const scan = responses.find((r) => r.id === 2);
       const body = bodyOf(scan as JsonRpcResponse);
       const plan = body.plan as Record<string, unknown>;
-      // Sanity check — the scan produced a finding so the test isn't
-      // asserting on a vacuously-empty plan.
-      expect(plan["violations"]).toBeGreaterThan(0);
+      // Sanity check — the scan produced a finding so the test
+      // isn't asserting on a vacuously-empty plan. Per
+      // Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // counter is gone; sum the per-lane `fixesByClass` tally for
+      // the error+warning total.
+      const lanes = plan["fixesByClass"] as
+        | { mechanical: number; guidance: number; runtimeOnly: number; verifyInSource: number }
+        | undefined;
+      const totalViolations = lanes
+        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        : 0;
+      expect(totalViolations).toBeGreaterThan(0);
       // Field is absent on the no-artifacts common case.
       expect(plan["violationsByScanKind"]).toBeUndefined();
       // And the existing absence signal (`meta.scannedBuildArtifacts`)

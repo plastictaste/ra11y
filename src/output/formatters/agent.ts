@@ -36,11 +36,15 @@ export const agentFormatter = defineFormatter({
     const byFile = groupByFile(sorted);
     const files = buildFiles(byFile);
     // `buildAgentPlan` splits the violations array internally by
-    // severity into the honest `violations` (error/warning) and `notes`
-    // (info) headline counters per CLAUDE.md §1 "Composite headline
-    // counts are dishonest" — passing the raw array keeps the split as
-    // the single source of truth (mirrors `src/mcp/tools-helpers.ts`'s
-    // pre-MCP split).
+    // severity. The honest per-axis counters are `notes` (info-
+    // severity, single kind) and `fixesByClass` (per-remediation-
+    // lane structured tally for error+warning). Per
+    // Q7-PLAN-VIOLATIONS-COMPOSITE the flat `violations` top-level
+    // integer was deleted because it summed across the four
+    // `fixesByClass` lanes under one number — same shape as the
+    // earlier `totalFindings` and `safeEditsAvailable` precedents.
+    // Passing the raw array keeps the split as the single source of
+    // truth (mirrors `src/mcp/tools-helpers.ts`'s pre-MCP split).
     const plan = buildAgentPlan(sorted, files);
     const reviewCandidates = buildReviewCandidates(report.candidates ?? []);
     const meta = buildMeta(result);

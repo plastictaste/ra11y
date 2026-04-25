@@ -133,9 +133,22 @@ describe("scan_project hard-errors when cwd does not exist (P0-F)", () => {
     const result = resultOf(responses[1]);
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
-      plan?: { violations?: number };
+      plan?: {
+        notes?: number;
+        fixesByClass?: {
+          mechanical: number;
+          guidance: number;
+          runtimeOnly: number;
+          verifyInSource: number;
+        };
+      };
     };
-    expect(typeof body.plan?.violations).toBe("number");
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // top-level integer was deleted. The honest "scan ran" signal
+    // is that the plan exists with a numeric `notes` counter (and
+    // optionally a `fixesByClass` per-lane tally, present-when-
+    // meaningful).
+    expect(typeof body.plan?.notes).toBe("number");
   });
 });
 
@@ -167,9 +180,22 @@ describe("scan hard-errors when every path is missing (P0-F)", () => {
     const result = resultOf(responses[1]);
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
-      plan?: { violations?: number };
+      plan?: {
+        notes?: number;
+        fixesByClass?: {
+          mechanical: number;
+          guidance: number;
+          runtimeOnly: number;
+          verifyInSource: number;
+        };
+      };
     };
-    expect(typeof body.plan?.violations).toBe("number");
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // top-level integer was deleted. The honest "scan ran" signal
+    // is that the plan exists with a numeric `notes` counter (and
+    // optionally a `fixesByClass` per-lane tally, present-when-
+    // meaningful).
+    expect(typeof body.plan?.notes).toBe("number");
   });
 
   it("still emits the warnings envelope on a valid-but-empty directory", async () => {

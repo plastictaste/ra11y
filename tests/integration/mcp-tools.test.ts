@@ -172,11 +172,26 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
     const body = bodyOf(responses[1]) as {
-      plan: { violations: number; notes: number };
+      plan: {
+        notes: number;
+        fixesByClass?: {
+          mechanical: number;
+          guidance: number;
+          runtimeOnly: number;
+          verifyInSource: number;
+        };
+      };
       meta: { scanMode: string; scanned: { mode: string; root: string } };
     };
     expect(body.meta.scanned).toEqual({ mode: "project", root: BAD_ALT_DIR });
-    expect(body.plan.violations + body.plan.notes).toBeGreaterThan(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline was deleted — sum the structured per-lane tally
+    // alongside `plan.notes` for the total finding count.
+    const lanes = body.plan.fixesByClass;
+    const errorWarning = lanes
+      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      : 0;
+    expect(errorWarning + body.plan.notes).toBeGreaterThan(0);
     expect(body.meta.scanMode).toBe("full");
   });
 
@@ -515,12 +530,17 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: {
-        violations: number;
         notes: number;
+        fixesByClass?: Record<string, number>;
         limitations?: readonly string[];
       };
     };
-    expect(body.plan.violations).toBe(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline is gone; on a clean scan the per-lane `fixesByClass`
+    // is omitted (present-when-meaningful), so absence is the
+    // honest "no violations" signal.
+    expect((body.plan as Record<string, unknown>)["violations"]).toBeUndefined();
+    expect(body.plan.fixesByClass).toBeUndefined();
     expect(Array.isArray(body.plan.limitations)).toBe(true);
     expect(body.plan.limitations?.some((l) => /runtime/i.test(l))).toBe(true);
     expect(body.plan.limitations?.some((l) => /conformance|sufficient/i.test(l))).toBe(true);
@@ -535,9 +555,23 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // visible to the agent, not just when the scan was empty.
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [BAD_ALT_DIR] })]);
     const body = bodyOf(responses[1]) as {
-      plan: { violations: number; limitations?: readonly string[] };
+      plan: {
+        fixesByClass?: {
+          mechanical: number;
+          guidance: number;
+          runtimeOnly: number;
+          verifyInSource: number;
+        };
+        limitations?: readonly string[];
+      };
     };
-    expect(body.plan.violations).toBeGreaterThan(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat headline is gone;
+    // sum the per-lane tally for the error+warning total.
+    const lanes = body.plan.fixesByClass;
+    const errorWarning = lanes
+      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      : 0;
+    expect(errorWarning).toBeGreaterThan(0);
     expect(Array.isArray(body.plan.limitations)).toBe(true);
     expect(body.plan.limitations?.some((l) => /runtime/i.test(l))).toBe(true);
   });
@@ -647,11 +681,15 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
-      plan: { violations: number };
+      plan: { fixesByClass?: Record<string, number> };
       nextStep: string;
       nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    expect(body.plan.violations).toBe(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline is gone; on a clean scan the per-lane `fixesByClass`
+    // is omitted (present-when-meaningful).
+    expect((body.plan as Record<string, unknown>)["violations"]).toBeUndefined();
+    expect(body.plan.fixesByClass).toBeUndefined();
     expect(body.nextStepStructured?.tool).toBe("checklist");
     expect(body.nextStep).toContain("checklist");
   });
@@ -666,11 +704,15 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
-      plan: { violations: number };
+      plan: { fixesByClass?: Record<string, number> };
       nextStep: string;
       nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    expect(body.plan.violations).toBe(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline is gone; on a clean scan the per-lane `fixesByClass`
+    // is omitted (present-when-meaningful).
+    expect((body.plan as Record<string, unknown>)["violations"]).toBeUndefined();
+    expect(body.plan.fixesByClass).toBeUndefined();
     expect(body.nextStepStructured?.tool).toBe("checklist");
     expect(body.nextStep).toContain("checklist");
   });
@@ -762,10 +804,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
-      plan: { violations: number };
+      plan: { fixesByClass?: Record<string, number> };
       referenceGuide?: unknown;
     };
-    expect(body.plan.violations).toBe(0);
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline is gone; on a clean scan the per-lane `fixesByClass`
+    // is omitted (present-when-meaningful).
+    expect((body.plan as Record<string, unknown>)["violations"]).toBeUndefined();
+    expect(body.plan.fixesByClass).toBeUndefined();
     expect(body).not.toHaveProperty("referenceGuide");
   });
 
@@ -1004,8 +1050,26 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
+    type PlanShape = {
+      readonly notes: number;
+      readonly fixesByClass?: {
+        readonly mechanical: number;
+        readonly guidance: number;
+        readonly runtimeOnly: number;
+        readonly verifyInSource: number;
+      };
+    };
+    function planTotal(plan: PlanShape): number {
+      // Per Q7-PLAN-VIOLATIONS-COMPOSITE: sum the per-lane tally
+      // alongside `plan.notes` for the total finding count.
+      const lanes = plan.fixesByClass;
+      const errorWarning = lanes
+        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        : 0;
+      return errorWarning + plan.notes;
+    }
     const baselineBody = bodyOf(baseline[1]) as {
-      plan: { violations: number; notes: number };
+      plan: PlanShape;
       files: Array<{ findings: Array<{ criteria: readonly string[] }> }>;
     };
     // Pick a criterion that every finding in the fixture satisfies —
@@ -1026,12 +1090,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       }),
     ]);
     const body = bodyOf(skipped[1]) as {
-      plan: { violations: number; notes: number };
+      plan: PlanShape;
       meta: { skippedByCaller?: readonly string[] };
     };
     expect(body.meta.skippedByCaller).toEqual([everyFindingCrit]);
-    const skippedTotal = body.plan.violations + body.plan.notes;
-    const baselineTotal = baselineBody.plan.violations + baselineBody.plan.notes;
+    const skippedTotal = planTotal(body.plan);
+    const baselineTotal = planTotal(baselineBody.plan);
     expect(skippedTotal).toBeLessThan(baselineTotal);
   });
 
@@ -1633,9 +1697,10 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     // "(N mechanical edits, M guidance fixes)" — where "guidance fixes"
     // was a composite label that swept `fixClass: "runtime-only"` and
     // `fixClass: "verify-in-source"` findings under the same bucket as
-    // `fixClass: "guidance"`. The prose now names each lane it actually
-    // has violations in, per CLAUDE.md §1 "Composite headline counts
-    // are dishonest."
+    // `fixClass: "guidance"`. Q7-PLAN-VIOLATIONS-COMPOSITE further
+    // dropped the leading "N findings" headline that summed across
+    // the four lanes. The prose names each lane it actually has
+    // violations in, per "Composite headline counts are dishonest."
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
@@ -1643,10 +1708,19 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     const body = bodyOf(responses[1]) as {
       plan: {
         summary: string;
-        violations?: number;
+        fixesByClass?: {
+          mechanical: number;
+          guidance: number;
+          runtimeOnly: number;
+          verifyInSource: number;
+        };
       };
     };
-    if ((body.plan.violations ?? 0) === 0) return;
+    const lanes = body.plan.fixesByClass;
+    const errorWarning = lanes
+      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      : 0;
+    if (errorWarning === 0) return;
     // At least one known fixClass lane name must appear in the prose —
     // matching the enum values verbatim (no "edit"/"fix"/"fixes" suffix),
     // which is the signal that the breakdown is per-lane rather than
@@ -1658,5 +1732,10 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     expect(body.plan.summary).not.toMatch(/with fix suggestions\)/);
     expect(body.plan.summary).not.toMatch(/\d+ mechanical edits?\b/);
     expect(body.plan.summary).not.toMatch(/\d+ guidance fix(?:es)?\b/);
+    // Q7-PLAN-VIOLATIONS-COMPOSITE: no leading composite "N findings"
+    // or "N violations" headline summing across the lanes.
+    expect(body.plan.summary).not.toMatch(
+      new RegExp(`\\b${errorWarning}\\s+(findings?|violations?)\\b`),
+    );
   });
 });

@@ -89,7 +89,11 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
   const raw = agentFormatter.format(result, report);
   return JSON.parse(raw) as {
     plan: {
-      violations: number;
+      // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `violations` headline
+      // was deleted from the agent plan — agents that want the
+      // error+warning total sum the four `fixesByClass` lanes
+      // themselves. The shape declared here matches the wire surface;
+      // tests that need the flat count derive it from `fixesByClass`.
       notes: number;
       fixesByClass: {
         mechanical: number;
@@ -172,21 +176,37 @@ describe("formatter: agent — output shape", () => {
 });
 
 describe("formatter: agent — plan", () => {
-  it("plan splits violations from notes (no composite totalFindings counter)", () => {
-    // Per CLAUDE.md §1 "Composite headline counts are dishonest," the
-    // plan exposes split `violations` (severity error/warning) and
-    // `notes` (severity info) counters rather than a single
-    // `totalFindings` that summed both lanes. RESULT carries 3 errors +
-    // 1 warning + 0 info, so violations is 4 and notes is 0.
+  it("plan exposes notes split from violations (no composite totalFindings or violations headline)", () => {
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat top-level `violations`
+    // headline was deleted alongside the earlier `totalFindings`
+    // composite — both summed categorically different lanes under
+    // one name. The honest shape carries `plan.notes` (severity-info,
+    // single kind) + `plan.fixesByClass` (per-lane structured tally).
+    // RESULT carries 3 errors + 1 warning + 0 info, so the four
+    // `fixesByClass` lanes sum to 4 and notes is 0.
     const { plan } = parse();
-    expect(plan.violations).toBe(4);
     expect(plan.notes).toBe(0);
+    const violationsTotal =
+      plan.fixesByClass.mechanical +
+      plan.fixesByClass.guidance +
+      plan.fixesByClass.runtimeOnly +
+      plan.fixesByClass.verifyInSource;
+    expect(violationsTotal).toBe(4);
     expect((plan as Record<string, unknown>)["totalFindings"]).toBeUndefined();
+    expect((plan as Record<string, unknown>)["violations"]).toBeUndefined();
   });
 
-  it("plan.summary includes the violation count", () => {
+  it("plan.summary names the per-lane breakdown without a composite headline", () => {
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the prose drops the leading
+    // "N findings" composite that summed across the four lanes; the
+    // breakdown now reads as a flat lane list. RESULT has 1
+    // mechanical + 3 verify-in-source, which surface as named
+    // fragments — the bare number "4" must NOT appear as a
+    // standalone headline.
     const { plan } = parse();
-    expect(plan.summary).toContain("4");
+    expect(plan.summary).toContain("1 mechanical");
+    expect(plan.summary).toContain("3 verify-in-source");
+    expect(plan.summary).not.toMatch(/(^|\W)4\s+findings?\b/);
   });
 
   it("plan.summary names the most common rules", () => {
@@ -296,9 +316,15 @@ describe("formatter: agent — plan", () => {
     expect(runtimeIdx).toBeLessThan(verifyIdx);
   });
 
-  it("zero violations produces plan.violations: 0, plan.notes: 0, and trivial effort", () => {
+  it("zero violations produces plan.notes: 0, fixesByClass all-zero, and trivial effort", () => {
+    // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `plan.violations`
+    // headline is gone; the empty-scan case carries `plan.notes: 0`
+    // + an all-zero `fixesByClass` (or omits the per-lane field per
+    // present-when-meaningful — either is honest because every lane
+    // would be 0 and the agent reads "no violations" from the
+    // absence/zero-tally pair).
     const { plan } = parse(EMPTY_RESULT, EMPTY_REPORT);
-    expect(plan.violations).toBe(0);
+    expect((plan as Record<string, unknown>)["violations"]).toBeUndefined();
     expect(plan.notes).toBe(0);
     expect(plan.estimatedEffort).toBe("trivial");
     expect(plan.summary).toBe("No accessibility violations found.");

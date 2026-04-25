@@ -129,10 +129,10 @@ describe("sumFindingsEmitted + sumFindingsAcrossFiles reductions", () => {
 
 describe("runScanAndFormat — V1-META-COUNTS-BY-SURFACE-REGRESSION", () => {
   // When the scanner-raw stream (`perRuleCoverage.findingsEmitted`) and
-  // the filtered stream (`plan.violations + plan.notes`, plus the
-  // on-wire `files[*].findings` bucket) agree, `countsBySurface` is
-  // absent — the honest shape puts nothing on the wire for the common
-  // case.
+  // the filtered stream (`sum(plan.fixesByClass) + plan.notes`, plus
+  // the on-wire `files[*].findings` bucket) agree, `countsBySurface`
+  // is absent — the honest shape puts nothing on the wire for the
+  // common case.
   it("emits a formatted.meta block on a single-finding HTML scan and stamps countsBySurface only when drift exists", async () => {
     // `<img>` without `alt` fires `media/alt-text-missing` — a WCAG
     // 1.1.1 violation with a deterministic per-file count. Exactly one
@@ -158,8 +158,17 @@ describe("runScanAndFormat — V1-META-COUNTS-BY-SURFACE-REGRESSION", () => {
     // `countsBySurface` field and trust the single headline counters.
     expect(formatted.meta["countsBySurface"]).toBeUndefined();
     // Smoke-check the scan actually produced findings (otherwise the
-    // "agree at zero" case would pass vacuously).
-    const findings = (formatted.plan["violations"] as number) + (formatted.plan["notes"] as number);
+    // "agree at zero" case would pass vacuously). Per
+    // Q7-PLAN-VIOLATIONS-COMPOSITE the `plan.violations` headline was
+    // deleted; the flat error+warning total is now derived from the
+    // structured per-lane `fixesByClass` tally.
+    const lanes = formatted.plan["fixesByClass"] as Record<string, number> | undefined;
+    const errorWarning =
+      (lanes?.["mechanical"] ?? 0) +
+      (lanes?.["guidance"] ?? 0) +
+      (lanes?.["runtimeOnly"] ?? 0) +
+      (lanes?.["verifyInSource"] ?? 0);
+    const findings = errorWarning + ((formatted.plan["notes"] as number | undefined) ?? 0);
     expect(findings).toBeGreaterThan(0);
   });
 
@@ -771,12 +780,17 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
 });
 
 describe("splitViolationsByScanKind — V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
-  // Doctrine: the per-kind tally is the load-bearing surface so an
-  // agent budgeting against `plan.violations` can tell at a glance
-  // how many findings sit in vendor / build-artifact files (often
-  // un-editable; the productive triage is `propose_config` exclude
-  // or source-level disable). The split is deterministic from the
-  // build-artifact classifier path set, not a heuristic.
+  // Doctrine: the per-kind tally is the load-bearing surface for
+  // triage telemetry — an agent reading the response can tell at a
+  // glance how many error/warning findings sit in vendor /
+  // build-artifact files (often un-editable; the productive triage
+  // is `propose_config` exclude or source-level disable). The split
+  // is deterministic from the build-artifact classifier path set,
+  // not a heuristic. Note: per Q7-PLAN-VIOLATIONS-COMPOSITE the flat
+  // `plan.violations` headline was deleted, but the per-kind sibling
+  // remains valid because each lane (`source`, `buildArtifact`)
+  // names exactly one kind of thing — it is itself an honest split,
+  // not a composite.
   function f(severity: string) {
     return { severity };
   }
@@ -797,11 +811,15 @@ describe("splitViolationsByScanKind — V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () =>
     });
   });
 
-  it("excludes info-severity notes from both lanes — mirrors plan.violations semantics", () => {
-    // `plan.violations` is the error+warning count; `plan.notes` is
-    // info-severity. The per-kind sibling must split the same axis,
-    // not a different one — otherwise the lanes wouldn't sum to the
-    // headline they're splitting.
+  it("excludes info-severity notes from both lanes — mirrors the error+warning axis", () => {
+    // The per-kind sibling splits the error+warning axis (the same
+    // axis `plan.fixesByClass` tallies), not a different one —
+    // otherwise the two lanes wouldn't sum to the structured
+    // per-lane tally the agent reads alongside it. `plan.notes`
+    // (severity-info) tracks a different axis and stays out of the
+    // per-kind split. Pre-Q7 this test referenced the flat
+    // `plan.violations` headline; that field is gone but the
+    // semantic invariant (axis alignment) is unchanged.
     const files = [
       { path: "src/page.tsx", findings: [E, I, W] }, // 2 violations, 1 note
       { path: "vendor/lib.min.js", findings: [I, I, E] }, // 1 violation, 2 notes
@@ -867,7 +885,14 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
   const W = f("warning");
 
   it("stamps `plan.violationsByScanKind` when the vendor path set is non-empty", () => {
-    const plan = { violations: 8, notes: 0 } satisfies Record<string, unknown>;
+    // Plan fixture uses the post-Q7 shape (notes + fixesByClass) —
+    // the helper is pure-spread so any input fields would pass
+    // through, but matching the production shape keeps the test
+    // honest about what the wire surface looks like in 2026-04+.
+    const plan = {
+      notes: 0,
+      fixesByClass: { mechanical: 5, guidance: 0, runtimeOnly: 0, verifyInSource: 3 },
+    } satisfies Record<string, unknown>;
     const files = [
       { path: "src/page.tsx", findings: [E, E, W] },
       { path: "vendor/bootstrap.min.css", findings: [E, E, E, W, W] },
@@ -875,15 +900,23 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
     expect(out["violationsByScanKind"]).toEqual({ source: 3, buildArtifact: 5 });
     // Existing fields preserved — additive enrichment only.
-    expect(out["violations"]).toBe(8);
     expect(out["notes"]).toBe(0);
+    expect(out["fixesByClass"]).toEqual({
+      mechanical: 5,
+      guidance: 0,
+      runtimeOnly: 0,
+      verifyInSource: 3,
+    });
   });
 
   it("returns the input plan by identity (no shallow copy) when no artifacts were classified", () => {
     // Common-case fast path: the no-artifacts scan pays nothing for
     // the helper; the conditional-spread doctrine keeps the field off
     // the wire entirely.
-    const plan = { violations: 4, notes: 1 } satisfies Record<string, unknown>;
+    const plan = {
+      notes: 1,
+      fixesByClass: { mechanical: 4, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+    } satisfies Record<string, unknown>;
     const out = withViolationsByScanKind(plan, [{ path: "x", findings: [E] }], new Set());
     expect(out).toBe(plan);
     expect(out["violationsByScanKind"]).toBeUndefined();
@@ -891,14 +924,13 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
 
   it("preserves the input plan's other fields verbatim — additive only", () => {
     const plan = {
-      violations: 2,
       notes: 0,
       fixesByClass: { mechanical: 1, guidance: 1 },
       summary: "x",
     } satisfies Record<string, unknown>;
     const files = [{ path: "vendor/a.min.css", findings: [E, W] }];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/a.min.css"]));
-    expect(out["violations"]).toBe(2);
+    expect(out["notes"]).toBe(0);
     expect(out["fixesByClass"]).toEqual({ mechanical: 1, guidance: 1 });
     expect(out["summary"]).toBe("x");
     expect(out["violationsByScanKind"]).toEqual({ source: 0, buildArtifact: 2 });
@@ -912,7 +944,10 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     // "0 buildArtifact, 5 source" and trusts the split, vs. an absent
     // field that conflates "no artifacts in the scan" with "no
     // findings on artifacts."
-    const plan = { violations: 5 } satisfies Record<string, unknown>;
+    const plan = {
+      notes: 0,
+      fixesByClass: { mechanical: 3, guidance: 0, runtimeOnly: 0, verifyInSource: 2 },
+    } satisfies Record<string, unknown>;
     const files = [{ path: "src/app.tsx", findings: [E, E, E, W, W] }];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
     expect(out["violationsByScanKind"]).toEqual({ source: 5, buildArtifact: 0 });

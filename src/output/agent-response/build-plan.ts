@@ -71,37 +71,63 @@ function buildSummary(
 ): string {
   if (total === 0) return "No accessibility violations found.";
 
-  // Build the fixClass-lane parenthetical for the violations count.
-  // Zero-count lanes are omitted by buildFixClassBreakdown.
+  // Per Q7-PLAN-VIOLATIONS-COMPOSITE the prose drops the leading
+  // composite "N findings" headline that summed across the four
+  // `fixClass` lanes. The honest shape is the per-lane breakdown
+  // emitted directly: "31 mechanical, 6 verify-in-source. Most
+  // common: …". Callers that want the flat count sum the four
+  // lanes themselves; the summary string consumers read first
+  // shouldn't promise one kind of work and deliver four.
   const laneBreakdown = buildFixClassBreakdown(fixClassCounts);
+  // `buildFixClassBreakdown` returns a space-prefixed parenthetical
+  // ("(31 mechanical, …)"); strip the wrapper so the lane list reads
+  // as a flat fragment. Defensive: an empty breakdown (no rule with
+  // a `fixClass` produced a violation — should never happen on real
+  // scans) drops the lane fragment entirely; downstream pieces
+  // (manual review, top-rules) still ride.
+  const lanesFragment = stripParenWrapper(laneBreakdown);
 
   const trailingParts: string[] = [];
   if (reviewNeeded > 0) trailingParts.push(`${reviewNeeded} need review`);
   if (manualOnly > 0) trailingParts.push(`${manualOnly} manual`);
 
-  // Compose: "<N> findings (31 mechanical, …, 2 need review, 1 manual)."
-  // The lane breakdown and trailing parts are both in the same parenthetical
-  // so the shape stays compact and consistent with the MCP summary format.
-  let countSuffix = laneBreakdown;
+  const sentences: string[] = [];
+  // Lane fragment + manual-review fragment ride as one sentence so
+  // they read as a single inventory line. Trailing parts have
+  // historically been comma-glued onto the lane breakdown; keep
+  // that shape so existing field-format expectations don't drift.
+  let leadFragment = lanesFragment;
   if (trailingParts.length > 0) {
-    if (countSuffix.length > 0) {
-      // Already have "(31 mechanical, …)" — append trailing inside the parens.
-      countSuffix = `${countSuffix.slice(0, -1)}, ${trailingParts.join(", ")})`;
-    } else {
-      countSuffix = ` (${trailingParts.join(", ")})`;
-    }
+    leadFragment =
+      leadFragment.length > 0
+        ? `${leadFragment}, ${trailingParts.join(", ")}`
+        : trailingParts.join(", ");
   }
-
-  const noun = total === 1 ? "finding" : "findings";
-  let summary = `${total} ${noun}${countSuffix}.`;
+  if (leadFragment.length > 0) {
+    sentences.push(`${leadFragment}.`);
+  }
 
   const topRules = topN(ruleCounts, TOP_RULES_COUNT);
   if (topRules.length > 0) {
     const ruleList = topRules.map(([id, n]) => `${id} (${n})`).join(", ");
-    summary += ` Most common: ${ruleList}.`;
+    sentences.push(`Most common: ${ruleList}.`);
   }
 
-  return summary;
+  return sentences.join(" ");
+}
+
+/**
+ * Strips the leading " (" and trailing ")" from a parenthetical
+ * fragment produced by {@link buildFixClassBreakdown}. Tolerant of
+ * missing wrappers (returns the trimmed input) so the summary never
+ * emits malformed prose on an unexpected input.
+ */
+function stripParenWrapper(parenthetical: string): string {
+  const trimmed = parenthetical.trimStart();
+  if (trimmed.startsWith("(") && trimmed.endsWith(")")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 export interface FixCounts {
@@ -283,8 +309,13 @@ export function buildAgentPlan(
     ruleCounts,
   );
 
+  // `violations` (the flat error+warning count) was dropped per
+  // Q7-PLAN-VIOLATIONS-COMPOSITE — it summed across the four
+  // `fixesByClass` lanes under a single headline, the dishonest-
+  // composite pattern. Callers that want the flat count sum the
+  // per-lane tally themselves.
+  void violationsCount;
   return {
-    violations: violationsCount,
     notes: notesCount,
     fixesByClass,
     reviewNeeded,

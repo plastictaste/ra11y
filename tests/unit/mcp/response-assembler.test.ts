@@ -98,11 +98,13 @@ function baseInput(overrides: Partial<ScanFamilyResponseInput> = {}): ScanFamily
 describe("assembleScanFamilyResponse", () => {
   it("emits an honest clean-scan shape — zero counters omitted, no warnings, no referenceGuide", () => {
     const r = assembleScanFamilyResponse(baseInput());
-    // `totalFindings` was removed per CLAUDE.md §1 "Composite headline
-    // counts are dishonest" — `violations` and `notes` are the split
-    // siblings a caller reads instead.
+    // `totalFindings` was removed per "Composite headline counts are
+    // dishonest." `plan.violations` was removed for the same reason
+    // per Q7-PLAN-VIOLATIONS-COMPOSITE. The honest plan shape carries
+    // `notes` (severity-info, single kind) plus `fixesByClass` (per-
+    // lane structured tally, present-when-meaningful).
     expect(r.plan["totalFindings"]).toBeUndefined();
-    expect(r.plan["violations"]).toBe(0);
+    expect(r.plan["violations"]).toBeUndefined();
     expect(r.plan["notes"]).toBe(0);
     // Conditional-spread zero-counts are absent, not zero.
     // `safeEditsAvailable` was dropped entirely
@@ -261,18 +263,29 @@ describe("assembleScanFamilyResponse", () => {
     expect(lanes.mechanical + lanes.verifyInSource).toBe(1);
   });
 
-  it("splits notes from non-note violations in plan counters", () => {
+  it("splits notes from non-note violations via plan.notes + plan.fixesByClass (no composite headline)", () => {
     const note: Violation = {
       ...violation("/src/a.tsx", 1),
       severity: "info",
     } as unknown as Violation;
     const err = violation("/src/a.tsx", 2);
     const r = assembleScanFamilyResponse(baseInput({ violations: [note, err] }));
-    expect(r.plan["violations"]).toBe(1);
-    expect(r.plan["notes"]).toBe(1);
-    // `totalFindings` was removed per CLAUDE.md §1 — the split counters
-    // are the honest shape; consumers sum them if they want the total.
+    // `plan.violations` and `plan.totalFindings` were both removed
+    // per the "Composite headline counts are dishonest" doctrine
+    // (Q7-PLAN-VIOLATIONS-COMPOSITE / ADR 0024). The honest shape
+    // carries `plan.notes` (severity-info, single kind) and
+    // `plan.fixesByClass` (per-lane structured tally) — consumers
+    // that want the flat error+warning total sum the four lanes.
+    expect(r.plan["violations"]).toBeUndefined();
     expect(r.plan["totalFindings"]).toBeUndefined();
+    expect(r.plan["notes"]).toBe(1);
+    const lanes = r.plan["fixesByClass"] as Record<string, number>;
+    const errorWarningTotal =
+      (lanes["mechanical"] ?? 0) +
+      (lanes["guidance"] ?? 0) +
+      (lanes["runtimeOnly"] ?? 0) +
+      (lanes["verifyInSource"] ?? 0);
+    expect(errorWarningTotal).toBe(1);
   });
 
   it("omits reviewCandidates when includeReviewCandidates is not set", () => {
@@ -332,13 +345,16 @@ describe("assembleScanFamilyResponse", () => {
   });
 
   // Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS: three totals a field report
-  // saw disagree on the same response — `plan.violations+notes`,
+  // saw disagree on the same response — the `plan` totals,
   // `sum(perRuleCoverage.findingsEmitted)`, and
   // `sum(files[*].findings)`. When the three agree (the common case),
   // `meta.countsBySurface` is absent; when any pair differs, it lands
   // as an honest tripwire so the drift never reads as silent miss.
+  // Per Q7-PLAN-VIOLATIONS-COMPOSITE the `plan` total is now derived
+  // from `sum(plan.fixesByClass) + plan.notes` rather than read off a
+  // composite headline.
   describe("meta.countsBySurface cross-surface tripwire", () => {
-    it("cross-surface invariant — sum(files[*].findings) equals plan.violations + plan.notes on a non-truncated scan", () => {
+    it("cross-surface invariant — sum(files[*].findings) equals sum(plan.fixesByClass) + plan.notes on a non-truncated scan", () => {
       const note: Violation = {
         ...violation("/src/a.tsx", 1),
         severity: "info",
@@ -354,7 +370,13 @@ describe("assembleScanFamilyResponse", () => {
       expect(r.truncated).toBeUndefined();
       let filesSurface = 0;
       for (const f of r.files) filesSurface += f.findings.length;
-      const planTotal = (r.plan["violations"] as number) + (r.plan["notes"] as number);
+      const lanes = r.plan["fixesByClass"] as Record<string, number> | undefined;
+      const errorWarning =
+        (lanes?.["mechanical"] ?? 0) +
+        (lanes?.["guidance"] ?? 0) +
+        (lanes?.["runtimeOnly"] ?? 0) +
+        (lanes?.["verifyInSource"] ?? 0);
+      const planTotal = errorWarning + (r.plan["notes"] as number);
       expect(filesSurface).toBe(planTotal);
     });
 

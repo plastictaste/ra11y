@@ -195,7 +195,7 @@ describe("annotateBuildProvenance", () => {
   });
 
   it("injects ra11yVersion + bundleMtime into meta when meta is absent", () => {
-    const result = makeResult({ plan: { violations: 0 }, files: [] });
+    const result = makeResult({ plan: { notes: 0 }, files: [] });
     const annotated = annotateBuildProvenance(result);
     const parsed = JSON.parse(annotated.content[0]!.text) as {
       meta: { ra11yVersion: string; bundleMtime?: string; commitHash?: string };

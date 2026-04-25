@@ -35,7 +35,7 @@
  *      density pushes past the MCP host ceiling.
  *  10. Stamp the cross-surface tripwire via {@link buildCountsBySurface}
  *      so `meta.countsBySurface` lands on the wire whenever the three
- *      scan-family totals (`plan.violations+notes`,
+ *      scan-family totals (`sum(plan.fixesByClass)+plan.notes`,
  *      `sum(perRuleCoverage.findingsEmitted)`,
  *      `sum(files[*].findings)`) disagree
  *      (Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS).
@@ -482,8 +482,8 @@ export function assembleScanFamilyResponse(
 
   // Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS: three totals a scan-family
   // consumer can read off one response have diverged in field reports
-  // (plan.violations+notes vs sum(perRuleCoverage.findingsEmitted) vs
-  // sum(files[*].findings)). The filters between the scanner-raw stream
+  // (sum(plan.fixesByClass)+plan.notes vs sum(perRuleCoverage.findingsEmitted)
+  // vs sum(files[*].findings)). The filters between the scanner-raw stream
   // (`perRuleCoverage`) and the filtered stream (`plan` + `files`) —
   // wrapper-noise drop, severity, criterion-skip — eat findings the
   // per-rule rows still count, and trim steps (token-density below,

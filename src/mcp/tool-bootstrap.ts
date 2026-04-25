@@ -293,13 +293,16 @@ interface ScanSubset {
   readonly filesScanned: number;
   /**
    * Count of violations (severity `error` / `warning`) — the
-   * "things-needing-a-fix" headline the agent budgets against.
-   * Split out from the upstream `plan.violations` / `plan.notes` pair
-   * that {@link extractScanSubset} used to sum into a single
-   * `totalFindings` composite; per CLAUDE.md §1 "Composite headline
-   * counts are dishonest," a top-level counter must count one kind of
-   * thing, and violations vs. info-severity notes are categorically
-   * different work.
+   * "things-needing-a-fix" total the bootstrap report budgets against.
+   * Derived from `plan.fixesByClass` (sum of the four lanes) per
+   * Q7-PLAN-VIOLATIONS-COMPOSITE — the wire-level `plan.violations`
+   * headline was deleted because it summed across categorically
+   * different remediation lanes under one number. The bootstrap
+   * subset still carries a flat `violationsCount` because it's an
+   * internal structured-output field consumed by the bootstrap
+   * report assembler (not a user-facing surface). Distinct from
+   * `notesCount` which counts info-severity findings — both are
+   * single-kind tallies on different axes.
    */
   readonly violationsCount: number;
   /**
@@ -350,17 +353,26 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const meta = record["meta"];
   const plan = record["plan"];
   const filesScanned = readNumberFromRecord(meta, "filesScanned") ?? 0;
-  // Forward the upstream split (scan-assembly.ts:75-79) verbatim
-  // rather than re-summing violations + notes into a single composite.
-  // The former `plan.totalFindings` sum was the exact dishonest-
-  // headline pattern CLAUDE.md §1 warns against — agents budgeting
-  // against it treated info-severity notes as work identical to
-  // violations.
-  const violationsCount = readNumberFromRecord(plan, "violations") ?? 0;
+  // Q7-PLAN-VIOLATIONS-COMPOSITE: the wire-level `plan.violations`
+  // headline was deleted because it summed across the four
+  // `fixesByClass` lanes under one composite number. The bootstrap
+  // subset still carries a flat `violationsCount` (it's an internal
+  // structured-output field consumed by the bootstrap report
+  // assembler, not a user-facing surface) — we derive it from
+  // `plan.fixesByClass` so the count tracks the honest per-lane
+  // source. `plan.notes` survives unchanged (severity-info, not a
+  // composite of categorically different lanes).
+  const fixesByClass = readFixesByClass(plan);
+  const violationsCount =
+    fixesByClass === null
+      ? 0
+      : fixesByClass.mechanical +
+        fixesByClass.guidance +
+        fixesByClass.runtimeOnly +
+        fixesByClass.verifyInSource;
   const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionable = readNumberFromRecord(plan, "actionableManualItems");
-  const fixesByClass = readFixesByClass(plan);
   const limitations = readStringArray(plan, "limitations");
   return {
     filesScanned,

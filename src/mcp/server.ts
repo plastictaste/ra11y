@@ -321,19 +321,27 @@ async function handleToolsCall(
  * deserializing the whole response shape. Returns an empty object
  * on any parse failure — logging is telemetry, not correctness.
  */
+// Q7-PLAN-VIOLATIONS-COMPOSITE: log telemetry derives the flat
+// `violations` scalar from `plan.fixesByClass` (the wire surface
+// dropped the composite headline). Telemetry keeps a flat number
+// because it's a log line, not an agent-facing surface.
+type ScanCountsParsed = {
+  plan?: {
+    notes?: number;
+    fixesByClass?: Record<"mechanical" | "guidance" | "runtimeOnly" | "verifyInSource", number>;
+  };
+  meta?: { filesScanned?: number };
+};
 function extractScanCounts(result: unknown): Record<string, unknown> {
   if (!result || typeof result !== "object") return {};
-  const shape = result as { content?: Array<{ text?: unknown }> };
-  const first = shape.content?.[0];
-  const text = first?.text;
+  const text = (result as { content?: Array<{ text?: unknown }> }).content?.[0]?.text;
   if (typeof text !== "string") return {};
   try {
-    const parsed = JSON.parse(text) as {
-      plan?: { violations?: number; notes?: number };
-      meta?: { filesScanned?: number };
-    };
+    const parsed = JSON.parse(text) as ScanCountsParsed;
     const out: Record<string, unknown> = {};
-    if (typeof parsed.plan?.violations === "number") out["violations"] = parsed.plan.violations;
+    const fbc = parsed.plan?.fixesByClass;
+    if (fbc)
+      out["violations"] = fbc.mechanical + fbc.guidance + fbc.runtimeOnly + fbc.verifyInSource;
     if (typeof parsed.plan?.notes === "number") out["notes"] = parsed.plan.notes;
     if (typeof parsed.meta?.filesScanned === "number")
       out["filesScanned"] = parsed.meta.filesScanned;

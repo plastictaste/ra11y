@@ -61,16 +61,27 @@ describe("annotateStaleSubprocess", () => {
   });
 
   it("injects the warning code and prose hint into an object payload with no prior warnings", () => {
-    const result = makeResult({ plan: { violations: 3 }, meta: {} });
+    // Plan shape uses the post-Q7-PLAN-VIOLATIONS-COMPOSITE
+    // structure (notes + fixesByClass) — `annotateStaleSubprocess`
+    // is pure-pass-through over the plan, so this assertion guards
+    // that the per-lane tally rides through verbatim.
+    const result = makeResult({
+      plan: {
+        notes: 0,
+        fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+      },
+      meta: {},
+    });
     const annotated = annotateStaleSubprocess(result);
     const parsed = JSON.parse(annotated.content[0]!.text) as {
       warnings: string[];
       staleSubprocessHint: string;
-      plan: { violations: number };
+      plan: { fixesByClass: Record<string, number> };
     };
     expect(parsed.warnings).toEqual([STALE_SUBPROCESS_WARNING]);
     expect(parsed.staleSubprocessHint).toBe(STALE_SUBPROCESS_HINT);
-    expect(parsed.plan.violations).toBe(3);
+    expect(parsed.plan.fixesByClass["mechanical"]).toBe(1);
+    expect(parsed.plan.fixesByClass["runtimeOnly"]).toBe(2);
   });
 
   it("prepends the stale code to existing warnings so it is the first signal the agent sees", () => {
@@ -335,7 +346,7 @@ describe("mtime-based detection (deterministic repro — Q3-MCP-RESTART-HINT-SUB
 
     // Before rewrite: no warning fires.
     const freshResult = {
-      content: [{ type: "text" as const, text: JSON.stringify({ plan: { violations: 0 } }) }],
+      content: [{ type: "text" as const, text: JSON.stringify({ plan: { notes: 0 } }) }],
     };
     expect(isSubprocessStale()).toBe(false);
 

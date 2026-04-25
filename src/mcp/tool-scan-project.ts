@@ -281,14 +281,17 @@ export const scanProjectTool: McpTool = {
     const formattedMetaWithVendor = withVendorEnrichedPerRuleCoverage(formatted.meta, vendorPaths);
     // V1-MINIFIED-FILE-SCAN-KIND-SPLIT: stamp the per-scan-kind
     // violation tally on `plan.violationsByScanKind` so the agent can
-    // tell at a glance how many of `plan.violations` sit in vendor /
+    // tell at a glance how many error+warning findings sit in vendor /
     // build-artifact files (often un-editable; the productive triage
     // is `propose_config` exclude or source-level disable, not a fix
     // attempt) vs. authored source. Conditional-spread on `vendorPaths`
     // emptiness — the no-artifacts common case omits the field per
-    // CLAUDE.md §1 "Ambiguous field shapes are dishonest." Per-lane
-    // structured tally keeps the doctrine: `plan.violations` stays
-    // flat, no composite headline disagrees with the per-lane sibling.
+    // CLAUDE.md §1 "Ambiguous field shapes are dishonest." Each
+    // per-kind lane (`source`, `buildArtifact`) names exactly one
+    // kind of thing, so the split itself is honest. Per
+    // Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline was deleted — the per-kind sibling sums to the
+    // structured `plan.fixesByClass` total instead.
     // The shared `formatted.plan` reference is reused below in
     // `assembleScanProjectResponse`; rebinding here propagates the
     // enriched plan through the rest of the assembly chain without
@@ -1040,7 +1043,11 @@ function buildEmptyFilesResult(args: {
 }) {
   const { root, actualMode, fallbackReason, rootSource, configSource } = args;
   return textResult({
-    plan: { violations: 0, notes: 0, summary: "No parseable files found." },
+    // Q7-PLAN-VIOLATIONS-COMPOSITE: drop the flat `violations: 0` headline
+    // — see `buildScanPlan` in `scan-assembly.ts` for the full rationale.
+    // Zero-files scan has no lanes to populate, so only `notes` and
+    // `summary` ride; callers sum `plan.fixesByClass` for the flat count.
+    plan: { notes: 0, summary: "No parseable files found." },
     files: [],
     meta: {
       filesScanned: 0,

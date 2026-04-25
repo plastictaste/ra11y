@@ -177,8 +177,17 @@ export function buildNextStep(
   // `fixesByClass` is the honest per-lane source this predicate has
   // always read.
   const firstPick = pickFirstFinding(formatted.files, options.vendorPaths);
+  // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `plan.violations` headline
+  // was deleted because it summed across the four `fixesByClass` lanes
+  // under one number. The branching predicate ("are there any
+  // violations to point at?") still wants the aggregate count, so we
+  // sum the per-lane tally locally — the structured `fixesByClass`
+  // sibling is the honest source the wire surface points at, and a
+  // local sum keeps the branching honest without re-introducing a
+  // wire-level composite.
+  const violationsCount = sumFixesByClass(formatted.plan);
   const inputs: NextStepInputs = {
-    violations: numFromPlan(formatted.plan, "violations"),
+    violations: violationsCount,
     fixable:
       fixesByClassLane(formatted.plan, "mechanical") + fixesByClassLane(formatted.plan, "guidance"),
     actionableManual: numFromPlan(formatted.plan, "actionableManualItems"),
@@ -304,6 +313,24 @@ function fixesByClassLane(
   if (!raw || typeof raw !== "object") return 0;
   const v = (raw as Record<string, unknown>)[lane];
   return typeof v === "number" ? v : 0;
+}
+
+/**
+ * Sums the four `plan.fixesByClass` lanes into a flat error+warning
+ * count — replaces the wire-level `plan.violations` headline that was
+ * deleted per Q7-PLAN-VIOLATIONS-COMPOSITE. Used only as an internal
+ * branching predicate ("any violations to point at?") inside this
+ * builder; the wire surface stays per-lane. Defensive: a missing or
+ * malformed `fixesByClass` parent yields zero, matching the
+ * "clean scan" semantics the caller expects.
+ */
+function sumFixesByClass(plan: Record<string, unknown>): number {
+  return (
+    fixesByClassLane(plan, "mechanical") +
+    fixesByClassLane(plan, "guidance") +
+    fixesByClassLane(plan, "runtimeOnly") +
+    fixesByClassLane(plan, "verifyInSource")
+  );
 }
 
 /**

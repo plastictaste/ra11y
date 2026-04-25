@@ -31,12 +31,11 @@
  * `plan.totalFindings` was explicitly removed from the scan-family plan
  * block (see `src/mcp/scan-assembly.ts` header comment + ADR 0024) for
  * being a composite headline counter that summed severity-distinct
- * lanes (`violations` + `notes`) under one name — the doctrine's
- * "Composite headline counts are dishonest" rule. Re-introducing a
- * `totalFindings` field inside a `plan:` object literal that flows
- * through `textResult(...)` or `errorResult(...)` is a regression on
- * that lock. The legitimate split is `violations` + `notes` as
- * separate top-level plan fields.
+ * lanes under one name — the doctrine's "Composite headline counts
+ * are dishonest" rule. Re-introducing a `totalFindings` field inside
+ * a `plan:` object literal that flows through `textResult(...)` or
+ * `errorResult(...)` is a regression on that lock. The legitimate
+ * split is `notes` + `fixesByClass` as separate top-level plan fields.
  *
  * Note: `meta.totalFindings` is legitimate in `scan_process` (ADR
  * 0016 — it's a process-level aggregate, not a scan-family plan
@@ -45,6 +44,25 @@
  * `properties.totalFindings` in tool `inputSchema` definitions is also
  * unaffected because the schema literal is not emitted through
  * `textResult(...)` / `errorResult(...)`.
+ *
+ * ## Pattern C — `plan: { … violations: <number> … }` composite counter
+ *
+ * `plan.violations` was removed per Q7-PLAN-VIOLATIONS-COMPOSITE
+ * (2026-04-25) for the same reason as `plan.totalFindings` and
+ * `plan.safeEditsAvailable`: a flat top-level integer that summed
+ * across the four `fixesByClass` lanes (mechanical, guidance,
+ * runtimeOnly, verifyInSource) under a single headline. Agents
+ * budgeted against the composite as if every entry were an
+ * actionable edit when in reality two of the four lanes are
+ * prose-only. The honest shape is `plan.fixesByClass` (per-lane,
+ * always present when violations > 0); callers that want the flat
+ * count sum the four lanes themselves. Re-introducing a numeric
+ * `violations` property inside a `plan:` literal flowing through
+ * `textResult(...)` / `errorResult(...)` is a regression on the
+ * deletion. The pattern only fires on numeric initializers — the
+ * `violations: violations.length` arg passed INTO `buildScanPlan(...)`
+ * upstream is a function call, not a literal `plan: { ... }`
+ * initializer, so this check is scoped accordingly.
  *
  * ## Scope
  *
@@ -74,8 +92,11 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
 
-/** Which of the two patterns a violation represents. */
-export type ResponseAssemblyPattern = "newText-empty-with-edit-kind" | "plan-total-findings";
+/** Which of the patterns a violation represents. */
+export type ResponseAssemblyPattern =
+  | "newText-empty-with-edit-kind"
+  | "plan-total-findings"
+  | "plan-violations-composite";
 
 /**
  * Structured allowlist entry. `file` is the repo-relative path; `pattern`
@@ -139,6 +160,8 @@ function visit(
     if (a) out.push(a);
     const b = analyzePlanTotalFindingsPattern(node, relFile, source, allowlist);
     if (b) out.push(b);
+    const c = analyzePlanViolationsCompositePattern(node, relFile, source, allowlist);
+    if (c) out.push(c);
   }
   ts.forEachChild(node, (child) => visit(child, relFile, source, allowlist, out));
 }
@@ -248,6 +271,75 @@ function analyzePlanTotalFindingsPattern(
   };
 }
 
+// ─── Pattern C: plan: { … violations: <number> … } ────────────────────────
+
+/**
+ * Flags a property assignment `plan: { … violations: <numeric literal> … }`
+ * where the `plan` initializer is an object literal AND the object
+ * literal contains a numeric `violations` property. `plan.violations`
+ * was removed per Q7-PLAN-VIOLATIONS-COMPOSITE — it summed across the
+ * four `fixesByClass` lanes under one name, the doctrine's "Composite
+ * headline counts are dishonest" pattern. Legitimate shape: `plan.notes`
+ * + `plan.fixesByClass` as separate top-level plan fields.
+ *
+ * Scoped to `plan:` object literals inside a `textResult(...)` or
+ * `errorResult(...)` call so JSON-Schema `properties` definitions are
+ * out of scope by construction. Predicate is "numeric initializer"
+ * (`NumericLiteral`) so the legitimate `violations: violations.length`
+ * argument flowing INTO `buildScanPlan(...)` (a function call, not a
+ * `plan: { ... }` literal) does not trip — and even if it appeared
+ * inside a literal, it's a property-access, not a numeric literal.
+ */
+function analyzePlanViolationsCompositePattern(
+  node: ts.ObjectLiteralExpression,
+  relFile: string,
+  source: ts.SourceFile,
+  allowlist: readonly AllowlistEntry[],
+): ResponseAssemblyViolation | null {
+  const parent = node.parent;
+  if (!(parent && ts.isPropertyAssignment(parent))) return null;
+  if (parent.initializer !== node) return null;
+  if (getPropertyName(parent.name) !== "plan") return null;
+
+  let violationsProp: ts.PropertyAssignment | null = null;
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const name = getPropertyName(prop.name);
+    if (name !== "violations") continue;
+    // Only flag numeric-literal initializers — `violations: 0`,
+    // `violations: 323`, etc. A non-literal initializer (function
+    // call, identifier, computed expression) is out of scope:
+    // the historical false positive was the legitimate
+    // `buildScanPlan({ violations: violations.length, … })` arg
+    // form, but that's a CallExpression's argument, not a `plan:`
+    // ObjectLiteral. Inside an actual `plan: { ... }` literal,
+    // any non-literal `violations` initializer would be unusual
+    // and worth a human eyeball anyway; the predicate stays
+    // narrow on numeric literals to avoid surfacing false
+    // positives for legitimate dynamic shapes the test suite
+    // currently doesn't have but might add.
+    if (ts.isNumericLiteral(prop.initializer)) {
+      violationsProp = prop;
+      break;
+    }
+  }
+  if (!violationsProp) return null;
+  if (!isInsideResponseBuilder(parent)) return null;
+  if (isAllowlisted(relFile, "plan-violations-composite", allowlist)) return null;
+
+  const { line } = ts.getLineAndCharacterOfPosition(source, violationsProp.getStart(source));
+  const snippet = source.text
+    .slice(parent.getStart(source), node.getEnd())
+    .replace(/\s+/g, " ")
+    .slice(0, 160);
+  return {
+    file: relFile,
+    line: line + 1,
+    pattern: "plan-violations-composite",
+    snippet,
+  };
+}
+
 // ─── Shared helpers ────────────────────────────────────────────────────────
 
 function getPropertyName(name: ts.PropertyName): string | null {
@@ -327,8 +419,14 @@ if (import.meta.main) {
         "    omit `newText` entirely so presence-vs-absence carries the signal.\n" +
         "  plan-total-findings:\n" +
         "    `plan.totalFindings` is the composite headline counter ADR 0024 removed — it\n" +
-        "    sums severity-distinct lanes under one name. Split into `plan.violations` +\n" +
-        "    `plan.notes` (see src/mcp/scan-assembly.ts).\n",
+        "    sums severity-distinct lanes under one name. Split into `plan.notes` +\n" +
+        "    `plan.fixesByClass` (see src/mcp/scan-assembly.ts).\n" +
+        "  plan-violations-composite:\n" +
+        "    `plan.violations` was removed per Q7-PLAN-VIOLATIONS-COMPOSITE — it summed\n" +
+        "    across the four `fixesByClass` lanes (mechanical, guidance, runtimeOnly,\n" +
+        "    verifyInSource) under one headline. Use `plan.fixesByClass` (always present\n" +
+        "    when violations > 0) as the structured per-lane tally; sum the four lanes\n" +
+        "    when a flat count is needed.\n",
     );
     console.error(
       "See docs/kb/architecture/ai-first-consumer.md and .claude/rules/mcp-response-shapes.md for the full doctrine.",

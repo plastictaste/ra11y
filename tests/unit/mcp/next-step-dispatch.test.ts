@@ -134,7 +134,6 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 1,
           fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [{ path: "App.tsx", findings: [sampleFinding] }],
@@ -154,7 +153,9 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
   it("buildNextStep violation branch without fix emits explain_rule-valid args", () => {
     const result = buildNextStep(
       formatted({
-        plan: { violations: 1 },
+        plan: {
+          fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 1, verifyInSource: 0 },
+        },
         files: [{ path: "App.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -175,7 +176,7 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
     // This is the canonical drift site named in the backlog item.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 0, notes: 1 },
+        plan: { notes: 1 },
         files: [{ path: "Sidebar.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -192,9 +193,7 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
   });
 
   it("buildNextStep clean-scan branch emits checklist-valid args (empty is honest)", () => {
-    const result = buildNextStep(
-      formatted({ plan: { violations: 0, notes: 0, actionableManualItems: 0 } }),
-    );
+    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
     expect(result.structured?.tool).toBe("checklist");
     if (result.structured) {
       assertArgsAgainstSchema(

@@ -53,10 +53,13 @@ const sampleFinding = {
 
 describe("buildNextStep", () => {
   it("returns suggest_fix with aligned prose + structured args when a fixable violation exists", () => {
+    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // headline is gone; `buildNextStep` derives the count from
+    // `plan.fixesByClass` so all next-step fixtures populate the
+    // per-lane tally. One mechanical violation here.
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [{ path: "DemoComposer.tsx", findings: [sampleFinding] }],
@@ -76,9 +79,14 @@ describe("buildNextStep", () => {
   });
 
   it("returns explain_rule when violations exist but no fix is available", () => {
+    // Two violations in the runtime-only lane (which `buildNextStep`
+    // counts toward `violations` but not `fixable`) — the branch
+    // wants violations>0 but fixable===0.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 2 },
+        plan: {
+          fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+        },
         files: [{ path: "Header.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -92,9 +100,13 @@ describe("buildNextStep", () => {
   });
 
   it("returns scan_file when the response carries only info-level notes", () => {
+    // `notes` (severity-info) tracks a different axis than the
+    // `fixesByClass` lanes — leaving `fixesByClass` empty signals
+    // "no error/warning violations" and the branch falls into the
+    // notes-only handling.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 0, notes: 3 },
+        plan: { notes: 3 },
         files: [{ path: "Sidebar.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -105,18 +117,14 @@ describe("buildNextStep", () => {
   });
 
   it("returns checklist on a clean automated scan — both prose and structured point at the manual half", () => {
-    const result = buildNextStep(
-      formatted({ plan: { violations: 0, notes: 0, actionableManualItems: 0 } }),
-    );
+    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
 
     expect(result.prose).toContain("checklist");
     expect(result.structured).toEqual({ tool: "checklist", args: {} });
   });
 
   it("returns checklist when the actionable-manual count is non-zero", () => {
-    const result = buildNextStep(
-      formatted({ plan: { violations: 0, notes: 0, actionableManualItems: 4 } }),
-    );
+    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 4 } }));
 
     expect(result.prose).toContain("checklist");
     expect(result.prose).toContain("4 manual-review");
@@ -130,7 +138,9 @@ describe("buildNextStep", () => {
     // is omitted (CLAUDE.md §1) rather than fabricated.
     const result = buildNextStep(
       formatted({
-        plan: { violations: 1 },
+        plan: {
+          fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 1, verifyInSource: 0 },
+        },
         files: [{ path: "Unknown.tsx", findings: [{ malformed: true }] }],
       }),
     );
@@ -149,7 +159,6 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 2,
           fixesByClass: { mechanical: 2, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -184,7 +193,6 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 2,
           fixesByClass: { mechanical: 1, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -219,7 +227,6 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 1,
           fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -242,9 +249,7 @@ describe("buildNextStep", () => {
     // No-violations branch is outside the dedupe predicate's scope —
     // the flag is computed but irrelevant, and the clean-scan
     // recommendation (`checklist`) must not be affected.
-    const result = buildNextStep(
-      formatted({ plan: { violations: 0, notes: 0, actionableManualItems: 0 } }),
-    );
+    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
 
     expect(result.prose).toContain("checklist");
     expect(result.prose).not.toContain("suggest_fix");
@@ -261,7 +266,6 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -289,9 +293,7 @@ describe("buildNextStep", () => {
   // caught here before they ship.
 
   it("clean scan with manual candidates mentions ra11y/triage prompt", () => {
-    const result = buildNextStep(
-      formatted({ plan: { violations: 0, notes: 0, actionableManualItems: 3 } }),
-    );
+    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 3 } }));
     expect(result.prose).toContain("ra11y/triage");
     expect(result.prose).toContain("prompts/get");
     // Structured still points at the MCP tool (checklist); the prompt
@@ -300,9 +302,7 @@ describe("buildNextStep", () => {
   });
 
   it("clean scan with zero manual candidates mentions ra11y/audit prompt", () => {
-    const result = buildNextStep(
-      formatted({ plan: { violations: 0, notes: 0, actionableManualItems: 0 } }),
-    );
+    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
     expect(result.prose).toContain("ra11y/audit");
     expect(result.prose).toContain("prompts/get");
     // Structured still points at checklist — the canonical next MCP call.
@@ -313,7 +313,6 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 2,
           fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -343,7 +342,6 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          violations: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [
@@ -369,20 +367,21 @@ describe("buildNextStep", () => {
     const cases: readonly ScanFormatted[] = [
       formatted({
         plan: {
-          violations: 1,
           fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         },
         files: [{ path: "A.tsx", findings: [sampleFinding] }],
       }),
       formatted({
-        plan: { violations: 2 },
+        plan: {
+          fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+        },
         files: [{ path: "B.tsx", findings: [sampleFinding] }],
       }),
       formatted({
-        plan: { violations: 0, notes: 1 },
+        plan: { notes: 1 },
         files: [{ path: "C.tsx", findings: [sampleFinding] }],
       }),
-      formatted({ plan: { violations: 0, notes: 0, actionableManualItems: 2 } }),
+      formatted({ plan: { notes: 0, actionableManualItems: 2 } }),
     ];
     for (const f of cases) {
       const result = buildNextStep(f);
@@ -414,7 +413,6 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            violations: 2,
             fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
           },
           files: [
@@ -441,7 +439,6 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            violations: 2,
             fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
           },
           files: [
@@ -471,7 +468,6 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            violations: 2,
             fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
           },
           files: [
@@ -502,7 +498,6 @@ describe("buildNextStep", () => {
       const withoutOption = buildNextStep(
         formatted({
           plan: {
-            violations: 1,
             fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
           },
           files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
@@ -511,7 +506,6 @@ describe("buildNextStep", () => {
       const withEmptySet = buildNextStep(
         formatted({
           plan: {
-            violations: 1,
             fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
           },
           files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
@@ -541,7 +535,6 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            violations: 2,
             fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
           },
           files: [
@@ -567,7 +560,6 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            violations: 2,
             fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
           },
           files: [
