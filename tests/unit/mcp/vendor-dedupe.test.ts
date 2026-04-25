@@ -30,6 +30,7 @@ import { describe, expect, it } from "bun:test";
 import {
   collapseVendorCssFindings,
   VENDOR_DEDUPE_MIN_DISTINCT_PATHS,
+  VENDOR_JS_BASENAME_PATTERNS,
 } from "../../../src/mcp/vendor-dedupe.ts";
 import type { Violation } from "../../../src/types/violation.ts";
 
@@ -311,6 +312,185 @@ describe("collapseVendorCssFindings — determinism", () => {
 describe("collapseVendorCssFindings — threshold constant", () => {
   it("VENDOR_DEDUPE_MIN_DISTINCT_PATHS is 2 — collapse fires on the first cross-file duplicate", () => {
     expect(VENDOR_DEDUPE_MIN_DISTINCT_PATHS).toBe(2);
+  });
+});
+
+describe("collapseVendorCssFindings — JS vendor basename scope", () => {
+  // V1-CHECKLIST-VENDOR-FILE-FINGERPRINT-COLLAPSE: extends the cross-file
+  // dedupe to JS vendor drops (`jquery.*`, `bootstrap.js`, `wow.*`,
+  // `headroom.*`, `fancybox*`, `flexslider*`). Unlike CSS, plain `.js` /
+  // `.mjs` is also the default extension for authored code, so JS dedupe
+  // is gated on the basename matching a vendor pattern. Authored files
+  // sharing a basename across packages (e.g. `index.js`, `utils.js`)
+  // continue to pass through untouched.
+  it("collapses three copies of jquery.flexslider.js across template directories — the canonical V1 case", () => {
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "templates/template-1/js/jquery.flexslider.js",
+        line: 4,
+        ruleId: "media/captions-prerecorded",
+      }),
+      contrastViolation({
+        filePath: "templates/template-2/js/jquery.flexslider.js",
+        line: 4,
+        ruleId: "media/captions-prerecorded",
+      }),
+      contrastViolation({
+        filePath: "templates/template-3/js/jquery.flexslider.js",
+        line: 4,
+        ruleId: "media/captions-prerecorded",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(1);
+    const canonical = out[0] as Violation;
+    expect(canonical.vendorOccurrences).toHaveLength(3);
+    const paths = canonical.vendorOccurrences?.map((o) => o.path) ?? [];
+    expect(paths).toEqual([
+      "templates/template-1/js/jquery.flexslider.js",
+      "templates/template-2/js/jquery.flexslider.js",
+      "templates/template-3/js/jquery.flexslider.js",
+    ]);
+  });
+
+  it("does NOT collapse two unrelated authored .js files with the same basename", () => {
+    // `index.js` is the canonical authored-code basename — every package
+    // in a monorepo has one. Same basename + same ruleId + same patternId
+    // is coincidence, not a vendor drop. Collapsing would silently drop
+    // the non-canonical source from `files[]`.
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "packages/pkg-a/src/index.js",
+        ruleId: "media/captions-prerecorded",
+        patternId: "pid-shared",
+      }),
+      contrastViolation({
+        filePath: "packages/pkg-b/src/index.js",
+        ruleId: "media/captions-prerecorded",
+        patternId: "pid-shared",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(2);
+    for (const v of out) {
+      expect(v.vendorOccurrences).toBeUndefined();
+    }
+  });
+
+  it("does NOT collapse same-basename .ts / .tsx authored code even when basename matches a vendor pattern", () => {
+    // A type definition or wrapper file named e.g. `flexslider.ts` is
+    // authored code — only the built `.js` / `.mjs` extension qualifies,
+    // and only when paired with a vendor-pattern basename.
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "packages/app-a/src/flexslider.ts",
+        ruleId: "media/captions-prerecorded",
+        patternId: "pid-fs",
+      }),
+      contrastViolation({
+        filePath: "packages/app-b/src/flexslider.ts",
+        ruleId: "media/captions-prerecorded",
+        patternId: "pid-fs",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(2);
+  });
+
+  it("collapses common JS vendor basenames listed in the doctrine: jquery, bootstrap, wow, headroom, fancybox, flexslider", () => {
+    // Worked-example sweep — each named pattern in the
+    // VENDOR_JS_BASENAME_PATTERNS comment must collapse on the canonical
+    // basename it documents. If any line goes red, either the regex is
+    // wrong or the doctrine string is wrong.
+    const cases: { readonly basename: string }[] = [
+      { basename: "jquery.js" },
+      { basename: "jquery.min.js" },
+      { basename: "jquery-3.6.0.min.js" },
+      { basename: "jquery.flexslider.js" },
+      { basename: "bootstrap.js" },
+      { basename: "bootstrap.min.js" },
+      { basename: "bootstrap.bundle.js" },
+      { basename: "bootstrap.bundle.mjs" },
+      { basename: "wow.js" },
+      { basename: "wow.min.js" },
+      { basename: "headroom.js" },
+      { basename: "headroom.min.js" },
+      { basename: "fancybox.js" },
+      { basename: "fancybox.pack.js" },
+      { basename: "flexslider.js" },
+      { basename: "flexslider.min.js" },
+    ];
+    for (const { basename } of cases) {
+      const input: readonly Violation[] = [
+        contrastViolation({
+          filePath: `templates/site-a/js/${basename}`,
+          line: 4,
+          ruleId: "media/captions-prerecorded",
+        }),
+        contrastViolation({
+          filePath: `templates/site-b/js/${basename}`,
+          line: 4,
+          ruleId: "media/captions-prerecorded",
+        }),
+      ];
+      const out = collapseVendorCssFindings(input);
+      expect(out).toHaveLength(1);
+      expect((out[0] as Violation).vendorOccurrences).toHaveLength(2);
+    }
+  });
+
+  it("collapses .mjs vendor drops alongside .js (modern ES-module bundle variant)", () => {
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "templates/site-a/js/bootstrap.bundle.mjs",
+        line: 4,
+        ruleId: "media/captions-prerecorded",
+      }),
+      contrastViolation({
+        filePath: "templates/site-b/js/bootstrap.bundle.mjs",
+        line: 4,
+        ruleId: "media/captions-prerecorded",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(1);
+    expect((out[0] as Violation).vendorOccurrences).toHaveLength(2);
+  });
+
+  it("does NOT collapse JS files whose basename does not match any vendor pattern (e.g. lodash, react)", () => {
+    // The vendor list is curated, not exhaustive. Other common library
+    // basenames pass through as independent findings — the agent dismisses
+    // in one read; an over-eager dedupe drops authored code silently.
+    const input: readonly Violation[] = [
+      contrastViolation({
+        filePath: "templates/site-a/js/lodash.min.js",
+        ruleId: "media/captions-prerecorded",
+        patternId: "pid-shared",
+      }),
+      contrastViolation({
+        filePath: "templates/site-b/js/lodash.min.js",
+        ruleId: "media/captions-prerecorded",
+        patternId: "pid-shared",
+      }),
+    ];
+    const out = collapseVendorCssFindings(input);
+    expect(out).toHaveLength(2);
+    for (const v of out) {
+      expect(v.vendorOccurrences).toBeUndefined();
+    }
+  });
+
+  it("VENDOR_JS_BASENAME_PATTERNS exports the documented patterns for caller-pinning", () => {
+    // The list is the API surface for the doctrine. Pin its identity so a
+    // doctrine drift (e.g. accidental `wow.*` removal) shows up red here
+    // before it surfaces as a silent regression in the canonical V1 corpus.
+    expect(VENDOR_JS_BASENAME_PATTERNS.length).toBeGreaterThanOrEqual(6);
+    expect(VENDOR_JS_BASENAME_PATTERNS.some((re) => re.test("jquery.flexslider.js"))).toBe(true);
+    expect(VENDOR_JS_BASENAME_PATTERNS.some((re) => re.test("bootstrap.bundle.min.js"))).toBe(true);
+    expect(VENDOR_JS_BASENAME_PATTERNS.some((re) => re.test("flexslider.js"))).toBe(true);
+    // Authored-code basenames must not match.
+    expect(VENDOR_JS_BASENAME_PATTERNS.some((re) => re.test("index.js"))).toBe(false);
+    expect(VENDOR_JS_BASENAME_PATTERNS.some((re) => re.test("utils.js"))).toBe(false);
   });
 });
 
