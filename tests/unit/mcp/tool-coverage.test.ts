@@ -118,12 +118,14 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
 
   it("omits `warningsDetails` when no payload-bearing warning code fires (shape discipline, not just `warnings: undefined`)", async () => {
     // Scan-side scenario: every file parseable, no template directives,
-    // no Tailwind / storybook / build-artifact signal. `warnings` and
-    // `warningsDetails` must both be absent per "present-when-meaningful."
-    // Guarded independently from the `warnings` omission test because
-    // the two channels can drift — a bug that emitted `warningsDetails: {}`
-    // alongside `warnings: undefined` would satisfy the existing test
-    // but still force agents to disambiguate empty vs absent.
+    // no Tailwind / storybook / build-artifact signal. None of the
+    // scan-confidence warning codes fire — but
+    // `deprecated_field_id_renamed_criterionId` always rides on
+    // `coverage` while the legacy `id` alias on entry arrays still
+    // ships (Q7-CRITERION-ID-FIELD-NAME-DRIFT). Guard `warnings` to
+    // exactly the deprecation code and `warningsDetails` to absent —
+    // the dual-channel "no payload-bearing code fired" guarantee
+    // unaffected by the deprecation, which is presence-only signal.
     write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
     write(join(dir, "styles.css"), "main { color: black; }\n");
 
@@ -133,18 +135,20 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
 
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
-    expect(data.warnings).toBeUndefined();
+    expect(data.warnings).toEqual(["deprecated_field_id_renamed_criterionId"]);
     expect(data.warningsDetails).toBeUndefined();
   });
 
-  it("omits `warnings` on a clean all-parseable scan (never `warnings: []`)", async () => {
+  it("emits the criterionId-deprecation code on a clean all-parseable scan (warnings carries only the deprecation code, never `[]`)", async () => {
     // Every file clears the parseable-extension check; none of the
-    // other warning conditions fire either (non-zero filesScanned,
-    // no template directives in a TSX-only tree, no Tailwind utility
-    // pattern). The response must carry no `warnings` field at all —
-    // per CLAUDE.md §1 "Ambiguous field shapes are dishonest," an
-    // empty array would force the agent to disambiguate "clean scan"
-    // from "warnings machinery disabled."
+    // scan-confidence warning conditions fire either (non-zero
+    // filesScanned, no template directives in a TSX-only tree, no
+    // Tailwind utility pattern). The deprecation code
+    // `deprecated_field_id_renamed_criterionId` always rides on
+    // `coverage` while the legacy `id` alias on the entry arrays still
+    // ships (Q7-CRITERION-ID-FIELD-NAME-DRIFT). Per CLAUDE.md §1
+    // "Ambiguous field shapes are dishonest," `warnings: []` is still
+    // forbidden — the field must either be absent or non-empty.
     write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
     write(join(dir, "styles.css"), "main { color: black; }\n");
 
@@ -154,7 +158,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
 
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
-    expect(data.warnings).toBeUndefined();
+    expect(data.warnings).toEqual(["deprecated_field_id_renamed_criterionId"]);
   });
 
   it("fires `scanned_zero_files` when the scan root contains no parseable files at all", async () => {

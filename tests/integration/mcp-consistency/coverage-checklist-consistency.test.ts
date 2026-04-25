@@ -195,9 +195,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
 
     // Actionable (checklist items with candidates) lines up with
     // coverage's `manualWithCandidates`.
-    const coverageActionableIds = new Set(
-      coverage.manualWithCandidates.map((c) => c.criterionId),
-    );
+    const coverageActionableIds = new Set(coverage.manualWithCandidates.map((c) => c.criterionId));
     const checklistActionableIds = new Set(checklist.items.map((i) => i.criterionId));
     expect(checklistActionableIds).toEqual(coverageActionableIds);
   });
@@ -374,9 +372,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const firedInScanScoped = new Set(
       [...firedInScan].filter((id) => id.startsWith(`${coverage.standardId}:`)),
     );
-    const coverageFailingIds = new Set(
-      coverage.failingAutomatedCriteria.map((c) => c.criterionId),
-    );
+    const coverageFailingIds = new Set(coverage.failingAutomatedCriteria.map((c) => c.criterionId));
     expect(coverageFailingIds).toEqual(firedInScanScoped);
   });
 
