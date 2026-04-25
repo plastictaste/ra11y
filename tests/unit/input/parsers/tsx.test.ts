@@ -422,13 +422,34 @@ describe("parseTsx", () => {
     });
 
     it("keeps JSX mode ON when no filePath is supplied (backward-compat default)", () => {
-      // Callers without filePath (test helpers, MCP session, apply-fix
-      // internals) must keep the v0.1.x behaviour so existing rule
-      // tests and live scans don't regress.
+      // Callers without filePath (e.g. inline test fixtures, mdx
+      // pre-transform that fed pure JSX-equivalent residue) must keep
+      // the v0.1.x behaviour so existing rule tests and live scans
+      // don't regress. The MCP session, apply-fix re-parse path, and
+      // every CLI command pass filePath through (Q8-PARSER-ROUTING-JS-AS-TSX).
       const src = "const App = () => <div className='x'>hi</div>;";
       const { errors, root } = parseTsx(src);
       expect(errors).toEqual([]);
       expect(root.jsxElements.map((e) => e.tagName)).toEqual(["div"]);
+    });
+
+    it("does not emit fake JSX parse errors on a `.js` file with `<Identifier` member-access comparisons", () => {
+      // The dispatch's specified case for Q8-PARSER-ROUTING-JS-AS-TSX:
+      // an `index.js` file with `if (a < b && b > c)` plus member-access
+      // shapes — `<g.top>`, `<r.length>`, `<b.length>` — that the field
+      // report observed in 538-entry `parseErrorFiles[]` floods. The
+      // bare-extension JSX-mode gate must keep these clean rather than
+      // fake "Unclosed JSX element <b.length>" / "<g.top>" messages.
+      const src =
+        "function check(a, b) {\n" +
+        "  if (a < b && b > c) return 0;\n" +
+        "  return a < b.length ? -1 : 1;\n" +
+        "}\n" +
+        "var g = { top: 0, bottom: 100 };\n" +
+        "function inRange(e, f) { return e < g.top && f > g.bottom; }\n";
+      const { errors, root } = parseTsx(src, { filePath: "index.js" });
+      expect(errors).toEqual([]);
+      expect(root.jsxElements).toEqual([]);
     });
   });
 

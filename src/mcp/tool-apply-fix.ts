@@ -124,7 +124,13 @@ export const applyFixTool: McpTool = {
     if ("error" in preflight) return preflight.error;
     const { resolved, cwd, edit, ext, original, dryRun } = preflight;
 
-    const { newSource, newAst } = spliceWithNativeLineEndings(original.source, edit, ext);
+    // Forward `resolved` (the absolute file path) so the post-edit
+    // re-parse on a bare `.js`/`.ts` source routes through `parseTsx`'s
+    // JSX-disabled path — without it, every `apply_fix` against a
+    // plain-JS file with a `<Identifier` comparison operator would
+    // fake an `Unclosed JSX element <…>` post-edit and reject the edit
+    // (Q8-PARSER-ROUTING-JS-AS-TSX).
+    const { newSource, newAst } = spliceWithNativeLineEndings(original.source, edit, ext, resolved);
     const originalErrorCount = original.ast.errors.length;
     const newErrorCount = newAst.errors.length;
     if (newErrorCount > originalErrorCount) {

@@ -502,7 +502,15 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     filePath.endsWith(".ts") ||
     filePath.endsWith(".js")
   ) {
-    const r = parseTsx(source);
+    // Pass `filePath` so `inferJsxMode` can disable JSX-mode entry on
+    // bare `.js`/`.ts` inputs that lack a JSX-import signal — without
+    // this, every plain-JS file with a `<Identifier` comparison
+    // operator (`r.length<b.length`, `if (a<h && b>c)`) emits a fake
+    // `Unclosed JSX element <…>` and floods `parseErrorFiles[]`
+    // (Q8-PARSER-ROUTING-JS-AS-TSX). Other parser entry points
+    // (`session.parseFile`, fixture runner, CLI commands) already
+    // pass it; this was the remaining gap.
+    const r = parseTsx(source, { filePath });
     return { language: "tsx", root: r.root, errors: r.errors };
   }
   return null;

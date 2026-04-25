@@ -511,7 +511,7 @@ function extensionOf(filePath: string): Ext | null {
   return null;
 }
 
-export function parseFor(ext: Ext, source: string): Ast {
+export function parseFor(ext: Ext, source: string, filePath?: string): Ast {
   if (ext === "html") {
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
@@ -551,7 +551,14 @@ export function parseFor(ext: Ext, source: string): Ast {
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  const r = parseTsx(source);
+  // Forward `filePath` so `parseTsx`'s `inferJsxMode` can disable
+  // JSX-mode entry on bare `.js`/`.ts` post-edit sources that lack a
+  // JSX-import signal — without this, every `apply_fix` re-parse on a
+  // plain-JS file with a `<Identifier` comparison operator would emit
+  // a fake `Unclosed JSX element <…>` and trip the "edit introduces
+  // parse errors" envelope (Q8-PARSER-ROUTING-JS-AS-TSX). Optional so
+  // existing test callers (`parseFor(ext, source)`) still type-check.
+  const r = parseTsx(source, filePath === undefined ? {} : { filePath });
   return { language: "tsx", root: r.root, errors: r.errors };
 }
 
@@ -589,10 +596,17 @@ export function spliceWithNativeLineEndings(
   source: string,
   edit: ResolvedEdit,
   ext: Ext,
+  filePath?: string,
 ): { readonly newSource: string; readonly newAst: Ast } {
   const normalizedNewText = isCrlfSource(source) ? rewriteBareLfToCrlf(edit.newText) : edit.newText;
   const newSource = source.replace(edit.oldText, normalizedNewText);
-  const newAst = parseFor(ext, newSource);
+  // Forward `filePath` to `parseFor` so the post-edit re-parse on a
+  // bare-`.js` / `.ts` file routes through the JSX-disabled path —
+  // the same fix as the upstream `parseForExtension` call in
+  // `session.ts`. Without it, an `apply_fix` against a plain-JS file
+  // would fake an `Unclosed JSX element <…>` post-edit and reject a
+  // genuinely-clean edit (Q8-PARSER-ROUTING-JS-AS-TSX).
+  const newAst = parseFor(ext, newSource, filePath);
   return { newSource, newAst };
 }
 
