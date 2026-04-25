@@ -7,6 +7,7 @@
 
 import type { Rule } from "../types/rule.ts";
 import { rule as conflictingRole } from "./aria/conflicting-role.ts";
+import { rule as dialogRoleMissing } from "./aria/dialog-role-missing.ts";
 import { rule as disabledLinkSurrogate } from "./aria/disabled-link-surrogate.ts";
 import { rule as expandedOnDisclosure } from "./aria/expanded-on-disclosure.ts";
 import { rule as hiddenFocus } from "./aria/hidden-focus.ts";
@@ -113,6 +114,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   contrastEnhanced,
   contrastMinimum,
   contrastNonText,
+  dialogRoleMissing,
   disabledLinkSurrogate,
   dragAlternative,
   draggableNoKeyboardAlt,
@@ -205,6 +207,7 @@ export {
   contrastEnhanced,
   contrastMinimum,
   contrastNonText,
+  dialogRoleMissing,
   disabledLinkSurrogate,
   dragAlternative,
   draggableNoKeyboardAlt,
