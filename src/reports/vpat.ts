@@ -16,12 +16,16 @@
  *     OR the criterion fundamentally requires runtime evidence
  *     (keyboard traversal, focus visibility, rendered contrast — see
  *     `RUNTIME_EVIDENCE_REQUIRED_CRITERIA`) AND no fresh attestation
- *     covers it. Absence of a static finding on a runtime-dependent
- *     SC is not evidence of conformance.
+ *     covers it, OR the criterion is `automatable: "partial"` with
+ *     zero findings AND no attestation backing the manual axis.
+ *     Absence of a static finding is not evidence of conformance.
  *   - "Does Not Support" — at least one `error` violation.
- *   - "Partially Supports" — only `warning` violations, or the
- *     criterion is classified "partial" in the standard metadata.
- *   - "Supports" — zero violations on an automatable criterion.
+ *   - "Partially Supports" — only `warning` violations, or the criterion
+ *     is classified "partial" in the standard metadata AND a fresh
+ *     attestation (manual review / runtime harness) backs the manual
+ *     axis the static layer cannot prove.
+ *   - "Supports" — zero violations on a fully automatable criterion
+ *     whose satisfying rule actually ran on eligible inputs.
  */
 
 import type { Applicability } from "../mcp/manual-applicability.ts";
@@ -538,23 +542,8 @@ function buildEntry(
   // criterion even though no static rule fired. Skip the untested
   // override in that case so the attested-pass routes through the
   // normal `buildAutomatedPassRemarks` path with its evidence citation.
-  if (
-    firedCriteria !== undefined &&
-    !firedCriteria.has(criterion.id) &&
-    attestation === undefined
-  ) {
-    return {
-      criterionId: criterion.id,
-      localId: criterion.localId,
-      title: criterion.title,
-      level: criterion.level,
-      conformance: "Not Evaluated",
-      remarks: buildUntestedRemarks(criterion),
-      violationCount: 0,
-      automated: true,
-      evidenceStatus: "untested",
-    };
-  }
+  const unattestedEntry = buildUnattestedEntry(criterion, attestation, firedCriteria);
+  if (unattestedEntry) return unattestedEntry;
 
   const remarks = buildAutomatedPassRemarks(criterion, attestation);
   return {
@@ -661,6 +650,66 @@ function buildOutOfScopeRemarks(criterion: Criterion, scanLevel: "A" | "AA" | "A
  */
 function buildUntestedRemarks(criterion: Criterion): string {
   return `Not Evaluated. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): no rule satisfying this criterion ran on eligible inputs in this scan. Absence of findings is not evidence of conformance; extend the scan to files the rules target (CSS for contrast, HTML/TSX for structural rules) and re-run.`;
+}
+
+/**
+ * Routes criteria with no positive evidence to "Not Evaluated" before
+ * the default pass-by-absence logic runs. Two paths:
+ *   1. `automatable: "partial"` + no attestation — partial automation
+ *      cannot prove conformance for the manual / judgement-bound half;
+ *      "Partially Supports" with zero evidence is dishonest.
+ *   2. Rule satisfying the criterion never fired AND no attestation —
+ *      "Supports" on absence of findings is the canonical pass-by-omission
+ *      bug.
+ * The partial-unattested branch fires before the never-fired branch
+ * because the partial framing is more specific.
+ */
+function buildUnattestedEntry(
+  criterion: Criterion,
+  attestation: AttestationRecord | undefined,
+  firedCriteria: ReadonlySet<string> | undefined,
+): VpatEntry | undefined {
+  if (attestation !== undefined) return undefined;
+  if (criterion.automatable === "partial") {
+    return {
+      criterionId: criterion.id,
+      localId: criterion.localId,
+      title: criterion.title,
+      level: criterion.level,
+      conformance: "Not Evaluated",
+      remarks: buildPartialUnattestedRemarks(criterion),
+      violationCount: 0,
+      automated: true,
+    };
+  }
+  if (firedCriteria !== undefined && !firedCriteria.has(criterion.id)) {
+    return {
+      criterionId: criterion.id,
+      localId: criterion.localId,
+      title: criterion.title,
+      level: criterion.level,
+      conformance: "Not Evaluated",
+      remarks: buildUntestedRemarks(criterion),
+      violationCount: 0,
+      automated: true,
+      evidenceStatus: "untested",
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Auditor-facing remark for an `automatable: "partial"` criterion that
+ * had a satisfying rule run with zero findings AND no attestation. The
+ * automated half found nothing wrong, but the manual / judgement-bound
+ * half is unverified — claiming "Partially Supports" without that
+ * evidence reads to a procurement officer as "we tested and some parts
+ * work" when the honest framing is "we couldn't fully evaluate this."
+ * Routes to "Not Evaluated" with an explicit framing of which half is
+ * un-evaluated and pointers to `attest` for closing the gap.
+ */
+function buildPartialUnattestedRemarks(criterion: Criterion): string {
+  return `Not Evaluated. ${criterion.localId} ${criterion.title} (Level ${criterion.level}): partial-automation criterion. Static source-code checks ran with no findings, but the manual / judgement-bound half of this criterion was not evaluated. Absence of findings is not evidence of conformance; record a verdict via the \`attest\` tool (manual review, runtime harness, or human study) to close the gap.`;
 }
 
 const LEVEL_RANK: Readonly<Record<"A" | "AA" | "AAA", number>> = { A: 1, AA: 2, AAA: 3 };

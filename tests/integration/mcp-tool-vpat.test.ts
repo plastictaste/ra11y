@@ -341,6 +341,48 @@ describe("MCP tool: vpat", () => {
     }
   });
 
+  it("never routes partial-automation SCs to 'Partially Supports' on a clean scan with no attestation", async () => {
+    // Criteria classified `automatable: "partial"` depend on a runtime
+    // / manual axis the static layer cannot fully evaluate. With zero
+    // violations AND zero attestations the prior verdict was
+    // "Partially Supports" — which reads to a procurement officer as
+    // "we tested and some parts work" when the honest framing is "we
+    // couldn't fully evaluate this." Each criterion may legitimately
+    // route to "Not Applicable" (element-presence override), "Not
+    // Evaluated — out of scope" (above scanLevel), or "Not Evaluated"
+    // (partial-unattested branch); the doctrine-level invariant is
+    // simply that NONE of them hit "Partially Supports" without
+    // evidence. Verifies on a small fixture corpus where the partial
+    // criteria have no attestations.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "vpat", {
+        productName: "Acme App",
+        productVersion: "1.0.0",
+        cwd: BAD_ALT_DIR,
+      }),
+    ]);
+    const body = bodyOf(responses[1]);
+    const wcag22 = body.standards.find((s) => s.standardId === "wcag22");
+    expect(wcag22).toBeDefined();
+    if (!wcag22) return;
+    const partialEntries = wcag22.entries.filter(
+      (e: { conformance: string; remarks: string }) => e.conformance === "Partially Supports",
+    );
+    // No "Partially Supports" with zero evidence. The remaining valid
+    // routes for an unattested partial-automatable criterion are:
+    // "Not Applicable", "Not Evaluated", "Does Not Support".
+    for (const entry of partialEntries) {
+      expect(entry.remarks).toMatch(/attest|finding|warning|violation/i);
+    }
+    // Verify at least one criterion lands in the partial-unattested
+    // branch — the fix has to be reachable from a real reproducer.
+    const reachedPartialBranch = wcag22.entries.some((e: { remarks: string }) =>
+      e.remarks.includes("partial-automation criterion"),
+    );
+    expect(reachedPartialBranch).toBe(true);
+  });
+
   it("round-trips additionalPaths without raising scanned_zero_files", async () => {
     // Pass a directory in additionalPaths that widens the scanned set.
     // The bad-alt fixture tree is the cwd root; additionalPaths points
