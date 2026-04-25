@@ -974,6 +974,110 @@ describe("warningsFromScanMeta", () => {
     });
     expect(codes).not.toContain("scanned_minified_file");
   });
+
+  // V1-MISSING-WARNING-DIST-ONLY-SCAN: doctrine analogue of
+  // `scanned_zero_files`. When 100% of the parsed files are
+  // classified as build artifacts (the canonical misrooted-into-`dist/`
+  // shape), `scanned_build_artifacts_present` only signals "at least
+  // one artifact" — neither it nor `scanned_zero_files` (which needs
+  // filesScanned: 0) names the dominance regime. The new code surfaces
+  // the gap so the agent re-scopes to authored source.
+  it("fires `dist_only_scan_detected` when every parsed file is a build artifact", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 5 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsAllFiles: true,
+    });
+    expect(codes).toContain("dist_only_scan_detected");
+  });
+
+  it("does NOT fire `dist_only_scan_detected` when at least one parsed file is authored source", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 10,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 10 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsAllFiles: false,
+    });
+    expect(codes).not.toContain("dist_only_scan_detected");
+  });
+
+  it("does NOT fire `dist_only_scan_detected` when filesScanned is zero (the bare scanned_zero_files stays the honest signal)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 0,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      // Even if a caller speculatively passes the flag, the helper
+      // requires filesScanned > 0 so a 0-files scan can never trip
+      // this code on top of `scanned_zero_files`.
+      scannedBuildArtifactsAllFiles: true,
+    });
+    expect(codes).not.toContain("dist_only_scan_detected");
+    expect(codes).toContain("scanned_zero_files");
+  });
+
+  it("does NOT fire `dist_only_scan_detected` when the flag is omitted (tool didn't run the detector)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 5 },
+    });
+    expect(codes).not.toContain("dist_only_scan_detected");
+  });
+
+  // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: when filesScanned: 0 AND
+  // the config-loader walk-up landed on a real project marker at a
+  // strict ancestor, the bare `scanned_zero_files` is honest but
+  // incomplete — the parent dir likely would have produced findings.
+  // The companion code answers "did you mean a parent dir?" with a
+  // concrete path the agent can re-scope to in one read.
+  it("fires `cwd_appears_misrooted` when filesScanned is zero AND nearestConfigAncestor is supplied", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 0,
+      rootSource: "explicit",
+      configSource: "/parent/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      nearestConfigAncestor: "/parent",
+    });
+    expect(codes).toContain("cwd_appears_misrooted");
+    // Pairs with — does not replace — `scanned_zero_files`.
+    expect(codes).toContain("scanned_zero_files");
+  });
+
+  it("does NOT fire `cwd_appears_misrooted` on a genuinely empty dir with no ancestor config (the bare scanned_zero_files stays honest)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 0,
+      rootSource: "explicit",
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      // No ancestor probe result — predicate drops conservatively.
+    });
+    expect(codes).not.toContain("cwd_appears_misrooted");
+  });
+
+  it("does NOT fire `cwd_appears_misrooted` when filesScanned is non-zero (the scan reached authored source)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/parent/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".tsx": 12 },
+      nearestConfigAncestor: "/parent",
+    });
+    expect(codes).not.toContain("cwd_appears_misrooted");
+  });
 });
 
 describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)", () => {
@@ -2162,5 +2266,36 @@ describe("computeScanWarnings — animation_library_without_reduced_motion_guard
     // additionalMatches entries deliberately omit `suggestion` — the
     // headline tuple's text already names the remediation pattern.
     expect(payload?.additionalMatches?.[0]).not.toHaveProperty("suggestion");
+  });
+
+  // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED payload-bearing surface:
+  // the ancestor path is the load-bearing pivot the agent re-scopes
+  // to, so it must ride on the structured `warningsDetails` channel
+  // alongside the bare code (membership-vs-payload invariant).
+  it("warningsField pairs `cwd_appears_misrooted` with its `nearestConfigAncestor` payload", () => {
+    const out = warningsField({
+      filesScanned: 0,
+      rootSource: "explicit",
+      configSource: "/parent/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      nearestConfigAncestor: "/parent",
+    });
+    expect(out.warnings).toContain("cwd_appears_misrooted");
+    expect(out.warningsDetails?.cwd_appears_misrooted).toBeDefined();
+    expect(out.warningsDetails?.cwd_appears_misrooted?.nearestConfigAncestor).toBe("/parent");
+  });
+
+  it("does NOT emit a `cwd_appears_misrooted` payload when the code didn't fire", () => {
+    const out = warningsField({
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/parent/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".tsx": 12 },
+      nearestConfigAncestor: "/parent",
+    });
+    expect(out.warnings ?? []).not.toContain("cwd_appears_misrooted");
+    expect(out.warningsDetails?.cwd_appears_misrooted).toBeUndefined();
   });
 });

@@ -433,7 +433,47 @@ export type ScanWarningCode =
   // empty by definition; the warning is the routing signal that lets
   // the agent decide whether to widen scope, switch parsers, or
   // re-route via `additionalPaths`.
-  | "parser_bailed_zero_findings";
+  | "parser_bailed_zero_findings"
+  // V1-MISSING-WARNING-DIST-ONLY-SCAN: every file the scan touched was
+  // classified as a build artifact — i.e. `scannedBuildArtifacts` covers
+  // 100% of `filesScanned` AND `filesScanned > 0`. The canonical
+  // misrooted-into-`dist/` shape: a caller passes `cwd` pointing at a
+  // generated-output directory and gets a populated `files[]` whose
+  // findings all sit on minified bytes / bundler output. Without this
+  // code, the agent reads the response as "real findings on real files"
+  // because `scanned_zero_files` did not fire (filesScanned > 0) and
+  // `scanned_build_artifacts_present` only signals "at least one
+  // artifact" — neither code names the regime where the entire scan
+  // surface is generated code. Doctrine analogue of `scanned_zero_files`:
+  // the input plausibly didn't reach authored source, the success-shape
+  // is ambiguous, and a structured warning lets the agent re-scope to
+  // the source tree (`additionalPaths` to `src/`, narrower `cwd`)
+  // instead of triaging finding-by-finding on un-editable bytes. Pairs
+  // with — and is strictly narrower than — `scanned_build_artifacts_present`:
+  // both fire together when the dist-only condition holds, but this
+  // code names the dominance regime the broader presence label cannot.
+  // Binary-presence: the file list lives in `meta.scannedBuildArtifacts`
+  // already, so no payload is needed beyond the bare fired bit.
+  | "dist_only_scan_detected"
+  // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: `filesScanned === 0` AND
+  // the config-resolution walk-up landed on a `ra11y.config.*` /
+  // `package.json` at a strict ancestor of the resolved scan root —
+  // i.e. the parent dir would have produced findings but the caller
+  // pointed at an empty leaf. Pairs with `scanned_zero_files`; that
+  // code names "tool ran on nothing," this one names "did you mean a
+  // parent dir?" so the agent can re-call with the surfaced ancestor
+  // path instead of guessing. The deterministic predicate uses only
+  // already-resolved paths from the existing config-loader walk-up
+  // (no second filesystem traversal); the call site supplies the
+  // ancestor directory under {@link WarningInputs.nearestConfigAncestor}
+  // and the warning fires only when that path is present alongside
+  // `filesScanned: 0`. When no ancestor has a config, the code drops
+  // and the bare `scanned_zero_files` stays the honest signal — per
+  // CLAUDE.md §1 "No heuristic suppression," we surface only when the
+  // evidence is concrete (a real config at a known parent path).
+  // Payload-bearing: `warningsDetails.cwd_appears_misrooted: { nearestConfigAncestor }`
+  // carries the absolute path so the agent re-scopes in one read.
+  | "cwd_appears_misrooted";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -720,6 +760,35 @@ export interface WarningInputs {
     readonly library: string;
     readonly suggestion: string;
   }[];
+  /**
+   * V1-MISSING-WARNING-DIST-ONLY-SCAN: caller-signaled "every parsed file
+   * the scan touched was classified as a build artifact." The call site
+   * computes the predicate against `buildArtifacts.entries.length` and
+   * `meta.filesScanned` so this module stays pure over its inputs —
+   * mirrors `scannedBuildArtifactsPresent` (the broader "any artifact"
+   * flag). Pass `true` only when both halves of the predicate hold:
+   * `entries.length === filesScanned` AND `filesScanned > 0`. Pass
+   * `false` (or omit) when even one parsed file was authored source —
+   * the dist-only signal would be a lie in that case.
+   */
+  readonly scannedBuildArtifactsAllFiles?: boolean;
+  /**
+   * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: caller-supplied absolute
+   * path of the nearest strict ancestor of the resolved scan root that
+   * contains a `ra11y.config.*` / `package.json` marker. Drives the
+   * `cwd_appears_misrooted` code + its `warningsDetails` payload. The
+   * call site computes the ancestor from already-resolved paths the
+   * config-loader walk produced (no second filesystem traversal); when
+   * the loaded `configSource` lives at a strict ancestor of the scan
+   * root, that ancestor's `dirname` is the canonical answer. Pass
+   * `undefined` when no ancestor qualified — the code drops
+   * conservatively and the bare `scanned_zero_files` stays the honest
+   * signal. Distinct from `configSearchSawProjectMarker`: that flag
+   * gates `no_config_found` on whether the walk saw ANY marker, with no
+   * path surfaced; this field carries the ancestor path itself so the
+   * agent re-scopes in one read.
+   */
+  readonly nearestConfigAncestor?: string;
 }
 
 // MARKER_PROBE_002
@@ -958,7 +1027,8 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `content_files_skipped`, `source_language_unsupported`,
  *     `vendor_css_dominates_findings`, `parse_errors_present`,
  *     `scanned_build_artifacts_present`, `scanned_minified_file`,
- *     and `animation_library_without_reduced_motion_guard`.
+ *     `animation_library_without_reduced_motion_guard`, and
+ *     `cwd_appears_misrooted`.
  *     Each carries a `summarize*`
  *     helper that returns `undefined` if the predicate fired but the
  *     payload would be degenerate (e.g. zero counts, missing pivot) —
@@ -974,8 +1044,9 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `session_wrappers_configured_for_different_cwd`,
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
  *     `response_meta_truncated`,
- *     `baseline_dry_run`, and
- *     `proposed_config_deprecated_use_suggested_config`. Each names a
+ *     `baseline_dry_run`,
+ *     `proposed_config_deprecated_use_suggested_config`, and
+ *     `dist_only_scan_detected`. Each names a
  *     condition whose remediation is documented in the code's prose
  *     comment alongside its declaration; meta sub-fields named there
  *     carry any incidental detail (paths, ext maps, directive lists)
@@ -1327,6 +1398,25 @@ export interface ScanWarningDetails {
       readonly library: string;
     }[];
   };
+  /**
+   * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: payload for
+   * `cwd_appears_misrooted`. Carries the absolute path of the nearest
+   * strict ancestor of the resolved scan root that contains a
+   * `ra11y.config.*` / `package.json` marker — the deterministic answer
+   * to "did you mean a parent dir?". Without the path, an agent reading
+   * the bare code knows there's a parent worth pointing at but has to
+   * walk the directory tree itself to find it; with the path, the
+   * remediation is one re-call (`scan_project({ cwd: nearestConfigAncestor })`).
+   * Per CLAUDE.md §1 "No heuristic suppression," the path is
+   * deterministic-from-already-resolved-state — surfaced from the
+   * config-loader walk-up's existing findings rather than guessed. The
+   * agent reads the ancestor and decides whether the original `cwd`
+   * was intentional (e.g. scoped audit of a `dist/`-tagged folder)
+   * before re-routing.
+   */
+  readonly cwd_appears_misrooted?: {
+    readonly nearestConfigAncestor: string;
+  };
 }
 
 function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
@@ -1447,6 +1537,31 @@ function parseErrorCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
 }
 
 /**
+ * Scan-shape code family — V1-MISSING-WARNING-DIST-ONLY-SCAN and
+ * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED. Extracted from
+ * {@link computeScanWarnings} so the orchestrator stays under the
+ * cognitive-complexity cap (same pattern as
+ * {@link contentDistributionCodes} and {@link parseErrorCodes}). Both
+ * codes name a regime where the success-shape is ambiguous about whether
+ * the scan reached authored source — `dist_only_scan_detected` for "every
+ * parsed file was generated bytes," `cwd_appears_misrooted` for "no
+ * parseable files but a parent dir likely would have produced them."
+ *
+ * Order matches declaration order on `ScanWarningCode` for stable
+ * `warnings[]` sequencing across runs: dist-only first, misrooted second.
+ */
+function scanShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (inputs.scannedBuildArtifactsAllFiles === true && inputs.filesScanned > 0) {
+    out.push("dist_only_scan_detected");
+  }
+  if (inputs.filesScanned === 0 && typeof inputs.nearestConfigAncestor === "string") {
+    out.push("cwd_appears_misrooted");
+  }
+  return out;
+}
+
+/**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
  */
@@ -1532,6 +1647,14 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // order is unchanged because the helper preserves the original
   // sequence and runs at the original insertion point.
   out.push(...parseErrorCodes(inputs));
+  // Scan-shape code family — see `scanShapeCodes`. Two branches
+  // (V1-MISSING-WARNING-DIST-ONLY-SCAN, V1-MISSING-WARNING-CWD-APPEARS-MISROOTED)
+  // extracted into the helper so this function's cognitive complexity
+  // stays under the lint cap. Both name regimes where the success
+  // shape is ambiguous about whether the scan reached authored source
+  // (the doctrine analogue of `scanned_zero_files`); the emitted order
+  // is unchanged.
+  out.push(...scanShapeCodes(inputs));
   if (hasDeprecatedRulesByExtensionAlias(inputs.analysisCoverage)) {
     // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the legacy
     // `rulesByExtension` alias rode on `meta.analysisCoverage`
@@ -1994,6 +2117,23 @@ type ScanMetaWarningArgs = {
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
   readonly animationLibraryGuardCandidates?: WarningInputs["animationLibraryGuardCandidates"];
   /**
+   * V1-MISSING-WARNING-DIST-ONLY-SCAN: caller-signaled "every parsed
+   * file the scan touched was a build artifact." See
+   * {@link WarningInputs.scannedBuildArtifactsAllFiles} for the
+   * predicate semantics; the call site computes the cross-reference
+   * once and threads the result so this module stays pure.
+   */
+  readonly scannedBuildArtifactsAllFiles?: boolean;
+  /**
+   * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: caller-supplied absolute
+   * path of the nearest strict ancestor of the resolved scan root that
+   * carries a `ra11y.config.*` / `package.json` marker. See
+   * {@link WarningInputs.nearestConfigAncestor} for the resolution
+   * rules. Threaded as an explicit field so the warnings module stays
+   * pure over its inputs — no second filesystem walk.
+   */
+  readonly nearestConfigAncestor?: string;
+  /**
    * Q8-PARSE-ERRORS-PRESENT-SUBCODE: total finding count across every
    * scanned file. Threaded explicitly because `formatted.meta` does not
    * (and per the `plan.totalFindings` deletion precedent should not)
@@ -2005,6 +2145,58 @@ type ScanMetaWarningArgs = {
   readonly totalFindings?: number;
 };
 
+/**
+ * Optional `ScanMetaWarningArgs` keys that pass through to
+ * `WarningInputs` unchanged when defined. Listing them once avoids the
+ * 17-conditional-spread block that previously tripped the cognitive-
+ * complexity cap on `buildWarningInputsFromScanMeta`. Order is the same
+ * as the field declarations on `ScanMetaWarningArgs` so a reader walking
+ * either declaration sees the same sequence.
+ *
+ * Each key is a member of both `ScanMetaWarningArgs` and `WarningInputs`
+ * so a literal pass-through is type-safe; the few keys that don't share
+ * names (none today) would need explicit conditional spreads outside
+ * this list.
+ */
+const PASSTHROUGH_OPTIONAL_KEYS = [
+  "scannedBuildArtifactsPresent",
+  "scannedBuildArtifactsSummary",
+  "storybookPresetActive",
+  "sessionWrappersMismatchCwd",
+  "vendorCssNoise",
+  "templateDirectivesOverlap",
+  "additionalPathsRedundant",
+  "restrictToPathsEmpty",
+  "configSearchSawProjectMarker",
+  "metaArrayTruncated",
+  "scssUnresolvedVariableFiles",
+  "scannedMinifiedFiles",
+  "bulkCatalogDetection",
+  "animationLibraryGuardCandidates",
+  "scannedBuildArtifactsAllFiles",
+  "nearestConfigAncestor",
+  "totalFindings",
+] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
+
+/**
+ * Forwards every defined optional key in {@link PASSTHROUGH_OPTIONAL_KEYS}
+ * from `args` onto the returned record. Replaces the long conditional-
+ * spread chain in {@link buildWarningInputsFromScanMeta} so the
+ * orchestrator stays under the cognitive-complexity cap as new optional
+ * inputs accrete (V1-MISSING-WARNING-* additions stayed within budget
+ * once this helper landed). Pure over its inputs — type-safe pass-
+ * through; never copies an `undefined` so the conditional-spread
+ * "present-when-meaningful" contract is preserved.
+ */
+function forwardOptionalArgs(args: ScanMetaWarningArgs): Partial<WarningInputs> {
+  const out: Record<string, unknown> = {};
+  for (const key of PASSTHROUGH_OPTIONAL_KEYS) {
+    const value = args[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return out as Partial<WarningInputs>;
+}
+
 function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
   return {
     filesScanned: readNumber(args.meta, "filesScanned"),
@@ -2012,47 +2204,7 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     configSource: args.configSource,
     analysisCoverage: readRecord(args.meta, "analysisCoverage"),
     filesByExtension: readNumberRecord(args.meta, "filesByExtension"),
-    ...(args.scannedBuildArtifactsPresent === undefined
-      ? {}
-      : { scannedBuildArtifactsPresent: args.scannedBuildArtifactsPresent }),
-    ...(args.scannedBuildArtifactsSummary === undefined
-      ? {}
-      : { scannedBuildArtifactsSummary: args.scannedBuildArtifactsSummary }),
-    ...(args.storybookPresetActive === undefined
-      ? {}
-      : { storybookPresetActive: args.storybookPresetActive }),
-    ...(args.sessionWrappersMismatchCwd === undefined
-      ? {}
-      : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
-    ...(args.vendorCssNoise === undefined ? {} : { vendorCssNoise: args.vendorCssNoise }),
-    ...(args.templateDirectivesOverlap === undefined
-      ? {}
-      : { templateDirectivesOverlap: args.templateDirectivesOverlap }),
-    ...(args.additionalPathsRedundant === undefined
-      ? {}
-      : { additionalPathsRedundant: args.additionalPathsRedundant }),
-    ...(args.restrictToPathsEmpty === undefined
-      ? {}
-      : { restrictToPathsEmpty: args.restrictToPathsEmpty }),
-    ...(args.configSearchSawProjectMarker === undefined
-      ? {}
-      : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
-    ...(args.metaArrayTruncated === undefined
-      ? {}
-      : { metaArrayTruncated: args.metaArrayTruncated }),
-    ...(args.scssUnresolvedVariableFiles === undefined
-      ? {}
-      : { scssUnresolvedVariableFiles: args.scssUnresolvedVariableFiles }),
-    ...(args.scannedMinifiedFiles === undefined
-      ? {}
-      : { scannedMinifiedFiles: args.scannedMinifiedFiles }),
-    ...(args.bulkCatalogDetection === undefined
-      ? {}
-      : { bulkCatalogDetection: args.bulkCatalogDetection }),
-    ...(args.animationLibraryGuardCandidates === undefined
-      ? {}
-      : { animationLibraryGuardCandidates: args.animationLibraryGuardCandidates }),
-    ...(args.totalFindings === undefined ? {} : { totalFindings: args.totalFindings }),
+    ...forwardOptionalArgs(args),
   };
 }
 
@@ -2123,6 +2275,10 @@ export function computeScanWarningDetails(
     {
       code: "animation_library_without_reduced_motion_guard",
       summarize: () => summarizeAnimationLibraryGuard(inputs.animationLibraryGuardCandidates),
+    },
+    {
+      code: "cwd_appears_misrooted",
+      summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
     },
   ];
   for (const row of dispatch) {
@@ -2315,6 +2471,22 @@ function summarizeAnimationLibraryGuard(
     suggestion: head.suggestion,
     ...(tail.length === 0 ? {} : { additionalMatches: tail }),
   };
+}
+
+/**
+ * Builds the `cwd_appears_misrooted` payload from the caller-supplied
+ * `nearestConfigAncestor` path. Returns `undefined` when the input is
+ * absent or an empty string so the dispatch table conditional-spreads
+ * the entry away (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION
+ * payload-vs-binary contract). Pure shape-builder — the call site
+ * already validated the ancestor against the resolved scan root and
+ * filtered out the no-ancestor case before threading the value.
+ */
+function summarizeCwdAppearsMisrooted(
+  ancestor: WarningInputs["nearestConfigAncestor"],
+): NonNullable<ScanWarningDetails["cwd_appears_misrooted"]> | undefined {
+  if (typeof ancestor !== "string" || ancestor.length === 0) return undefined;
+  return { nearestConfigAncestor: ancestor };
 }
 
 /**

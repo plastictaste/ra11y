@@ -133,3 +133,48 @@ export function sawProjectMarkerInWalk(cwd: string): boolean {
     dir = parent;
   }
 }
+
+/**
+ * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: resolves the nearest STRICT
+ * ancestor of `cwd` that carries one of {@link PROJECT_MARKER_FILENAMES}
+ * (a `ra11y.config.*` or `package.json`). Returns the absolute path of
+ * that ancestor directory, or `undefined` when no strict ancestor up to
+ * the first `.git` directory or the filesystem root carries a marker.
+ *
+ * "Strict ancestor" — markers AT `cwd` itself are intentionally ignored.
+ * The doctrine surface is "did you mean a parent dir?", so a marker at
+ * `cwd` is not evidence that the user pointed at the wrong place; it's
+ * the normal shape for an empty-but-correct scan target. Only a marker
+ * upstairs answers the misrooted question.
+ *
+ * Walk-up semantics mirror {@link sawProjectMarkerInWalk} exactly except
+ * for the initial-dir skip — same stop conditions (`.git` directory or
+ * filesystem root), same marker list. Anchoring to the same range the
+ * config loader walks keeps the predicate honest: a positive result
+ * corresponds one-to-one with "the loader saw a real project marker
+ * upstairs and the caller landed on a leaf with no parseable files."
+ *
+ * Read-only and deterministic; one `existsSync` per walked directory
+ * per marker. Cheap enough to run on every empty-files scan branch.
+ *
+ * @param cwd Starting directory. Caller is responsible for ensuring the
+ *            path resolves; the probe uses `existsSync` per-directory
+ *            and returns `undefined` on any unreachable / no-marker
+ *            walk.
+ */
+export function nearestConfigAncestorPath(cwd: string): string | undefined {
+  let dir = resolve(cwd);
+  // Skip the starting dir itself — strict-ancestor semantics.
+  const parent = dirname(dir);
+  if (parent === dir) return undefined;
+  dir = parent;
+  while (true) {
+    for (const filename of PROJECT_MARKER_FILENAMES) {
+      if (existsSync(join(dir, filename))) return dir;
+    }
+    if (existsSync(join(dir, ".git"))) return undefined;
+    const next = dirname(dir);
+    if (next === dir) return undefined;
+    dir = next;
+  }
+}

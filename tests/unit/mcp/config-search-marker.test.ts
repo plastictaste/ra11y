@@ -17,7 +17,10 @@ import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sawProjectMarkerInWalk } from "../../../src/mcp/config-search-marker.ts";
+import {
+  nearestConfigAncestorPath,
+  sawProjectMarkerInWalk,
+} from "../../../src/mcp/config-search-marker.ts";
 
 function makeTmpDir(prefix: string): Promise<string> {
   return mkdtemp(join(tmpdir(), `${prefix}-`));
@@ -89,5 +92,62 @@ describe("sawProjectMarkerInWalk", () => {
     await writeFile(join(dir, "package.json"), "{}");
     await mkdir(join(dir, ".git"));
     expect(sawProjectMarkerInWalk(dir)).toBe(true);
+  });
+});
+
+// V1-MISSING-WARNING-CWD-APPEARS-MISROOTED probe:
+// `nearestConfigAncestorPath` answers "did you mean a parent dir?" by
+// resolving the nearest STRICT ancestor with a project marker. Markers
+// at `cwd` itself are ignored on purpose — the empty-files-on-a-real-
+// project shape is the normal case for an empty repo, not a misroot.
+describe("nearestConfigAncestorPath", () => {
+  it("returns the parent directory when an ancestor carries a `ra11y.config.ts`", async () => {
+    const root = await makeTmpDir("ra11y-ancestor-config");
+    await writeFile(join(root, "ra11y.config.ts"), "export default {};");
+    await mkdir(join(root, ".git")); // stop probe at the scratch root
+    const nested = join(root, "src");
+    await mkdir(nested);
+    expect(nearestConfigAncestorPath(nested)).toBe(root);
+  });
+
+  it("returns the nearest ancestor when a `package.json` sits two levels up", async () => {
+    const root = await makeTmpDir("ra11y-ancestor-pkg");
+    await writeFile(join(root, "package.json"), "{}");
+    await mkdir(join(root, ".git"));
+    const nested = join(root, "a", "b");
+    await mkdir(nested, { recursive: true });
+    expect(nearestConfigAncestorPath(nested)).toBe(root);
+  });
+
+  it("returns undefined when only the starting dir carries a marker (strict-ancestor semantics)", async () => {
+    // A marker AT `cwd` is the normal shape for an empty-but-correct
+    // scan target — not evidence the caller pointed at the wrong
+    // place. Strict-ancestor semantics means the probe ignores it.
+    const dir = await makeTmpDir("ra11y-ancestor-self-only");
+    await writeFile(join(dir, "package.json"), "{}");
+    await mkdir(join(dir, ".git"));
+    expect(nearestConfigAncestorPath(dir)).toBeUndefined();
+  });
+
+  it("returns undefined when a `.git` directory blocks the walk-up before any marker", async () => {
+    // `.git` mirrors the loader's stop condition: a marker outside the
+    // repo boundary is invisible to the loader and must be invisible
+    // here too.
+    const outer = await makeTmpDir("ra11y-ancestor-git-stop");
+    await writeFile(join(outer, "package.json"), "{}"); // outside the probe's reach
+    const repo = join(outer, "repo");
+    await mkdir(repo);
+    await mkdir(join(repo, ".git"));
+    const nested = join(repo, "src");
+    await mkdir(nested);
+    expect(nearestConfigAncestorPath(nested)).toBeUndefined();
+  });
+
+  it("returns undefined when no ancestor carries a marker (scratch directory)", async () => {
+    const root = await makeTmpDir("ra11y-ancestor-none");
+    await mkdir(join(root, ".git")); // stop probe at the scratch root
+    const nested = join(root, "src");
+    await mkdir(nested);
+    expect(nearestConfigAncestorPath(nested)).toBeUndefined();
   });
 });
