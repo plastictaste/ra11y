@@ -1,0 +1,35 @@
+/*
+ * Bad: state classes that distinguish state from base by changing only
+ * color-family properties. Sighted full-color users see the difference;
+ * colorblind users, screen-reader users, and users under color-inverted
+ * themes get no signal that the state has changed.
+ */
+
+.tab {
+  color: #4a5568;
+  background-color: #fff;
+}
+
+.tab.active {
+  color: #1a56db;
+  background-color: #fff;
+}
+
+.list-item.is-selected {
+  color: white;
+  background-color: navy;
+  border-color: navy;
+}
+
+[aria-current] {
+  color: #c00;
+}
+
+input:checked + label {
+  color: green;
+}
+
+.btn.disabled {
+  background: #eee;
+  color: #aaa;
+}

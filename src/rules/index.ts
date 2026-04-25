@@ -23,6 +23,7 @@ import { rule as roleFromClassOnly } from "./aria/role-from-class-only.ts";
 import { rule as tabControlsMissing } from "./aria/tab-controls-missing.ts";
 import { rule as validAttr } from "./aria/valid-attr.ts";
 import { rule as meaningByColorOnly } from "./color/meaning-by-color-only.ts";
+import { rule as stateClassColorOnly } from "./color/state-class-color-only.ts";
 import { rule as contrastEnhanced } from "./contrast/enhanced.ts";
 import { rule as contrastMinimum } from "./contrast/minimum.ts";
 import { rule as contrastNonText } from "./contrast/non-text.ts";
@@ -182,6 +183,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   sectionAccessibleNameMissing,
   selectOnchangeContextChange,
   skipLink,
+  stateClassColorOnly,
   stretchedLinkMultipleInContainer,
   submitNotButtonOrInput,
   svgAccessibleName,
@@ -280,6 +282,7 @@ export {
   sectionAccessibleNameMissing,
   selectOnchangeContextChange,
   skipLink,
+  stateClassColorOnly,
   stretchedLinkMultipleInContainer,
   submitNotButtonOrInput,
   svgAccessibleName,
