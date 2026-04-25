@@ -231,7 +231,36 @@ export const rule = defineRule({
   satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
   severity: "error",
   scope: "node",
-  fixClass: "mechanical",
+  // V1-SUGGEST-FIX-MECHANICAL-LANE-EMIT-EDIT: re-tagged `mechanical` →
+  // `verify-in-source`. Neither finding lane is a deterministic single
+  // attribute insertion the scanner can ship as `fixPaths.primary.edit`:
+  //
+  //   - `missing-expanded`: adding `aria-expanded` is part of the fix,
+  //     but the value the scanner could emit (`"false"` as the safe
+  //     initial collapsed state) is opinionated — many disclosure
+  //     triggers render with the panel already expanded, in which case
+  //     `"false"` is wrong on first paint. Worse, the WCAG 4.1.2
+  //     conformance gap isn't fully closed by attribute insertion alone:
+  //     the runtime that toggles `"true"` ↔ `"false"` in lock-step with
+  //     the panel's open/closed state has to be wired in source. The
+  //     fix needs agent judgment on the host runtime, not a single
+  //     mechanical edit.
+  //   - `missing-controls`: the `aria-controls="<id>"` value names a
+  //     specific id on the controlled region, which the scanner cannot
+  //     determine from the trigger alone — the region may not yet exist,
+  //     may need an id added, or may be selected at runtime by sibling
+  //     class. Never a deterministic source transform.
+  //
+  // Re-tagging keeps `plan.fixesByClass.mechanical` honest about which
+  // findings can be apply-now edits (per the doctrine that composite
+  // headline counts must match what `suggest_fix` can actually produce
+  // — docs/kb/architecture/ai-first-consumer.md). The rule still carries
+  // `meta.mechanicalInPrinciple: true` on `kind: "guidance"` responses
+  // because `verify-in-source` is in MECHANICAL_IN_PRINCIPLE_LANES — the
+  // family supports a source-edit path even though this lane doesn't
+  // ship one. Mirrors the alt-text-missing precedent in commit
+  // bd2a67c6.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

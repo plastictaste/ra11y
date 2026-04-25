@@ -651,8 +651,20 @@ describe("rule aria/expanded-on-disclosure", () => {
       expect(rule.docs.references.some((r) => r.includes("WCAG22"))).toBe(true);
     });
 
-    it('is a mechanical fix class (aria-expanded="false" is a safe initial value)', () => {
-      expect(rule.fixClass).toBe("mechanical");
+    it("is a verify-in-source fix class (V1-SUGGEST-FIX-MECHANICAL-LANE-EMIT-EDIT)", () => {
+      // Re-tagged from `mechanical` because neither finding lane is a
+      // deterministic single attribute insertion the scanner can ship as
+      // `fixPaths.primary.edit`. The `missing-expanded` value (`"false"`)
+      // is opinionated and the runtime toggle wiring needs agent
+      // judgment; `missing-controls` requires identifying or inventing
+      // an id on the controlled region. Mirrors the alt-text-missing
+      // precedent (commit bd2a67c6) — the rule family stays
+      // mechanical-in-principle (verify-in-source is in
+      // MECHANICAL_IN_PRINCIPLE_LANES) so suggest_fix annotates
+      // guidance responses with `meta.mechanicalInPrinciple: true`,
+      // but the per-finding lane counter no longer overstates
+      // apply-now editability.
+      expect(rule.fixClass).toBe("verify-in-source");
     });
   });
 });
