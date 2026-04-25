@@ -29,7 +29,15 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlAttribute,
+  HtmlDocument,
+  HtmlElement,
+  JsxAttribute,
+  JsxElement,
+  TsxModule,
+} from "../../types/ast.ts";
+import type { FixPaths } from "../../types/violation.ts";
 
 /**
  * The concrete (non-abstract) roles from WAI-ARIA 1.2. Abstract roles
@@ -190,14 +198,14 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      checkHtml(ctx.ast as HtmlDocument, ctx.source, (v) => ctx.emit(v));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
+      checkJsx(ctx.ast as TsxModule, ctx.source, (v) => ctx.emit(v));
     }
   },
 });
@@ -207,26 +215,86 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths: FixPaths;
 }) => void;
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
+function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
     const role = getHtmlAttribute(element, "role");
     if (role === null) continue;
     const invalid = findInvalidTokens(role);
     if (invalid.length === 0) continue;
-    emit(buildViolation(element.tagName, role, invalid, element.loc.start));
+    const roleAttr = getRoleAttributeHtml(element);
+    const edit = buildRoleReplacementEdit(roleAttr, source, invalid);
+    emit(buildViolation(element.tagName, role, invalid, element.loc.start, edit));
   }
 }
 
-function checkJsx(module: TsxModule, emit: Emit): void {
+function checkJsx(module: TsxModule, source: string, emit: Emit): void {
   for (const element of walkJsxElements(module)) {
     const role = getJsxAttributeString(element, "role");
     if (role === null) continue;
     const invalid = findInvalidTokens(role);
     if (invalid.length === 0) continue;
-    emit(buildViolation(element.tagName, role, invalid, element.loc.start));
+    const roleAttr = getRoleAttributeJsx(element);
+    const edit = buildRoleReplacementEdit(roleAttr, source, invalid);
+    emit(buildViolation(element.tagName, role, invalid, element.loc.start, edit));
   }
+}
+
+function getRoleAttributeHtml(element: HtmlElement): HtmlAttribute | null {
+  for (const attr of element.attributes) {
+    if (attr.name.toLowerCase() === "role") return attr;
+  }
+  return null;
+}
+
+function getRoleAttributeJsx(element: JsxElement): JsxAttribute | null {
+  for (const attr of element.attributes) {
+    if (attr.name.toLowerCase() === "role") return attr;
+  }
+  return null;
+}
+
+/**
+ * Deterministic mechanical edit: replace the misspelled role token
+ * with the nearest valid role when one exists within 2 edits.
+ *
+ * Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: the rule has enough evidence
+ * to rewrite the attribute value — `nearest` is computed from a fixed
+ * dictionary and carries ≤2 edits of distance, which is exactly the
+ * "typo substitution" the doctrine names as mechanical (see
+ * `src/types/rule.ts` `FixClass` definition). When no `nearest` is in
+ * range (invented roles like `widget`), we drop the edit and the
+ * response falls into the `kind: "guidance"` lane with
+ * `meta.mechanicalInPrinciple: true` so cross-surface counts stay
+ * honest.
+ *
+ * Space-separated fallback chains (`role="buton button"`) get the
+ * same substitution applied to the first invalid token; downstream
+ * tokens keep their original spelling.
+ */
+function buildRoleReplacementEdit(
+  roleAttr: HtmlAttribute | JsxAttribute | null,
+  source: string,
+  invalid: readonly string[],
+): { readonly oldText: string; readonly newText: string } | null {
+  if (roleAttr === null) return null;
+  const firstBad = invalid[0];
+  if (firstBad === undefined) return null;
+  const nearest = nearestValidRole(firstBad);
+  if (nearest === null) return null;
+  const oldText = source.slice(roleAttr.range.start, roleAttr.range.end);
+  // Replace the first occurrence of the bad token inside the raw
+  // attribute text. The token search is literal — we found it by
+  // splitting the attribute value on whitespace, so it must appear as
+  // a substring. If the literal search fails (exotic quoting / HTML
+  // entities), we bail and let the guidance lane carry the fix.
+  const tokenIndex = oldText.indexOf(firstBad);
+  if (tokenIndex === -1) return null;
+  const newText =
+    oldText.slice(0, tokenIndex) + nearest + oldText.slice(tokenIndex + firstBad.length);
+  return { oldText, newText };
 }
 
 function findInvalidTokens(roleValue: string): readonly string[] {
@@ -242,14 +310,35 @@ function buildViolation(
   roleValue: string,
   invalid: readonly string[],
   loc: { line: number; column: number },
+  edit: { readonly oldText: string; readonly newText: string } | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths: FixPaths;
 } {
   const firstBad = invalid[0] ?? roleValue;
   const nearest = nearestValidRole(firstBad);
+  // Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: the deterministic edit (when
+  // available) is the primary path so `suggest_fix` returns `kind:
+  // "edit"`. The secondary "remove the role" path stays as an
+  // alternative so the agent sees it without a second round-trip.
+  const fixPaths: FixPaths = {
+    primary: nearest
+      ? {
+          label: `replace role="${firstBad}" with role="${nearest}"`,
+          ...(edit === null ? {} : { edit }),
+        }
+      : { label: `remove role="${firstBad}" or replace with a valid WAI-ARIA role` },
+    alternatives: nearest
+      ? [
+          {
+            label: `remove role="${firstBad}" — drops the invalid token back to the host element's implicit role`,
+          },
+        ]
+      : [],
+  };
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
@@ -257,6 +346,7 @@ function buildViolation(
     suggestion: nearest
       ? `Did you mean role="${nearest}"? See https://www.w3.org/TR/wai-aria-1.2/#role_definitions for the full list of valid roles.`
       : `Remove the role attribute or replace it with a valid role from https://www.w3.org/TR/wai-aria-1.2/#role_definitions.`,
+    fixPaths,
   };
 }
 

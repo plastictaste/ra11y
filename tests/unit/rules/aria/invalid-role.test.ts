@@ -125,4 +125,51 @@ describe("rule aria/invalid-role", () => {
       expect(rule.docs.references[0]).toContain("WCAG22");
     });
   });
+
+  describe("Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: fixPaths.primary.edit", () => {
+    // Doctrine: a `fixClass: "mechanical"` rule must populate
+    // `fixPaths.primary.edit` so `suggest_fix` returns `kind: "edit"`.
+    // For typos within 2 edits of a real role, the replacement is
+    // deterministic (the `nearest` helper picks exactly one candidate);
+    // for invented roles with no close match, the primary path ships
+    // guidance only.
+    it("HTML typo: primary.edit replaces the misspelled token with the nearest valid role", () => {
+      const source = `<div role="buton">Save</div>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`role="buton"`);
+      expect(edit?.newText).toBe(`role="button"`);
+      expect(source.includes(edit?.oldText ?? "")).toBe(true);
+    });
+
+    it("JSX typo: primary.edit mirrors the HTML shape", () => {
+      const source = `const X = <div role="buton">Save</div>;`;
+      const violations = runRule(rule, source);
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`role="buton"`);
+      expect(edit?.newText).toBe(`role="button"`);
+    });
+
+    it("invented role with no near match: primary carries no edit (falls into guidance lane)", () => {
+      const source = `<div role="widget"></div>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.fixPaths?.primary.edit).toBeUndefined();
+      expect(violations[0]?.fixPaths?.primary.label).toContain("remove");
+    });
+
+    it("fallback chain: only the first invalid token is rewritten, downstream tokens preserved", () => {
+      const source = `<div role="buton button">x</div>`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`role="buton button"`);
+      expect(edit?.newText).toBe(`role="button button"`);
+    });
+  });
 });
