@@ -37,9 +37,15 @@ describe("Violation.fixClass", () => {
   });
 
   it("stamps from rule metadata onto every emitted Violation", () => {
-    // alt-text-missing is classified "mechanical" per ADR 0007's
-    // worked example: "missing alt text → add alt" is a deterministic
-    // source transform.
+    // V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: alt-text-missing
+    // is classified "verify-in-source" because the alt prose is never a
+    // deterministic source transform — every surface needs the agent
+    // to read adjacent code to write text describing what the image
+    // communicates. The rule was previously "mechanical" but always fell
+    // through to `kind: "guidance"` in suggest_fix; the re-tag keeps
+    // `plan.fixesByClass` honest about which findings can be apply-now
+    // edits vs. which need agent judgment. See ADR 0007 for fixClass
+    // semantics.
     const source = `export default function App() { return <img src="chart.png" />; }\n`;
     const parsed = parseTsx(source);
     const ast: Ast = { language: "tsx", root: parsed.root, errors: parsed.errors };
@@ -51,7 +57,7 @@ describe("Violation.fixClass", () => {
     });
     const hit = result.violations.find((v) => v.ruleId === "media/alt-text-missing");
     expect(hit).toBeDefined();
-    expect(hit?.fixClass).toBe("mechanical");
+    expect(hit?.fixClass).toBe("verify-in-source");
   });
 
   it("buildAgentFinding forwards fixClass so agents can batch-route", () => {
@@ -67,7 +73,7 @@ describe("Violation.fixClass", () => {
     const hit = result.violations.find((v) => v.ruleId === "media/alt-text-missing");
     if (!hit) throw new Error("expected a media/alt-text-missing violation");
     const formatted = buildAgentFinding(hit);
-    expect(formatted.fixClass).toBe("mechanical");
+    expect(formatted.fixClass).toBe("verify-in-source");
   });
 
   it("synthetic internal/rule-crash findings route into verify-in-source", () => {

@@ -195,4 +195,69 @@ describe("rule document/lang-attribute", () => {
     expect(suggestion).toContain('xml:lang="en-us"');
     expect(suggestion).toContain('lang="en"');
   });
+
+  // ── V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: fixPaths.edit ─
+  // The rule is `fixClass: "verify-in-source"` because the language tag
+  // requires inference. On the high-signal lanes — author has already
+  // declared a `<meta http-equiv="Content-Language">` or `<meta
+  // name="language">` somewhere on the page — the inferred tag is
+  // deterministic and the rule emits `fixPaths.primary.edit` so
+  // `suggest_fix` returns `kind: "edit"`. The bare `<html>` (no in-page
+  // hint) and charset-only branches stay guidance-only.
+
+  describe("fixPaths.edit (V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE)", () => {
+    it("emits primary.edit inserting lang from <meta http-equiv='Content-Language'>", () => {
+      const source =
+        '<html><head><meta http-equiv="Content-Language" content="fr"></head><body></body></html>';
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe("<html>");
+      expect(edit?.newText).toBe('<html lang="fr">');
+      expect(v[0]?.fixPaths?.primary.label).toContain('lang="fr"');
+      expect(v[0]?.fixPaths?.alternatives).toHaveLength(0);
+    });
+
+    it("emits primary.edit using the primary tag from a comma-separated Content-Language list", () => {
+      const source =
+        '<html><head><meta http-equiv="Content-Language" content="es-ES, en"></head><body></body></html>';
+      const v = runRule(rule, source, { filePath: "index.html" });
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.newText).toBe('<html lang="es-ES">');
+    });
+
+    it("emits primary.edit using <meta name='language'> when http-equiv is absent", () => {
+      const source = '<html><head><meta name="language" content="de"></head><body></body></html>';
+      const v = runRule(rule, source, { filePath: "index.html" });
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.newText).toBe('<html lang="de">');
+    });
+
+    it("does NOT emit fixPaths.edit for bare <html> without any in-page language hint", () => {
+      // The fallback ladder still produces prose `suggestion`, but the
+      // structured edit lane stays absent because no deterministic tag
+      // exists. suggest_fix will return kind: "guidance" with
+      // `meta.mechanicalInPrinciple: true` (verify-in-source lane).
+      const source = "<html><body></body></html>";
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.fixPaths).toBeUndefined();
+    });
+
+    it("does NOT emit fixPaths.edit for legacy charset hints (charset is a region family, not one tag)", () => {
+      // shift_jis identifies "Japanese content" — but that's a language
+      // family hint the rule's prose lays out for the agent to verify;
+      // promoting it to a structured edit would risk pasting `lang="ja"`
+      // into a Korean or Chinese-via-shift_jis page. Encoding the family
+      // as a deterministic tag would be a guess; honest shape is prose-
+      // only. See ai-first-consumer.md "No heuristic suppression."
+      const source = '<html><head><meta charset="shift_jis"></head><body></body></html>';
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.fixPaths).toBeUndefined();
+    });
+  });
 });

@@ -66,7 +66,20 @@ export const rule = defineRule({
   satisfies: ["wcag22:1.1.1", "wcag21:1.1.1"],
   severity: "error",
   scope: "node",
-  fixClass: "mechanical",
+  // V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: alt-text is
+  // never a deterministic source transform — every surface (img, SVG
+  // <image>, role="img", canvas) needs prose that describes what the
+  // element communicates, which the static scanner cannot derive. Tagged
+  // `verify-in-source` so `plan.fixesByClass` reflects honest "agent
+  // reads adjacent code" expectation rather than the previous
+  // `mechanical` lane that always fell through to `kind: "guidance"` in
+  // `suggest_fix`. The `meta.mechanicalInPrinciple: true` annotation
+  // still fires (verify-in-source is in MECHANICAL_IN_PRINCIPLE_LANES),
+  // so agents reading the guidance still see "rule family supports a
+  // source-edit path." See ADR 0007 for fixClass lane semantics and
+  // docs/kb/architecture/ai-first-consumer.md "Composite headline counts
+  // are dishonest" for the doctrine that motivated the re-tag.
+  fixClass: "verify-in-source",
   // Opt in: wrapper components declared as rendering `<img>` via the
   // object form of `nativeWrappers` (e.g. `{ Avatar: "img", NextImage:
   // "img" }`) get the same missing-alt check as a bare `<img>`. The

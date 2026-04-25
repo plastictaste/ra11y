@@ -17,13 +17,29 @@
 import { defineRule } from "../../api/plugin.ts";
 import { findHtmlElementsByTag, getHtmlAttribute } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
+import type { FixPaths } from "../../types/violation.ts";
 
 export const rule = defineRule({
   id: "document/lang-attribute",
   satisfies: ["wcag22:3.1.1", "wcag21:3.1.1"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: the language code
+  // is rarely deterministic — the static scanner cannot identify the
+  // primary language of an HTML document from the source alone unless
+  // the author already wrote the answer somewhere on the page (a
+  // `<meta http-equiv="Content-Language">` declaration or a `<meta
+  // name="language">` declaration). For those high-signal cases the
+  // rule populates `fixPaths.primary.edit` so `suggest_fix` returns
+  // `kind: "edit"`; for the broad case (no in-page hint, or only a
+  // legacy charset to reason from), the response is honestly `kind:
+  // "guidance"` with `meta.mechanicalInPrinciple: true` (verify-in-source
+  // is in MECHANICAL_IN_PRINCIPLE_LANES). Re-tagging from `mechanical`
+  // to `verify-in-source` keeps `plan.fixesByClass` honest about which
+  // findings can be apply-now edits vs. which need agent judgment. See
+  // ADR 0007 + docs/kb/architecture/ai-first-consumer.md "Composite
+  // headline counts are dishonest."
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },
@@ -84,21 +100,238 @@ export const rule = defineRule({
 
     if (langPresent || xmlLangPresent) return;
 
-    ctx.emit({
-      severity: "error",
-      location: {
-        filePath: "",
-        line: htmlEl.loc.start.line,
-        column: htmlEl.loc.start.column,
-      },
-      message:
-        lang === null
-          ? "<html> element is missing the lang attribute — screen readers won't know how to pronounce the page content."
-          : "<html lang> is empty — screen readers won't know how to pronounce the page content.",
-      suggestion: buildSuggestion(doc),
-    });
+    emitMissingLang(htmlEl, doc, ctx.source, lang === null, (v) => ctx.emit(v));
   },
 });
+
+/**
+ * Emits the missing-or-empty-lang violation, attaching `fixPaths.edit`
+ * when a deterministic language tag is available from in-page meta
+ * hints (`<meta http-equiv="Content-Language">` or
+ * `<meta name="language">`). Extracted to keep `afterFile` under the
+ * cognitive-complexity budget (`scripts/check-limits.ts`).
+ *
+ * `langWasNull` flips the message between "missing the lang attribute"
+ * (no `lang=` at all) and "<html lang> is empty" (`lang=""` or
+ * whitespace) — the message text is load-bearing for the existing
+ * unit tests and for the agent reading the suggestion in context.
+ */
+function emitMissingLang(
+  htmlEl: HtmlElement,
+  doc: HtmlDocument,
+  source: string,
+  langWasNull: boolean,
+  emit: (v: {
+    readonly severity: "error";
+    readonly location: {
+      readonly filePath: string;
+      readonly line: number;
+      readonly column: number;
+    };
+    readonly message: string;
+    readonly suggestion: string;
+    readonly fixPaths?: FixPaths;
+  }) => void,
+): void {
+  // High-signal lane: the author has already declared the language
+  // somewhere on the page (`<meta http-equiv="Content-Language">` or
+  // `<meta name="language">`). When that's the case the edit IS
+  // deterministic — copy the value into a `lang="…"` attribute on
+  // `<html>` — and the rule emits a structured `fixPaths.primary.edit`
+  // so `suggest_fix` returns `kind: "edit"`. Otherwise (no high-signal
+  // hint, or the open tag's source slice is unparseable), the violation
+  // falls through to guidance and the agent reads the surrounding page
+  // to pick a tag.
+  const deterministicLang = highSignalLanguage(doc);
+  const edit =
+    deterministicLang === null ? null : buildLangInsertEdit(htmlEl, deterministicLang, source);
+  const message = langWasNull
+    ? "<html> element is missing the lang attribute — screen readers won't know how to pronounce the page content."
+    : "<html lang> is empty — screen readers won't know how to pronounce the page content.";
+  emit({
+    severity: "error",
+    location: {
+      filePath: "",
+      line: htmlEl.loc.start.line,
+      column: htmlEl.loc.start.column,
+    },
+    message,
+    suggestion: buildSuggestion(doc),
+    ...(edit === null ? {} : { fixPaths: buildFixPaths(deterministicLang ?? "", edit) }),
+  });
+}
+
+/**
+ * Builds the `fixPaths` payload for the high-signal branch — a
+ * structured `primary.edit` matching the value the suggestion ladder
+ * already proposed in prose. Suppresses `alternatives` (empty list) so
+ * the shape stays minimal; the prose `suggestion` already enumerates
+ * fallbacks for agents that want to override the deterministic edit.
+ */
+function buildFixPaths(
+  langValue: string,
+  edit: { readonly oldText: string; readonly newText: string },
+): FixPaths {
+  return {
+    primary: {
+      label: `add lang="${langValue}" to <html>`,
+      edit,
+    },
+    alternatives: [],
+  };
+}
+
+/**
+ * Returns the language tag the rule can deterministically insert into
+ * `<html lang="…">`, or null when no high-signal hint exists. Reads
+ * the same `<meta http-equiv="Content-Language">` and `<meta
+ * name="language">` channels {@link buildSuggestion} consults — the
+ * deterministic `fixPaths.edit` lane and the prose suggestion ladder
+ * stay aligned (an agent reading the prose sees the same value the
+ * structured edit would apply). The legacy-charset fallback is NOT
+ * promoted to a deterministic edit: a charset hint identifies a
+ * language family ("Cyrillic-script languages") rather than one tag,
+ * so encoding it as `lang="ru"` would be a guess.
+ */
+function highSignalLanguage(doc: HtmlDocument): string | null {
+  const metas = findHtmlElementsByTag(doc, "meta");
+  return findMetaHttpEquivLanguage(metas) ?? findMetaNameLanguage(metas);
+}
+
+/**
+ * Inserts ` lang="<value>"` into the open tag of the `<html>` element.
+ * Walks the source slice from the element's start offset to find the
+ * open tag's terminating `>` (respecting attribute quoting), then
+ * inserts the new attribute immediately before that `>` and any
+ * preceding whitespace. Returns null when the slice doesn't begin with
+ * a recognizable `<html` open tag — the caller falls through to
+ * guidance instead of emitting a confidently-wrong edit.
+ *
+ * Mirrors the open-tag boundary scanner in
+ * `src/rules/forms/autocomplete-missing.ts`. Duplicated locally rather
+ * than extracted into a shared helper so each rule keeps its own
+ * scanner private — extracting would touch shared engine helpers and
+ * widen the blast radius of an attribute-insert refactor without
+ * winning test coverage.
+ */
+function buildLangInsertEdit(
+  htmlEl: HtmlElement,
+  langValue: string,
+  source: string,
+): { readonly oldText: string; readonly newText: string } | null {
+  // `htmlEl.range` covers the entire element (open tag + children +
+  // close tag) — too much to use as the find-and-replace anchor. Slice
+  // only the open tag's source by walking from the element's start
+  // offset until the open-tag terminating `>`. The resulting `oldText`
+  // is exactly the `<html …>` substring the agent will literally find
+  // in source.
+  const startOffset = htmlEl.range.start;
+  // Cap the scan at the whole element's end as a defensive upper bound;
+  // no well-formed `<html>` open tag is longer than the element itself.
+  const elementEnd = htmlEl.range.end;
+  const elementSlice = source.slice(startOffset, elementEnd);
+  const afterTagName = scanHtmlTagName(elementSlice);
+  if (afterTagName === -1) return null;
+  const gtIndex = scanToOpenTagEnd(elementSlice, afterTagName);
+  if (gtIndex === -1) return null;
+  // The open tag spans bytes [0, gtIndex] of `elementSlice` (inclusive
+  // of the `>`). Slice exactly that span as the literal oldText.
+  const openTag = elementSlice.slice(0, gtIndex + 1);
+  let insertAt = gtIndex;
+  // Step before any optional self-closing `/` and trailing whitespace
+  // so the inserted attribute lands flush with the existing attribute
+  // list rather than between whitespace and the `>`.
+  if (elementSlice.charCodeAt(insertAt - 1) === 0x2f /* / */) insertAt -= 1;
+  while (insertAt > 0 && isAsciiWhitespace(elementSlice.charCodeAt(insertAt - 1))) {
+    insertAt -= 1;
+  }
+  const before = elementSlice.slice(0, insertAt);
+  const afterToGt = elementSlice.slice(insertAt, gtIndex + 1);
+  return {
+    oldText: openTag,
+    newText: `${before} lang="${langValue}"${afterToGt}`,
+  };
+}
+
+/**
+ * Returns the byte offset AFTER the `<html` tag name in `raw` — the
+ * position of the first attribute-list character (whitespace, `/`, or
+ * `>`). Returns -1 when `raw` does not start with `<html` followed by
+ * a non-name byte; that includes shapes like `<htmlfoo>` (longer name)
+ * and `<HTML5>` (the parser preserves case via tagName, but the open
+ * tag's source slice is matched verbatim so a case mismatch falls
+ * through to guidance).
+ */
+function scanHtmlTagName(raw: string): number {
+  // The minimum valid open tag is `<html>` — 6 bytes.
+  if (raw.length < 6) return -1;
+  if (raw.charCodeAt(0) !== 0x3c /* < */) return -1;
+  if (raw.charCodeAt(1) !== 0x68 /* h */) return -1;
+  if (raw.charCodeAt(2) !== 0x74 /* t */) return -1;
+  if (raw.charCodeAt(3) !== 0x6d /* m */) return -1;
+  if (raw.charCodeAt(4) !== 0x6c /* l */) return -1;
+  const next = raw.charCodeAt(5);
+  // Open-tag separator: whitespace, `/`, or `>`. Any letter/digit means
+  // the tag name continues (e.g. `<htmlx`), so this isn't an `<html>`.
+  if (
+    next === 0x20 ||
+    next === 0x09 ||
+    next === 0x0a ||
+    next === 0x0d ||
+    next === 0x2f ||
+    next === 0x3e
+  ) {
+    return 5;
+  }
+  return -1;
+}
+
+/**
+ * Walks `raw` from `startIndex` until the `>` that closes the open
+ * tag, respecting single- and double-quoted attribute values. Returns
+ * the byte offset of the `>` or -1 if input runs out / a quote stays
+ * unclosed. Per-byte transitions are factored into
+ * {@link advanceOpenTagState} to keep this loop trivial (the
+ * complexity budget caps cognitive complexity at 15).
+ */
+function scanToOpenTagEnd(raw: string, startIndex: number): number {
+  const state: OpenTagScanState = { inSingle: false, inDouble: false };
+  for (let i = startIndex; i < raw.length; i += 1) {
+    const result = advanceOpenTagState(raw.charCodeAt(i), state);
+    if (result === "gt") return i;
+  }
+  return -1;
+}
+
+interface OpenTagScanState {
+  inSingle: boolean;
+  inDouble: boolean;
+}
+
+/**
+ * Per-byte transition for {@link scanToOpenTagEnd}. Mutates `state` in
+ * place (toggling the active quote flag) and returns `"gt"` only when
+ * the byte is the open-tag-closing `>` outside any quote — the caller
+ * uses that signal to short-circuit the loop with the current index.
+ */
+function advanceOpenTagState(ch: number, state: OpenTagScanState): "gt" | "continue" {
+  if (state.inSingle) {
+    if (ch === 0x27) state.inSingle = false;
+    return "continue";
+  }
+  if (state.inDouble) {
+    if (ch === 0x22) state.inDouble = false;
+    return "continue";
+  }
+  if (ch === 0x3e) return "gt";
+  if (ch === 0x27) state.inSingle = true;
+  else if (ch === 0x22) state.inDouble = true;
+  return "continue";
+}
+
+function isAsciiWhitespace(ch: number): boolean {
+  return ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d;
+}
 
 /**
  * Case-insensitive BCP 47 equality. Two tags match iff their

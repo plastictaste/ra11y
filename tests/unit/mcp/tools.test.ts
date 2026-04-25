@@ -369,19 +369,25 @@ describe("MCP tool: scan_project", () => {
       };
       // The fixture at tests/fixtures/bad/alt-text-missing/ has violations.
       expect(data.plan.violations).toBeGreaterThan(0);
-      // Directive guidance: names either a `suggest_fix` / `explain_rule`
-      // hop (mixed or guidance-lane fixture) or, under the Q2R2-FIX-DEDUPE
-      // trim, the inline mechanical `primary.edit` path (fixture is
-      // all-mechanical — alt-text-missing is fixClass: "mechanical"). The
-      // match covers both shapes so the test keeps asserting "the
-      // response points somewhere concrete" without locking in one
-      // specific lane. When the round-trip nudge is present, we keep
-      // the stricter file:line assertion; when the dedupe trims it, the
-      // inline-fix prose doesn't name a file:line (the agent reads the
-      // finding instead).
+      // Directive guidance: names something concrete the agent can
+      // follow. Three shapes the response can take, all valid:
+      //   1. `suggest_fix` hop on a file:line — fires when the violation's
+      //      lane (`mechanical` or `guidance`) is countable as
+      //      "fixable" by `nextStep`.
+      //   2. `explain_rule` hop on a `ruleId` — fires when no violation
+      //      is in the fixable lanes (e.g. `media/alt-text-missing` re-
+      //      tagged to `verify-in-source` per V1-FIX-LANG-AUTOCOMPLETE-
+      //      ALT-MECHANICAL-DOWNGRADE; the lane is excluded from
+      //      `fixable` because suggest_fix can't action it inline).
+      //   3. Inline `primary.edit` prose under the Q2R2-FIX-DEDUPE
+      //      trim — fires when EVERY violation is `fixClass: "mechanical"`.
+      // The branches below cover all three without locking in one lane;
+      // the test asserts "the response points somewhere concrete."
       // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
-      if (/suggest_fix|explain_rule/.test(data.nextStep)) {
+      if (/suggest_fix/.test(data.nextStep)) {
         expect(data.nextStep).toMatch(/\.html:\d+|\.tsx:\d+|\.jsx:\d+/);
+      } else if (/explain_rule/.test(data.nextStep)) {
+        expect(data.nextStep).toMatch(/`[\w/-]+`/);
       } else {
         expect(data.nextStep).toContain("primary.edit");
       }
