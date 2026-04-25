@@ -1765,3 +1765,98 @@ describe("computeScanWarnings: V1-RULES-BY-EXTENSION-LABELING (ADR 0028)", () =>
     );
   });
 });
+
+describe("computeScanWarnings: V1-BULK-CATALOG-SCAN-PERF-12S", () => {
+  // The detector at `src/mcp/bulk-catalog.ts` resolves to either an
+  // additive payload (slow + vendor-heavy OR bulk + vendor-heavy) or
+  // `undefined`. The warnings module is pure over the resolved value
+  // — when the detection field is populated, the code fires and its
+  // payload echoes the raw inputs verbatim (no thresholds in the
+  // payload, no derived "severity" tokens). When the field is
+  // omitted, the code drops conservatively.
+  it("fires `bulk_catalog_detected` when the detection field is populated", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 4043,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      bulkCatalogDetection: {
+        trigger: "slow_and_vendor_heavy",
+        durationMs: 12188,
+        filesScanned: 4043,
+        buildArtifactsCount: 516,
+        suggestedExcludes: ["**/bootstrap.css", "**/animate.css"],
+        topVendorFile: "templates/site-0/bootstrap.css",
+      },
+    });
+    expect(codes).toContain("bulk_catalog_detected");
+  });
+
+  it("does NOT fire when the detection field is undefined (the common case)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 200,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+    });
+    expect(codes).not.toContain("bulk_catalog_detected");
+  });
+
+  it("emits the structured payload via the dispatch table when the code fires", () => {
+    const inputs = {
+      filesScanned: 4043,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      bulkCatalogDetection: {
+        trigger: "slow_and_vendor_heavy" as const,
+        durationMs: 12188,
+        filesScanned: 4043,
+        buildArtifactsCount: 516,
+        suggestedExcludes: ["**/bootstrap.css", "**/animate.css", "**/font-awesome.min.css"],
+        topVendorFile: "templates/site-0/bootstrap.css",
+      },
+    };
+    const codes = computeScanWarnings(inputs);
+    const details = computeScanWarningDetails(codes, inputs);
+    expect(details.bulk_catalog_detected).toBeDefined();
+    expect(details.bulk_catalog_detected?.trigger).toBe("slow_and_vendor_heavy");
+    expect(details.bulk_catalog_detected?.durationMs).toBe(12188);
+    expect(details.bulk_catalog_detected?.filesScanned).toBe(4043);
+    expect(details.bulk_catalog_detected?.buildArtifactsCount).toBe(516);
+    expect(details.bulk_catalog_detected?.suggestedExcludes).toEqual([
+      "**/bootstrap.css",
+      "**/animate.css",
+      "**/font-awesome.min.css",
+    ]);
+    expect(details.bulk_catalog_detected?.topVendorFile).toBe("templates/site-0/bootstrap.css");
+  });
+
+  it("the `topVendorFile` field is omitted from the payload when the detection has no top vendor file (present-when-meaningful)", () => {
+    // Defensive — a detection without `topVendorFile` should still
+    // produce a payload (the rest of the signal is load-bearing) but
+    // the optional field stays absent rather than emitting `null` or
+    // `""` per CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+    const inputs = {
+      filesScanned: 4043,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      bulkCatalogDetection: {
+        trigger: "bulk_and_vendor_heavy" as const,
+        durationMs: 5000,
+        filesScanned: 4043,
+        buildArtifactsCount: 60,
+        suggestedExcludes: ["**/some-vendor.css"],
+      },
+    };
+    const codes = computeScanWarnings(inputs);
+    const details = computeScanWarningDetails(codes, inputs);
+    expect(details.bulk_catalog_detected).toBeDefined();
+    expect("topVendorFile" in (details.bulk_catalog_detected ?? {})).toBe(false);
+  });
+});

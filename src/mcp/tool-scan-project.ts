@@ -19,6 +19,7 @@ import {
   groupBuildArtifactsByBasename,
   type ScannedBuildArtifact,
 } from "./build-artifacts.ts";
+import { type BulkCatalogDetection, detectBulkCatalog } from "./bulk-catalog.ts";
 import {
   catalogEmptyResultMetaFields,
   detectCatalogShape,
@@ -466,11 +467,37 @@ export const scanProjectTool: McpTool = {
           restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
           configSearchSawProjectMarker,
           scssUnresolvedVariableFiles,
+          // V1-BULK-CATALOG-SCAN-PERF-12S: run the detector at the
+          // assembly seam so the threshold logic stays close to its
+          // inputs (`meta.durationMs`, `meta.filesScanned`, the
+          // build-artifact entries). Returns `undefined` on the
+          // common case (most scans clear neither trigger path) so
+          // the detection threads through the warning channel via
+          // conditional-spread.
+          bulkCatalogDetection: detectBulkCatalog({
+            durationMs: readMetaNumber(formatted.meta, "durationMs"),
+            filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
+            buildArtifacts: buildArtifacts.entries,
+          }),
         }),
       }),
     );
   },
 };
+
+/**
+ * Defensive number read from `formatted.meta` for the bulk-catalog
+ * detector inputs. `meta.durationMs` and `meta.filesScanned` are
+ * always populated by the scan harness today (see
+ * `src/mcp/scan-assembly.ts` — both are required schema fields), but
+ * the detector stays total over hostile shapes by treating any
+ * non-number as zero so the predicate falls through to "no detection"
+ * rather than throwing on a bad meta block.
+ */
+function readMetaNumber(meta: Record<string, unknown>, key: string): number {
+  const v = meta[key];
+  return typeof v === "number" ? v : 0;
+}
 
 /**
  * Computes the spreadable `reviewCandidates` field fragment for the
@@ -568,6 +595,7 @@ function buildBaseWarningsForScanProject(args: {
   readonly restrictToPathsEmpty: boolean;
   readonly configSearchSawProjectMarker: boolean;
   readonly scssUnresolvedVariableFiles: readonly string[];
+  readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
 }): {
   readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
@@ -584,6 +612,7 @@ function buildBaseWarningsForScanProject(args: {
     restrictToPathsEmpty,
     configSearchSawProjectMarker,
     scssUnresolvedVariableFiles,
+    bulkCatalogDetection,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
   // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
@@ -663,6 +692,14 @@ function buildBaseWarningsForScanProject(args: {
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
     ...(scssUnresolvedVariableFiles.length === 0 ? {} : { scssUnresolvedVariableFiles }),
     ...(scannedMinifiedFiles.length === 0 ? {} : { scannedMinifiedFiles }),
+    // V1-BULK-CATALOG-SCAN-PERF-12S: detector ran upstream at the
+    // call site (it needs `meta.durationMs` + `meta.filesScanned` +
+    // the build-artifact entries) and resolved to either an
+    // additive payload or `undefined`. Conditional-spread keeps the
+    // shape honest per CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest" — the warning code drops conservatively when the
+    // detector did not fire.
+    ...(bulkCatalogDetection === undefined ? {} : { bulkCatalogDetection }),
   });
   return warningsFieldsForAssembler(warningsFromMeta);
 }

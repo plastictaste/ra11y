@@ -307,6 +307,33 @@ export type ScanWarningCode =
   // both fields ship unchanged today; the warning is the additive signal
   // that lets callers self-migrate without a hidden break.
   | "deprecated_field_id_renamed_criterionId"
+  // V1-BULK-CATALOG-SCAN-PERF-12S: a `scan_project` invocation crossed
+  // both the slow-duration / bulk-files threshold AND the vendor-heavy
+  // build-artifact floor — the canonical "vendor-template catalog
+  // running 4× over the documented perf budget" shape. Without this
+  // code, the agent reads `meta.durationMs: 12188` as scan-confidence
+  // telemetry but has no signal that the perf class itself is
+  // actionable via scope reduction; the documented 3s budget for the
+  // 1000-file row in CLAUDE.md §11 is upstream context the agent does
+  // not inherit. Fires when (a) the build-artifact detector saw more
+  // than `BULK_BUILD_ARTIFACTS_FLOOR` entries (the slowdown is
+  // plausibly vendor-driven, not structural) AND (b) either the
+  // duration is more than 3× the budget for a 1000-file project OR
+  // the file count is above the documented "scope down rather than
+  // wait" threshold. Surface-don't-suppress: findings stay in
+  // `files[]`; the warning is the additive signal that vendor-glob
+  // exclusion or per-template scoped scans are the first lever.
+  // Paired payload: `warningsDetails.bulk_catalog_detected` carries
+  // the trigger discriminator, the raw durationMs / filesScanned /
+  // buildArtifactsCount, and a `suggestedExcludes` list built from
+  // the actual top vendor basenames — agents see concrete file shapes
+  // the scan actually saw, not canned `bootstrap*.css` literals fired
+  // on every catalog. Pairs with `scanned_build_artifacts_present`
+  // (broader presence label) and `vendor_css_dominates_findings`
+  // (CSS-finding dominance) — bulk_catalog names the perf-class-vs-
+  // budget regime that the other two presence/dominance signals don't
+  // capture.
+  | "bulk_catalog_detected"
   // V1-RULES-BY-EXTENSION-LABELING (ADR 0028):
   // `meta.analysisCoverage.rulesByExtension` was renamed to
   // `rulesFiredByExtension` to disambiguate it from
@@ -545,6 +572,22 @@ export interface WarningInputs {
    * applied; the code drops conservatively.
    */
   readonly metaArrayTruncated?: boolean;
+  /**
+   * V1-BULK-CATALOG-SCAN-PERF-12S: caller-supplied detection from
+   * {@link import("./bulk-catalog.ts").detectBulkCatalog}. Drives the
+   * `bulk_catalog_detected` code + its paired
+   * `warningsDetails.bulk_catalog_detected` payload. The detector
+   * lives at `src/mcp/bulk-catalog.ts` so the warnings module stays
+   * pure over its inputs — the threshold logic and the
+   * `suggestedExcludes` basename selection happen at the call site,
+   * which has access to `meta.durationMs`, `meta.filesScanned`, and
+   * the `buildArtifacts.entries` list.
+   *
+   * Pass `undefined` when the detector did not fire (the common case
+   * — most scans stay under the perf-class threshold). The code drops
+   * conservatively when this field is absent.
+   */
+  readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
 }
 
 // MARKER_PROBE_002
@@ -967,6 +1010,35 @@ export interface ScanWarningDetails {
     readonly hardCeilingBytes: number;
     readonly droppedFileCount: number;
   };
+  /**
+   * V1-BULK-CATALOG-SCAN-PERF-12S: payload for `bulk_catalog_detected`.
+   * Carries the trigger discriminator (`slow_and_vendor_heavy` vs.
+   * `bulk_and_vendor_heavy` — see {@link import("./bulk-catalog.ts").BulkCatalogTrigger})
+   * plus the raw inputs that fired the predicate. `suggestedExcludes`
+   * is built from the actual top vendor-file basenames the scan saw
+   * (not canned `bootstrap*.css` literals) so agents see concrete file
+   * shapes that exist in this corpus; each entry is a `**\/<basename>`
+   * glob the agent can paste into a `propose_config` `exclude:` entry
+   * verbatim, matching the same root-relative POSIX vocabulary as
+   * `meta.scannedBuildArtifacts.grouped[].suggestedGlob`. `topVendorFile`
+   * is the densest single artifact path so the agent has a
+   * file-by-file pivot before excluding the broader glob.
+   *
+   * Doctrine surface: every count is raw, not derived. No "severity"
+   * token, no English remediation prose. The agent reads the trigger
+   * + raw inputs + suggested globs and decides whether the perf class
+   * warrants scope narrowing — same shape as the
+   * `vendor_css_dominates_findings` payload (additive telemetry, not
+   * a suppression lever).
+   */
+  readonly bulk_catalog_detected?: {
+    readonly trigger: "slow_and_vendor_heavy" | "bulk_and_vendor_heavy";
+    readonly durationMs: number;
+    readonly filesScanned: number;
+    readonly buildArtifactsCount: number;
+    readonly suggestedExcludes: readonly string[];
+    readonly topVendorFile?: string;
+  };
 }
 
 function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
@@ -1196,6 +1268,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // limit and re-page." Findings stay in `files[]` per surface-
     // don't-suppress doctrine.
     out.push("vendor_css_dominates_findings");
+  }
+  if (inputs.bulkCatalogDetection !== undefined) {
+    // V1-BULK-CATALOG-SCAN-PERF-12S: the bulk-catalog detector at
+    // `./bulk-catalog.ts` cleared the perf-class threshold AND saw
+    // a vendor-heavy build-artifact footprint. Surfaces alongside
+    // (not in place of) `scanned_build_artifacts_present` and
+    // `vendor_css_dominates_findings` — those signal vendor presence
+    // and finding-share dominance respectively; this signals the
+    // perf-class regime where the agent's first lever is scope
+    // reduction (per-template `cwd` recursion, `additionalPaths`
+    // narrowing, or `propose_config exclude` on the suggested
+    // basenames). The detector's structured payload is surfaced via
+    // the dispatch table below as
+    // `warningsDetails.bulk_catalog_detected`.
+    out.push("bulk_catalog_detected");
   }
   return out;
 }
@@ -1530,6 +1617,7 @@ type ScanMetaWarningArgs = {
   readonly metaArrayTruncated?: boolean;
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly scannedMinifiedFiles?: readonly string[];
+  readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
 };
 
 function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInputs {
@@ -1573,6 +1661,9 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.scannedMinifiedFiles === undefined
       ? {}
       : { scannedMinifiedFiles: args.scannedMinifiedFiles }),
+    ...(args.bulkCatalogDetection === undefined
+      ? {}
+      : { bulkCatalogDetection: args.bulkCatalogDetection }),
   };
 }
 
@@ -1635,6 +1726,10 @@ export function computeScanWarningDetails(
     {
       code: "scanned_minified_file",
       summarize: () => summarizeScannedMinifiedFiles(inputs.scannedMinifiedFiles),
+    },
+    {
+      code: "bulk_catalog_detected",
+      summarize: () => summarizeBulkCatalog(inputs.bulkCatalogDetection),
     },
   ];
   for (const row of dispatch) {
@@ -1728,6 +1823,30 @@ function summarizeScannedMinifiedFiles(
 ): NonNullable<ScanWarningDetails["scanned_minified_file"]> | undefined {
   if (files === undefined || files.length === 0) return undefined;
   return { files: [...files].sort() };
+}
+
+/**
+ * Builds the `bulk_catalog_detected` payload from the caller-supplied
+ * detection. Returns `undefined` when the detection is absent so the
+ * dispatch table conditional-spreads the entry away (V1-WARNINGS-
+ * DETAILS-CROSS-SURFACE-REGRESSION payload-vs-binary contract). Pure
+ * shape-builder — every quantity comes from the detector at
+ * `./bulk-catalog.ts` directly; no thresholds, no derivation. The
+ * `topVendorFile` field is conditional-spread per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest."
+ */
+function summarizeBulkCatalog(
+  detection: WarningInputs["bulkCatalogDetection"],
+): NonNullable<ScanWarningDetails["bulk_catalog_detected"]> | undefined {
+  if (detection === undefined) return undefined;
+  return {
+    trigger: detection.trigger,
+    durationMs: detection.durationMs,
+    filesScanned: detection.filesScanned,
+    buildArtifactsCount: detection.buildArtifactsCount,
+    suggestedExcludes: detection.suggestedExcludes,
+    ...(detection.topVendorFile === undefined ? {} : { topVendorFile: detection.topVendorFile }),
+  };
 }
 
 /**
