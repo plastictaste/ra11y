@@ -239,6 +239,36 @@ describe("rule color/meaning-by-color-only", () => {
       expect(violations[0]?.message).not.toMatch(/carries no status word/);
     });
 
+    it("HTML: reason text and severity agree — no concession that 'screen-reader users get the word'", () => {
+      // Doctrine 2026-04-25 ("Reason text and severity must agree"):
+      // when the rule still emits at `error` on a case where the
+      // visible text carries the status word, the reason must not
+      // concede the predicate. The old phrasing — "screen-reader users
+      // reading prose get the word, but colorblind users may lose the
+      // association" — granted the rule's own predicate (the meaning
+      // is NOT color-only for SR users) while keeping severity at
+      // `error`, training the agent to mistrust the rule. The
+      // rewritten reason surfaces the *residual* concern: color may
+      // still be the sole signal that frames the word as a *status*
+      // (vs. ordinary prose) for users who cannot resolve the color
+      // channel.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><button class="btn btn-danger">Danger</button></body></html>`,
+        { filePath: "alert.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("error");
+      const msg = violations[0]?.message ?? "";
+      // No concession that the predicate is satisfied for SR users.
+      expect(msg).not.toMatch(/screen-reader users reading prose get the word/i);
+      // No phrase suggesting the visible text is absent.
+      expect(msg).not.toMatch(/no visible text/i);
+      // Residual concern is framed honestly.
+      expect(msg).toMatch(/color may still be the .?sole.? meaning signal/i);
+      expect(msg).toMatch(/status (rather than|vs\.?) ordinary prose|framing.*status/i);
+    });
+
     it("HTML: fix suggestion demotes 'prefix with status word' and warns against the tautology", () => {
       const violations = runRule(
         rule,

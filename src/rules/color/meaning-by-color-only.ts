@@ -508,7 +508,20 @@ function buildMessage(
 ): string {
   const textSample = text.length > 80 ? `${text.slice(0, 80)}…` : text;
   if (textHasStatusWord) {
-    return `${descriptor} conveys "${statusWord}" status via the ${token} class; text content "${textSample}" already carries a status word — verify color is not the *sole* meaning signal for users who cannot distinguish the color (screen-reader users reading prose get the word, but colorblind users reading a monochrome rendering may lose the association between the word and the visual emphasis).`;
+    // The visible text already carries the status keyword, so the
+    // concern is not "no signal reaches the user." It is that *the
+    // framing of that keyword as a status* may be the sole meaning
+    // signal carried by color alone: a sighted user reads "Danger" and
+    // the red painting tells them this is an alert (not ordinary
+    // prose); strip the color and the same word reads as a label, a
+    // section heading, or generic copy. The residual concern survives
+    // for users who cannot resolve the color-emphasis channel —
+    // colorblind users on monochrome rendering, users under high-
+    // contrast or color-inverted themes, and users on a localized UI
+    // where the English keyword may not register as a status term.
+    // Doctrine: "Reason text and severity must agree" (2026-04-25) —
+    // do NOT concede that the keyword's presence resolves the rule.
+    return `${descriptor} conveys "${statusWord}" status via the ${token} class; the visible text "${textSample}" already carries a status word, but color may still be the *sole* meaning signal framing that word as a status rather than ordinary prose — users who cannot resolve the color channel (colorblind users on a monochrome rendering, high-contrast / color-inverted themes, localized UIs where "${statusWord}" is not a recognized status term) lose the status framing and read the word as plain copy.`;
   }
   return `${descriptor} conveys "${statusWord}" status via the ${token} class alone — text content "${textSample}" carries no status word, no icon sibling, no sr-only label, and no ARIA live role. Screen-reader users, colorblind users, and anyone under a color-inverted theme receive the ${statusWord} text as plain prose with no indication that it is a status.`;
 }
@@ -526,8 +539,11 @@ function buildSuggestion(
     // already carries the word, that fix produces a tautology like
     // "Danger: Danger" on `<button class="btn-danger">Danger</button>`.
     // Lead with the channels that don't duplicate the visible word.
+    // Frame the residual concern honestly — color is still the sole
+    // signal that this word is a *status* rather than ordinary prose
+    // for users who can't resolve the color-emphasis channel.
     const textSample = text.length > 40 ? `${text.slice(0, 40)}…` : text;
-    return `The visible text "${textSample}" already names the "${statusWord}" status, so the risk is narrower: a colorblind user still may not see that the word is being emphasized as a status (vs. appearing as ordinary prose). Any of: (1) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\` — so the status is announced both in prose and as a glyph; (2) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (3) set \`aria-label="${titleWord}: ${textSample}"\` on the element so the accessible name is unambiguous. DO NOT prefix the visible text with "${titleWord}:" — the text already carries "${statusWord}" and the prefix would produce a tautology. Pick the channel that matches how the message reaches the page.`;
+    return `The visible text "${textSample}" already names the "${statusWord}" status, but color is still the sole signal framing that word as a status (not ordinary prose) for users who cannot resolve the color channel — colorblind users on a monochrome rendering, users under high-contrast / color-inverted themes, and users on localized UIs where the English keyword may not register as a status term. Any of: (1) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\` — so the status is announced both in prose and as a glyph; (2) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (3) set \`aria-label="${titleWord}: ${textSample}"\` on the element so the accessible name is unambiguous. DO NOT prefix the visible text with "${titleWord}:" — the text already carries "${statusWord}" and the prefix would produce a tautology. Pick the channel that matches how the message reaches the page.`;
   }
   return `Add a second channel for the "${statusWord}" status conveyed by ${token} on ${descriptor}. Any of: (1) prefix the visible text with the status word — e.g., "${titleWord}: <your text>" — so assistive tech reads the status as prose; (2) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\`; (3) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (4) set \`aria-label="${titleWord}: <your text>"\` on the element. Pick the one that matches how the message reaches the page.`;
 }
