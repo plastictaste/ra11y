@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><title>Quarterly results</title></head>
+<body>
+  <main>
+    <h1>Quarterly results</h1>
+    <!-- Bad: role="presentation" strips the table's data semantics, but
+         <th> headers are present and depend on those semantics for AT
+         to announce row/column relationships. -->
+    <table role="presentation">
+      <caption>Quarterly results</caption>
+      <thead>
+        <tr><th scope="col">Quarter</th><th scope="col">Revenue</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Q1</td><td>$1.2M</td></tr>
+        <tr><td>Q2</td><td>$1.4M</td></tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>

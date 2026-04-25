@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><title>Featured items</title></head>
+<body>
+  <main>
+    <h1>Featured items</h1>
+    <!-- Bad: role="none" strips the list semantics, but <li> children
+         depend on those semantics to be announced as "list, N items"
+         and to be navigable as a list by AT. -->
+    <ul role="none">
+      <li>First featured item</li>
+      <li>Second featured item</li>
+      <li>Third featured item</li>
+    </ul>
+  </main>
+</body>
+</html>

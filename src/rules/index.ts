@@ -15,6 +15,7 @@ import { rule as iconFontHidden } from "./aria/icon-font-hidden.ts";
 import { rule as invalidRole } from "./aria/invalid-role.ts";
 import { rule as labelledbyTargetExists } from "./aria/labelledby-target-exists.ts";
 import { rule as liveRegionValid } from "./aria/live-region-valid.ts";
+import { rule as presentationOnSemanticAncestor } from "./aria/presentation-on-semantic-ancestor.ts";
 import { rule as progressbarValueRange } from "./aria/progressbar-value-range.ts";
 import { rule as redundantRoleOnHostElement } from "./aria/redundant-role-on-host-element.ts";
 import { rule as requiredAttrs } from "./aria/required-attrs.ts";
@@ -167,6 +168,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   pageTitled,
   pauseStopHide,
   placeholderAsLabel,
+  presentationOnSemanticAncestor,
   progressbarValueRange,
   radioGroupWithoutFieldset,
   redundantRoleOnHostElement,
@@ -263,6 +265,7 @@ export {
   pageTitled,
   pauseStopHide,
   placeholderAsLabel,
+  presentationOnSemanticAncestor,
   progressbarValueRange,
   radioGroupWithoutFieldset,
   redundantRoleOnHostElement,
