@@ -80,6 +80,7 @@ import { rule as skipLink } from "./navigation/skip-link.ts";
 import { rule as duplicateId } from "./parsing/duplicate-id.ts";
 import { rule as htmlHasLang } from "./parsing/html-has-lang.ts";
 import { rule as invalidIdShape } from "./parsing/invalid-id-shape.ts";
+import { rule as malformedTag } from "./parsing/malformed-tag.ts";
 import { rule as cancellation } from "./pointer/cancellation.ts";
 import { rule as dragAlternative } from "./pointer/drag-alternative.ts";
 import { rule as draggableNoKeyboardAlt } from "./pointer/draggable-no-keyboard-alt.ts";
@@ -163,6 +164,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   linkTargetBlankAnnouncement,
   listStructure,
   liveRegionValid,
+  malformedTag,
   meaningByColorOnly,
   metaRefresh,
   nestedInteractive,
@@ -264,6 +266,7 @@ export {
   linkTargetBlankAnnouncement,
   listStructure,
   liveRegionValid,
+  malformedTag,
   meaningByColorOnly,
   metaRefresh,
   nestedInteractive,

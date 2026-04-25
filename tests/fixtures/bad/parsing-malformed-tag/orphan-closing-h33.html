@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Orphan closing tag — canonical field shape</title>
+  </head>
+  <body>
+    <main>
+      <h2>Article</h2>
+      <p>Lead paragraph.</p>
+      <h3>Sub-section</h33>
+      <p>The closer above is `</h33>` (digit-double typo on `</h3>`).</p>
+      <p>The HTML5 parser logs a recoverable stray-close error and silently
+        leaves the heading unclosed; AT loses the heading boundary.</p>
+    </main>
+  </body>
+</html>

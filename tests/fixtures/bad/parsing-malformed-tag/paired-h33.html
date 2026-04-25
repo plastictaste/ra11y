@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Paired malformed heading</title>
+  </head>
+  <body>
+    <main>
+      <h2>Article</h2>
+      <h33>Sub-section title</h33>
+      <p>The opener and closer agree (`<h33>...</h33>`), but `h33` is not a
+        valid HTML element. Browsers parse it as an unknown inline element
+        with no implicit role — absent from the screen-reader heading list.</p>
+    </main>
+  </body>
+</html>
