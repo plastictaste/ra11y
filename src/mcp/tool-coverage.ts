@@ -9,12 +9,15 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
+import { collectBuildArtifacts } from "./build-artifacts.ts";
+import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
-import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
+import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { outputFilePathSet } from "./scan-assembly.ts";
-import { scannedProject } from "./scanned-envelope.ts";
+import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
+import { configSearchedFromField } from "./scanner-meta.ts";
 import type { McpSession } from "./session.ts";
 import { deriveTestableCriteria } from "./testable-criteria.ts";
 import {
@@ -271,24 +274,37 @@ export const coverageTool: McpTool = {
       // as `invisible-to-rules` while live candidates reach the caller.
       outputFilePathSet(result.violations, report.candidates ?? []),
     );
+    // V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT: same scan state must
+    // surface the same warning code set on every tool that runs the
+    // scanner. Coverage previously omitted `no_config_found` (passed
+    // `configSource: undefined`) and `scanned_build_artifacts_present`
+    // (didn't run the detector); both codes ride on `scan_project` for
+    // the same cwd. The agent reading warnings on `coverage` to gate
+    // "are we done?" got a strict subset of the truth and would route
+    // away from a real onboarding gap (no config) or a vendor-dump-
+    // dominated scan (build artifacts) that `scan_project` had
+    // already labelled. Thread `projectConfig.sourcePath` and run the
+    // build-artifact detector here so the warning predicates fire
+    // consistently. The `configSearchSawProjectMarker` probe gates
+    // `no_config_found` per Q-SHARED-NO-CONFIG-WARNING-TINY-REPO so
+    // tiny scratch-dir scans stay quiet on every surface.
+    //
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
     // a coverage response with `criteriaAutomatable: 0` etc. is
     // indistinguishable from "tool never ran" unless we surface the
-    // honest "scanned_zero_files" / "extensions_skipped_no_parser"
-    // codes. `coverage` has no root-resolution step (takes `paths`
-    // directly, defaulting to `[cwd]`) and doesn't load project config
-    // in this handler; mirror the `scan` tool's inputs for the other
-    // codes. The `analysisCoverage` block we just built is passed in so
-    // `extensions_skipped_no_parser` fires whenever discovery rejected
-    // files on the parseable-extension check — same condition as
-    // scan_project.
+    // honest scan-confidence codes — same input → same labels.
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(cwd) : false;
+    const buildArtifactEntries = collectBuildArtifacts(files);
     const filesByExtension = countFilesByExtension(files);
     const baseWarnings = buildDerivativeScanWarnings({
       filesScanned: files.length,
       rootSource: null,
-      configSource: undefined,
+      configSource: projectConfig.sourcePath,
       analysisCoverage: analysisCoverageField.analysisCoverage,
       filesByExtension,
+      scannedBuildArtifactsPresent: buildArtifactEntries.length > 0,
+      configSearchSawProjectMarker,
       // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate truncation so the
       // response-level `response_meta_truncated` code fires when
       // the coverage helper head-sliced any path-array.
@@ -318,18 +334,27 @@ export const coverageTool: McpTool = {
     // alongside the alias in the next minor release; the
     // `### Deprecated` CHANGELOG entry tracks the removal window.
     const warnings = mergeDeprecatedFieldIdWarning(baseWarnings);
-    // `meta` is opt-in per `metaMode` — legacy callers (no metaMode)
-    // never saw a `meta` block on this tool, and additive surface
-    // creep is avoided by emitting under `metaMode: "delta"` only so
-    // the session meta-cache has something to collapse on repeat
-    // calls. The telemetry we DO ship (filesScanned, rulesEvaluated,
-    // standards, level, cwd) is scan-confidence data an agent uses to
-    // cross-check parity with the scan-family tools (CLAUDE.md §1
-    // "Verbose meta is signal, not clutter").
+    // V1-COVERAGE-META-BLOCK-MISSING: every tool that runs the scanner
+    // ships a `meta` block carrying load-bearing scan-confidence
+    // telemetry — `filesScanned`, `configSource`, `rootSource`,
+    // `rulesEvaluated`, `scanned`, plus the conditional
+    // `configSearchedFrom`. Coverage previously gated this entire
+    // block behind `metaMode: "delta"`, so the default "full" call
+    // shipped no meta at all. An agent that ran `scan_project({ cwd })`
+    // followed by `coverage({ cwd })` to gate "are we done?" couldn't
+    // verify the two calls scanned the same input set — silent
+    // cross-surface drift per `docs/kb/architecture/ai-first-consumer.md`
+    // "Cross-surface count invariant." Mirror scan_project's meta shape
+    // here; the meta-cache `metaMode` knob still applies (delta-mode
+    // collapses repeat calls to a sessionRef-keyed delta) but no
+    // longer suppresses the block on the default path.
+    const scannedEnvelope = scannedProject(cwd);
     const metaField = buildCoverageMetaField({
       params,
       session,
       filesScanned: files.length,
+      configSource: projectConfig.sourcePath,
+      scannedEnvelope,
       rulesEvaluated: buildRulesEvaluated({
         loadedCount: activeRules.length,
         perRuleCoverage,
@@ -394,29 +419,54 @@ export const coverageTool: McpTool = {
 };
 
 /**
- * Assembles the optional `meta` field for `coverage`. Emitted only
- * when `metaMode: "delta"` is requested so legacy callers see no shape
- * change (the tool had no `meta` block historically). Under delta mode
- * we collect scan-confidence telemetry (filesScanned, rulesEvaluated,
- * enabled standards, level, cwd) and hand it to the shared meta-cache
- * helper — repeat calls with the same signature collapse to a delta
- * keyed by `sessionRef`. Scoped to the single-standard return shape
- * (where the response envelope is an object); the multi-standard array
- * shape stays unchanged until a concrete consumer needs opt-in there.
+ * Assembles the `meta` field for `coverage`. V1-COVERAGE-META-BLOCK-
+ * MISSING + V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT: every tool that
+ * runs the scanner ships the same load-bearing scan-confidence
+ * telemetry (filesScanned, configSource, rootSource, rulesEvaluated,
+ * scanned, configSearchedFrom) so an agent that calls `scan_project`
+ * followed by `coverage` on the same cwd can verify both walked the
+ * same file set. The block ships unconditionally on the default
+ * `metaMode: "full"` path; `metaMode: "delta"` still collapses repeat
+ * calls through {@link applyMetaCacheMode} for tight tool-call loops.
+ *
+ * `rootSource: "explicit"` because `coverage` resolves its scan root
+ * from the caller's `cwd` param (defaulting to `process.cwd()`) — the
+ * same precedence `scan_project` uses for an explicit cwd. No
+ * host-root / git-root / spawn-cwd fallback chain on this tool.
+ *
+ * Scoped to the single-standard return shape (where the response
+ * envelope is an object); the multi-standard array shape stays
+ * unchanged until a concrete consumer needs opt-in there.
  */
 function buildCoverageMetaField(args: {
   readonly params: Record<string, unknown>;
   readonly session: McpSession;
   readonly filesScanned: number;
+  readonly configSource: string | null;
+  readonly scannedEnvelope: ScannedEnvelope;
   readonly rulesEvaluated: RulesEvaluated;
   readonly enabledStandards: readonly string[];
   readonly level: "A" | "AA" | "AAA";
   readonly cwd: string;
-}): { readonly meta?: Record<string, unknown> } {
-  if (readMetaMode(args.params) === "full") return {};
+}): { readonly meta: Record<string, unknown> } {
+  const callerCwd =
+    typeof args.params["cwd"] === "string" ? (args.params["cwd"] as string) : undefined;
   const fullMeta: Record<string, unknown> = {
     cwd: args.cwd,
     filesScanned: args.filesScanned,
+    scanned: args.scannedEnvelope,
+    configSource: args.configSource,
+    // Q8-CONFIGSEARCHEDFROM-ECHO-RECURRENCE: the shared helper omits
+    // when the search base would echo `cwd` or `scanned.root` already
+    // on the response. `coverage` walks up from `args.cwd`, so the
+    // base equals `scanned.root` on every default-shape call and the
+    // field is consistently dropped — uniform with `scan_project`.
+    ...configSearchedFromField({
+      searchBase: args.cwd,
+      callerCwd,
+      scanned: args.scannedEnvelope,
+    }),
+    rootSource: "explicit" as const,
     rulesEvaluated: args.rulesEvaluated,
     standards: [...args.enabledStandards],
     level: args.level,

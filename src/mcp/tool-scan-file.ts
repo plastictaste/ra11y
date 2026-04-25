@@ -27,6 +27,7 @@ import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
 import { runScanAndCollect } from "./scan-collect.ts";
 import { scannedFile } from "./scanned-envelope.ts";
+import { configSearchedFromField } from "./scanner-meta.ts";
 import type { McpSession } from "./session.ts";
 import {
   errorResult,
@@ -317,23 +318,31 @@ function buildScanFileResponse(args: {
     },
     { singleFilePath: parsed.filePath },
   );
+  const scannedEnvelope = scannedFile(parsed.filePath);
   const fullMeta: Record<string, unknown> = {
     ...assembled.meta,
     filesScanned: 1,
-    scanned: scannedFile(parsed.filePath),
+    scanned: scannedEnvelope,
     configSource: projectConfig.sourcePath,
-    // Q6-CONFIG-CONTEXT-TRIPLE-READOUT: emit `configSearchedFrom`
-    // only when the loader's walk-up base was DERIVED rather than
-    // caller-supplied. When the caller passed `cwd`, the search base
-    // equals that cwd (pure echo of an input the agent set), so the
-    // field adds no signal and is omitted. When the caller omitted
-    // `cwd`, the base is `dirname(absFilePath)` — meaningful context
-    // the agent can't otherwise read off the response. `configNote`
+    // Q6-CONFIG-CONTEXT-TRIPLE-READOUT + Q8-CONFIGSEARCHEDFROM-ECHO-
+    // RECURRENCE: emit `configSearchedFrom` only when its value names
+    // a directory the agent can't otherwise read off the response. The
+    // shared {@link configSearchedFromField} helper widens the omit
+    // predicate uniformly across every MCP surface: omit when the
+    // value would echo (a) the caller-supplied `cwd`, (b) the
+    // `scanned.root` of a project-mode scan, or (c) `dirname(scanned.file)`
+    // of a file-mode scan. The Q6 closure used (a) only — `dirname`
+    // matches kept slipping through on `scan_file` and on docs-site
+    // fragment scans, so the helper folds (c) in too. `configNote`
     // (a 200-char boilerplate echoing the `no_config_found` warning
     // fired by the assembler when `configSource === null`) dropped
     // entirely per `.claude/rules/mcp-response-shapes.md`
     // "present-when-meaningful; never sentinel-empty."
-    ...(scanFileCwd === configSearchBase ? {} : { configSearchedFrom: configSearchBase }),
+    ...configSearchedFromField({
+      searchBase: configSearchBase,
+      callerCwd: scanFileCwd,
+      scanned: scannedEnvelope,
+    }),
     // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
     // `nextStepStructured` moved to the top level of the response.
     // One pointer, one place — the load-bearing agent-direction field
