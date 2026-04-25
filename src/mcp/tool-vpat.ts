@@ -16,6 +16,10 @@
  * gap is visible in the rendered VPAT. The tool also emits
  * `warnings: ["product_metadata_placeholders_in_use"]` so the agent
  * knows to prompt the user for real values before shipping the VPAT.
+ * In the same vein, an all-fail VPAT (every standard section reports
+ * `summary.supports === 0`) emits `warnings: ["vpat_no_passing_criteria"]`
+ * so a procurement-shaped artifact with zero positive conformance rows
+ * is visibly flagged before distribution.
  *
  * Read-only — no disk writes. Idempotent for a given
  * (cwd, files, attestations, product metadata, standards, level) tuple.
@@ -202,6 +206,7 @@ export const vpatTool: McpTool = {
       product: report.product,
       configSource,
       configSearchSawProjectMarker,
+      report,
     });
 
     const nextStep = buildNextStep(report);
@@ -332,7 +337,7 @@ function buildOptionalProductFields(params: Record<string, unknown>): Partial<Vp
 }
 
 /**
- * Computes the top-level `warnings` list. Three silent-failure modes
+ * Computes the top-level `warnings` list. Four silent-failure modes
  * qualify (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
  *
  *   - `scanned_zero_files` — the VPAT rows would all be "Not Evaluated"
@@ -351,12 +356,26 @@ function buildOptionalProductFields(params: Record<string, unknown>): Partial<Vp
  *     the caller passed empty strings. A VPAT header with these
  *     placeholders is visibly incomplete; the warning routes the agent
  *     back to the user before shipping the artifact.
+ *   - `vpat_no_passing_criteria` — every standard's section reports
+ *     `summary.supports === 0`. The VPAT is publishable-shaped (header
+ *     fields populated, criteria rendered) but no row carries a positive
+ *     conformance verdict — every entry is "Does Not Support",
+ *     "Partially Supports", "Not Applicable", or "Not Evaluated". An
+ *     all-fail VPAT is a procurement footgun: distributing it claims
+ *     conformance against zero criteria, which a reader will misread as
+ *     "this product evaluated and passed nothing." The warning fires
+ *     independently of `scanned_zero_files` (the empty-tree case already
+ *     has zero supports as a derived fact, and surfacing both lets the
+ *     agent see both the cause-shape and the artifact-shape) so an agent
+ *     reviewing the response sees the all-fail framing whether the cause
+ *     was a missed scan or genuine catastrophic non-conformance.
  */
 function computeWarnings(inputs: {
   readonly filesScanned: number;
   readonly product: VpatProductMetadata;
   readonly configSource: string | null;
   readonly configSearchSawProjectMarker: boolean;
+  readonly report: VpatReport;
 }): readonly string[] {
   const out: string[] = [];
   if (inputs.filesScanned === 0) out.push("scanned_zero_files");
@@ -367,7 +386,24 @@ function computeWarnings(inputs: {
   ) {
     out.push("product_metadata_placeholders_in_use");
   }
+  if (hasNoPassingCriteria(inputs.report)) out.push("vpat_no_passing_criteria");
   return out;
+}
+
+/**
+ * Returns true when every standard section in the VPAT report reports
+ * zero `Supports` rows. Walks each section's `summary.supports` so a
+ * mixed-standard VPAT (e.g. WCAG 2.2 + EN 301 549) only trips the
+ * warning when neither standard has any passing criterion — a single
+ * standard with passes is enough evidence that the artifact is not an
+ * all-fail one. Returns false for an empty `standards` array (no
+ * sections to evaluate); the empty-standards case is a builder-shape
+ * gap that the report header would surface separately, not the same
+ * silent-failure mode as "every section evaluated to zero supports."
+ */
+function hasNoPassingCriteria(report: VpatReport): boolean {
+  if (report.standards.length === 0) return false;
+  return report.standards.every((s) => s.summary.supports === 0);
 }
 
 /**

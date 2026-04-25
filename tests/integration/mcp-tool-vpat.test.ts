@@ -18,6 +18,9 @@
  *   - Empty directory: `warnings` includes `scanned_zero_files`.
  *   - Empty-string product metadata: placeholders land AND warnings
  *     include `product_metadata_placeholders_in_use`.
+ *   - All-fail VPAT (every standard's `summary.supports === 0`):
+ *     warnings include `vpat_no_passing_criteria`. A scan that produces
+ *     at least one passing criterion does NOT raise it.
  *   - `format: "markdown"` attaches `markdownRendering`; `format: "json"`
  *     omits it.
  */
@@ -278,6 +281,63 @@ describe("MCP tool: vpat", () => {
       expect(entry).toBeDefined();
       expect(entry?.conformance).toBe("Not Evaluated");
       expect(entry?.remarks).toContain("runtime-dependent criterion");
+    }
+  });
+
+  it("emits vpat_no_passing_criteria when every standard reports summary.supports === 0", async () => {
+    // An empty directory drives every criterion to "Not Evaluated" (no
+    // rules fire because no files were parsed), so summary.supports
+    // collapses to 0 across every standard section. The artifact is
+    // still publishable-shaped — the warning is the only structural
+    // signal that no row carries a positive conformance verdict, so an
+    // agent doesn't ship an all-fail VPAT thinking it represents real
+    // evaluated coverage. (V1-VPAT-NO-PASSING-CRITERIA-WARNING).
+    const emptyDir = await mkdtemp(join(tmpdir(), "ra11y-vpat-allfail-"));
+    try {
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "vpat", {
+          productName: "Acme App",
+          productVersion: "1.0.0",
+          cwd: emptyDir,
+        }),
+      ]);
+      const body = bodyOf(responses[1]);
+      // Sanity: all-fail precondition holds — every section reports
+      // zero supports. If the precondition ever drifts (e.g. a new
+      // automatable rule changes the no-evidence default), the test
+      // should fail loudly here rather than silently pass on the
+      // warning assertion below.
+      for (const section of body.standards) {
+        expect(section.summary.supports).toBe(0);
+      }
+      expect(body.warnings).toBeDefined();
+      expect(body.warnings).toContain("vpat_no_passing_criteria");
+    } finally {
+      await rm(emptyDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not emit vpat_no_passing_criteria when at least one criterion supports", async () => {
+    // The bad-alt-text fixture has at least one rule that reports
+    // "Supports" (rules whose criteria have no findings on the parsed
+    // files). The warning must NOT fire when summary.supports > 0 in
+    // any standard section — surface the no-passing signal honestly,
+    // not as a false alarm on a partially-passing VPAT.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "vpat", {
+        productName: "Acme App",
+        productVersion: "1.0.0",
+        cwd: BAD_ALT_DIR,
+      }),
+    ]);
+    const body = bodyOf(responses[1]);
+    // Sanity: at least one section has supports > 0.
+    const anySupports = body.standards.some((s) => s.summary.supports > 0);
+    expect(anySupports).toBe(true);
+    if (body.warnings !== undefined) {
+      expect(body.warnings).not.toContain("vpat_no_passing_criteria");
     }
   });
 
