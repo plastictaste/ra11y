@@ -314,18 +314,32 @@ describe("MCP tool: scan", () => {
     const terseCov = terseData.meta.analysisCoverage ?? {};
     expect(terseCov.parseErrorFiles).toBeUndefined();
     expect(terseCov.opaqueCustomComponentNames).toBeUndefined();
+    expect(terseCov.rulesFiredByExtension).toBeUndefined();
+    // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the deprecated alias
+    // `rulesByExtension` follows the same verbose-only gate as the
+    // canonical name — neither field rides on a terse scan.
     expect(terseCov.rulesByExtension).toBeUndefined();
 
     const verbose = await tool.handler({ paths: [BAD_ALT], verboseMeta: true }, session);
     const verboseData = JSON.parse(verbose.content[0].text) as {
       meta: { analysisCoverage?: Record<string, unknown> };
+      warnings?: readonly string[];
     };
     const cov = verboseData.meta.analysisCoverage ?? {};
-    // BAD_ALT is a .html fixture — expect rulesByExtension to include .html.
-    expect(cov.rulesByExtension).toBeDefined();
-    const byExt = cov.rulesByExtension as Record<string, string[]>;
+    // BAD_ALT is a .html fixture — expect rulesFiredByExtension to include .html.
+    expect(cov.rulesFiredByExtension).toBeDefined();
+    const byExt = cov.rulesFiredByExtension as Record<string, string[]>;
     expect(Array.isArray(byExt[".html"])).toBe(true);
     expect(byExt[".html"].length).toBeGreaterThan(0);
+    // The deprecated alias `rulesByExtension` ships alongside, carrying
+    // the identical value (ADR 0028, V1-RULES-BY-EXTENSION-LABELING).
+    // Emission triggers the deprecation warning so callers reading the
+    // warnings channel can drop their `rulesByExtension` reads on the
+    // next call.
+    expect(cov.rulesByExtension).toEqual(byExt);
+    expect(verboseData.warnings).toContain(
+      "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension",
+    );
   });
 });
 

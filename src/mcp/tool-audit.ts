@@ -59,7 +59,7 @@ export const auditTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "Scan leg only: expand analysisCoverage counts into lists (opaqueCustomComponentNames; rulesByExtension). `parseErrorFiles` (errored + zero findings) and `partialParseFiles` (errored + still produced findings) always ship when non-empty with `{ path, parser, reason }` entries regardless of this flag — the per-entry parser + reason is the agent's fix pivot. Off by default.",
+            "Scan leg only: expand analysisCoverage counts into lists (opaqueCustomComponentNames; rulesFiredByExtension — the deprecated alias `rulesByExtension` ships alongside for one minor release per ADR 0028). `parseErrorFiles` (errored + zero findings) and `partialParseFiles` (errored + still produced findings) always ship when non-empty with `{ path, parser, reason }` entries regardless of this flag — the per-entry parser + reason is the agent's fix pivot. Off by default.",
         },
         autoDetectWrappers: {
           type: "boolean",

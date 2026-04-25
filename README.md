@@ -278,7 +278,7 @@ Or start the server directly: `ra11y --mcp`
   "additionalPaths": ["dist/assets"],  // bypass .gitignore + default build-dir skips to scan
                                        // post-compile Tailwind/CSS-in-JS output.
   "verboseMeta": true                  // expand analysisCoverage to include file lists and
-                                       // rulesByExtension for scan-confidence debugging.
+                                       // rulesFiredByExtension for scan-confidence debugging.
 }
 ```
 

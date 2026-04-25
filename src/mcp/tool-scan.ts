@@ -74,7 +74,7 @@ export const scanTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, analysisCoverage expands its counts into the actual lists — `opaqueCustomComponentNames` (PascalCase tags not in nativeWrappers) and `rulesByExtension` (which rules ran against which file types). `parseErrorFiles` (paths that errored AND produced zero findings; invisible to rules) and `partialParseFiles` (errored + still produced findings) always ship with `{ path, parser, reason }` entries regardless of this flag — the parser + reason pair is the fix pivot. Off by default to keep responses terse; enable when triaging coverage gaps.",
+            "When true, analysisCoverage expands its counts into the actual lists — `opaqueCustomComponentNames` (PascalCase tags not in nativeWrappers) and `rulesFiredByExtension` (which rules were eligible to run against which file types; deprecated alias `rulesByExtension` ships alongside for one minor release per ADR 0028 — emission triggers the `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension` warning). `parseErrorFiles` (paths that errored AND produced zero findings; invisible to rules) and `partialParseFiles` (errored + still produced findings) always ship with `{ path, parser, reason }` entries regardless of this flag — the parser + reason pair is the fix pivot. Off by default to keep responses terse; enable when triaging coverage gaps.",
         },
         metaMode: metaModeSchema,
         includeRuleDetails: includeRuleDetailsSchema,

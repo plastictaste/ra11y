@@ -261,7 +261,26 @@ export type ScanWarningCode =
   // CHANGELOG entry tracks the removal window. Surface-don't-suppress:
   // both fields ship unchanged today; the warning is the additive signal
   // that lets callers self-migrate without a hidden break.
-  | "deprecated_field_id_renamed_criterionId";
+  | "deprecated_field_id_renamed_criterionId"
+  // V1-RULES-BY-EXTENSION-LABELING (ADR 0028):
+  // `meta.analysisCoverage.rulesByExtension` was renamed to
+  // `rulesFiredByExtension` to disambiguate it from
+  // `perRuleCoverage` — both surfaces previously carried look-alike
+  // "what ran?" semantics under different field shapes (the per-extension
+  // eligibility view vs. the per-rule post-runner tally), and agents
+  // joining them silently disagreed on the answer. The legacy
+  // `rulesByExtension` field still ships alongside `rulesFiredByExtension`
+  // for one minor release as a deprecated alias; both fields carry the
+  // identical value. This code fires whenever the alias is emitted so
+  // callers reading the warnings channel can drop their `rulesByExtension`
+  // reads on the next call without paying the double-payload cost. The
+  // alias is removed in the next minor release; the `### Deprecated`
+  // CHANGELOG entry tracks the removal window. Mirror precedent:
+  // `deprecated_field_id_renamed_criterionId` (Q7-CRITERION-ID-FIELD-NAME-
+  // DRIFT). Surface-don't-suppress: both fields ship unchanged today;
+  // the warning is the additive signal that lets callers self-migrate
+  // without a hidden break.
+  | "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -994,6 +1013,17 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // findings while also landing in `parseErrorFiles`).
     out.push("parse_errors_present");
   }
+  if (hasDeprecatedRulesByExtensionAlias(inputs.analysisCoverage)) {
+    // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the legacy
+    // `rulesByExtension` alias rode on `meta.analysisCoverage`
+    // alongside the canonical `rulesFiredByExtension`. Surface the
+    // deprecation code so callers reading the warnings channel can
+    // drop their `rulesByExtension` reads on the next call without
+    // the double-payload cost. Presence-only signal — mirrors the
+    // `deprecated_field_id_renamed_criterionId` pattern from
+    // Q7-CRITERION-ID-FIELD-NAME-DRIFT.
+    out.push("deprecated_field_rules_by_extension_renamed_rules_fired_by_extension");
+  }
   // Content-distribution codes — see `contentDistributionCodes`. Two
   // branches extracted into the helper so the main function's
   // cognitive complexity stays under the lint cap; the emitted order
@@ -1090,6 +1120,27 @@ function hasParseErrors(coverage: Record<string, unknown> | undefined): boolean 
   const full = coverage["parseErrorFileCount"];
   const partial = coverage["partialParseFileCount"];
   return (typeof full === "number" && full > 0) || (typeof partial === "number" && partial > 0);
+}
+
+/**
+ * Predicate for `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`.
+ * Returns `true` whenever the coverage block carries the deprecated
+ * alias `rulesByExtension`. The builder in `analysis-coverage.ts`
+ * populates the alias alongside `rulesFiredByExtension` for one minor
+ * release (ADR 0028) — agents reading the warnings channel can drop
+ * their `rulesByExtension` reads on the next call once they see this
+ * code fire. Mirror precedent: the `id` → `criterionId` rename in
+ * `tool-coverage.ts` (Q7-CRITERION-ID-FIELD-NAME-DRIFT) emits the
+ * deprecation as a presence-only signal at the response-assembly site;
+ * here the alias rides on `meta.analysisCoverage` so the predicate
+ * mirrors that one-step lookup.
+ */
+function hasDeprecatedRulesByExtensionAlias(
+  coverage: Record<string, unknown> | undefined,
+): boolean {
+  if (coverage === undefined) return false;
+  const alias = coverage["rulesByExtension"];
+  return alias !== undefined && typeof alias === "object" && alias !== null;
 }
 
 function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {

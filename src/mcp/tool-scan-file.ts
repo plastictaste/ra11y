@@ -78,7 +78,7 @@ export const scanFileTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, the response includes an `analysisCoverage` block with parse-error and opaque-component details, plus `rulesByExtension` so you can verify which rules ran on this file's type. Off by default.",
+            "When true, the response includes an `analysisCoverage` block with parse-error and opaque-component details, plus `rulesFiredByExtension` (legacy alias `rulesByExtension` ships alongside for one minor release per ADR 0028) so you can verify which rules were eligible to run on this file's type. Off by default.",
         },
         metaMode: metaModeSchema,
       },

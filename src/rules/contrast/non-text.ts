@@ -99,7 +99,7 @@ export const rule = defineRule({
   // Project scope mirrors `contrast/minimum` / `contrast/enhanced`:
   // the cross-reference is cross-file by nature (CSS failure, JSX/HTML
   // consumer). `.html` / `.htm` are listed alongside `.css` so
-  // `rulesByExtension` honestly reports HTML inline-style evaluations
+  // `rulesFiredByExtension` honestly reports HTML inline-style evaluations
   // alongside stylesheet rules. `.scss` / `.less` are listed for the
   // same reason as `contrast/minimum`: the SCSS and Less parsers
   // preprocess preprocessor source to a CSS-shaped AST and tag

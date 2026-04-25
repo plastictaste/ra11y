@@ -109,7 +109,7 @@ export const scanDiffTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, analysisCoverage expands its counts into underlying lists (opaqueCustomComponentNames; rulesByExtension). `parseErrorFiles` (files that errored AND produced zero findings) and `partialParseFiles` (files that errored but still produced findings) always ship when non-empty with `{ path, parser, reason }` entries, regardless of this flag — the per-entry parser + reason is the agent's fix pivot.",
+            "When true, analysisCoverage expands its counts into underlying lists (opaqueCustomComponentNames; rulesFiredByExtension — legacy alias `rulesByExtension` ships alongside for one minor release per ADR 0028). `parseErrorFiles` (files that errored AND produced zero findings) and `partialParseFiles` (files that errored but still produced findings) always ship when non-empty with `{ path, parser, reason }` entries, regardless of this flag — the per-entry parser + reason is the agent's fix pivot.",
         },
         metaMode: metaModeSchema,
         hunksOnly: {

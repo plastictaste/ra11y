@@ -114,7 +114,7 @@ export const rule = defineRule({
   severity: "error",
   scope: "project",
   fixClass: "guidance",
-  // `.html` / `.htm` are listed alongside `.css` so `rulesByExtension`
+  // `.html` / `.htm` are listed alongside `.css` so `rulesFiredByExtension`
   // honestly reports "this rule evaluated HTML files" when an inline
   // `style="color:…;background:…"` pair is scored. The rule still runs
   // in `afterProject` — the extension gate only threads through the

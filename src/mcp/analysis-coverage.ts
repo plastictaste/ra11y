@@ -50,12 +50,16 @@
  * `parse_errors_present` / `parseErrorFileCount` signals as a silent-
  * failure shape (CLAUDE.md §1 "Zero-output success is ambiguous
  * failure" — the response-level analogue applies to partial-success
- * signals too). `opaqueCustomComponentNames` and `rulesByExtension`
+ * signals too). `opaqueCustomComponentNames` and `rulesFiredByExtension`
  * still hide behind `verboseMeta` because they are bounded-but-large
  * inventories whose per-entry value is lower than the top-level count;
  * parse errors are high-signal per-entry and rarely exceed a handful
  * per scan. Fields are omitted when they'd be empty, so clean projects
- * stay terse.
+ * stay terse. The deprecated alias `rulesByExtension` ships alongside
+ * `rulesFiredByExtension` for one minor release (ADR 0028) — both
+ * fields carry the identical value, and the warnings channel emits
+ * `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
+ * whenever the alias rides.
  */
 
 import { isHtmlFragment, walkJsxElements } from "../engine/ast-helpers.ts";
@@ -156,6 +160,30 @@ interface CoverageBlock {
   partialParseFileCount?: number;
   partialParseFiles?: readonly ParseErrorEntry[];
   partialParseFilesTruncated?: MetaArrayTruncationSummary;
+  /**
+   * V1-RULES-BY-EXTENSION-LABELING (ADR 0028): for each extension that
+   * had files in this scan, the list of active rule IDs eligible to
+   * evaluate files of that extension — the same set the rule-runner's
+   * `applies()` gate would admit per file. Routes through
+   * {@link extensionMatches} so alias-heavy scans
+   * (`.scss → .css`, `.mdx → .tsx`/`.jsx`, `.astro → .html`,
+   * `.md`/`.markdown → .html`, `.js → .jsx`, `.ts → .tsx`) report the
+   * declared CSS/HTML/TSX/JSX rule families honestly. Rules without
+   * any `appliesTo.fileExtensions` constraint are unconditionally
+   * included. The companion `perRuleCoverage` carries the per-rule
+   * post-runner tally — the rename moves the per-extension view out
+   * of name-collision with `perRuleCoverage`'s look-alike "what ran?"
+   * shape (the historical drift the field-name ambiguity caused —
+   * agents joined the two surfaces and silently disagreed on the
+   * answer).
+   */
+  rulesFiredByExtension?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Deprecated alias for `rulesFiredByExtension`. Ships unchanged for
+   * one minor release while the rename lands; emission triggers the
+   * `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
+   * warning code so agents can self-migrate. ADR 0028.
+   */
   rulesByExtension?: Readonly<Record<string, readonly string[]>>;
   parseModeByExtension?: Readonly<Record<string, string>>;
   /**
@@ -381,11 +409,11 @@ export function buildAnalysisCoverage(
 }
 
 /**
- * Populates the non-cap tail of the coverage block — `rulesByExtension`
- * (verbose-only), `hints`, and `skippedByExtension`. Extracted from
- * {@link buildAnalysisCoverage} so the orchestrator stays under the
- * cognitive-complexity cap as cap-related branches accrete in the
- * early section.
+ * Populates the non-cap tail of the coverage block — `rulesFiredByExtension`
+ * + the deprecated `rulesByExtension` alias (verbose-only), `hints`, and
+ * `skippedByExtension`. Extracted from {@link buildAnalysisCoverage} so
+ * the orchestrator stays under the cognitive-complexity cap as cap-related
+ * branches accrete in the early section.
  */
 function populateCoverageTail(
   coverage: CoverageBlock,
@@ -396,8 +424,18 @@ function populateCoverageTail(
   discoveryDiagnostics: import("../input/discover.ts").DiscoveryDiagnostics | undefined,
 ): void {
   if (verbose) {
-    const byExt = rulesByExtension(files, activeRules);
-    if (Object.keys(byExt).length > 0) coverage.rulesByExtension = byExt;
+    const byExt = rulesFiredByExtension(files, activeRules);
+    if (Object.keys(byExt).length > 0) {
+      // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): canonical name +
+      // deprecated alias both ship for one minor release. Both fields
+      // carry the identical value; the warnings channel emits
+      // `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
+      // whenever the alias rides so agents can self-migrate without a
+      // hidden break. Mirror precedent: `id` → `criterionId` rename in
+      // `tool-coverage.ts` (Q7-CRITERION-ID-FIELD-NAME-DRIFT).
+      coverage.rulesFiredByExtension = byExt;
+      coverage.rulesByExtension = byExt;
+    }
   }
   // Per-extension parse-mode disclosure so the agent can reconcile
   // `filesByExtension` counts against per-rule `filesEvaluated`.
@@ -785,21 +823,25 @@ function describeTemplateDirectiveHandling(engines: ReadonlySet<string>): string
 
 /**
  * For each file extension actually seen in this scan, lists the active
- * rule IDs that evaluated files with that extension. Mirrors the gate in
- * rule-runner.ts `applies()` exactly: routes through
+ * rule IDs eligible to evaluate files with that extension. Mirrors the
+ * gate in rule-runner.ts `applies()` exactly: routes through
  * {@link extensionMatches} so extension aliases (`.scss → .css`,
  * `.mdx → .tsx`/`.jsx`, `.astro → .html`, `.md`/`.markdown → .html`,
  * `.js → .jsx`, `.ts → .tsx`) expand into the declared gate the same way
- * they do at runtime. A rule with no `fileExtensions` constraint runs on
- * every extension; otherwise it runs on declared extensions plus any
- * alias-equivalent extension the parser adapters funnel in. Without this,
- * `rulesByExtension` disagreed with `perRuleCoverage` on alias-heavy
- * scans — a `.scss`-only scan listed only the rules literally declaring
- * `.scss` (typically zero), while `perRuleCoverage` correctly showed
- * every `.css`-targeted rule with `filesEvaluated: 1` (because the SCSS
- * adapter produces a CSS AST and `applies()` matches via alias). Two
- * surfaces naming "rules run on this extension" must agree
- * (Q3-RULES-BY-EXTENSION-UNDERCOUNT) — this is the agreement site.
+ * they do at runtime. A rule with no `fileExtensions` constraint is
+ * eligible on every extension; otherwise it is eligible on declared
+ * extensions plus any alias-equivalent extension the parser adapters
+ * funnel in. Without alias expansion, the per-extension view disagreed
+ * with `perRuleCoverage` on alias-heavy scans — a `.scss`-only scan
+ * listed only the rules literally declaring `.scss` (typically zero),
+ * while `perRuleCoverage` correctly showed every `.css`-targeted rule
+ * with `filesEvaluated: 1` (because the SCSS adapter produces a CSS AST
+ * and `applies()` matches via alias). The rename to
+ * `rulesFiredByExtension` (ADR 0028, V1-RULES-BY-EXTENSION-LABELING)
+ * disambiguates this view from `perRuleCoverage`'s post-runner tally —
+ * the two surfaces no longer share a look-alike name with categorically
+ * different semantics. Q3-RULES-BY-EXTENSION-UNDERCOUNT is the agreement
+ * site for the alias expansion.
  */
 /**
  * Per-extension disclosure of which parser / AST-language each file
@@ -835,7 +877,7 @@ function parseModeByExtension(files: readonly ParsedFile[]): Record<string, stri
   return Object.fromEntries([...seen.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function rulesByExtension(
+function rulesFiredByExtension(
   files: readonly ParsedFile[],
   activeRules: readonly Rule[],
 ): Record<string, readonly string[]> {
@@ -855,9 +897,10 @@ function rulesByExtension(
       }
       // `extensionMatches` is the same helper rule-runner.ts `applies()`
       // uses for per-file eligibility — routing through it is what keeps
-      // `rulesByExtension` and `perRuleCoverage` in agreement on
+      // `rulesFiredByExtension` and `perRuleCoverage` in agreement on
       // alias-heavy scans. Literal equality silently dropped every
-      // aliased extension (the historical bug).
+      // aliased extension (the historical bug,
+      // Q3-RULES-BY-EXTENSION-UNDERCOUNT).
       if (extensionMatches(ext, declared)) ids.push(r.id);
     }
     out[ext] = ids.sort();

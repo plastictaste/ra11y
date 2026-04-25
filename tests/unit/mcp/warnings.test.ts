@@ -1664,3 +1664,62 @@ describe("computeScanWarnings — scanned_minified_file payload + warningsField 
     expect(details.scanned_minified_file).toBeUndefined();
   });
 });
+
+describe("computeScanWarnings: V1-RULES-BY-EXTENSION-LABELING (ADR 0028)", () => {
+  // The rename ships the canonical `rulesFiredByExtension` with the
+  // deprecated alias `rulesByExtension` riding alongside for one minor
+  // release. The warning code `deprecated_field_rules_by_extension_
+  // renamed_rules_fired_by_extension` is a presence-only signal —
+  // mirror precedent: `deprecated_field_id_renamed_criterionId`
+  // (Q7-CRITERION-ID-FIELD-NAME-DRIFT). Predicate keys off alias
+  // presence in `analysisCoverage.rulesByExtension`, so a callsite
+  // that drops the alias drops the warning, too.
+  it("fires when analysisCoverage carries the deprecated `rulesByExtension` alias", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        rulesFiredByExtension: { ".scss": ["contrast/fake"] },
+        rulesByExtension: { ".scss": ["contrast/fake"] },
+      },
+      filesByExtension: { ".scss": 1 },
+    });
+    expect(codes).toContain("deprecated_field_rules_by_extension_renamed_rules_fired_by_extension");
+  });
+
+  it("does NOT fire when only `rulesFiredByExtension` is present (post-deprecation shape)", () => {
+    // After the alias is dropped at the next minor, the canonical
+    // field rides alone and the deprecation warning falls silent —
+    // pin that future shape now so the predicate can't drift to fire
+    // on the canonical name's mere presence.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        rulesFiredByExtension: { ".scss": ["contrast/fake"] },
+      },
+      filesByExtension: { ".scss": 1 },
+    });
+    expect(codes).not.toContain(
+      "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension",
+    );
+  });
+
+  it("does NOT fire on a terse scan where neither field is present", () => {
+    // Both `rulesFiredByExtension` and `rulesByExtension` ship under
+    // verboseMeta only — a default scan emits neither and the
+    // deprecation warning stays absent.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".scss": 1 },
+    });
+    expect(codes).not.toContain(
+      "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension",
+    );
+  });
+});
