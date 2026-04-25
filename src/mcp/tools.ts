@@ -143,12 +143,12 @@ const explainRuleTool: McpTool = {
       // / limits up front lets the agent triage faster
       // (`docs/kb/architecture/ai-first-consumer.md` "Surface, don't
       // suppress" + the heuristic-mislabeling cluster).
-      ...(rule.docs.knownFalsePositives !== undefined
-        ? { knownFalsePositives: [...rule.docs.knownFalsePositives] }
-        : {}),
-      ...(rule.docs.knownLimitations !== undefined
-        ? { knownLimitations: [...rule.docs.knownLimitations] }
-        : {}),
+      ...(rule.docs.knownFalsePositives === undefined
+        ? {}
+        : { knownFalsePositives: [...rule.docs.knownFalsePositives] }),
+      ...(rule.docs.knownLimitations === undefined
+        ? {}
+        : { knownLimitations: [...rule.docs.knownLimitations] }),
     });
   },
 };
