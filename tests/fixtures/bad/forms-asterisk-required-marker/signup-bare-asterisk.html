@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Sign up</title></head>
+  <body>
+    <main>
+      <h1>Sign up</h1>
+      <!--
+        Each label's visible text trails a bare `*` (the widely used
+        "asterisk equals required" convention) but the corresponding
+        controls expose no programmatic required signal. A screen-reader
+        user hearing "Email star edit text" has no way to know which
+        fields are required; submission failures are the first signal.
+      -->
+      <form action="/signup" method="post">
+        <label for="email">Email *</label>
+        <input id="email" type="email">
+
+        <label for="password">Password *</label>
+        <input id="password" type="password">
+
+        <input type="text" name="display-name" placeholder="Display name *">
+
+        <button type="submit">Sign up</button>
+      </form>
+    </main>
+  </body>
+</html>

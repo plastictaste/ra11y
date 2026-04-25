@@ -37,6 +37,7 @@ import { rule as notObscured } from "./focus/not-obscured.ts";
 import { rule as outlineVisible } from "./focus/outline-visible.ts";
 import { rule as tabindexPositive } from "./focus/tabindex-positive.ts";
 import { rule as ariaInvalidMissing } from "./forms/aria-invalid-missing.ts";
+import { rule as asteriskRequiredMarker } from "./forms/asterisk-required-marker.ts";
 import { rule as autocompleteMissing } from "./forms/autocomplete-missing.ts";
 import { rule as errorMessageNotAssociated } from "./forms/error-message-not-associated.ts";
 import { rule as fieldsetLegend } from "./forms/fieldset-legend.ts";
@@ -108,6 +109,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   anchorButtonNotFocusable,
   animationFromInteractions,
   ariaInvalidMissing,
+  asteriskRequiredMarker,
   audioVideoNoControls,
   autocompleteMissing,
   autoplaySound,
@@ -205,6 +207,7 @@ export {
   anchorButtonNotFocusable,
   animationFromInteractions,
   ariaInvalidMissing,
+  asteriskRequiredMarker,
   audioVideoNoControls,
   autocompleteMissing,
   autoplaySound,
