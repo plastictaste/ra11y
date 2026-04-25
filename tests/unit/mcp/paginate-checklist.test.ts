@@ -462,6 +462,119 @@ describe("paginateChecklistItems — V1-CHECKLIST-PERCRITERION-CURSOR cursor res
     expect(page.totalCandidates).toBe(5);
   });
 
+  /**
+   * V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER — when the per-criterion
+   * cap clips at least one criterion, the response carries
+   * `maxCandidatesPerCriterionHint: N` so the caller can raise the
+   * input param to a useful target in one shot instead of paginating
+   * through `nextCursor`. The hint is `min(largestUncappedCount, 100)`
+   * — the noisiest criterion's pre-clip count, capped by the input
+   * band's ceiling. Honest-shape: absent when nothing was clipped.
+   */
+  it("emits maxCandidatesPerCriterionHint when per-criterion cap fires (default 10)", () => {
+    // 84-candidate criterion, cap defaults to 10. Hint should be 84
+    // (the largest uncapped count, well below the 100 ceiling) so the
+    // caller knows raising to 84 covers the elided tail.
+    const items = [makeItem("wcag22:1.3.2", 84)];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 10 }));
+    expect(page.paginationFields.perCriterionClipped).toBe(true);
+    expect(page.paginationFields.maxCandidatesPerCriterionHint).toBe(84);
+  });
+
+  it("caps the hint at the input band's ceiling (100)", () => {
+    // 250 candidates with cap 10 → hint clamps at 100, not 250. Lets
+    // the caller pass it back as maxCandidatesPerCriterion without
+    // tripping the silent-clamp warning.
+    const items = [makeItem("wcag22:1.3.2", 250)];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 10 }));
+    expect(page.paginationFields.perCriterionClipped).toBe(true);
+    expect(page.paginationFields.maxCandidatesPerCriterionHint).toBe(100);
+  });
+
+  it("hint picks the noisiest criterion across multiple clipped items", () => {
+    // Three clipped criteria with 30, 50, 20 candidates respectively;
+    // hint should be 50 (the largest), not 30 (the first) — the agent's
+    // question is "how high to set this to see everything?" — answered
+    // by the loudest criterion.
+    const items = [
+      makeItem("wcag22:1.4.3", 30),
+      makeItem("wcag22:2.4.5", 50),
+      makeItem("wcag22:3.3.1", 20),
+    ];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    expect(page.paginationFields.perCriterionClipped).toBe(true);
+    expect(page.paginationFields.maxCandidatesPerCriterionHint).toBe(50);
+  });
+
+  it("omits the hint when no criterion exceeds the cap (honest-shape)", () => {
+    // Nothing clipped → no hint. Absent, not 0 or null.
+    const items = [makeItem("wcag22:1.4.3", 3), makeItem("wcag22:2.4.5", 5)];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 10 }));
+    expect(page.paginationFields.perCriterionClipped).toBeUndefined();
+    expect(page.paginationFields.maxCandidatesPerCriterionHint).toBeUndefined();
+  });
+
+  it("caller-supplied maxCandidatesPerCriterion: 50 is honored within the [1, 100] band", () => {
+    // Acceptance-test the documented input band: caller asks for 50
+    // (above default 10, below ceiling 100), no clamp warning, no
+    // silent override. 60 candidates with cap 50 → 50 ship, hint=60.
+    const items = [makeItem("wcag22:1.3.2", 60)];
+    const params = readChecklistPageParams({ maxCandidatesPerCriterion: 50 });
+    expect(params.maxCandidatesPerCriterion).toBe(50);
+    const page = paginateChecklistItems(items, params);
+    expect(page.items[0]?.candidates.length).toBe(50);
+    expect(page.paginationFields.perCriterionClipped).toBe(true);
+    expect(page.paginationFields.maxCandidatesPerCriterionHint).toBe(60);
+  });
+
+  it("default maxCandidatesPerCriterion is at most 20 (V1 default-lower invariant)", () => {
+    // The acceptance criterion: the default must stay ≤ 20 so a bulk
+    // catalog scan can't blow the MCP host token budget on a single
+    // noisy criterion. Pin the invariant so a future bump is a
+    // conscious choice, not a drive-by.
+    const params = readChecklistPageParams({});
+    expect(params.maxCandidatesPerCriterion).toBeLessThanOrEqual(20);
+  });
+
+  it("resume branch carries the hint when more tail remains", () => {
+    // 30 candidates, cap 5. Page 2 cursor-resume yields [5..9] with
+    // [10..29] still pending; hint = min(30, 100) = 30 so the agent
+    // can switch to a one-shot deep-cut instead of three more cursor
+    // round-trips.
+    const items = [makeItem("wcag22:2.4.5", 30)];
+    const page1 = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    const cursor = page1.paginationFields.nextCursor;
+    expect(cursor).toBeDefined();
+    const page2 = paginateChecklistItems(
+      items,
+      fullParams({
+        maxCandidatesPerCriterion: 5,
+        ...(cursor ? { cursor } : {}),
+      }),
+    );
+    expect(page2.paginationFields.nextCursor).toBeDefined();
+    expect(page2.paginationFields.maxCandidatesPerCriterionHint).toBe(30);
+  });
+
+  it("resume branch omits the hint when the criterion is fully drained", () => {
+    // 7 candidates, cap 5. Page 2 cursor-resume yields [5..6] — the
+    // criterion is fully drained, no further nextCursor, no hint
+    // (absent rather than 7, since the agent has everything already).
+    const items = [makeItem("wcag22:2.4.5", 7)];
+    const page1 = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    const cursor = page1.paginationFields.nextCursor;
+    expect(cursor).toBeDefined();
+    const page2 = paginateChecklistItems(
+      items,
+      fullParams({
+        maxCandidatesPerCriterion: 5,
+        ...(cursor ? { cursor } : {}),
+      }),
+    );
+    expect(page2.paginationFields.nextCursor).toBeUndefined();
+    expect(page2.paginationFields.maxCandidatesPerCriterionHint).toBeUndefined();
+  });
+
   it("readChecklistPageParams parses a valid cursor and drops malformed shapes", () => {
     // Valid cursor threads through.
     const got = readChecklistPageParams({

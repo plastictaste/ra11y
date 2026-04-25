@@ -331,7 +331,7 @@ export const checklistTool: McpTool = {
         maxCandidatesPerCriterion: {
           type: "number",
           description:
-            'Caps candidates per criterion within the returned page — orthogonal to `limit`. Defaults to 10, clamped to [1, 100]. When the caller\'s value is outside that range the response carries `warnings: ["max_candidates_per_criterion_clamped"]` + `warningsDetails.max_candidates_per_criterion_clamped: { requested, applied }` so the clamp is narrated, not silent. Prevents one noisy criterion from consuming the whole page without hiding it. When any criterion is clipped, the response carries `perCriterionClipped: true`; `totalCandidates` still reports the pre-clip tally so the agent can see what was elided. The response also carries an opaque `nextCursor` the caller can pass back to fetch the elided per-criterion tail.',
+            'Caps candidates per criterion within the returned page — orthogonal to `limit`. Defaults to 10 (sized for realistic MCP host token budgets on bulk catalogs), clamped to [1, 100]. When the caller\'s value is outside that range the response carries `warnings: ["max_candidates_per_criterion_clamped"]` + `warningsDetails.max_candidates_per_criterion_clamped: { requested, applied }` so the clamp is narrated, not silent. Prevents one noisy criterion from consuming the whole page without hiding it. When any criterion is clipped, the response carries `perCriterionClipped: true` and `maxCandidatesPerCriterionHint: N` — the smaller of (largest uncapped count, 100). Pass that value back as `maxCandidatesPerCriterion` to get a deeper cut in one shot instead of paginating through `nextCursor`. `totalCandidates` reports the pre-clip tally so the agent sees what was elided.',
         },
         cursor: {
           type: "object",
@@ -606,6 +606,7 @@ export const checklistTool: McpTool = {
       truncated: page.paginationFields.truncated === true,
       nextOffset: page.paginationFields.nextOffset,
       nextCursor: page.paginationFields.nextCursor,
+      maxCandidatesPerCriterionHint: page.paginationFields.maxCandidatesPerCriterionHint,
       cwd,
       standard: strParam(params, "standard"),
       level: strParam(params, "level"),
@@ -1222,6 +1223,20 @@ export interface PaginatedChecklist {
      * seen the full inventory).
      */
     readonly nextCursor?: ChecklistCursor;
+    /**
+     * V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: a useful target the
+     * caller can pass back as `maxCandidatesPerCriterion` when they
+     * want a deeper cut in one shot instead of paginating through
+     * `nextCursor`. Computed as `min(largestUncappedCount, 100)` —
+     * the smaller of the noisiest criterion's pre-clip count and the
+     * caller-supplied input band's ceiling. Present only when the
+     * per-criterion cap actually clipped at least one criterion (no
+     * suggestion to give if nothing was elided). The default lives at
+     * 10 to match realistic MCP host token budgets on bulk catalogs;
+     * the hint is the agent-readable bridge from the tight default to
+     * the documented [1, 100] band.
+     */
+    readonly maxCandidatesPerCriterionHint?: number;
   };
 }
 
@@ -1254,30 +1269,16 @@ export function paginateChecklistItems(
   if (cursor !== undefined) {
     return paginateChecklistResume(items, cursor, maxCandidatesPerCriterion);
   }
-  let totalCandidates = 0;
-  let firstClippedCursor: ChecklistCursor | undefined;
-  // Phase 1 — per-criterion clip. Walk items in order; for each,
-  // accumulate the raw total (pre-clip) and build a clipped copy.
-  // Capture the first clipped criterion so a nextCursor can point at
-  // its elided tail for a later resume call.
-  const clipped: ChecklistItemOut[] = [];
-  for (const item of items) {
-    totalCandidates += item.candidates.length;
-    if (item.candidates.length > maxCandidatesPerCriterion) {
-      if (firstClippedCursor === undefined) {
-        firstClippedCursor = {
-          afterCriterion: item.criterionId,
-          afterCandidateIndex: maxCandidatesPerCriterion - 1,
-        };
-      }
-      clipped.push({
-        ...item,
-        candidates: item.candidates.slice(0, maxCandidatesPerCriterion),
-      });
-    } else {
-      clipped.push(item);
-    }
-  }
+  // Phase 1 — per-criterion clip. Extracted to a helper so this main
+  // function stays under the lint's cognitive-complexity ceiling; the
+  // helper returns the clipped item list, the inventory-wide total,
+  // the cursor pointing at the first clipped criterion (for later
+  // resume calls), and the max uncapped count across clipped items
+  // (V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER hint computation).
+  const { clipped, totalCandidates, firstClippedCursor, largestUncappedCount } = clipChecklistItems(
+    items,
+    maxCandidatesPerCriterion,
+  );
   // Phase 2 — flat-stream pagination across clipped items. Walk with
   // a running global index; each item emits the candidate slice that
   // falls inside [offset, offset + limit). Items entirely outside
@@ -1301,6 +1302,14 @@ export function paginateChecklistItems(
     });
   }
   const truncated = rangeEnd < postClipTotal;
+  // V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: hint = min(largest
+  // uncapped count, MAX_MAX_PER_CRITERION). Only meaningful when at
+  // least one criterion clipped — otherwise the caller already saw
+  // every candidate and there's nothing to bump the cap for.
+  const maxCandidatesPerCriterionHint =
+    firstClippedCursor === undefined
+      ? undefined
+      : Math.min(largestUncappedCount, CHECKLIST_MAX_MAX_PER_CRITERION);
   return {
     items: pageItems,
     totalCandidates,
@@ -1312,8 +1321,60 @@ export function paginateChecklistItems(
       truncated,
       perCriterionClipped: firstClippedCursor !== undefined,
       ...(firstClippedCursor ? { nextCursor: firstClippedCursor } : {}),
+      ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
     }),
   };
+}
+
+/**
+ * Phase-1 helper for {@link paginateChecklistItems} — clips each item's
+ * candidate list to `maxCandidatesPerCriterion` and threads back the
+ * scalars the caller needs to assemble the response:
+ *   - `clipped` — items in input order, with each candidate list sliced
+ *     to at most `cap` candidates (untouched when already under).
+ *   - `totalCandidates` — pre-clip inventory total (so `totalCandidates`
+ *     in the response stays stable across pages).
+ *   - `firstClippedCursor` — the first clipped criterion's cursor for
+ *     later resume calls; `undefined` when nothing was clipped.
+ *   - `largestUncappedCount` — pre-clip count of the noisiest clipped
+ *     criterion (V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER hint input).
+ *     0 when nothing was clipped — read it only when `firstClippedCursor`
+ *     is defined.
+ *
+ * Extracted from the main function so the loop's branching doesn't push
+ * `paginateChecklistItems` past the lint's cognitive-complexity cap.
+ */
+function clipChecklistItems(
+  items: readonly ChecklistItemOut[],
+  cap: number,
+): {
+  readonly clipped: readonly ChecklistItemOut[];
+  readonly totalCandidates: number;
+  readonly firstClippedCursor: ChecklistCursor | undefined;
+  readonly largestUncappedCount: number;
+} {
+  let totalCandidates = 0;
+  let firstClippedCursor: ChecklistCursor | undefined;
+  let largestUncappedCount = 0;
+  const clipped: ChecklistItemOut[] = [];
+  for (const item of items) {
+    totalCandidates += item.candidates.length;
+    if (item.candidates.length <= cap) {
+      clipped.push(item);
+      continue;
+    }
+    if (firstClippedCursor === undefined) {
+      firstClippedCursor = {
+        afterCriterion: item.criterionId,
+        afterCandidateIndex: cap - 1,
+      };
+    }
+    if (item.candidates.length > largestUncappedCount) {
+      largestUncappedCount = item.candidates.length;
+    }
+    clipped.push({ ...item, candidates: item.candidates.slice(0, cap) });
+  }
+  return { clipped, totalCandidates, firstClippedCursor, largestUncappedCount };
 }
 
 /**
@@ -1365,11 +1426,21 @@ function paginateChecklistResume(
   const nextCursor: ChecklistCursor | undefined = moreRemaining
     ? { afterCriterion: target.criterionId, afterCandidateIndex: resumeEnd - 1 }
     : undefined;
+  // V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: same hint shape on the
+  // resume branch — only emitted when more tail remains, since the
+  // agent has already seen everything we have on the criterion when
+  // the resume consumed it. `min(target.candidates.length, 100)` is
+  // the smaller of "total candidates on this criterion" and the input
+  // band's ceiling.
+  const maxCandidatesPerCriterionHint = moreRemaining
+    ? Math.min(target.candidates.length, CHECKLIST_MAX_MAX_PER_CRITERION)
+    : undefined;
   return {
     items: pageItems,
     totalCandidates,
     paginationFields: {
       ...(nextCursor ? { nextCursor } : {}),
+      ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
     },
   };
 }
@@ -1396,8 +1467,18 @@ function buildChecklistPaginationFields(args: {
   readonly truncated: boolean;
   readonly perCriterionClipped: boolean;
   readonly nextCursor?: ChecklistCursor;
+  readonly maxCandidatesPerCriterionHint?: number;
 }): PaginatedChecklist["paginationFields"] {
-  const { limit, offset, pageItems, rangeEnd, truncated, perCriterionClipped, nextCursor } = args;
+  const {
+    limit,
+    offset,
+    pageItems,
+    rangeEnd,
+    truncated,
+    perCriterionClipped,
+    nextCursor,
+    maxCandidatesPerCriterionHint,
+  } = args;
   // Count the candidates that actually shipped so `effectiveLimit` is
   // honest about what reached the wire. Summing post-slice captures
   // both the global limit AND per-criterion clip.
@@ -1418,6 +1499,7 @@ function buildChecklistPaginationFields(args: {
     ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
     ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
     ...(nextCursor ? { nextCursor } : {}),
+    ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
   };
 }
 
@@ -1445,6 +1527,15 @@ interface ChecklistNextStepInputs {
   readonly truncated: boolean;
   readonly nextOffset: number | undefined;
   readonly nextCursor: ChecklistCursor | undefined;
+  /**
+   * V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: when the per-criterion
+   * cap clipped, the hint value (smaller of largestUncappedCount and
+   * the documented [1, 100] band's ceiling) is the agent-readable
+   * target for "raise the cap to see everything in one shot." Threaded
+   * into the cursor-branch prose so the recommendation names a concrete
+   * number rather than asking the agent to guess.
+   */
+  readonly maxCandidatesPerCriterionHint: number | undefined;
   readonly cwd: string;
   readonly standard: string | undefined;
   readonly level: string | undefined;
@@ -1477,7 +1568,8 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
   readonly nextStep?: string;
   readonly nextStepStructured?: { readonly tool: string; readonly args: Record<string, unknown> };
 } {
-  const { actionableLen, truncated, nextOffset, nextCursor, cwd } = inputs;
+  const { actionableLen, truncated, nextOffset, nextCursor, maxCandidatesPerCriterionHint, cwd } =
+    inputs;
   if (actionableLen === 0) {
     return {
       nextStep:
@@ -1495,8 +1587,12 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
     };
   }
   if (nextCursor !== undefined) {
+    const hintClause =
+      maxCandidatesPerCriterionHint === undefined
+        ? ""
+        : ` Raising \`maxCandidatesPerCriterion\` to \`${maxCandidatesPerCriterionHint}\` (the response's \`maxCandidatesPerCriterionHint\`) on the next call is the alternative when you want a deeper cut in one shot.`;
     return {
-      nextStep: `At least one criterion's candidate list was clipped by \`maxCandidatesPerCriterion\`. Call \`checklist\` again with \`cursor: nextCursor\` (pass the token back verbatim) to fetch the elided tail of \`${nextCursor.afterCriterion}\`; repeat while a \`nextCursor\` is emitted. Raising \`maxCandidatesPerCriterion\` on the next call is the alternative when you want a deeper cut in one shot.`,
+      nextStep: `At least one criterion's candidate list was clipped by \`maxCandidatesPerCriterion\`. Call \`checklist\` again with \`cursor: nextCursor\` (pass the token back verbatim) to fetch the elided tail of \`${nextCursor.afterCriterion}\`; repeat while a \`nextCursor\` is emitted.${hintClause}`,
       nextStepStructured: {
         tool: "checklist",
         args: buildChecklistArgs(inputs, { cursor: nextCursor }),
