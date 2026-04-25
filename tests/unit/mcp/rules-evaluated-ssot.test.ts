@@ -240,4 +240,32 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
       expect(listRules.rules.length - loadedWithOff).toBe(1);
     });
   });
+
+  // Invariant #4: `sessionConfigure.active.ruleCount` agrees with
+  // `scan_project.meta.rulesEvaluated.loaded` on the same session.
+  //
+  // Before V1-SESSION-RULECOUNT-VS-SCAN-RULESLOADED, `sessionConfigure`
+  // open-coded its counter as "registry rules whose `satisfies` cites
+  // a criterion under the configured standard." That filter excluded
+  // rules like `parsing/invalid-id-shape` (cites only `wcag21:4.1.1` —
+  // WCAG 2.2 dropped SC 4.1.1) and produced an off-by-one against
+  // `scan_project.meta.rulesEvaluated.loaded` on the same session
+  // (74 vs 75 in the canonical field report). Per AI-first doctrine,
+  // cross-surface counts that name the same concept must agree.
+  // Routing the `sessionConfigure` count through `resolveActiveRules`
+  // brings it onto the same SSOT every scan-family surface uses.
+  it("sessionConfigure.ruleCount agrees with scan_project.rulesEvaluated.loaded", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "index.html"),
+        '<!doctype html><html lang="en"><head><title>Hi</title></head><body></body></html>\n',
+      );
+      const session = new McpSession();
+      const configureResult = await callJson<{
+        active: { ruleCount: number };
+      }>(findTool("sessionConfigure"), {}, session);
+      const scan = await callJson<ScanMetaShape>(scanProjectTool, { cwd: dir }, session);
+      expect(configureResult.active.ruleCount).toBe(scan.meta.rulesEvaluated.loaded);
+    });
+  });
 });

@@ -11,6 +11,7 @@
  */
 
 import { buildListRulesNextStep } from "./list-rules-next-step.ts";
+import { resolveActiveRules } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
 import { attestTool } from "./tool-attest.ts";
@@ -266,9 +267,21 @@ const sessionConfigureTool: McpTool = {
     const parsed = buildConfigureOpts(params);
     if (!parsed.ok) return errorResult(parsed.error);
     const config = session.configure(parsed.opts);
-    const ruleCount = session.registry.rules.filter((r) =>
-      r.satisfies.some((s) => s.startsWith(`${config.standard}:`)),
-    ).length;
+    // Resolve `ruleCount` through the same SSOT every scan-family tool
+    // uses for `meta.rulesEvaluated.loaded` so the two cross-surface
+    // counters can't drift. Before V1-SESSION-RULECOUNT-VS-SCAN-
+    // RULESLOADED, this filtered the registry by "rule satisfies a
+    // criterion under the configured standard," which excluded rules
+    // like `parsing/invalid-id-shape` (cites `wcag21:4.1.1` only —
+    // WCAG 2.2 dropped SC 4.1.1) and produced an off-by-one against
+    // `scan_project.meta.rulesEvaluated.loaded` on the same session.
+    // Per `docs/kb/architecture/ai-first-consumer.md` ("cross-surface
+    // counts that name the same concept must agree"), both counters
+    // now resolve through `resolveActiveRules`. The standard/level
+    // filter is applied later inside `runScan`; `ruleCount` is the
+    // registry ceiling, matching `loaded`'s contract in
+    // `rules-evaluated.ts`.
+    const ruleCount = resolveActiveRules(session).length;
     return textResult({
       active: {
         standard: config.standard,
