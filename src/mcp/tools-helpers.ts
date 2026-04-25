@@ -116,6 +116,14 @@ export type StructuredErrorCode =
   | "allow-write-disabled"
   | "edit-shape-invalid"
   | "edit-no-match"
+  // apply_fix: oldText didn't match AND the would-be target carries a
+  // template-directive token (`{{…}}`, `{%…%}`, `<%=…%>`). Distinct from
+  // edit-no-match because the diagnosis the agent should act on is
+  // different — the upstream finding is plausibly a Liquid/Jinja/ERB
+  // false positive, not a stale `oldText`. Looping back through
+  // `suggest_fix` will keep returning `kind: "guidance"`. See
+  // V1-APPLY-FIX-LIQUID-FP-DIAGNOSIS in `.claude/backlog.md`.
+  | "target-contains-template-directive"
   | "edit-multiple-matches"
   | "edit-introduces-parse-errors"
   // meta-tool internal

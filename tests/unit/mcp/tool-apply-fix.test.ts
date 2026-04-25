@@ -135,6 +135,100 @@ describe("apply_fix: anchor uniqueness", () => {
   });
 });
 
+describe("apply_fix: template-directive diagnosis (V1-APPLY-FIX-LIQUID-FP-DIAGNOSIS)", () => {
+  it("returns `target-contains-template-directive` when oldText literally references a Liquid expression", async () => {
+    await withScratch(async (dir) => {
+      const file = join(dir, "page.html");
+      // The author's source has a Liquid expression; the agent (off a
+      // stale read or suggest_fix's guidance) constructs an oldText
+      // referencing a different expression that doesn't appear in the
+      // file byte-for-byte. The directive tokens in oldText are the
+      // load-bearing signal — the agent is editing a template region.
+      await writeFile(file, "<html><head><title>{{ page.title }}</title></head></html>\n");
+      const { isError, code, body } = await call(allowWriteSession(), {
+        file,
+        edit: {
+          oldText: "<title>{{ site.title }}</title>",
+          newText: "<title>{{ site.title }} - Acme</title>",
+        },
+        cwd: dir,
+      });
+      expect(isError).toBe(true);
+      expect(code).toBe("target-contains-template-directive");
+      const err = body as ErrorBody;
+      expect(err.details?.["matchCount"]).toBe(0);
+      expect(err.details?.["directiveSource"]).toBe("oldText");
+      expect(err.details?.["directiveTokens"]).toEqual(["{{", "}}"]);
+      expect(err.error).toMatch(/template[- ]directive/i);
+    });
+  });
+
+  it("returns `target-contains-template-directive` when oldText fragment-matches a directive line in source (ERB)", async () => {
+    await withScratch(async (dir) => {
+      const file = join(dir, "view.html.erb");
+      // ERB extension routes through HTML parser. oldText doesn't match
+      // the source byte-for-byte (rendered shape vs. authored shape), but
+      // a long anchor fragment lands on the `<%= … %>` line.
+      await writeFile(
+        file,
+        '<html><body><img src="/uploads/<%= upload.filename %>"></body></html>\n',
+      );
+      const { isError, code, body } = await call(allowWriteSession(), {
+        file,
+        edit: {
+          oldText: '<img src="/uploads/photo.jpg">',
+          newText: '<img src="/uploads/photo.jpg" alt="Photo">',
+        },
+        cwd: dir,
+      });
+      expect(isError).toBe(true);
+      expect(code).toBe("target-contains-template-directive");
+      const err = body as ErrorBody;
+      expect(err.details?.["directiveSource"]).toBe("matchedFragment");
+      expect(err.details?.["directiveLine"]).toBe(1);
+      const tokens = err.details?.["directiveTokens"] as readonly string[];
+      expect(tokens.some((t) => t.startsWith("<%"))).toBe(true);
+    });
+  });
+
+  it("falls back to `edit-no-match` when no template directives are present in oldText or near the target", async () => {
+    await withScratch(async (dir) => {
+      const file = join(dir, "plain.html");
+      await writeFile(file, "<html><body><p>nothing template-y here</p></body></html>\n");
+      const { isError, code } = await call(allowWriteSession(), {
+        file,
+        edit: { oldText: "completely-unrelated-anchor-string", newText: "anything" },
+        cwd: dir,
+      });
+      expect(isError).toBe(true);
+      expect(code).toBe("edit-no-match");
+    });
+  });
+
+  it("emits remediation steering the agent away from looping suggest_fix → apply_fix", async () => {
+    await withScratch(async (dir) => {
+      const file = join(dir, "page.html");
+      await writeFile(file, "<html><head><title>{{ page.title }}</title></head></html>\n");
+      const result = await applyFixTool.handler(
+        {
+          file,
+          edit: {
+            oldText: "<title>{{ site.title }}</title>",
+            newText: "<title>{{ site.title }} - Acme</title>",
+          },
+          cwd: dir,
+        },
+        allowWriteSession(),
+      );
+      const remediation = (result.structuredContent as { remediation?: string } | undefined)
+        ?.remediation;
+      expect(remediation).toBeDefined();
+      expect(remediation).toMatch(/ra11y-disable/);
+      expect(remediation).toMatch(/Do NOT loop/i);
+    });
+  });
+});
+
 describe("apply_fix: parse-error guardrail", () => {
   it("rejects `edit-introduces-parse-errors` when the post-edit source fails to parse, leaving the file untouched", async () => {
     await withScratch(async (dir) => {

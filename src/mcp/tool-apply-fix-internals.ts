@@ -147,14 +147,7 @@ export async function preflightValidate(
   if ("error" in original) return original;
   const matchCount = countOccurrences(original.parsed.source, edit.oldText);
   if (matchCount === 0) {
-    return {
-      error: errorResult({
-        code: "edit-no-match",
-        message: `Edit's oldText was not found in ${resolved}. The file may have changed since suggest_fix was called, or oldText has whitespace/quoting that doesn't match. Re-run suggest_fix and retry.`,
-        details: { filePath: resolved, matchCount: 0 },
-        remediation: "Re-run `suggest_fix` against the current source and retry with its new edit.",
-      }),
-    };
+    return { error: noMatchEnvelope(resolved, original.parsed.source, edit.oldText) };
   }
   if (matchCount > 1) {
     return {
@@ -323,6 +316,177 @@ function countOccurrences(source: string, needle: string): number {
     idx = source.indexOf(needle, idx + needle.length);
   }
   return count;
+}
+
+/**
+ * Matches any template-directive opener or closer on a single line.
+ * Mirrors `TEMPLATE_DIRECTIVE_LINE_RE` in `warnings.ts` — kept inline
+ * so the apply_fix path stays decoupled from the warnings module's
+ * larger surface and so a future tightening on either side requires
+ * an explicit cross-edit. Both regexes are pure over their input;
+ * adding a token (e.g. Razor `@{ … }`) is a two-spot, deterministic
+ * change.
+ */
+const TEMPLATE_DIRECTIVE_TOKEN_RE = /(?:\{%-?|-?%\}|\{\{-?|-?\}\}|<%[=-]?|%>)/g;
+
+export interface TemplateDirectiveDiagnosis {
+  readonly source: "oldText" | "matchedFragment";
+  readonly tokens: readonly string[];
+  readonly line?: number;
+}
+
+/**
+ * Diagnostic for V1-APPLY-FIX-LIQUID-FP-DIAGNOSIS — when `oldText`
+ * doesn't match the source, decide whether the would-be edit target
+ * sits in template-directive territory so the handler can route the
+ * agent to "verify and suppress" instead of looping back through
+ * `suggest_fix`/`apply_fix` on a false positive.
+ *
+ * Two deterministic signals (each "provable from the code", per the
+ * AI-first consumer doctrine on labeled buckets):
+ *
+ *   1. `oldText` itself contains a template-directive token. The
+ *      agent's `suggest_fix` payload literally targeted a template
+ *      expression — a guaranteed FP class.
+ *   2. `oldText` doesn't contain a directive, but a long-enough
+ *      contiguous fragment of it appears in source on a line that
+ *      does. Anchored at ≥8 non-whitespace chars to suppress fragment
+ *      collisions on common tokens like `class=` or `<div>`.
+ *
+ * Returns `null` when neither signal fires — the caller falls back to
+ * the generic `edit-no-match` envelope. Tokens returned are the exact
+ * substrings that matched, deduped + sorted, so the agent can branch
+ * on which template flavor (Liquid `{{`, ERB `<%=`, …) is in play.
+ */
+export function diagnoseTemplateDirectiveTarget(
+  source: string,
+  oldText: string,
+): TemplateDirectiveDiagnosis | null {
+  const tokensInOldText = collectDirectiveTokens(oldText);
+  if (tokensInOldText.length > 0) {
+    return { source: "oldText", tokens: tokensInOldText };
+  }
+  const fragmentHit = findLongestFragmentOnDirectiveLine(source, oldText);
+  if (fragmentHit === null) return null;
+  return {
+    source: "matchedFragment",
+    tokens: fragmentHit.tokens,
+    line: fragmentHit.line,
+  };
+}
+
+/**
+ * Builds the structured-error envelope for the no-match branch of
+ * `apply_fix`. Splits out from `preflightValidate` so the preflight's
+ * nesting depth stays inside the limits-guard budget; the diagnostic
+ * + envelope choice fan-out lives here.
+ */
+function noMatchEnvelope(resolved: string, source: string, oldText: string): McpToolResult {
+  const directiveDiagnosis = diagnoseTemplateDirectiveTarget(source, oldText);
+  if (directiveDiagnosis === null) {
+    return errorResult({
+      code: "edit-no-match",
+      message: `Edit's oldText was not found in ${resolved}. The file may have changed since suggest_fix was called, or oldText has whitespace/quoting that doesn't match. Re-run suggest_fix and retry.`,
+      details: { filePath: resolved, matchCount: 0 },
+      remediation: "Re-run `suggest_fix` against the current source and retry with its new edit.",
+    });
+  }
+  const tokens = directiveDiagnosis.tokens.join(", ");
+  const lineDetail =
+    directiveDiagnosis.line === undefined ? {} : { directiveLine: directiveDiagnosis.line };
+  return errorResult({
+    code: "target-contains-template-directive",
+    message: `Edit's oldText was not found in ${resolved}, and the would-be target carries a template-directive token (${tokens}). The cited finding may be a false positive on a template expression whose rendered value is only knowable at render time.`,
+    details: {
+      filePath: resolved,
+      matchCount: 0,
+      directiveTokens: directiveDiagnosis.tokens,
+      directiveSource: directiveDiagnosis.source,
+      ...lineDetail,
+    },
+    remediation:
+      "Verify the rendered output — the cited finding may be a false positive on a template expression. If the expression is trusted, suppress at source with `<!-- ra11y-disable <rule-id> -->` (HTML/Liquid/ERB) or `{/* ra11y-disable <rule-id> */}` (TSX). Do NOT loop back through `suggest_fix`/`apply_fix`; the rule cannot statically resolve the rendered text.",
+  });
+}
+
+function collectDirectiveTokens(text: string): string[] {
+  const matches = text.match(TEMPLATE_DIRECTIVE_TOKEN_RE);
+  if (matches === null) return [];
+  return [...new Set(matches)].sort();
+}
+
+/**
+ * Walks `oldText` looking for a contiguous fragment of length ≥
+ * `FRAGMENT_MIN_LEN` that appears in `source` on a line carrying a
+ * template directive. The length floor keeps spurious matches on tiny
+ * tokens (`<div>`, `class=`) from triggering the diagnosis. Returns
+ * the directive tokens on the first such line, plus the 1-based line
+ * number, or `null` if no fragment qualifies.
+ *
+ * Strategy: try long whitespace-bounded tokens first (most
+ * distinctive); fall back to sliding-window substrings of the whole
+ * `oldText` so a partial overlap with a templated line still anchors
+ * — agents reliably ship `oldText` with mid-string templated regions
+ * replaced by a literal placeholder (the FP that motivates this
+ * diagnosis), and the surrounding bytes still anchor.
+ */
+function findLongestFragmentOnDirectiveLine(
+  source: string,
+  oldText: string,
+): { readonly tokens: readonly string[]; readonly line: number } | null {
+  for (const fragment of candidateFragments(oldText)) {
+    const idx = source.indexOf(fragment);
+    if (idx === -1) continue;
+    const line = lineOfOffset(source, idx);
+    const lineText = sliceLine(source, line);
+    const tokens = collectDirectiveTokens(lineText);
+    if (tokens.length > 0) {
+      return { tokens, line };
+    }
+  }
+  return null;
+}
+
+const FRAGMENT_MIN_LEN = 8;
+
+/**
+ * Yields candidate anchor fragments from `oldText` to probe against
+ * `source`. Yields whitespace-split tokens of length ≥ FRAGMENT_MIN_LEN
+ * in length-desc order, then sliding windows of length
+ * FRAGMENT_MIN_LEN walking the leading + trailing edges of oldText.
+ * Edge windows let the diagnosis fire when the agent's `oldText` has a
+ * literal placeholder where the source carries a template expression
+ * — the bytes flanking the placeholder still appear in source.
+ */
+function* candidateFragments(oldText: string): Generator<string> {
+  const tokens = oldText.split(/\s+/).filter((t) => t.length >= FRAGMENT_MIN_LEN);
+  tokens.sort((a, b) => b.length - a.length);
+  for (const t of tokens) yield t;
+  if (oldText.length < FRAGMENT_MIN_LEN) return;
+  // Sliding windows along the full string. Step 1 keeps it cheap on
+  // typical oldText sizes (≤ a few hundred chars in practice — agents
+  // get this from suggest_fix's anchor-widened edit shape).
+  const seen = new Set<string>(tokens);
+  for (let i = 0; i + FRAGMENT_MIN_LEN <= oldText.length; i += 1) {
+    const w = oldText.slice(i, i + FRAGMENT_MIN_LEN);
+    if (/\s/.test(w)) continue;
+    if (seen.has(w)) continue;
+    seen.add(w);
+    yield w;
+  }
+}
+
+function lineOfOffset(source: string, offset: number): number {
+  let line = 1;
+  for (let i = 0; i < offset && i < source.length; i += 1) {
+    if (source.charCodeAt(i) === 0x0a) line += 1;
+  }
+  return line;
+}
+
+function sliceLine(source: string, line: number): string {
+  const lines = source.split("\n");
+  return lines[line - 1] ?? "";
 }
 
 function extensionOf(filePath: string): Ext | null {
