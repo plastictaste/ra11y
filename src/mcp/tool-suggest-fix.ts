@@ -151,6 +151,12 @@ export const suggestFixTool: McpTool = {
       source: parsed.source,
       filePath,
       tailwindDetected,
+      // Q7-SUGGEST-FIX-NONE-NEAREST-FINDING: forward every per-file
+      // finding so the builder can attach `nearestFinding` /
+      // `didYouMean` breadcrumbs on the `kind: "none"` branch. The
+      // suggest_fix scan is single-file, so `result.violations` IS the
+      // per-file set — no further filtering needed here.
+      sameFileFindings: result.violations,
       ...(scanWarnings.length > 0 ? { warnings: scanWarnings } : {}),
     });
     return textResult(payload as Record<string, unknown>);

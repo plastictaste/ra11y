@@ -205,6 +205,166 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
   });
 });
 
+describe("buildSuggestFixPayload — kind: 'none' nearestFinding / didYouMean breadcrumb (Q7-SUGGEST-FIX-NONE-NEAREST-FINDING)", () => {
+  // Doctrine (CLAUDE.md §1 "Ambiguous field shapes are dishonest"): a
+  // `kind: "none"` response with no breadcrumb is a dead-end shape that
+  // forces the agent to re-scan when paginated scans drifted the line,
+  // the agent lost the original line, or a rule rename swapped the ID.
+  // The breadcrumb walks the per-file findings within ±10 lines for
+  // same-rule matches:
+  //   - exactly one → `nearestFinding: { ruleId, line }`
+  //   - two or more → `didYouMean: [{ ruleId, line }, …]` (top 3, sorted
+  //     by absolute distance from the requested line)
+  // Both fields are conditional-spread (absent when no nearby same-rule
+  // finding exists, never `nearestFinding: null` or `didYouMean: []`).
+
+  function findingAt(line: number, ruleId: string = RULE_ID): Violation {
+    return {
+      ruleId,
+      fixClass: "mechanical",
+      criteria: ["wcag22:2.1.1"],
+      severity: "error",
+      location: { filePath: FILE_PATH, line, column: 1 },
+      message: "Click handler without keyboard equivalent.",
+      suggestion: "Add onKeyDown handler alongside onClick.",
+      findingId: `id-${line}`,
+      groupKey: `gk-${line}`,
+    };
+  }
+
+  it("attaches nearestFinding when exactly one same-rule finding sits within the ±10 window", () => {
+    // Requested line 3; one same-rule finding at line 5 (distance 2).
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, { sameFileFindings: [findingAt(5)] }),
+    );
+    expect(payload["kind"]).toBe("none");
+    expect(payload["nearestFinding"]).toEqual({ ruleId: RULE_ID, line: 5 });
+    expect(payload).not.toHaveProperty("didYouMean");
+  });
+
+  it("attaches didYouMean (top 3, sorted by distance) when multiple same-rule findings sit in the window", () => {
+    // Requested line 10; same-rule findings at 5 (dist 5), 8 (dist 2),
+    // 12 (dist 2), 15 (dist 5). Sorted by distance with line-asc tiebreak:
+    // [8, 12, 5] for the top 3 (5 and 15 are tied at dist 5; 5 wins on
+    // line-ascending).
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, {
+        line: 10,
+        sameFileFindings: [findingAt(5), findingAt(8), findingAt(12), findingAt(15)],
+      }),
+    );
+    expect(payload["kind"]).toBe("none");
+    expect(payload).not.toHaveProperty("nearestFinding");
+    const dym = payload["didYouMean"] as ReadonlyArray<{ ruleId: string; line: number }>;
+    expect(dym).toEqual([
+      { ruleId: RULE_ID, line: 8 },
+      { ruleId: RULE_ID, line: 12 },
+      { ruleId: RULE_ID, line: 5 },
+    ]);
+  });
+
+  it("OMITS both fields when sameFileFindings is undefined (handler that didn't plumb the list)", () => {
+    const payload = buildSuggestFixPayload(baseArgs(undefined));
+    expect(payload["kind"]).toBe("none");
+    expect(payload).not.toHaveProperty("nearestFinding");
+    expect(payload).not.toHaveProperty("didYouMean");
+  });
+
+  it("OMITS both fields when sameFileFindings is empty (clean scan)", () => {
+    const payload = buildSuggestFixPayload(baseArgs(undefined, { sameFileFindings: [] }));
+    expect(payload["kind"]).toBe("none");
+    expect(payload).not.toHaveProperty("nearestFinding");
+    expect(payload).not.toHaveProperty("didYouMean");
+  });
+
+  it("OMITS both fields when no same-rule finding sits within the ±10 window (out-of-window only)", () => {
+    // Requested line 3; same-rule finding at line 50 (distance 47).
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, { sameFileFindings: [findingAt(50)] }),
+    );
+    expect(payload["kind"]).toBe("none");
+    expect(payload).not.toHaveProperty("nearestFinding");
+    expect(payload).not.toHaveProperty("didYouMean");
+  });
+
+  it("ignores findings from a different rule even when in-window (same-rule filter)", () => {
+    // Requested line 3; in-window finding at line 5 belongs to a
+    // different rule. The breadcrumb is scoped to same-rule matches —
+    // pointing the agent at an unrelated rule would be confidently
+    // wrong (CLAUDE.md §1 "Don't duplicate capability the agent already
+    // has").
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, {
+        sameFileFindings: [findingAt(5, "semantics/heading-order")],
+      }),
+    );
+    expect(payload["kind"]).toBe("none");
+    expect(payload).not.toHaveProperty("nearestFinding");
+    expect(payload).not.toHaveProperty("didYouMean");
+  });
+
+  it("nearestFinding fires at the window edges (distance == 10 is in-window, == 11 is out)", () => {
+    // Requested line 20; finding at line 30 (distance 10) is in-window.
+    const inWindow = buildSuggestFixPayload(
+      baseArgs(undefined, { line: 20, sameFileFindings: [findingAt(30)] }),
+    );
+    expect(inWindow["nearestFinding"]).toEqual({ ruleId: RULE_ID, line: 30 });
+
+    // Finding at line 31 (distance 11) is out of window.
+    const outOfWindow = buildSuggestFixPayload(
+      baseArgs(undefined, { line: 20, sameFileFindings: [findingAt(31)] }),
+    );
+    expect(outOfWindow).not.toHaveProperty("nearestFinding");
+  });
+
+  it("caps didYouMean at 3 entries even when many same-rule findings sit in the window", () => {
+    // Requested line 10; five same-rule findings in window: 6, 8, 10, 12, 14.
+    // After ranking by absolute distance (0, 2, 2, 4, 4) the top 3 are
+    // [10, 8, 12] (8 vs 12 tied; 8 wins on line-asc; same for 6 vs 14).
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, {
+        line: 10,
+        sameFileFindings: [findingAt(6), findingAt(8), findingAt(10), findingAt(12), findingAt(14)],
+      }),
+    );
+    const dym = payload["didYouMean"] as ReadonlyArray<{ ruleId: string; line: number }>;
+    expect(dym).toHaveLength(3);
+    expect(dym[0]).toEqual({ ruleId: RULE_ID, line: 10 });
+    expect(dym[1]).toEqual({ ruleId: RULE_ID, line: 8 });
+    expect(dym[2]).toEqual({ ruleId: RULE_ID, line: 12 });
+  });
+
+  it("breadcrumb fields are siblings of explanation + confidence (not nested)", () => {
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, { sameFileFindings: [findingAt(5)] }),
+    );
+    expect(payload["kind"]).toBe("none");
+    expect(typeof payload["explanation"]).toBe("string");
+    expect(payload["confidence"]).toBe("low");
+    expect(payload["nearestFinding"]).toEqual({ ruleId: RULE_ID, line: 5 });
+  });
+
+  it("breadcrumb does NOT fire on kind: 'edit' or 'guidance' (only kind: 'none' carries it)", () => {
+    // Same per-file findings list as above, but this time a match
+    // exists — the response is `kind: "edit"` and the breadcrumb is
+    // scoped to the dead-end branch only. Reading nearestFinding on a
+    // matched response would be redundant noise.
+    const editPayload = buildSuggestFixPayload(
+      baseArgs(violationWithFixPaths(), { sameFileFindings: [findingAt(5)] }),
+    );
+    expect(editPayload["kind"]).toBe("edit");
+    expect(editPayload).not.toHaveProperty("nearestFinding");
+    expect(editPayload).not.toHaveProperty("didYouMean");
+
+    const guidancePayload = buildSuggestFixPayload(
+      baseArgs(violationGuidanceOnly(), { sameFileFindings: [findingAt(5)] }),
+    );
+    expect(guidancePayload["kind"]).toBe("guidance");
+    expect(guidancePayload).not.toHaveProperty("nearestFinding");
+    expect(guidancePayload).not.toHaveProperty("didYouMean");
+  });
+});
+
 describe("buildSuggestFixPayload — response-level `warnings` plumbing", () => {
   // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
   // suggest_fix surfaces scan-confidence codes under a single

@@ -9,7 +9,13 @@
  *     finding never existed at this location." The verify pair is
  *     present-when-meaningful — only the lanes that actually applied a
  *     fix carry it. See V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE +
- *     CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+ *     CLAUDE.md §1 "Ambiguous field shapes are dishonest." When the
+ *     per-file finding list carries one or more same-rule findings
+ *     within ±NEAREST_FINDING_WINDOW lines of the requested line, the
+ *     response gets a `nearestFinding: { ruleId, line }` (single match)
+ *     or `didYouMean[]` (multi match) breadcrumb so paginated scans /
+ *     line-drift / rule renames don't produce a dead-end response. See
+ *     Q7-SUGGEST-FIX-NONE-NEAREST-FINDING.
  *   - `kind: "edit"` — the rule emitted fixPaths with a mechanical
  *     `primary.edit`; the agent can apply it via Edit directly. The
  *     edit is widened to a unique anchor window via `widenToUniqueAnchor`
@@ -111,6 +117,19 @@ export interface BuildSuggestFixPayloadArgs {
    */
   readonly filePath: string;
   /**
+   * Every finding the suggest_fix scan emitted on this file. Used by the
+   * `kind: "none"` branch to walk same-rule findings within
+   * {@link NEAREST_FINDING_WINDOW} of the requested line and attach a
+   * `nearestFinding` (single match) or `didYouMean[]` (multi match)
+   * breadcrumb. Closes the dead-end `kind: "none"` shape called out in
+   * Q7-SUGGEST-FIX-NONE-NEAREST-FINDING — paginated scans drift the
+   * line, agents lose the original line, rule renames swap the rule ID
+   * out from under the request; without breadcrumbs the agent has to
+   * re-scan to recover. Optional so unit tests can omit it; the handler
+   * always passes the full per-file violation list.
+   */
+  readonly sameFileFindings?: readonly Violation[];
+  /**
    * Caller-computed response-level warnings, forwarded verbatim onto
    * every outcome shape. Closes the zero-output-success ambiguity
    * documented in CLAUDE.md §1 — the handler knows the scan-confidence
@@ -134,6 +153,74 @@ export interface BuildSuggestFixPayloadArgs {
    * "context-blind advice."
    */
   readonly tailwindDetected?: boolean;
+}
+
+/**
+ * Half-window for the `nearestFinding` / `didYouMean` breadcrumb in the
+ * `kind: "none"` branch. The window is `±NEAREST_FINDING_WINDOW` lines
+ * around the requested line; chosen to absorb the typical line-drift
+ * sources (paginated diff stamping, intermediate edits inserting a few
+ * lines above the violation, agents that re-prompted after truncation)
+ * without sliding into "any nearby finding will do." A window above ~10
+ * starts producing too many false-positive matches in dense JSX/CSS
+ * files; below ~5 misses common pagination drift.
+ */
+const NEAREST_FINDING_WINDOW = 10;
+
+/**
+ * Cap on the `didYouMean` array. Three is enough to disambiguate the
+ * common multi-match window without becoming a buried list the agent
+ * skips. Sorted by absolute line distance from the requested line so the
+ * closest candidate sits first.
+ */
+const DID_YOU_MEAN_CAP = 3;
+
+/**
+ * Walks `sameFileFindings` for findings sharing `ruleId` within
+ * {@link NEAREST_FINDING_WINDOW} lines of the requested line and
+ * returns the breadcrumb spread for the `kind: "none"` branch:
+ *
+ *   - exactly one same-rule finding in window → `{ nearestFinding: { ruleId, line } }`
+ *   - two or more → `{ didYouMean: [{ ruleId, line }, …] }` (top
+ *     {@link DID_YOU_MEAN_CAP}, sorted by absolute distance from the
+ *     requested line, then by line ascending so output is deterministic
+ *     across ties)
+ *   - zero (or no findings list provided) → `{}` (no breadcrumb)
+ *
+ * Closes Q7-SUGGEST-FIX-NONE-NEAREST-FINDING. The two field shapes are
+ * mutually exclusive — `nearestFinding` is the singular case the agent
+ * can act on directly; `didYouMean` is the plural case where the agent
+ * has to choose. Conditional-spread per CLAUDE.md §1 "Ambiguous field
+ * shapes are dishonest" — the field is absent when no breadcrumb fits,
+ * never `nearestFinding: null` or `didYouMean: []`.
+ */
+function nearestFindingSpread(
+  ruleId: string,
+  requestedLine: number,
+  sameFileFindings: readonly Violation[] | undefined,
+): {
+  readonly nearestFinding?: { readonly ruleId: string; readonly line: number };
+  readonly didYouMean?: ReadonlyArray<{ readonly ruleId: string; readonly line: number }>;
+} {
+  if (!sameFileFindings || sameFileFindings.length === 0) return {};
+  const inWindow = sameFileFindings
+    .filter(
+      (v) =>
+        v.ruleId === ruleId && Math.abs(v.location.line - requestedLine) <= NEAREST_FINDING_WINDOW,
+    )
+    .map((v) => ({ ruleId: v.ruleId, line: v.location.line }));
+  if (inWindow.length === 0) return {};
+  if (inWindow.length === 1) {
+    const only = inWindow[0];
+    if (!only) return {};
+    return { nearestFinding: only };
+  }
+  const ranked = [...inWindow].sort((a, b) => {
+    const distDelta = Math.abs(a.line - requestedLine) - Math.abs(b.line - requestedLine);
+    if (distDelta !== 0) return distDelta;
+    return a.line - b.line;
+  });
+  return { didYouMean: ranked.slice(0, DID_YOU_MEAN_CAP) };
 }
 
 /**
@@ -208,7 +295,17 @@ function stripContextBlindTailwindHint(
 }
 
 export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record<string, unknown> {
-  const { ruleId, line, match, sourceContext, source, filePath, warnings, tailwindDetected } = args;
+  const {
+    ruleId,
+    line,
+    match,
+    sourceContext,
+    source,
+    filePath,
+    warnings,
+    tailwindDetected,
+    sameFileFindings,
+  } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
   // Response-level `warnings` for the zero-output-success doctrine
   // (CLAUDE.md §1). The handler pre-computes scan-confidence codes
@@ -223,10 +320,22 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     // never existed." Present-when-meaningful (CLAUDE.md §1
     // "Ambiguous field shapes are dishonest") — the verify pair only
     // belongs on the lanes that actually applied a fix.
+    //
+    // Q7-SUGGEST-FIX-NONE-NEAREST-FINDING: walk the per-file findings
+    // for same-rule matches within ±NEAREST_FINDING_WINDOW lines of the
+    // requested line. Single match → `nearestFinding: { ruleId, line }`;
+    // multi match → `didYouMean[]`. Without these breadcrumbs the
+    // response is a dead end forcing the agent to re-scan when paginated
+    // scans drifted the line, the agent lost the original line, or a
+    // rule rename swapped the ID. Conditional-spread so the field is
+    // absent when no nearby same-rule finding exists (CLAUDE.md §1
+    // "Ambiguous field shapes are dishonest").
+    const nearestSpread = nearestFindingSpread(ruleId, line, sameFileFindings);
     return {
       kind: "none",
       explanation: `No violation for ${ruleId} at line ${line}.`,
       confidence: "low",
+      ...nearestSpread,
       ...warningsField,
     };
   }
