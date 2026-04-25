@@ -32,6 +32,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const CRLF_FIXTURE = join(
+  PROJECT_ROOT,
+  "tests",
+  "fixtures",
+  "real-world",
+  "crlf-source-file",
+  "source",
+  "index.html",
+);
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -88,6 +97,16 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 function isError(response: JsonRpcResponse): boolean {
   const result = response.result as { isError?: boolean } | undefined;
   return result?.isError === true;
+}
+
+/** Count `\r\n` byte pairs in a Buffer — used by the CRLF preservation
+ * test to verify the on-disk byte-content stays CRLF after a write. */
+function countCrlf(buf: Buffer): number {
+  let n = 0;
+  for (let i = 0; i + 1 < buf.length; i += 1) {
+    if (buf[i] === 0x0d && buf[i + 1] === 0x0a) n += 1;
+  }
+  return n;
 }
 
 /**
@@ -310,6 +329,89 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
       expect(body.error).toMatch(/matches 2 locations/i);
       const after = await readFile(file, "utf8");
       expect(after).toBe(before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves CRLF line endings when writing into a CRLF source file", async () => {
+    // Sourced from tests/fixtures/real-world/crlf-source-file/ — a
+    // sanitized HTML file with `\r\n` line endings and an <img> missing
+    // alt. The agent's `newText` arrives LF-normalized (the common
+    // case: copy-pasted from a Markdown snippet, authored on a Unix
+    // host, or assembled by a model that emits `\n` by default). The
+    // invariant under test: apply_fix detects the file's native CRLF
+    // ending and normalizes the spliced source to match — the on-disk
+    // bytes after the write contain only `\r\n`, never a bare `\n`.
+    // Pre-fix this test fails because the unconditional
+    // `String.prototype.replace` leaves `\r\n` outside the edit window
+    // and `\n` inside, mixing endings silently.
+    const fixtureBytes = await readFile(CRLF_FIXTURE);
+    // Sanity guard: if someone normalizes the fixture in editor, the
+    // test would silently degrade. Assert source has CRLF up front.
+    expect(fixtureBytes.includes(0x0d)).toBe(true);
+
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-crlf-"));
+    const file = join(dir, "page.html");
+    await writeFile(file, fixtureBytes);
+    try {
+      // Multi-line edit: oldText spans lines (CRLF-bearing in source),
+      // newText arrives with LF newlines — the canonical
+      // `suggest_fix` shape on a CRLF host. Pre-fix, the splice would
+      // leave LF inside the spliced region while CRLF survived
+      // outside, mixing endings silently. Post-fix, the writer
+      // detects the file's native CRLF and normalizes newText to
+      // match before writing.
+      //
+      // The oldText must be a verbatim slice of the source as the
+      // agent sees it. We read the file's current bytes (CRLF) and
+      // build oldText from that so the unique-match guard inside
+      // apply_fix succeeds.
+      const sourceText = new TextDecoder("utf-8").decode(fixtureBytes);
+      const oldText = `<h1>Hello</h1>\r\n<img src="/logo.png">`;
+      // newText uses LF only — the regression-driving shape.
+      const newText = `<h1>Hello</h1>\n<img src="/logo.png" alt="Acme">`;
+      // Sanity: oldText is present in the source so apply_fix can
+      // perform its unique-match check.
+      expect(sourceText.includes(oldText)).toBe(true);
+
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "sessionConfigure", { allowWrite: true }),
+        toolCall(3, "apply_fix", {
+          file,
+          edit: { oldText, newText },
+          cwd: dir,
+          dryRun: false,
+        }),
+      ]);
+      const body = bodyOf(responses[2]) as {
+        applied: boolean;
+        delta: { resolvedViolations: Array<{ ruleId: string }> };
+      };
+      expect(body.applied).toBe(true);
+
+      const after = await readFile(file);
+      // Every LF in the post-write file must be preceded by CR. A bare
+      // LF is the silent-mix failure mode this fix prevents.
+      const bytes = new Uint8Array(after);
+      const bareLfIndex: number[] = [];
+      for (let i = 0; i < bytes.length; i += 1) {
+        if (bytes[i] === 0x0a && (i === 0 || bytes[i - 1] !== 0x0d)) {
+          bareLfIndex.push(i);
+        }
+      }
+      expect(bareLfIndex).toEqual([]);
+
+      // And the CRLF count must be preserved — the file should still
+      // have at least the same number of CRLF pairs as the original.
+      const originalCrlfCount = countCrlf(fixtureBytes);
+      const afterCrlfCount = countCrlf(after);
+      expect(afterCrlfCount).toBeGreaterThanOrEqual(originalCrlfCount);
+
+      // And the alt attribute landed.
+      const decoded = new TextDecoder("utf-8").decode(after);
+      expect(decoded).toContain('alt="Acme"');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
