@@ -111,9 +111,7 @@ interface ContributorFile {
  * dominant bucket is the field whose serialized contribution exceeds
  * 50% of the finding's total bytes (otherwise `"other"`).
  */
-export function analyzeTopContributor(
-  files: readonly ContributorFile[],
-): TopContributorAnalysis {
+export function analyzeTopContributor(files: readonly ContributorFile[]): TopContributorAnalysis {
   let topBytes = -1;
   let topFinding: ContributorFinding | undefined;
   let topIsTied = false;

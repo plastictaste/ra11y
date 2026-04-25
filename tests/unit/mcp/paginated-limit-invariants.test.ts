@@ -182,11 +182,7 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
     });
     const bareDetails = bare.warningsDetails.response_token_budget_truncated;
     expect(bareDetails).toBeDefined();
-    expect(Object.keys(bareDetails ?? {})).toEqual([
-      "requestedLimit",
-      "effectiveLimit",
-      "reason",
-    ]);
+    expect(Object.keys(bareDetails ?? {})).toEqual(["requestedLimit", "effectiveLimit", "reason"]);
 
     // With an unambiguous winner the triple appears alongside the
     // request/effective numbers.
