@@ -125,6 +125,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [focus/outline-visible](./rules/focus__outline-visible.md)
 - [focus/tabindex-positive](./rules/focus__tabindex-positive.md)
 - [forms/aria-invalid-missing](./rules/forms__aria-invalid-missing.md)
+- [forms/asterisk-required-marker](./rules/forms__asterisk-required-marker.md)
 - [forms/autocomplete-missing](./rules/forms__autocomplete-missing.md)
 - [forms/error-message-not-associated](./rules/forms__error-message-not-associated.md)
 - [forms/fieldset-legend](./rules/forms__fieldset-legend.md)

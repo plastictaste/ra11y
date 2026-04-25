@@ -50,7 +50,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +22 | otp-input-cluster | **rule** |
+| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +23 | otp-input-cluster | **rule** |
 | `wcag22:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag22:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag22:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -116,7 +116,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag22:3.2.6` | Consistent Help | A | manual | — | — | **attestation-only** |
 | `wcag22:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `wcag22:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
+| `wcag22:3.3.2` | Labels or Instructions | A | full | forms/asterisk-required-marker, forms/fieldset-legend +11 | otp-input-cluster | **rule** |
 | `wcag22:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag22:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag22:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
@@ -145,7 +145,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +22 | otp-input-cluster | **rule** |
+| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +23 | otp-input-cluster | **rule** |
 | `wcag21:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag21:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag21:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -205,7 +205,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
 | `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag21:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `wcag21:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
+| `wcag21:3.3.2` | Labels or Instructions | A | full | forms/asterisk-required-marker, forms/fieldset-legend +11 | otp-input-cluster | **rule** |
 | `wcag21:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag21:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
@@ -228,7 +228,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `section508:1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `section508:1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +22 | otp-input-cluster | **rule** |
+| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +23 | otp-input-cluster | **rule** |
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
@@ -255,7 +255,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `section508:3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `section508:3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `section508:3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
+| `section508:3.3.2` | Labels or Instructions | base | full | forms/asterisk-required-marker, forms/fieldset-legend +11 | otp-input-cluster | **rule** |
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
@@ -275,7 +275,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `en301549:9.1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `en301549:9.1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +22 | otp-input-cluster | **rule** |
+| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, aria/presentation-on-semantic-ancestor +23 | otp-input-cluster | **rule** |
 | `en301549:9.1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `en301549:9.1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
@@ -313,7 +313,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `en301549:9.3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `en301549:9.3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `en301549:9.3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
+| `en301549:9.3.3.2` | Labels or Instructions | base | full | forms/asterisk-required-marker, forms/fieldset-legend +11 | otp-input-cluster | **rule** |
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
