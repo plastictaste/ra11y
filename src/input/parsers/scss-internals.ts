@@ -9,7 +9,7 @@
  *   - selector-list combining for nesting flattening
  */
 
-import type { ParseError } from "../../types/ast.ts";
+import type { CssNode, CssStylesheet, ParseError } from "../../types/ast.ts";
 
 // ---------------------------------------------------------------------------
 // Character-level helpers
@@ -370,3 +370,102 @@ export const STATEMENT_STRIP_AT_RULES: ReadonlySet<string> = new Set([
   "at-root",
   "content",
 ]);
+
+// ---------------------------------------------------------------------------
+// SCSS unresolved-variable detection (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT)
+// ---------------------------------------------------------------------------
+
+/**
+ * True when the source contains at least one top-level `$var: …;`
+ * declaration. Cheap regex scan; we accept that a `$var` reference
+ * inside an interpolation string would also trip the test, because the
+ * companion AST check (zero color literals downstream) is the
+ * load-bearing half — interpolation-only files never produce literal
+ * colors regardless.
+ *
+ * Used by {@link scssVariableDeclarationsLikelyUnresolved} as the first
+ * gate in the "token-only SCSS file" predicate; pulled out of the call
+ * site so the regex literal is named.
+ */
+export function hasTopLevelScssVariableDeclaration(source: string): boolean {
+  return SCSS_VAR_DECL_RE.test(source);
+}
+
+const SCSS_VAR_DECL_RE = /(^|[\s;{}])\$[A-Za-z_][\w-]*\s*:/m;
+
+/**
+ * Pattern matching a literal-color value the contrast extractor could
+ * resolve: hex (`#abc`, `#abcdef`, `#abcdef12`), `rgb(…)` / `rgba(…)`,
+ * `hsl(…)` / `hsla(…)`, or `currentColor`. Named colors are deliberately
+ * out of scope — the false-positive cost (a `color: inherit` in a
+ * variable-only theme partial reading as "resolved") would degrade the
+ * signal. The contrast extractor's full named-color set lives in
+ * `src/utils/color.ts`; mirroring it here would couple the detector to
+ * the rule's color vocabulary unnecessarily.
+ */
+const RESOLVED_COLOR_LITERAL_RE = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\s*\(|\bcurrentColor\b/i;
+
+/**
+ * Honest "did SCSS variable substitution produce any usable color
+ * literal in this file's CSS output?" predicate
+ * (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT).
+ *
+ * Returns `true` when the source declares at least one `$var: …`
+ * AND the resulting CSS AST carries no literal-color value across all
+ * rule declarations. The companion case — a `_variables.scss` partial
+ * whose only role is to define tokens for downstream compilation — is
+ * precisely this shape: declarations vanish during preprocessing, no
+ * rules survive, and the resulting AST is empty.
+ *
+ * Walks `rules[*].declarations[*].value` (and into nested at-rule
+ * blocks) looking for the first resolvable color literal. The first
+ * match short-circuits — the predicate only needs to know "any color
+ * literal present?", not how many. Pure over its inputs; cheap over
+ * realistic SCSS file sizes (typical theme partial: ≤ 200 declarations).
+ *
+ * False-positive note: a file like `body { background: var(--bg); }`
+ * with a `$var: …;` declaration trips the predicate even though the
+ * `var(--bg)` reference might resolve at runtime. That's intentional —
+ * the SCSS preprocessor is the only resolution we run; CSS custom
+ * properties resolve at the cascade layer the static scanner cannot
+ * reach. The honest signal is "this scan saw no literal colors after
+ * SCSS substitution" — same shape the agent acts on.
+ */
+export function scssVariableDeclarationsLikelyUnresolved(
+  scssSource: string,
+  cssRoot: CssStylesheet,
+): boolean {
+  if (!hasTopLevelScssVariableDeclaration(scssSource)) return false;
+  return !anyResolvedColorInCssNodes(cssRoot.rules);
+}
+
+/**
+ * Recursively walks a CSS node list looking for the first declaration
+ * whose value contains a resolvable color literal. Returns `true` on
+ * the first match, `false` when the walk completes without one.
+ */
+function anyResolvedColorInCssNodes(nodes: readonly CssNode[]): boolean {
+  for (const node of nodes) {
+    if (nodeHasResolvedColor(node)) return true;
+  }
+  return false;
+}
+
+/** Per-node check — extracted to keep the loop body trivial. */
+function nodeHasResolvedColor(node: CssNode): boolean {
+  if (node.kind === "CssRule") {
+    return ruleHasResolvedColor(node.declarations);
+  }
+  if (node.kind === "CssAtRule") {
+    return anyResolvedColorInCssNodes(node.children);
+  }
+  return false;
+}
+
+/** True when any declaration value matches a resolvable color literal. */
+function ruleHasResolvedColor(declarations: readonly { readonly value: string }[]): boolean {
+  for (const decl of declarations) {
+    if (RESOLVED_COLOR_LITERAL_RE.test(decl.value)) return true;
+  }
+  return false;
+}

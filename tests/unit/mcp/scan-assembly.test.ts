@@ -25,9 +25,12 @@
 import { describe, expect, it } from "bun:test";
 import type { ParsedFile } from "../../../src/engine/scanner.ts";
 import { parseHtml } from "../../../src/input/parsers/html.ts";
+import { parseScss } from "../../../src/input/parsers/scss.ts";
 import {
   applyParseErrorAdjustment,
+  applyScssUnresolvedVariablesAdjustment,
   buildCountsBySurface,
+  detectScssUnresolvedVariableFiles,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
   withCountsBySurface,
@@ -563,5 +566,204 @@ describe("runScanAndFormat — countsBySurface honest-shape regression", () => {
     if (raw !== undefined) {
       expect(typeof raw).toBe("object");
     }
+  });
+});
+
+// V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT
+//
+// Token-only SCSS partials (`_variables.scss`, theme tokens, Font
+// Awesome SCSS files) parse to zero CSS rules — and a `contrast/minimum`
+// row that reads `findingsEmitted: 0, coverageConfidence: "high"` is the
+// canonical zero-output-success-is-ambiguous-failure shape on this
+// substrate. The detector + adjuster live in scan-assembly so the meta
+// downgrade and the response-level `scss_unresolved_variables` warning
+// agree on the file list.
+describe("detectScssUnresolvedVariableFiles", () => {
+  function scssFile(path: string, source: string): ParsedFile {
+    const parsed = parseScss(source);
+    return {
+      filePath: path,
+      source,
+      ast: { language: "css", root: parsed.root, errors: [...parsed.errors] },
+    };
+  }
+
+  it("identifies a token-only `_variables.scss` partial whose substitution produced no rules", () => {
+    const file = scssFile("theme/_variables.scss", "$primary: #0d6efd;\n$secondary: #6c757d;\n");
+    expect(detectScssUnresolvedVariableFiles([file])).toEqual(["theme/_variables.scss"]);
+  });
+
+  it("does NOT flag an SCSS file whose declarations resolved to literal hex colors", () => {
+    // `$primary: #0d6efd;` is a literal — the substitution pass inlines
+    // it and the resulting CSS carries `color: #0d6efd;`.
+    const file = scssFile("theme.scss", "$primary: #0d6efd;\n.btn { color: $primary; }\n");
+    expect(detectScssUnresolvedVariableFiles([file])).toEqual([]);
+  });
+
+  it("does NOT flag a plain SCSS file with no `$variable:` declarations (signal is variables + zero usages)", () => {
+    const file = scssFile("plain.scss", ".btn { color: red; }\n");
+    expect(detectScssUnresolvedVariableFiles([file])).toEqual([]);
+  });
+
+  it("flags SCSS files that use `var(--token)` references because CSS custom properties are outside the SCSS substitution layer", () => {
+    // SCSS variable declared but file uses CSS custom property
+    // references for color — neither substitution nor cascade sees a
+    // literal, so the static scanner has no contrast evidence.
+    const file = scssFile("tokens.scss", "$brand: var(--brand);\n.btn { color: var(--brand); }\n");
+    expect(detectScssUnresolvedVariableFiles([file])).toEqual(["tokens.scss"]);
+  });
+
+  it("returns paths in deterministic sorted order across the scan", () => {
+    const a = scssFile("z/_z.scss", "$a: 4;\n");
+    const b = scssFile("a/_a.scss", "$b: 4;\n");
+    expect(detectScssUnresolvedVariableFiles([a, b])).toEqual(["a/_a.scss", "z/_z.scss"]);
+  });
+
+  it("ignores non-.scss files (CSS / HTML / TSX) regardless of source content", () => {
+    function htmlFile(path: string, source: string): ParsedFile {
+      const parsed = parseHtml(source);
+      return {
+        filePath: path,
+        source,
+        ast: { language: "html", root: parsed.root, errors: parsed.errors },
+      };
+    }
+    const html = htmlFile("/a.html", "<html><body>$primary:</body></html>");
+    expect(detectScssUnresolvedVariableFiles([html])).toEqual([]);
+  });
+});
+
+describe("applyScssUnresolvedVariablesAdjustment", () => {
+  const contrastRule = {
+    id: "contrast/minimum",
+    satisfies: [],
+    severity: "error",
+    scope: "project",
+    fixClass: "guidance",
+    appliesTo: { fileExtensions: [".css", ".html", ".htm", ".scss", ".less"] },
+    docs: { title: "contrast", rationale: "", goodExample: "", badExample: "" },
+  } as unknown as Rule;
+  const tsxRule = {
+    id: "alt-text/missing",
+    satisfies: [],
+    severity: "error",
+    scope: "node",
+    fixClass: "guidance",
+    appliesTo: { fileExtensions: [".tsx", ".jsx"] },
+    docs: { title: "alt", rationale: "", goodExample: "", badExample: "" },
+  } as unknown as Rule;
+
+  function scssFile(path: string): ParsedFile {
+    const source = "$primary: #fff;\n";
+    const parsed = parseScss(source);
+    return {
+      filePath: path,
+      source,
+      ast: { language: "css", root: parsed.root, errors: [...parsed.errors] },
+    };
+  }
+
+  it("returns the input array unchanged when no SCSS files matched (no-op fast path)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+    ];
+    const out = applyScssUnresolvedVariablesAdjustment(rows, [], [contrastRule], new Set());
+    expect(out).toBe(rows);
+  });
+
+  it("downgrades a `contrast/minimum` row to medium with structured reason when at least one eligible .scss file is unresolved", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 1,
+        filesEligible: 1,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+    ];
+    const files = [scssFile("/_variables.scss")];
+    const out = applyScssUnresolvedVariablesAdjustment(
+      rows,
+      files,
+      [contrastRule],
+      new Set(["/_variables.scss"]),
+    );
+    const [row] = out;
+    expect(row?.coverageConfidence).toBe("medium");
+    expect(row?.coverageConfidenceReason).toBe("scss-unresolved-variables");
+    expect(row?.reason).toContain("scss variables unresolved");
+  });
+
+  it("does NOT downgrade rules whose extension gate doesn't include .scss (alt-text rule untouched)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "alt-text/missing",
+        filesEvaluated: 5,
+        filesEligible: 5,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+    ];
+    const files = [scssFile("/_variables.scss")];
+    const out = applyScssUnresolvedVariablesAdjustment(
+      rows,
+      files,
+      [tsxRule],
+      new Set(["/_variables.scss"]),
+    );
+    expect(out[0]?.coverageConfidence).toBe("high");
+    expect(out[0]?.coverageConfidenceReason).toBeUndefined();
+  });
+
+  it("preserves an existing `low` confidence stamped by parse-error adjustment (parse-error precedence)", () => {
+    // The parse-error pass already marked this row low; SCSS adjuster
+    // must not weaken or rewrite that stronger downgrade.
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 0,
+        filesEligible: 1,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        coverageConfidenceReason: "file-parse-error",
+      },
+    ];
+    const files = [scssFile("/_variables.scss")];
+    const out = applyScssUnresolvedVariablesAdjustment(
+      rows,
+      files,
+      [contrastRule],
+      new Set(["/_variables.scss"]),
+    );
+    expect(out[0]?.coverageConfidence).toBe("low");
+    expect(out[0]?.coverageConfidenceReason).toBe("file-parse-error");
+  });
+
+  it("preserves an existing `reason` on the row when the SCSS downgrade fires (reason carries the rule's pre-existing prose)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 1,
+        filesEligible: 1,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+        reason: "previous prose from another axis",
+      },
+    ];
+    const files = [scssFile("/_variables.scss")];
+    const out = applyScssUnresolvedVariablesAdjustment(
+      rows,
+      files,
+      [contrastRule],
+      new Set(["/_variables.scss"]),
+    );
+    expect(out[0]?.reason).toBe("previous prose from another axis");
+    expect(out[0]?.coverageConfidence).toBe("medium");
   });
 });

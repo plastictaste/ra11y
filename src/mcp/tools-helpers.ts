@@ -29,8 +29,10 @@ import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
 import {
   applyParseErrorAdjustment,
+  applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
+  detectScssUnresolvedVariableFiles,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
   withCountsBySurface,
@@ -488,6 +490,19 @@ export async function runScanAndFormat(
    * count) but a per-file tool does.
    */
   readonly reviewCandidates: readonly import("../types/review.ts").ReviewCandidate[];
+  /**
+   * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: deterministic-sorted list
+   * of `.scss` files in this scan whose top-level `$variable: …`
+   * declarations produced zero literal-color usages downstream after
+   * the SCSS preprocessor's substitution pass. Empty array when no
+   * files matched. Threaded to the response-level
+   * `scss_unresolved_variables` warning at `tool-scan-project.ts` so
+   * the meta downgrade and the top-level warning agree on the file
+   * list — `applyScssUnresolvedVariablesAdjustment` has already
+   * stamped `coverageConfidenceReason: "scss-unresolved-variables"`
+   * on `meta.perRuleCoverage` rows whose extension gate matched.
+   */
+  readonly scssUnresolvedVariableFiles: readonly string[];
 }> {
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
@@ -615,11 +630,21 @@ export async function runScanAndFormat(
   // fast path when the scan has no parse-error / partial-parse files,
   // so the common case pays nothing.
   const findingFilePaths = new Set(filtered.map((v) => v.location.filePath));
-  const adjustedPerRuleCoverage = applyParseErrorAdjustment(
+  // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: detect token-only `.scss`
+  // partials so the per-rule coverage downgrade and the response-level
+  // `scss_unresolved_variables` warning agree on the same file list.
+  const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(files);
+  const parseErrorAdjusted = applyParseErrorAdjustment(
     perRuleCoverage,
     files,
     activeRules,
     findingFilePaths,
+  );
+  const adjustedPerRuleCoverage = applyScssUnresolvedVariablesAdjustment(
+    parseErrorAdjusted,
+    files,
+    activeRules,
+    new Set(scssUnresolvedFiles),
   );
   // Per-rule trust telemetry (Q2R2-RULE-COV). The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
@@ -699,6 +724,7 @@ export async function runScanAndFormat(
     durationMs: result.durationMs,
     filesScanned: result.filesScanned,
     reviewCandidates: report.candidates ?? [],
+    scssUnresolvedVariableFiles: scssUnresolvedFiles,
   };
 }
 

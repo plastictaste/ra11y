@@ -202,7 +202,11 @@ export const scanProjectTool: McpTool = {
     const classified = classifyIfAutoDetect(autoDetect, files, detectedNames);
     const t1 = performance.now();
     const skipCriterion = strArrayParam(params, "skipCriterion");
-    const { formatted, reviewCandidates: rawReviewCandidates } = await runScanAndFormat(
+    const {
+      formatted,
+      reviewCandidates: rawReviewCandidates,
+      scssUnresolvedVariableFiles,
+    } = await runScanAndFormat(
       files,
       session,
       standards,
@@ -405,6 +409,7 @@ export const scanProjectTool: McpTool = {
             filesAdded: files.length - baseFiles.length,
           }),
           configSearchSawProjectMarker,
+          scssUnresolvedVariableFiles,
         }),
       }),
     );
@@ -505,6 +510,7 @@ function buildBaseWarningsForScanProject(args: {
   readonly sessionWrappersMismatchCwd: boolean;
   readonly additionalPathsRedundant: boolean;
   readonly configSearchSawProjectMarker: boolean;
+  readonly scssUnresolvedVariableFiles: readonly string[];
 }): {
   readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
@@ -519,6 +525,7 @@ function buildBaseWarningsForScanProject(args: {
     sessionWrappersMismatchCwd,
     additionalPathsRedundant,
     configSearchSawProjectMarker,
+    scssUnresolvedVariableFiles,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
   // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
@@ -573,6 +580,7 @@ function buildBaseWarningsForScanProject(args: {
       ...buildArtifacts.metaField,
     }),
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
+    ...(scssUnresolvedVariableFiles.length === 0 ? {} : { scssUnresolvedVariableFiles }),
   });
   return warningsFieldsForAssembler(warningsFromMeta);
 }

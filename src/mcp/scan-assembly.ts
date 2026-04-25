@@ -9,6 +9,7 @@
 
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { DiscoveryDiagnostics } from "../input/discover.ts";
+import { scssVariableDeclarationsLikelyUnresolved } from "../input/parsers/scss-internals.ts";
 import type { FixesByClass } from "../output/agent-response/index.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
@@ -361,6 +362,117 @@ function adjustRowForParseErrors(
     filesEvaluated: adjustedEvaluated,
     coverageConfidence: "low",
     coverageConfidenceReason: reason,
+  };
+}
+
+/**
+ * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: returns the subset of
+ * scanned `.scss` files that declare top-level `$variable: …`
+ * statements but produced zero literal-color usages downstream after
+ * the SCSS preprocessor's substitution pass — the canonical
+ * "token-only theme partial" / `_variables.scss` shape that reads as
+ * `findings: []` with `coverageConfidence: "high"` despite the
+ * scanner having no contrast evidence to evaluate.
+ *
+ * Pure over its inputs; runs `scssVariableDeclarationsLikelyUnresolved`
+ * on every parsed `.scss` file. The result drives both the
+ * `coverageConfidenceReason: "scss-unresolved-variables"` per-rule
+ * downgrade ({@link applyScssUnresolvedVariablesAdjustment}) and the
+ * top-level `scss_unresolved_variables` warning code's
+ * `warningsDetails.scss_unresolved_variables.files` payload — so the
+ * agent reading either surface gets the same file list and decides
+ * whether to scan the compiled CSS output for full coverage.
+ *
+ * Returns paths in sorted order so wire output is deterministic across
+ * runs. Empty array (not `undefined`) when no files match — callers
+ * conditional-spread on `length > 0`.
+ */
+export function detectScssUnresolvedVariableFiles(files: readonly ParsedFile[]): readonly string[] {
+  const out: string[] = [];
+  for (const file of files) {
+    if (!file.filePath.toLowerCase().endsWith(".scss")) continue;
+    if (file.ast.language !== "css") continue;
+    if (scssVariableDeclarationsLikelyUnresolved(file.source, file.ast.root)) {
+      out.push(file.filePath);
+    }
+  }
+  out.sort();
+  return out;
+}
+
+/**
+ * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT row adjuster — companion of
+ * {@link applyParseErrorAdjustment} on a different axis. Downgrades a
+ * rule's `coverageConfidence` to `"medium"` with
+ * `coverageConfidenceReason: "scss-unresolved-variables"` when at
+ * least one of its eligible files is in the unresolved-variables set.
+ *
+ * Why `"medium"` and not `"low"`: the rule did run, eligibility was
+ * met, the file parsed cleanly. The honest signal is "evidence horizon
+ * was bounded by the SCSS preprocessor's static-resolution limits" —
+ * the same shape as the cross-file-resolution downgrade in ADR 0026.
+ * A `"low"` downgrade would conflate this case with the parse-error
+ * case (file invisible / partially-parsed), which is a stronger
+ * statement than the substrate warrants here.
+ *
+ * Precedence: when {@link applyParseErrorAdjustment} already dropped a
+ * row to `"low"`, this adjuster keeps the existing `"low"` and the
+ * existing `coverageConfidenceReason` — parse-error / partial-parse is
+ * a stronger signal (file invisible to rules) than
+ * unresolved-variables (file parsed; substitution layer was bounded).
+ * The two reasons never share a row.
+ *
+ * No-op fast path: when {@link unresolvedScssFiles} is empty, returns
+ * the input array unchanged so the common case stays cheap. Exported
+ * so the wiring layer (response-assembler, tools-helpers) can run both
+ * adjusters in series and feed the per-rule meta + the top-level
+ * `ruleCoverage` derivative the same adjusted view.
+ */
+export function applyScssUnresolvedVariablesAdjustment(
+  rows: readonly PerRuleCoverage[],
+  files: readonly ParsedFile[],
+  activeRules: readonly Rule[],
+  unresolvedScssFiles: ReadonlySet<string>,
+): readonly PerRuleCoverage[] {
+  if (unresolvedScssFiles.size === 0) return rows;
+  const ruleById = new Map<string, Rule>();
+  for (const r of activeRules) ruleById.set(r.id, r);
+  const unresolvedSet = new Set(unresolvedScssFiles);
+  const unresolvedFiles = files.filter((f) => unresolvedSet.has(f.filePath));
+  return rows.map((row) =>
+    adjustRowForScssUnresolvedVariables(row, ruleById.get(row.ruleId), unresolvedFiles),
+  );
+}
+
+/**
+ * Per-row adjustment helper for {@link applyScssUnresolvedVariablesAdjustment}.
+ * Returns the input row unchanged when no unresolved-variable files match
+ * the rule's gate, when the row is already at `"low"` (parse-error
+ * precedence), or when the row's existing
+ * `coverageConfidenceReason` is set to a non-scss reason. Otherwise
+ * stamps `coverageConfidence: "medium"` + the structured reason.
+ */
+function adjustRowForScssUnresolvedVariables(
+  row: PerRuleCoverage,
+  rule: Rule | undefined,
+  unresolvedFiles: readonly ParsedFile[],
+): PerRuleCoverage {
+  if (row.coverageConfidence === "low") return row;
+  if (
+    row.coverageConfidenceReason !== undefined &&
+    row.coverageConfidenceReason !== "scss-unresolved-variables"
+  ) {
+    return row;
+  }
+  const matches = countMatchingFiles(rule, unresolvedFiles);
+  if (matches === 0) return row;
+  return {
+    ...row,
+    coverageConfidence: "medium",
+    coverageConfidenceReason: "scss-unresolved-variables",
+    reason:
+      row.reason ??
+      "scss variables unresolved — scan the compiled CSS output for full contrast coverage",
   };
 }
 

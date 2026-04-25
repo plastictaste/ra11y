@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { parseScss } from "../../../../src/input/parsers/scss.ts";
+import {
+  hasTopLevelScssVariableDeclaration,
+  scssVariableDeclarationsLikelyUnresolved,
+} from "../../../../src/input/parsers/scss-internals.ts";
 import type { CssAtRule, CssDeclaration, CssRule } from "../../../../src/types/ast.ts";
 
 function asRule(node: unknown): CssRule {
@@ -399,5 +403,56 @@ describe("parseScss — error recovery", () => {
     // the rule appears as a flat one or it's consumed by the block.
     // Minimum invariant: no crash.
     expect(root.kind).toBe("CssStylesheet");
+  });
+});
+
+// V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT — detector for the
+// token-only-partial shape (variables declared, zero literal-color
+// usages downstream). Drives the per-rule
+// `coverageConfidenceReason: "scss-unresolved-variables"` downgrade
+// and the response-level `scss_unresolved_variables` warning code.
+describe("scssVariableDeclarationsLikelyUnresolved", () => {
+  it("returns true for a token-only `_variables.scss` partial", () => {
+    const source = "$primary: #0d6efd;\n$secondary: #6c757d;\n";
+    const { root } = parseScss(source);
+    expect(scssVariableDeclarationsLikelyUnresolved(source, root)).toBe(true);
+  });
+
+  it("returns false when a variable's literal value substituted into a rule (resolvable contrast pair)", () => {
+    const source = "$primary: #0d6efd;\n.btn { color: $primary; background: white; }\n";
+    const { root } = parseScss(source);
+    expect(scssVariableDeclarationsLikelyUnresolved(source, root)).toBe(false);
+  });
+
+  it("returns false when no `$variable:` declarations are present (signal requires both halves of the predicate)", () => {
+    const source = ".btn { color: red; }\n";
+    const { root } = parseScss(source);
+    expect(scssVariableDeclarationsLikelyUnresolved(source, root)).toBe(false);
+  });
+
+  it("returns true when the only color usages are CSS custom-property references (outside SCSS substitution layer)", () => {
+    const source = "$brand: var(--brand);\n.btn { color: var(--brand); }\n";
+    const { root } = parseScss(source);
+    expect(scssVariableDeclarationsLikelyUnresolved(source, root)).toBe(true);
+  });
+
+  it("recognizes hex / rgb() / hsl() / currentColor as resolved literals", () => {
+    for (const literal of ["#abc", "#aabbcc", "rgb(0, 0, 0)", "hsl(0, 0%, 0%)", "currentColor"]) {
+      const source = `$x: foo;\n.btn { color: ${literal}; }\n`;
+      const { root } = parseScss(source);
+      expect(scssVariableDeclarationsLikelyUnresolved(source, root)).toBe(false);
+    }
+  });
+});
+
+describe("hasTopLevelScssVariableDeclaration", () => {
+  it("matches `$name: value;` at start of source", () => {
+    expect(hasTopLevelScssVariableDeclaration("$primary: #abc;")).toBe(true);
+  });
+  it("matches `$name:` with whitespace before the colon", () => {
+    expect(hasTopLevelScssVariableDeclaration("$primary  : #abc;")).toBe(true);
+  });
+  it("does not match plain CSS without variables", () => {
+    expect(hasTopLevelScssVariableDeclaration(".btn { color: red; }")).toBe(false);
   });
 });

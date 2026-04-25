@@ -77,8 +77,10 @@ import {
 } from "./rule-coverage-derivative.ts";
 import {
   applyParseErrorAdjustment,
+  applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
+  detectScssUnresolvedVariableFiles,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
   withCountsBySurface,
@@ -232,6 +234,7 @@ function buildAssemblerWarningsField(args: {
   readonly storybookPresetActive: boolean | undefined;
   readonly sessionWrappersMismatchCwd: boolean | undefined;
   readonly configSearchSawProjectMarker: boolean | undefined;
+  readonly scssUnresolvedVariableFiles?: readonly string[];
 }): {
   readonly warnings?: readonly ScanWarningCode[];
   readonly warningsDetails?: ScanWarningDetails;
@@ -277,6 +280,10 @@ function buildAssemblerWarningsField(args: {
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
     ...(metaArrayTruncated ? { metaArrayTruncated: true } : {}),
+    ...(args.scssUnresolvedVariableFiles === undefined ||
+    args.scssUnresolvedVariableFiles.length === 0
+      ? {}
+      : { scssUnresolvedVariableFiles: args.scssUnresolvedVariableFiles }),
   });
 }
 
@@ -354,11 +361,25 @@ export function assembleScanFamilyResponse(
   // confidently cleaned (parse-error files no longer count toward
   // `filesEvaluated`; partial-parse matches drop confidence to
   // `"low"`). No-op fast path when the scan has no parse errors.
-  const adjustedPerRuleCoverage = applyParseErrorAdjustment(
+  // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: chain a second adjustment
+  // for `.scss` files where `$variable: …;` declarations produced no
+  // literal-color usages — drops `coverageConfidence` to `"medium"`
+  // with `coverageConfidenceReason: "scss-unresolved-variables"` so
+  // a token-only theme partial doesn't read as `findings: []` /
+  // `coverageConfidence: "high"`. Parse-error precedence is honored:
+  // a row already at `"low"` keeps its existing reason.
+  const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(parsedFiles);
+  const parseErrorAdjusted = applyParseErrorAdjustment(
     perRuleCoverage,
     parsedFiles,
     activeRules,
     findingFilePaths,
+  );
+  const adjustedPerRuleCoverage = applyScssUnresolvedVariablesAdjustment(
+    parseErrorAdjusted,
+    parsedFiles,
+    activeRules,
+    new Set(scssUnresolvedFiles),
   );
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
@@ -415,6 +436,7 @@ export function assembleScanFamilyResponse(
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     configSearchSawProjectMarker,
+    scssUnresolvedVariableFiles: scssUnresolvedFiles,
   });
 
   // Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS: three totals a scan-family
