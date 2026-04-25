@@ -128,9 +128,7 @@ function collectMainLandmarks(doc: HtmlDocument): readonly HtmlElement[] {
 function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
   const htmlElements = findHtmlElementsByTag(doc, "html");
   const anchor = htmlElements[0];
-  ctx.emit(
-    buildLayoutPartialEmit(anchor?.loc.start.line ?? 1, anchor?.loc.start.column ?? 1, ""),
-  );
+  ctx.emit(buildLayoutPartialEmit(anchor?.loc.start.line ?? 1, anchor?.loc.start.column ?? 1, ""));
 }
 
 /**
