@@ -59,6 +59,7 @@ import { defineCandidateFinder } from "../../api/plugin.ts";
 import { findHtmlElementsByTag, findJsxElementsByTag } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
+import { findProseContainerAncestor, proseContainerReasonSuffix } from "../mdx-prose-container.ts";
 
 // Full criterion set — all six IDs registered on this finder so the
 // engine knows which criteria it covers for manual-applicability and
@@ -168,9 +169,9 @@ function findJsxCandidates(
   candidates: ReviewCandidate[],
 ): void {
   for (const el of findJsxElementsByTag(root, "video"))
-    emitJsx(el, "video", filePath, source, candidates);
+    emitJsx(el, "video", filePath, source, root, candidates);
   for (const el of findJsxElementsByTag(root, "audio"))
-    emitJsx(el, "audio", filePath, source, candidates);
+    emitJsx(el, "audio", filePath, source, root, candidates);
 }
 
 function emitHtml(
@@ -196,12 +197,25 @@ function emitJsx(
   tag: MediaTag,
   filePath: string,
   source: string,
+  root: TsxModule,
   candidates: ReviewCandidate[],
 ): void {
-  const reason = reasonForTag(tag);
+  const baseReason = reasonForTag(tag);
   const snippet = source.slice(el.range.start, Math.min(el.range.start + 120, el.range.end));
   const location = { filePath, line: el.loc.start.line, column: el.loc.start.column };
+  // MDX prose-container framing — see media-variants.ts emitJsx
+  // for the doctrine reference. The candidate stays in the primary
+  // list; the reason names the prose-container ancestor and the
+  // confidence drops from "high" to "medium" because the static
+  // evidence (a JSX-shape match inside an inline-prose component)
+  // weakens.
+  const containerName = findProseContainerAncestor(el, root);
+  const reason =
+    containerName === null
+      ? baseReason
+      : `${baseReason}${proseContainerReasonSuffix(containerName)}`;
+  const confidence: "high" | "medium" = containerName === null ? "high" : "medium";
   for (const criterionId of criterionIdsForTag(tag)) {
-    candidates.push({ criterionId, location, reason, snippet, confidence: "high" });
+    candidates.push({ criterionId, location, reason, snippet, confidence });
   }
 }

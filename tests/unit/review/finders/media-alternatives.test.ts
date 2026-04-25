@@ -246,3 +246,70 @@ describe("review/media-alternatives — audio criterion fan scope (Q7-CHECKLIST-
     expect(criterionIds).toEqual(["wcag21:1.2.1", "wcag22:1.2.1"]);
   });
 });
+
+describe("review/media-alternatives — MDX prose-container enrichment", () => {
+  // MDX docs sites embed `<Callout>` / `<Note>` / `<Warning>` /
+  // `<Example>` / `<Tip>` / `<Info>` / `<Caution>` / `<Important>`
+  // around explanatory prose. Authors who write a tag-name mention
+  // inside without backticks (`<Callout>Use the <video> element to
+  // embed.</Callout>`) get the bare `<video>` parsed as a real JSX
+  // element child by the TSX parser MDX delegates to. The candidate
+  // stays in the primary list (surface-don't-suppress); the reason
+  // names the prose-container ancestor and the confidence drops to
+  // "medium" because the static evidence (a JSX-shape match nested
+  // inside an inline-prose component) is weaker than a direct
+  // `<video>` in DOM-shape source.
+  //
+  // Pairs with the same enrichment in `media-variants` — both 1.2.x
+  // finders carry the consistent reason text so an agent learns the
+  // dismissal pattern once and applies it across every media SC.
+
+  it("video inside <Callout> in TSX gains the prose-container reason suffix", () => {
+    const source = `const X = <Callout><video src="x.mp4" /></Callout>;`;
+    const out = runFinder(finder, source, { filePath: "ratio.tsx" });
+    const v121 = out.find((c) => c.criterionId === "wcag22:1.2.1");
+    expect(v121).toBeDefined();
+    expect(v121?.reason).toContain("<Callout>");
+    expect(v121?.reason).toContain("verify the element actually renders");
+  });
+
+  it("video inside <Note> downgrades confidence to medium", () => {
+    const source = `const X = <Note><video src="x.mp4" /></Note>;`;
+    const out = runFinder(finder, source, { filePath: "ratio.tsx" });
+    const v = out.find((c) => c.criterionId === "wcag22:1.2.1");
+    expect(v?.confidence).toBe("medium");
+  });
+
+  it("audio inside <Tip> emits 1.2.1 with the prose-container suffix", () => {
+    const source = `const X = <Tip><audio src="a.mp3" /></Tip>;`;
+    const out = runFinder(finder, source, { filePath: "audio-guide.tsx" });
+    const a = out.find((c) => c.criterionId === "wcag22:1.2.1");
+    expect(a?.reason).toContain("<Tip>");
+    expect(a?.confidence).toBe("medium");
+  });
+
+  it("video at TSX module top-level keeps high confidence and unenriched reason", () => {
+    const source = `const X = <video src="x.mp4" />;`;
+    const out = runFinder(finder, source, { filePath: "player.tsx" });
+    const v = out.find((c) => c.criterionId === "wcag22:1.2.1");
+    expect(v?.confidence).toBe("high");
+    expect(v?.reason).not.toContain("MDX");
+    expect(v?.reason).not.toContain("prose block");
+  });
+
+  it("video inside non-prose layout components (<Layout>/<Section>) is NOT enriched", () => {
+    const source = `const X = <Layout><Section><video src="x.mp4" /></Section></Layout>;`;
+    const out = runFinder(finder, source, { filePath: "page.tsx" });
+    const v = out.find((c) => c.criterionId === "wcag22:1.2.1");
+    expect(v?.confidence).toBe("high");
+    expect(v?.reason).not.toContain("prose block");
+  });
+
+  it("HTML <video> stays high confidence — no MDX prose containers in HTML", () => {
+    const source = `<!doctype html><html lang="en"><body><video src="x.mp4"></video></body></html>`;
+    const out = runFinder(finder, source, { filePath: "pages/video.html" });
+    const v = out.find((c) => c.criterionId === "wcag22:1.2.1");
+    expect(v?.confidence).toBe("high");
+    expect(v?.reason).not.toContain("prose block");
+  });
+});

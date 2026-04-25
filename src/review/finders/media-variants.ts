@@ -25,6 +25,7 @@ import { defineCandidateFinder } from "../../api/plugin.ts";
 import { findHtmlElementsByTag, findJsxElementsByTag } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
+import { findProseContainerAncestor, proseContainerReasonSuffix } from "../mdx-prose-container.ts";
 
 interface CriterionPrompt {
   readonly criterionId: string;
@@ -130,8 +131,10 @@ function collectJsx(
   source: string,
   out: ReviewCandidate[],
 ): void {
-  for (const el of findJsxElementsByTag(root, "video")) emitJsx(el, "video", filePath, source, out);
-  for (const el of findJsxElementsByTag(root, "audio")) emitJsx(el, "audio", filePath, source, out);
+  for (const el of findJsxElementsByTag(root, "video"))
+    emitJsx(el, "video", filePath, source, root, out);
+  for (const el of findJsxElementsByTag(root, "audio"))
+    emitJsx(el, "audio", filePath, source, root, out);
 }
 
 function emitHtml(
@@ -161,19 +164,34 @@ function emitJsx(
   kind: "video" | "audio",
   filePath: string,
   source: string,
+  root: TsxModule,
   out: ReviewCandidate[],
 ): void {
   const snippet = source.slice(el.range.start, Math.min(el.range.start + 120, el.range.end));
   const location = { filePath, line: el.loc.start.line, column: el.loc.start.column };
+  // MDX prose-container framing: when the element sits inside a
+  // documented prose component (`<Callout>`, `<Note>`, `<Warning>`,
+  // `<Example>`, `<Tip>`, `<Info>`, `<Caution>`, `<Important>`),
+  // the author may have written the tag as a code mention. The
+  // candidate stays in the primary list (surface-don't-suppress);
+  // the reason gains a suffix the agent reads to dismiss in one
+  // file Read. See src/review/mdx-prose-container.ts header for
+  // doctrine alignment.
+  const containerName = findProseContainerAncestor(el, root);
+  const enrichmentSuffix = containerName === null ? "" : proseContainerReasonSuffix(containerName);
   for (const prompt of PROMPTS) {
-    const reason = kind === "video" ? prompt.videoReason : prompt.audioReason;
-    if (reason === null) continue;
+    const baseReason = kind === "video" ? prompt.videoReason : prompt.audioReason;
+    if (baseReason === null) continue;
+    const reason = `${baseReason}${enrichmentSuffix}`;
     for (const id of [prompt.criterionId, ...prompt.equivalentIds]) {
-      // Confidence "high": deterministic <video>/<audio> tag match.
-      // The criterion-level prompts (live captions, sign language,
-      // background audio, etc.) each ask the reviewer to classify
-      // the content, but the element is unambiguous.
-      out.push({ criterionId: id, location, reason, snippet, confidence: "high" });
+      // Confidence: deterministic <video>/<audio> tag match earns
+      // "high"; when the element sits inside a prose container the
+      // static evidence weakens (the tag may be code-mention text
+      // the parser read as JSX), so downgrade to "medium" — the
+      // candidate still surfaces but signals the agent that
+      // dismissal is one Read away rather than always-real.
+      const confidence = containerName === null ? "high" : "medium";
+      out.push({ criterionId: id, location, reason, snippet, confidence });
     }
   }
 }
