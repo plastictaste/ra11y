@@ -64,6 +64,7 @@ import { rule as animationFromInteractions } from "./motion/animation-from-inter
 import { rule as pauseStopHide } from "./motion/pause-stop-hide.ts";
 import { rule as hrefEmptyFragment } from "./navigation/href-empty-fragment.ts";
 import { rule as hrefJavascriptScheme } from "./navigation/href-javascript-scheme.ts";
+import { rule as inPageLinkFragmentMissing } from "./navigation/in-page-link-fragment-missing.ts";
 import { rule as linkDescriptiveText } from "./navigation/link-descriptive-text.ts";
 import { rule as linkNameOnlySymbol } from "./navigation/link-name-only-symbol.ts";
 import { rule as linkNoHref } from "./navigation/link-no-href.ts";
@@ -127,6 +128,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
+  inPageLinkFragmentMissing,
   invalidIdShape,
   invalidRole,
   labelAdjacentMismatch,
@@ -216,6 +218,7 @@ export {
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
+  inPageLinkFragmentMissing,
   invalidIdShape,
   invalidRole,
   labelAdjacentMismatch,

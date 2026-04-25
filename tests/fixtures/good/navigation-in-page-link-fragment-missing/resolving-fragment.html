@@ -1,0 +1,24 @@
+<!--
+  Good: every fragment href resolves to an existing element. Includes the
+  modern id form (#main, #install) AND the universal browser convention
+  (#top — always scrolls to the top of the document regardless of whether
+  any id="top" exists).
+  Expect: rule navigation/in-page-link-fragment-missing does not fire.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <nav>
+      <a href="#main">Skip to main content</a>
+      <a href="#install">Install</a>
+      <a href="#top">Back to top</a>
+    </nav>
+    <main id="main">
+      <h1>Docs</h1>
+      <section id="install">
+        <h2>Installation</h2>
+        <p>Run npm install.</p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,24 @@
+<!--
+  Bad: an anchor links to fragment "#installation" but no element in this
+  document carries id="installation" (a typo of the real id
+  "instalation"). The link announces as in-page navigation but lands
+  nowhere — activating it scrolls to document top with no focus advance.
+  Common in hand-maintained tables of contents and breadcrumb headers.
+  Expect: rule navigation/in-page-link-fragment-missing fires once at
+  severity "warning"; suggestion proposes the near-match id.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <nav>
+      <a href="#installation">Install</a>
+    </nav>
+    <main>
+      <h1>Docs</h1>
+      <section id="instalation">
+        <h2>Installation</h2>
+        <p>Run npm install.</p>
+      </section>
+    </main>
+  </body>
+</html>
