@@ -211,7 +211,23 @@ export function buildPerRuleCoverage(
   const out: PerRuleCoverage[] = [];
   const sortedRules = [...rules].sort((a, b) => a.id.localeCompare(b.id));
   for (const rule of sortedRules) {
-    if (!filter.isRuleActive(rule)) continue;
+    if (!filter.isRuleActive(rule)) {
+      // Surface, don't suppress (Q7-AAA-RULE-LOADER-SILENT-NORUN). A
+      // rule pre-filtered by the active conformance level would
+      // otherwise vanish from the response — the agent reading
+      // `perRuleCoverage` cannot then distinguish "the rule isn't
+      // loaded" from "the rule is loaded but level filtering excluded
+      // it." Emit a structured `skipReason: "gated_by_level"` row
+      // (with `requiredLevel` + `requestedLevel`) so the agent has the
+      // exact remediation. Rules inactive for the orthogonal "no
+      // enabled-standard criterion" reason still skip — there is no
+      // honest level-gate row for them, and surfacing them as `loaded`
+      // is also a lie (they aren't reachable under the current
+      // standards).
+      const gate = filter.levelGateForInactiveRule(rule);
+      if (gate) out.push(buildLevelGatedEntry(rule.id, gate));
+      continue;
+    }
     const findingsEmitted = findingsByRule.get(rule.id) ?? 0;
     const concentration = computeConcentration(findingsEmitted, densestByRule.get(rule.id));
     const classPatternConcentration = classPatternByRule.get(rule.id);
@@ -521,6 +537,42 @@ function buildProjectScopedEntry(
     coverageConfidence: "high",
     ...concentrationSpread,
     ...classPatternSpread,
+  };
+}
+
+/**
+ * Assembles one {@link PerRuleCoverage} record for a rule that the
+ * level filter excluded before any per-file evaluation could happen.
+ * The row carries `findingsEmitted: 0`, `filesEvaluated: 0`,
+ * `filesEligible: 0`, and `coverageConfidence: "low"`; the orthogonal
+ * `skipReason: "gated_by_level"` discriminator (plus
+ * `requiredLevel` / `requestedLevel`) tells the agent exactly what
+ * unlocks the rule (Q7-AAA-RULE-LOADER-SILENT-NORUN). The `reason`
+ * field carries human prose for parity with low-confidence rows.
+ *
+ * `coverageConfidence: "low"` is the honest classifier here — the
+ * tally IS zero across the board, and the agent SHOULD NOT trust that
+ * as evidence the rule's pattern is absent from the codebase.
+ * `skipReason` answers the question `coverageConfidence` cannot:
+ * "the row reads zero because the rule never ran, not because it
+ * ran cleanly." The two fields name orthogonal axes; both must be
+ * present for the row to be honest.
+ */
+function buildLevelGatedEntry(
+  ruleId: string,
+  gate: { requiredLevel: "A" | "AA" | "AAA"; requestedLevel: "A" | "AA" | "AAA" },
+): PerRuleCoverage {
+  return {
+    ruleId,
+    filesEvaluated: 0,
+    filesEligible: 0,
+    findingsEmitted: 0,
+    coverageConfidence: "low",
+    reason: `gated_by_level: rule requires level ${gate.requiredLevel}; scan requested level ${gate.requestedLevel}`,
+    remediation: `re-run with \`level: '${gate.requiredLevel}'\` to evaluate this rule`,
+    skipReason: "gated_by_level",
+    requiredLevel: gate.requiredLevel,
+    requestedLevel: gate.requestedLevel,
   };
 }
 

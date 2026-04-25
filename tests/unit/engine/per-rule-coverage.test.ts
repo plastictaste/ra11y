@@ -63,6 +63,10 @@ const passAllFilter: StandardFilter = {
   isRuleActive: () => true,
   citedCriteria: () => ["wcag22:1.4.3"],
   citedCriteriaTitles: () => ["Contrast (Minimum)"],
+  // The level-gate diagnostic only fires for inactive rules; an
+  // always-active filter never reaches it, so `undefined` is the
+  // honest stub return.
+  levelGateForInactiveRule: () => undefined,
 };
 
 function tracker(
@@ -194,12 +198,16 @@ describe("buildPerRuleCoverage", () => {
     expect(row!.remediation).toBeDefined();
   });
 
-  it("omits filter-inactive rules (rule disabled under current standards)", () => {
+  it("omits filter-inactive rules when no enabled standard reaches the rule", () => {
+    // The "rule's `satisfies` resolves to no enabled-standard criterion"
+    // case — there is no honest level-gate row to surface here, and
+    // emitting one would be a lie, so the row stays absent.
     const rules = [mkRule("contrast/minimum", [".css"])];
     const filter: StandardFilter = {
       isRuleActive: () => false,
       citedCriteria: () => [],
       citedCriteriaTitles: () => [],
+      levelGateForInactiveRule: () => undefined,
     };
     const entries = buildPerRuleCoverage(
       tracker({ "contrast/minimum": { eligible: 0, evaluated: 0 } }),
@@ -209,6 +217,40 @@ describe("buildPerRuleCoverage", () => {
       5,
     );
     expect(entries.length).toBe(0);
+  });
+
+  // Q7-AAA-RULE-LOADER-SILENT-NORUN. A rule that the active conformance
+  // level filtered out (canonical: an AAA-only rule under default `AA`)
+  // used to disappear from `perRuleCoverage` — the agent reading the
+  // response could not distinguish "rule isn't loaded" from "rule loaded
+  // but level-gated." Surface, don't suppress: emit a structured row
+  // with `skipReason: "gated_by_level"` plus `requiredLevel` /
+  // `requestedLevel` so the agent has the exact remediation.
+  it("emits a skipReason: 'gated_by_level' row when the level filter excluded the rule", () => {
+    const rules = [mkRule("link/announce-target-blank", [".html", ".tsx"])];
+    const filter: StandardFilter = {
+      isRuleActive: () => false,
+      citedCriteria: () => [],
+      citedCriteriaTitles: () => [],
+      levelGateForInactiveRule: () => ({ requiredLevel: "AAA", requestedLevel: "AA" }),
+    };
+    const entries = buildPerRuleCoverage(tracker({}), rules, filter, [], 3);
+    expect(entries.length).toBe(1);
+    const row = entries[0];
+    expect(row).toBeDefined();
+    expect(row!.ruleId).toBe("link/announce-target-blank");
+    expect(row!.findingsEmitted).toBe(0);
+    expect(row!.filesEvaluated).toBe(0);
+    expect(row!.filesEligible).toBe(0);
+    expect(row!.coverageConfidence).toBe("low");
+    expect(row!.skipReason).toBe("gated_by_level");
+    expect(row!.requiredLevel).toBe("AAA");
+    expect(row!.requestedLevel).toBe("AA");
+    // Reason + remediation carry actionable prose so an agent reading
+    // the row alone has the full context.
+    expect(row!.reason).toContain("AAA");
+    expect(row!.reason).toContain("AA");
+    expect(row!.remediation).toContain("level: 'AAA'");
   });
 
   it("sorts entries by rule ID for cross-run stability", () => {

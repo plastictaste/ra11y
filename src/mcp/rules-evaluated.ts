@@ -83,6 +83,14 @@ export interface RulesEvaluated {
  * Zero is a meaningful signal ("rule ran, saw eligible inputs, didn't
  * flag anything") paired with `coverageConfidence` in the underlying
  * `perRuleCoverage` rows.
+ *
+ * Level-gated rows (Q7-AAA-RULE-LOADER-SILENT-NORUN — rules pre-
+ * filtered by the active conformance level) carry `filesEligible: 0`
+ * and `findingsEmitted: 0` by construction, so they don't increment
+ * either sub-counter. The agent reads "loaded > withEligibleInputs"
+ * with the gated rows themselves naming the exact gap; without the
+ * row surfaced, the agent could not distinguish "rule never loaded"
+ * from "rule loaded but level-gated."
  */
 export function buildRulesEvaluated(args: {
   readonly loadedCount: number;

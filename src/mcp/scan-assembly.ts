@@ -394,6 +394,13 @@ function adjustRowForParseErrors(
   parseErrorFiles: readonly ParsedFile[],
   partialParseFiles: readonly ParsedFile[],
 ): PerRuleCoverage {
+  // Level-gated rows were never evaluated against any file (the
+  // standard filter excluded the rule before per-file dispatch), so
+  // stamping `coverageConfidenceReason: "partial-parse"` on a
+  // gated row would lie about why its `filesEvaluated` is zero —
+  // the cause is level gating, not parse error. Pass through
+  // unchanged (Q7-AAA-RULE-LOADER-SILENT-NORUN).
+  if (row.skipReason === "gated_by_level") return row;
   const parseErrorMatches = countMatchingFiles(rule, parseErrorFiles);
   const partialParseMatches = countMatchingFiles(rule, partialParseFiles);
   if (parseErrorMatches === 0 && partialParseMatches === 0) return row;

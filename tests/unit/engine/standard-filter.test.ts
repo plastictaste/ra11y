@@ -222,6 +222,138 @@ describe("createStandardFilter", () => {
     expect(filter.citedCriteria(mixedRule)).toEqual(["delta:1.1", "delta:9.9"]);
   });
 
+  // Q7-AAA-RULE-LOADER-SILENT-NORUN. The per-rule-coverage builder
+  // needs to distinguish "rule inactive because no enabled standard
+  // reaches it" from "rule inactive because the active level filtered
+  // it out." Only the second deserves a `skipReason: "gated_by_level"`
+  // row in the response — so the filter surfaces the diagnostic
+  // honestly, returning `undefined` for the first case and a
+  // `{ requiredLevel, requestedLevel }` for the second.
+  it("levelGateForInactiveRule names the AAA-only rule's required level under AA", () => {
+    const gamma2 = defineStandard({
+      id: "gamma2",
+      name: "Gamma2",
+      version: "1.0",
+      publisher: "Test",
+      url: "https://example.com/gamma2",
+      levels: ["A", "AA", "AAA"],
+      criteria: [
+        {
+          id: "gamma2:9.9",
+          standardId: "gamma2",
+          localId: "9.9",
+          title: "Gamma2 AAA",
+          level: "AAA",
+          description: "AAA-only criterion",
+          url: "https://example.com/gamma2#9.9",
+          automatable: "full",
+        },
+      ],
+    });
+    const aaaOnlyRule = defineRule({
+      id: "test/rule-aaa-only-2",
+      satisfies: ["gamma2:9.9"],
+      severity: "warning",
+      scope: "node",
+      fixClass: "mechanical",
+      docs: {
+        description: "",
+        rationale: "",
+        goodExample: "",
+        badExample: "",
+        references: [],
+      },
+      check() {
+        return undefined;
+      },
+    });
+    const criteria = new CriteriaRegistry();
+    criteria.rebuild([gamma2]);
+    const filter = createStandardFilter(new Set(["gamma2"]), criteria, "AA");
+    expect(filter.isRuleActive(aaaOnlyRule)).toBe(false);
+    expect(filter.levelGateForInactiveRule(aaaOnlyRule)).toEqual({
+      requiredLevel: "AAA",
+      requestedLevel: "AA",
+    });
+    // Same standard, AAA active → rule is active, no gate diagnostic.
+    const aaaFilter = createStandardFilter(new Set(["gamma2"]), criteria, "AAA");
+    expect(aaaFilter.isRuleActive(aaaOnlyRule)).toBe(true);
+    expect(aaaFilter.levelGateForInactiveRule(aaaOnlyRule)).toBeUndefined();
+    // Filter with no active level: legacy behavior, no gate ever fires.
+    const noLevelFilter = createStandardFilter(new Set(["gamma2"]), criteria);
+    expect(noLevelFilter.levelGateForInactiveRule(aaaOnlyRule)).toBeUndefined();
+  });
+
+  it("levelGateForInactiveRule returns undefined when no enabled standard reaches the rule", () => {
+    // Rule satisfies alpha:1.1; only beta is enabled and there is no
+    // equivalence path. The rule is inactive for the orthogonal
+    // "no enabled-standard criterion" reason, so the gate diagnostic
+    // returns undefined (the per-rule-coverage builder then skips the
+    // rule rather than synthesizing a misleading level-gate row).
+    const lonelyAlpha = defineStandard({
+      id: "alphaSolo",
+      name: "AlphaSolo",
+      version: "1.0",
+      publisher: "Test",
+      url: "https://example.com/alphaSolo",
+      levels: ["A"],
+      criteria: [
+        {
+          id: "alphaSolo:1.1",
+          standardId: "alphaSolo",
+          localId: "1.1",
+          title: "Alpha Solo 1.1",
+          level: "A",
+          description: "…",
+          url: "https://example.com/alphaSolo#1.1",
+          automatable: "partial",
+        },
+      ],
+    });
+    const beta2 = defineStandard({
+      id: "beta2",
+      name: "Beta2",
+      version: "1.0",
+      publisher: "Test",
+      url: "https://example.com/beta2",
+      levels: ["A"],
+      criteria: [
+        {
+          id: "beta2:1.1",
+          standardId: "beta2",
+          localId: "1.1",
+          title: "Beta2 1.1",
+          level: "A",
+          description: "…",
+          url: "https://example.com/beta2#1.1",
+          automatable: "partial",
+        },
+      ],
+    });
+    const ruleSatisfyingAlphaSolo = defineRule({
+      id: "test/rule-alpha-solo",
+      satisfies: ["alphaSolo:1.1"],
+      severity: "warning",
+      scope: "node",
+      fixClass: "mechanical",
+      docs: {
+        description: "",
+        rationale: "",
+        goodExample: "",
+        badExample: "",
+        references: [],
+      },
+      check() {
+        return undefined;
+      },
+    });
+    const criteria = new CriteriaRegistry();
+    criteria.rebuild([lonelyAlpha, beta2]);
+    const filter = createStandardFilter(new Set(["beta2"]), criteria, "AA");
+    expect(filter.isRuleActive(ruleSatisfyingAlphaSolo)).toBe(false);
+    expect(filter.levelGateForInactiveRule(ruleSatisfyingAlphaSolo)).toBeUndefined();
+  });
+
   it("treats Section 508's `base` level as always active regardless of activeLevel", () => {
     // Section 508 has no A/AA/AAA axis; its criteria use level "base".
     // A rule citing a Section-508 base criterion should still fire when

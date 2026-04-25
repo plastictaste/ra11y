@@ -345,6 +345,130 @@ describe("per-rule coverage end-to-end", () => {
     expect(rulesEvaluated.fired).toBe(firedFromRows);
   });
 
+  // Q7-AAA-RULE-LOADER-SILENT-NORUN. An AAA-only rule (e.g.
+  // `navigation/link-target-blank-announcement` satisfying
+  // `wcag22:3.2.5` AAA, `contrast/enhanced` satisfying `wcag22:1.4.6`
+  // AAA, `motion/animation-from-interactions` satisfying `wcag22:2.3.3`
+  // AAA) under a default `level: "AA"` scan used to disappear from
+  // `perRuleCoverage` — the agent reading "the rule isn't here"
+  // could not distinguish "rule isn't loaded" from "rule loaded but
+  // level-gated." End-to-end, the scanner now emits a
+  // `skipReason: "gated_by_level"` row with `requiredLevel: "AAA"`
+  // and `requestedLevel: "AA"` so the agent has the exact
+  // remediation. The same rule must actually fire when the scan
+  // requests `level: "AAA"` (the half-(a) of the dispatch).
+  it("AAA-only rules surface as gated-by-level rows under AA and run under AAA", () => {
+    // `<a target="_blank">` with no announcement text triggers
+    // `navigation/link-target-blank-announcement` (AAA-only). The same
+    // file is used for both directions of the test so the only
+    // independent variable is the active level.
+    const source = `<!doctype html><html lang="en"><head><title>t</title></head><body><a href="https://example.com" target="_blank">Docs</a></body></html>`;
+    const files = [htmlFile("site/index.html", source)];
+
+    // Half (b): under AA (the default project-config level), the
+    // AAA-only rule does NOT fire, but the row IS present with
+    // structured `skipReason`.
+    const aa = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      level: "AA",
+      files,
+    });
+    const aaaFired = aa.result.violations.filter(
+      (v) => v.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(aaaFired.length).toBe(0);
+    const gatedRow = aa.perRuleCoverage.find(
+      (r) => r.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(gatedRow).toBeDefined();
+    expect(gatedRow!.skipReason).toBe("gated_by_level");
+    expect(gatedRow!.requiredLevel).toBe("AAA");
+    expect(gatedRow!.requestedLevel).toBe("AA");
+    expect(gatedRow!.coverageConfidence).toBe("low");
+    expect(gatedRow!.findingsEmitted).toBe(0);
+    expect(gatedRow!.filesEvaluated).toBe(0);
+    expect(gatedRow!.filesEligible).toBe(0);
+
+    // Invariant: every AAA-only built-in rule under enabled standards
+    // surfaces a gated row under AA so the agent never has to wonder
+    // which AAA rules exist. Non-gated rows must NOT carry skipReason.
+    for (const row of aa.perRuleCoverage) {
+      if (row.skipReason === "gated_by_level") {
+        expect(row.requiredLevel).toBe("AAA");
+        expect(row.requestedLevel).toBe("AA");
+      } else {
+        expect(row.skipReason).toBeUndefined();
+        expect(row.requiredLevel).toBeUndefined();
+        expect(row.requestedLevel).toBeUndefined();
+      }
+    }
+
+    // Half (a): under AAA, the rule actually fires.
+    const aaa = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      level: "AAA",
+      files,
+    });
+    const aaaFiredUnderAaa = aaa.result.violations.filter(
+      (v) => v.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(aaaFiredUnderAaa.length).toBeGreaterThan(0);
+    const aaaRow = aaa.perRuleCoverage.find(
+      (r) => r.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(aaaRow).toBeDefined();
+    expect(aaaRow!.skipReason).toBeUndefined();
+    expect(aaaRow!.coverageConfidence).toBe("high");
+    expect(aaaRow!.findingsEmitted).toBeGreaterThan(0);
+  });
+
+  // Cross-surface invariant carried by the doctrine: at every level
+  // the caller can request, every BUILTIN_RULE that has at least one
+  // cited criterion under enabled standards must appear in
+  // `perRuleCoverage` — gated rules surface as a structured row
+  // rather than vanishing. Without this, the agent reads two
+  // different totals for "rules in this scan" depending on which
+  // surface it consults (Q7-AAA-RULE-LOADER-SILENT-NORUN).
+  //
+  // Rules whose `satisfies` resolves to no enabled-standard criterion
+  // (e.g. `parsing/invalid-id-shape` cites only `wcag21:4.1.1` while
+  // this scan enables only `wcag22`) are honestly absent — surfacing
+  // them as "loaded" would lie about reachability under the current
+  // standards configuration.
+  it("perRuleCoverage surfaces every reachable rule at every level (gated rules included)", () => {
+    const files = [
+      tsxFile("src/App.tsx", `export function App() { return <main><h1>Hi</h1></main>; }`),
+    ];
+    // Compute the reachable set once at level "AAA" (no rule is
+    // level-gated there) so the expected list is the ceiling.
+    const ceiling = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      level: "AAA",
+      files,
+    });
+    const reachableIds = new Set(ceiling.perRuleCoverage.map((r) => r.ruleId));
+    expect(reachableIds.size).toBeGreaterThan(0);
+
+    for (const level of ["A", "AA", "AAA"] as const) {
+      const { perRuleCoverage } = runScan({
+        standards: [wcag22],
+        rules: BUILTIN_RULES,
+        enabled: ["wcag22"],
+        level,
+        files,
+      });
+      const presentIds = new Set(perRuleCoverage.map((r) => r.ruleId));
+      const missing = [...reachableIds].filter((id) => !presentIds.has(id));
+      expect({ level, missing }).toEqual({ level, missing: [] });
+    }
+  });
+
   // V1-MOTION-PAUSE-STOP-FILES-EVALUATED-OFF-BY-ONE: rules sharing the
   // same `appliesTo.fileExtensions` set must report the same
   // `filesEvaluated` count on a given scan. The eligibility pass is

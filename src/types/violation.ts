@@ -373,14 +373,18 @@ export interface Violation {
  * `.css`, and a Tailwind project pre-build has 0 eligible CSS sources
  * — a clean tally means nothing.
  *
- * Invariant (V1-META-RULES-EVALUATED-COVERAGE-DRIFT): every rule in
- * the "was evaluated" set gets exactly one entry — that's the same set
- * that drives `meta.rulesEvaluated`, so
- * `perRuleCoverage.length === meta.rulesEvaluated` by construction.
- * Zero-eligible rules surface as `filesEvaluated: 0` with
- * `coverageConfidence: "low"` rather than going silently absent; the
- * agent can tell "ran-with-zero-eligible-files" from "never-ran"
- * without guessing.
+ * Invariant (V1-META-RULES-EVALUATED-COVERAGE-DRIFT,
+ * Q7-AAA-RULE-LOADER-SILENT-NORUN): every rule the scanner loaded
+ * (post-config-filter `activeRules`) gets exactly one entry — that's
+ * the same set `meta.rulesEvaluated.loaded` counts, so
+ * `perRuleCoverage.length === meta.rulesEvaluated.loaded` by
+ * construction. Zero-eligible rules surface as `filesEvaluated: 0`
+ * with `coverageConfidence: "low"`; rules pre-filtered by the active
+ * conformance level (canonical: AAA-only rules under a default `AA`
+ * scan) surface with {@link skipReason} = `"gated_by_level"` rather
+ * than going silently absent. Either way, the agent can tell "ran-
+ * with-zero-eligible-files" from "filtered before evaluation" from
+ * "never-loaded" without guessing.
  *
  * Semantics:
  *   - `filesEligible` — parseable files whose extension matches the
@@ -528,6 +532,50 @@ export interface PerRuleCoverage {
     | "file-parse-error"
     | "partial-parse"
     | "scss-unresolved-variables";
+  /**
+   * Reason this rule was loaded but did not run on this scan. Sibling of
+   * {@link coverageConfidence} for the orthogonal "rule never executed"
+   * axis: `coverageConfidence` answers "trust the clean tally" for rules
+   * that DID run; `skipReason` answers "why is this row showing zero
+   * across the board?" for rules that the engine pre-filtered before any
+   * evaluation. Without this field, level-gated rules silently disappear
+   * from `perRuleCoverage` and the agent reading "the AAA-only rule isn't
+   * here" cannot tell "the rule wasn't loaded" from "the rule was loaded
+   * but the active level filtered it out" — the canonical Q7-AAA-RULE-
+   * LOADER-SILENT-NORUN failure mode.
+   *
+   * Values:
+   *   - `"gated_by_level"` — every cited criterion's level was strictly
+   *     above the active conformance level (e.g. an AAA-only rule under
+   *     a default `level: "AA"` scan). Pairs with {@link requiredLevel}
+   *     (the rule's minimum criterion level) and {@link requestedLevel}
+   *     (the active scan level) so the agent has the exact remediation
+   *     ("re-run with `level: 'AAA'` to evaluate this rule") without
+   *     needing a docs round trip.
+   *
+   * Present-when-meaningful per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest": rules that DID run never carry this field. Doctrine:
+   * surface, don't suppress — the row exists so the agent knows the rule
+   * is in the registry and what would unlock it, instead of inferring
+   * "rule does not exist" from silent absence.
+   */
+  readonly skipReason?: "gated_by_level";
+  /**
+   * Minimum conformance level any of the rule's cited criteria require —
+   * the level a caller would have to request for the rule to run. Stamped
+   * only when {@link skipReason} is `"gated_by_level"`. The
+   * `"base"` value covers Section 508 / EN 301 549-style standards that
+   * have no A/AA/AAA axis; in practice gated rows only carry the WCAG
+   * tiers (A/AA/AAA) because `base`-level criteria pass the level filter
+   * unconditionally and never hit this branch.
+   */
+  readonly requiredLevel?: "A" | "AA" | "AAA";
+  /**
+   * Active scan level that filtered the rule out. Stamped only when
+   * {@link skipReason} is `"gated_by_level"`. Mirrors the engine's
+   * {@link import("../engine/standard-filter.ts").ConformanceLevel}.
+   */
+  readonly requestedLevel?: "A" | "AA" | "AAA";
   /**
    * Honest per-rule file-concentration hint: when a rule's findings
    * cluster on one file (total > {@link findingsEmitted} threshold AND

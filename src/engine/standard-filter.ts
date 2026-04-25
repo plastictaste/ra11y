@@ -41,6 +41,31 @@ export interface StandardFilter {
    * back to the ID itself — never empty string. See `titlesForCriteria`.
    */
   citedCriteriaTitles(rule: Rule): readonly string[];
+  /**
+   * Diagnostic for an inactive rule: was the rule filtered out solely by
+   * conformance level (every cited criterion under enabled standards is
+   * strictly above the active level), and if so, what level does the
+   * rule need? Returns `undefined` when the filter has no active level
+   * (legacy behavior — every rule whose enabled-standard criteria set is
+   * non-empty is active), or when the rule is inactive for a reason
+   * other than level gating (no cited criteria belong to enabled
+   * standards). Used by the per-rule-coverage builder to surface a
+   * `skipReason: "gated_by_level"` row instead of letting the rule
+   * disappear from the response (Q7-AAA-RULE-LOADER-SILENT-NORUN).
+   */
+  levelGateForInactiveRule(rule: Rule): LevelGateInfo | undefined;
+}
+
+/**
+ * Diagnostic returned by {@link StandardFilter.levelGateForInactiveRule}
+ * when a rule was inactive due to level gating. `requiredLevel` is the
+ * lowest cited criterion level under enabled standards (the level a
+ * caller would have to request for the rule to run); `requestedLevel`
+ * is the filter's active level.
+ */
+export interface LevelGateInfo {
+  readonly requiredLevel: ConformanceLevel;
+  readonly requestedLevel: ConformanceLevel;
 }
 
 export function createStandardFilter(
@@ -70,6 +95,25 @@ export function createStandardFilter(
       const sorted = [...cited].sort();
       return titlesForCriteria(sorted, (id) => criteria.get(id)?.title);
     },
+
+    levelGateForInactiveRule(rule: Rule): LevelGateInfo | undefined {
+      // Level gating only applies when the filter has an active level.
+      // Without one, an inactive rule was inactive for the orthogonal
+      // "no cited criteria belong to enabled standards" reason, which
+      // this diagnostic does not cover (the per-rule-coverage builder
+      // skips that rule rather than synthesizing a level-gate row that
+      // would be a lie).
+      if (activeLevel === undefined) return undefined;
+      const lowest = lowestCitedLevel(rule, criteria, enabledStandards);
+      if (lowest === undefined) return undefined;
+      // The lowest cited criterion is at-or-below the active level →
+      // the rule should have been active. This branch is unreachable
+      // when `isRuleActive` returned false, but the guard keeps the
+      // helper honest if a future caller invokes it without checking
+      // activity first.
+      if (LEVEL_RANK[lowest] <= LEVEL_RANK[activeLevel]) return undefined;
+      return { requiredLevel: lowest, requestedLevel: activeLevel };
+    },
   };
 }
 
@@ -93,6 +137,44 @@ function* walkCitedCriteria(
 }
 
 const LEVEL_RANK: Readonly<Record<ConformanceLevel, number>> = { A: 1, AA: 2, AAA: 3 };
+
+/**
+ * Returns the lowest A/AA/AAA level cited by `rule` under enabled
+ * standards, or `undefined` when:
+ *
+ *   - no cited criterion resolves to an enabled standard (the rule is
+ *     inactive for the orthogonal "no enabled-standard criterion"
+ *     reason, not level gating); OR
+ *   - any cited criterion is `base`-level (Section 508 / EN 301 549
+ *     style standards without an A/AA/AAA axis pass the level filter
+ *     unconditionally, so the rule should have been active and the
+ *     gate diagnostic must not lie about a `requiredLevel`).
+ *
+ * Used by {@link StandardFilter.levelGateForInactiveRule} to decide
+ * whether to surface a structured `skipReason: "gated_by_level"` row
+ * for a rule the per-rule-coverage builder otherwise drops
+ * (Q7-AAA-RULE-LOADER-SILENT-NORUN).
+ */
+function lowestCitedLevel(
+  rule: Rule,
+  criteria: CriteriaRegistry,
+  enabledStandards: ReadonlySet<string>,
+): ConformanceLevel | undefined {
+  let lowestRank: number | undefined;
+  let lowestLevel: ConformanceLevel | undefined;
+  for (const c of walkCitedCriteria(rule, criteria, enabledStandards)) {
+    const crit = criteria.get(c);
+    if (!crit) continue;
+    if (crit.level === "base") return undefined;
+    const rank = LEVEL_RANK[crit.level as ConformanceLevel];
+    if (rank === undefined) continue;
+    if (lowestRank === undefined || rank < lowestRank) {
+      lowestRank = rank;
+      lowestLevel = crit.level as ConformanceLevel;
+    }
+  }
+  return lowestLevel;
+}
 
 /**
  * True when a criterion's level is at or below the active level, i.e.
