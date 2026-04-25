@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Registration</title>
+  </head>
+  <body>
+    <main>
+      <h1>Create account</h1>
+      <form>
+        <label for="username">Username</label>
+        <input type="text" id="username" required minlength="3" maxlength="20">
+
+        <label for="email">Email</label>
+        <input type="email" id="email" required>
+
+        <label for="zip">ZIP code</label>
+        <input type="text" id="zip" pattern="[0-9]{5}">
+
+        <label for="age">Age</label>
+        <input type="number" id="age" min="18" max="120">
+
+        <button type="submit">Register</button>
+      </form>
+    </main>
+  </body>
+</html>

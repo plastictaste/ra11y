@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Contact</title>
+  </head>
+  <body>
+    <main>
+      <h1>Contact us</h1>
+      <form>
+        <!-- No validation constraints — finder should not fire -->
+        <label for="message">Message</label>
+        <textarea id="message" rows="5"></textarea>
+
+        <!-- Hidden input: not a user-facing field -->
+        <input type="hidden" name="csrf_token" value="abc123">
+
+        <button type="submit">Send</button>
+      </form>
+    </main>
+  </body>
+</html>
