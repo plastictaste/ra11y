@@ -46,7 +46,7 @@ export const assertions: FixtureAssertions = {
   origin: {
     notes:
       "Sanitized excerpt of a Jekyll-style `docs/_docs/pagination.md` page. " +
-      "Original report cited `pagination.md:134` for the phrase \"See below\" " +
+      'Original report cited `pagination.md:134` for the phrase "See below" ' +
       "whose actual position was line 136 — finder pointed at the containing " +
       "block-open line rather than the text-node's own line.",
   },

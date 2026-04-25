@@ -98,55 +98,69 @@ export function mapValueOffsetToSourcePosition(
   startColumn: number,
   valueOffset: number,
 ): { line: number; column: number } {
-  let line = startLine;
-  let column = startColumn;
-  let valueChars = 0;
-  let i = 0;
-  while (i < rawText.length && valueChars < valueOffset) {
-    const span = detectDirectiveSpan(rawText, i);
+  const cursor = { line: startLine, column: startColumn, i: 0, valueChars: 0 };
+  while (cursor.i < rawText.length && cursor.valueChars < valueOffset) {
+    const span = detectDirectiveSpan(rawText, cursor.i);
     if (span === null) {
-      // Non-directive char: advance line/col AND consume one value char.
-      if (rawText.charCodeAt(i) === 0x0a) {
-        line += 1;
-        column = 1;
-      } else {
-        column += 1;
-      }
-      valueChars += 1;
-      i += 1;
+      advanceLiteralChar(rawText, cursor);
       continue;
     }
     if (span.end === -1) {
       // Unclosed directive: `stripTemplateDirectives` preserves the
       // remainder verbatim as value, so mirror that — every char from
       // here on counts as a value char too.
-      while (i < rawText.length && valueChars < valueOffset) {
-        if (rawText.charCodeAt(i) === 0x0a) {
-          line += 1;
-          column = 1;
-        } else {
-          column += 1;
-        }
-        valueChars += 1;
-        i += 1;
-      }
+      advanceVerbatimRemainder(rawText, cursor, valueOffset);
       break;
     }
     // Closed directive span: advance line/col through every char in
     // the span (so newlines inside `{% include …\n   … %}` count) but
     // do NOT consume any value chars — the strip removed them.
-    const endExclusive = span.end + 2;
-    while (i < endExclusive && i < rawText.length) {
-      if (rawText.charCodeAt(i) === 0x0a) {
-        line += 1;
-        column = 1;
-      } else {
-        column += 1;
-      }
-      i += 1;
-    }
+    advanceThroughDirectiveSpan(rawText, cursor, span.end + 2);
   }
-  return { line, column };
+  return { line: cursor.line, column: cursor.column };
+}
+
+interface MapCursor {
+  line: number;
+  column: number;
+  i: number;
+  valueChars: number;
+}
+
+/** Advance one literal char: bump line/col and consume one value char. */
+function advanceLiteralChar(rawText: string, cursor: MapCursor): void {
+  if (rawText.charCodeAt(cursor.i) === 0x0a) {
+    cursor.line += 1;
+    cursor.column = 1;
+  } else {
+    cursor.column += 1;
+  }
+  cursor.valueChars += 1;
+  cursor.i += 1;
+}
+
+/** Walk the unclosed-directive remainder, both line/col AND value chars. */
+function advanceVerbatimRemainder(rawText: string, cursor: MapCursor, valueOffset: number): void {
+  while (cursor.i < rawText.length && cursor.valueChars < valueOffset) {
+    advanceLiteralChar(rawText, cursor);
+  }
+}
+
+/** Walk a closed directive span: line/col only, no value chars consumed. */
+function advanceThroughDirectiveSpan(
+  rawText: string,
+  cursor: MapCursor,
+  endExclusive: number,
+): void {
+  while (cursor.i < endExclusive && cursor.i < rawText.length) {
+    if (rawText.charCodeAt(cursor.i) === 0x0a) {
+      cursor.line += 1;
+      cursor.column = 1;
+    } else {
+      cursor.column += 1;
+    }
+    cursor.i += 1;
+  }
 }
 
 /**

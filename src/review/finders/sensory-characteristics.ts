@@ -343,12 +343,7 @@ function precisePositionForOffset(
     const localOffset = concatOffset - span.concatStart;
     if (localOffset < 0 || localOffset > span.value.length) continue;
     const rawText = source.slice(span.rangeStart, span.rangeEnd);
-    return mapValueOffsetToSourcePosition(
-      rawText,
-      span.start.line,
-      span.start.column,
-      localOffset,
-    );
+    return mapValueOffsetToSourcePosition(rawText, span.start.line, span.start.column, localOffset);
   }
   return { line: fallback.line, column: fallback.column };
 }
