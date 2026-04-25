@@ -116,7 +116,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag22:3.2.6` | Consistent Help | A | manual | — | — | **attestation-only** |
 | `wcag22:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `wcag22:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-adjacent-mismatch +9 | otp-input-cluster | **rule** |
+| `wcag22:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
 | `wcag22:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag22:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag22:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
@@ -205,7 +205,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
 | `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
 | `wcag21:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `wcag21:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-adjacent-mismatch +9 | otp-input-cluster | **rule** |
+| `wcag21:3.3.2` | Labels or Instructions | A | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
 | `wcag21:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `wcag21:3.3.4` | Error Prevention (Legal, Financial, Data) | AA | manual | — | error-prevention, validation-timing | **finder** |
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
@@ -255,7 +255,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `section508:3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `section508:3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `section508:3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-adjacent-mismatch +9 | otp-input-cluster | **rule** |
+| `section508:3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
@@ -313,7 +313,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.2.3` | Consistent Navigation | base | manual | — | consistent-navigation | **finder** |
 | `en301549:9.3.2.4` | Consistent Identification | base | manual | — | consistent-identification | **finder** |
 | `en301549:9.3.3.1` | Error Identification | base | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
-| `en301549:9.3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-adjacent-mismatch +9 | otp-input-cluster | **rule** |
+| `en301549:9.3.3.2` | Labels or Instructions | base | full | forms/fieldset-legend, forms/label-adjacent-mismatch +10 | otp-input-cluster | **rule** |
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
