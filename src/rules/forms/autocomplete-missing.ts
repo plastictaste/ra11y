@@ -28,7 +28,8 @@ import {
   hasHtmlAttribute,
   hasJsxAttribute,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, JsxElement, TsxModule } from "../../types/ast.ts";
+import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import type { FixPaths } from "../../types/violation.ts";
 
 /**
  * Maps a lowercase input `type` to the autocomplete token we expect.
@@ -105,14 +106,14 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      checkHtml(ctx.ast as HtmlDocument, ctx.source, (v) => ctx.emit(v));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
+      checkJsx(ctx.ast as TsxModule, ctx.source, (v) => ctx.emit(v));
     }
   },
 });
@@ -122,9 +123,10 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths: FixPaths;
 }) => void;
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
+function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
   for (const input of findHtmlElementsByTag(doc, "input")) {
     if (hasHtmlAttribute(input, "autocomplete")) continue;
     const type = (getHtmlAttribute(input, "type") ?? "text").toLowerCase();
@@ -135,17 +137,18 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) continue;
     const match = matchPurpose(type, nameAttr, idAttr);
     if (!match) continue;
-    emit(buildViolation("input", match, input.loc.start));
+    const edit = buildAutocompleteInsertEditHtml(input, match.expected, source);
+    emit(buildViolation("input", match, input.loc.start, edit));
   }
 }
 
-function checkJsx(module: TsxModule, emit: Emit): void {
+function checkJsx(module: TsxModule, source: string, emit: Emit): void {
   for (const input of findJsxElementsByTag(module, "input")) {
-    checkJsxInput(input, emit);
+    checkJsxInput(input, source, emit);
   }
 }
 
-function checkJsxInput(input: JsxElement, emit: Emit): void {
+function checkJsxInput(input: JsxElement, source: string, emit: Emit): void {
   if (hasJsxAttribute(input, "autoComplete") || hasJsxAttribute(input, "autocomplete")) return;
   const type = (getJsxAttributeString(input, "type") ?? "text").toLowerCase();
   const nameAttr = getJsxAttributeString(input, "name");
@@ -155,7 +158,209 @@ function checkJsxInput(input: JsxElement, emit: Emit): void {
   if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) return;
   const match = matchPurpose(type, nameAttr, idAttr);
   if (!match) return;
-  emit(buildViolation("input", match, input.loc.start));
+  const edit = buildAutocompleteInsertEditJsx(input, match.expected, source);
+  emit(buildViolation("input", match, input.loc.start, edit));
+}
+
+/**
+ * Deterministic mechanical edit: insert `autocomplete="<expected>"`
+ * into the input's open tag. The expected value is drawn from
+ * {@link EXPECTED_BY_TYPE} / {@link NAME_HEURISTICS} — a closed token
+ * set the rule has already resolved before emit, so the edit is
+ * strictly "insert one attribute with a known value."
+ *
+ * The `<tag...>` open-tag regex covers the canonical shapes
+ * (`<input type="email" name="email">`, `<input class="…" />`) and
+ * refuses any `>` inside attribute quotes. Exotic shapes (HTML
+ * conditional comments, attributes with embedded `>` via entities)
+ * fall through to `null` and the rule ships guidance — never an edit
+ * the find-and-replace could silently apply to the wrong site. See
+ * Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE.
+ */
+function buildAutocompleteInsertEditHtml(
+  input: HtmlElement,
+  expected: string,
+  source: string,
+): { readonly oldText: string; readonly newText: string } | null {
+  return buildOpenTagInsertEdit(input.range.start, input.range.end, source, {
+    attrName: "autocomplete",
+    attrValue: expected,
+    dialect: "html",
+  });
+}
+
+function buildAutocompleteInsertEditJsx(
+  input: JsxElement,
+  expected: string,
+  source: string,
+): { readonly oldText: string; readonly newText: string } | null {
+  // JSX opening tags use the same `<tag attrs />` shape as HTML for
+  // the literal attribute values this rule cares about; we reuse the
+  // same regex-based splitter. When the JSX tag carries
+  // `{...spread}` or other non-literal attribute shapes the regex
+  // rejects them and the rule ships guidance — correct by
+  // construction.
+  //
+  // The attribute name on React is `autoComplete` (camelCase), not
+  // the HTML-spec `autocomplete` — React's DOM property layer expects
+  // that casing. We emit camelCase here; the native-HTML parser's
+  // `hasJsxAttribute("autocomplete")` check above stays
+  // case-insensitive so pre-existing lowercase attributes still
+  // suppress the finding.
+  return buildOpenTagInsertEdit(input.range.start, input.range.end, source, {
+    attrName: "autoComplete",
+    attrValue: expected,
+    dialect: "jsx",
+  });
+}
+
+/**
+ * Literal open-tag boundary finder used by both HTML and JSX branches.
+ * Rather than splitting the tag on a regex (which greedily confused
+ * self-closing `/` with attribute whitespace), we walk the raw slice
+ * to locate the end of the tag name, then the closing `>`, then insert
+ * the new attribute at the boundary *before* any optional `/` and
+ * before the `>`.
+ *
+ * Returns null on quoting shapes we can't safely handle (unbalanced
+ * quotes, embedded `>` inside a `{…}` expression that itself contains
+ * a template literal with `{` / `}`, etc.). The caller falls through
+ * to guidance when null is returned — never emits a wrong edit.
+ */
+function buildOpenTagInsertEdit(
+  startOffset: number,
+  endOffset: number,
+  source: string,
+  params: {
+    readonly attrName: string;
+    readonly attrValue: string;
+    readonly dialect: "html" | "jsx";
+  },
+): { readonly oldText: string; readonly newText: string } | null {
+  const raw = source.slice(startOffset, endOffset);
+  const afterTagName = scanTagName(raw);
+  if (afterTagName === -1) return null;
+  const gtIndex = scanToOpenTagEnd(raw, afterTagName, params.dialect);
+  if (gtIndex === -1) return null;
+  const insertAt = computeInsertPoint(raw, gtIndex);
+  const beforeInsert = raw.slice(0, insertAt);
+  const afterInsert = raw.slice(insertAt);
+  const attrLiteral = ` ${params.attrName}="${params.attrValue}"`;
+  return { oldText: raw, newText: `${beforeInsert}${attrLiteral}${afterInsert}` };
+}
+
+/**
+ * Returns the byte offset AFTER the tag name in `raw`, assuming raw
+ * starts with `<`. Returns -1 when the input does not start with a
+ * valid HTML/JSX tag name.
+ */
+function scanTagName(raw: string): number {
+  if (raw.charCodeAt(0) !== 0x3c /* < */) return -1;
+  if (raw.length < 2) return -1;
+  const firstCh = raw.charCodeAt(1);
+  const isAlphaFirst = (firstCh >= 0x41 && firstCh <= 0x5a) || (firstCh >= 0x61 && firstCh <= 0x7a);
+  if (!isAlphaFirst) return -1;
+  let i = 2;
+  while (i < raw.length) {
+    const ch = raw.charCodeAt(i);
+    const isAlpha = (ch >= 0x41 && ch <= 0x5a) || (ch >= 0x61 && ch <= 0x7a);
+    const isDigit = ch >= 0x30 && ch <= 0x39;
+    if (!(isAlpha || isDigit)) return i;
+    i += 1;
+  }
+  return -1;
+}
+
+/**
+ * Walks from `startIndex` through the attribute list until the open-
+ * tag's closing `>`, respecting quote and (JSX) brace nesting.
+ * Returns the byte offset of the `>` or -1 if we run out of input
+ * without finding it / leave a quote or brace unclosed.
+ *
+ * Keeps the step-by-step logic in {@link advanceOpenTagScanner} so
+ * this loop stays trivial.
+ */
+function scanToOpenTagEnd(raw: string, startIndex: number, dialect: "html" | "jsx"): number {
+  const state: OpenTagScanState = {
+    index: startIndex,
+    inSingle: false,
+    inDouble: false,
+    braceDepth: 0,
+    foundAt: -1,
+  };
+  while (state.index < raw.length && state.foundAt === -1) {
+    advanceOpenTagScanner(raw.charCodeAt(state.index), state, dialect);
+    state.index += 1;
+  }
+  if (state.foundAt === -1) return -1;
+  if (state.inSingle || state.inDouble || state.braceDepth > 0) return -1;
+  return state.foundAt;
+}
+
+interface OpenTagScanState {
+  index: number;
+  inSingle: boolean;
+  inDouble: boolean;
+  braceDepth: number;
+  foundAt: number;
+}
+
+function advanceOpenTagScanner(ch: number, state: OpenTagScanState, dialect: "html" | "jsx"): void {
+  if (state.inSingle) {
+    if (ch === 0x27) state.inSingle = false;
+    return;
+  }
+  if (state.inDouble) {
+    if (ch === 0x22) state.inDouble = false;
+    return;
+  }
+  if (state.braceDepth > 0) {
+    state.braceDepth = updateBraceDepth(ch, state.braceDepth, dialect);
+    return;
+  }
+  const next = classifyOpenTagByte(ch, dialect);
+  if (next.kind === "gt") state.foundAt = state.index;
+  else if (next.kind === "single") state.inSingle = true;
+  else if (next.kind === "double") state.inDouble = true;
+  else if (next.kind === "brace") state.braceDepth = 1;
+}
+
+function updateBraceDepth(ch: number, depth: number, dialect: "html" | "jsx"): number {
+  if (dialect !== "jsx") return depth;
+  if (ch === 0x7b /* { */) return depth + 1;
+  if (ch === 0x7d /* } */) return depth - 1;
+  return depth;
+}
+
+function classifyOpenTagByte(
+  ch: number,
+  dialect: "html" | "jsx",
+): { readonly kind: "gt" | "single" | "double" | "brace" | "other" } {
+  if (ch === 0x3e) return { kind: "gt" };
+  if (ch === 0x27) return { kind: "single" };
+  if (ch === 0x22) return { kind: "double" };
+  if (dialect === "jsx" && ch === 0x7b) return { kind: "brace" };
+  return { kind: "other" };
+}
+
+/**
+ * Insertion point for the new attribute: immediately *after* the last
+ * non-whitespace, non-slash byte of the open tag. This lets us place
+ * the new attribute before any author-supplied whitespace and before
+ * the `/` of a self-closing tag, avoiding doubled spaces on
+ * `<input />`-style inputs.
+ */
+function computeInsertPoint(raw: string, gtIndex: number): number {
+  let insertAt = gtIndex;
+  if (raw.charCodeAt(insertAt - 1) === 0x2f /* / */) insertAt -= 1;
+  while (insertAt > 0 && isAsciiWhitespace(raw.charCodeAt(insertAt - 1))) {
+    insertAt -= 1;
+  }
+  return insertAt;
+}
+
+function isAsciiWhitespace(ch: number): boolean {
+  return ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d;
 }
 
 /**
@@ -282,16 +487,31 @@ function buildViolation(
   tagName: string,
   match: PurposeMatch,
   loc: { line: number; column: number },
+  edit: { readonly oldText: string; readonly newText: string } | null,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths: FixPaths;
 } {
+  // Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: emit `fixPaths.primary.edit`
+  // whenever the open-tag regex resolved cleanly so `suggest_fix`
+  // returns `kind: "edit"` with a concrete oldText/newText pair. The
+  // expected autocomplete token is fully resolved at this point (see
+  // `matchPurpose`), so the edit is deterministic.
+  const fixPaths: FixPaths = {
+    primary: {
+      label: `add autocomplete="${match.expected}" to <${tagName}>`,
+      ...(edit === null ? {} : { edit }),
+    },
+    alternatives: [],
+  };
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<${tagName}> appears to collect information about the user but has no autocomplete attribute — ${describeTrigger(match.trigger)}. WCAG 2.2 SC 1.3.5 (AA) requires an autocomplete value drawn from the 53 input-purpose tokens so the field's purpose can be programmatically determined.`,
     suggestion: `Add autocomplete="${match.expected}" so the field's purpose is programmatically determinable per SC 1.3.5. See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of 53 tokens.`,
+    fixPaths,
   };
 }

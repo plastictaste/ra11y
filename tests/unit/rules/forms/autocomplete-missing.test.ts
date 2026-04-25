@@ -242,4 +242,61 @@ describe("rule forms/autocomplete-missing", () => {
       expect(rule.satisfies).toContain("wcag21:1.3.5");
     });
   });
+
+  describe("Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: fixPaths.primary.edit", () => {
+    // Doctrine: a `fixClass: "mechanical"` rule must populate
+    // `fixPaths.primary.edit` so `suggest_fix` returns `kind: "edit"`.
+    // The expected autocomplete token is fully resolved at emit time
+    // (from EXPECTED_BY_TYPE / NAME_HEURISTICS), so the insertion is
+    // strictly "add one attribute with a known value."
+    it("HTML input with type='email': primary.edit inserts autocomplete=\"email\" at the end of the attribute list", () => {
+      const source = `<input type="email" name="email">`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`<input type="email" name="email">`);
+      expect(edit?.newText).toBe(`<input type="email" name="email" autocomplete="email">`);
+      expect(source.includes(edit?.oldText ?? "")).toBe(true);
+    });
+
+    it("HTML input with type='password': primary.edit inserts autocomplete=\"current-password\"", () => {
+      const source = `<input type="password" name="pw">`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.newText).toContain(`autocomplete="current-password"`);
+    });
+
+    it("HTML input inferring purpose from name: primary.edit inserts the inferred token", () => {
+      const source = `<input type="text" name="firstName">`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.newText).toContain(`autocomplete="given-name"`);
+    });
+
+    it("HTML self-closing input: primary.edit preserves the self-close", () => {
+      const source = `<input type="email" name="email" />`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.newText).toBe(`<input type="email" name="email" autocomplete="email" />`);
+    });
+
+    it("JSX input: primary.edit uses React's camelCase autoComplete property name", () => {
+      const source = `const X = <input type="email" name="email" />;`;
+      const violations = runRule(rule, source);
+      expect(violations).toHaveLength(1);
+      const edit = violations[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.newText).toContain(`autoComplete="email"`);
+      // Never `autocomplete="..."` on JSX — React's DOM property layer
+      // requires the camelCase form.
+      expect(edit?.newText).not.toContain(` autocomplete="`);
+    });
+  });
 });

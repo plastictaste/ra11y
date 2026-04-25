@@ -409,6 +409,54 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(fix).not.toHaveProperty("verifyCommandStructured");
   });
 
+  it("Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: suggest_fix returns kind: 'edit' with non-empty oldText/newText for a mechanical rule", async () => {
+    // Doctrine: a `fixClass: "mechanical"` rule must populate
+    // `fixPaths.primary.edit` so suggest_fix returns `kind: "edit"`
+    // with a concrete oldText/newText pair the agent can apply via
+    // Edit. Previously, 0 of 32 suggest_fix calls returned `kind:
+    // "edit"` across real-world scans because the mechanical rules
+    // shipped no inline edit payload. This test pins down the happy
+    // path end-to-end for one of the newly-wired rules
+    // (aria/redundant-role-on-host-element — pure deletion, simplest
+    // deterministic edit).
+    const tmpDir = await mkdtemp(join(tmpdir(), "ra11y-suggest-fix-edit-"));
+    try {
+      const badFile = join(tmpDir, "index.html");
+      await writeFile(
+        badFile,
+        '<!DOCTYPE html>\n<html lang="en"><body>\n<nav role="navigation">Links</nav>\n</body></html>\n',
+      );
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "suggest_fix", {
+          ruleId: "aria/redundant-role-on-host-element",
+          file: badFile,
+          line: 3,
+        }),
+      ]);
+      const fix = bodyOf(responses[1]) as {
+        kind: string;
+        primary: { label: string; edit?: { oldText: string; newText: string } };
+      };
+      expect(fix.kind).toBe("edit");
+      expect(fix.primary.edit).toBeDefined();
+      expect(typeof fix.primary.edit?.oldText).toBe("string");
+      expect(typeof fix.primary.edit?.newText).toBe("string");
+      // Ambiguous field shapes are dishonest — non-empty is mandatory
+      // on kind:"edit" (CLAUDE.md §1).
+      expect((fix.primary.edit?.oldText ?? "").length).toBeGreaterThan(0);
+      // newText is the intended post-edit text — for this rule it is
+      // empty (pure deletion). The legitimate empty string is expected.
+      expect(typeof fix.primary.edit?.newText).toBe("string");
+      // The oldText must contain the role attribute we're about to
+      // delete, and the overall substitution must be something the
+      // agent can apply.
+      expect(fix.primary.edit?.oldText).toContain('role="navigation"');
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("suggest_fix with an unknown rule returns a tool-level error envelope with code rule-not-found", async () => {
     const responses = await mcpSession([
       initMsg(1),
