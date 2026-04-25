@@ -57,7 +57,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:1.3.5` | Identify Input Purpose | AA | full | forms/autocomplete-missing | otp-input-cluster | **rule** |
 | `wcag22:1.3.6` | Identify Purpose | AAA | manual | — | identify-purpose | **finder** |
 | `wcag22:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
-| `wcag22:1.4.2` | Audio Control | A | partial | media/autoplay-sound | — | **rule** |
+| `wcag22:1.4.2` | Audio Control | A | partial | media/audio-video-no-controls, media/autoplay-sound | — | **rule** |
 | `wcag22:1.4.3` | Contrast (Minimum) | AA | partial | contrast/minimum | — | **rule** |
 | `wcag22:1.4.4` | Resize Text | AA | partial | document/viewport-zoom | — | **rule** |
 | `wcag22:1.4.5` | Images of Text | AA | manual | — | images-of-text | **finder** |
@@ -69,7 +69,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:1.4.11` | Non-text Contrast | AA | partial | contrast/non-text | — | **rule** |
 | `wcag22:1.4.12` | Text Spacing | AA | partial | layout/text-spacing | — | **rule** |
 | `wcag22:1.4.13` | Content on Hover or Focus | AA | partial | tooltip/dismissable | — | **rule** |
-| `wcag22:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +4 | — | **rule** |
+| `wcag22:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +5 | — | **rule** |
 | `wcag22:2.1.2` | No Keyboard Trap | A | manual | — | no-keyboard-trap | **finder** |
 | `wcag22:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
@@ -152,7 +152,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:1.3.5` | Identify Input Purpose | AA | full | forms/autocomplete-missing | otp-input-cluster | **rule** |
 | `wcag21:1.3.6` | Identify Purpose | AAA | manual | — | identify-purpose | **finder** |
 | `wcag21:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
-| `wcag21:1.4.2` | Audio Control | A | partial | media/autoplay-sound | — | **rule** |
+| `wcag21:1.4.2` | Audio Control | A | partial | media/audio-video-no-controls, media/autoplay-sound | — | **rule** |
 | `wcag21:1.4.3` | Contrast (Minimum) | AA | partial | contrast/minimum | — | **rule** |
 | `wcag21:1.4.4` | Resize Text | AA | partial | document/viewport-zoom | — | **rule** |
 | `wcag21:1.4.5` | Images of Text | AA | manual | — | images-of-text | **finder** |
@@ -164,7 +164,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:1.4.11` | Non-text Contrast | AA | partial | contrast/non-text | — | **rule** |
 | `wcag21:1.4.12` | Text Spacing | AA | partial | layout/text-spacing | — | **rule** |
 | `wcag21:1.4.13` | Content on Hover or Focus | AA | partial | tooltip/dismissable | — | **rule** |
-| `wcag21:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +4 | — | **rule** |
+| `wcag21:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +5 | — | **rule** |
 | `wcag21:2.1.2` | No Keyboard Trap | A | manual | — | no-keyboard-trap | **finder** |
 | `wcag21:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
@@ -232,11 +232,11 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
-| `section508:1.4.2` | Audio Control | base | partial | media/autoplay-sound | — | **rule** |
+| `section508:1.4.2` | Audio Control | base | partial | media/audio-video-no-controls, media/autoplay-sound | — | **rule** |
 | `section508:1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `section508:1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
 | `section508:1.4.5` | Images of Text | base | manual | — | images-of-text | **finder** |
-| `section508:2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +4 | — | **rule** |
+| `section508:2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +5 | — | **rule** |
 | `section508:2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `section508:2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
 | `section508:2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
@@ -281,7 +281,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
 | `en301549:9.1.3.5` | Identify Input Purpose | base | full | forms/autocomplete-missing | otp-input-cluster | **rule** |
 | `en301549:9.1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
-| `en301549:9.1.4.2` | Audio Control | base | partial | media/autoplay-sound | — | **rule** |
+| `en301549:9.1.4.2` | Audio Control | base | partial | media/audio-video-no-controls, media/autoplay-sound | — | **rule** |
 | `en301549:9.1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `en301549:9.1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
 | `en301549:9.1.4.5` | Images of Text | base | manual | — | images-of-text | **finder** |
@@ -289,7 +289,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.4.11` | Non-text Contrast | base | partial | contrast/non-text | — | **rule** |
 | `en301549:9.1.4.12` | Text Spacing | base | partial | layout/text-spacing | — | **rule** |
 | `en301549:9.1.4.13` | Content on Hover or Focus | base | partial | tooltip/dismissable | — | **rule** |
-| `en301549:9.2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +4 | — | **rule** |
+| `en301549:9.2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +5 | — | **rule** |
 | `en301549:9.2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `en301549:9.2.1.4` | Character Key Shortcuts | base | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
 | `en301549:9.2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
