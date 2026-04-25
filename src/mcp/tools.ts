@@ -375,9 +375,9 @@ const sessionConfigureTool: McpTool = {
         ...(Object.keys(config.nativeWrapperElements).length > 0
           ? { nativeWrapperElements: { ...config.nativeWrapperElements } }
           : {}),
-        ...(config.nativeWrappersConfiguredCwd !== undefined
-          ? { cwd: config.nativeWrappersConfiguredCwd }
-          : {}),
+        ...(config.nativeWrappersConfiguredCwd === undefined
+          ? {}
+          : { cwd: config.nativeWrappersConfiguredCwd }),
       },
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
