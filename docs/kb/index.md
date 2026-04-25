@@ -188,6 +188,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [semantics/table-caption-missing](./rules/semantics__table-caption-missing.md)
 - [semantics/table-headers](./rules/semantics__table-headers.md)
 - [semantics/table-th-scope-missing](./rules/semantics__table-th-scope-missing.md)
+- [semantics/visual-disabled-non-control](./rules/semantics__visual-disabled-non-control.md)
 - [tooltip/dismissable](./rules/tooltip__dismissable.md)
 - [wrapper/drift](./rules/wrapper__drift.md)
 
