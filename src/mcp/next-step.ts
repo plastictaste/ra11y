@@ -453,3 +453,178 @@ function allViolationsMechanical(
   }
   return sawViolation;
 }
+
+/**
+ * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: counts findings by `ruleId`
+ * across the page's pre-trim files list and returns the rule ID with
+ * the highest occurrence count. Returns `undefined` on empty input or
+ * when the top two rules tie (no clear winner — per the AI-first
+ * doctrine "Ambiguous field shapes are dishonest," a tied winner is
+ * an honest "we couldn't pick" and the caller falls back to the prose-
+ * only hint).
+ *
+ * Scope: counts every finding regardless of severity. The reroute is
+ * about escaping per-file pagination on bulk-template scans, where the
+ * dominant rule is whatever fires most across the page — `info` wave
+ * findings (e.g. opaque-component notes) count toward the dominance
+ * tally because they ALSO contribute to the per-file expansion the
+ * agent is paginating through. Filtering to `error`/`warning` here
+ * would silently miss the wave on info-dense scans.
+ *
+ * Deterministic tie-break: when counts tie at the top, return
+ * `undefined` rather than picking alphabetically — a faked winner
+ * would route the agent to a rule that doesn't dominate, and the
+ * downstream `explain_rule` reroute would mislead. Falling back to the
+ * standard prose ("page-by-page on a 1793-file inventory will be
+ * slow") keeps the warning honest without naming a wrong target.
+ */
+export function pickTopRuleByCount(
+  files: readonly { readonly findings: readonly unknown[] }[],
+): string | undefined {
+  const counts = countFindingsByRuleId(files);
+  if (counts.size === 0) return undefined;
+  return findUniqueMaxKey(counts);
+}
+
+/**
+ * Walks every finding across `files` and tallies occurrences keyed by
+ * `ruleId`. Skips findings that aren't object-shaped or whose `ruleId`
+ * is not a string — synthetic / legacy shapes shouldn't pollute the
+ * dominance count. Extracted so {@link pickTopRuleByCount} stays inside
+ * the cognitive-complexity lint cap; the tally / max passes are
+ * conceptually distinct and read better as two functions.
+ */
+function countFindingsByRuleId(
+  files: readonly { readonly findings: readonly unknown[] }[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    for (const raw of file.findings) {
+      if (!raw || typeof raw !== "object") continue;
+      const ruleId = (raw as Record<string, unknown>)["ruleId"];
+      if (typeof ruleId !== "string") continue;
+      counts.set(ruleId, (counts.get(ruleId) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/**
+ * Returns the unique key with the maximum value in `counts`, or
+ * `undefined` if the top two values tie. Honest "we couldn't pick" —
+ * naming an alphabetically-stable winner here would route the
+ * downstream `explain_rule` reroute to a rule that doesn't dominate.
+ */
+function findUniqueMaxKey(counts: ReadonlyMap<string, number>): string | undefined {
+  let topKey: string | undefined;
+  let topCount = 0;
+  let tie = false;
+  for (const [key, count] of counts) {
+    if (count > topCount) {
+      topKey = key;
+      topCount = count;
+      tie = false;
+    } else if (count === topCount) {
+      tie = true;
+    }
+  }
+  if (tie || topKey === undefined) return undefined;
+  return topKey;
+}
+
+/**
+ * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: builds the per-rule narrowing
+ * `nextStep` reroute for the degenerate-pagination case where the
+ * token-density cap clipped the page to ≤ 2 files AND the project
+ * carries > 100 files-with-findings. Without this reroute, an agent
+ * that follows the standard `nextOffset` loop calls `scan_project`
+ * once per file — 1793 sequential round trips on the canonical
+ * bulk-template repro — which the canonical "what next?" hint
+ * (`suggest_fix` on the first finding) doesn't escape from.
+ *
+ * Reroute target: `explain_rule({ ruleId: topRuleId })`. Per the
+ * AI-first doctrine "Don't duplicate capability the agent already has"
+ * + "Interrogate the problem before accepting the solution's shape,"
+ * the structured hint must name an existing tool with parameters the
+ * tool actually accepts. The pairing item V1-TOOL-FINDINGS-BY-RULE
+ * tracks the future `findings_by_rule` primitive that would route
+ * here directly; until that lands, `explain_rule` is the honest first
+ * step — the agent reads what the dominant rule does, decides whether
+ * the wave is a vendor-noise mass-suppress candidate or a single-fix
+ * mechanical edit that propagates, and acts once instead of paging.
+ *
+ * Prose names the dominant rule + the file-count math so the agent
+ * sees the per-rule narrowing pattern explicitly:
+ * "1793 files-with-findings; current page returned 1 file (density
+ * cap). The dominant rule is `contrast/minimum` — call `explain_rule`
+ * to triage that wave once instead of paging file-by-file."
+ *
+ * Returns `undefined` (not a fallback `NextStepResult`) when the
+ * caller didn't establish a `topRuleId`, so the assembly site can
+ * keep the standard nextStep unchanged on ambiguity rather than
+ * downgrade to a generic prose-only hint.
+ */
+export function perRuleNarrowingNextStep(args: {
+  readonly topRuleId: string;
+  readonly totalFilesWithFindings: number;
+  readonly effectiveLimit: number;
+}): NextStepResult {
+  const { topRuleId, totalFilesWithFindings, effectiveLimit } = args;
+  const filesPlural = effectiveLimit === 1 ? "" : "s";
+  return {
+    prose: `${totalFilesWithFindings} files-with-findings on this scan; the token-density cap clipped this page to ${effectiveLimit} file${filesPlural}, so paging file-by-file from \`nextOffset\` would take ~${totalFilesWithFindings} round trips. The dominant rule on this page is \`${topRuleId}\` — call \`explain_rule\` on it first to decide whether the wave is a single mass-suppress (vendor / generated code) or a one-shot fix that propagates. After triaging the dominant rule, narrow scope with a tighter \`cwd\` or \`additionalPaths\` instead of resuming pagination.`,
+    structured: { tool: "explain_rule", args: { ruleId: topRuleId } },
+  };
+}
+
+/**
+ * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: gate predicate for the
+ * per-rule narrowing reroute. Fires when the density cap clipped the
+ * page to ≤ 2 files AND the underlying inventory carries > 100
+ * files-with-findings. Both thresholds are encoded here (rather than
+ * spread across the assembler) so the reroute's trigger is auditable
+ * in one place and the condition is testable in isolation.
+ *
+ * Why both thresholds: the ≤ 2 files clip names the degenerate-
+ * pagination regime (one-file pages, the actual pathology); the >
+ * 100 inventory threshold filters out small scans where pagination
+ * is trivially complete in a few calls — the reroute would be noise
+ * on a 12-file scan even if density clipped to 1 file (12 calls is
+ * not the 1793-call pathology). Numbers chosen empirically from the
+ * Q7 field reports: real bulk-template repros sit at 100+ files-with-
+ * findings; small repos with dense findings stay under that floor.
+ *
+ * NOT a numeric-threshold suppression (per the AI-first doctrine):
+ * the standard `nextStep` still ships when this gate fails — the
+ * reroute is additive routing for a regime where the standard hint
+ * leads the agent into a known degenerate loop. Both file-count and
+ * inventory thresholds are encoded as named constants so the
+ * predicate's intent is visible.
+ */
+export function shouldRerouteToPerRuleNarrowing(args: {
+  readonly effectiveLimit: number;
+  readonly totalFilesWithFindings: number;
+}): boolean {
+  return (
+    args.effectiveLimit <= PER_RULE_REROUTE_MAX_PAGE_FILES &&
+    args.totalFilesWithFindings > PER_RULE_REROUTE_MIN_INVENTORY
+  );
+}
+
+/**
+ * Maximum `effectiveLimit` (post-density-cap files in the page) that
+ * still qualifies for the per-rule narrowing reroute. Above this the
+ * standard `nextOffset` loop is making meaningful progress per call
+ * and the per-rule pivot is unnecessary.
+ */
+const PER_RULE_REROUTE_MAX_PAGE_FILES = 2;
+
+/**
+ * Minimum `totalFilesWithFindings` that qualifies the scan for the
+ * per-rule narrowing reroute. Strict `>` (not `>=`) so the reroute
+ * never fires on a 100-file scan — at that boundary, ~100 calls is
+ * still finite and the per-rule narrowing isn't the better pattern.
+ * The bulk-template pathology starts well above this; 100 is a
+ * conservative floor.
+ */
+const PER_RULE_REROUTE_MIN_INVENTORY = 100;

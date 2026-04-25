@@ -15,7 +15,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { buildNextStep } from "../../../src/mcp/next-step.ts";
+import {
+  buildNextStep,
+  perRuleNarrowingNextStep,
+  pickTopRuleByCount,
+  shouldRerouteToPerRuleNarrowing,
+} from "../../../src/mcp/next-step.ts";
 import type { ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
 
 // These tests probe `buildNextStep`'s graceful handling of partial or
@@ -579,6 +584,121 @@ describe("buildNextStep", () => {
       expect(result.prose).toContain("vendor/bootstrap.css");
       expect(result.prose).toContain("authored/site.css");
       expect(result.prose).toContain("same-family");
+    });
+  });
+});
+
+describe("Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY — per-rule narrowing reroute", () => {
+  describe("pickTopRuleByCount", () => {
+    it("returns the rule ID with the highest finding count across the page", () => {
+      const files = [
+        {
+          findings: [
+            { ruleId: "contrast/minimum" },
+            { ruleId: "contrast/minimum" },
+            { ruleId: "alt-text/missing" },
+          ],
+        },
+        { findings: [{ ruleId: "contrast/minimum" }] },
+      ];
+      expect(pickTopRuleByCount(files)).toBe("contrast/minimum");
+    });
+
+    it("returns undefined on empty input", () => {
+      expect(pickTopRuleByCount([])).toBeUndefined();
+      expect(pickTopRuleByCount([{ findings: [] }])).toBeUndefined();
+    });
+
+    it("returns undefined when the top two rules tie at the highest count", () => {
+      // Honest "we couldn't pick" — naming an alphabetically-stable
+      // winner would route the agent to a rule that doesn't dominate.
+      const files = [
+        {
+          findings: [
+            { ruleId: "contrast/minimum" },
+            { ruleId: "contrast/minimum" },
+            { ruleId: "alt-text/missing" },
+            { ruleId: "alt-text/missing" },
+          ],
+        },
+      ];
+      expect(pickTopRuleByCount(files)).toBeUndefined();
+    });
+
+    it("ignores findings missing a string ruleId", () => {
+      const files = [
+        {
+          findings: [
+            { ruleId: "contrast/minimum" },
+            { ruleId: 42 }, // wrong type
+            null,
+            "not-an-object",
+            { noRuleId: true },
+          ],
+        },
+      ];
+      expect(pickTopRuleByCount(files)).toBe("contrast/minimum");
+    });
+  });
+
+  describe("shouldRerouteToPerRuleNarrowing", () => {
+    it("fires when effectiveLimit ≤ 2 and totalFilesWithFindings > 100", () => {
+      expect(
+        shouldRerouteToPerRuleNarrowing({ effectiveLimit: 1, totalFilesWithFindings: 1793 }),
+      ).toBe(true);
+      expect(
+        shouldRerouteToPerRuleNarrowing({ effectiveLimit: 2, totalFilesWithFindings: 101 }),
+      ).toBe(true);
+    });
+
+    it("does not fire when effectiveLimit exceeds the page-files threshold", () => {
+      // 3 files in the page is no longer the degenerate one-or-two regime.
+      expect(
+        shouldRerouteToPerRuleNarrowing({ effectiveLimit: 3, totalFilesWithFindings: 1793 }),
+      ).toBe(false);
+    });
+
+    it("does not fire on a strict-equality 100-file inventory boundary", () => {
+      // Strict `>`, not `>=` — at 100 files the standard pagination is
+      // still finite. The reroute targets the bulk-template pathology
+      // (well above this floor); 100 stays out by design.
+      expect(
+        shouldRerouteToPerRuleNarrowing({ effectiveLimit: 1, totalFilesWithFindings: 100 }),
+      ).toBe(false);
+    });
+
+    it("does not fire on small-inventory scans even with a one-file page", () => {
+      expect(
+        shouldRerouteToPerRuleNarrowing({ effectiveLimit: 1, totalFilesWithFindings: 12 }),
+      ).toBe(false);
+    });
+  });
+
+  describe("perRuleNarrowingNextStep", () => {
+    it("routes the structured hint to explain_rule with the dominant ruleId", () => {
+      const result = perRuleNarrowingNextStep({
+        topRuleId: "contrast/minimum",
+        totalFilesWithFindings: 1793,
+        effectiveLimit: 1,
+      });
+      expect(result.structured).toEqual({
+        tool: "explain_rule",
+        args: { ruleId: "contrast/minimum" },
+      });
+    });
+
+    it("names the dominant rule and the inventory size in the prose", () => {
+      const result = perRuleNarrowingNextStep({
+        topRuleId: "contrast/minimum",
+        totalFilesWithFindings: 1793,
+        effectiveLimit: 1,
+      });
+      expect(result.prose).toContain("contrast/minimum");
+      expect(result.prose).toContain("1793");
+      expect(result.prose).toContain("explain_rule");
+      // Prose names the per-rule narrowing pattern explicitly so the
+      // agent reads the escape from the per-file pagination loop.
+      expect(result.prose).toContain("file-by-file");
     });
   });
 });

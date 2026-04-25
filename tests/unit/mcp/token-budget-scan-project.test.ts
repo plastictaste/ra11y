@@ -139,6 +139,34 @@ function buildAsymmetricFixture(fileCount: number): string {
   return root;
 }
 
+/**
+ * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: builds a tempdir with N
+ * extremely dense HTML files — many more inputs + images per file
+ * than {@link buildDenseFixture} — so the token-density cap clips
+ * the page to ≤ 2 files at high `limit` values. Mirrors the bulk-
+ * template repro's per-page byte profile: every file ships ~50+
+ * findings whose serialized payload (criteria + fix description +
+ * snippet) packs the response densely enough that one or two files
+ * exhaust the ~88k-char budget on their own.
+ */
+function buildUltraDenseFixture(fileCount: number): string {
+  const root = mkdtempSync(join(tmpdir(), "ra11y-tokenbudget-ultra-"));
+  const src = join(root, "src");
+  mkdirSync(src);
+  // 50 unlabeled inputs + 5 unlabeled images per file → ~55 findings
+  // per file. Total wire payload per file pushes well past 30 KB
+  // after fix-description + criteria fields land.
+  const formBlock = Array.from({ length: 50 }, (_, i) => `  <input type="text" name="f${i}">`).join(
+    "\n",
+  );
+  const imgBlock = Array.from({ length: 5 }, (_, i) => `  <img src="/p${i}.png">`).join("\n");
+  const body = `<html><body>\n${imgBlock}\n  <form>\n${formBlock}\n  </form>\n</body></html>\n`;
+  for (let i = 0; i < fileCount; i += 1) {
+    writeFileSync(join(src, `page-${i}.html`), body);
+  }
+  return root;
+}
+
 describe("scan_project token-density budget (ADR 0021 amendment)", () => {
   it("passes through unchanged when the response fits under the default budget", async () => {
     // Small fixture, small limit → response well under ~88 KB. The
@@ -294,6 +322,50 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
         "message",
         "other",
       ]).toContain(details?.dominantContributor ?? "");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: density-cap reroute points at explain_rule when the page clips ≤ 2 files and inventory > 100", async () => {
+    // 150 ultra-dense HTML files → > 100 files-with-findings AND
+    // (with `limit: 200` so the file-count cap doesn't fire first)
+    // the density cap saturates the page on a small slice (~1-2 files).
+    // Verifies the per-rule narrowing reroute lands the structured
+    // hint at `explain_rule` instead of the standard `suggest_fix`
+    // first-finding pointer — the canonical escape from the per-file
+    // pagination loop on bulk-template repros.
+    const root = buildUltraDenseFixture(150);
+    try {
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_project", { cwd: root, limit: 200 }),
+      ]);
+      const body = bodyOf(responses[1]) as {
+        files: unknown[];
+        truncated?: boolean;
+        totalFilesWithFindings?: number;
+        effectiveLimit?: number;
+        pageClipReason?: string;
+        nextStep?: string;
+        nextStepStructured?: { tool: string; args: Record<string, unknown> };
+      };
+      // Density cap engaged AND clipped to the degenerate-page regime
+      // (≤ 2 files). Inventory > 100 by construction.
+      expect(body.pageClipReason).toBe("token_density");
+      expect(body.totalFilesWithFindings).toBeGreaterThan(100);
+      expect(body.effectiveLimit).toBeLessThanOrEqual(2);
+      // The reroute fires: structured hint points at `explain_rule`,
+      // not the usual `suggest_fix`. Args carry the dominant rule's
+      // ID so an agent copying `nextStepStructured.args` lands the
+      // call directly.
+      expect(body.nextStepStructured?.tool).toBe("explain_rule");
+      expect(typeof body.nextStepStructured?.args.ruleId).toBe("string");
+      expect((body.nextStepStructured?.args.ruleId as string).length).toBeGreaterThan(0);
+      // Prose names the per-file pagination problem so the agent
+      // sees why the standard nextOffset loop is being bypassed.
+      expect(body.nextStep).toContain("file-by-file");
+      expect(body.nextStep).toContain("explain_rule");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

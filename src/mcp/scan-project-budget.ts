@@ -9,7 +9,12 @@
  */
 
 import { applyMetaCacheMode } from "./meta-cache.ts";
-import type { NextStepStructured } from "./next-step.ts";
+import {
+  type NextStepStructured,
+  perRuleNarrowingNextStep,
+  pickTopRuleByCount,
+  shouldRerouteToPerRuleNarrowing,
+} from "./next-step.ts";
 import type { ReferenceGuide } from "./reference-guide.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
@@ -279,8 +284,25 @@ function mergeBudgetedFields(args: {
     ...(baseWarningsDetails ?? {}),
     ...densityDetails,
   };
+  // Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: when the density cap clipped
+  // the page to ≤ 2 files AND the project carries > 100 files-with-
+  // findings, the standard `nextStep` (suggest_fix on the first
+  // finding) leads the agent into a per-file pagination loop that may
+  // take ~totalFilesWithFindings round trips on bulk-template repros.
+  // Override `nextStep` + `nextStepStructured` to a per-rule narrowing
+  // hint (`explain_rule({ ruleId: topRuleId })`) so the agent can
+  // triage the dominant rule's wave once instead of paging through
+  // every file. Reroute is additive routing for the degenerate regime;
+  // every other field on the response is unchanged (surface-don't-
+  // suppress — the per-file findings still ship).
+  const perRuleReroute = perRuleNarrowingRerouteFields({
+    files: filesForAnalysis,
+    effectiveLimit: topLevelEffectiveLimit,
+    totalFilesWithFindings,
+  });
   return {
     ...tentative,
+    ...perRuleReroute,
     files: budgeted.files,
     // `truncated` stays present-only (never `false`) per CLAUDE.md
     // §1 "Ambiguous field shapes are dishonest"; `nextOffset` tracks
@@ -310,6 +332,56 @@ function mergeBudgetedFields(args: {
     // re-page. Structured payload lives under the ADR 0023 sibling
     // channel; the bare-string warnings array stays unchanged.
     warningsDetails: mergedDetails,
+  };
+}
+
+/**
+ * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: builds the spreadable
+ * `nextStep` / `nextStepStructured` override fragment for the
+ * degenerate-pagination regime. Returns an empty record when the gate
+ * fails (page wasn't clipped to ≤ 2 files OR inventory ≤ 100 OR the
+ * dominant rule was ambiguous), so the merge call site keeps the
+ * standard nextStep unchanged via spread-then-override semantics —
+ * the override only stamps when all preconditions hold.
+ *
+ * The reroute target is `explain_rule({ ruleId: topRuleId })` rather
+ * than `scan_project({ ruleIds: [...] })` because `scan_project` does
+ * not currently accept a `ruleIds` parameter. Per the AI-first
+ * doctrine "Don't duplicate capability the agent already has" +
+ * "Interrogate the problem before accepting the solution's shape,"
+ * the structured hint must name an existing tool with parameters the
+ * tool actually accepts; routing to a non-existent param would
+ * silently fail when the agent copies `nextStepStructured.args` into
+ * the next call. The pairing item V1-TOOL-FINDINGS-BY-RULE tracks
+ * the future `findings_by_rule` primitive that would route here
+ * directly; until that lands, `explain_rule` is the honest first step
+ * — the agent reads what the dominant rule does, decides whether the
+ * wave is a vendor-noise mass-suppress candidate or a single-fix
+ * mechanical edit that propagates, then acts once instead of paging.
+ */
+function perRuleNarrowingRerouteFields(args: {
+  readonly files: readonly { readonly findings?: readonly Record<string, unknown>[] }[];
+  readonly effectiveLimit: number;
+  readonly totalFilesWithFindings: number;
+}): {
+  readonly nextStep?: string;
+  readonly nextStepStructured?: NextStepStructured;
+} {
+  const { files, effectiveLimit, totalFilesWithFindings } = args;
+  if (!shouldRerouteToPerRuleNarrowing({ effectiveLimit, totalFilesWithFindings })) {
+    return {};
+  }
+  const filesForCount = files.map((f) => ({ findings: f.findings ?? [] }));
+  const topRuleId = pickTopRuleByCount(filesForCount);
+  if (topRuleId === undefined) return {};
+  const rerouted = perRuleNarrowingNextStep({
+    topRuleId,
+    totalFilesWithFindings,
+    effectiveLimit,
+  });
+  return {
+    nextStep: rerouted.prose,
+    ...(rerouted.structured === undefined ? {} : { nextStepStructured: rerouted.structured }),
   };
 }
 
