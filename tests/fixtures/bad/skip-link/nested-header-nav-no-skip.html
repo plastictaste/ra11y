@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>skip-link — bad (nested header/nav, no skip link)</title>
+  </head>
+  <body>
+    <!--
+      Nested-nav case: the literal <nav> sits inside a top-level
+      <header> body child rather than directly under <body>. The
+      walker that collects <nav> elements descends the whole tree,
+      so path 1 still finds the multi-link nav and gates on whether
+      a skip link precedes it. Here no skip link exists anywhere on
+      the page, so path 1 emits the "no skip link precedes the
+      primary <nav>" warning at the nav's location.
+    -->
+    <header>
+      <nav>
+        <a href="/">Home</a>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+      </nav>
+    </header>
+    <main>
+      <h1>Welcome</h1>
+      <p>No skip link, multi-link nav nested inside a top-level header.</p>
+    </main>
+  </body>
+</html>

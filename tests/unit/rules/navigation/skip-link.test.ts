@@ -332,4 +332,130 @@ describe("rule navigation/skip-link", () => {
       expect(v[0]?.suggestion).toContain("#main");
     });
   });
+
+  describe("nested <header><nav> shape (path 1, header-wrapped chrome)", () => {
+    // The dispatch-motivating shape: layouts where the literal nav
+    // sits inside a top-level `<header>` body child rather than
+    // directly under `<body>`. Path 1's `<nav>`-walker collects the
+    // nested nav the same way it collects a direct-child nav (the
+    // walk descends the whole tree), so the "no skip link precedes
+    // the primary <nav>" warning still fires when no skip link is
+    // present. The new behavior wired by this group: when the nested
+    // nav lives inside the first body `<header>` child AND a top-
+    // level body skip-link-shaped anchor exists (regardless of
+    // source order vs the header), suppress the path-1 emission —
+    // the layout has plausibly handled the case the same way the
+    // opaque-component path 3 already treats top-level skip links
+    // as "agent has wired this." The agent can verify keyboard tab
+    // order by reading the file.
+    it("fires on <body><header><nav> with no skip link anywhere", () => {
+      const html = `<html><body>
+          <header>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </header>
+          <main>x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("No skip link");
+    });
+
+    it("does NOT fire when a top-level skip-link anchor follows the <header>", () => {
+      const html = `<html><body>
+          <header>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </header>
+          <a href="#main">Skip to main content</a>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when the suppressing top-level anchor is identified by class only", () => {
+      // Same nested shape, but the top-level skip-link anchor has
+      // bare visible text ("Skip") that wouldn't match the "Skip
+      // to …" canonical-phrasing branch — it qualifies via
+      // `class="skip-link"`. Mirrors the Bootstrap/Tailwind class-
+      // based shape.
+      const html = `<html><body>
+          <header>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </header>
+          <a class="skip-link" href="#main">Skip</a>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when a top-level skip-link anchor precedes the <header>", () => {
+      // The strict-correctness case the dispatch's success scenarios
+      // already covered for direct `<body><nav>` shape — the same
+      // suppression naturally applies on the nested shape, because
+      // the skip link precedes the nav in source order so path 1's
+      // existing precedence check is satisfied.
+      const html = `<html><body>
+          <a href="#main">Skip to main content</a>
+          <header>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </header>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("still fires when a non-skip-link anchor sits between header and main", () => {
+      // The suppression depends on the body-level anchor *looking
+      // like* a skip link (class or canonical text). A plain
+      // anchor — even an in-page one — should not count, otherwise
+      // the suppression hides legitimate skip-link absence.
+      const html = `<html><body>
+          <header>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </header>
+          <a href="#section-2">Read section 2</a>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("No skip link");
+    });
+
+    it("still fires when the wrapping element is <div>, not <header>", () => {
+      // The suppression is gated on `<header>` specifically — a
+      // `<div>` wrapper does not earn the "opaque chrome" treatment
+      // because it carries no semantic claim about being page
+      // chrome. Without this gate, every layout that wraps its nav
+      // in a `<div>` would silently skip the check.
+      const html = `<html><body>
+          <div>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </div>
+          <a href="#main">Skip to main content</a>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("No skip link");
+    });
+
+    it("does not double-emit with path 3 (opaque component) on nested-nav layouts", () => {
+      // When path 1 found a literal multi-link nav (even nested),
+      // path 3 must not also fire — the layout already exposed the
+      // nav structurally and path 1 owns the verdict.
+      const html = `<html><body>
+          <header>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </header>
+          <a href="#main">Skip to main content</a>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      // No path-3 info-severity finding either; suppression is total.
+      expect(v).toHaveLength(0);
+    });
+  });
 });

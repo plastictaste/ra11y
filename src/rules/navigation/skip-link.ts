@@ -18,7 +18,17 @@
  * 1. Primary-nav gating. On documents with a `<nav>` landmark
  *    containing multiple links, the first `<a href>` before that
  *    nav must (a) have an in-page href (`#something`) and (b)
- *    reference a valid id. Missing/non-matching → warning.
+ *    reference a valid id. Missing/non-matching → warning. The
+ *    `<nav>` is found anywhere in the body (literal `<body><nav>`,
+ *    nested `<body><header><nav>`, deeper wrappers, …) — the
+ *    walker that collects `<nav>` elements does not gate on depth.
+ *    When the first matched `<nav>` lives inside the first `<header>`
+ *    body child AND a top-level `<body>` skip-link-shaped anchor
+ *    exists (regardless of source order vs the header), the
+ *    emission is suppressed — same lenient "layout has plausibly
+ *    handled the case" treatment path 3 applies to opaque-component
+ *    layouts. The agent can read the file and verify the skip-link
+ *    actually precedes the nav in tab order if needed.
  *
  * 2. Any skip-link-shaped anchor. An `<a href="#foo">` whose class
  *    or visible text identifies it as a skip link ("Skip to main
@@ -215,6 +225,52 @@ function bodyHasTopLevelSkipLinkAnchor(doc: HtmlDocument): boolean {
 }
 
 /**
+ * First `<header>` child of `<body>` when it is the first element
+ * child — i.e. the literal `<body><header>…` layout shape. Returns
+ * `null` when there is no `<body>`, when the first body element
+ * child is anything other than `<header>`, or when `<body>` has no
+ * element children. Skips comments, doctypes, and pure-whitespace
+ * text the same way `firstSignificantBodyChild` does. Used by
+ * path 1 to recognize the nested `<body><header><nav>` shape so the
+ * "skip link must precede the nav" check can apply the same lenient
+ * "layout has plausibly handled it" suppression path 3 already uses
+ * for opaque components.
+ */
+function firstHeaderBodyChild(doc: HtmlDocument): HtmlElement | null {
+  const bodies = findHtmlElementsByTag(doc, "body");
+  const body = bodies[0];
+  if (!body) return null;
+  for (const child of body.children) {
+    if (child.kind === "HtmlComment" || child.kind === "HtmlDoctype") continue;
+    if (child.kind === "HtmlText") {
+      if (child.value.trim().length === 0) continue;
+      return null;
+    }
+    if (child.kind === "HtmlElement") {
+      return child.tagName.toLowerCase() === "header" ? child : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * `true` when `descendant` is a transitive `HtmlElement` descendant
+ * of `ancestor` (or is `ancestor` itself). Walks the subtree once.
+ * Used by path 1 to test whether the first `<nav>` matched on the
+ * page lives inside the first `<header>` body child — the literal
+ * `<body><header><nav>` shape — without requiring parent links on
+ * the AST (the HTML AST is intentionally child-only per
+ * `src/types/ast.ts`).
+ */
+function elementContainsElement(ancestor: HtmlElement, descendant: HtmlElement): boolean {
+  if (ancestor === descendant) return true;
+  for (const el of walkHtmlElements(ancestor)) {
+    if (el === descendant) return true;
+  }
+  return false;
+}
+
+/**
  * Path 3: opaque-navigation component. When path 1 found no literal
  * multi-link `<nav>` to check against, but the layout's first
  * significant `<body>` child is a PascalCase component whose name
@@ -320,6 +376,28 @@ function checkPrimaryNavPath(
 
   const firstLink = firstFocusableAnchor(doc);
   if (!(firstLink && precedesElement(firstLink, firstNav))) {
+    // Nested `<body><header><nav>…` shape: when the matched `<nav>`
+    // lives inside the first `<header>` body child AND a top-level
+    // `<body>` skip-link-shaped anchor exists, suppress the
+    // emission. Same lenient "layout has plausibly handled it"
+    // treatment path 3 (opaque-component) applies to layouts where
+    // the navigation chrome is wrapped — without this branch, any
+    // page that puts its skip link as a sibling of `<header>`
+    // (rather than inside it, before the nav) would emit a stale
+    // "no skip link precedes the primary <nav>" warning that
+    // contradicts the visible top-level skip-link anchor. The
+    // suppression is path-1-only — paths 2 and 3 still run; the
+    // owner of "literal nav with valid skip link in body" is path 1
+    // and it returns `true` here so path 3 stays silent. The agent
+    // can verify keyboard tab order by reading the file if needed.
+    const headerChild = firstHeaderBodyChild(doc);
+    if (
+      headerChild &&
+      elementContainsElement(headerChild, firstNav) &&
+      bodyHasTopLevelSkipLinkAnchor(doc)
+    ) {
+      return true;
+    }
     ctx.emit({
       severity: "warning",
       location: {

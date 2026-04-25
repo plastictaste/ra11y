@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>skip-link — good (nested header/nav, top-level skip link)</title>
+  </head>
+  <body>
+    <!--
+      Same nested header/nav layout as the bad fixture, but the page
+      wires a top-level skip-link-shaped anchor as a sibling of the
+      <header>. Path 1 recognizes the nested-header shape and treats
+      the body-level skip link as "the layout has plausibly handled
+      it" — same lenient suppression path 3 applies to opaque-
+      component layouts. The agent reading this file can verify the
+      skip link actually precedes the nav in source order (it does
+      here) and that the target id resolves (it does — <main id=main>).
+    -->
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header>
+      <nav>
+        <a href="/">Home</a>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+      </nav>
+    </header>
+    <main id="main">
+      <h1>Welcome</h1>
+      <p>Page content.</p>
+    </main>
+  </body>
+</html>
