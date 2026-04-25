@@ -53,6 +53,141 @@ const PARTIAL_PATH_SEGMENTS: readonly string[] = [
 ];
 
 /**
+ * Path segments under which a file is conventionally a fragment whose
+ * rendered output is composed into a parent template / layout / page —
+ * Jekyll / Eleventy include trees (`_includes/`, `_layouts/`,
+ * `_partials/`), Hugo / Astro / framework partial trees (`partials/`),
+ * and component fragments (`components/`) whose composed page supplies
+ * the document envelope (`<html>`, `<body>`, `<h1>`, `<title>`).
+ *
+ * Distinct from {@link PARTIAL_PATH_SEGMENTS}: that list is the
+ * partial-or-layout signal used for *enrichment* (annotating an
+ * already-emitted finding with a "could be wrong because composed
+ * elsewhere" hint). This list is the fragment signal used by
+ * {@link isFragmentFile} to *suppress* document-shape emits — the
+ * fragment classification is structural evidence that the rule's
+ * "this file IS the page" premise does not hold.
+ *
+ * Detected as substrings flanked by `/` (or boundary) so a top-level
+ * `partials/` matches but `my_partials_dir/` does not.
+ */
+const FRAGMENT_PATH_SEGMENTS: readonly string[] = [
+  "_includes",
+  "_layouts",
+  "_partials",
+  "partials",
+  "components",
+];
+
+/**
+ * True when `filePath` lives under a fragment-convention directory
+ * segment ({@link FRAGMENT_PATH_SEGMENTS}). Pure path inspection — no
+ * AST or source content read. Used as one OR-branch of
+ * {@link isFragmentFile}.
+ */
+function looksLikeFragmentPath(filePath: string): boolean {
+  if (filePath.length === 0) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  for (const segment of FRAGMENT_PATH_SEGMENTS) {
+    if (normalized.startsWith(`${segment}/`)) return true;
+    if (normalized.includes(`/${segment}/`)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when `source` begins with a `---`-delimited front-matter block
+ * (Jekyll, Eleventy, Hugo, Astro, MDX). The opener `---` must sit at
+ * the very top of the file (after an optional UTF-8 BOM and blank
+ * lines) on its own line, AND a closing `---` line must follow — a
+ * stray `---` without a closer is not a front-matter block.
+ *
+ * Distinct from {@link hasJekyllLayoutFrontMatter}, which additionally
+ * requires the YAML body to declare a `layout:` key. The fragment-
+ * detection use case wants the broader signal: ANY `---` front-matter
+ * block at the top of a file is evidence the file is content composed
+ * into a parent layout (the front-matter gets stripped by the SSG
+ * before the residue reaches a browser, which itself implies the file
+ * is not the rendered page).
+ */
+function hasFrontMatterDelimiter(source: string): boolean {
+  let i = 0;
+  // Skip UTF-8 BOM.
+  if (source.charCodeAt(0) === 0xfeff) i = 1;
+  // Skip leading blank lines.
+  while (i < source.length && (source[i] === "\n" || source[i] === "\r")) i += 1;
+  // Require `---` opener on its own line.
+  if (!source.startsWith("---", i)) return false;
+  const afterOpener = i + 3;
+  if (afterOpener >= source.length) return false;
+  const nextChar = source[afterOpener];
+  if (nextChar !== "\n" && nextChar !== "\r") return false;
+  // Require a matching `---` closer on its own line later in the file.
+  return source.indexOf("\n---", afterOpener) !== -1;
+}
+
+/**
+ * True when the file should be treated as a fragment whose composed
+ * rendered page supplies the document envelope (`<html>`, `<body>`,
+ * `<head>`, `<h1>`, `<title>`). Document-shape rules
+ * (`semantics/heading-hierarchy`'s no-`<h1>` branch,
+ * `semantics/landmark-main`, `document/page-titled`,
+ * `document/lang-attribute`) should suppress their document-envelope
+ * emits when this returns true — the file's missing element is
+ * supplied at composition time and a confident emit would be a false
+ * positive.
+ *
+ * Three OR-branches, layered cheapest-first:
+ *
+ *   (a) The parsed document carries NONE of `<html>`, `<body>`, or
+ *       `<head>` at any depth — a true bare fragment (component
+ *       template, content partial, include snippet) with no envelope
+ *       evidence at all.
+ *   (b) The raw source begins with a `---`-delimited front-matter
+ *       block (Jekyll / Eleventy / Hugo / Astro / MDX). The opener at
+ *       the top of the file is conclusive evidence the file is content
+ *       composed into a parent layout.
+ *   (c) The file path lives under a fragment-convention directory
+ *       segment — `_includes/`, `_layouts/`, `_partials/`, `partials/`,
+ *       `components/` ({@link FRAGMENT_PATH_SEGMENTS}).
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` — fragment-
+ * classification is structural evidence the parser actually has, not a
+ * heuristic guess about composition or rendering. The "no heuristic
+ * suppression" doctrine applies to predicates over weaker evidence
+ * (logo / process-page / essential-presentation guesses); fragment
+ * detection is a deterministic structural classification, the same
+ * confidence level as `isHtmlFragment` already used to gate
+ * page-level rules. Suppression is honest here.
+ *
+ * Pure function over the parsed document + raw source + file path.
+ * Returns false for self-contained HTML pages with no front-matter
+ * block and no fragment-path segment.
+ *
+ * @param doc parsed HTML document
+ * @param source original file source text — required for branches
+ *   (a)'s `<head>` check via the AST and (b)'s front-matter probe
+ * @param filePath the file's path — required for branch (c)
+ */
+export function isFragmentFile(doc: HtmlDocument, source: string, filePath: string): boolean {
+  // Branch (a): no envelope tags anywhere in the document. Stricter
+  // than `isHtmlFragment` (which checks only `<html>` / `<body>`):
+  // a `<head>`-only partial (e.g. a Jekyll `_includes/head.html`
+  // injected into a parent layout's `<head>`) carries `<head>` and
+  // is therefore NOT classified by branch (a) — but branches (b) and
+  // (c) cover the typical paths such files live on.
+  const hasHtml = findHtmlElementsByTag(doc, "html").length > 0;
+  const hasBody = findHtmlElementsByTag(doc, "body").length > 0;
+  const hasHead = findHtmlElementsByTag(doc, "head").length > 0;
+  if (!(hasHtml || hasBody || hasHead)) return true;
+  // Branch (b): front-matter delimiter at the top of the source.
+  if (hasFrontMatterDelimiter(source)) return true;
+  // Branch (c): conventional fragment / partial / component path.
+  if (looksLikeFragmentPath(filePath)) return true;
+  return false;
+}
+
+/**
  * True when `filePath` lives under a directory segment conventionally
  * used by static-site generators for content partials, layout wrappers,
  * or include fragments (`_docs`, `_includes`, `_layouts`, `_posts`,
