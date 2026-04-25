@@ -543,6 +543,121 @@ describe("rule semantics/button-name", () => {
     });
   });
 
+  // V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT: when the unnamed button
+  // wraps a known FA glyph the rule already names a deterministic
+  // aria-label in prose ("Primary fix: aria-label=\"Close\""); the
+  // mechanical-edit lane ships the matching `fixPaths.primary.edit` so
+  // `suggest_fix` returns `kind: "edit"` instead of `kind: "guidance"`.
+  describe("FA-icon mechanical edit (V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT)", () => {
+    it("HTML: <button><i class='fa-bars'> ships fixPaths.primary.edit inserting aria-label", () => {
+      const source = `<button><i class="fa-bars"></i></button>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`<button>`);
+      expect(edit?.newText).toBe(`<button aria-label="Menu">`);
+      // The edit's oldText must literally appear in source so apply-fix
+      // can find-and-replace without ambiguity.
+      expect(source.includes(edit?.oldText ?? "")).toBe(true);
+      // Primary label echoes the action verb derived from the glyph.
+      expect(v[0]?.fixPaths?.primary.label).toBe(`add aria-label="Menu" to <button>`);
+    });
+
+    it("HTML: preserves existing class attribute on <button> when inserting aria-label", () => {
+      const source = `<button class="btn btn-icon"><i class="fa fa-times"></i></button>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`<button class="btn btn-icon">`);
+      expect(edit?.newText).toBe(`<button class="btn btn-icon" aria-label="Close">`);
+    });
+
+    it("HTML: role=button host gets aria-label inserted on the host tag (not the inner <i>)", () => {
+      const source = `<div role="button" tabindex="0"><i class="fa fa-bars"></i></div>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`<div role="button" tabindex="0">`);
+      expect(edit?.newText).toBe(`<div role="button" tabindex="0" aria-label="Menu">`);
+    });
+
+    it("HTML: fa-play (added in V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT) maps to Play with edit", () => {
+      // Closes the simple-timer field-report gap: previously
+      // <button><i class="fa fa-play" /></button> fell through to the
+      // generic "<button>Close</button>" placeholder.
+      const source = `<button><i class="fa fa-play"></i></button>`;
+      const v = runRule(rule, source, { filePath: "timer.html" });
+      expect(v[0]?.suggestion).toContain('aria-label="Play"');
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit?.newText).toBe(`<button aria-label="Play">`);
+    });
+
+    it("HTML: fa-clipboard (added in V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT) maps to Copy with edit", () => {
+      // Closes the password-generator field-report gap.
+      const source = `<button><i class="fas fa-clipboard"></i></button>`;
+      const v = runRule(rule, source, { filePath: "password.html" });
+      expect(v[0]?.suggestion).toContain('aria-label="Copy"');
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit?.newText).toBe(`<button aria-label="Copy">`);
+    });
+
+    it("JSX: <button><i className='fa-bars' /> ships fixPaths.primary.edit inserting aria-label", () => {
+      const source = `const X = <button><i className="fa-bars" /></button>;`;
+      const v = runRule(rule, source);
+      expect(v).toHaveLength(1);
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.oldText).toBe(`<button>`);
+      expect(edit?.newText).toBe(`<button aria-label="Menu">`);
+      expect(source.includes(edit?.oldText ?? "")).toBe(true);
+    });
+
+    it("JSX: preserves className when inserting aria-label", () => {
+      const source = `const X = <button className="icon-btn"><i className="fa fa-xmark" /></button>;`;
+      const v = runRule(rule, source);
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit?.oldText).toBe(`<button className="icon-btn">`);
+      expect(edit?.newText).toBe(`<button className="icon-btn" aria-label="Close">`);
+    });
+
+    it("JSX: open-tag scanner respects {expression} attribute values", () => {
+      // Brace-aware scanner means a `>` inside a `{...}` expression
+      // does NOT terminate the open tag; the inserted attribute lands
+      // before the real `>`.
+      const source = `const X = <button onClick={() => 1 > 0 ? a : b}><i className="fa fa-search" /></button>;`;
+      const v = runRule(rule, source);
+      const edit = v[0]?.fixPaths?.primary.edit;
+      expect(edit).toBeDefined();
+      expect(edit?.newText).toContain(` aria-label="Search">`);
+      // The original onClick expression survives intact.
+      expect(edit?.newText).toContain(`onClick={() => 1 > 0 ? a : b}`);
+    });
+
+    it("HTML: unknown glyph keeps prose-only fix (no fixPaths.edit) — surface, don't invent", () => {
+      // Doctrine: when the map doesn't speak for the glyph, no
+      // mechanical edit ships. The agent reads the surrounding code
+      // and decides. This pins the conservative boundary so
+      // V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY (Turn 9) can extend
+      // the derivation honestly later.
+      const source = `<button><i class="fa fa-flux-capacitor"></i></button>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.fixPaths).toBeUndefined();
+    });
+
+    it("HTML: <input type='image'> never ships FA fixPaths.edit (input is void, no children)", () => {
+      // Inputs are void elements — they have no children to wrap an
+      // <i> in, and the rule's input-button branch never plumbs the
+      // FA-icon path. Pin the absence so the input-button shape stays
+      // honest.
+      const source = `<input type="image" src="submit.png">`;
+      const v = runRule(rule, source, { filePath: "form.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.fixPaths).toBeUndefined();
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

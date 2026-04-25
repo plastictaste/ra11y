@@ -1,3 +1,8 @@
+// ra11y-limits-exempt: V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT inlines the
+// open-tag boundary scanner locally (mirroring the same private duplication
+// in autocomplete-missing.ts and lang-attribute.ts) per the cross-turn note
+// for V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY — Turn 9 owns the helper
+// extraction into ast-helpers, at which point this exemption decays.
 /**
  * Rule: semantics/button-name
  * Satisfies: wcag22:4.1.2, wcag21:4.1.2
@@ -47,6 +52,7 @@ import {
   TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
 } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import type { FixPaths } from "../../types/violation.ts";
 
 export const rule = defineRule({
   id: "semantics/button-name",
@@ -79,14 +85,14 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      checkHtml(ctx.ast as HtmlDocument, ctx.source, (v) => ctx.emit(v));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      checkJsx(ctx.ast as TsxModule, ctx.wrappersForElement, (v) => ctx.emit(v));
+      checkJsx(ctx.ast as TsxModule, ctx.source, ctx.wrappersForElement, (v) => ctx.emit(v));
     }
   },
 });
@@ -96,19 +102,20 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths?: FixPaths;
 }) => void;
 
 // ---------------------------------------------------------------------------
 // HTML
 // ---------------------------------------------------------------------------
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
-  checkHtmlNativeButtons(doc, emit);
+function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
+  checkHtmlNativeButtons(doc, source, emit);
   checkHtmlInputButtons(doc, emit);
-  checkHtmlRoleButtons(doc, emit);
+  checkHtmlRoleButtons(doc, source, emit);
 }
 
-function checkHtmlNativeButtons(doc: HtmlDocument, emit: Emit): void {
+function checkHtmlNativeButtons(doc: HtmlDocument, source: string, emit: Emit): void {
   for (const button of findHtmlElementsByTag(doc, "button")) {
     if (hasAccessibleNameHtml(button)) continue;
     // Per docs/kb/architecture/ai-first-consumer.md §"Surface, don't
@@ -116,12 +123,14 @@ function checkHtmlNativeButtons(doc: HtmlDocument, emit: Emit): void {
     // stripped by the parser, so the accessible-name check fails with
     // no static evidence of a name. Finding still emits at `error`;
     // the reason text carries the template_directive_stripped signal.
+    const icon = describeIconChildHtml(button);
     emit(
       buildViolation(
         "button",
         button.loc.start,
-        describeIconChildHtml(button),
+        icon,
         htmlSubtreeHasStrippedDirective(button),
+        buildFaIconFixPathsHtml(button, source, icon),
       ),
     );
   }
@@ -138,22 +147,24 @@ function checkHtmlInputButtons(doc: HtmlDocument, emit: Emit): void {
     // signal to propagate. A value="{{ t.submit }}" interpolation is
     // already handled: attribute values aren't subject to the parser's
     // text-node stripping and surface unchanged.
-    emit(buildViolation(`input type="${type}"`, input.loc.start, iconCtx, false));
+    emit(buildViolation(`input type="${type}"`, input.loc.start, iconCtx, false, undefined));
   }
 }
 
-function checkHtmlRoleButtons(doc: HtmlDocument, emit: Emit): void {
+function checkHtmlRoleButtons(doc: HtmlDocument, source: string, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     const lowered = el.tagName.toLowerCase();
     if (lowered === "button" || lowered === "input") continue;
     if (getHtmlAttribute(el, "role")?.toLowerCase() !== "button") continue;
     if (hasAccessibleNameHtml(el)) continue;
+    const icon = describeIconChildHtml(el);
     emit(
       buildViolation(
         `${el.tagName} role="button"`,
         el.loc.start,
-        describeIconChildHtml(el),
+        icon,
         htmlSubtreeHasStrippedDirective(el),
+        buildFaIconFixPathsHtml(el, source, icon),
       ),
     );
   }
@@ -242,14 +253,20 @@ function hasImageInputNameHtml(element: HtmlElement): boolean {
 // JSX
 // ---------------------------------------------------------------------------
 
-function checkJsx(module: TsxModule, wrappersForButton: ReadonlySet<string>, emit: Emit): void {
-  checkJsxNativeButtons(module, wrappersForButton, emit);
+function checkJsx(
+  module: TsxModule,
+  source: string,
+  wrappersForButton: ReadonlySet<string>,
+  emit: Emit,
+): void {
+  checkJsxNativeButtons(module, source, wrappersForButton, emit);
   checkJsxInputButtons(module, emit);
-  checkJsxRoleButtons(module, emit);
+  checkJsxRoleButtons(module, source, emit);
 }
 
 function checkJsxNativeButtons(
   module: TsxModule,
+  source: string,
   wrappersForButton: ReadonlySet<string>,
   emit: Emit,
 ): void {
@@ -263,7 +280,7 @@ function checkJsxNativeButtons(
     if (seen.has(button)) continue;
     seen.add(button);
     if (hasAccessibleNameJsx(button)) continue;
-    emit(buildJsxViolation("button", button, describeIconChildJsx(button)));
+    emit(buildJsxViolation("button", button, describeIconChildJsx(button), source));
   }
 }
 
@@ -274,20 +291,25 @@ function checkJsxInputButtons(module: TsxModule, emit: Emit): void {
     const type = getJsxAttributeString(input, "type") ?? "";
     const iconCtx =
       type === "image" ? describeImageInputJsx(input) : ({ kind: "empty" } satisfies IconContext);
-    emit(buildJsxViolation(`input type="${type}"`, input, iconCtx));
+    emit(buildJsxViolation(`input type="${type}"`, input, iconCtx, undefined));
   }
 }
 
-function checkJsxRoleButtons(module: TsxModule, emit: Emit): void {
+function checkJsxRoleButtons(module: TsxModule, source: string, emit: Emit): void {
   for (const el of walkJsxElements(module)) {
     if (el.tagName === "button" || el.tagName === "input") continue;
     if (getJsxAttributeString(el, "role") !== "button") continue;
     if (hasAccessibleNameJsx(el)) continue;
-    emit(buildJsxViolation(`${el.tagName} role="button"`, el, describeIconChildJsx(el)));
+    emit(buildJsxViolation(`${el.tagName} role="button"`, el, describeIconChildJsx(el), source));
   }
 }
 
-function buildJsxViolation(subject: string, el: JsxElement, icon: IconContext) {
+function buildJsxViolation(
+  subject: string,
+  el: JsxElement,
+  icon: IconContext,
+  source: string | undefined,
+) {
   const loc = { filePath: "", line: el.loc.start.line, column: el.loc.start.column };
   if (el.hasSpreadProps) {
     return {
@@ -297,11 +319,17 @@ function buildJsxViolation(subject: string, el: JsxElement, icon: IconContext) {
       suggestion: `If the primitive is only consumed by callers that pass a label via props or children, this is fine — add \`{/* ra11y-disable semantics/button-name */}\` at the top of the file to silence this info note. Otherwise require callers to pass a name.`,
     };
   }
+  // V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT: when the button wraps a
+  // known FA glyph and `source` is plumbed through, ship the
+  // `fixPaths.primary.edit` matching the prose so `suggest_fix`
+  // returns `kind: "edit"` instead of `kind: "guidance"`.
+  const fixPaths = source === undefined ? undefined : buildFaIconFixPathsJsx(el, source, icon);
   return {
     severity: "error" as const,
     location: loc,
     message: `<${subject}> has no accessible name — screen readers will announce it as "button" with no action.`,
     suggestion: buildIconAwareSuggestion(subject, icon),
+    ...(fixPaths === undefined ? {} : { fixPaths }),
   };
 }
 
@@ -426,11 +454,13 @@ function buildViolation(
   loc: { line: number; column: number },
   icon: IconContext,
   templateStripped: boolean,
+  fixPaths: FixPaths | undefined,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  fixPaths?: FixPaths;
 } {
   const base = `<${subject}> has no accessible name — screen readers will announce it as "button" with no action.`;
   return {
@@ -438,6 +468,7 @@ function buildViolation(
     location: { filePath: "", line: loc.line, column: loc.column },
     message: templateStripped ? `${base}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : base,
     suggestion: buildIconAwareSuggestion(subject, icon),
+    ...(fixPaths === undefined ? {} : { fixPaths }),
   };
 }
 
@@ -486,6 +517,14 @@ const FA_GLYPH_LABELS: Readonly<Record<string, string>> = {
   "fa-magnifying-glass": "Search",
   "fa-bell": "Notifications",
   "fa-user": "Account",
+  // V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT: extended after the field
+  // report cited two icon-only `<button>` patterns whose glyphs were
+  // common in shipping projects but absent from the map (simple-timer
+  // `fa-play`, password-generator `fa-clipboard`). Without these
+  // entries the FA-aware fix prose did not fire and the button fell
+  // through to the generic "<button>Close</button>" placeholder.
+  "fa-play": "Play",
+  "fa-clipboard": "Copy",
 };
 
 /**
@@ -647,4 +686,226 @@ function buildIconAwareSuggestion(subject: string, icon: IconContext): string {
     return `${host} has no accessible name. Set value="Close" (or the button's action verb — Submit, Save, Delete), or add aria-label="Close". For input type="submit"/"reset" a non-empty value is the canonical name source.`;
   }
   return `${host} is empty. Add visible text — e.g., <${subject}>Close</${subject}> — or aria-label="Close" for icon-only variants. Replace "Close" with the button's action verb (Submit, Save, Delete, etc.), and use aria-labelledby="<id>" when the label already exists as visible text elsewhere in the DOM.`;
+}
+
+// ---------------------------------------------------------------------------
+// FA-icon mechanical edit (V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT).
+//
+// When the unnamed `<button>` / `role="button"` element wraps an
+// `<i class="(fa|fas|far|fab) fa-<glyph>">` whose glyph is in
+// FA_GLYPH_LABELS, we ship a deterministic `fixPaths.primary.edit` that
+// inserts ` aria-label="<derived>"` into the host's open tag — so
+// `suggest_fix` returns `kind: "edit"` and matches the prose ("Primary
+// fix: aria-label=\"Close\"") rather than `kind: "guidance"`.
+//
+// The open-tag boundary scanner is duplicated locally rather than
+// extracted to a shared helper to honor the cross-turn note for
+// V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY (Turn 9 owns the helper
+// extraction). Mirrors the same private duplication in
+// `src/rules/forms/autocomplete-missing.ts` and
+// `src/rules/document/lang-attribute.ts`.
+// ---------------------------------------------------------------------------
+
+function buildFaIconFixPathsHtml(
+  element: HtmlElement,
+  source: string,
+  icon: IconContext,
+): FixPaths | undefined {
+  if (icon.kind !== "fa-icon") return undefined;
+  const tag = element.tagName.toLowerCase();
+  const edit = buildAriaLabelInsertEdit(
+    element.range.start,
+    element.range.end,
+    source,
+    tag,
+    icon.label,
+    "html",
+  );
+  if (edit === null) return undefined;
+  return {
+    primary: {
+      label: `add aria-label="${icon.label}" to <${tag}>`,
+      edit,
+    },
+    alternatives: [],
+  };
+}
+
+function buildFaIconFixPathsJsx(
+  element: JsxElement,
+  source: string,
+  icon: IconContext,
+): FixPaths | undefined {
+  if (icon.kind !== "fa-icon") return undefined;
+  // JSX preserves the tagName casing the author wrote (e.g. `button`,
+  // `Button`, `Slot`); the open-tag scanner matches the literal tag
+  // name in source so case-as-authored is correct.
+  const tag = element.tagName;
+  const edit = buildAriaLabelInsertEdit(
+    element.range.start,
+    element.range.end,
+    source,
+    tag,
+    icon.label,
+    "jsx",
+  );
+  if (edit === null) return undefined;
+  return {
+    primary: {
+      label: `add aria-label="${icon.label}" to <${tag}>`,
+      edit,
+    },
+    alternatives: [],
+  };
+}
+
+/**
+ * Slices the host element's open tag from `source` and inserts
+ * ` aria-label="<value>"` immediately before the tag-closing `>` (and
+ * before any trailing whitespace or self-closing `/`). Returns null
+ * when the slice doesn't begin with the expected `<tagName` open tag —
+ * the caller falls through to guidance instead of emitting a
+ * confidently-wrong edit.
+ *
+ * The `dialect` parameter routes brace-counting (JSX `{...expr}`
+ * attribute values can contain `>` characters that don't terminate the
+ * open tag) and is the same shape as the helper in
+ * `src/rules/forms/autocomplete-missing.ts`.
+ */
+function buildAriaLabelInsertEdit(
+  startOffset: number,
+  endOffset: number,
+  source: string,
+  tagName: string,
+  ariaLabel: string,
+  dialect: "html" | "jsx",
+): { readonly oldText: string; readonly newText: string } | null {
+  const raw = source.slice(startOffset, endOffset);
+  const afterTagName = scanExpectedTagName(raw, tagName);
+  if (afterTagName === -1) return null;
+  const gtIndex = scanOpenTagToGt(raw, afterTagName, dialect);
+  if (gtIndex === -1) return null;
+  const openTag = raw.slice(0, gtIndex + 1);
+  let insertAt = gtIndex;
+  if (raw.charCodeAt(insertAt - 1) === 0x2f /* / */) insertAt -= 1;
+  while (insertAt > 0 && isAsciiWhitespaceCharCode(raw.charCodeAt(insertAt - 1))) {
+    insertAt -= 1;
+  }
+  const before = raw.slice(0, insertAt);
+  const afterToGt = raw.slice(insertAt, gtIndex + 1);
+  return {
+    oldText: openTag,
+    newText: `${before} aria-label="${ariaLabel}"${afterToGt}`,
+  };
+}
+
+/**
+ * Returns the byte offset AFTER `<tagName` in `raw`, or -1 when `raw`
+ * does not start with `<tagName` followed by an open-tag-separator
+ * byte. Mirrors `scanHtmlTagName` in
+ * `src/rules/document/lang-attribute.ts` but parameterized over the
+ * tag name so this rule can verify both `<button` and arbitrary
+ * `role="button"` host tags (`<div role="button">`, `<a role="button">`).
+ */
+function scanExpectedTagName(raw: string, tagName: string): number {
+  const minLen = 1 + tagName.length + 1;
+  if (raw.length < minLen) return -1;
+  if (raw.charCodeAt(0) !== 0x3c /* < */) return -1;
+  for (let i = 0; i < tagName.length; i += 1) {
+    if (raw.charCodeAt(1 + i) !== tagName.charCodeAt(i)) return -1;
+  }
+  const next = raw.charCodeAt(1 + tagName.length);
+  // Open-tag separator: whitespace, `/`, or `>`. Any letter/digit means
+  // the source's tag name continues past the expected one (e.g.
+  // `<buttonGroup` vs the expected `button`), so this isn't the
+  // element we think it is.
+  if (
+    next === 0x20 ||
+    next === 0x09 ||
+    next === 0x0a ||
+    next === 0x0d ||
+    next === 0x2f ||
+    next === 0x3e
+  ) {
+    return 1 + tagName.length;
+  }
+  return -1;
+}
+
+/**
+ * Walks `raw` from `startIndex` until the `>` that closes the open
+ * tag, respecting single/double-quoted attribute values and (for the
+ * JSX dialect) `{...}` expression nesting. Returns the byte offset of
+ * the `>` or -1 if input runs out / a quote/brace stays unclosed.
+ *
+ * Same shape as `scanToOpenTagEnd` in
+ * `src/rules/forms/autocomplete-missing.ts` — duplicated locally per
+ * the cross-turn note (V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY owns
+ * shared-helper extraction in Turn 9). The per-byte transition is
+ * factored into {@link advanceOpenTagState} so this loop stays under
+ * the cognitive-complexity budget.
+ */
+function scanOpenTagToGt(raw: string, startIndex: number, dialect: "html" | "jsx"): number {
+  const state: OpenTagState = { inSingle: false, inDouble: false, braceDepth: 0 };
+  for (let i = startIndex; i < raw.length; i += 1) {
+    if (advanceOpenTagState(raw.charCodeAt(i), state, dialect) === "gt") return i;
+  }
+  return -1;
+}
+
+interface OpenTagState {
+  inSingle: boolean;
+  inDouble: boolean;
+  braceDepth: number;
+}
+
+/**
+ * Per-byte transition for {@link scanOpenTagToGt}. Mutates `state` in
+ * place (toggling the active quote flag, updating brace depth) and
+ * returns `"gt"` only when the byte is the open-tag-closing `>`
+ * outside any quote or `{...}` expression — the caller short-circuits
+ * the loop with the current index when it sees that signal. Quote- and
+ * brace-mode handling are extracted into siblings so each branch stays
+ * trivial under the cognitive-complexity ceiling.
+ */
+function advanceOpenTagState(
+  ch: number,
+  state: OpenTagState,
+  dialect: "html" | "jsx",
+): "gt" | "continue" {
+  if (state.inSingle) {
+    if (ch === 0x27) state.inSingle = false;
+    return "continue";
+  }
+  if (state.inDouble) {
+    if (ch === 0x22) state.inDouble = false;
+    return "continue";
+  }
+  if (state.braceDepth > 0) {
+    advanceBraceDepth(ch, state, dialect);
+    return "continue";
+  }
+  return enterTopLevelByte(ch, state, dialect);
+}
+
+function advanceBraceDepth(ch: number, state: OpenTagState, dialect: "html" | "jsx"): void {
+  if (dialect !== "jsx") return;
+  if (ch === 0x7b) state.braceDepth += 1;
+  else if (ch === 0x7d) state.braceDepth -= 1;
+}
+
+function enterTopLevelByte(
+  ch: number,
+  state: OpenTagState,
+  dialect: "html" | "jsx",
+): "gt" | "continue" {
+  if (ch === 0x3e) return "gt";
+  if (ch === 0x27) state.inSingle = true;
+  else if (ch === 0x22) state.inDouble = true;
+  else if (dialect === "jsx" && ch === 0x7b) state.braceDepth = 1;
+  return "continue";
+}
+
+function isAsciiWhitespaceCharCode(ch: number): boolean {
+  return ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d;
 }
