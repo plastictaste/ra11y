@@ -157,6 +157,71 @@ describe("checklist emits top-level `warnings` for silent-failure modes", () => 
   });
 });
 
+/**
+ * Q7-CHECKLIST-META-PARITY: `checklist` field reports showed responses
+ * that shipped only `stale_mcp_subprocess` in `warnings` (or no `meta`
+ * block at all) on bulk-template sites where `scan_project` on the
+ * same corpus surfaced `template_files_parsed_as_literal`,
+ * `parse_errors_present`, `extensions_skipped_no_parser`, etc. The
+ * cross-surface drift forced agents to call `scan_project` a second
+ * time to confirm what `checklist` already knew but didn't emit.
+ * Doctrine: "verbose meta is signal, not clutter" — the parity subset
+ * (configSource, scanned.root, rulesEvaluated, filesByExtension) is
+ * the minimum an agent needs to cross-check scan confidence without
+ * a second round trip. This invariant guards the propagation so the
+ * drift never reopens.
+ */
+describe("checklist meta + warnings parity with scan_project on the same input", () => {
+  it("emits the same warning code scan_project emits on the template-directives fixture", async () => {
+    // Both tools run on the same cwd; both must surface
+    // `template_files_parsed_as_literal` so the agent sees the
+    // honest "parse quality degraded" signal regardless of which
+    // surface it called.
+    const [spResponses, clResponses] = await Promise.all([
+      mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: TEMPLATE_FIXTURE })]),
+      mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: TEMPLATE_FIXTURE })]),
+    ]);
+    const sp = bodyOf(spResponses[1]) as { warnings?: readonly string[] };
+    const cl = bodyOf(clResponses[1]) as { warnings?: readonly string[] };
+    expect(Array.isArray(sp.warnings)).toBe(true);
+    expect(Array.isArray(cl.warnings)).toBe(true);
+    expect(sp.warnings).toContain("template_files_parsed_as_literal");
+    expect(cl.warnings).toContain("template_files_parsed_as_literal");
+  });
+
+  it("ships a meta block with configSource, scanned.root, rulesEvaluated, filesByExtension on every call", async () => {
+    // Doctrine: "verbose meta is signal, not clutter." The backlog-
+    // mandated minimum parity fields must be present on every checklist
+    // response (default mode — not gated behind `metaMode: "delta"`)
+    // so an agent cross-checking with scan_project sees the same
+    // scan-confidence telemetry on the same inputs.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "checklist", { cwd: TEMPLATE_FIXTURE }),
+    ]);
+    const body = bodyOf(responses[1]) as {
+      meta?: {
+        configSource?: string | null;
+        scanned?: { mode?: string; root?: string };
+        rulesEvaluated?: { loaded?: number; withEligibleInputs?: number; fired?: number };
+        filesByExtension?: Readonly<Record<string, number>>;
+      };
+    };
+    expect(body.meta).toBeDefined();
+    expect(body.meta?.scanned?.mode).toBe("project");
+    expect(typeof body.meta?.scanned?.root).toBe("string");
+    // `configSource` is `null` (no config resolved) rather than
+    // omitted — the field is always present so the agent can
+    // distinguish "no config" from "the shape dropped the field."
+    expect(body.meta?.configSource === null || typeof body.meta?.configSource === "string").toBe(
+      true,
+    );
+    expect(typeof body.meta?.rulesEvaluated?.loaded).toBe("number");
+    expect(typeof body.meta?.filesByExtension).toBe("object");
+    expect(body.meta?.filesByExtension).not.toBeNull();
+  });
+});
+
 describe("coverage emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires on a nonexistent cwd", async () => {
     const bogus = join("/path/that/does/not/exist", "ra11y-coverage-no-such-dir");

@@ -23,9 +23,11 @@ import {
   irrelevanceReason,
   isLikelyIrrelevant,
 } from "./manual-applicability.ts";
-import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
+import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
+import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
+import { scannedProject, type ScannedEnvelope } from "./scanned-envelope.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import { deriveTestableCriteria } from "./testable-criteria.ts";
@@ -584,6 +586,25 @@ export const checklistTool: McpTool = {
       new Set(result.violations.map((v) => v.location.filePath)),
     );
     const filesByExtension = countFilesByExtension(files);
+    // Q7-CHECKLIST-META-PARITY: emit the same `scanned` envelope
+    // `scan_project`/`coverage` use so an agent cross-referencing the
+    // scan-family surfaces sees the same `scanned.root` pointer on
+    // identical inputs. `coverage` uses `scannedProject(cwd)`
+    // unconditionally (its `paths` default is `[cwd]`); mirror that
+    // here so the three tools' scanned envelopes agree on the same
+    // project root without splitting shapes on whether `paths` was
+    // explicit.
+    const scanned = scannedProject(cwd);
+    // Q7-CHECKLIST-META-PARITY: probe the walk-up range for a project
+    // marker so `no_config_found` fires here on the same predicate
+    // `scan_project` uses. Without this, a tiny-repo-with-a-parent-
+    // package.json scan that fires the code on `scan_project` silently
+    // drops it here — the cross-surface drift the AI-first doctrine
+    // flags under "one tool call should answer 'what next?'". Cheap
+    // read-only walk; runs once per handler invocation, and only when
+    // the loader found no config (otherwise the probe result is unused).
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(cwd) : false;
     const metaField = buildChecklistMetaField({
       params,
       session,
@@ -595,6 +616,9 @@ export const checklistTool: McpTool = {
       enabledStandards: standards,
       level,
       cwd,
+      configSource: projectConfig.sourcePath,
+      scanned,
+      filesByExtension,
     });
     const warningsFragment = buildChecklistWarnings({
       files,
@@ -602,6 +626,8 @@ export const checklistTool: McpTool = {
       filesByExtension,
       violations: result.violations,
       nextCursor: page.paginationFields.nextCursor,
+      configSource: projectConfig.sourcePath,
+      configSearchSawProjectMarker,
       ...(perCriterionClamp ? { perCriterionClamp } : {}),
     });
     return textResult({
@@ -639,12 +665,30 @@ function buildChecklistWarnings(args: {
   readonly filesByExtension: Record<string, number>;
   readonly violations: ReturnType<typeof runScan>["result"]["violations"];
   readonly nextCursor: ChecklistCursor | undefined;
+  /**
+   * Q7-CHECKLIST-META-PARITY: the resolved `configSource` from the
+   * loaded project config. Threaded through so `no_config_found` fires
+   * here on the same predicate `scan_project` uses — without it the
+   * code silently drops on checklist even when scan_project surfaces
+   * it on the same cwd. `null` means the walk-up found nothing;
+   * `undefined` would mean the tool didn't attempt config resolution
+   * at all (not possible here — we always load the config).
+   */
+  readonly configSource: string | null;
+  /**
+   * Q7-CHECKLIST-META-PARITY: true when the walk-up from the scan root
+   * saw a `package.json` or `ra11y.config.*` marker. Pairs with
+   * `configSource === null` to gate `no_config_found` honestly — tiny
+   * demo directories without a parent project root never trip the code.
+   */
+  readonly configSearchSawProjectMarker: boolean;
   readonly perCriterionClamp?: { readonly requested: number; readonly applied: number };
 }): { readonly warnings?: readonly string[]; readonly warningsDetails?: unknown } {
   const derivative = buildDerivativeScanWarnings({
     filesScanned: args.files.length,
     rootSource: null,
-    configSource: undefined,
+    configSource: args.configSource,
+    configSearchSawProjectMarker: args.configSearchSawProjectMarker,
     analysisCoverage: args.analysisCoverageField.analysisCoverage,
     filesByExtension: args.filesByExtension,
     // Q4-WARNING-DOWNGRADE-NOISE: gate `template_files_parsed_as_literal`
@@ -715,13 +759,23 @@ function countFilesByExtension(files: readonly ParsedFile[]): Record<string, num
 }
 
 /**
- * Assembles the optional `meta` field for `checklist`. Emitted only
- * when `metaMode: "delta"` is requested so legacy callers see no shape
- * change (the tool had no `meta` block historically). Under delta mode
- * we collect scan-confidence telemetry (filesScanned, rulesEvaluated,
- * enabled standards, level, cwd) and hand it to the shared meta-cache
- * helper — repeat calls with the same signature collapse to a delta
- * keyed by `sessionRef`.
+ * Assembles the `meta` field for `checklist`. Always emitted now
+ * (Q7-CHECKLIST-META-PARITY) so an agent reading this response can
+ * cross-check scan-confidence telemetry against `scan_project` without
+ * a second round trip. The parity subset (configSource, scanned.root,
+ * rulesEvaluated, filesByExtension) is the backlog-mandated minimum:
+ * field reports showed bulk-template sites where `checklist` shipped
+ * no `meta` block at all while `scan_project` on the same corpus
+ * surfaced `template_files_parsed_as_literal`, `parse_errors_present`,
+ * `extensions_skipped_no_parser`, `source_language_unsupported` —
+ * cross-surface drift the AI-first doctrine names under "one tool call
+ * should answer 'what next?'" (verbose meta is scan-confidence signal,
+ * not clutter).
+ *
+ * Under `metaMode: "delta"` the shared meta-cache helper still collapses
+ * repeat calls with the same signature to a delta keyed by `sessionRef`;
+ * `applyMetaCacheMode` passes through unchanged in the default full
+ * mode.
  */
 function buildChecklistMetaField(args: {
   readonly params: Record<string, unknown>;
@@ -731,12 +785,17 @@ function buildChecklistMetaField(args: {
   readonly enabledStandards: readonly string[];
   readonly level: "A" | "AA" | "AAA";
   readonly cwd: string;
-}): { readonly meta?: Record<string, unknown> } {
-  if (readMetaMode(args.params) === "full") return {};
+  readonly configSource: string | null;
+  readonly scanned: ScannedEnvelope;
+  readonly filesByExtension: Record<string, number>;
+}): { readonly meta: Record<string, unknown> } {
   const fullMeta: Record<string, unknown> = {
     cwd: args.cwd,
     filesScanned: args.filesScanned,
+    scanned: args.scanned,
+    configSource: args.configSource,
     rulesEvaluated: args.rulesEvaluated,
+    filesByExtension: args.filesByExtension,
     standards: [...args.enabledStandards],
     level: args.level,
   };
