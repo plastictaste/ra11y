@@ -609,4 +609,220 @@ describe("rule semantics/landmark-main", () => {
       expect(v).toHaveLength(0);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Body-shape descriptor (Q7-LANDMARK-MAIN-REASON-IDENTICAL).
+  //
+  // The pre-fix message was identical across every fire on a single scan
+  // (18 fires, one identical sentence) — a fixed boilerplate sentence
+  // that gave the agent no per-finding evidence to triage with. The
+  // descriptor encodes the body's visible-direct-child tally + presence
+  // of sibling landmark elements (header / nav / footer / aside) into
+  // the message so two fires from the same rule on the same scan now
+  // disagree on text whenever the underlying body shape disagrees.
+  //
+  // Per the AI-first consumer model: reason-text enrichment only — the
+  // candidate stays in the primary list, severity stays "warning", no
+  // bucket. Encodes dismissal/triage signal per-finding.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("body-shape descriptor in missing-<main> message", () => {
+    it("inlines the visible direct-child count and tag tally", () => {
+      // Body has: header (landmark, counted once), 3 sibling sections,
+      // 1 footer (landmark) — 5 visible direct children. Top-3 tally
+      // sorted by count desc, ties alphabetical.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          "    <section>one</section>",
+          "    <section>two</section>",
+          "    <section>three</section>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "tally.html" },
+      );
+      expect(v).toHaveLength(1);
+      const message = v[0]?.message ?? "";
+      expect(message).toContain("Body has 5 visible direct children");
+      expect(message).toContain("3 section, 1 footer, 1 header");
+    });
+
+    it("names sibling landmark elements when present", () => {
+      // header + nav + footer present, no <main> — message should
+      // enumerate the existing landmarks so the agent reads "missing
+      // main is the only gap" rather than "page is structurally
+      // landmark-less".
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header><nav>top</nav></header>",
+          "    <div>content</div>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "with-landmarks.html" },
+      );
+      expect(v).toHaveLength(1);
+      const message = v[0]?.message ?? "";
+      expect(message).toContain("Other landmark elements present: header, nav, footer");
+    });
+
+    it("calls out the no-other-landmark case explicitly (branch E shape)", () => {
+      // theme-clock-style empty-structural-shell: body of decorative
+      // divs, no headings, no landmarks. The descriptor must say so
+      // explicitly — "no other landmark elements present" — because
+      // that absence is the strongest 1.3.1 signal in the file.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div class="container">',
+          '      <div class="needle hour"></div>',
+          '      <div class="needle minute"></div>',
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "clock.html" },
+      );
+      expect(v).toHaveLength(1);
+      const message = v[0]?.message ?? "";
+      expect(message).toContain("No other landmark elements present");
+      expect(message).toContain("AT users have no jump-to-content target");
+    });
+
+    it("excludes <script>/<style> from the visible-direct-child tally", () => {
+      // Body has: 1 div + 1 script + 1 style = 1 visible direct child.
+      // Script-only routes elsewhere, but a body with a single visible
+      // wrapper plus assets shouldn't claim 3 direct children.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <div class="app">x</div>',
+          '    <script src="a.js"></script>',
+          "    <style>.x{}</style>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "assets.html" },
+      );
+      expect(v).toHaveLength(1);
+      const message = v[0]?.message ?? "";
+      expect(message).toContain("Body has 2 visible direct children");
+      expect(message).not.toContain("script");
+      expect(message).not.toContain("style");
+    });
+
+    it("two pages with different body shapes produce different messages (the regression Q7 closes)", () => {
+      // The Q7 backlog item: 18 fires on a single scan all carried the
+      // identical sentence. Guard the inverse: two structurally
+      // different pages now produce structurally different messages.
+      const minimalPage = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <div>only thing</div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      const richPage = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <nav>n</nav>",
+          "    <article>one</article>",
+          "    <article>two</article>",
+          "    <article>three</article>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "b.html" },
+      );
+      expect(minimalPage).toHaveLength(1);
+      expect(richPage).toHaveLength(1);
+      expect(minimalPage[0]?.message).not.toBe(richPage[0]?.message);
+      // And the canonical "no <main> landmark" substring stays intact
+      // across both — fixture assertions keying off it stay green.
+      expect(minimalPage[0]?.message).toContain("no <main> landmark");
+      expect(richPage[0]?.message).toContain("no <main> landmark");
+    });
+
+    it("caps the tag tally at 3 kinds with a '+ N more' suffix", () => {
+      // Body with 5 distinct kinds — div + section + article + form +
+      // p — should surface the top-3 by count plus "+ 2 more" so the
+      // message stays bounded on degenerate shapes.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <div>1</div>",
+          "    <div>2</div>",
+          "    <section>3</section>",
+          "    <article>4</article>",
+          "    <form>5</form>",
+          "    <p>6</p>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "many-kinds.html" },
+      );
+      expect(v).toHaveLength(1);
+      const message = v[0]?.message ?? "";
+      expect(message).toContain("Body has 7 visible direct children");
+      // 2 div tops the tally; ties (1 article / 1 form / 1 header /
+      // 1 p / 1 section) sort alphabetically — top 3 = 2 div, 1
+      // article, 1 form. Remaining kinds = 3 (header, p, section).
+      expect(message).toContain("2 div, 1 article, 1 form");
+      expect(message).toContain("+ 3 more");
+    });
+
+    it("layout-partial branch also carries the body-shape descriptor when a body exists", () => {
+      // Jekyll _layouts/default.html canonical shape — body exists, so
+      // the descriptor should be appended after the partial-suffix.
+      // The backlog item targets the missing-<main> path; the partial
+      // branch is part of that path when a body is present, and the
+      // 18-identical-sentence problem applies equally there. Bodyless
+      // partials are exempt — there's no body to describe.
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          "    <div>content area</div>",
+          "    {{ content }}",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "default.html" },
+      );
+      expect(v).toHaveLength(1);
+      const message = v[0]?.message ?? "";
+      expect(message).toContain("layout wrapper or template partial");
+      expect(message).toContain("Body has");
+      expect(message).toContain("Other landmark elements present");
+    });
+  });
 });

@@ -29,6 +29,7 @@
 
 import { defineRule } from "../../api/plugin.ts";
 import {
+  directHtmlChildren,
   findHtmlElementsByTag,
   getHtmlAttribute,
   walkHtmlElements,
@@ -97,7 +98,7 @@ export const rule = defineRule({
 
     const mains = collectMainLandmarks(doc);
     if (mains.length === 0) {
-      emitMissingMain(ctx, bodies[0], layoutOrPartial);
+      emitMissingMain(ctx, bodies[0], doc, layoutOrPartial);
       return;
     }
     if (mains.length > 1) emitDuplicateMains(ctx, mains);
@@ -119,11 +120,17 @@ function collectMainLandmarks(doc: HtmlDocument): readonly HtmlElement[] {
  * (e.g. Jekyll `_includes/top.html` with `<html>` + `<head>` but no
  * body close). Anchors the finding at the first `<html>` tag when one
  * exists — same line the user reads first — or falls back to 1:1.
+ *
+ * No body-shape descriptor is appended here: the bodyless-partial
+ * branch genuinely has no body to describe, and the partial-suffix
+ * already names the dismissal hatch (the composition directive).
  */
 function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
   const htmlElements = findHtmlElementsByTag(doc, "html");
   const anchor = htmlElements[0];
-  ctx.emit(buildLayoutPartialEmit(anchor?.loc.start.line ?? 1, anchor?.loc.start.column ?? 1));
+  ctx.emit(
+    buildLayoutPartialEmit(anchor?.loc.start.line ?? 1, anchor?.loc.start.column ?? 1, ""),
+  );
 }
 
 /**
@@ -132,23 +139,33 @@ function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
  * `_layouts/default.html` with `{{ content }}` and no local <main>),
  * the emit is enriched with `couldBeWrongBecause` instead of firing at
  * full confidence — the <main> may live in the included child.
+ *
+ * Both branches inject a per-file body-shape descriptor (see
+ * {@link describeBodyShape}) so the message text varies by file: the
+ * 18-fire-identical-sentence shape (Q7-LANDMARK-MAIN-REASON-IDENTICAL)
+ * collapsed dismissal/triage signal — every fire on a single scan
+ * produced the same prose. Encoding the body's direct-child tally and
+ * the sibling-landmark presence into the message gives the agent
+ * per-finding evidence it can act on without re-reading the source.
  */
 function emitMissingMain(
   ctx: FileContext,
   body: HtmlElement | undefined,
+  doc: HtmlDocument,
   layoutOrPartial: boolean,
 ): void {
   const line = body?.loc.start.line ?? 1;
   const column = body?.loc.start.column ?? 1;
+  const shape = body ? describeBodyShape(body, doc) : "";
   if (layoutOrPartial) {
-    ctx.emit(buildLayoutPartialEmit(line, column));
+    ctx.emit(buildLayoutPartialEmit(line, column, shape));
     return;
   }
+  const shapeSuffix = shape ? ` ${shape}` : "";
   ctx.emit({
     severity: "warning",
     location: { filePath: "", line, column },
-    message:
-      "Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.",
+    message: `Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.${shapeSuffix}`,
     suggestion:
       'Document has no <main>. Wrap the primary content region — typically the main article/content below the header/nav — in <main> or add role="main" to an existing container. Do not wrap the <header>, <nav>, or <footer> regions in the main landmark.',
   });
@@ -207,6 +224,7 @@ const PARTIAL_OR_LAYOUT_SUFFIX =
 function buildLayoutPartialEmit(
   line: number,
   column: number,
+  bodyShape: string,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
@@ -214,10 +232,11 @@ function buildLayoutPartialEmit(
   suggestion: string;
   couldBeWrongBecause: readonly string[];
 } {
+  const shapeSuffix = bodyShape ? ` ${bodyShape}` : "";
   return {
     severity: "warning",
     location: { filePath: "", line, column },
-    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}`,
+    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}${shapeSuffix}`,
     suggestion:
       "Document has no <main> in this file, but it looks like a layout wrapper or template partial — the <main> may be authored in the included/yielded file. Verify against the parent layout or partial chain; if this file is the root layout, add <main> around the composition point (typically surrounding the {{ content }} / <%= yield %> / @RenderBody site). Use a <!-- ra11y-disable semantics/landmark-main --> pragma if the composition is deliberate and the <main> lives in sibling files.",
     couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE],
@@ -285,6 +304,125 @@ function isMainLandmark(el: HtmlElement): boolean {
   if (el.tagName.toLowerCase() === "main") return true;
   const role = getHtmlAttribute(el, "role");
   return role !== null && role.toLowerCase() === "main";
+}
+
+/**
+ * Tags that contribute no rendered output to the page — excluded from
+ * the body-shape direct-child tally so a body whose only direct
+ * children are `<script>` / `<style>` does not produce an empty
+ * "(0 visible direct children)" descriptor. Mirrors the
+ * `NON_VISIBLE_TAGS` set in `src/engine/layout-partial.ts` (kept local
+ * here so changes to one don't silently couple to the other — the
+ * descriptor is presentation, the predicate is policy).
+ */
+const NON_VISIBLE_DIRECT_CHILD_TAGS: ReadonlySet<string> = new Set([
+  "script",
+  "style",
+  "noscript",
+  "template",
+]);
+
+/**
+ * Sibling-landmark tags surfaced in the body-shape descriptor when
+ * present. Tells the agent at a glance whether the page already has
+ * other landmark structure (so a missing `<main>` is the only gap)
+ * or whether it has zero landmarks of any kind (so the page is
+ * structurally landmark-less, a stronger 1.3.1 signal).
+ */
+const SIBLING_LANDMARK_TAGS: readonly string[] = ["header", "nav", "footer", "aside"];
+
+/**
+ * Builds a per-file body-shape descriptor that fills in the
+ * dismissal/triage signal a fixed boilerplate sentence cannot — the
+ * 18-fire-identical-message shape (Q7-LANDMARK-MAIN-REASON-IDENTICAL)
+ * left every fire on a single scan reading the same prose, so the agent
+ * had to re-read each cited file to triage. The descriptor encodes:
+ *
+ *   1. Total visible direct-child count of `<body>` (excludes
+ *      `<script>` / `<style>` / `<noscript>` / `<template>` per
+ *      {@link NON_VISIBLE_DIRECT_CHILD_TAGS}). Distinguishes "body
+ *      with one wrapper div" from "body with twelve sibling sections".
+ *   2. Top tag-name tally for those visible direct children
+ *      (descending by count, ties broken alphabetically, capped at 3
+ *      kinds). Matches the backlog phrasing "body contains [n] sibling
+ *      sections / divs / forms".
+ *   3. Sibling-landmark presence anywhere in the document — either
+ *      "other landmark elements present: header, nav" (page already
+ *      has structure, missing `<main>` is the only gap) or "no other
+ *      landmark elements present" (page is structurally
+ *      landmark-less; AT users have nothing to jump to).
+ *
+ * Pure function over the parsed document — same shape semantics as
+ * `inspectBody()` in `src/engine/layout-partial.ts`. Returns `""` when
+ * the body has zero visible direct children AND no sibling landmarks
+ * (degenerate input the caller can render without a suffix).
+ */
+function describeBodyShape(body: HtmlElement, doc: HtmlDocument): string {
+  const counts = new Map<string, number>();
+  let visibleDirectChildren = 0;
+  for (const child of directHtmlChildren(body)) {
+    if (child.kind !== "HtmlElement") continue;
+    const tag = child.tagName.toLowerCase();
+    if (NON_VISIBLE_DIRECT_CHILD_TAGS.has(tag)) continue;
+    visibleDirectChildren += 1;
+    counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+
+  const siblingLandmarks = collectSiblingLandmarks(doc);
+
+  if (visibleDirectChildren === 0 && siblingLandmarks.length === 0) return "";
+
+  const parts: string[] = [];
+  if (visibleDirectChildren > 0) {
+    const tally = formatTagTally(counts);
+    const noun = visibleDirectChildren === 1 ? "child" : "children";
+    parts.push(`Body has ${visibleDirectChildren} visible direct ${noun} (${tally}).`);
+  }
+  if (siblingLandmarks.length > 0) {
+    parts.push(`Other landmark elements present: ${siblingLandmarks.join(", ")}.`);
+  } else {
+    parts.push(
+      "No other landmark elements present (no <header>, <nav>, <footer>, or <aside>) — AT users have no jump-to-content target anywhere on the page.",
+    );
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Collects the sibling-landmark tag names that appear anywhere in the
+ * document, in the canonical order from {@link SIBLING_LANDMARK_TAGS}.
+ * Walks the whole tree (not just `<body>` direct children) because
+ * authored HTML often nests landmarks inside layout wrappers and a
+ * presence-only signal stays correct across nesting depth.
+ */
+function collectSiblingLandmarks(doc: HtmlDocument): readonly string[] {
+  const present = new Set<string>();
+  for (const el of walkHtmlElements(doc)) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "header" || tag === "nav" || tag === "footer" || tag === "aside") {
+      present.add(tag);
+    }
+  }
+  return SIBLING_LANDMARK_TAGS.filter((tag) => present.has(tag));
+}
+
+/**
+ * Formats the visible-direct-child tag tally as "3 div, 1 header, 1
+ * footer" — descending by count, ties broken alphabetically, capped
+ * at 3 kinds with a `"+ N more"` suffix when more kinds exist. The
+ * cap keeps the message bounded on shapes like a body with 8
+ * different one-off children; the count itself stays in the leading
+ * `Body has N visible direct children` count so no signal is lost.
+ */
+function formatTagTally(counts: ReadonlyMap<string, number>): string {
+  const entries = [...counts.entries()].sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return a[0].localeCompare(b[0]);
+  });
+  const TOP = 3;
+  const head = entries.slice(0, TOP).map(([tag, count]) => `${count} ${tag}`);
+  if (entries.length > TOP) head.push(`+ ${entries.length - TOP} more`);
+  return head.join(", ");
 }
 
 // `looksLikeFullPage` lives in `src/engine/layout-partial.ts` so that
