@@ -115,20 +115,19 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
         expect(["high", "medium", "low"]).toContain(c.confidence);
       }
 
-      // Cross-standard dedup proof: the media-alternatives finder emits
-      // its six `criterionIds` at the <audio>'s (line, column, reason)
-      // tuple. The surfaced entry folds them into one row with a
-      // sorted `criteria` array containing wcag22:1.2.1 (along with
-      // its 2.1/section508/en301549 equivalents if they all target
-      // that tag).
+      // Spec-correctness proof: <audio> is audio-only content and only
+      // applies to wcag22:1.2.1 (Audio-only and Video-only Prerecorded).
+      // The default scan uses standards: ["wcag22"], so the
+      // audio candidate's criteria array contains exactly "wcag22:1.2.1".
+      // It must NOT contain wcag22:1.2.3 or wcag22:1.2.5 — those are
+      // scoped to synchronized media (video+audio track), not audio-only.
       const audioCandidate = candidates.find((c) => c.criteria.includes("wcag22:1.2.1"));
       expect(audioCandidate).toBeDefined();
       if (!audioCandidate) return;
-      // The finder declares three WCAG 2.2 criteria (1.2.1 + 1.2.3 +
-      // 1.2.5) plus their WCAG 2.1 equivalents, keyed at the same
-      // (file, line, column, reason) tuple — dedup collapses them
-      // into a single entry with ≥ 2 criteria.
-      expect(audioCandidate.criteria.length).toBeGreaterThanOrEqual(2);
+      expect(audioCandidate.criteria.includes("wcag22:1.2.3")).toBe(false);
+      expect(audioCandidate.criteria.includes("wcag22:1.2.5")).toBe(false);
+      // At least wcag22:1.2.1 must be present (surface, don't suppress).
+      expect(audioCandidate.criteria.length).toBeGreaterThanOrEqual(1);
     });
   });
 

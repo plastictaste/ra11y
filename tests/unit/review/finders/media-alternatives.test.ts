@@ -3,7 +3,7 @@
  * (wcag22:1.2.1 / 1.2.3 / 1.2.5 and wcag21 equivalents — Audio-only,
  * Video-only, Audio-description/Media-alternative, Audio-description).
  *
- * Pins two contracts:
+ * Pins three contracts:
  *
  *   1. DOM-origin extension gate: `.js` / `.ts` files get routed through
  *      `parseTsx` and see the finder via the `.js → .jsx` alias in
@@ -25,6 +25,15 @@
  *      embedded media (1.2.2) remain surfaced as a deterministic
  *      warning by the `media/video-captions-missing` rule, which lives
  *      at the violations layer and is unaffected by this contract.
+ *
+ *   3. Audio criterion fan scope (Q7-CHECKLIST-AUDIO-VS-VIDEO-CRITERION-FAN):
+ *      WCAG 1.2.3 (Audio Description or Media Alternative) and 1.2.5
+ *      (Audio Description) are normatively scoped to *synchronized media*
+ *      only — content that has both a video track and an audio track.
+ *      A bare `<audio>` element is audio-only content; emitting 1.2.3 and
+ *      1.2.5 candidates for it is a spec-incorrect overclaim. The finder
+ *      must emit 1.2.1 only for `<audio>` and the full 1.2.1/1.2.3/1.2.5
+ *      fan-out for `<video>`.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -74,9 +83,11 @@ describe("review/media-alternatives — DOM-origin extension gate", () => {
     // finder must skip (see the iframe-non-emission contract).
     const source = loadFixture("bad", "video-in-html.html");
     const out = runFinder(finder, source, { filePath: "pages/demo.html" });
-    // 2 tags (<video>, <audio>) × 6 criterion IDs = 12. The iframe
+    // <video> × 6 criterion IDs + <audio> × 2 criterion IDs = 8.
+    // 1.2.3 and 1.2.5 are synchronized-media criteria — they do not
+    // apply to the <audio> element (audio-only content). The iframe
     // contributes nothing — see the second describe block.
-    expect(out.length).toBe(12);
+    expect(out.length).toBe(8);
     const tags = new Set<string>();
     for (const c of out) {
       const reason = c.reason;
@@ -167,5 +178,71 @@ describe("review/media-alternatives — iframe non-emission (V1-LIKELY-IRRELEVAN
     `;
     const out = runFinder(finder, source, { filePath: "src/Embed.jsx" });
     expect(out.length).toBe(0);
+  });
+});
+
+describe("review/media-alternatives — audio criterion fan scope (Q7-CHECKLIST-AUDIO-VS-VIDEO-CRITERION-FAN)", () => {
+  // WCAG 1.2.3 and 1.2.5 are scoped to synchronized media (content
+  // with both a video track and an audio track). A bare <audio>
+  // element is audio-only content. Emitting 1.2.3 or 1.2.5 candidates
+  // for <audio> is spec-incorrect. The finder must emit only 1.2.1
+  // (and its wcag21 equivalent) for audio elements.
+
+  it("emits only wcag22:1.2.1 and wcag21:1.2.1 for a bare <audio> element (HTML)", () => {
+    const source = `<!doctype html><html lang="en"><body>
+  <audio src="/episode.mp3" controls></audio>
+</body></html>`;
+    const out = runFinder(finder, source, { filePath: "pages/podcast.html" });
+    const criterionIds = out.map((c) => c.criterionId).sort();
+    // Only 1.2.1 criteria — no 1.2.3, no 1.2.5
+    expect(criterionIds).toEqual(["wcag21:1.2.1", "wcag22:1.2.1"]);
+  });
+
+  it("does NOT emit wcag22:1.2.3 for a bare <audio> element (HTML)", () => {
+    const source = `<!doctype html><html lang="en"><body>
+  <audio src="/interview.mp3" controls></audio>
+</body></html>`;
+    const out = runFinder(finder, source, { filePath: "pages/interview.html" });
+    const ids = new Set(out.map((c) => c.criterionId));
+    expect(ids.has("wcag22:1.2.3")).toBe(false);
+  });
+
+  it("does NOT emit wcag22:1.2.5 for a bare <audio> element (HTML)", () => {
+    const source = `<!doctype html><html lang="en"><body>
+  <audio src="/lecture.mp3" controls></audio>
+</body></html>`;
+    const out = runFinder(finder, source, { filePath: "pages/lecture.html" });
+    const ids = new Set(out.map((c) => c.criterionId));
+    expect(ids.has("wcag22:1.2.5")).toBe(false);
+  });
+
+  it("emits all 6 criteria for a <video> element (HTML)", () => {
+    // <video> may be video-only (1.2.1) or synchronized media (1.2.3, 1.2.5).
+    // All three criterion pairs must surface so the reviewer can determine
+    // which SC applies based on whether the video has an audio track.
+    const source = `<!doctype html><html lang="en"><body>
+  <video src="/demo.mp4" controls></video>
+</body></html>`;
+    const out = runFinder(finder, source, { filePath: "pages/demo.html" });
+    const ids = new Set(out.map((c) => c.criterionId));
+    expect(ids.has("wcag22:1.2.1")).toBe(true);
+    expect(ids.has("wcag21:1.2.1")).toBe(true);
+    expect(ids.has("wcag22:1.2.3")).toBe(true);
+    expect(ids.has("wcag21:1.2.3")).toBe(true);
+    expect(ids.has("wcag22:1.2.5")).toBe(true);
+    expect(ids.has("wcag21:1.2.5")).toBe(true);
+    expect(out.length).toBe(6);
+  });
+
+  it("emits only wcag22:1.2.1 and wcag21:1.2.1 for a JSX <audio> element", () => {
+    // Same contract on the JSX path: <audio> is audio-only content.
+    const source = `
+      export function PodcastPlayer({ src }) {
+        return <audio src={src} controls />;
+      }
+    `;
+    const out = runFinder(finder, source, { filePath: "src/PodcastPlayer.tsx" });
+    const criterionIds = out.map((c) => c.criterionId).sort();
+    expect(criterionIds).toEqual(["wcag21:1.2.1", "wcag22:1.2.1"]);
   });
 });
