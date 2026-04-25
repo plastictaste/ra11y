@@ -120,7 +120,13 @@ export const scanProjectTool: McpTool = {
           type: "array",
           items: { type: "string" },
           description:
-            'Paths to scan in addition to the auto-discovered tree, with `.gitignore` and default build-dir skips (`dist`, `build`, `out`, `.next`, …) bypassed. Use to include post-compile CSS/HTML that Tailwind or the bundler produces — e.g. `["dist/assets"]` — so color-contrast and focus-visible rules have real styles to evaluate. User `exclude` patterns still apply. Relative paths resolve from `cwd`.',
+            'Paths to scan in addition to the auto-discovered tree, with `.gitignore` and default build-dir skips (`dist`, `build`, `out`, `.next`, …) bypassed. Use to include post-compile CSS/HTML that Tailwind or the bundler produces — e.g. `["dist/assets"]` — so color-contrast and focus-visible rules have real styles to evaluate. User `exclude` patterns still apply. Relative paths resolve from `cwd`. This flag only ADDS files; to scope a project scan to a subdirectory, use `restrictToPaths` instead.',
+        },
+        restrictToPaths: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Restrict the scan to files at or beneath the listed paths. Discovery still walks the full project (so `.gitignore`, default ignores, and configured excludes apply uniformly), then the resulting file set is intersected with these paths. Use to scope a project scan to one or more subdirectories without sacrificing the project-aware shape of `scan_project` (config resolution, root-source telemetry, baseline probe, paging) — the alternative `scan` tool has a different response shape and no paging. Each entry may be a directory (matches every parseable file beneath it) or a single file. Relative paths resolve from `cwd`. Combines with `additionalPaths`: any `additionalPaths` files added to the merged set are intersected too. When the intersection is empty, the response carries the `restrict_to_paths_no_matches` warning so the caller can distinguish "scoped scan with nothing to do" from "the paths did not match."',
         },
         limit: {
           type: "number",
@@ -177,7 +183,20 @@ export const scanProjectTool: McpTool = {
     const additionalPaths = strArrayParam(params, "additionalPaths") ?? [];
     const additionalFiles =
       additionalPaths.length > 0 ? await parseExplicitPaths(additionalPaths, session, root) : [];
-    const files = mergeFilesByPath(baseFiles, additionalFiles);
+    const mergedFiles = mergeFilesByPath(baseFiles, additionalFiles);
+    // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: see {@link applyRestrictToPaths}.
+    // Discovery still walked the full project so excludes / gitignore /
+    // default ignores apply uniformly; the restriction only scopes
+    // which discovered files reach the scanner. Empty-intersection
+    // signal rides on `meta.restrictToPathsApplied` + the
+    // `restrict_to_paths_no_matches` warning code, so a scoped scan
+    // with no matches doesn't read as a clean codebase (CLAUDE.md §1
+    // "Zero-output success is ambiguous failure").
+    const { files, restrictApplied, restrictAppliedField } = applyRestrictToPaths(
+      params,
+      mergedFiles,
+      root,
+    );
     const parseMs = ms(t0);
     if (files.length === 0) {
       logger.debug(`scan_project: 0 parseable files (${parseMs}ms discover)`);
@@ -188,6 +207,8 @@ export const scanProjectTool: McpTool = {
         rootSource,
         configSource: projectConfig.sourcePath,
         configSearchSawProjectMarker,
+        restrictAppliedField,
+        restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
       });
     }
     const autoDetect = params["autoDetectWrappers"] === true;
@@ -373,10 +394,11 @@ export const scanProjectTool: McpTool = {
       ...routeHintMetaFields(detectedFramework, catalogHint),
       ...additionalPathsScannedField({
         additionalPaths,
-        filesAdded: files.length - baseFiles.length,
+        filesAdded: mergedFiles.length - baseFiles.length,
         root,
         excludes: session.config.exclude,
       }),
+      ...restrictAppliedField,
       // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
       // `nextStepStructured` ship at the top level of the response, not
       // inside `meta`. They reach the assembler below via explicit
@@ -431,8 +453,14 @@ export const scanProjectTool: McpTool = {
           additionalPathsRedundant: isAdditionalPathsRedundant({
             additionalPaths,
             additionalFilesCount: additionalFiles.length,
-            filesAdded: files.length - baseFiles.length,
+            filesAdded: mergedFiles.length - baseFiles.length,
           }),
+          // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: empty intersection AND a
+          // non-empty pre-restrict set → the restriction is what cleared
+          // the file list (not "no parseable files anywhere"). Helper
+          // returns false when no restriction was supplied OR the
+          // restriction kept ≥1 file.
+          restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
           configSearchSawProjectMarker,
           scssUnresolvedVariableFiles,
         }),
@@ -534,6 +562,7 @@ function buildBaseWarningsForScanProject(args: {
   readonly storybookPresetActive: boolean;
   readonly sessionWrappersMismatchCwd: boolean;
   readonly additionalPathsRedundant: boolean;
+  readonly restrictToPathsEmpty: boolean;
   readonly configSearchSawProjectMarker: boolean;
   readonly scssUnresolvedVariableFiles: readonly string[];
 }): {
@@ -549,6 +578,7 @@ function buildBaseWarningsForScanProject(args: {
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     additionalPathsRedundant,
+    restrictToPathsEmpty,
     configSearchSawProjectMarker,
     scssUnresolvedVariableFiles,
   } = args;
@@ -606,6 +636,7 @@ function buildBaseWarningsForScanProject(args: {
     sessionWrappersMismatchCwd,
     templateDirectivesOverlap,
     additionalPathsRedundant,
+    restrictToPathsEmpty,
     configSearchSawProjectMarker,
     // Q-SHARED-META-ARRAY-BUDGET-CAP: scan-project is the primary
     // driver of meta-array bloat (CSS build-artifact tails, parse-
@@ -995,6 +1026,17 @@ function buildEmptyFilesResult(args: {
   readonly rootSource: "explicit" | "host-root" | "git" | "spawn-cwd";
   readonly configSource: string | null;
   readonly configSearchSawProjectMarker: boolean;
+  /**
+   * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: when the empty-files branch is
+   * reached because the caller's `restrictToPaths` intersected the
+   * non-empty discovered set down to zero, the meta payload + warning
+   * code must still ride on the response — otherwise the empty result
+   * reads as a clean codebase scan (CLAUDE.md §1 "Zero-output success
+   * is ambiguous failure"). The handler computes the restrict-applied
+   * record at the call site and threads it through.
+   */
+  readonly restrictAppliedField: { readonly restrictToPathsApplied?: RestrictApplied };
+  readonly restrictToPathsEmpty: boolean;
 }) {
   const { root, actualMode, fallbackReason, rootSource, configSource } = args;
   return textResult({
@@ -1010,6 +1052,7 @@ function buildEmptyFilesResult(args: {
       // doesn't parse." Surface the framework + hint so the agent has
       // the build command and emit dir inline.
       ...mergeEmptyResultHints(ssgEmptyResultMetaFields(root), catalogEmptyResultMetaFields(root)),
+      ...args.restrictAppliedField,
     },
     // Zero parsed files → the `no_config_found` warning drops by
     // construction via the `filesScanned < 10` gate; the probe flag is
@@ -1022,6 +1065,7 @@ function buildEmptyFilesResult(args: {
       analysisCoverage: undefined,
       filesByExtension: undefined,
       configSearchSawProjectMarker: args.configSearchSawProjectMarker,
+      ...(args.restrictToPathsEmpty ? { restrictToPathsEmpty: true } : {}),
     }),
   });
 }
@@ -1116,6 +1160,97 @@ function mergeFilesByPath<T extends { readonly filePath: string }>(
   const extras = secondary.filter((f) => !seen.has(f.filePath));
   if (extras.length === 0) return primary;
   return [...primary, ...extras];
+}
+
+/**
+ * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: intersects a discovered file set
+ * with the caller's `restrictToPaths`. A file is kept when ANY
+ * restriction path either equals it (file-level restriction) OR is a
+ * directory that contains it (directory prefix match). Restriction
+ * paths resolve against `root` so callers can pass them in the same
+ * shape they pass `cwd`-relative paths elsewhere — `["src/app"]`
+ * works the same way `cwd: "src/app"` would scope a fresh scan, but
+ * without forcing the agent to choose between paging-aware
+ * `scan_project` and the alternative `scan` tool.
+ *
+ * Directory matching is `startsWith(restrictDir + sep)` — the trailing
+ * separator gates `src/app/foo.tsx` against a stray match on a sibling
+ * directory like `src/app-utils/`. File matching uses exact equality
+ * because the discovery walker stamps files with their absolute paths.
+ *
+ * Empty `restrictToPaths` is the no-op shape; the caller short-circuits
+ * before invoking this helper, so the function assumes ≥1 entry.
+ */
+function intersectFilesWithRestrictPaths<T extends { readonly filePath: string }>(
+  files: readonly T[],
+  restrictToPaths: readonly string[],
+  root: string,
+): readonly T[] {
+  const absRestricts = restrictToPaths.map((p) => (isAbsolute(p) ? p : resolve(root, p)));
+  return files.filter((f) => {
+    for (const r of absRestricts) {
+      if (f.filePath === r) return true;
+      if (f.filePath.startsWith(`${r}/`)) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT entry point. Reads
+ * `restrictToPaths` off the caller's params and either returns the
+ * input set unchanged (no restriction supplied) or returns the
+ * intersection plus the `restrictToPathsApplied` meta payload. Lives
+ * in its own helper so the handler's cognitive-complexity score stays
+ * inside the lint cap — the conditional-binding pattern was the
+ * single edit that pushed it over.
+ */
+interface RestrictApplied {
+  readonly paths: readonly string[];
+  readonly filesBeforeRestrict: number;
+  readonly filesAfterRestrict: number;
+}
+
+function applyRestrictToPaths<T extends { readonly filePath: string }>(
+  params: Record<string, unknown>,
+  mergedFiles: readonly T[],
+  root: string,
+): {
+  readonly files: readonly T[];
+  readonly restrictApplied: RestrictApplied | undefined;
+  readonly restrictAppliedField: { readonly restrictToPathsApplied?: RestrictApplied };
+} {
+  const restrictToPaths = strArrayParam(params, "restrictToPaths") ?? [];
+  if (restrictToPaths.length === 0) {
+    return { files: mergedFiles, restrictApplied: undefined, restrictAppliedField: {} };
+  }
+  const intersected = intersectFilesWithRestrictPaths(mergedFiles, restrictToPaths, root);
+  const restrictApplied: RestrictApplied = {
+    paths: restrictToPaths,
+    filesBeforeRestrict: mergedFiles.length,
+    filesAfterRestrict: intersected.length,
+  };
+  return {
+    files: intersected,
+    restrictApplied,
+    restrictAppliedField: { restrictToPathsApplied: restrictApplied },
+  };
+}
+
+/**
+ * Drives the `restrict_to_paths_no_matches` warning. Returns true only
+ * when the restriction filter ran AND emptied a previously-non-empty
+ * set — the ambiguous case where a successful zero-files response would
+ * otherwise read as "clean codebase" rather than "the scope filter
+ * rejected everything." Returns false when no restriction was supplied,
+ * the restriction kept ≥1 file, OR the pre-restrict set was already
+ * empty (that case is `scanned_zero_files`, not the restriction).
+ * Extracted so the handler's cognitive-complexity score stays inside
+ * the lint cap.
+ */
+function didRestrictToPathsEmptyTheSet(applied: RestrictApplied | undefined): boolean {
+  if (applied === undefined) return false;
+  return applied.filesBeforeRestrict > 0 && applied.filesAfterRestrict === 0;
 }
 
 /**

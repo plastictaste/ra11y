@@ -140,6 +140,23 @@ export type ScanWarningCode =
   // the remediation differs (fix the path vs. drop the param). Companion
   // to `Q3-ADDITIONAL-PATHS-SKIP-REASON`; surface-don't-suppress doctrine.
   | "redundant_additional_paths"
+  // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: the caller passed
+  // `restrictToPaths` on `scan_project`, the pre-restrict file set was
+  // non-empty, AND the intersection emptied the set — i.e. none of the
+  // restriction entries matched any discovered file. Without this code,
+  // the response is a successful zero-files scan that reads as "clean
+  // codebase" when the reality is "the scope filter dropped everything"
+  // (the canonical CLAUDE.md §1 "Zero-output success is ambiguous
+  // failure" shape). The structured signal lives on
+  // `meta.restrictToPathsApplied` (paths + filesBeforeRestrict +
+  // filesAfterRestrict), so the bare code is enough — agents reading
+  // the warning channel branch on the presence and follow up via meta
+  // for the path list. Distinct from `scanned_zero_files`: that one
+  // fires when discovery itself produced zero files (cwd-typo,
+  // empty/exotic tree); this one fires when discovery produced files
+  // but the restriction filter rejected every one. The two never fire
+  // together — this code requires `filesBeforeRestrict > 0`.
+  | "restrict_to_paths_no_matches"
   // Q-SHARED-META-ARRAY-BUDGET-CAP: at least one of the path-list
   // meta arrays (`scannedBuildArtifacts.ungrouped`,
   // `analysisCoverage.parseErrorFiles`,
@@ -397,6 +414,18 @@ export interface WarningInputs {
    */
   readonly additionalPathsRedundant?: boolean;
   /**
+   * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: true when the caller supplied
+   * `restrictToPaths` on `scan_project`, the pre-restrict merged file
+   * set had ≥1 entry, AND the intersection with the restriction paths
+   * left zero files. Drives the `restrict_to_paths_no_matches` code.
+   * Pass `false` (or omit) when `restrictToPaths` was not supplied,
+   * the restriction did not empty the set, OR the pre-restrict set was
+   * already empty (that case is the `scanned_zero_files` shape, not
+   * the restriction). The predicate runs at the call site so the
+   * warnings module stays pure over its inputs.
+   */
+  readonly restrictToPathsEmpty?: boolean;
+  /**
    * Q4-WARNING-DOWNGRADE-NOISE: true when at least one emitted finding's
    * line sits inside a detected template-directive range in the same
    * file — i.e. the literal-template-parse actually polluted a finding
@@ -638,7 +667,8 @@ const VENDOR_CSS_DOMINATES_SHARE_THRESHOLD = 0.5;
  *     `tailwind_detected_css_undercounted`, `template_files_parsed_as_literal`,
  *     `no_hunks_in_comparison`, `storybook_preset_active`,
  *     `session_wrappers_configured_for_different_cwd`,
- *     `redundant_additional_paths`, `response_meta_truncated`,
+ *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
+ *     `response_meta_truncated`,
  *     `baseline_dry_run`, and
  *     `proposed_config_deprecated_use_suggested_config`. Each names a
  *     condition whose remediation is documented in the code's prose
@@ -923,6 +953,34 @@ function fileListDrivenCodes(inputs: WarningInputs): readonly ScanWarningCode[] 
 }
 
 /**
+ * Sub-chain extracted from {@link computeScanWarnings} to keep its
+ * cognitive complexity under the lint cap (same pattern as
+ * {@link contentDistributionCodes} and {@link fileListDrivenCodes}).
+ * These are the scan_project path-knob signals: `additionalPaths`
+ * resolved to files already in the discovered set
+ * (`redundant_additional_paths` — Q4-ADDITIONALPATHS-REDUNDANT) and
+ * `restrictToPaths` intersected the discovered file set down to zero
+ * entries (`restrict_to_paths_no_matches` — V1-ADDITIONAL-PATHS-SCOPE-
+ * RESTRICT). Both are warning-only; the structured signal lives on
+ * `meta.additionalPathsScanned` and `meta.restrictToPathsApplied`
+ * respectively.
+ *
+ * Order matches the original if-chain in {@link computeScanWarnings}
+ * verbatim for this subset so consumers reading `warnings[]` see a
+ * stable code sequence: redundant first, restrict-empty second.
+ */
+function pathShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (inputs.additionalPathsRedundant === true) {
+    out.push("redundant_additional_paths");
+  }
+  if (inputs.restrictToPathsEmpty === true) {
+    out.push("restrict_to_paths_no_matches");
+  }
+  return out;
+}
+
+/**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
  */
@@ -1030,16 +1088,12 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // is unchanged because the helper preserves the original sequence
   // and runs at the original insertion point.
   out.push(...contentDistributionCodes(inputs));
-  if (inputs.additionalPathsRedundant === true) {
-    // Q4-ADDITIONALPATHS-REDUNDANT: the caller's `additionalPaths`
-    // resolved to files that were already in the default-discovered
-    // set. The flag bought nothing — not because the paths were
-    // ignored (that case surfaces under
-    // `additionalPathsScanned.skipped`), but because the requested
-    // files were already going to be scanned. Warning-only; findings
-    // are unaffected.
-    out.push("redundant_additional_paths");
-  }
+  // Path-shape codes — see `pathShapeCodes`. The two scan_project
+  // path-knob signals (`additionalPaths` redundancy and
+  // `restrictToPaths` empty-intersection) are extracted into a helper
+  // so this function's cognitive complexity stays under the lint cap;
+  // the emitted order is unchanged.
+  out.push(...pathShapeCodes(inputs));
   if (inputs.metaArrayTruncated === true) {
     // Q-SHARED-META-ARRAY-BUDGET-CAP: at least one linear-with-input
     // meta path-array exceeded META_ARRAY_CAP and the head slice
@@ -1400,6 +1454,7 @@ type ScanMetaWarningArgs = {
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
   readonly templateDirectivesOverlap?: boolean;
   readonly additionalPathsRedundant?: boolean;
+  readonly restrictToPathsEmpty?: boolean;
   readonly configSearchSawProjectMarker?: boolean;
   readonly metaArrayTruncated?: boolean;
   readonly scssUnresolvedVariableFiles?: readonly string[];
@@ -1432,6 +1487,9 @@ function buildWarningInputsFromScanMeta(args: ScanMetaWarningArgs): WarningInput
     ...(args.additionalPathsRedundant === undefined
       ? {}
       : { additionalPathsRedundant: args.additionalPathsRedundant }),
+    ...(args.restrictToPathsEmpty === undefined
+      ? {}
+      : { restrictToPathsEmpty: args.restrictToPathsEmpty }),
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),

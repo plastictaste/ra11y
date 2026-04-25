@@ -48,9 +48,9 @@ Scans explicit paths. Required: `paths: string[]`. Optional: `standard`, `level`
 
 ### `scan_project`
 
-Scans the whole project. `paths` optional — omit and the server auto-promotes to the git root. `changedOnly: true` or `since: "<git-ref>"` scope to diffs for CI-on-diff workflows.
+Scans the whole project. `paths` optional — omit and the server auto-promotes to the git root. `changedOnly: true` or `since: "<git-ref>"` scope to diffs for CI-on-diff workflows. `additionalPaths: [...]` widens discovery to bypass `.gitignore`/build-dir skips for the listed paths (post-compile CSS/HTML, Tailwind output). `restrictToPaths: [...]` scopes the project scan to a subdirectory or file subset by intersecting the discovered file set after standard discovery — `meta.restrictToPathsApplied` reports the before/after counts and the response carries `restrict_to_paths_no_matches` if the intersection drops to zero (so a scoped scan with no matches doesn't read as a clean codebase).
 
-**Use when:** first-pass triage of a new repo, or a CI check on a PR.
+**Use when:** first-pass triage of a new repo, or a CI check on a PR. Use `restrictToPaths` when you want the project-aware shape (paging, baseline probe, root-source telemetry) but only need findings under a single subtree.
 
 ### `scan_file`
 

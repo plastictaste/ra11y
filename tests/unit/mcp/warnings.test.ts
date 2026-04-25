@@ -783,6 +783,46 @@ describe("warningsFromScanMeta", () => {
     expect(codesFalse).not.toContain("redundant_additional_paths");
   });
 
+  // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: `restrictToPaths` intersected
+  // the discovered file set down to zero entries — distinct from
+  // `scanned_zero_files` (discovery itself produced nothing) because
+  // the response carries a populated `meta.restrictToPathsApplied`
+  // showing the pre-restrict count was non-zero. Without the dedicated
+  // code, a scoped scan that matched no files reads as a clean
+  // codebase.
+  it("fires `restrict_to_paths_no_matches` when the flag is true", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 0,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      restrictToPathsEmpty: true,
+    });
+    expect(codes).toContain("restrict_to_paths_no_matches");
+  });
+
+  it("does not fire `restrict_to_paths_no_matches` when the flag is absent or false", () => {
+    const codesAbsent = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+    });
+    expect(codesAbsent).not.toContain("restrict_to_paths_no_matches");
+
+    const codesFalse = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      restrictToPathsEmpty: false,
+    });
+    expect(codesFalse).not.toContain("restrict_to_paths_no_matches");
+  });
+
   // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: the broader
   // `scanned_build_artifacts_present` already labels artifact
   // presence; this finer code names the minified subset
