@@ -1512,6 +1512,59 @@ describe("MCP tool: detect_native_wrappers", () => {
     expect(data.note).toBe("No parseable files found.");
   });
 
+  it("stamps emptyReason 'no-parseable-jsx-files' on a pure-HTML/CSS project with zero JSX-bearing files", async () => {
+    // Q7-DETECT-NATIVE-WRAPPERS-EMPTY-REASON-DISCRIMINATOR. A project
+    // with parseable HTML/CSS/MD files but no `.tsx`/`.jsx`/`.mdx`/
+    // `.astro` source has no surface where a wrapper could be defined.
+    // Previously this scenario fell through to the
+    // `"no-pascalcase-onclick-components"` branch — semantically close
+    // but the prose nudged "no wrappers here" rather than the honest
+    // "the detector has no JSX surface to look at." Worse, when the
+    // project happened to carry a single `.mdx` file (docs-only sites
+    // tag themselves as "pure HTML"), the detector's JSX-walker DID
+    // see PascalCase tags from MDX components but those legitimately
+    // never carry inline `onClick` — that hit the
+    // `no-jsx-onclick-candidates-found-but-opaque-components-present`
+    // branch, whose `nextStep` told the agent to inspect
+    // `analysisCoverage.opaqueCustomComponentNames` on a
+    // `scan_project` response, a list that didn't exist in the same
+    // sense for a docs-MDX codebase. The discriminator must be
+    // computed deterministically from the parsed-file extension set
+    // (per "Heuristic-mislabeled meta sub-fields are dishonest" in
+    // ai-first-consumer.md) — the JSX-bearing count is provable from
+    // the input.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-pure-html-"));
+    await writeFile(
+      joinPath(dir, "index.html"),
+      "<!doctype html><html><body><h1>Hi</h1></body></html>",
+    );
+    await writeFile(joinPath(dir, "about.html"), "<!doctype html><html><body><p>About</p></body></html>");
+    await writeFile(joinPath(dir, "styles.css"), "body { color: black; }");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      candidates: unknown[];
+      emptyReason?: string;
+      nextStep: string;
+    };
+    expect(data.candidates).toEqual([]);
+    expect(data.emptyReason).toBe("no-parseable-jsx-files");
+    // The prose nextStep MUST NOT reference the opaque-components
+    // inventory — that surface only makes sense when the JSX walker
+    // actually saw PascalCase tags. Sending the agent to a list that
+    // doesn't exist for this project is the silent-misroute the bug
+    // report flagged.
+    expect(data.nextStep).not.toContain("opaqueCustomComponentNames");
+    expect(data.nextStep).not.toContain("opaque components");
+  });
+
   it("stamps emptyReason 'no-jsx-onclick-candidates-found-but-opaque-components-present' when PascalCase components exist but none carry onClick", async () => {
     // The Astro/MDX case. The scanned JSX/TSX carries PascalCase
     // wrappers but none have inline `onClick` handlers — wrappers in
