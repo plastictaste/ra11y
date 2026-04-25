@@ -41,12 +41,18 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
       expect(violations[0]?.suggestion).toContain("1 does");
     });
 
-    it("a fragment file contains a single unlabeled <nav>", () => {
-      const source = ["<header>", "  <nav><a href='/a'>A</a></nav>", "</header>"].join("\n");
-      const violations = runRule(rule, source, { filePath: "_includes/header.html" });
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.message).toContain("Fragment");
-      expect(violations[0]?.suggestion).toContain("Primary");
+    it("a fragment file contains TWO unlabeled <form> elements", () => {
+      // Two same-type landmarks in one fragment is a deterministic
+      // duplicate — observable from the file, fires per instance.
+      const source = [
+        "<section>",
+        "  <form action='/search'>search</form>",
+        "  <form action='/subscribe'>subscribe</form>",
+        "</section>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "_includes/footer.html" });
+      expect(violations).toHaveLength(2);
+      expect(violations[0]?.message).toContain("<form>");
     });
 
     it("a full page has two unlabeled <aside> elements", () => {
@@ -151,6 +157,28 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
     it("a fragment contains a single labeled <nav>", () => {
       const source = ["<nav aria-label='Primary'>", "  <a href='/a'>A</a>", "</nav>"].join("\n");
       const violations = runRule(rule, source, { filePath: "_includes/nav.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a fragment file contains a single unlabeled <nav>", () => {
+      // Predicting that this partial composes alongside another
+      // unlabeled <nav> is a guess about an unseen layout — the
+      // rule no longer emits on a single observable instance. This
+      // case belongs on the review-candidate surface.
+      const source = ["<header>", "  <nav><a href='/a'>A</a></nav>", "</header>"].join("\n");
+      const violations = runRule(rule, source, { filePath: "_includes/header.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a fragment file contains a single unlabeled <aside>", () => {
+      const source = ["<aside>", "  <p>related links</p>", "</aside>"].join("\n");
+      const violations = runRule(rule, source, { filePath: "_includes/sidebar.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("a fragment file contains a single unlabeled <form>", () => {
+      const source = ["<form action='/search'>", "  <input type='text' />", "</form>"].join("\n");
+      const violations = runRule(rule, source, { filePath: "_includes/search.html" });
       expect(violations).toHaveLength(0);
     });
   });

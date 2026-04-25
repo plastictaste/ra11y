@@ -47,10 +47,11 @@
  * Fragment files (Jekyll `_includes/…`, Handlebars partials, Astro
  * slots) are skipped entirely — we can't see their composed parent,
  * so any top-level `<section>` might or might not end up under
- * `<body>` at render time. The duplicate-landmark rule handles
- * fragment-single-nav; section doesn't get the same treatment because
- * `<section>` is a weaker landmark and the false-positive cost is
- * higher.
+ * `<body>` at render time. Predicting composition is a heuristic
+ * (the symmetric twin of heuristic suppression), so the rule
+ * declines to fire on a single observable instance. Same reasoning
+ * gates `semantics/duplicate-landmark-unlabeled`, which only fires
+ * when ≥2 same-type landmarks are observable in the same file.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -123,8 +124,7 @@ export const rule = defineRule({
     // whether a top-level <section> composes into a landmark row, so
     // we don't fire. Over-triggering on fragments was the primary
     // concern on the backlog item. Shared predicate with landmark-main
-    // / duplicate-landmark-unlabeled / skip-link via `isHtmlFragment`
-    // in `src/engine/ast-helpers.ts`.
+    // / skip-link via `isHtmlFragment` in `src/engine/ast-helpers.ts`.
     if (isHtmlFragment(doc)) return;
 
     checkSections(ctx, doc);

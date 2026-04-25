@@ -1,0 +1,15 @@
+<!-- Jekyll-style _includes/footer.html fragment: no <html>/<body>
+     root, two unlabeled <form> elements observable in the same
+     file. Two same-type landmarks in one file is a deterministic
+     duplicate (observable from the file alone), so the rule fires
+     on every unlabeled instance. -->
+<section class="footer-cta">
+  <form action="/search">
+    <input type="search" name="q" />
+    <button type="submit">Search</button>
+  </form>
+  <form action="/subscribe">
+    <input type="email" name="email" />
+    <button type="submit">Subscribe</button>
+  </form>
+</section>
