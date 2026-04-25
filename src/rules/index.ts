@@ -41,6 +41,7 @@ import { rule as labelAdjacentMismatch } from "./forms/label-adjacent-mismatch.t
 import { rule as labelAdjacentUnassociated } from "./forms/label-adjacent-unassociated.ts";
 import { rule as labelForIdMismatch } from "./forms/label-for-id-mismatch.ts";
 import { rule as labelsRequired } from "./forms/labels-required.ts";
+import { rule as noSubmitControl } from "./forms/no-submit-control.ts";
 import { rule as nonEmptyLabel } from "./forms/non-empty-label.ts";
 import { rule as placeholderAsLabel } from "./forms/placeholder-as-label.ts";
 import { rule as radioGroupWithoutFieldset } from "./forms/radio-group-without-fieldset.ts";
@@ -151,6 +152,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   meaningByColorOnly,
   metaRefresh,
   nestedInteractive,
+  noSubmitControl,
   nonEmptyLabel,
   notObscured,
   orientationLock,
@@ -242,6 +244,7 @@ export {
   meaningByColorOnly,
   metaRefresh,
   nestedInteractive,
+  noSubmitControl,
   nonEmptyLabel,
   notObscured,
   orientationLock,

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Contact us</title></head>
+  <body>
+    <main>
+      <h1>Contact us</h1>
+      <!--
+        Broken-stub contact form: text inputs are present but no
+        <button>, no <input type="submit">, no <button type="submit">.
+        Pressing Enter on the input does nothing because there is no
+        default-type submit button to receive the implicit submission;
+        clicking the Reset button just clears the fields.
+      -->
+      <form action="/contact" method="post">
+        <label>Name <input type="text" name="name"></label>
+        <label>Email <input type="email" name="email"></label>
+        <label>Message <textarea name="message"></textarea></label>
+        <button type="button">Reset</button>
+      </form>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head><title>Contact us</title></head>
+  <body>
+    <main>
+      <h1>Contact us</h1>
+      <!--
+        Bare <button> defaults to type="submit" per the HTML spec, so
+        this form has a submit affordance even though the type isn't
+        spelled out. Enter-on-input also submits.
+      -->
+      <form action="/contact" method="post">
+        <label>Name <input type="text" name="name"></label>
+        <label>Email <input type="email" name="email"></label>
+        <label>Message <textarea name="message"></textarea></label>
+        <button>Send</button>
+      </form>
+    </main>
+  </body>
+</html>
