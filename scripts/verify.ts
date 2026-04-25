@@ -170,6 +170,19 @@ const CHECKS: readonly Check[] = [
   },
   { name: "docs-links", cmd: ["bun", "scripts/check-docs-links.ts"], precommit: false, full: true },
   { name: "kb-drift", cmd: ["bun", "scripts/check-kb-drift.ts"], precommit: false, full: true },
+  // mcp-dist-freshness is a build-output check: it self-skips when
+  // `dist/` is absent (typical local-dev state), so the precommit cost
+  // is near-zero. When `dist/` IS present (post-build, post-publish-
+  // rehearsal, CI rehydration), staleness against `src/` becomes a real
+  // signal — re-runs `Bun.build` to a tmp dir and diffs `cli.js` bytes.
+  // Always-runs (no `affectedBy`) because any src/ change can invalidate
+  // a previously-fresh dist; the self-skip handles the no-dist case.
+  {
+    name: "mcp-dist-freshness",
+    cmd: ["bun", "scripts/check-mcp-dist-freshness.ts"],
+    precommit: true,
+    full: true,
+  },
 ];
 
 const precommit = process.argv.includes("--precommit");
