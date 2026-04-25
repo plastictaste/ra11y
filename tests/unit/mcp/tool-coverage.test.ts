@@ -39,6 +39,12 @@ function write(path: string, content: string): void {
 
 interface CoverageEnvelope {
   readonly standardId: string;
+  readonly scanned?: {
+    readonly mode: string;
+    readonly root?: string;
+    readonly paths?: readonly string[];
+    readonly file?: string;
+  };
   readonly analysisCoverage?: Record<string, unknown>;
   readonly warnings?: readonly string[];
   readonly warningsDetails?: {
@@ -201,6 +207,37 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
     expect(typeof data.automatedCriteriaPassRate).toBe("number");
+  });
+
+  it("emits a `scanned` envelope matching scan_project's shape on the same cwd (V1-COVERAGE-SCANNED-POINTER-MISSING)", async () => {
+    // Cross-surface drift between two tools that both run a real scan
+    // over the same cwd is dishonest (`ai-first-consumer.md` "One tool
+    // call should answer 'what next?'"). An agent calling
+    // `coverage({ cwd })` to verify "are we done?" must see the same
+    // `scanned` pointer `scan_project({ cwd })` returns — otherwise
+    // the agent has to fire a second `scan_project` call just to
+    // confirm what `coverage` actually looked at.
+    write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+
+    const session = new McpSession();
+    const coverageResult = await findTool("coverage").handler({ cwd: dir }, session);
+    const scanResult = await findTool("scan_project").handler({ cwd: dir }, session);
+
+    expect(coverageResult.isError).toBeUndefined();
+    expect(scanResult.isError).toBeUndefined();
+
+    const coverage = parseEnvelope(coverageResult.content[0].text);
+    const scan = JSON.parse(scanResult.content[0].text) as {
+      readonly meta?: { readonly scanned?: { readonly mode: string; readonly root?: string } };
+    };
+
+    expect(coverage.scanned).toBeDefined();
+    expect(coverage.scanned?.mode).toBe("project");
+    // Top-level placement on `coverage` mirrors how `analysisCoverage`
+    // already escapes the meta block on this tool — load-bearing
+    // scan-confidence telemetry isn't gated by `metaMode`.
+    expect(scan.meta?.scanned).toBeDefined();
+    expect(coverage.scanned).toEqual(scan.meta?.scanned);
   });
 
   it("mirrors scan_project's analysisCoverage + warnings on the same cwd (cross-tool parity)", async () => {

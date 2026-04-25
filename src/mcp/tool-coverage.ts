@@ -13,6 +13,7 @@ import { detectApplicability, splitManualCriteria } from "./manual-applicability
 import { applyMetaCacheMode, metaModeSchema, readMetaMode } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import type { McpSession } from "./session.ts";
 import { deriveTestableCriteria } from "./testable-criteria.ts";
 import {
@@ -347,6 +348,18 @@ export const coverageTool: McpTool = {
       return textResult({
         ...entry,
         ...nextStep,
+        // V1-COVERAGE-SCANNED-POINTER-MISSING: `coverage` runs a real
+        // scan over the resolved cwd (see `runScan` above) — surface
+        // the same `scanned` envelope `scan_project` emits so an agent
+        // calling `coverage({ cwd })` to confirm "are we done?" can
+        // verify *what* was scanned without a separate `scan_project`
+        // round trip. Cross-surface drift between the two pointers is
+        // dishonest per ai-first-consumer.md ("One tool call should
+        // answer 'what next?'"). Top-level (not gated by `metaMode`)
+        // because it's load-bearing scan-confidence telemetry, mirror
+        // of how `analysisCoverage` already escapes the meta block on
+        // this tool.
+        scanned: scannedProject(cwd),
         ...analysisCoverageField,
         ...metaField,
         ...warnings,
