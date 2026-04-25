@@ -296,6 +296,45 @@ export interface Violation {
     readonly path: string;
     readonly line: number;
   }[];
+  /**
+   * In-file sibling rollup for findings the **rule itself** identified
+   * as N near-identical emissions on visually-grouped sibling elements
+   * sharing the same parent and the same `(tagName, type, attributes-
+   * modulo-id)` shape. Distinct from {@link vendorOccurrences} (cross-
+   * file copies stamped by the MCP assembly layer): `siblingInstances`
+   * is intra-file, intra-parent, and stamped by the rule at emit time
+   * because only the rule has the parent-DOM context.
+   *
+   * Canonical acute case (Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE): a
+   * one-time-code (OTP) cluster — six `<input class="otp" type="number"
+   * maxlength="1">` siblings sharing one parent, each missing a label.
+   * Without the rollup, `forms/labels-required` emitted six findings
+   * with identical `groupKey` and identical fix shape; with the rollup,
+   * one canonical finding ships with `siblingInstances: [{ line, id? },
+   * …]` naming every sibling the agent should fix together. Same
+   * pattern applies to quiz radio-button sets and day-of-week checkbox
+   * sets.
+   *
+   * Surface-don't-suppress: the collapsed siblings are fully enumerable
+   * via the list. The list always includes the canonical finding's own
+   * `(line, id?)` as the first entry so consumers can iterate without a
+   * second lookup. Threshold: ≥3 siblings sharing the fingerprint
+   * trigger collapse — singletons and pairs stay individually emitted
+   * because the rollup is meaningful only when the cluster has the
+   * shape of a deliberate visual group.
+   *
+   * Per CLAUDE.md §1 "Ambiguous field shapes are dishonest": omit
+   * `siblingInstances` entirely when no collapse happened; never emit
+   * `siblingInstances: []` as a sentinel. Forwarders use a conditional
+   * spread.
+   *
+   * See `src/rules/forms/labels-required.ts` for the canonical emit
+   * site and the fingerprint recipe.
+   */
+  readonly siblingInstances?: readonly {
+    readonly line: number;
+    readonly id?: string;
+  }[];
 }
 
 /**

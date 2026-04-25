@@ -218,6 +218,26 @@ export interface AgentFinding {
     readonly path: string;
     readonly line: number;
   }[];
+  /**
+   * In-file sibling rollup mirroring
+   * {@link import("../../types/violation.ts").Violation#siblingInstances}.
+   * Stamped by a rule (currently `forms/labels-required`) when ≥3
+   * direct-child sibling controls share the same parent and the same
+   * `(tagName, type, attributes-modulo-id)` fingerprint and would
+   * otherwise emit N near-identical findings — collapsed into one
+   * canonical finding whose list enumerates every sibling. The list
+   * always includes the canonical finding's own `(line, id?)` as the
+   * first entry so consumers can iterate without a second lookup.
+   *
+   * Surface-don't-suppress: collapsed siblings are fully enumerable via
+   * this list. Present-when-meaningful — omitted (never `[]`) for
+   * singleton findings, per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest."
+   */
+  readonly siblingInstances?: readonly {
+    readonly line: number;
+    readonly id?: string;
+  }[];
 }
 
 export interface AgentFile {

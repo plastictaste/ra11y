@@ -716,7 +716,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // Three orphan inputs fire `forms/labels-required` with the
     // identical short-template description (no per-finding
     // interpolation), so the hoist's ≥2-duplicate threshold reliably
-    // engages on this fixture.
+    // engages on this fixture. Each input carries a DIFFERENT `type`
+    // so the Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE fingerprint
+    // (`tagName, type, attributes-modulo-id`) differs across siblings
+    // and the rollup does not engage — three distinct findings still
+    // fire, exercising the fix-description hoist as intended.
     const dir = await mkdtemp(join(tmpdir(), "ra11y-fixdesc-hoist-"));
     try {
       const fixturePath = join(dir, "form.html");
@@ -727,8 +731,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
 <head><title>Form</title></head>
 <body>
   <input type="text">
-  <input type="text">
-  <input type="text">
+  <input type="email">
+  <input type="search">
 </body>
 </html>
 `,

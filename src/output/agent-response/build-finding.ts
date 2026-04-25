@@ -242,5 +242,21 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     ...(v.vendorOccurrences !== undefined && v.vendorOccurrences.length > 0
       ? { vendorOccurrences: v.vendorOccurrences.map((o) => ({ path: o.path, line: o.line })) }
       : {}),
+    // In-file rule-emitted sibling rollup (Q7-DUPLICATE-INPUT-SIBLING-
+    // COLLAPSE). Conditional spread keeps `siblingInstances: []` /
+    // `undefined` off the wire per CLAUDE.md §1 "Ambiguous field shapes
+    // are dishonest."
+    ...mapSiblingInstancesToAgent(v.siblingInstances),
+  };
+}
+
+function mapSiblingInstancesToAgent(
+  siblings: readonly { readonly line: number; readonly id?: string }[] | undefined,
+): { siblingInstances?: readonly { readonly line: number; readonly id?: string }[] } {
+  if (siblings === undefined || siblings.length === 0) return {};
+  return {
+    siblingInstances: siblings.map((s) =>
+      s.id === undefined ? { line: s.line } : { line: s.line, id: s.id },
+    ),
   };
 }

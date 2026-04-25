@@ -53,6 +53,15 @@ export const jsonFormatter = defineFormatter({
           ...(v.couldBeWrongBecause && v.couldBeWrongBecause.length > 0
             ? { couldBeWrongBecause: [...v.couldBeWrongBecause] }
             : {}),
+          // In-file rule-emitted sibling rollup (Q7-DUPLICATE-INPUT-
+          // SIBLING-COLLAPSE). One canonical finding standing in for N
+          // visually-grouped sibling controls; the list enumerates
+          // every sibling's `(line, id?)` so JSON consumers can
+          // iterate. Conditional spread per CLAUDE.md §1 "Ambiguous
+          // field shapes are dishonest."
+          ...(v.siblingInstances !== undefined && v.siblingInstances.length > 0
+            ? { siblingInstances: [...v.siblingInstances] }
+            : {}),
         })),
       },
       report: {

@@ -43,6 +43,13 @@ import {
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import {
+  buildSiblingCollapsedMessage,
+  collectFailingHtmlControls,
+  computeHtmlCollapseDecisions,
+  computeJsxCollapseDecisions,
+  type SiblingInstance,
+} from "./_label-sibling-collapse.ts";
 
 const LABELABLE_TAGS: ReadonlySet<string> = new Set(["input", "select", "textarea"]);
 
@@ -111,6 +118,7 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  siblingInstances?: readonly SiblingInstance[];
 }) => void;
 
 // ---------------------------------------------------------------------------
@@ -130,27 +138,53 @@ function checkHtmlNativeControls(
   implicitLabelIds: ReadonlySet<string>,
   emit: Emit,
 ): void {
+  // Collapse decisions are computed per-parent over the failing-control
+  // set: same parent + same `(tagName, type, attributes-modulo-id)`
+  // fingerprint AND ≥3 siblings → emit ONE finding with
+  // `siblingInstances`; otherwise emit each individually as before.
+  // The `consumed` set marks elements rolled into a collapsed finding
+  // so the per-tag loop below skips them.
+  const isFailing = (el: HtmlElement): boolean =>
+    !(isExcludedHtmlControl(el) || htmlHasLabel(el, labelFors, implicitLabelIds));
+  const failing = collectFailingHtmlControls(doc, LABELABLE_TAGS, isFailing, walkHtmlElements);
+  const { primary, consumed } = computeHtmlCollapseDecisions(failing);
+
   for (const tag of LABELABLE_TAGS) {
     for (const el of findHtmlElementsByTag(doc, tag)) {
-      if (isExcludedHtmlControl(el)) continue;
-      if (htmlHasLabel(el, labelFors, implicitLabelIds)) continue;
-      emit({
-        severity: "error",
-        location: {
-          filePath: "",
-          line: el.loc.start.line,
-          column: el.loc.start.column,
-        },
-        message: buildMessage(el.tagName, getHtmlAttribute(el, "type")),
-        suggestion: buildSuggestion(
-          el.tagName,
-          getHtmlAttribute(el, "type"),
-          getHtmlAttribute(el, "id"),
-          getNonEmptyHtmlPlaceholder(el),
-        ),
-      });
+      if (!isFailing(el)) continue;
+      if (consumed.has(el)) continue;
+      emit(buildHtmlNativeControlViolation(el, primary.get(el)));
     }
   }
+}
+
+function buildHtmlNativeControlViolation(
+  el: HtmlElement,
+  siblings: readonly SiblingInstance[] | undefined,
+): {
+  severity: "error";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+  siblingInstances?: readonly SiblingInstance[];
+} {
+  const type = getHtmlAttribute(el, "type");
+  const message =
+    siblings === undefined
+      ? buildMessage(el.tagName, type)
+      : buildSiblingCollapsedMessage(el.tagName, type, siblings.length);
+  return {
+    severity: "error",
+    location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
+    message,
+    suggestion: buildSuggestion(
+      el.tagName,
+      type,
+      getHtmlAttribute(el, "id"),
+      getNonEmptyHtmlPlaceholder(el),
+    ),
+    ...(siblings === undefined ? {} : { siblingInstances: siblings }),
+  };
 }
 
 // contenteditable hosts — any element with contenteditable="true" (or
@@ -263,9 +297,32 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
   const labelHtmlFors = collectJsxLabelHtmlFors(module);
   const implicitIds = collectJsxImplicitlyLabeledControls(module, wrappersForInput);
 
+  // Pre-pass: detect collapsible sibling clusters among direct-child
+  // intrinsic `<input>` / `<select>` / `<textarea>` failing controls.
+  // Wrappers and polymorphic `<Tag as="input">` resolutions stay out of
+  // collapse — clusters of those are rare and the fingerprint would be
+  // less stable across the resolution boundary; per-element emit on
+  // those is the safer default. The helper consumes the rule's
+  // failing-predicate verdict (label-check + excluded-control filter)
+  // via the {@link JsxFailingPredicate} callback.
+  const { primary, consumed } = computeJsxCollapseDecisions(module, LABELABLE_TAGS, (el) => {
+    if (isExcludedJsxControl(el)) return false;
+    if (jsxHasLabel(el, labelHtmlFors, implicitIds)) return false;
+    return true;
+  });
+
   const seen = new Set<JsxElement>();
-  checkJsxInputs(module, wrappersForInput, labelHtmlFors, implicitIds, seen, emit);
-  checkJsxSelectsAndTextareas(module, labelHtmlFors, implicitIds, emit);
+  checkJsxInputs(
+    module,
+    wrappersForInput,
+    labelHtmlFors,
+    implicitIds,
+    seen,
+    primary,
+    consumed,
+    emit,
+  );
+  checkJsxSelectsAndTextareas(module, labelHtmlFors, implicitIds, primary, consumed, emit);
   checkJsxEditableHosts(module, labelHtmlFors, implicitIds, seen, emit);
 }
 
@@ -278,6 +335,8 @@ function checkJsxInputs(
   labelHtmlFors: ReadonlySet<string>,
   implicitIds: ReadonlySet<number>,
   seen: Set<JsxElement>,
+  primary: ReadonlyMap<JsxElement, readonly SiblingInstance[]>,
+  consumed: ReadonlySet<JsxElement>,
   emit: Emit,
 ): void {
   for (const el of findJsxElementsForTag(module, "input", wrappersForInput)) {
@@ -290,7 +349,9 @@ function checkJsxInputs(
     // `<Button as="input">` still excludes it.
     if (isExcludedJsxControl(el)) continue;
     if (jsxHasLabel(el, labelHtmlFors, implicitIds)) continue;
-    emit(buildJsxViolation(el));
+    if (consumed.has(el)) continue;
+    const siblings = primary.get(el);
+    emit(buildJsxViolation(el, siblings));
   }
 }
 
@@ -302,12 +363,16 @@ function checkJsxSelectsAndTextareas(
   module: TsxModule,
   labelHtmlFors: ReadonlySet<string>,
   implicitIds: ReadonlySet<number>,
+  primary: ReadonlyMap<JsxElement, readonly SiblingInstance[]>,
+  consumed: ReadonlySet<JsxElement>,
   emit: Emit,
 ): void {
   for (const tag of ["select", "textarea"] as const) {
     for (const el of findJsxElementsByTag(module, tag)) {
       if (jsxHasLabel(el, labelHtmlFors, implicitIds)) continue;
-      emit(buildJsxViolation(el));
+      if (consumed.has(el)) continue;
+      const siblings = primary.get(el);
+      emit(buildJsxViolation(el, siblings));
     }
   }
 }
@@ -381,7 +446,7 @@ function buildJsxEditableViolation(el: JsxElement) {
   };
 }
 
-function buildJsxViolation(el: JsxElement) {
+function buildJsxViolation(el: JsxElement, siblings?: readonly SiblingInstance[]) {
   const type = getJsxAttributeString(el, "type");
   const id = getJsxAttributeString(el, "id");
   const location = { filePath: "", line: el.loc.start.line, column: el.loc.start.column };
@@ -396,8 +461,12 @@ function buildJsxViolation(el: JsxElement) {
   return {
     severity: "error" as const,
     location,
-    message: buildMessage(el.tagName, type),
+    message:
+      siblings === undefined
+        ? buildMessage(el.tagName, type)
+        : buildSiblingCollapsedMessage(el.tagName, type, siblings.length),
     suggestion: buildSuggestion(el.tagName, type, id, getNonEmptyJsxPlaceholder(el)),
+    ...(siblings === undefined ? {} : { siblingInstances: siblings }),
   };
 }
 

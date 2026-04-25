@@ -487,4 +487,121 @@ describe("rule forms/labels-required", () => {
       expect(v).toHaveLength(0);
     });
   });
+
+  // Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE — when ≥3 direct-child input
+  // siblings under one parent share the same `(tagName, type,
+  // attributes-modulo-id)` fingerprint and all fail the label check,
+  // collapse the N near-identical findings into ONE canonical finding
+  // carrying `siblingInstances`. Surface-don't-suppress: the consolidated
+  // finding still surfaces, with the full per-sibling line/id trail on
+  // `siblingInstances` so an agent reads one row instead of N.
+  describe("HTML: sibling collapse (Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE)", () => {
+    it("collapses 6 OTP-shaped <input> siblings into one finding with siblingInstances", () => {
+      // The canonical OTP cluster pattern — six identical inputs under
+      // one parent, each missing a label and each carrying a unique
+      // `id` so the fingerprint matches modulo `id`.
+      const source = `<form>
+        <input class="otp" type="number" maxlength="1" id="d1">
+        <input class="otp" type="number" maxlength="1" id="d2">
+        <input class="otp" type="number" maxlength="1" id="d3">
+        <input class="otp" type="number" maxlength="1" id="d4">
+        <input class="otp" type="number" maxlength="1" id="d5">
+        <input class="otp" type="number" maxlength="1" id="d6">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "otp.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.siblingInstances).toBeDefined();
+      expect(v[0]?.siblingInstances?.length).toBe(6);
+      // First entry mirrors the canonical (anchor) finding's line + id.
+      expect(v[0]?.siblingInstances?.[0]?.id).toBe("d1");
+      expect(v[0]?.siblingInstances?.[5]?.id).toBe("d6");
+      // Message names the rollup so an agent reading the message alone
+      // knows it is one finding standing in for N siblings.
+      expect(v[0]?.message).toContain("siblingInstances");
+      expect(v[0]?.message).toContain("5 adjacent sibling");
+    });
+
+    it("emits per-element when 2 sibling inputs share a fingerprint (below threshold)", () => {
+      // Two siblings is below SIBLING_COLLAPSE_THRESHOLD = 3 — both
+      // emit individually and neither carries `siblingInstances`.
+      const source = `<form>
+        <input class="otp" type="number" maxlength="1" id="d1">
+        <input class="otp" type="number" maxlength="1" id="d2">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "pair.html" });
+      expect(v).toHaveLength(2);
+      expect(v[0]?.siblingInstances).toBeUndefined();
+      expect(v[1]?.siblingInstances).toBeUndefined();
+    });
+
+    it("does not collapse siblings under different parents", () => {
+      // Same fingerprint but two different parents — neither parent
+      // has ≥3 failing siblings, so per-element emission stays.
+      const source = `<form>
+        <input class="otp" type="number" maxlength="1" id="a1">
+        <input class="otp" type="number" maxlength="1" id="a2">
+      </form>
+      <form>
+        <input class="otp" type="number" maxlength="1" id="b1">
+        <input class="otp" type="number" maxlength="1" id="b2">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "two-forms.html" });
+      expect(v).toHaveLength(4);
+      for (const finding of v) {
+        expect(finding.siblingInstances).toBeUndefined();
+      }
+    });
+
+    it("groups siblings by fingerprint within one parent (mixed shapes do not cross-collapse)", () => {
+      // One parent, three OTP inputs and three text inputs — two
+      // separate groups, each ≥3, each collapses independently.
+      const source = `<form>
+        <input class="otp" type="number" maxlength="1" id="d1">
+        <input class="otp" type="number" maxlength="1" id="d2">
+        <input class="otp" type="number" maxlength="1" id="d3">
+        <input class="text" type="text" id="t1">
+        <input class="text" type="text" id="t2">
+        <input class="text" type="text" id="t3">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "mixed.html" });
+      expect(v).toHaveLength(2);
+      expect(v[0]?.siblingInstances?.length).toBe(3);
+      expect(v[1]?.siblingInstances?.length).toBe(3);
+      // The two collapsed findings target different anchors.
+      expect(v[0]?.location.line).not.toBe(v[1]?.location.line);
+    });
+
+    it("collapses 4 day-of-week-style sibling checkboxes into one finding", () => {
+      // Different attribute set, same shape — class-grouped checkboxes
+      // sharing every attribute except id collapse the same way.
+      const source = `<form>
+        <input type="checkbox" class="dow" name="d" id="mon">
+        <input type="checkbox" class="dow" name="d" id="tue">
+        <input type="checkbox" class="dow" name="d" id="wed">
+        <input type="checkbox" class="dow" name="d" id="thu">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "dow.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.siblingInstances?.length).toBe(4);
+    });
+  });
+
+  describe("JSX: sibling collapse (Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE)", () => {
+    it("collapses 4 OTP-shaped JSX <input> siblings into one finding", () => {
+      const source = `const X = (
+        <form>
+          <input className="otp" type="number" maxLength={1} id="d1" />
+          <input className="otp" type="number" maxLength={1} id="d2" />
+          <input className="otp" type="number" maxLength={1} id="d3" />
+          <input className="otp" type="number" maxLength={1} id="d4" />
+        </form>
+      );`;
+      const v = runRule(rule, source, { filePath: "otp.tsx" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.siblingInstances?.length).toBe(4);
+      expect(v[0]?.siblingInstances?.[0]?.id).toBe("d1");
+      expect(v[0]?.siblingInstances?.[3]?.id).toBe("d4");
+      expect(v[0]?.message).toContain("siblingInstances");
+    });
+  });
 });
