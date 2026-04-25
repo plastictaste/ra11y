@@ -56,7 +56,7 @@ Coverage: 41 rule · 31 finder · 13 attestation-only · 1 gap
 | `wcag22:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
 | `wcag22:1.3.5` | Identify Input Purpose | AA | full | forms/autocomplete-missing | otp-input-cluster | **rule** |
 | `wcag22:1.3.6` | Identify Purpose | AAA | manual | — | identify-purpose | **finder** |
-| `wcag22:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | use-of-color | **rule** |
+| `wcag22:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
 | `wcag22:1.4.2` | Audio Control | A | partial | media/autoplay-sound | — | **rule** |
 | `wcag22:1.4.3` | Contrast (Minimum) | AA | partial | contrast/minimum | — | **rule** |
 | `wcag22:1.4.4` | Resize Text | AA | partial | document/viewport-zoom | — | **rule** |
@@ -151,7 +151,7 @@ Coverage: 39 rule · 28 finder · 10 attestation-only · 1 gap
 | `wcag21:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
 | `wcag21:1.3.5` | Identify Input Purpose | AA | full | forms/autocomplete-missing | otp-input-cluster | **rule** |
 | `wcag21:1.3.6` | Identify Purpose | AAA | manual | — | identify-purpose | **finder** |
-| `wcag21:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | use-of-color | **rule** |
+| `wcag21:1.4.1` | Use of Color | A | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
 | `wcag21:1.4.2` | Audio Control | A | partial | media/autoplay-sound | — | **rule** |
 | `wcag21:1.4.3` | Contrast (Minimum) | AA | partial | contrast/minimum | — | **rule** |
 | `wcag21:1.4.4` | Resize Text | AA | partial | document/viewport-zoom | — | **rule** |
@@ -231,7 +231,7 @@ Coverage: 23 rule · 14 finder · 1 attestation-only · 0 gap
 | `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-font-hidden, document/charset-first-1024-bytes +19 | otp-input-cluster | **rule** |
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
-| `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | use-of-color | **rule** |
+| `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
 | `section508:1.4.2` | Audio Control | base | partial | media/autoplay-sound | — | **rule** |
 | `section508:1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `section508:1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
@@ -280,7 +280,7 @@ Coverage: 33 rule · 16 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
 | `en301549:9.1.3.5` | Identify Input Purpose | base | full | forms/autocomplete-missing | otp-input-cluster | **rule** |
-| `en301549:9.1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | use-of-color | **rule** |
+| `en301549:9.1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +1 | color-class-crossref, use-of-color | **rule** |
 | `en301549:9.1.4.2` | Audio Control | base | partial | media/autoplay-sound | — | **rule** |
 | `en301549:9.1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `en301549:9.1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
