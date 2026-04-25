@@ -872,3 +872,170 @@ export function withViolationsByScanKind(
   const split = splitViolationsByScanKind(files, vendorPaths);
   return { ...plan, violationsByScanKind: split };
 }
+
+/**
+ * Default cap for the {@link computeTopRules} headline rollup. Bulk-
+ * scan repros (≈1800 file-with-finding catalogs) made the agent page
+ * through every file just to learn which rules dominated; ten is the
+ * empirical cut-off where the long tail flattens into per-file
+ * idiosyncrasies. Callers can override per-tool, but ten is the
+ * scan-project default and the size every test fixture pins.
+ */
+export const TOP_RULES_DEFAULT_LIMIT = 10;
+
+/**
+ * One entry on `plan.topRules` — the cross-file rule-frequency
+ * rollup surfaced at the response top level so an agent reading the
+ * headline can tell which rule produced the most violations without
+ * paging through `files[]`. Per-rule {@link topFile} is the densest
+ * single file the rule fired on (path-equality on `files[].path`,
+ * which is the same form `meta.perRuleCoverage[].concentration.file`
+ * uses); omitted only when the rule emitted on no file (a
+ * theoretical degenerate case the call site never hits because rule
+ * IDs come from per-finding `ruleId` reads).
+ *
+ * Severity filter — info-severity findings are excluded from the
+ * count axis the same way `splitViolationsByScanKind` excludes them:
+ * the rollup describes the same error+warning surface the
+ * `plan.fixesByClass` headline tallies. Without the filter, an
+ * info-only rule (e.g. `wrappers/inferred`) would crowd the top of
+ * the list with non-actionable context — the agent reads
+ * "{@link AgentPlan.notes}" for that surface separately.
+ */
+export interface TopRule {
+  readonly ruleId: string;
+  readonly count: number;
+  readonly topFile?: string;
+}
+
+/**
+ * Computes the rank-ordered top-{@link TOP_RULES_DEFAULT_LIMIT} rule
+ * frequency rollup from a per-file findings list. Pure over its
+ * inputs; designed for the `plan.topRules` headline on
+ * `scan_project`. The pieces (`findingsEmitted` per rule,
+ * `concentration.file` for the densest per-rule file) already exist
+ * inside `meta.perRuleCoverage`; this helper exposes the same
+ * information as a sorted top-N list at the headline so the agent
+ * doesn't have to walk the whole `perRuleCoverage` array (every
+ * loaded rule produces a row, even rules with zero findings) just
+ * to find the dominant lanes.
+ *
+ * Sort: count descending, then ruleId ascending (alphabetical) for
+ * deterministic ordering across runs. Slice to `limit` (default
+ * {@link TOP_RULES_DEFAULT_LIMIT}); when fewer than `limit` rules
+ * fired, returns all of them (no padding with zero-count rows —
+ * those would be a noise-not-signal shape per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest").
+ *
+ * Severity filter — see {@link TopRule}'s docblock. Info-severity
+ * findings are excluded from both the rule count and the per-rule
+ * top-file selection so the rollup splits the same error+warning
+ * axis the structured `plan.fixesByClass` headline tallies.
+ */
+export function computeTopRules(
+  files: readonly {
+    readonly path: string;
+    readonly findings: readonly { readonly ruleId: string; readonly severity: string }[];
+  }[],
+  limit: number = TOP_RULES_DEFAULT_LIMIT,
+): readonly TopRule[] {
+  const tally = tallyTopRules(files);
+  const ranked: TopRule[] = [];
+  for (const [ruleId, count] of tally.totals) {
+    const fileCounts = tally.perFile.get(ruleId);
+    const topFile = fileCounts === undefined ? undefined : pickDensestFile(fileCounts);
+    ranked.push({ ruleId, count, ...(topFile === undefined ? {} : { topFile }) });
+  }
+  // Count desc; ruleId asc tiebreak so the wire shape stays stable
+  // across runs even when the underlying scanner reorders discovery.
+  ranked.sort((a, b) => b.count - a.count || a.ruleId.localeCompare(b.ruleId));
+  return ranked.slice(0, limit);
+}
+
+/**
+ * Single-pass walker for {@link computeTopRules}. Builds the
+ * per-rule total count and the per-(rule, path) sub-tally that the
+ * `topFile` annotation reads from, in one walk over the input. Pure
+ * over its input; extracted so the orchestrator
+ * {@link computeTopRules} stays inside the cognitive-complexity cap.
+ *
+ * Severity filter — info-severity findings are skipped here so both
+ * the count axis and the densest-file selection stay aligned with
+ * the error+warning surface `plan.fixesByClass` tallies.
+ */
+function tallyTopRules(
+  files: readonly {
+    readonly path: string;
+    readonly findings: readonly { readonly ruleId: string; readonly severity: string }[];
+  }[],
+): {
+  readonly totals: ReadonlyMap<string, number>;
+  readonly perFile: ReadonlyMap<string, ReadonlyMap<string, number>>;
+} {
+  const totals = new Map<string, number>();
+  const perFile = new Map<string, Map<string, number>>();
+  for (const file of files) {
+    for (const finding of file.findings) {
+      if (finding.severity === "info") continue;
+      const ruleId = finding.ruleId;
+      totals.set(ruleId, (totals.get(ruleId) ?? 0) + 1);
+      let bucket = perFile.get(ruleId);
+      if (bucket === undefined) {
+        bucket = new Map<string, number>();
+        perFile.set(ruleId, bucket);
+      }
+      bucket.set(file.path, (bucket.get(file.path) ?? 0) + 1);
+    }
+  }
+  return { totals, perFile };
+}
+
+/**
+ * Picks the densest file from a per-file count bucket — the single
+ * path with the highest finding count, ties broken alphabetically
+ * for determinism. Used by {@link computeTopRules} to fill in
+ * {@link TopRule.topFile}. Returns `undefined` only when the bucket
+ * is empty (defensive — callers never hit this branch because the
+ * bucket is constructed from observed findings).
+ */
+function pickDensestFile(fileCounts: ReadonlyMap<string, number>): string | undefined {
+  let best: string | undefined;
+  let bestCount = -1;
+  for (const [path, count] of fileCounts) {
+    if (count > bestCount || (count === bestCount && best !== undefined && path < best)) {
+      best = path;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/**
+ * Stamps `plan.topRules` onto a `plan` record produced by
+ * {@link buildScanPlan}. Conditional-spread per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest": when no error/warning
+ * findings emerged on this scan, the rollup would be `[]` — a sentinel
+ * that forces the agent to read `plan.topRules` to learn it has
+ * nothing to read. Identity-stable when no rules fired, so
+ * `tool-scan-project.ts` can route through this helper unconditionally
+ * without paying for a shallow copy on the common no-violations path.
+ *
+ * Designed to run AFTER {@link buildScanPlan} produced the `plan`
+ * record but BEFORE the `plan` reaches the wire — `tool-scan-project.ts`
+ * calls this once on the full `formatted.files` list (NOT the paged
+ * subset) so the rollup describes the whole scan, not the page the
+ * caller happened to fetch. The whole-scan framing is what removes
+ * the per-file paging cost the rollup exists to address.
+ */
+export function withTopRules(
+  plan: Record<string, unknown>,
+  files: readonly {
+    readonly path: string;
+    readonly findings: readonly { readonly ruleId: string; readonly severity: string }[];
+  }[],
+  limit: number = TOP_RULES_DEFAULT_LIMIT,
+): Record<string, unknown> {
+  const topRules = computeTopRules(files, limit);
+  if (topRules.length === 0) return plan;
+  return { ...plan, topRules };
+}

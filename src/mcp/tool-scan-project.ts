@@ -35,7 +35,7 @@ import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
-import { withViolationsByScanKind } from "./scan-assembly.ts";
+import { withTopRules, withViolationsByScanKind } from "./scan-assembly.ts";
 import { assembleScanProjectResponse } from "./scan-project-budget.ts";
 import {
   buildScanProjectReviewCandidates,
@@ -297,9 +297,24 @@ export const scanProjectTool: McpTool = {
     // `assembleScanProjectResponse`; rebinding here propagates the
     // enriched plan through the rest of the assembly chain without
     // forcing a second pass through the helper.
+    // V1-CROSS-FILE-ROLLUP-PRIMITIVE: stamp `plan.topRules` so a bulk
+    // scan (≈1800-file catalog) doesn't force the agent to page through
+    // every file just to learn which rules dominated. Computed over the
+    // FULL `formatted.files` list — not the paged subset — so the
+    // headline describes the whole scan regardless of which page the
+    // caller fetched. The pieces (`findingsEmitted` per rule,
+    // `concentration.file` per rule) already live in
+    // `meta.perRuleCoverage`; this rollup exposes the same information
+    // sorted at the headline so the agent can route triage
+    // ("`explain_rule` on the dominant rule" / "narrow scope" /
+    // "propose_config exclude") in one read. Identity-stable when no
+    // error/warning findings emerged.
     const formattedWithScanKind: ScanFormatted = {
       ...formatted,
-      plan: withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+      plan: withTopRules(
+        withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+        formatted.files,
+      ),
     };
     const nextStep = buildNextStep(formatted, {
       iterativeTip:

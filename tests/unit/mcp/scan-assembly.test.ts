@@ -30,11 +30,13 @@ import {
   applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   buildCountsBySurface,
+  computeTopRules,
   detectScssUnresolvedVariableFiles,
   splitViolationsByScanKind,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
   withCountsBySurface,
+  withTopRules,
   withViolationsByScanKind,
 } from "../../../src/mcp/scan-assembly.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
@@ -951,5 +953,133 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     const files = [{ path: "src/app.tsx", findings: [E, E, E, W, W] }];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
     expect(out["violationsByScanKind"]).toEqual({ source: 5, buildArtifact: 0 });
+  });
+});
+
+describe("computeTopRules — cross-file rule-frequency rollup", () => {
+  // Doctrine: bulk-scan repros (≈1800-file catalogs) made the agent
+  // page through every file just to learn which rules dominated. The
+  // pieces (`findingsEmitted` per rule, densest file per rule) already
+  // exist on `meta.perRuleCoverage`; this rollup exposes the same
+  // information at the headline so triage can route in one read.
+  const E = (ruleId: string) => ({ ruleId, severity: "error" });
+  const W = (ruleId: string) => ({ ruleId, severity: "warning" });
+  const I = (ruleId: string) => ({ ruleId, severity: "info" });
+
+  it("ranks rules by total count descending, then ruleId ascending for ties", () => {
+    const out = computeTopRules([
+      { path: "src/a.tsx", findings: [E("alt-text/missing"), E("alt-text/missing")] },
+      { path: "src/b.tsx", findings: [E("contrast/minimum"), E("alt-text/missing")] },
+      { path: "src/c.tsx", findings: [W("zzz/last"), W("aaa/first")] },
+    ]);
+    expect(out.map((r) => r.ruleId)).toEqual([
+      "alt-text/missing",
+      "aaa/first",
+      "contrast/minimum",
+      "zzz/last",
+    ]);
+    expect(out[0]).toMatchObject({ ruleId: "alt-text/missing", count: 3 });
+  });
+
+  it("annotates each rule with `topFile` — the densest single file the rule fired on", () => {
+    const out = computeTopRules([
+      { path: "vendor/bootstrap.css", findings: [E("contrast/minimum"), E("contrast/minimum")] },
+      { path: "src/page.tsx", findings: [E("contrast/minimum")] },
+    ]);
+    expect(out[0]).toEqual({
+      ruleId: "contrast/minimum",
+      count: 3,
+      topFile: "vendor/bootstrap.css",
+    });
+  });
+
+  it("excludes info-severity findings from both the count and the topFile selection", () => {
+    // The rollup describes the same error+warning surface
+    // `plan.fixesByClass` tallies; info-severity rules (e.g. wrappers/inferred)
+    // would crowd the top of the list with non-actionable context.
+    const out = computeTopRules([
+      { path: "src/a.tsx", findings: [I("wrappers/inferred"), I("wrappers/inferred")] },
+      { path: "src/b.tsx", findings: [E("contrast/minimum")] },
+    ]);
+    expect(out).toEqual([{ ruleId: "contrast/minimum", count: 1, topFile: "src/b.tsx" }]);
+  });
+
+  it("truncates to the limit (default 10) on ranked output", () => {
+    // Build 12 distinct rules each emitting one finding so the sort
+    // surfaces them all, then confirm the cap. Names start with
+    // matching prefix so the alphabetical tiebreak is exercised.
+    const files = Array.from({ length: 12 }, (_, i) => ({
+      path: `src/${i}.tsx`,
+      findings: [E(`rule/${String(i).padStart(2, "0")}`)],
+    }));
+    expect(computeTopRules(files).length).toBe(10);
+    expect(computeTopRules(files, 5).length).toBe(5);
+  });
+
+  it("returns all rules when fewer than the limit fired (no zero-count padding)", () => {
+    // No padding with zero-count rows — that would be a noise-not-
+    // signal shape per "Ambiguous field shapes are dishonest."
+    const out = computeTopRules([{ path: "src/a.tsx", findings: [E("rule/one"), W("rule/two")] }]);
+    expect(out.length).toBe(2);
+  });
+
+  it("returns an empty array on a clean scan — caller conditional-spreads the field off the wire", () => {
+    expect(computeTopRules([])).toEqual([]);
+    expect(computeTopRules([{ path: "src/x.tsx", findings: [] }])).toEqual([]);
+    // Info-only scan — same axis as withViolationsByScanKind's
+    // severity filter; `plan.notes` carries that surface separately.
+    expect(computeTopRules([{ path: "src/x.tsx", findings: [I("wrappers/inferred")] }])).toEqual(
+      [],
+    );
+  });
+});
+
+describe("withTopRules — plan-stamping helper", () => {
+  const E = (ruleId: string) => ({ ruleId, severity: "error" });
+  const W = (ruleId: string) => ({ ruleId, severity: "warning" });
+
+  it("stamps `plan.topRules` when at least one error/warning rule fired", () => {
+    const plan = {
+      notes: 0,
+      fixesByClass: { mechanical: 3, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+    } satisfies Record<string, unknown>;
+    const out = withTopRules(plan, [
+      { path: "src/a.tsx", findings: [E("contrast/minimum"), W("alt-text/missing")] },
+    ]);
+    expect(out["topRules"]).toEqual([
+      { ruleId: "alt-text/missing", count: 1, topFile: "src/a.tsx" },
+      { ruleId: "contrast/minimum", count: 1, topFile: "src/a.tsx" },
+    ]);
+    // Existing plan fields preserved — additive enrichment only.
+    expect(out["notes"]).toBe(0);
+    expect(out["fixesByClass"]).toEqual({
+      mechanical: 3,
+      guidance: 0,
+      runtimeOnly: 0,
+      verifyInSource: 0,
+    });
+  });
+
+  it("returns the input plan by identity (no shallow copy) when no rules fired — common no-violations path", () => {
+    // Conditional-spread on emptiness keeps `topRules` off the wire on
+    // clean scans; `[]` would force the agent to read a field whose
+    // only signal is "nothing here."
+    const plan = {
+      notes: 0,
+      summary: "No accessibility violations found.",
+    } satisfies Record<string, unknown>;
+    const out = withTopRules(plan, [{ path: "src/a.tsx", findings: [] }]);
+    expect(out).toBe(plan);
+    expect(out["topRules"]).toBeUndefined();
+  });
+
+  it("respects an explicit limit when the caller overrides the default", () => {
+    const plan = {} satisfies Record<string, unknown>;
+    const files = Array.from({ length: 6 }, (_, i) => ({
+      path: `src/${i}.tsx`,
+      findings: [E(`rule/${String(i).padStart(2, "0")}`)],
+    }));
+    const out = withTopRules(plan, files, 3);
+    expect((out["topRules"] as readonly { ruleId: string }[]).length).toBe(3);
   });
 });
