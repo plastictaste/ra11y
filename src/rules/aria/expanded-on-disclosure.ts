@@ -32,24 +32,49 @@
  *
  * The rule is framework-agnostic: it matches on the *shape* of a
  * disclosure trigger (aria-controls, toggle-style data attributes with
- * collapse/disclosure values, inline onclick handlers that toggle a
- * visibility class, or disclosure-pattern class-name tokens like
- * `toggle` / `dropdown-toggle` / `accordion` / `disclosure` /
- * `collapse-toggle` on the trigger itself). Widely-used framework data attributes like
- * `data-bs-toggle="collapse"` / `data-toggle="dropdown"` merely serve as
- * additive evidence hints that the element *is* a disclosure trigger —
- * the rule is not Bootstrap-specific (see CLAUDE.md §14 "no
+ * disclosure values, inline onclick handlers that toggle a visibility
+ * class, or disclosure-pattern class-name tokens like `toggle` /
+ * `dropdown-toggle` / `accordion` / `disclosure` / `collapse-toggle` on
+ * the trigger itself). Widely-used framework data attributes like
+ * `data-bs-toggle="collapse"` / `data-toggle="dropdown"` merely serve
+ * as additive evidence hints that the element *is* a disclosure
+ * trigger — the rule is not Bootstrap-specific (see CLAUDE.md §14 "no
  * vendor-specific runtime ingest adapters"). Any value from the
- * disclosure-ish set (`collapse`, `dropdown`, `accordion`, `offcanvas`,
- * `modal`, `tab`, `pill`) on a `data-*-toggle` attribute triggers the
- * predicate regardless of prefix. `popover` and `tooltip` are
- * deliberately excluded: both are descriptive-content widgets whose
- * state is exposed via `role="tooltip"` + `aria-describedby`, not via
- * `aria-expanded`. Flagging `data-bs-toggle="tooltip"` /
- * `data-bs-toggle="popover"` here produced false positives against
- * Bootstrap's canonical tooltip and popover markup. Tooltip- and
- * popover-specific checks (dismissability, described-by pairing) live
- * in `src/rules/tooltip/dismissable.ts`.
+ * narrow disclosure set (`collapse`, `dropdown`, `accordion`,
+ * `offcanvas`) on a `data-*-toggle` attribute triggers the predicate
+ * regardless of prefix.
+ *
+ * Exclusion list — these widget shapes are NOT disclosure triggers
+ * per the WAI-ARIA Authoring Practices, and the rule does not fire on
+ * them. Each uses a different ARIA state/property channel that lives
+ * (or will live) in its own rule:
+ *
+ *   - **Tabs** (`data-*-toggle="tab"`, `data-*-toggle="pill"`,
+ *     `role="tab"`) — APG §tabs uses `aria-selected` on the active tab,
+ *     not `aria-expanded`. Coverage will move to a companion rule
+ *     `aria/tab-pattern-roles` (not yet scaffolded; tracked in backlog).
+ *   - **Modal / dialog triggers** (`data-*-toggle="modal"`) — APG
+ *     §dialog-modal uses `aria-haspopup="dialog"` on the trigger; the
+ *     dialog is a separate surface, not a show/hide region of the
+ *     trigger's container, so `aria-expanded` does not apply. Coverage
+ *     will move to a companion rule `aria/modal-trigger-haspopup` (not
+ *     yet scaffolded; tracked in backlog).
+ *   - **Popover triggers** (`data-*-toggle="popover"`) — descriptive-
+ *     content widget; state exposed via `role="tooltip"` on the popover
+ *     body + `aria-describedby` on the trigger. Popover-specific checks
+ *     (dismissability, described-by pairing) live in
+ *     `src/rules/tooltip/dismissable.ts`.
+ *   - **Tooltip triggers** (`data-*-toggle="tooltip"`) — same shape as
+ *     popover; `role="tooltip"` + `aria-describedby`, not
+ *     `aria-expanded`. Tooltip-specific checks live in
+ *     `src/rules/tooltip/dismissable.ts`.
+ *
+ * Flagging tabs / modals / popovers / tooltips here would emit
+ * findings under the wrong WCAG axis and produced high-volume false
+ * positives in the field. The companion rules above are tracked
+ * separately so the toggle-attribute namespace's other widget kinds
+ * get correct findings under the right axes — see CLAUDE.md §14 "no
+ * vendor-specific runtime ingest adapters" for the framing.
  *
  * Exemptions:
  *   - `<summary>` inside `<details>`: native disclosure, state is
@@ -79,28 +104,43 @@ import type {
 
 /**
  * Values (on `data-*-toggle` / `data-toggle`) that mark the element as
- * a disclosure trigger whose collapsed/expanded state must be exposed
- * via `aria-expanded`. Matched case-insensitively and token-exactly —
- * a value like `collapse,show` (multi-token, rare but observed) is
- * split on whitespace/comma.
+ * a genuine disclosure trigger per the WAI-ARIA Authoring Practices
+ * §disclosure pattern (https://www.w3.org/WAI/ARIA/apg/patterns/disclosure/) —
+ * i.e. a button whose only job is to toggle the visibility of an
+ * adjacent content region whose state must be exposed via
+ * `aria-expanded`. Matched case-insensitively and token-exactly — a
+ * value like `collapse,show` (multi-token, rare but observed) is split
+ * on whitespace/comma.
  *
- * `modal` is included: per the ARIA authoring practices it has
- * open/closed state that a trigger button should announce via
- * `aria-expanded`. `tab` / `pill` cover tab-panel disclosure triggers.
- * `popover` and `tooltip` are intentionally *not* included — both
- * expose state via `role="tooltip"` + `aria-describedby`, not
- * `aria-expanded`, and flagging them here produced false positives on
- * Bootstrap's canonical tooltip and popover markup. Tooltip- and
- * popover-specific checks live in `src/rules/tooltip/dismissable.ts`.
+ * The set is deliberately narrow:
+ *
+ *   - `collapse` / `dropdown` / `accordion` / `offcanvas` — show/hide a
+ *     sibling region; APG-aligned disclosure shape; `aria-expanded` on
+ *     the trigger is the correct state channel.
+ *
+ * Excluded — these widget shapes use a DIFFERENT ARIA attribute and
+ * are out of scope for this rule (see header docstring for the full
+ * exclusion list and future companion-rule pointers):
+ *
+ *   - `tab` / `pill` — APG tabs pattern uses `aria-selected` on the
+ *     `role="tab"` trigger, not `aria-expanded`. A separate companion
+ *     rule (`aria/tab-pattern-roles`, not yet scaffolded) will cover
+ *     the role+selected gap.
+ *   - `modal` — APG dialog/modal pattern uses `aria-haspopup="dialog"`
+ *     on the trigger, not `aria-expanded` (the dialog is not a
+ *     show/hide region of the trigger's container; it is a separate
+ *     surface). A separate companion rule (`aria/modal-trigger-haspopup`,
+ *     not yet scaffolded) will cover that gap.
+ *   - `popover` / `tooltip` — both are descriptive-content widgets
+ *     whose state is exposed via `role="tooltip"` + `aria-describedby`,
+ *     not `aria-expanded`. Tooltip- and popover-specific checks live
+ *     in `src/rules/tooltip/dismissable.ts`.
  */
 const DISCLOSURE_TOGGLE_VALUES: ReadonlySet<string> = new Set([
   "collapse",
   "dropdown",
   "accordion",
   "offcanvas",
-  "modal",
-  "tab",
-  "pill",
 ]);
 
 /**

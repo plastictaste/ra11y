@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tab trigger is not a disclosure — aria/expanded-on-disclosure must not fire</title>
+  </head>
+  <body>
+    <!--
+      Bootstrap's canonical tab/pill markup. Per the WAI-ARIA Authoring
+      Practices §tabs pattern, the active state of a tab trigger is
+      exposed via `aria-selected="true|false"` on a `role="tab"`
+      element — NOT via `aria-expanded`. Forcing `aria-expanded` onto
+      a tab trigger would misrepresent the widget as a disclosure.
+
+      The disclosure rule at src/rules/aria/expanded-on-disclosure.ts
+      deliberately excludes `tab` and `pill` from its disclosure-toggle
+      allow-list so this fixture scans clean for that rule. A separate
+      companion rule (`aria/tab-pattern-roles`, not yet scaffolded)
+      will cover the role / aria-selected gap on tab triggers.
+
+      See:
+        - https://www.w3.org/TR/WCAG22/#name-role-value
+        - https://www.w3.org/WAI/ARIA/apg/patterns/tabs/
+        - https://getbootstrap.com/docs/5.3/components/navs-tabs/
+    -->
+    <ul class="nav nav-tabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" type="button" data-bs-toggle="tab" data-bs-target="#home">
+          Home
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" type="button" data-bs-toggle="tab" data-bs-target="#profile">
+          Profile
+        </button>
+      </li>
+    </ul>
+
+    <!-- nav-pills variant: same shape, same exclusion. -->
+    <ul class="nav nav-pills">
+      <li class="nav-item">
+        <a class="nav-link active" data-bs-toggle="pill" href="#contact-pill">Contact</a>
+      </li>
+    </ul>
+
+    <!-- A real disclosure trigger (dropdown) shown here as a control:
+         the rule MUST still flag disclosure triggers elsewhere on the
+         page. This one is deliberately complete (aria-expanded +
+         aria-controls both present) so the whole fixture scans clean
+         against aria/expanded-on-disclosure. -->
+    <button type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-controls="menu-1">
+      Menu
+    </button>
+    <ul id="menu-1">
+      <li><a href="/a">Item A</a></li>
+      <li><a href="/b">Item B</a></li>
+    </ul>
+  </body>
+</html>

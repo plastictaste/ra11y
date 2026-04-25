@@ -169,6 +169,60 @@ describe("rule aria/expanded-on-disclosure", () => {
       );
       expect(violations).toHaveLength(0);
     });
+
+    it('a <button data-bs-toggle="tab"> has no aria-expanded (tabs use aria-selected, not aria-expanded)', () => {
+      // APG §tabs: a tab trigger announces its active state via
+      // aria-selected on the role="tab" element, not aria-expanded.
+      // Forcing aria-expanded onto a tab trigger would misrepresent
+      // the widget. A separate companion rule (aria/tab-pattern-roles)
+      // covers the role/aria-selected gap.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button type="button" data-bs-toggle="tab" data-bs-target="#profile">Profile</button>
+        </body></html>`,
+        { filePath: "tab.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('an <a data-bs-toggle="pill"> has no aria-expanded (nav-pills use aria-selected like tabs)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#contact" data-bs-toggle="pill">Contact</a>
+        </body></html>`,
+        { filePath: "pill.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('a <button data-bs-toggle="modal"> has no aria-expanded (modals use aria-haspopup="dialog", not aria-expanded)', () => {
+      // APG §dialog-modal: a modal trigger announces the controlled
+      // surface via aria-haspopup="dialog", not aria-expanded — the
+      // dialog is a separate surface, not a show/hide region of the
+      // trigger's container. A separate companion rule
+      // (aria/modal-trigger-haspopup) covers the haspopup gap.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button type="button" data-bs-toggle="modal" data-bs-target="#mymodal">Open dialog</button>
+        </body></html>`,
+        { filePath: "modal.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('an <a data-bs-toggle="modal"> has no aria-expanded (modal anchor, not disclosure)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#mymodal" data-bs-toggle="modal">Open modal</a>
+        </body></html>`,
+        { filePath: "modal-anchor.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -268,6 +322,28 @@ describe("rule aria/expanded-on-disclosure", () => {
            return <button type="button" data-bs-toggle="tooltip" title="Hint">Hover</button>;
          }`,
         { filePath: "Tip.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('a <button data-bs-toggle="tab"> does not fire (tabs use aria-selected, not aria-expanded)', () => {
+      const violations = runRule(
+        rule,
+        `function TabTrigger() {
+           return <button type="button" data-bs-toggle="tab" data-bs-target="#profile">Profile</button>;
+         }`,
+        { filePath: "TabTrigger.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('a <button data-bs-toggle="modal"> does not fire (modals use aria-haspopup="dialog")', () => {
+      const violations = runRule(
+        rule,
+        `function ModalTrigger() {
+           return <button type="button" data-bs-toggle="modal" data-bs-target="#m">Open</button>;
+         }`,
+        { filePath: "ModalTrigger.tsx" },
       );
       expect(violations).toHaveLength(0);
     });

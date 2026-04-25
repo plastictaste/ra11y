@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Modal trigger is not a disclosure — aria/expanded-on-disclosure must not fire</title>
+  </head>
+  <body>
+    <!--
+      Bootstrap's canonical modal-trigger markup. Per the WAI-ARIA
+      Authoring Practices §dialog-modal pattern, a modal trigger
+      announces the controlled surface via `aria-haspopup="dialog"`
+      (and the dialog itself uses `role="dialog"` + `aria-modal="true"`).
+      The dialog is a separate surface — not a show/hide region of the
+      trigger's container — so `aria-expanded` is not the right state
+      channel and forcing it onto the trigger would misrepresent the
+      widget as a disclosure.
+
+      The disclosure rule at src/rules/aria/expanded-on-disclosure.ts
+      deliberately excludes `modal` from its disclosure-toggle
+      allow-list so this fixture scans clean for that rule. A separate
+      companion rule (`aria/modal-trigger-haspopup`, not yet
+      scaffolded) will cover the haspopup gap on modal triggers.
+
+      See:
+        - https://www.w3.org/TR/WCAG22/#name-role-value
+        - https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/
+        - https://getbootstrap.com/docs/5.3/components/modal/
+    -->
+    <button type="button" data-bs-toggle="modal" data-bs-target="#example-modal">
+      Open dialog
+    </button>
+
+    <!-- A link-triggered modal (also valid Bootstrap usage). -->
+    <a href="#example-modal" data-bs-toggle="modal">Open via link</a>
+
+    <!-- A real disclosure trigger (dropdown) shown here as a control:
+         the rule MUST still flag disclosure triggers elsewhere on the
+         page. This one is deliberately complete (aria-expanded +
+         aria-controls both present) so the whole fixture scans clean
+         against aria/expanded-on-disclosure. -->
+    <button type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-controls="menu-1">
+      Menu
+    </button>
+    <ul id="menu-1">
+      <li><a href="/a">Item A</a></li>
+      <li><a href="/b">Item B</a></li>
+    </ul>
+  </body>
+</html>
