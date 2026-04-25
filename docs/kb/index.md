@@ -110,6 +110,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/tab-controls-missing](./rules/aria__tab-controls-missing.md)
 - [aria/valid-attr](./rules/aria__valid-attr.md)
 - [color/meaning-by-color-only](./rules/color__meaning-by-color-only.md)
+- [color/state-class-color-only](./rules/color__state-class-color-only.md)
 - [contrast/enhanced](./rules/contrast__enhanced.md)
 - [contrast/minimum](./rules/contrast__minimum.md)
 - [contrast/non-text](./rules/contrast__non-text.md)
