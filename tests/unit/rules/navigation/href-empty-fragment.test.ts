@@ -223,11 +223,9 @@ describe("rule navigation/href-empty-fragment", () => {
     });
 
     it('HTML: empty href inside <nav class="pager"> branches the suggestion', () => {
-      const violations = runRule(
-        rule,
-        `<nav class="pager"><a href="">Previous</a></nav>`,
-        { filePath: "index.html" },
-      );
+      const violations = runRule(rule, `<nav class="pager"><a href="">Previous</a></nav>`, {
+        filePath: "index.html",
+      });
       expect(violations).toHaveLength(1);
       const sugg = violations[0]?.suggestion ?? "";
       expect(sugg).toContain("pagination context");
@@ -246,11 +244,9 @@ describe("rule navigation/href-empty-fragment", () => {
     });
 
     it("HTML: bare # outside any pagination context keeps the original generic suggestion", () => {
-      const violations = runRule(
-        rule,
-        `<div class="content"><a href="#">x</a></div>`,
-        { filePath: "index.html" },
-      );
+      const violations = runRule(rule, `<div class="content"><a href="#">x</a></div>`, {
+        filePath: "index.html",
+      });
       expect(violations).toHaveLength(1);
       const sugg = violations[0]?.suggestion ?? "";
       // Generic suggestion mentions section-id (in-page nav) — pagination
@@ -272,11 +268,9 @@ describe("rule navigation/href-empty-fragment", () => {
     });
 
     it("HTML: case-insensitive — class=Pagination still branches", () => {
-      const violations = runRule(
-        rule,
-        `<ul class="Pagination"><a href="#">x</a></ul>`,
-        { filePath: "index.html" },
-      );
+      const violations = runRule(rule, `<ul class="Pagination"><a href="#">x</a></ul>`, {
+        filePath: "index.html",
+      });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.suggestion).toContain("pagination context");
     });

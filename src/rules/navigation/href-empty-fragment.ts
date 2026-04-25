@@ -32,12 +32,7 @@
 
 import { defineRule } from "../../api/plugin.ts";
 import { getHtmlAttribute, getJsxAttribute } from "../../engine/ast-helpers.ts";
-import type {
-  HtmlDocument,
-  HtmlNode,
-  JsxElement,
-  TsxModule,
-} from "../../types/ast.ts";
+import type { HtmlDocument, HtmlNode, JsxElement, TsxModule } from "../../types/ast.ts";
 import { isDomOriginExtension } from "../../utils/path.ts";
 
 type PlaceholderKind = "bare-fragment" | "empty";
