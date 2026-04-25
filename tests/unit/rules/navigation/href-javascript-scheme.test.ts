@@ -184,12 +184,12 @@ describe("rule navigation/href-javascript-scheme", () => {
     });
   });
 
-  // Belt-and-braces gate (Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS): a
-  // `javascript:` href substring inside a packed plugin or minified
-  // `.js` bundle is not a real anchor — the surrounding code may be a
-  // string-template factory, a JS-API wrapper, or a build-time
-  // interpolation. Only act on JSX nodes parsed out of `.tsx` / `.jsx`
-  // (and the JSX-bearing `.mdx` / `.astro` aliases).
+  // Belt-and-braces DOM-origin gate: a `javascript:` href substring
+  // inside a packed plugin or minified `.js` bundle is not a real anchor
+  // — the surrounding code may be a string-template factory, a JS-API
+  // wrapper, or a build-time interpolation. Only act on JSX nodes parsed
+  // out of `.tsx` / `.jsx` (and the JSX-bearing `.mdx` / `.astro`
+  // aliases).
   describe("non-JSX JS gate", () => {
     it("does not fire on a bare .js file containing an anchor-shaped substring", () => {
       const source = `var html = '<a href="javascript:void(0)">click</a>';`;
@@ -204,11 +204,9 @@ describe("rule navigation/href-javascript-scheme", () => {
     });
 
     it("still fires on a .tsx file containing the same anchor element", () => {
-      const violations = runRule(
-        rule,
-        `function F(){return <a href="javascript:void(0)">x</a>}`,
-        { filePath: "Link.tsx" },
-      );
+      const violations = runRule(rule, `function F(){return <a href="javascript:void(0)">x</a>}`, {
+        filePath: "Link.tsx",
+      });
       expect(violations).toHaveLength(1);
     });
   });

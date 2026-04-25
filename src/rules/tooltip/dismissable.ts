@@ -133,12 +133,11 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      // Belt-and-braces gate: a `title="…"` attribute substring inside a
-      // packed plugin or minified `.js` bundle is not a real interactive
-      // element — the surrounding code may be a string-template factory or
-      // a JS-API wrapper. Only act on JSX nodes parsed out of `.tsx` /
-      // `.jsx` (and the JSX-bearing `.mdx` / `.astro` aliases). See
-      // Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS.
+      // Belt-and-braces DOM-origin gate: a `title="…"` attribute substring
+      // inside a packed plugin or minified `.js` bundle is not a real
+      // interactive element — the surrounding code may be a string-template
+      // factory or a JS-API wrapper. Only act on JSX nodes parsed out of
+      // `.tsx` / `.jsx` (and the JSX-bearing `.mdx` / `.astro` aliases).
       if (!isDomOriginExtension(ctx.filePath)) return;
       checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
     }

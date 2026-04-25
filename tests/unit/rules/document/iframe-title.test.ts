@@ -223,12 +223,12 @@ describe("rule document/iframe-title", () => {
     });
   });
 
-  // Belt-and-braces gate (Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS): the
-  // `appliesTo.fileExtensions` check upstream aliases `.js → .jsx` so
-  // Next.js-style JSX-in-`.js` corpora keep scanning, but minified
-  // bundles and packed plugins parse JSX-shaped substrings out of
-  // string templates that are not real DOM elements. The rule must
-  // not act on JSX nodes surfaced from a bare `.js` / `.ts` file.
+  // Belt-and-braces DOM-origin gate: the `appliesTo.fileExtensions`
+  // check upstream aliases `.js → .jsx` so Next.js-style JSX-in-`.js`
+  // corpora keep scanning, but minified bundles and packed plugins parse
+  // JSX-shaped substrings out of string templates that are not real DOM
+  // elements. The rule must not act on JSX nodes surfaced from a bare
+  // `.js` / `.ts` file.
   describe("non-JSX JS gate", () => {
     it("does not fire on a bare .js file containing an iframe-shaped substring", () => {
       const source = `var html = '<iframe src="/embed"></iframe>';`;

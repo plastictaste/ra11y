@@ -88,12 +88,12 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      // Belt-and-braces gate: an `<a href="javascript:…">` substring inside
-      // a packed plugin or minified `.js` bundle is not a real anchor — it's
-      // a string the runtime injects somewhere else, or a JS-API wrapper, or
-      // a template literal that a build step interpolates. Only act on JSX
-      // nodes parsed out of `.tsx` / `.jsx` (and the JSX-bearing `.mdx` /
-      // `.astro` aliases). See Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS.
+      // Belt-and-braces DOM-origin gate: an `<a href="javascript:…">`
+      // substring inside a packed plugin or minified `.js` bundle is not a
+      // real anchor — it's a string the runtime injects somewhere else, or
+      // a JS-API wrapper, or a template literal that a build step
+      // interpolates. Only act on JSX nodes parsed out of `.tsx` / `.jsx`
+      // (and the JSX-bearing `.mdx` / `.astro` aliases).
       if (!isDomOriginExtension(ctx.filePath)) return;
       checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
     }

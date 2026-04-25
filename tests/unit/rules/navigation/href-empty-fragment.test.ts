@@ -167,12 +167,11 @@ describe("rule navigation/href-empty-fragment", () => {
     });
   });
 
-  // Belt-and-braces gate (Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS): an
-  // `<a href="">` substring inside a packed plugin or minified `.js`
-  // bundle is not a real anchor — the surrounding code may be a
-  // string-template factory, a JS-API wrapper, or a build-time
-  // interpolation. Only act on JSX nodes parsed out of `.tsx` / `.jsx`
-  // (and the JSX-bearing `.mdx` / `.astro` aliases).
+  // Belt-and-braces DOM-origin gate: an `<a href="">` substring inside a
+  // packed plugin or minified `.js` bundle is not a real anchor — the
+  // surrounding code may be a string-template factory, a JS-API wrapper,
+  // or a build-time interpolation. Only act on JSX nodes parsed out of
+  // `.tsx` / `.jsx` (and the JSX-bearing `.mdx` / `.astro` aliases).
   describe("non-JSX JS gate", () => {
     it("does not fire on a bare .js file containing a placeholder anchor substring", () => {
       const source = `var html = '<a href="">click</a>';`;

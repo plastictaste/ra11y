@@ -143,8 +143,10 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
  * `appliesTo.fileExtensions` check earlier in the pipeline aliases
  * `.js → .jsx` / `.ts → .tsx` to keep Next.js-style JSX-in-`.js` corpora
  * scanning, but minified JS plugins and packed bundles can still parse
- * to JSX-shaped substrings (Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS). For
- * rules that depend on the *DOM-rendered* role of an element (the
+ * to JSX-shaped substrings even when no real DOM element is present at
+ * runtime (the parser's bare-JS gate is heuristic on JSX-import signals
+ * and can miss). For rules that depend on the *DOM-rendered* role of an
+ * element (the
  * anchor's role at click time, the iframe's announced name, the native
  * tooltip's keyboard behavior), bare `.js` / `.ts` is not the right
  * substrate even when the parser confidently produced JSX nodes — the
