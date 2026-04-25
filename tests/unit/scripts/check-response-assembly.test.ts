@@ -157,3 +157,104 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
     expect(patterns).toEqual(["plan-total-findings", "plan-violations-composite"]);
   });
 });
+
+describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite pattern", () => {
+  test("flags `automatedCoverage: { … automatedCriteriaPassRate }` inside textResult", () => {
+    // Q7-CHECKLIST-PASS-RATE-COMPOSITE: the lone scalar bundled
+    // `clean` / `untestable` / `withFindings` into one ratio. The
+    // singular shape is the canonical checklist envelope on a
+    // single-standard call.
+    const src = `
+      import { textResult } from "./helpers";
+      export function handler() {
+        return textResult({
+          summary: {
+            automatedCoverage: { standardId: "wcag22", automatedCriteriaPassRate: 45 },
+          },
+        });
+      }
+    `;
+    const violations = findResponseAssemblyViolations(src, "synthetic.ts", NO_ALLOWLIST);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.pattern).toBe("automated-coverage-pass-rate-composite");
+  });
+
+  test("flags an array element under `automatedCoverage: [{ … }, …]` (multi-standard path)", () => {
+    // The multi-standard path keeps an array of per-standard glosses;
+    // the predicate must catch the regression on any element.
+    const src = `
+      import { textResult } from "./helpers";
+      export function handler() {
+        return textResult({
+          summary: {
+            automatedCoverage: [
+              { standardId: "wcag22", automatedCriteriaPassRate: 45 },
+              { standardId: "section508", criteriaWithRulesAllClean: 1, criteriaWithoutEligibleInputs: 0 },
+            ],
+          },
+        });
+      }
+    `;
+    const violations = findResponseAssemblyViolations(src, "synthetic.ts", NO_ALLOWLIST);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.pattern).toBe("automated-coverage-pass-rate-composite");
+  });
+
+  test("does NOT flag the sibling `coverage` tool's per-standard `automatedCriteriaPassRate`", () => {
+    // The `coverage` tool surfaces `automatedCriteriaPassRate` at the
+    // top level of each per-standard entry alongside the structured
+    // four-counter split. That shape is out of scope because the
+    // value never sits under an `automatedCoverage:` key.
+    const src = `
+      import { textResult } from "./helpers";
+      export function handler() {
+        return textResult({
+          standardId: "wcag22",
+          automatedCriteriaPassRate: 73,
+          criteriaEvaluated: 30,
+          criteriaClean: 22,
+          criteriaWithFindings: 8,
+          criteriaUntestable: 5,
+        });
+      }
+    `;
+    const violations = findResponseAssemblyViolations(src, "synthetic.ts", NO_ALLOWLIST);
+    expect(violations).toHaveLength(0);
+  });
+
+  test("does NOT flag `automatedCriteriaPassRate` outside textResult / errorResult", () => {
+    // Schema fixtures, JSDoc samples, or unit-test helpers carrying
+    // the literal stay out of scope by the response-builder ascent.
+    const src = `
+      export const fixture = {
+        summary: {
+          automatedCoverage: { standardId: "wcag22", automatedCriteriaPassRate: 45 },
+        },
+      };
+    `;
+    const violations = findResponseAssemblyViolations(src, "synthetic.ts", NO_ALLOWLIST);
+    expect(violations).toHaveLength(0);
+  });
+
+  test("respects allowlist entries for automated-coverage-pass-rate-composite", () => {
+    const src = `
+      import { textResult } from "./helpers";
+      export function handler() {
+        return textResult({
+          summary: {
+            automatedCoverage: { standardId: "wcag22", automatedCriteriaPassRate: 45 },
+          },
+        });
+      }
+    `;
+    const allowlist: readonly AllowlistEntry[] = [
+      {
+        file: "synthetic.ts",
+        pattern: "automated-coverage-pass-rate-composite",
+        reason: "synthetic test allowlist",
+      },
+    ];
+    const violations = findResponseAssemblyViolations(src, "synthetic.ts", allowlist);
+    expect(violations).toHaveLength(0);
+  });
+});

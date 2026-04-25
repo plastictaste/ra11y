@@ -1168,11 +1168,16 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     }
   });
 
-  it("checklist.summary.automatedCoverage is a one-field gloss (ADR 0010)", async () => {
+  it("checklist.summary.automatedCoverage carries the non-overlapping split (ADR 0010 + Q7-CHECKLIST-PASS-RATE-COMPOSITE)", async () => {
     // ADR 0010 trimmed the per-standard block that used to live on
     // `checklist.summary.automatedCoverage` — the full shape is
-    // canonical on `coverage` only. What survives here is the headline
-    // identity + pass rate the workflow-queue context needs.
+    // canonical on `coverage` only. Q7-CHECKLIST-PASS-RATE-COMPOSITE
+    // then dropped the lone `automatedCriteriaPassRate` scalar (which
+    // bundled "rule fired clean" with "rule never had eligible inputs"
+    // with "rule found violations" into one ratio — composite headline
+    // dishonesty per `ai-first-consumer.md`). What survives here is
+    // the standardId plus two non-overlapping counters the agent reads
+    // without summing.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR] }),
@@ -1181,15 +1186,24 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       summary: {
         automatedCoverage: {
           standardId: string;
-          automatedCriteriaPassRate: number;
+          criteriaWithRulesAllClean: number;
+          criteriaWithoutEligibleInputs: number;
         };
       };
     };
     expect(body.summary.automatedCoverage.standardId).toBe("wcag22");
-    expect(typeof body.summary.automatedCoverage.automatedCriteriaPassRate).toBe("number");
-    // The dropped fields (criteriaAutomatable, criteriaAutomatablePassing)
-    // must not re-appear — that would re-create the three-places-same-shape
-    // drift ADR 0010 closes.
+    expect(typeof body.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");
+    expect(typeof body.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBe("number");
+    expect(body.summary.automatedCoverage.criteriaWithRulesAllClean).toBeGreaterThanOrEqual(0);
+    expect(body.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBeGreaterThanOrEqual(0);
+    // The dropped composite + the dropped per-standard block (both
+    // ADR 0010 and Q7-CHECKLIST-PASS-RATE-COMPOSITE closures) must not
+    // re-appear — re-introducing any of them recreates the
+    // "three-places-reporting-the-same-shape" drift / composite-
+    // headline dishonesty.
+    expect(
+      (body.summary.automatedCoverage as Record<string, unknown>)["automatedCriteriaPassRate"],
+    ).toBeUndefined();
     expect(
       (body.summary.automatedCoverage as Record<string, unknown>)["criteriaAutomatable"],
     ).toBeUndefined();

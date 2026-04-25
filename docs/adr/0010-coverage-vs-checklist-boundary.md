@@ -60,9 +60,19 @@ through to drive the review session.
 2. **`checklist` never emits `failingAutomatedCriteria`, `criteriaTotal`,
    `criteriaAutomatable`, or `criteriaAutomatablePassing`.** Those are
    compliance-dashboard fields; the agent reads them from `coverage`.
-3. **`checklist.summary.automatedCoverage` drops to a one-field gloss**:
-   `{ standardId, automatedCriteriaPassRate }` — a headline number for
-   context, nothing more. The full shape stays in `coverage`.
+3. **`checklist.summary.automatedCoverage` drops to a structured-split
+   gloss**: `{ standardId, criteriaWithRulesAllClean,
+   criteriaWithoutEligibleInputs }`. The two counters name
+   non-overlapping concepts the agent reads separately; the lone
+   `automatedCriteriaPassRate` scalar that originally rode here was
+   removed per Q7-CHECKLIST-PASS-RATE-COMPOSITE (2026-04-25) — it
+   bundled "rule fired clean" (`clean`) with "rule never had eligible
+   inputs" (`untestable`) with "rule found violations"
+   (`withFindings`) into a single ratio, the doctrine's "Composite
+   headline counts are dishonest" failure mode. The full per-standard
+   block (`criteriaTotal`, `criteriaAutomatable`, `criteriaEvaluated`,
+   `criteriaWithFindings`, `automatedCriteriaPassRate`) stays canonical
+   in `coverage` only.
 4. **Both tools keep `untargetedCriteria: number`** and
    `likelyIrrelevant: …[]`. Those are the manual-review axis; both tools
    need them to frame their output honestly. They must be computed from
@@ -122,7 +132,10 @@ this batch.
   (emitted via the existing `buildNextStep` helper pattern; `next-step.ts`
   already centralizes structured-next-step construction for scan tools).
 - `tool-checklist.ts` trims `automatedCoverage` to `{ standardId,
-  automatedCriteriaPassRate }` and adds its own `nextStep` pair.
+  criteriaWithRulesAllClean, criteriaWithoutEligibleInputs }` (the
+  composite-pass-rate scalar was deleted per
+  Q7-CHECKLIST-PASS-RATE-COMPOSITE; the two non-overlapping counters
+  replace it) and adds its own `nextStep` pair.
 - New cross-tool invariant test under `tests/integration/mcp-consistency/`:
   `coverage.untargetedCriteria` sum ≡ `checklist.summary.untargetedCriteria`
   ≡ `scan_project.plan.untargetedCriteria` on the same scan. We already

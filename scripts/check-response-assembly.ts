@@ -64,6 +64,30 @@
  * upstream is a function call, not a literal `plan: { ... }`
  * initializer, so this check is scoped accordingly.
  *
+ * ## Pattern D — `automatedCoverage: { … automatedCriteriaPassRate … }` composite
+ *
+ * `checklist.summary.automatedCoverage.automatedCriteriaPassRate` was
+ * removed per Q7-CHECKLIST-PASS-RATE-COMPOSITE (2026-04-25): the lone
+ * scalar bundled "rule fired clean" (`clean`) with "rule never had
+ * eligible inputs" (`untestable`) with "rule found violations"
+ * (`withFindings`) into one ratio — a composite headline summing
+ * categorically different sub-buckets per the doctrine's "Composite
+ * headline counts are dishonest" rule. The honest shape is two
+ * non-overlapping counters (`criteriaWithRulesAllClean` +
+ * `criteriaWithoutEligibleInputs`) that the agent reads separately
+ * and never sums into a single rate.
+ *
+ * Re-introducing `automatedCriteriaPassRate` on either the singular
+ * `automatedCoverage: { … }` shape or any element of the
+ * `automatedCoverage: [{ … }, …]` array (multi-standard path) inside a
+ * `textResult(...)` / `errorResult(...)` call regresses the deletion.
+ * Note: the sibling `coverage` tool still emits `automatedCriteriaPassRate`
+ * at the per-standard report top level alongside the four-counter split
+ * (`criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`,
+ * `criteriaUntestable`); that surface is out of scope here because the
+ * pattern is gated on the `automatedCoverage:` key (not present on the
+ * coverage tool's flat per-standard shape).
+ *
  * ## Scope
  *
  * This check walks the AI-first consumer-model paths enumerated in
@@ -96,7 +120,8 @@ import ts from "typescript";
 export type ResponseAssemblyPattern =
   | "newText-empty-with-edit-kind"
   | "plan-total-findings"
-  | "plan-violations-composite";
+  | "plan-violations-composite"
+  | "automated-coverage-pass-rate-composite";
 
 /**
  * Structured allowlist entry. `file` is the repo-relative path; `pattern`
@@ -162,6 +187,8 @@ function visit(
     if (b) out.push(b);
     const c = analyzePlanViolationsCompositePattern(node, relFile, source, allowlist);
     if (c) out.push(c);
+    const d = analyzeAutomatedCoveragePassRatePattern(node, relFile, source, allowlist);
+    if (d) out.push(d);
   }
   ts.forEachChild(node, (child) => visit(child, relFile, source, allowlist, out));
 }
@@ -340,6 +367,90 @@ function analyzePlanViolationsCompositePattern(
   };
 }
 
+// ─── Pattern D: automatedCoverage: { … automatedCriteriaPassRate … } ──────
+
+/**
+ * Flags an object literal that carries an `automatedCriteriaPassRate`
+ * property whose enclosing `automatedCoverage:` initializer flows
+ * through `textResult(...)` or `errorResult(...)`. Both shapes the
+ * `checklist` tool emits are caught:
+ *
+ *   - Singular object: `automatedCoverage: { standardId, … automatedCriteriaPassRate }`
+ *   - Array element: `automatedCoverage: [{ standardId, … automatedCriteriaPassRate }, …]`
+ *
+ * The walk works inside-out — a literal carrying
+ * `automatedCriteriaPassRate` is the candidate; we then walk its
+ * ancestors to confirm the literal sits under an `automatedCoverage:`
+ * property. That ancestor predicate is what scopes this check away
+ * from the sibling `coverage` tool's per-standard shape (where
+ * `automatedCriteriaPassRate` is legitimately surfaced at the top level
+ * of each entry alongside the structured `criteriaEvaluated /
+ * criteriaClean / criteriaWithFindings / criteriaUntestable` split, not
+ * inside an `automatedCoverage:` envelope).
+ *
+ * Q7-CHECKLIST-PASS-RATE-COMPOSITE removed the scalar from the
+ * checklist surface; the honest shape is the two non-overlapping
+ * counters (`criteriaWithRulesAllClean` + `criteriaWithoutEligibleInputs`).
+ */
+function analyzeAutomatedCoveragePassRatePattern(
+  node: ts.ObjectLiteralExpression,
+  relFile: string,
+  source: ts.SourceFile,
+  allowlist: readonly AllowlistEntry[],
+): ResponseAssemblyViolation | null {
+  let passRateProp: ts.PropertyAssignment | null = null;
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const name = getPropertyName(prop.name);
+    if (name === "automatedCriteriaPassRate") {
+      passRateProp = prop;
+      break;
+    }
+  }
+  if (!passRateProp) return null;
+  if (!isInsideAutomatedCoverage(node)) return null;
+  if (!isInsideResponseBuilder(node)) return null;
+  if (isAllowlisted(relFile, "automated-coverage-pass-rate-composite", allowlist)) return null;
+
+  const { line } = ts.getLineAndCharacterOfPosition(source, passRateProp.getStart(source));
+  const snippet = source.text
+    .slice(node.getStart(source), node.getEnd())
+    .replace(/\s+/g, " ")
+    .slice(0, 160);
+  return {
+    file: relFile,
+    line: line + 1,
+    pattern: "automated-coverage-pass-rate-composite",
+    snippet,
+  };
+}
+
+/**
+ * True when the given literal is nested under a property assignment
+ * keyed `automatedCoverage:`. Walks ancestors handling both shapes the
+ * checklist tool used to emit:
+ *
+ *   - Singular: `automatedCoverage: { standardId, automatedCriteriaPassRate }`
+ *   - Array: `automatedCoverage: [{ standardId, automatedCriteriaPassRate }, …]`
+ *
+ * The walk stops as soon as it hits a CallExpression — anything outside
+ * the immediate property-assembly scope is irrelevant. Mirrors the
+ * "find an ancestor with property X" predicate
+ * {@link isInsideResponseBuilder} uses, scoped to the named key.
+ */
+function isInsideAutomatedCoverage(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isPropertyAssignment(current)) {
+      const name = getPropertyName(current.name);
+      if (name === "automatedCoverage") return true;
+    }
+    if (ts.isCallExpression(current)) return false;
+    current = current.parent;
+  }
+  return false;
+}
+
 // ─── Shared helpers ────────────────────────────────────────────────────────
 
 function getPropertyName(name: ts.PropertyName): string | null {
@@ -426,7 +537,14 @@ if (import.meta.main) {
         "    across the four `fixesByClass` lanes (mechanical, guidance, runtimeOnly,\n" +
         "    verifyInSource) under one headline. Use `plan.fixesByClass` (always present\n" +
         "    when violations > 0) as the structured per-lane tally; sum the four lanes\n" +
-        "    when a flat count is needed.\n",
+        "    when a flat count is needed.\n" +
+        "  automated-coverage-pass-rate-composite:\n" +
+        "    `automatedCoverage.automatedCriteriaPassRate` was removed per\n" +
+        "    Q7-CHECKLIST-PASS-RATE-COMPOSITE — the lone scalar bundled `clean` /\n" +
+        "    `untestable` / `withFindings` (rule fired clean, rule never had eligible\n" +
+        "    inputs, rule found violations) into one ratio. Use the two non-overlapping\n" +
+        "    counters `criteriaWithRulesAllClean` + `criteriaWithoutEligibleInputs`\n" +
+        "    instead; the agent reads both and never sums them into a rate.\n",
     );
     console.error(
       "See docs/kb/architecture/ai-first-consumer.md and .claude/rules/mcp-response-shapes.md for the full doctrine.",

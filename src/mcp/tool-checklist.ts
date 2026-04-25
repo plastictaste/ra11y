@@ -369,13 +369,17 @@ export const checklistTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
-    // Q-SHARED-PASS-RATE-COMPOSITE: thread testableCriteria so the
-    // `automatedCriteriaPassRate` surfaced on `summary.automatedCoverage`
-    // here uses the honest `clean / evaluated` denominator — same shape
-    // `coverage` emits. Without this, the two tools report different
-    // pass-rate numbers on the same scan (the canonical cross-surface
-    // drift the AI-first doctrine flags in "one tool call should answer
-    // 'what next?'").
+    // Q7-CHECKLIST-PASS-RATE-COMPOSITE: thread testableCriteria so the
+    // `clean` / `untestable` counters surfaced on
+    // `summary.automatedCoverage` use the honest split `coverage`
+    // emits (clean = ran + zero findings; untestable = rule declared
+    // extension eligibility but saw zero applicable input). The
+    // previous lone `automatedCriteriaPassRate` headline conflated
+    // "rule ran clean" with "rule never had eligible inputs" with
+    // "rule found violations" into one composite — dishonest per
+    // `ai-first-consumer.md` §"Composite headline counts are
+    // dishonest." Splitting into two non-overlapping counters lets the
+    // agent decide; there is no single rate that's honest.
     const testableCriteria = deriveTestableCriteria(
       activeRules,
       perRuleCoverage,
@@ -458,40 +462,41 @@ export const checklistTool: McpTool = {
     // callers read `actionable` and `untargetedCriteria` separately
     // and never sum them into one headline. The cross-tool invariant
     // test now re-derives the total from the split parts on the fly.
-    // ADR 0010 — `checklist.summary.automatedCoverage` is a one-field
-    // gloss: `{ standardId, automatedCriteriaPassRate }`. The headline
-    // pass-rate number is honest here (workflow-queue context for the
-    // manual items we're about to list), but the full per-standard
-    // block (`criteriaTotal`, `criteriaAutomatable`,
-    // `criteriaAutomatablePassing`, `failingAutomatedCriteria`) is
-    // canonical in `coverage` only — emitting it here re-created the
-    // "three places reporting the same shape" drift ADR 0010 closed.
+    // ADR 0010 + Q7-CHECKLIST-PASS-RATE-COMPOSITE —
+    // `checklist.summary.automatedCoverage` is now a structured split:
+    // `{ standardId, criteriaWithRulesAllClean,
+    // criteriaWithoutEligibleInputs }`. The previous lone
+    // `automatedCriteriaPassRate` scalar bundled "rule fired clean"
+    // (clean), "rule found violations" (withFindings), and "rule never
+    // had eligible inputs" (untestable) into one ratio — composite
+    // headline dishonesty per `ai-first-consumer.md`. The two
+    // counters here are non-overlapping concepts:
+    //   - `criteriaWithRulesAllClean`: rules ran on eligible input and
+    //     emitted zero findings. Maps to coverage report's `clean`.
+    //   - `criteriaWithoutEligibleInputs`: rules declared extension
+    //     eligibility but the scan saw no applicable input — the
+    //     canonical Tailwind-pre-build / vendor-bundle shape. Maps to
+    //     coverage report's `untestable`. The agent reads both and
+    //     decides; never sums them into a single rate.
+    // The full per-standard block (`criteriaTotal`,
+    // `criteriaAutomatable`, `criteriaAutomatablePassing`,
+    // `failingAutomatedCriteria`, `criteriaEvaluated`) stays canonical
+    // in `coverage` — emitting them here would re-create the
+    // "three-places-reporting-the-same-shape" drift ADR 0010 closed.
     // Single-standard path flattens to an object; multi-standard keeps
     // the array shape so `Array.isArray(automatedCoverage)` still
     // discriminates.
-    //
-    // V1-ZERO-SCAN-PASS-RATE-SENTINEL: on a zero-file scan, the pass-
-    // rate denominator has no meaningful population — the legacy
-    // `passing / automatable` formula returns 100, the
-    // `clean / evaluated` formula returns 0, and neither is an honest
-    // answer. Omit `automatedCriteriaPassRate` entirely in that case
-    // (present-when-meaningful per `ai-first-consumer.md` §"Ambiguous
-    // field shapes are dishonest") so an agent summing dashboards
-    // doesn't score the call as clean conformance. The
-    // `scanned_zero_files` warning already communicates the honest
-    // reason at the response-envelope layer.
-    const passRateMeaningful = files.length > 0;
     const automatedCoverage =
       coverage.length === 1
         ? {
             standardId: coverage[0]?.standardId,
-            ...(passRateMeaningful
-              ? { automatedCriteriaPassRate: coverage[0]?.automatedPassRate }
-              : {}),
+            criteriaWithRulesAllClean: coverage[0]?.clean,
+            criteriaWithoutEligibleInputs: coverage[0]?.untestable,
           }
         : coverage.map((c) => ({
             standardId: c.standardId,
-            ...(passRateMeaningful ? { automatedCriteriaPassRate: c.automatedPassRate } : {}),
+            criteriaWithRulesAllClean: c.clean,
+            criteriaWithoutEligibleInputs: c.untestable,
           }));
     // Field order is load-bearing — the agent reads top-to-bottom and
     // uses the leading fields as the headline. Actionable-first puts
