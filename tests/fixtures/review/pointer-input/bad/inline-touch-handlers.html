@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Inline touch event handlers</title>
+  </head>
+  <body>
+    <!-- ontouchstart on a canvas element — signals path-based drawing -->
+    <canvas
+      id="draw-area"
+      width="400"
+      height="300"
+      ontouchstart="handleStart(event)"
+      ontouchmove="handleMove(event)"
+    ></canvas>
+
+    <!-- onpointermove on a div — path-tracking drag target -->
+    <div
+      id="drag-handle"
+      role="slider"
+      aria-label="Drag to resize"
+      onpointermove="onDrag(event)"
+    ></div>
+  </body>
+</html>

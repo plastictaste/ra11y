@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Click-only handlers, no gesture attrs</title>
+  </head>
+  <body>
+    <!-- onclick and onpointerdown are point-in-time — no path tracking -->
+    <button onclick="handleClick()" id="submit-btn">Submit</button>
+    <div
+      id="drop-zone"
+      role="button"
+      tabindex="0"
+      onclick="handleDrop(event)"
+      onpointerdown="handlePointerDown(event)"
+    >
+      Drop files here
+    </div>
+  </body>
+</html>

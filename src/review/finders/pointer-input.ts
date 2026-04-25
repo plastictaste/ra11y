@@ -18,20 +18,25 @@
  * is the path stroke of a signature pad (gesture-required — likely
  * real 2.5.1 issue) or a hover-tooltip trigger (no gesture — fine).
  *
- * The finder fires on three classes of evidence:
+ * The finder fires on four classes of evidence:
  *   1. JSX event-handler attributes known to be path-based / multipoint
  *      (onPointerMove, onTouchMove, gesture*).
- *   2. addEventListener() calls for the same set of DOM event names.
+ *   2. addEventListener() calls for the same set of DOM event names, plus
+ *      imports of well-known gesture libraries (hammer.js / hammerjs,
+ *      use-gesture, @use-gesture/*, interactjs) which signal a project
+ *      has wired gesture input even if the call sites are abstracted.
  *   3. Path-based library-author patterns the single-handler scan
  *      misses — co-occurring `touchstart`+`touchmove` or
  *      `pointerdown`+`pointermove` listeners in one file (classic
  *      swipe/drag implementations), plus file/class/function
  *      identifiers matching /swipe|pan|pinch|rotate/i.
+ *   4. HTML inline event-handler attributes: `ontouchstart`, `ontouchmove`,
+ *      and `onpointermove` on any element in an HTML / HTM file.
  */
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
-import { walkJsxElements } from "../../engine/ast-helpers.ts";
-import type { TsxModule } from "../../types/ast.ts";
+import { getHtmlAttribute, walkHtmlElements, walkJsxElements } from "../../engine/ast-helpers.ts";
+import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 import type { RuleContext } from "../../types/rule.ts";
 
@@ -54,6 +59,20 @@ const GESTURE_HANDLERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * HTML inline event-handler attribute names that indicate path-based or
+ * touch-specific interaction. These appear as literal attributes on HTML
+ * elements: `<div ontouchstart="...">`. Note: `ontouchstart` is a
+ * point-in-time event but its presence alongside `ontouchmove` is the
+ * classic path-tracking pair; we surface all three so the reviewer can
+ * confirm whether the handler drives a path-based gesture.
+ */
+const HTML_INLINE_GESTURE_ATTRS: ReadonlySet<string> = new Set([
+  "ontouchstart",
+  "ontouchmove",
+  "onpointermove",
+]);
+
+/**
  * Source-text patterns for DOM-event listener registration from non-JSX
  * TS/JS code (addEventListener calls, Web API event names used as
  * property handlers). Complements the JSX walk.
@@ -65,6 +84,22 @@ const SOURCE_PATTERNS: readonly { readonly pattern: RegExp; readonly label: stri
     label: "addEventListener('$1')",
   },
 ];
+
+/**
+ * Import/require patterns for well-known pointer-event gesture libraries.
+ * A library import is direct evidence of gesture input being wired in the
+ * project even when call sites are abstracted behind component boundaries.
+ * Curated short list — only libraries whose primary purpose is gesture
+ * input; general-purpose interaction or animation libraries are not included.
+ *
+ * Covered:
+ *   - `hammerjs` / `hammer.js` — most popular multi-touch library
+ *   - `use-gesture` — older scoped package name (unscoped)
+ *   - `@use-gesture/<package>` — current scoped packages (@use-gesture/react, etc.)
+ *   - `interactjs` / `interact.js` — drag-drop and gesture library
+ */
+const GESTURE_LIBRARY_PATTERN =
+  /(?:require\s*\(\s*|from\s+|import\s*\(\s*)['"`](hammer(?:js|\.js)?|use-gesture|@use-gesture\/[\w-]+|interact(?:js|\.js)?)['"`]/g;
 
 /**
  * addEventListener call for one of the "start/down" point-in-time
@@ -157,10 +192,10 @@ export const finder = defineCandidateFinder({
   id: "review/pointer-input",
   criterionIds: [...CRITERION_IDS],
   scope: "node",
-  appliesTo: { fileExtensions: [".tsx", ".jsx", ".ts", ".js"] },
+  appliesTo: { fileExtensions: [".tsx", ".jsx", ".ts", ".js", ".html", ".htm"] },
   docs: {
     description:
-      "Finds path-based/multipoint pointer and touch event handlers (onPointerMove, onTouchMove, gesture events), co-occurring touchstart+touchmove / pointerdown+pointermove pairs that signal path tracking, and file/class/function identifiers named like swipe/pan/pinch/rotate — signals of gesture-driven UI that must offer a single-pointer alternative (2.5.1) and support concurrent input modalities (2.5.6).",
+      "Finds path-based/multipoint pointer and touch event handlers (onPointerMove, onTouchMove, gesture events), HTML inline gesture attributes (ontouchstart, ontouchmove, onpointermove), gesture library imports (hammer.js, use-gesture, @use-gesture/*, interactjs), co-occurring touchstart+touchmove / pointerdown+pointermove pairs that signal path tracking, and file/class/function identifiers named like swipe/pan/pinch/rotate — signals of gesture-driven UI that must offer a single-pointer alternative (2.5.1) and support concurrent input modalities (2.5.6).",
     reviewPrompt:
       "At each handler, determine what the interaction does. If the user can only achieve the outcome through a path, swipe, pinch, or multi-finger gesture, verify a single-pointer alternative exists (2.5.1). If the handler restricts input to touch only — no equivalent mouse/keyboard path — verify that's intended, else add the alternative (2.5.6).",
     references: [
@@ -170,15 +205,59 @@ export const finder = defineCandidateFinder({
   },
   find(ctx) {
     const out: ReviewCandidate[] = [];
-    if (ctx.language === "tsx" || ctx.language === "jsx") {
+    if (ctx.language === "html") {
+      findHtmlInlineHandlers(ctx.ast as HtmlDocument, ctx.filePath, out);
+    } else if (ctx.language === "tsx" || ctx.language === "jsx") {
       findJsxHandlers(ctx.ast as TsxModule, ctx.filePath, out);
     }
     findSourceHandlers(ctx, out);
+    findLibraryImports(ctx, out);
     findPathBasedPairs(ctx, out);
     findNamePatternHits(ctx, out);
     return out;
   },
 });
+
+// ---------------------------------------------------------------------------
+// HTML branch: inline event-handler attributes
+// ---------------------------------------------------------------------------
+
+/**
+ * Walks HTML elements looking for inline gesture event-handler attributes
+ * (`ontouchstart`, `ontouchmove`, `onpointermove`). These are deterministic
+ * evidence of the element having touch/pointer-path interaction wired.
+ *
+ * The attribute value is included in the reason text so the reviewer can
+ * see the handler body (or handler name) without opening the file.
+ */
+function findHtmlInlineHandlers(
+  root: HtmlDocument,
+  filePath: string,
+  out: ReviewCandidate[],
+): void {
+  for (const el of walkHtmlElements(root)) {
+    for (const attrName of HTML_INLINE_GESTURE_ATTRS) {
+      const attrValue = getHtmlAttribute(el, attrName);
+      if (attrValue === null) continue;
+      // Build a short representation: include a snippet of the handler
+      // value if it fits, otherwise just the attribute name.
+      const snippet = attrValue.length <= 60 ? `="${attrValue}"` : "";
+      const reason = `<${el.tagName}> has \`${attrName}${snippet}\`${GESTURE_REASON}`;
+      for (const criterionId of CRITERION_IDS) {
+        out.push({
+          criterionId,
+          location: { filePath, line: el.loc.start.line, column: el.loc.start.column },
+          reason,
+          confidence: "high",
+        });
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// JS / TS / JSX branch: JSX event-handler attributes
+// ---------------------------------------------------------------------------
 
 function findJsxHandlers(module: TsxModule, filePath: string, out: ReviewCandidate[]): void {
   for (const el of walkJsxElements(module)) {
@@ -223,6 +302,36 @@ function findSourceHandlers(ctx: RuleContext, out: ReviewCandidate[]): void {
           confidence: "high",
         });
       }
+    }
+  }
+}
+
+/**
+ * Emits a review candidate for each import or require of a well-known
+ * gesture library. Library imports are strong, direct evidence that the
+ * file is consuming gesture input — even if the call sites are hidden
+ * behind an abstraction layer or the library's own API surface.
+ *
+ * The library name is included in the reason text so the reviewer knows
+ * which gesture library is in use without reading the file in full.
+ */
+function findLibraryImports(ctx: RuleContext, out: ReviewCandidate[]): void {
+  GESTURE_LIBRARY_PATTERN.lastIndex = 0;
+  for (const match of ctx.source.matchAll(GESTURE_LIBRARY_PATTERN)) {
+    const offset = match.index ?? 0;
+    const { line, column } = offsetToLineColumn(ctx.source, offset);
+    const libraryName = match[1] ?? "";
+    for (const criterionId of CRITERION_IDS) {
+      // Confidence "high": an import/require of a gesture library is
+      // deterministic evidence that gesture input is being used. The
+      // agent must still verify whether the gesture the library performs
+      // has a single-pointer alternative.
+      out.push({
+        criterionId,
+        location: { filePath: ctx.filePath, line, column },
+        reason: `imports gesture library \`${libraryName}\`${GESTURE_REASON}`,
+        confidence: "high",
+      });
     }
   }
 }
@@ -375,7 +484,8 @@ function emitIdentifierHits(ctx: RuleContext, out: ReviewCandidate[], seen: Set<
  *     `pointermove` (or `touchend` / `pointerdown` paired with them,
  *     which the path-pair branch already surfaces directly).
  *   - An import of a well-known pointer-event library:
- *     `hammerjs` / `hammer.js`, `use-gesture`, `@use-gesture/*`.
+ *     `hammerjs` / `hammer.js`, `use-gesture`, `@use-gesture/*`,
+ *     `interactjs` / `interact.js`.
  *
  * These signals make the identifier-name branch informative: a file
  * that imports `@use-gesture/react` AND declares a `panHandler` is
@@ -385,7 +495,7 @@ function emitIdentifierHits(ctx: RuleContext, out: ReviewCandidate[], seen: Set<
 const COMPANION_LISTENER_PATTERN =
   /addEventListener\s*\(\s*['"`](touchstart|touchmove|pointermove)['"`]/;
 const COMPANION_LIBRARY_PATTERN =
-  /(?:require\s*\(\s*|from\s+|import\s*\(\s*)['"`](hammer(?:js|\.js)?|use-gesture|@use-gesture\/[\w-]+)['"`]/;
+  /(?:require\s*\(\s*|from\s+|import\s*\(\s*)['"`](hammer(?:js|\.js)?|use-gesture|@use-gesture\/[\w-]+|interact(?:js|\.js)?)['"`]/;
 
 function hasCompanionSignal(source: string): boolean {
   if (COMPANION_LISTENER_PATTERN.test(source)) return true;
