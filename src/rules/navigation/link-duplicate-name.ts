@@ -6,11 +6,25 @@
  * pass unit-testable in isolation via the rule's public test surface.
  *
  * Scope boundaries encoded here:
- *   - Group anchors by `normalizedName`. Within each group, fire only
- *     when at least two distinct hrefs appear — same-name + same-href
- *     is permitted by the spec rationale (two links to the same
- *     destination are allowed to share a name; AT announces "visited"
- *     state on re-encounter and the user is not deceived).
+ *   - Group anchors by `(normalizedName, landmarkScope)`. Within each
+ *     group, fire only when at least two distinct hrefs appear —
+ *     same-name + same-href is permitted by the spec rationale (two
+ *     links to the same destination are allowed to share a name; AT
+ *     announces "visited" state on re-encounter and the user is not
+ *     deceived).
+ *   - Landmark scope = the line:column key of the anchor's nearest
+ *     landmark-element ancestor, or `"document"` when no such
+ *     ancestor exists. Two same-name + different-href anchors in
+ *     DIFFERENT landmarks (`<nav>` vs `<main>`) are NOT confusing per
+ *     WCAG 2.4.4 — the criterion permits link purpose to be
+ *     established from "link text together with its programmatically
+ *     determined link context," and landmarks ARE that context (per
+ *     ARIA-in-HTML). The screen-reader links list groups by landmark,
+ *     so the user always knows which region they are inspecting. The
+ *     scoped grouping prevents false positives on the canonical SSG
+ *     pattern: "Learn more" in a nav and "Learn more" in main, each
+ *     pointing at distinct destinations — both are unambiguous in
+ *     their landmark.
  *   - Normalized name = trim + collapse internal whitespace + lowercase
  *     (matches the convention the generic-phrase path uses).
  *   - Href normalization = trim only. `/foo` and `/foo` group as same
@@ -28,7 +42,6 @@
  */
 
 import {
-  findHtmlElementsByTag,
   findJsxElementsForTag,
   getHtmlAttribute,
   getJsxAttributeString,
@@ -37,7 +50,126 @@ import {
   truncateForEcho,
 } from "../../engine/ast-helpers.ts";
 import { stripTemplateDirectives } from "../../input/parsers/html-template-directives.ts";
-import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlDocument,
+  HtmlElement,
+  HtmlNode,
+  JsxElement,
+  JsxNode,
+  TsxModule,
+} from "../../types/ast.ts";
+
+/**
+ * Native HTML elements whose presence in the ancestor chain establishes
+ * a programmatic landmark scope per ARIA-in-HTML. Anchors nested inside
+ * one of these are scoped to that landmark for the duplicate-name
+ * grouping; anchors with no such ancestor are scoped to `"document"`.
+ *
+ * `header` and `footer` are listed unconditionally rather than gated
+ * on body-level placement (as `semantics/duplicate-landmark-unlabeled`
+ * does) — the goal here is to scope same-name links to a programmatic
+ * region the screen-reader links list disambiguates by. Even a
+ * `<header>` nested inside an `<article>` (technically a generic group,
+ * not a `banner` landmark) still groups its anchors visually with that
+ * article's content, so cross-`<header>` same-name + different-href
+ * pairs are still distinguishable in context. The looser scoping keeps
+ * the rule honest in the asymmetric-failure-mode sense: missing a
+ * scoping signal would re-introduce the cross-landmark false positive.
+ *
+ * `section` is included even though sectioning content is only a
+ * landmark when given an accessible name — the duplicate-link concern
+ * is about disambiguation, and a scoped section still provides
+ * scoping in the visual/structural sense.
+ */
+const LANDMARK_TAGS: ReadonlySet<string> = new Set([
+  "nav",
+  "main",
+  "header",
+  "footer",
+  "aside",
+  "form",
+  "section",
+]);
+
+/**
+ * Explicit ARIA `role` values that promote any element to a landmark
+ * scope. Mirrors ARIA-in-HTML §5.4 landmark roles.
+ */
+const LANDMARK_ROLES: ReadonlySet<string> = new Set([
+  "navigation",
+  "main",
+  "banner",
+  "contentinfo",
+  "complementary",
+  "region",
+  "search",
+  "form",
+]);
+
+/** Scope key used when an anchor has no enclosing landmark element. */
+const DOCUMENT_SCOPE = "document";
+
+/** True if the element introduces a landmark scope. */
+function isHtmlLandmark(el: HtmlElement): boolean {
+  if (LANDMARK_TAGS.has(el.tagName.toLowerCase())) return true;
+  const role = (getHtmlAttribute(el, "role") ?? "").toLowerCase();
+  return LANDMARK_ROLES.has(role);
+}
+
+function isJsxLandmark(el: JsxElement): boolean {
+  if (LANDMARK_TAGS.has(el.tagName.toLowerCase())) return true;
+  const role = (getJsxAttributeString(el, "role") ?? "").toLowerCase();
+  return LANDMARK_ROLES.has(role);
+}
+
+/**
+ * Walks the HTML tree once, returning a map from each `<a>` element to
+ * the scope key of its nearest enclosing landmark — or `"document"`
+ * when none exists. The scope key is the landmark element's position
+ * (`"L:line:column"`), unique within a file. Used by the duplicate-
+ * name grouping to keep cross-landmark same-name links apart.
+ */
+function buildHtmlAnchorScopes(doc: HtmlDocument): Map<HtmlElement, string> {
+  const scopes = new Map<HtmlElement, string>();
+  const visit = (children: readonly HtmlNode[], scope: string): void => {
+    for (const node of children) {
+      if (node.kind !== "HtmlElement") continue;
+      if (node.tagName.toLowerCase() === "a") {
+        scopes.set(node, scope);
+      }
+      const nextScope = isHtmlLandmark(node)
+        ? `L:${node.loc.start.line}:${node.loc.start.column}`
+        : scope;
+      visit(node.children, nextScope);
+    }
+  };
+  visit(doc.children, DOCUMENT_SCOPE);
+  return scopes;
+}
+
+/**
+ * JSX counterpart of `buildHtmlAnchorScopes`. Recurses from each
+ * top-level `module.jsxElements` root, propagating the nearest landmark
+ * ancestor as the scope key. Records every JsxElement encountered (not
+ * just tag-name matches) so polymorphic anchors (`<Box as="a">`,
+ * mapped wrappers) resolved by `findJsxElementsForTag` downstream can
+ * still look up their scope without a re-walk.
+ */
+function buildJsxAnchorScopes(module: TsxModule): Map<JsxElement, string> {
+  const scopes = new Map<JsxElement, string>();
+  const visit = (node: JsxNode, scope: string): void => {
+    if (node.kind !== "JsxElement") return;
+    scopes.set(node, scope);
+    const nextScope = isJsxLandmark(node)
+      ? `L:${node.loc.start.line}:${node.loc.start.column}`
+      : scope;
+    for (const child of node.children) visit(child, nextScope);
+  };
+  for (const root of module.jsxElements) {
+    visit(root, DOCUMENT_SCOPE);
+  }
+  return scopes;
+}
 
 /** Local copy of the emit signature — matches the shape the rule uses
  * for its per-file emits. Kept narrow so this helper file never pulls
@@ -80,23 +212,36 @@ interface AnchorRecord {
   readonly href: string;
   readonly normalizedName: string;
   readonly rawName: string;
+  /**
+   * Scope key for the anchor's nearest enclosing landmark element, or
+   * `"document"` when none exists. Two anchors with the same
+   * `normalizedName` but different `landmarkScope` values are NOT
+   * grouped together — the screen-reader links list disambiguates by
+   * landmark, so cross-landmark same-name + different-href pairs are
+   * not a 2.4.4 violation.
+   */
+  readonly landmarkScope: string;
 }
 
 /**
  * Emits one violation per anchor in any name-group whose hrefs are not
- * all identical. The group must have ≥2 records AND ≥2 distinct hrefs;
- * groups where every record points at the same href are silent (the
- * spec rationale permits two-or-more links to the same destination
- * sharing a name).
+ * all identical. The group key is `(normalizedName, landmarkScope)` —
+ * anchors in different landmarks (or one in a landmark and one at the
+ * document root) form distinct groups, so cross-landmark same-name
+ * pairs never trigger. Within a single scope, the group must have
+ * ≥2 records AND ≥2 distinct hrefs; groups where every record points
+ * at the same href are silent (the spec rationale permits two-or-more
+ * links to the same destination sharing a name).
  */
 function emitDuplicateGroups(records: readonly AnchorRecord[], emit: DupEmit): void {
   const groups = new Map<string, AnchorRecord[]>();
   for (const rec of records) {
-    const bucket = groups.get(rec.normalizedName);
+    const key = `${rec.landmarkScope} ${rec.normalizedName}`;
+    const bucket = groups.get(key);
     if (bucket) {
       bucket.push(rec);
     } else {
-      groups.set(rec.normalizedName, [rec]);
+      groups.set(key, [rec]);
     }
   }
   for (const bucket of groups.values()) {
@@ -206,7 +351,11 @@ export function checkDuplicateHrefHtml(
   emit: DupEmit,
 ): void {
   const records: AnchorRecord[] = [];
-  for (const a of findHtmlElementsByTag(doc, "a")) {
+  // Walk the tree once to map every anchor to its nearest landmark
+  // scope; the iteration below reads from this map rather than each
+  // anchor re-walking its ancestors.
+  const scopes = buildHtmlAnchorScopes(doc);
+  for (const [a, landmarkScope] of scopes) {
     if (!hasHtmlAttribute(a, "href")) continue;
     const hrefRaw = getHtmlAttribute(a, "href");
     if (hrefRaw === null) continue;
@@ -230,6 +379,7 @@ export function checkDuplicateHrefHtml(
       href: hrefStripped,
       normalizedName,
       rawName: name,
+      landmarkScope,
     });
   }
   emitDuplicateGroups(records, emit);
@@ -245,6 +395,11 @@ export function checkDuplicateHrefJsx(
   const records: AnchorRecord[] = [];
   const wrappers = new Set<string>([...linkTags, ...wrappersForA]);
   wrappers.delete("a");
+  // Pre-compute landmark scope for every JsxElement in the module so
+  // polymorphic-resolution channels (`<Box as="a">`) and wrapper-
+  // mapping resolve to the correct landmark ancestor without a
+  // second tree walk.
+  const scopes = buildJsxAnchorScopes(module);
   const seen = new Set<JsxElement>();
   for (const el of findJsxElementsForTag(module, "a", wrappers)) {
     if (seen.has(el)) continue;
@@ -260,12 +415,18 @@ export function checkDuplicateHrefJsx(
     if (name === null) continue;
     const normalizedName = normalizeAccessibleName(name);
     if (normalizedName.length === 0) continue;
+    // The walker records every JsxElement in the module, so this
+    // lookup always resolves; the fallback exists only to keep the
+    // type strict (and to stay safe if a future caller hands in an
+    // element from outside the walked module).
+    const landmarkScope = scopes.get(el) ?? DOCUMENT_SCOPE;
     records.push({
       line: el.loc.start.line,
       column: el.loc.start.column,
       href: hrefStripped,
       normalizedName,
       rawName: name,
+      landmarkScope,
     });
   }
   emitDuplicateGroups(records, emit);

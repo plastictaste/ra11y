@@ -503,6 +503,146 @@ describe("rule navigation/link-descriptive-text", () => {
     });
   });
 
+  describe("HTML cross-landmark scope: same name + different hrefs across landmarks is silent", () => {
+    // WCAG 2.4.4 permits a link's purpose to be established from "link
+    // text together with its programmatically determined link context"
+    // — landmarks ARE that context per ARIA-in-HTML. The screen-reader
+    // links list groups by landmark, so a "Learn more" in <nav> and a
+    // "Learn more" in <main> are distinguishable to the user even when
+    // their hrefs differ. Same-name + different-href fires only when
+    // both anchors share the SAME nearest landmark (or both are at the
+    // document root with no landmark ancestor).
+
+    it("does NOT fire when same-name + different-href anchors are split between <nav> and <main>", () => {
+      const v = runRule(
+        rule,
+        `<nav aria-label="Site"><a href="/about">About us</a></nav>` +
+          `<main><a href="/products/about">About us</a></main>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+
+    it("does NOT fire when same-name + different-href anchors are split between <header> and <footer>", () => {
+      const v = runRule(
+        rule,
+        `<header><a href="/contact">Contact</a></header>` +
+          `<footer><a href="/contact-us">Contact</a></footer>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+
+    it("does NOT fire when one anchor is in <nav> and the other is at document root", () => {
+      // The document-root anchor has no landmark ancestor; its scope is
+      // distinct from the <nav>'s scope, so the two never group.
+      const v = runRule(
+        rule,
+        `<nav><a href="/help-nav">Help</a></nav>` + `<a href="/help-doc">Help</a>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+
+    it("DOES fire when same-name + different-href anchors share the SAME <nav>", () => {
+      // Within one landmark the user has no further programmatic
+      // distinction between two same-named entries — the duplicate-
+      // destination ambiguity is real.
+      const v = runRule(
+        rule,
+        `<nav><a href="/post1">Read more</a><a href="/post2">Read more</a></nav>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("DOES fire when same-name + different-href anchors are both at the document root", () => {
+      // Two anchors with no landmark ancestor share the implicit
+      // "document" scope — they are not disambiguated by a landmark
+      // boundary, and a screen-reader user lands on the same
+      // unscoped name twice. This is the long-standing behavior the
+      // landmark-scoping change preserves.
+      const v = runRule(rule, `<a href="/a">Buy Now</a><a href="/b">Buy Now</a>`, {
+        filePath: "index.html",
+      });
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("treats role='navigation' the same as <nav> for scoping purposes", () => {
+      // ARIA landmark roles establish landmark scope just like the
+      // native tags do.
+      const v = runRule(
+        rule,
+        `<div role="navigation"><a href="/nav-help">Help</a></div>` +
+          `<div role="main"><a href="/main-help">Help</a></div>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+
+    it("scopes by the NEAREST landmark — nested same-landmark groups still fire", () => {
+      // Two <a> in the same <main>, even though one is in a deeper
+      // <section>, share `<section>` as their nearest landmark
+      // ancestor (`<section>` is in the LANDMARK_TAGS set). The
+      // OTHER one is direct in <main>, scoped to <main>. Different
+      // scopes → silent. This codifies the "nearest" semantics.
+      const v = runRule(
+        rule,
+        `<main>` +
+          `<a href="/main-direct">Read more</a>` +
+          `<section><a href="/section-link">Read more</a></section>` +
+          `</main>`,
+        { filePath: "index.html" },
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+  });
+
+  describe("JSX cross-landmark scope: same name + different hrefs across landmarks is silent", () => {
+    it("does NOT fire when same-name + different-href anchors are split between <nav> and <main>", () => {
+      const v = runRule(
+        rule,
+        `const X = <div>` +
+          `<nav><a href="/about-nav">About</a></nav>` +
+          `<main><a href="/about-main">About</a></main>` +
+          `</div>;`,
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+
+    it("DOES fire when same-name + different-href anchors share the SAME <nav>", () => {
+      const v = runRule(
+        rule,
+        `const X = <nav>` +
+          `<a href="/post1">Read more</a>` +
+          `<a href="/post2">Read more</a>` +
+          `</nav>;`,
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(2);
+    });
+
+    it("treats role='navigation' the same as <nav> for scoping in JSX", () => {
+      const v = runRule(
+        rule,
+        `const X = <div>` +
+          `<div role="navigation"><Link to="/help-nav">Help</Link></div>` +
+          `<div role="main"><Link to="/help-main">Help</Link></div>` +
+          `</div>;`,
+      );
+      const dupFindings = v.filter((x) => x.message.includes("share the accessible name"));
+      expect(dupFindings).toHaveLength(0);
+    });
+  });
+
   describe("JSX duplicate-name-different-href detection", () => {
     it("fires on two <a> with same name and different hrefs", () => {
       const v = runRule(

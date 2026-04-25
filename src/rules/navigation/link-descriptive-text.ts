@@ -41,17 +41,24 @@
  *          | "none"`.
  *
  *   3. DUPLICATE-NAME-DIFFERENT-HREF PATH — two or more anchors in the
- *      same file share the same normalized accessible name BUT point at
- *      different destinations. A screen-reader user navigating by link
- *      list (VoiceOver rotor, JAWS links dialog) hears the same name
- *      for each entry but lands somewhere different — exactly the
- *      "purpose cannot be determined from link text" failure WCAG 2.4.4
- *      describes. WCAG's spec rationale explicitly permits the looser
- *      variant where two links share a name AND a destination (they're
- *      the same link; AT announces "visited" state on re-encounter and
- *      the user is not deceived) — so same-name + same-href stays
- *      silent here. Fires SC 2.4.4 (link text + context cannot
- *      distinguish) and SC 2.4.9 AAA (link text alone must identify
+ *      same file AND the same landmark scope share the same normalized
+ *      accessible name BUT point at different destinations. A screen-
+ *      reader user navigating by link list (VoiceOver rotor, JAWS
+ *      links dialog) hears the same name for each entry but lands
+ *      somewhere different — exactly the "purpose cannot be determined
+ *      from link text" failure WCAG 2.4.4 describes. WCAG's spec
+ *      rationale explicitly permits the looser variant where two links
+ *      share a name AND a destination (they're the same link; AT
+ *      announces "visited" state on re-encounter and the user is not
+ *      deceived) — so same-name + same-href stays silent here. WCAG
+ *      also names "programmatically determined link context" as a
+ *      disambiguator (landmarks ARE that context per ARIA-in-HTML), so
+ *      same-name + different-href across DIFFERENT landmarks (e.g. a
+ *      "Learn more" in `<nav>` and a "Learn more" in `<main>`) is also
+ *      silent — the screen-reader links list groups by landmark and
+ *      the user always knows which region they are inspecting. Fires
+ *      SC 2.4.4 (link text + context cannot distinguish within ONE
+ *      landmark scope) and SC 2.4.9 AAA (link text alone must identify
  *      purpose). Anchors without an `href` attribute are excluded from
  *      grouping because they are not activatable controls. Templated
  *      hrefs (`href="{{ item.url }}"`) are skipped — at static time
