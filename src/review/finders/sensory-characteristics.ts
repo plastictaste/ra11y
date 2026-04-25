@@ -10,7 +10,6 @@
  */
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
-import { walkHtmlElements, walkJsxElements } from "../../engine/ast-helpers.ts";
 import {
   mapValueOffsetToSourcePosition,
   stripTemplateDirectives,
@@ -220,6 +219,122 @@ function matchSensory(text: string): MatchHit | undefined {
   return matchLocativeWithCooccurrence(text);
 }
 
+// ---------------------------------------------------------------------------
+// Callout-container detection
+// ---------------------------------------------------------------------------
+
+/**
+ * CSS class tokens that identify a known prose-callout container:
+ * documentation blocks like `<div class="note">`, `<aside class="tip">`,
+ * Docusaurus `<div class="admonition">`, etc. Content inside these
+ * containers typically describes the UI to a *developer*, not a user-
+ * facing instruction. Per AI-first doctrine, candidates inside callout
+ * containers are NOT suppressed — they remain in the primary list with
+ * reason-text enrichment so the agent can dismiss in one read.
+ */
+const CALLOUT_CLASS_TOKENS: ReadonlySet<string> = new Set([
+  "note",
+  "tip",
+  "warning",
+  "caution",
+  "callout",
+  "admonition",
+  "alert",
+  "info",
+  "important",
+  "danger",
+]);
+
+/**
+ * PascalCase JSX component names whose children are typically
+ * developer-facing documentation prose rather than user-facing UI copy.
+ */
+const CALLOUT_JSX_TAG_NAMES: ReadonlySet<string> = new Set([
+  "Note",
+  "Tip",
+  "Warning",
+  "Caution",
+  "Callout",
+  "Admonition",
+  "Alert",
+  "Info",
+  "Important",
+  "Danger",
+]);
+
+/**
+ * Returns a human-readable label for the HTML element if it matches a
+ * known callout pattern (e.g. `div.note`, `aside.tip`, etc.), or
+ * `undefined` when the element is not a callout container.
+ *
+ * Checks the `class` attribute token list against CALLOUT_CLASS_TOKENS.
+ * Does NOT check descendant elements — only the element itself. Ancestors
+ * are checked by the caller's ancestor-stack walk.
+ */
+function htmlCalloutLabel(el: HtmlElement): string | undefined {
+  const classAttr = el.attributes.find((a) => a.name.toLowerCase() === "class");
+  if (!classAttr?.value) return undefined;
+  const tokens = classAttr.value.toLowerCase().split(/\s+/);
+  for (const tok of tokens) {
+    if (CALLOUT_CLASS_TOKENS.has(tok)) {
+      return `<${el.tagName.toLowerCase()} class="${tok}">`;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Returns a human-readable label for the callout container if the JSX
+ * element's tagName is a known documentation-callout component name, or if
+ * the element has a `className` / `class` prop whose token list matches a
+ * callout class token.
+ */
+function jsxCalloutLabel(el: JsxElement): string | undefined {
+  // PascalCase component match (e.g. <Note>, <Callout>)
+  if (CALLOUT_JSX_TAG_NAMES.has(el.tagName)) {
+    return `<${el.tagName}>`;
+  }
+  // className / class prop token match (e.g. <div className="note tip">)
+  const classAttr = el.attributes.find((a) => a.name === "className" || a.name === "class");
+  if (!classAttr) return undefined;
+  // Only string-literal values are checked — expression values like
+  // {styles.note} cannot be evaluated statically without cross-file
+  // resolution that the agent is better positioned to do.
+  const attrVal = classAttr.value;
+  if (!attrVal || attrVal.kind !== "StringLiteral") return undefined;
+  const tokens = attrVal.value.toLowerCase().split(/\s+/);
+  for (const tok of tokens) {
+    if (CALLOUT_CLASS_TOKENS.has(tok)) return `<${el.tagName} className="${tok}">`;
+  }
+  return undefined;
+}
+
+/**
+ * Checks the given ancestor stack (outermost to innermost) for any
+ * HTML element that matches a callout container. Returns the label of the
+ * first (outermost) match, or `undefined` when none match.
+ */
+function calloutLabelFromHtmlAncestors(ancestors: readonly HtmlElement[]): string | undefined {
+  for (const ancestor of ancestors) {
+    const label = htmlCalloutLabel(ancestor);
+    if (label) return label;
+  }
+  return undefined;
+}
+
+/**
+ * Checks the given JSX ancestor stack for any element that matches a
+ * callout container. Returns the label of the first (outermost) match,
+ * or `undefined` when none match.
+ */
+function calloutLabelFromJsxAncestors(ancestors: readonly JsxElement[]): string | undefined {
+  for (const ancestor of ancestors) {
+    const label = jsxCalloutLabel(ancestor);
+    if (label) return label;
+  }
+  return undefined;
+}
+
 export const finder = defineCandidateFinder({
   id: "review/sensory-characteristics",
   criterionIds: [...CRITERION_IDS],
@@ -401,29 +516,133 @@ function firstSentenceBoundary(text: string): number {
   return m ? m.index : -1;
 }
 
+/**
+ * Checks a single HTML element for a sensory match and emits a candidate
+ * when one is found. Extracted from `walkHtmlWithAncestors` to keep the
+ * walker's cognitive complexity within the Biome limit.
+ *
+ * `ancestors` is the element's ancestor chain (outermost first), used to
+ * detect when the element is nested inside a callout container. The
+ * element itself is also checked (handles the case where `el` IS the
+ * callout container whose direct-text children triggered the match).
+ */
+function checkHtmlElement(
+  el: HtmlElement,
+  ancestors: readonly HtmlElement[],
+  filePath: string,
+  source: string,
+  candidates: ReviewCandidate[],
+): void {
+  const spans = collectHtmlTextSpans(el);
+  if (spans.length === 0) return;
+  const concat = concatSpans(spans);
+  const hit = matchSensory(concat.trim());
+  if (!hit) return;
+  const hasDirectText = el.children.some(
+    (c) => c.kind === "HtmlText" && matchSensory(c.value) !== undefined,
+  );
+  if (!hasDirectText) return;
+  const concatOffset = concat.indexOf(hit.phrase);
+  if (concatOffset === -1) return;
+  const precise = precisePositionForOffset(spans, concatOffset, source, el.loc.start);
+  // Prefer outermost callout ancestor; fall back to the element itself.
+  const calloutLabel = calloutLabelFromHtmlAncestors(ancestors) ?? htmlCalloutLabel(el);
+  emitSensoryCandidates(
+    filePath,
+    precise,
+    concat,
+    concatOffset,
+    hit.phrase,
+    candidates,
+    calloutLabel,
+  );
+}
+
+/**
+ * Recursive HTML walk that tracks the ancestor stack so callout-container
+ * detection can inspect parent elements. Preserves the line-mapping fix
+ * from the `ssg-pagination-sensory-line-drift` fixture.
+ */
+function walkHtmlWithAncestors(
+  node: HtmlDocument | HtmlElement,
+  ancestors: readonly HtmlElement[],
+  filePath: string,
+  source: string,
+  candidates: ReviewCandidate[],
+): void {
+  for (const child of node.children) {
+    if (child.kind !== "HtmlElement") continue;
+    checkHtmlElement(child, ancestors, filePath, source, candidates);
+    walkHtmlWithAncestors(child, [...ancestors, child], filePath, source, candidates);
+  }
+}
+
 function findHtmlCandidates(
   root: HtmlDocument,
   filePath: string,
   source: string,
   candidates: ReviewCandidate[],
 ): void {
-  for (const el of walkHtmlElements(root)) {
-    const spans = collectHtmlTextSpans(el);
-    if (spans.length === 0) continue;
-    const concat = concatSpans(spans);
-    const trimmed = concat.trim();
-    const hit = trimmed ? matchSensory(trimmed) : undefined;
-    if (!hit) continue;
-    const hasDirectText = el.children.some(
-      (c) => c.kind === "HtmlText" && matchSensory(c.value) !== undefined,
-    );
-    if (!hasDirectText) continue;
-    // Re-locate the match in the un-trimmed concat so offsets line up
-    // with span concatStart values.
-    const concatOffset = concat.indexOf(hit.phrase);
-    if (concatOffset === -1) continue;
-    const precise = precisePositionForOffset(spans, concatOffset, source, el.loc.start);
-    emitSensoryCandidates(filePath, precise, concat, concatOffset, hit.phrase, candidates);
+  walkHtmlWithAncestors(root, [], filePath, source, candidates);
+}
+
+/**
+ * Checks a single JSX element for a sensory match and emits a candidate
+ * when one is found. Extracted from `walkJsxWithAncestors` to keep the
+ * walker's cognitive complexity within the Biome limit.
+ */
+function checkJsxElement(
+  el: JsxElement,
+  ancestors: readonly JsxElement[],
+  filePath: string,
+  source: string,
+  candidates: ReviewCandidate[],
+): void {
+  const spans = collectJsxTextSpans(el);
+  if (spans.length === 0) return;
+  const concat = concatSpans(spans);
+  const hit = matchSensory(concat.trim());
+  if (!hit) return;
+  const hasDirectText = el.children.some(
+    (c) => c.kind === "JsxText" && matchSensory(c.value) !== undefined,
+  );
+  if (!hasDirectText) return;
+  const concatOffset = concat.indexOf(hit.phrase);
+  if (concatOffset === -1) return;
+  const precise = precisePositionForOffset(spans, concatOffset, source, el.loc.start);
+  const calloutLabel = calloutLabelFromJsxAncestors(ancestors) ?? jsxCalloutLabel(el);
+  emitSensoryCandidates(
+    filePath,
+    precise,
+    concat,
+    concatOffset,
+    hit.phrase,
+    candidates,
+    calloutLabel,
+  );
+}
+
+/**
+ * Recursive JSX walk that tracks the ancestor stack — mirrors
+ * `walkHtmlWithAncestors` for JSX sources. Callout detection covers:
+ *   - Known PascalCase component names (CALLOUT_JSX_TAG_NAMES)
+ *   - Elements with a `className` / `class` prop containing a string
+ *     literal whose token list overlaps CALLOUT_CLASS_TOKENS
+ */
+function walkJsxWithAncestors(
+  root: TsxModule | JsxElement,
+  ancestors: readonly JsxElement[],
+  filePath: string,
+  source: string,
+  candidates: ReviewCandidate[],
+): void {
+  const elements: readonly JsxElement[] =
+    root.kind === "JsxElement"
+      ? (root.children.filter((c) => c.kind === "JsxElement") as JsxElement[])
+      : root.jsxElements;
+  for (const el of elements) {
+    checkJsxElement(el, ancestors, filePath, source, candidates);
+    walkJsxWithAncestors(el, [...ancestors, el], filePath, source, candidates);
   }
 }
 
@@ -433,22 +652,7 @@ function findJsxCandidates(
   source: string,
   candidates: ReviewCandidate[],
 ): void {
-  for (const el of walkJsxElements(root)) {
-    const spans = collectJsxTextSpans(el);
-    if (spans.length === 0) continue;
-    const concat = concatSpans(spans);
-    const trimmed = concat.trim();
-    const hit = trimmed ? matchSensory(trimmed) : undefined;
-    if (!hit) continue;
-    const hasDirectText = el.children.some(
-      (c) => c.kind === "JsxText" && matchSensory(c.value) !== undefined,
-    );
-    if (!hasDirectText) continue;
-    const concatOffset = concat.indexOf(hit.phrase);
-    if (concatOffset === -1) continue;
-    const precise = precisePositionForOffset(spans, concatOffset, source, el.loc.start);
-    emitSensoryCandidates(filePath, precise, concat, concatOffset, hit.phrase, candidates);
-  }
+  walkJsxWithAncestors(root, [], filePath, source, candidates);
 }
 
 function emitSensoryCandidates(
@@ -458,6 +662,14 @@ function emitSensoryCandidates(
   matchOffset: number,
   matchedPhrase: string,
   candidates: ReviewCandidate[],
+  /**
+   * When the matched text is inside a known prose-callout container,
+   * this is a human-readable label like `<div class="note">` or
+   * `<Note>`. Per AI-first doctrine, the candidate stays in the
+   * primary list — no suppression. The reason text is enriched so
+   * the agent can dismiss in one read without opening the file.
+   */
+  calloutLabel?: string,
 ): void {
   // HtmlText is parser-stripped, but attribute values and JSX text are
   // not (see images-of-text.ts for the rationale) — strip defensively
@@ -480,7 +692,16 @@ function emitSensoryCandidates(
   // below.") without re-reading the file. Per AI-first doctrine, no
   // confidence downgrade by file extension — the reason text is the
   // lever; the agent triages on context.
-  const reason = `text references sensory characteristic "${matchedPhrase}" in: "${context}" -- verify a non-sensory alternative exists`;
+  //
+  // When the match is inside a callout container, append a note so
+  // the agent knows this is likely developer-facing documentation
+  // prose, not a user-facing UI instruction. The candidate stays in
+  // the primary list (surface, don't suppress); the enriched reason
+  // is the mechanism for a fast one-read dismiss.
+  const calloutNote = calloutLabel
+    ? ` -- inside a ${calloutLabel} callout block: likely developer-facing documentation, not a user-facing UI instruction; verify the rendered output uses non-sensory alternatives`
+    : "";
+  const reason = `text references sensory characteristic "${matchedPhrase}" in: "${context}" -- verify a non-sensory alternative exists${calloutNote}`;
   const snippet = context.length > 0 ? context : renderedBody.slice(0, 120);
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": regex on visible text. "Click below" and

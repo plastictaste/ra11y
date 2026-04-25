@@ -12,6 +12,12 @@
  * Polysemy guard: "view"/"look" are pointing verbs imperatively but
  * nouns when preceded by a determiner ("the view above"). The
  * cooccurrence check skips verb credit on a determiner-preceded token.
+ *
+ * Callout-container enrichment: when the matched phrase sits inside a
+ * known prose-callout element (<div class="note">, <aside class="tip">,
+ * <Note>, <Callout>, etc.), the reason text is enriched with a note
+ * that the prose is likely developer-facing documentation. The candidate
+ * stays in the primary list (no suppression per AI-first doctrine).
  */
 
 import { describe, expect, it } from "bun:test";
@@ -155,5 +161,126 @@ describe("review/sensory-characteristics", () => {
     const c = candidates[0];
     if (!c) throw new Error("expected at least one candidate");
     expect(c.location.line).toBe(4);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Callout-container reason-text enrichment
+  // ---------------------------------------------------------------------------
+
+  it("enriches reason text when the match is inside an HTML callout container (div.note)", () => {
+    // Developer documentation prose inside a <div class="note"> block.
+    // The candidate must still surface (surface, don't suppress), but
+    // the reason text must carry the callout-container note so the
+    // agent can dismiss in one read.
+    const source = [
+      '<div class="note">',
+      "  <p>Click the green button on the right side to proceed.</p>",
+      "</div>",
+    ].join("\n");
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    // The standard sensory phrase must be in the reason
+    expect(c.reason).toContain("right side");
+    // The callout-container note must be appended
+    expect(c.reason).toContain("callout block");
+    expect(c.reason).toContain("developer-facing documentation");
+  });
+
+  it("enriches reason text when the match is inside an HTML callout container (aside.tip)", () => {
+    const source = [
+      '<aside class="tip">',
+      "  <p>See the screenshot below for the exact button location.</p>",
+      "</aside>",
+    ].join("\n");
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    expect(c.reason).toContain("below");
+    expect(c.reason).toContain("callout block");
+    expect(c.reason).toContain("developer-facing documentation");
+  });
+
+  it("enriches reason text when the match is inside a JSX callout component (<Note>)", () => {
+    // PascalCase component name matching — <Note> is a common docs-site
+    // callout component (Docusaurus, VitePress, etc.).
+    const source = [
+      "const Docs = () => (",
+      "  <Note>",
+      "    <p>Click the red button on the right side of the toolbar.</p>",
+      "  </Note>",
+      ");",
+    ].join("\n");
+    const candidates = runFinder(finder, source, { filePath: "input.tsx" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    expect(c.reason).toContain("right side");
+    expect(c.reason).toContain("callout block");
+    expect(c.reason).toContain("developer-facing documentation");
+  });
+
+  it("enriches reason text when the match is inside a JSX component with className callout class", () => {
+    const source = [
+      'const Docs = () => (<div className="callout warning"><p>Click the red button above.</p></div>);',
+    ].join("\n");
+    const candidates = runFinder(finder, source, { filePath: "input.tsx" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    expect(c.reason).toContain("callout block");
+    expect(c.reason).toContain("developer-facing documentation");
+  });
+
+  it("does NOT add callout note when match is NOT inside a callout container", () => {
+    // Standard user-facing UI copy — no callout container. The reason
+    // text must contain the sensory phrase but must NOT carry the
+    // callout-container note.
+    const source = `<p>Click the red button to submit the form.</p>`;
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    expect(c.reason).toContain("the red");
+    expect(c.reason).not.toContain("callout block");
+    expect(c.reason).not.toContain("developer-facing documentation");
+  });
+
+  it("callout-wrapped match still surfaces — no suppression", () => {
+    // Per AI-first doctrine, candidates inside callout containers are
+    // NOT removed from the primary list. The agent reads the reason
+    // text and decides. This test guards that surface, not suppress
+    // invariant: wrapping a phrase in <div class="note"> must not
+    // cause the candidate count to drop to zero.
+    const plainSource = `<p>Click the red button to submit.</p>`;
+    const wrappedSource = [
+      '<div class="note">',
+      "  <p>Click the red button to submit.</p>",
+      "</div>",
+    ].join("\n");
+    const plainCount = runFinder(finder, plainSource, { filePath: "input.html" }).length;
+    const wrappedCount = runFinder(finder, wrappedSource, { filePath: "input.html" }).length;
+    expect(plainCount).toBeGreaterThan(0);
+    // The wrapped form must emit the same number of candidates (or more
+    // — wrapping adds the callout ancestor to the match, never removes it).
+    expect(wrappedCount).toBeGreaterThanOrEqual(plainCount);
+  });
+
+  it("multiple callout class tokens — picks the matching one for the label", () => {
+    // An element with multiple classes where only one is a callout token.
+    const source = [
+      '<div class="docs-section warning highlight">',
+      "  <p>Click the red button on the right side.</p>",
+      "</div>",
+    ].join("\n");
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    // The label must cite the specific callout class token, not the full class list
+    expect(c.reason).toContain('class="warning"');
+    expect(c.reason).toContain("callout block");
   });
 });
