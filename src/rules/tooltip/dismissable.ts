@@ -55,6 +55,28 @@
  * the runtime widget is wired up, and dismisses with a
  * `<!-- ra11y-disable -->` pragma when confirmed. Per CLAUDE.md §1
  * "Surface, don't suppress" + "No heuristic suppression" and ADR 0009.
+ *
+ * Sole-name-source gate (deterministic, attribute-level): when the
+ * titled element has NO additional accessible-name source beyond
+ * `title` itself — no visible text content, no `aria-label`, no
+ * `aria-labelledby`, and (for input[type=submit|button|reset]) no
+ * `value` — the rule does NOT fire. The dismiss path the rule
+ * recommends ("add aria-label") would land an aria-label that
+ * competes with the native title for the same accessible-name slot,
+ * leaving the element worse off than before; the contradictory
+ * suggestion makes the finding misleading rather than helpful. The
+ * gate is honest because every input is observable from the
+ * attributes / descendant text alone (no guessed composition or
+ * cross-file resolution), so the suppression is deterministic, not
+ * heuristic — per `docs/kb/architecture/ai-first-consumer.md` the
+ * test "would the gate be correct 100% of the time from the evidence
+ * the scanner has" passes. When the gate fires, the underlying
+ * accessibility issue is name-source absence rather than tooltip
+ * dismissability; sibling rules (forms/asterisk-required-marker,
+ * aria/labelledby-target-exists, etc.) are the right place to surface
+ * it. Per CLAUDE.md §1 "Surface, don't suppress" the gate is narrow:
+ * any additional name source — including descendant text or alt on a
+ * descendant `<img>` — passes the gate and the rule fires as before.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -114,7 +136,7 @@ export const rule = defineRule({
     description:
       "Native title attributes on interactive elements produce browser tooltips that are not dismissable, hoverable, or persistent — failing WCAG 1.4.13.",
     rationale:
-      "Browser-native tooltips (rendered from the title attribute) cannot be dismissed with the Escape key, disappear when the pointer approaches them, time out unpredictably, and are invisible to many touch and assistive-technology users. WCAG 1.4.13 requires content that appears on hover or focus to be dismissable, hoverable, and persistent — three properties native tooltips do not satisfy. The fix is to expose the information as an accessible visible label, an aria-label, or a custom tooltip with proper keyboard and pointer behavior.",
+      "Browser-native tooltips (rendered from the title attribute) cannot be dismissed with the Escape key, disappear when the pointer approaches them, time out unpredictably, and are invisible to many touch and assistive-technology users. WCAG 1.4.13 requires content that appears on hover or focus to be dismissable, hoverable, and persistent — three properties native tooltips do not satisfy. The fix is to expose the information as an accessible visible label, an aria-label, or a custom tooltip with proper keyboard and pointer behavior. The rule fires only when the element already has another accessible-name source (visible text, aria-label, aria-labelledby, value on a button-input, or alt on a descendant img); when title is the sole name source the rule is silent because the suggested aria-label remediation would otherwise compete with the existing title for the same name slot.",
     goodExample: `<button aria-label="Save document">💾</button>`,
     badExample: `<button title="Save document">💾</button>`,
     normativeQuote:
@@ -180,6 +202,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (title === null) continue;
     if (title.trim().length === 0) continue;
     if (!isInteractiveHtml(el)) continue;
+    if (!hasAdditionalNameSourceHtml(el)) continue;
     const enhancer = detectHtmlEnhancer(el);
     const textEqualsTitle = isTextEquivalentToTitle(htmlTextContent(el), title);
     emit(buildViolation(el.tagName.toLowerCase(), title, el.loc.start, enhancer, textEqualsTitle));
@@ -213,6 +236,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     // the element is interactive — same failure mode either way.
     if (titleString !== null && titleString.trim().length === 0) continue;
     if (!isInteractiveJsx(el)) continue;
+    if (!hasAdditionalNameSourceJsx(el)) continue;
     const displayTitle = titleString ?? "<expression>";
     const enhancer = detectJsxEnhancer(el);
     // Equivalence check only meaningful for string-literal titles —
@@ -241,6 +265,146 @@ function isInteractiveJsx(element: JsxElement): boolean {
   return true;
 }
 
+/**
+ * Input types whose `value` attribute IS the canonical accessible name
+ * (button-flavored inputs render the value as their visible label). For
+ * these inputs a non-empty `value` counts as an additional name source
+ * beyond `title`. Text-flavored inputs (`text`, `email`, `password`,
+ * etc.) use `value` to seed initial input — that is NOT a label, so
+ * those are excluded from this set.
+ */
+const INPUT_VALUE_AS_NAME_TYPES: ReadonlySet<string> = new Set(["submit", "button", "reset"]);
+
+/**
+ * Sole-name-source gate (HTML): true when the titled element has any
+ * accessible-name evidence beyond `title` itself. Predicates:
+ *
+ *   - non-empty `aria-label`
+ *   - non-empty `aria-labelledby` (the rule does not resolve the
+ *     reference; per CLAUDE.md §1 "Don't duplicate capability the agent
+ *     already has," dangling-id verification belongs to
+ *     aria/labelledby-target-exists)
+ *   - non-empty descendant text content
+ *   - any descendant `<img>` carrying a non-empty `alt` (decorative
+ *     `alt=""` does not count — it is explicitly empty)
+ *   - for `<input type="submit"|"button"|"reset">`: non-empty `value`
+ *
+ * When all are absent, `title` is the sole name source — the rule
+ * suppresses, because suggesting `aria-label` would land it in
+ * competition with the existing `title` for the same name slot. The
+ * gate is deterministic from the attributes and direct descendants
+ * alone; no guessed composition.
+ */
+function hasAdditionalNameSourceHtml(element: HtmlElement): boolean {
+  const ariaLabel = getHtmlAttribute(element, "aria-label");
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
+  const labelledby = getHtmlAttribute(element, "aria-labelledby");
+  if (labelledby !== null && labelledby.trim().length > 0) return true;
+  if (htmlTextContent(element).length > 0) return true;
+  if (element.tagName.toLowerCase() === "input") {
+    const type = getHtmlAttribute(element, "type");
+    const normalized = type === null ? "" : type.toLowerCase();
+    if (INPUT_VALUE_AS_NAME_TYPES.has(normalized)) {
+      const value = getHtmlAttribute(element, "value");
+      if (value !== null && value.trim().length > 0) return true;
+    }
+  }
+  if (hasDescendantImgWithAltHtml(element)) return true;
+  return false;
+}
+
+/**
+ * Sole-name-source gate (JSX): mirrors the HTML predicate. Notes:
+ *
+ *   - `aria-labelledby` is treated as present-when-the-attribute-is —
+ *     JSX expression values are opaque to static analysis, so any
+ *     non-empty form (string literal or expression) is honored.
+ *   - JSX text content is the literal text of descendant `JsxText`
+ *     nodes only; expression children count as content because their
+ *     runtime value is opaque, and treating them as a possible name
+ *     source is the conservative ("surface, don't suppress") move on
+ *     the rule-firing side of the gate.
+ */
+function hasAdditionalNameSourceJsx(element: JsxElement): boolean {
+  if (hasJsxAriaNameAttr(element)) return true;
+  if (jsxTextContent(element).length > 0) return true;
+  if (hasJsxExpressionChild(element)) return true;
+  if (hasJsxInputValueName(element)) return true;
+  if (hasDescendantImgWithAltJsx(element)) return true;
+  return false;
+}
+
+/**
+ * `aria-label` non-empty OR `aria-labelledby` present (expression
+ * values opaque → treated as present per "surface, don't suppress" on
+ * the rule-firing side of the gate).
+ */
+function hasJsxAriaNameAttr(element: JsxElement): boolean {
+  const ariaLabel = getJsxAttributeString(element, "aria-label");
+  if (ariaLabel !== null && ariaLabel.trim().length > 0) return true;
+  const labelledbyAttr = getJsxAttribute(element, "aria-labelledby");
+  if (labelledbyAttr === null) return false;
+  const labelledbyString = getJsxAttributeString(element, "aria-labelledby");
+  return labelledbyString === null || labelledbyString.trim().length > 0;
+}
+
+/** Any JSX expression child like `{label}` — opaque content. */
+function hasJsxExpressionChild(element: JsxElement): boolean {
+  for (const child of element.children) {
+    if (child.kind === "JsxExpression") return true;
+  }
+  return false;
+}
+
+/**
+ * `<input type="submit"|"button"|"reset" value="…">` — value renders
+ * as the visible label and counts as the accessible name. Expression
+ * `value={expr}` is opaque → treated as present.
+ */
+function hasJsxInputValueName(element: JsxElement): boolean {
+  if (element.tagName !== "input") return false;
+  const type = getJsxAttributeString(element, "type");
+  const normalized = type === null ? "" : type.toLowerCase();
+  if (!INPUT_VALUE_AS_NAME_TYPES.has(normalized)) return false;
+  const valueAttr = getJsxAttribute(element, "value");
+  if (valueAttr === null) return false;
+  const valueString = getJsxAttributeString(element, "value");
+  return valueString === null || valueString.trim().length > 0;
+}
+
+/**
+ * Direct-descendant scan for `<img>` (or component named `img`) with a
+ * non-empty `alt`. `alt=""` is explicitly decorative — does not count
+ * as a name source. Walks all descendants because a button often wraps
+ * the image in an inner `<span>` for layout.
+ */
+function hasDescendantImgWithAltHtml(element: HtmlElement): boolean {
+  for (const descendant of walkHtmlElements(element)) {
+    if (descendant.tagName.toLowerCase() !== "img") continue;
+    const alt = getHtmlAttribute(descendant, "alt");
+    if (alt !== null && alt.trim().length > 0) return true;
+  }
+  return false;
+}
+
+function hasDescendantImgWithAltJsx(element: JsxElement): boolean {
+  const stack: JsxElement[] = [
+    ...element.children.flatMap((c) => (c.kind === "JsxElement" ? [c] : [])),
+  ];
+  while (stack.length > 0) {
+    // biome-ignore lint/style/noNonNullAssertion: stack length checked above
+    const current = stack.pop()!;
+    if (current.tagName === "img") {
+      const alt = getJsxAttributeString(current, "alt");
+      if (alt !== null && alt.trim().length > 0) return true;
+    }
+    for (const child of current.children) {
+      if (child.kind === "JsxElement") stack.push(child);
+    }
+  }
+  return false;
+}
+
 function buildViolation(
   tag: string,
   title: string,
@@ -259,6 +423,17 @@ function buildViolation(
   // itself is usually short; a long value is almost certainly a bug.
   const display = truncateForEcho(title, 40);
   const baseMessage = `<${tag}> has title="${display}" — native browser tooltips are not dismissable with the keyboard, disappear on pointer approach, and are invisible to touch and many assistive-technology users, failing WCAG 1.4.13 (Content on Hover or Focus).`;
+  // Reason-text gate citation: this finding fires only because the
+  // element already carries another accessible-name source (visible
+  // text, aria-label, aria-labelledby, alt on a descendant <img>, or
+  // value= on a button-flavored input), so the title is supplementary
+  // — and therefore the dismissability failure is the only WCAG 1.4.13
+  // issue at this site. Telling the agent the gate fired keeps the
+  // suggestion's "add aria-label" alternative from looking like it
+  // would land alongside no existing name source. Per the backlog
+  // gate contract.
+  const gateClause =
+    " The element already has another name source beyond title (visible text, aria-label, aria-labelledby, value on a button-input, or alt on a descendant <img>); the title is supplementary, not the sole accessible name.";
   const enrichmentClause =
     enhancer === null
       ? ""
@@ -266,7 +441,7 @@ function buildViolation(
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `${baseMessage}${enrichmentClause}`,
+    message: `${baseMessage}${gateClause}${enrichmentClause}`,
     suggestion: buildSuggestion(tag, display, textEqualsTitle),
     // Conditional spread — `couldBeWrongBecause: []` would be a dishonest
     // empty-vs-unpopulated sentinel per CLAUDE.md §1.

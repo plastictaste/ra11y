@@ -24,10 +24,17 @@ describe("rule tooltip/dismissable", () => {
       expect(violations[0]?.message).toMatch(/<a>/);
     });
 
-    it("input has a title attribute", () => {
-      const violations = runRule(rule, `<input type="text" title="Enter your full name" />`, {
-        filePath: "page.html",
-      });
+    it("input[type=submit] with value and title fires (value is the name source)", () => {
+      // Bare `<input type="text" title="…" />` no longer fires under
+      // the sole-name-source gate (no value, no visible text, no
+      // aria-label) — see the gate-suppression block below for the
+      // explicit coverage. Button-flavored inputs render the value as
+      // their accessible name; a non-empty value passes the gate.
+      const violations = runRule(
+        rule,
+        `<input type="submit" value="Save" title="Save and close the document" />`,
+        { filePath: "page.html" },
+      );
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toMatch(/<input>/);
     });
@@ -404,6 +411,188 @@ describe("rule tooltip/dismissable", () => {
       const suggestion = violations[0]?.suggestion ?? "";
       expect(suggestion).toMatch(/visible text label inside the element/);
       expect(suggestion).toMatch(/custom tooltip component/);
+    });
+  });
+
+  // Sole-name-source gate: when `title` is the *only* accessible-name
+  // source on the interactive element (no visible text content, no
+  // aria-label, no aria-labelledby, no value on a button-input, no
+  // alt-bearing descendant <img>), the dismiss path the rule
+  // recommends ("add aria-label") would land an aria-label that
+  // competes with the existing title for the same name slot — the
+  // suggestion would be self-defeating. Suppress on this branch and
+  // keep the supplementary-title flagging on the cases where another
+  // name source is present and the dismissability failure is the only
+  // 1.4.13 issue. Per the backlog Q7-RULE-TOOLTIP-DISMISSABLE-TITLE-IS-ACCNAME
+  // gate contract; deterministic from attributes + descendant text
+  // alone (no guessed composition), so the gate is honest per
+  // docs/kb/architecture/ai-first-consumer.md "the test before adding
+  // a gate is whether the predicate is provable from the code."
+  describe("sole-name-source gate", () => {
+    it("HTML: empty button with only title does NOT fire", () => {
+      const violations = runRule(rule, `<button title="Save"></button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: bare input[type=text] with only title does NOT fire", () => {
+      const violations = runRule(rule, `<input type="text" title="Enter your full name" />`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: bare anchor (with href) and only title does NOT fire", () => {
+      const violations = runRule(rule, `<a href="/help" title="Help center"></a>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: input[type=submit] WITHOUT value and only title does NOT fire", () => {
+      const violations = runRule(rule, `<input type="submit" title="Save" />`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: button wrapping img with no alt and only title does NOT fire", () => {
+      const violations = runRule(rule, `<button title="Save"><img src="save.png" /></button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: button wrapping img with empty alt does NOT fire", () => {
+      // alt="" is explicitly decorative — does not count as a name source.
+      const violations = runRule(
+        rule,
+        `<button title="Save"><img src="save.png" alt="" /></button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: button with aria-label + title fires (aria-label is the name source)", () => {
+      const violations = runRule(
+        rule,
+        `<button aria-label="Save document" title="Click to persist changes"></button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      // Reason-text must cite the gate so the agent understands the
+      // suggestion's "add aria-label" branch is contextual, not a
+      // greenfield instruction.
+      expect(violations[0]?.message).toMatch(/already has another name source/);
+    });
+
+    it("HTML: button with aria-labelledby + title fires", () => {
+      const violations = runRule(
+        rule,
+        `<h2 id="save-heading">Save</h2><button aria-labelledby="save-heading" title="Click to persist changes"></button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("HTML: button wrapping img WITH alt + title fires", () => {
+      const violations = runRule(
+        rule,
+        `<button title="Save document"><img src="save.png" alt="floppy disk icon" /></button>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("HTML: input[type=submit] WITH value + title fires (value is the name source)", () => {
+      const violations = runRule(
+        rule,
+        `<input type="submit" value="Save" title="Save and close" />`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("HTML: input[type=button] WITH value + title fires", () => {
+      const violations = runRule(
+        rule,
+        `<input type="button" value="Cancel" title="Discard changes" />`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("HTML: input[type=text] WITH value + title still does NOT fire (value is initial input, not a label)", () => {
+      // Text inputs use `value` to seed initial content — that is NOT
+      // the accessible name, so it must not pass the gate.
+      const violations = runRule(
+        rule,
+        `<input type="text" value="seed text" title="Enter your name" />`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: div with role=button and only title (empty) does NOT fire", () => {
+      const violations = runRule(rule, `<div role="button" tabindex="0" title="Open menu"></div>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX: empty button with only title does NOT fire", () => {
+      const violations = runRule(rule, `const x = <button title="Save"></button>;`);
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX: bare input with only title does NOT fire", () => {
+      const violations = runRule(rule, `const x = <input type="text" title="Enter your name" />;`);
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX: button with aria-label + title fires", () => {
+      const violations = runRule(
+        rule,
+        `const x = <button aria-label="Save" title="Click to persist"></button>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/already has another name source/);
+    });
+
+    it("JSX: button with expression child counts as opaque content (gate passes)", () => {
+      // `{label}` is opaque to static analysis — treating it as a
+      // possible name source is the conservative ("surface, don't
+      // suppress") move on the rule-firing side.
+      const violations = runRule(
+        rule,
+        `const label="x"; const y = <button title="Save">{label}</button>;`,
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("JSX: button wrapping img with alt + title fires", () => {
+      const violations = runRule(
+        rule,
+        `const x = <button title="Save"><img src="s.png" alt="disk icon" /></button>;`,
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("JSX: input[type=submit] with value + title fires", () => {
+      const violations = runRule(
+        rule,
+        `const x = <input type="submit" value="Save" title="Save and close" />;`,
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("JSX: button with aria-labelledby={expr} + title fires (expression treated as present)", () => {
+      const violations = runRule(
+        rule,
+        `const id="h1"; const x = <button aria-labelledby={id} title="Click to save"></button>;`,
+      );
+      expect(violations).toHaveLength(1);
     });
   });
 
