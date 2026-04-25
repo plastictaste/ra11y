@@ -2061,6 +2061,154 @@ describe("MCP tool: sessionConfigure", () => {
     const afterCode = (afterGate.structuredContent as { code: string }).code;
     expect(afterCode).not.toBe("allow-write-disabled");
   });
+
+  it("echoes merged session state on the active block", async () => {
+    // V1-SESSION-CONFIGURE-ECHO-STATE: a caller that lands rules,
+    // wrappers, exclude, and cwd in one configure call must see all of
+    // them on the response so they can verify the merge applied. Before
+    // this, the response only echoed standard/level/ruleCount/
+    // allowWrite — a wrong rule ID was a silent no-op the agent could
+    // not discover.
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler(
+      {
+        rules: { "media/alt-text-missing": "warning" },
+        nativeWrappers: { Button: "button", IconButton: "button" },
+        exclude: ["dist/**"],
+        cwd: "/tmp/echo-state-test",
+      },
+      session,
+    );
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      active: {
+        standard: string;
+        level: string;
+        allowWrite: boolean;
+        rules?: Record<string, string>;
+        nativeWrappers?: readonly string[];
+        nativeWrapperElements?: Record<string, string>;
+        exclude?: readonly string[];
+        cwd?: string;
+      };
+    };
+    expect(data.active.rules).toEqual({ "media/alt-text-missing": "warning" });
+    expect(data.active.nativeWrappers?.includes("Button")).toBe(true);
+    expect(data.active.nativeWrappers?.includes("IconButton")).toBe(true);
+    expect(data.active.nativeWrapperElements).toEqual({
+      Button: "button",
+      IconButton: "button",
+    });
+    expect(data.active.exclude).toEqual(["dist/**"]);
+    expect(data.active.cwd).toBe("/tmp/echo-state-test");
+  });
+
+  it("omits empty echo fields per present-when-meaningful doctrine", async () => {
+    // A bare-args call (no rules, no wrappers, no excludes) must NOT
+    // return `rules: {}`, `nativeWrappers: []`, `exclude: []` — empty
+    // sentinels are dishonest under AI-first doctrine. The required
+    // fields stay populated; the optional fields are conditional-
+    // spread.
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+    const data = JSON.parse(result.content[0].text) as {
+      active: Record<string, unknown>;
+    };
+    expect(data.active["standard"]).toBe("wcag21");
+    expect("rules" in data.active).toBe(false);
+    expect("nativeWrappers" in data.active).toBe(false);
+    expect("nativeWrapperElements" in data.active).toBe(false);
+    expect("exclude" in data.active).toBe(false);
+    expect("cwd" in data.active).toBe(false);
+  });
+
+  it("emits unknown_rule_ids warning when a rule ID does not match the registry", async () => {
+    // The canonical silent-no-op the backlog item names. The session
+    // still records the setting (no-op fast path: nothing in the
+    // registry has that ID, so nothing changes), but the agent sees
+    // a structured warning + the offending IDs in `warningsDetails` so
+    // a typo or stale post-rename ID is discoverable.
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler(
+      { rules: { "made/up-rule": "warning", "another/typo": "off" } },
+      session,
+    );
+    const data = JSON.parse(result.content[0].text) as {
+      warnings?: readonly string[];
+      warningsDetails?: { unknown_rule_ids?: { ruleIds: readonly string[] } };
+    };
+    expect(data.warnings?.includes("unknown_rule_ids")).toBe(true);
+    expect(data.warningsDetails?.unknown_rule_ids?.ruleIds).toEqual([
+      "another/typo",
+      "made/up-rule",
+    ]);
+  });
+
+  it("omits unknown_rule_ids when every ID resolves through the registry or alias table", async () => {
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler(
+      { rules: { "media/alt-text-missing": "off" } },
+      session,
+    );
+    const data = JSON.parse(result.content[0].text) as {
+      warnings?: readonly string[];
+    };
+    expect(data.warnings?.includes("unknown_rule_ids") ?? false).toBe(false);
+  });
+
+  it("does not flag aliased rule IDs as unknown", async () => {
+    // `navigation/href-placeholder` is a deprecated alias that resolves
+    // to `navigation/href-javascript-scheme`. The unknown-rule check
+    // must follow the alias table before testing the registry, or
+    // every legacy ID would noisily trip the warning during the
+    // deprecation window.
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler(
+      { rules: { "navigation/href-placeholder": "off" } },
+      session,
+    );
+    const data = JSON.parse(result.content[0].text) as {
+      warnings?: readonly string[];
+    };
+    expect(data.warnings?.includes("unknown_rule_ids") ?? false).toBe(false);
+  });
+
+  it("emits session_allow_write_enabled whenever the merged gate is open", async () => {
+    // The write gate is security-load-bearing: every configure response
+    // surfaces the open state additively so an agent reading the
+    // response after any param change still sees the signal — the gate
+    // does not reset when the next call doesn't mention it.
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const opened = await tool.handler({ allowWrite: true }, session);
+    const openedData = JSON.parse(opened.content[0].text) as {
+      warnings?: readonly string[];
+    };
+    expect(openedData.warnings?.includes("session_allow_write_enabled")).toBe(true);
+
+    // Subsequent unrelated call still surfaces the warning because the
+    // session state still has allowWrite open.
+    const followup = await tool.handler({ standard: "wcag21" }, session);
+    const followupData = JSON.parse(followup.content[0].text) as {
+      warnings?: readonly string[];
+    };
+    expect(followupData.warnings?.includes("session_allow_write_enabled")).toBe(true);
+  });
+
+  it("omits session_allow_write_enabled when the gate is closed", async () => {
+    const tool = findTool("sessionConfigure");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+    const data = JSON.parse(result.content[0].text) as {
+      warnings?: readonly string[];
+    };
+    expect(data.warnings?.includes("session_allow_write_enabled") ?? false).toBe(false);
+  });
 });
 
 describe("MCP tool: coverage", () => {

@@ -10,7 +10,7 @@
  * state. No MCP-specific logic leaks into `src/engine/`.
  */
 
-import { RULE_ALIASES } from "../engine/rule-aliases.ts";
+import { RULE_ALIASES, resolveRuleId } from "../engine/rule-aliases.ts";
 import { buildListRulesNextStep } from "./list-rules-next-step.ts";
 import { resolveActiveRules } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
@@ -324,13 +324,65 @@ const sessionConfigureTool: McpTool = {
     // registry ceiling, matching `loaded`'s contract in
     // `rules-evaluated.ts`.
     const ruleCount = resolveActiveRules(session).length;
+
+    // V1-SESSION-CONFIGURE-ECHO-STATE: echo the merged session state so
+    // a caller can verify what landed. Before this, the response only
+    // reported standard/level/ruleCount/allowWrite — a wrong rule ID in
+    // the input was a silent no-op (the typo never appeared in any
+    // surface so the agent could not discover it). Optional fields are
+    // present-when-meaningful per AI-first doctrine; empty maps/arrays
+    // are conditional-spread off the response.
+    // Aliases resolve to their canonical ID before the registry
+    // lookup so a deprecated-but-still-supported ID (e.g.
+    // `navigation/href-placeholder` → `navigation/href-javascript-scheme`)
+    // is not falsely flagged as unknown. The dedicated
+    // `deprecated_rule_id:<old>:<new>` warning surface for aliased IDs
+    // fires from the scan-family tools at apply-time; the unknown
+    // check here is only the silent-no-op guard the backlog item
+    // names.
+    const knownRuleIds = new Set(session.registry.rules.map((r) => r.id));
+    const unknownRuleIds = Object.keys(config.rules)
+      .filter((id) => !knownRuleIds.has(resolveRuleId(id).resolved))
+      .sort();
+    const warnings: string[] = [];
+    const warningsDetails: Record<string, unknown> = {};
+    if (unknownRuleIds.length > 0) {
+      // Surface-don't-suppress: a rule ID that doesn't match any
+      // registry entry was almost certainly a typo or a stale
+      // post-rename ID without an alias. Without this code, the
+      // setting silently does nothing — the agent has no signal to
+      // re-issue with a corrected ID.
+      warnings.push("unknown_rule_ids");
+      warningsDetails["unknown_rule_ids"] = { ruleIds: unknownRuleIds };
+    }
+    if (config.allowWrite) {
+      // The `apply_fix` write gate is open. Surface it as an additive
+      // signal on every configure response so the agent can branch on
+      // the gate state without inferring it from a separate field
+      // read. Defaults to false; a host has explicitly opted in (now
+      // or on a previous call this connection).
+      warnings.push("session_allow_write_enabled");
+    }
     return textResult({
       active: {
         standard: config.standard,
         level: config.level,
         ruleCount,
         allowWrite: config.allowWrite,
+        ...(config.exclude.length > 0 ? { exclude: [...config.exclude] } : {}),
+        ...(Object.keys(config.rules).length > 0 ? { rules: { ...config.rules } } : {}),
+        ...(config.nativeWrappers.length > 0
+          ? { nativeWrappers: [...config.nativeWrappers] }
+          : {}),
+        ...(Object.keys(config.nativeWrapperElements).length > 0
+          ? { nativeWrapperElements: { ...config.nativeWrapperElements } }
+          : {}),
+        ...(config.nativeWrappersConfiguredCwd !== undefined
+          ? { cwd: config.nativeWrappersConfiguredCwd }
+          : {}),
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
+      ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
     });
   },
 };
