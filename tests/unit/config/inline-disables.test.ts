@@ -50,6 +50,49 @@ describe("parseInlineDisables", () => {
       const map = parseInlineDisables(src);
       expect(map.get(2)?.has("contrast/minimum")).toBe(true);
     });
+
+    // Guards the SSG-friendly Liquid carrier: SSG authors writing in
+    // .liquid / .njk / .md-with-frontmatter need a comment shape that
+    // disappears at render time. The HTML form (`<!-- … -->`) survives
+    // template rendering and pollutes the generated page.
+    it("works with Liquid comments {% comment %}...{% endcomment %}", () => {
+      const src = [
+        "{% comment %}ra11y-disable-next-line contrast/minimum{% endcomment %}",
+        "<p>x</p>",
+      ].join("\n");
+      const map = parseInlineDisables(src);
+      expect(map.get(2)?.has("contrast/minimum")).toBe(true);
+    });
+
+    // Guards Liquid's whitespace-stripping form `{%- comment -%}` /
+    // `{%- endcomment -%}`. Templates use this to suppress surrounding
+    // whitespace from the rendered output; the pragma reader must still
+    // recognize the comment.
+    it("tolerates Liquid whitespace-stripping form {%- comment -%}", () => {
+      const src = [
+        "{%- comment -%}ra11y-disable-next-line contrast/minimum{%- endcomment -%}",
+        "<p>x</p>",
+      ].join("\n");
+      const map = parseInlineDisables(src);
+      expect(map.get(2)?.has("contrast/minimum")).toBe(true);
+    });
+
+    // Guards the Hugo carrier — same SSG concern, different syntax.
+    // Hugo wraps a JS-style block comment inside its own action
+    // delimiters (`{{/* … */}}`), and the comment is stripped from
+    // template output.
+    it("works with Hugo comments {{/* ... */}}", () => {
+      const src = ["{{/* ra11y-disable-next-line contrast/minimum */}}", "<p>x</p>"].join("\n");
+      const map = parseInlineDisables(src);
+      expect(map.get(2)?.has("contrast/minimum")).toBe(true);
+    });
+
+    // Guards Hugo's whitespace-stripping form `{{- /* … */ -}}`.
+    it("tolerates Hugo whitespace-stripping form {{- /* … */ -}}", () => {
+      const src = ["{{- /* ra11y-disable-next-line contrast/minimum */ -}}", "<p>x</p>"].join("\n");
+      const map = parseInlineDisables(src);
+      expect(map.get(2)?.has("contrast/minimum")).toBe(true);
+    });
   });
 
   describe("disable/enable regions", () => {
@@ -179,6 +222,65 @@ describe("parseInlineDisables", () => {
       ].join("\n");
       const { declarations } = parseInlineDisablesDetailed(src);
       expect(declarations[0]?.reason).toBe("dark-mode promo");
+    });
+
+    // Guards reason capture inside a Liquid carrier — the closing
+    // `{% endcomment %}` must NOT bleed into the reason text.
+    it("captures reason text inside a Liquid {% comment %} carrier", () => {
+      const src = [
+        "{% comment %}ra11y-disable-next-line wcag22:1.4.5: brand wordmark, tracked in #888{% endcomment %}",
+        "<img src='logo.svg' />",
+      ].join("\n");
+      const { disableMap, declarations } = parseInlineDisablesDetailed(src);
+      expect(disableMap.get(2)?.has("wcag22:1.4.5")).toBe(true);
+      expect(declarations[0]?.reason).toBe("brand wordmark, tracked in #888");
+      expect(declarations[0]?.ruleIds).toEqual(["wcag22:1.4.5"]);
+    });
+
+    // Guards reason capture inside a Hugo carrier — the closing
+    // `*/}}` must NOT bleed into the reason text.
+    it("captures reason text inside a Hugo {{/* */}} carrier", () => {
+      const src = [
+        "{{/* ra11y-disable-next-line wcag22:1.4.5: hero figure, decorative */}}",
+        "<img src='hero.jpg' />",
+      ].join("\n");
+      const { disableMap, declarations } = parseInlineDisablesDetailed(src);
+      expect(disableMap.get(2)?.has("wcag22:1.4.5")).toBe(true);
+      expect(declarations[0]?.reason).toBe("hero figure, decorative");
+      expect(declarations[0]?.ruleIds).toEqual(["wcag22:1.4.5"]);
+    });
+
+    // Guards that a Liquid carrier can open a region disable, and a
+    // matching Liquid carrier can close it. Confirms the new patterns
+    // route through the same disable/enable region machinery as the
+    // existing comment shapes.
+    it("supports disable/enable regions wrapped in Liquid carriers", () => {
+      const src = [
+        "{% comment %}ra11y-disable contrast/minimum{% endcomment %}",
+        "<p>a</p>",
+        "<p>b</p>",
+        "{% comment %}ra11y-enable contrast/minimum{% endcomment %}",
+        "<p>c</p>",
+      ].join("\n");
+      const map = parseInlineDisables(src);
+      expect(map.get(2)?.has("contrast/minimum")).toBe(true);
+      expect(map.get(3)?.has("contrast/minimum")).toBe(true);
+      expect(map.get(5)?.has("contrast/minimum")).toBeFalsy();
+    });
+
+    // Guards that a Hugo carrier can open and close a region disable.
+    it("supports disable/enable regions wrapped in Hugo carriers", () => {
+      const src = [
+        "{{/* ra11y-disable contrast/minimum */}}",
+        "<p>a</p>",
+        "<p>b</p>",
+        "{{/* ra11y-enable contrast/minimum */}}",
+        "<p>c</p>",
+      ].join("\n");
+      const map = parseInlineDisables(src);
+      expect(map.get(2)?.has("contrast/minimum")).toBe(true);
+      expect(map.get(3)?.has("contrast/minimum")).toBe(true);
+      expect(map.get(5)?.has("contrast/minimum")).toBeFalsy();
     });
 
     it("records `line`, `kind`, and `ruleIds` on every declaration", () => {

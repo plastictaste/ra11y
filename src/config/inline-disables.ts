@@ -46,6 +46,22 @@
  * declaration so the `suppression/no-reason` finder can surface a
  * review candidate pointing the agent at the missing reason.
  *
+ * Template-engine comment carriers also recognized (additive — for
+ * SSG-authored sources where a raw `<!-- … -->` would render to the
+ * page and pollute the output):
+ *
+ *   {% comment %}ra11y-disable wcag22:1.4.5{% endcomment %}   (Liquid / Eleventy / Jekyll)
+ *   {{/* ra11y-disable wcag22:1.4.5 *\/}}                      (Hugo)
+ *
+ * Liquid's whitespace-stripping form (`{%-` / `-%}`) and Hugo's
+ * (`{{-` / `-}}`) are both tolerated. The JSX `{/* … *\/}` form (used
+ * by Astro and JSX in general) was already supported and handles
+ * `.astro` files via the same matcher. Detection is purely syntactic:
+ * we recognize each delimiter shape unconditionally, regardless of the
+ * source file's extension — the delimiter shapes are mutually
+ * unambiguous and avoiding a filename parameter keeps every existing
+ * caller source-compatible.
+ *
  * Tokens in the directive are stored opaquely — they can be rule IDs
  * (e.g. `keyboard/handler-missing`) to silence rule violations, or
  * criterion IDs (e.g. `wcag22:2.4.5`) to silence review candidates.
@@ -70,6 +86,18 @@ const COMMENT_PATTERNS: readonly RegExp[] = [
   /<!--\s*(ra11y-(?:disable(?:-next-line)?|enable))\s*(.*?)-->/,
   // JSX block comment: {/* ra11y-… */}
   /\{\s*\/\*\s*(ra11y-(?:disable(?:-next-line)?|enable))\s*([^*]*)\*\/\s*\}/,
+  // Liquid / Eleventy / Jekyll comment tag:
+  //   {% comment %}ra11y-… {% endcomment %}
+  // Whitespace-stripping forms `{%-` / `-%}` are tolerated. Reason
+  // text and rule IDs may include any character except the closing
+  // `{% endcomment %}` delimiter, so we use a non-greedy capture
+  // followed by the explicit terminator.
+  /\{%-?\s*comment\s*-?%\}\s*(ra11y-(?:disable(?:-next-line)?|enable))\s*(.*?)\{%-?\s*endcomment\s*-?%\}/,
+  // Hugo comment: {{/* ra11y-… */}}
+  // Whitespace-stripping forms `{{-` / `-}}` are tolerated. The
+  // closing delimiter is `*/}}` (Hugo wraps a JS-style block comment
+  // inside its own action delimiters).
+  /\{\{-?\s*\/\*\s*(ra11y-(?:disable(?:-next-line)?|enable))\s*([^*]*)\*\/\s*-?\}\}/,
 ];
 
 export type DisableMap = Map<number, Set<string>>;
