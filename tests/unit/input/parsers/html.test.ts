@@ -490,4 +490,129 @@ describe("parseHtml", () => {
     );
     expect(errors.length).toBe(0);
   });
+
+  // ─── HTML5 implicit-close behavior ─────────────────────────────────────
+  //
+  // The HTML Living Standard's "Tag omission in text/html" notes allow
+  // several elements to omit their explicit end tag when the close can
+  // be inferred from context. Browser-renderable, hand-authored HTML
+  // routinely relies on this — `<p>foo<p>bar`, `<li>one<li>two`,
+  // `<tr><td>a<td>b`, and (most commonly) a `<p>` with no `</p>` before
+  // `</body></html>`. Without implicit-close handling, every such file
+  // routes into `analysisCoverage.partialParseFiles` with reasons that
+  // read as parser failures, so the agent reading them dismisses real
+  // a11y findings on the recovered subtree.
+  //
+  // See `IMPLIED_END_TAG_ELEMENTS` and `IMPLICIT_CLOSE_ON_OPEN` in the
+  // parser for the closed sets backing these tests; the closed sets
+  // mirror the spec's tag-omission notes for each element.
+
+  it("closes <p> implicitly when </body> arrives", () => {
+    const { errors } = parseHtml(
+      "<!DOCTYPE html><html><body><p>hello</body></html>\n",
+    );
+    expect(errors).toEqual([]);
+  });
+
+  it("closes <p> implicitly when a sibling <p> opens", () => {
+    const { root, errors } = parseHtml("<div><p>one<p>two<p>three</div>");
+    expect(errors).toEqual([]);
+    const div = findFirst(root, "div");
+    const ps = (div?.children ?? []).filter(
+      (c) => c.kind === "HtmlElement" && (c as HtmlElement).tagName === "p",
+    );
+    expect(ps.length).toBe(3);
+  });
+
+  it("closes <p> implicitly when a sibling block-level element opens", () => {
+    // `<p>` followed by `<ul>` / `<table>` / `<div>` — the spec's
+    // "p-closer" set. The previous `<p>` ends; `<ul>` becomes a
+    // sibling, not a child.
+    const { root, errors } = parseHtml(
+      "<div><p>before<ul><li>a<li>b</ul><table><tr><td>x</table></div>",
+    );
+    expect(errors).toEqual([]);
+    const div = findFirst(root, "div");
+    const directChildren = (div?.children ?? []).filter(
+      (c) => c.kind === "HtmlElement",
+    ) as HtmlElement[];
+    expect(directChildren.map((c) => c.tagName)).toEqual(["p", "ul", "table"]);
+  });
+
+  it("closes <li> implicitly when a sibling <li> opens or </ul> arrives", () => {
+    const { root, errors } = parseHtml(
+      "<ul><li>one<li>two<li>three</ul>",
+    );
+    expect(errors).toEqual([]);
+    const ul = findFirst(root, "ul");
+    const lis = (ul?.children ?? []).filter(
+      (c) => c.kind === "HtmlElement" && (c as HtmlElement).tagName === "li",
+    );
+    expect(lis.length).toBe(3);
+  });
+
+  it("closes <dt> / <dd> implicitly on each other and on </dl>", () => {
+    const { root, errors } = parseHtml(
+      "<dl><dt>term1<dd>def1<dt>term2<dd>def2</dl>",
+    );
+    expect(errors).toEqual([]);
+    const dl = findFirst(root, "dl");
+    const tags = (dl?.children ?? [])
+      .filter((c) => c.kind === "HtmlElement")
+      .map((c) => (c as HtmlElement).tagName);
+    expect(tags).toEqual(["dt", "dd", "dt", "dd"]);
+  });
+
+  it("closes table cells and rows implicitly", () => {
+    const { errors } = parseHtml(
+      "<table><thead><tr><th>a<th>b</thead><tbody><tr><td>1<td>2<tr><td>3<td>4</tbody></table>",
+    );
+    expect(errors).toEqual([]);
+  });
+
+  it("closes <option> implicitly on sibling <option>", () => {
+    const { errors } = parseHtml(
+      "<select><option>a<option>b<option>c</select>",
+    );
+    expect(errors).toEqual([]);
+  });
+
+  it("still reports a stray closing tag when no ancestor matches", () => {
+    // `</span>` has no matching opener anywhere in the open stack;
+    // this is a genuine structural bug, not a spec-allowed implicit
+    // close, and the recoverable error must still surface so an
+    // agent reading `partialParseFiles[].reason` learns the file is
+    // really broken.
+    const { errors } = parseHtml("<div>hello</span></div>");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.some((e) => e.message === "Stray closing tag at top level")).toBe(true);
+  });
+
+  it("still reports a stray closing tag for </> orphans inside content", () => {
+    const { errors } = parseHtml("<div>foo</></div>");
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("still reports an unclosed <div> at EOF — <div> is not in the implied-end set", () => {
+    // A non-implied-end element with no close tag IS a real bug; the
+    // parser must keep emitting "Unclosed <div>" so the agent sees
+    // the genuine structural break. The implicit-close work tightened
+    // the predicate; it did not silence it for the elements where
+    // the spec still requires an explicit end tag.
+    const { errors } = parseHtml("<div><span>unfinished");
+    expect(errors.some((e) => e.message.includes("Unclosed <div>"))).toBe(true);
+    expect(errors.some((e) => e.message.includes("Unclosed <span>"))).toBe(true);
+  });
+
+  it("parses a real-world index.html ending with </body></html> + trailing whitespace", () => {
+    const src =
+      "<!DOCTYPE html>\n" +
+      '<html lang="en">\n' +
+      "<head><meta charset=\"utf-8\"><title>x</title></head>\n" +
+      "<body>\n" +
+      "<main><h1>Hi</h1><p>one<p>two</main>\n" +
+      "</body></html>\n\n";
+    const { errors } = parseHtml(src);
+    expect(errors).toEqual([]);
+  });
 });
