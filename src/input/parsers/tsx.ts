@@ -77,7 +77,8 @@ const SELF_CLOSING_VOID: ReadonlySet<string> = new Set([
 
 export function parseTsx(source: string, options: TsxParseOptions = {}): TsxParseResult {
   const jsxMode = inferJsxMode(source, options.filePath);
-  const result = new TsxParser(source, jsxMode).parse();
+  const nonJsxExtension = isNonJsxExtension(options.filePath);
+  const result = new TsxParser(source, jsxMode, nonJsxExtension).parse();
   // Storybook synthesis is the only file-path-aware pass today. Engage
   // when the path looks like a story file (`isStorybookStoryFile` is the
   // single source of truth — see `src/utils/path.ts`); otherwise the
@@ -118,10 +119,24 @@ class TsxParser {
    * and preserve every existing rule-evaluation path.
    */
   readonly #jsxEnabled: boolean;
+  /**
+   * Set when the caller supplied a `filePath` whose extension is NOT
+   * JSX-bearing (`.js`/`.cjs`/`.mjs`/`.ts`/`.css`/`.json`/etc.). When the
+   * scanner still emits a structural JSX error on such a file — typically
+   * a minified `.js` whose `r.length<b.length` parses as `<b.length>` open
+   * tag once a stray JSX-import signal flipped `#jsxEnabled` back on — the
+   * reason text rewrites to name the false-JSX context honestly instead of
+   * blaming the author for "Unclosed JSX element <r.length>"
+   * (V1-JS-PARSE-ERROR-REASON-MISLEADING). The fragment is preserved
+   * verbatim in both shapes so grep against historical reports still
+   * matches.
+   */
+  readonly #nonJsxExtension: boolean;
 
-  constructor(source: string, jsxEnabled = true) {
+  constructor(source: string, jsxEnabled = true, nonJsxExtension = false) {
     this.#source = source;
     this.#jsxEnabled = jsxEnabled;
+    this.#nonJsxExtension = nonJsxExtension;
   }
 
   parse(): TsxParseResult {
@@ -290,7 +305,7 @@ class TsxParser {
     const ch = this.#peek();
     if (ch === undefined) {
       this.#errors.push({
-        message: `Unterminated JSX element <${tagName}>`,
+        message: this.#formatStructuralJsxError("Unterminated", tagName),
         position: startPos,
         recoverable: true,
       });
@@ -424,7 +439,7 @@ class TsxParser {
       if (this.#pos === before) this.#advance(1);
     }
     this.#errors.push({
-      message: `Unclosed JSX element <${tagName}>`,
+      message: this.#formatStructuralJsxError("Unclosed", tagName),
       position: this.#position(),
       recoverable: true,
     });
@@ -485,6 +500,29 @@ class TsxParser {
     this.#readTagName();
     while (!this.#eof() && this.#peek() !== ">") this.#advance(1);
     if (!this.#eof()) this.#advance(1);
+  }
+
+  // ---------------------------------------------------------------------
+  // Error formatting
+  // ---------------------------------------------------------------------
+
+  /**
+   * Builds the reason string for a structural JSX error (`Unterminated` /
+   * `Unclosed` element). On JSX-bearing extensions (`.tsx`/`.jsx`/`.mdx`/
+   * `.astro`) and callers that supplied no `filePath`, the message stays
+   * the original parser-internal phrasing so the v0.1.x rule and report
+   * tests don't churn. On non-JSX extensions, the message rewrites to
+   * name the false-JSX context honestly: the upstream pipeline routed a
+   * `.js`/`.ts`/`.css`/etc. file to the TSX parser, the parser tripped
+   * on a `<` that was almost certainly a JS comparison operator, and an
+   * agent reading the report should fix the parser routing rather than
+   * "fix the JSX." The original `<tagName>` fragment is preserved so
+   * grep against earlier reports still matches
+   * (V1-JS-PARSE-ERROR-REASON-MISLEADING).
+   */
+  #formatStructuralJsxError(kind: "Unterminated" | "Unclosed", tagName: string): string {
+    if (!this.#nonJsxExtension) return `${kind} JSX element <${tagName}>`;
+    return `Minified or plain-JS <${tagName}> parsed as JSX element; file likely needs a non-JSX parser.`;
   }
 
   // ---------------------------------------------------------------------
@@ -649,4 +687,24 @@ function hasJsxImportSignal(source: string): boolean {
   const head =
     source.length <= JSX_IMPORT_SIGNAL_WINDOW ? source : source.slice(0, JSX_IMPORT_SIGNAL_WINDOW);
   return JSX_IMPORT_SIGNAL_RE.test(head);
+}
+
+/**
+ * True when `filePath` is supplied AND the extension is NOT one of
+ * `.jsx`/`.tsx`/`.mdx`/`.astro`. Drives the
+ * `#formatStructuralJsxError` reason rewrite so the
+ * `partialParseFiles[].reason` an agent reads on a `.js`/`.ts`/`.css`/
+ * etc. file names the false-JSX context honestly instead of pretending
+ * the author left a JSX tag unclosed (V1-JS-PARSE-ERROR-REASON-MISLEADING).
+ *
+ * Returns `false` when `filePath` is undefined — back-compat for the
+ * many call sites (test helpers, MCP session, apply-fix internals) that
+ * still parse without a path. Those paths keep the original parser
+ * phrasing.
+ */
+function isNonJsxExtension(filePath: string | undefined): boolean {
+  if (filePath === undefined) return false;
+  const ext = lowercaseExtension(filePath);
+  if (ext === "") return false;
+  return !JSX_BEARING_EXTENSIONS.has(ext);
 }

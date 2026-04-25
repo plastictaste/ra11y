@@ -431,4 +431,82 @@ describe("parseTsx", () => {
       expect(root.jsxElements.map((e) => e.tagName)).toEqual(["div"]);
     });
   });
+
+  // V1-JS-PARSE-ERROR-REASON-MISLEADING — when the parser still emits a
+  // structural JSX error on a non-JSX-bearing extension (e.g. a `.js`
+  // whose stray `from "react"` mention in a string literal flips
+  // jsxEnabled back on), the reason text rewrites to name the false-JSX
+  // context honestly instead of misleading the agent into "fix the JSX."
+  describe("structural-error reason on non-JSX extensions", () => {
+    it("rewrites Unclosed-element reason on a .js file with a JSX-import signal", () => {
+      // The leading `import React from 'react'` flips `inferJsxMode` to true
+      // for this `.js` file, so the parser enters JSX mode. The unclosed
+      // `<r.length>` then trips `#consumeJsxChildren`'s structural error.
+      // Without the rewrite, the reason an agent reads is "Unclosed JSX
+      // element <r.length>" — which is dishonest, since `r.length` is a
+      // member-access in `r.length<b.length`, not authored JSX.
+      const src =
+        "import React from 'react';\n" +
+        "!function(r,b){var x=r.length<b.length?r.length:b.length;return x}([1],[2,3]);";
+      const { errors } = parseTsx(src, { filePath: "livereload.js" });
+      expect(errors.length).toBeGreaterThan(0);
+      const first = errors[0];
+      expect(first?.recoverable).toBe(true);
+      // Reason must NOT use the parser-internal "Unclosed JSX element"
+      // phrasing — that's the misleading shape this item fixes.
+      expect(first?.message).not.toMatch(/^Unclosed JSX element/);
+      expect(first?.message).not.toMatch(/^Unterminated JSX element/);
+      // Reason MUST name the false-JSX context AND preserve the
+      // erroneous fragment for grep against historical reports.
+      expect(first?.message).toContain("Minified or plain-JS");
+      expect(first?.message).toContain("file likely needs a non-JSX parser");
+      expect(first?.message).toContain("<b.length>");
+    });
+
+    it("rewrites Unterminated-element reason on a .js file truncated mid-open-tag", () => {
+      // Source ends inside an open tag — triggers `#consumeOpenTagTerminator`'s
+      // EOF branch (the second of the two structural-error sites).
+      const src = "import React from 'react';\nvar x = <Button class='";
+      const { errors } = parseTsx(src, { filePath: "snippet.js" });
+      expect(errors.length).toBeGreaterThan(0);
+      const first = errors[0];
+      expect(first?.message).not.toMatch(/^Unterminated JSX element/);
+      expect(first?.message).toContain("Minified or plain-JS");
+      expect(first?.message).toContain("<Button>");
+    });
+
+    it("preserves the original Unclosed-element reason on .tsx (real authored JSX bug)", () => {
+      // `.tsx` is a JSX-bearing extension — the rewrite must NOT fire.
+      // Authors of broken JSX in a real .tsx file deserve the original
+      // parser-internal phrasing so they can fix the unclosed tag.
+      const src = "export function App() { return <div><p>oops; }";
+      const { errors } = parseTsx(src, { filePath: "App.tsx" });
+      expect(errors.length).toBeGreaterThan(0);
+      const first = errors[0];
+      expect(first?.message).toMatch(/^Unclosed JSX element </);
+      expect(first?.message).not.toContain("Minified or plain-JS");
+    });
+
+    it("preserves the original Unclosed-element reason on .jsx (real authored JSX bug)", () => {
+      const src = "export const App = () => <div><span>oops;";
+      const { errors } = parseTsx(src, { filePath: "App.jsx" });
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0]?.message).toMatch(/^Unclosed JSX element </);
+    });
+
+    it("preserves the original Unclosed-element reason when no filePath is supplied", () => {
+      // No filePath → can't classify the extension → keep the v0.1.x
+      // phrasing so existing rule tests and snapshots don't churn.
+      const src = "const x = <div><p>oops";
+      const { errors } = parseTsx(src);
+      expect(errors.length).toBeGreaterThan(0);
+      // The parser emits one error per still-open element on EOF; we
+      // assert both have the original phrasing rather than spelling out
+      // the inner-vs-outer order.
+      for (const err of errors) {
+        expect(err.message).toMatch(/^Unclosed JSX element </);
+        expect(err.message).not.toContain("Minified or plain-JS");
+      }
+    });
+  });
 });
