@@ -199,4 +199,137 @@ describe("rule navigation/skip-link", () => {
       expect(v[0]?.message).toContain("#main-content");
     });
   });
+
+  describe("opaque-navigation component (path 3)", () => {
+    // The dispatch motivating this path: layouts where the literal
+    // `<nav>` lives inside a PascalCase component (`<Header />`,
+    // `<Topbar />`, etc.) silently passed the primary-nav check
+    // because the in-file evidence didn't include the nav. The agent
+    // can verify by reading the component source — this path's job is
+    // to surface the candidate so the agent knows to look. Doctrine
+    // (`docs/kb/architecture/ai-first-consumer.md` "Heuristic emission
+    // is the symmetric twin of heuristic suppression"): we emit at
+    // `info` severity, not `warning`, because the predicate ("the
+    // opaque component renders primary nav") is unobservable from
+    // this file — it's a question for the agent, not a deterministic
+    // finding.
+    it("emits info-severity when first <body> child is <Header />", () => {
+      const html = `<html><body>
+          <Header />
+          <main>x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("Header");
+      expect(v[0]?.message).toContain("opaque");
+    });
+
+    it("emits for each opaque-name shape: Topbar, Sidebar, AppBar, NavBar", () => {
+      for (const tag of ["Topbar", "Sidebar", "AppBar", "NavBar"]) {
+        const html = `<html><body>
+            <${tag} />
+            <main>x</main>
+          </body></html>`;
+        const v = runRule(rule, html, { filePath: "layout.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.severity).toBe("info");
+        expect(v[0]?.message).toContain(tag);
+      }
+    });
+
+    it("suppresses when a top-level skip-link anchor precedes the opaque component", () => {
+      const html = `<html><body>
+          <a href="#main">Skip to main content</a>
+          <Header />
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    // The dispatch's worked example: a top-level skip link AFTER the
+    // opaque component still suppresses path 3. Source order matters
+    // for whether the skip link works at runtime, but this path's
+    // intent is "did the agent already wire a skip link in this
+    // layout?" — and the answer is yes either way. The agent reading
+    // the file can decide whether to reorder; we don't double-emit.
+    it("suppresses when a top-level skip-link anchor follows the opaque component", () => {
+      const html = `<html><body>
+          <Header />
+          <a class="skip-link" href="#main">Skip to main content</a>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when the first body child is a plain <div /> (not nav-named)", () => {
+      const v = runRule(rule, "<html><body><div /></body></html>", { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when the first body child is a non-nav-named PascalCase component", () => {
+      // `<Hero />`, `<Banner />`, `<Container />` — none of these
+      // match the navigation-chrome regex; the path stays silent and
+      // the agent isn't asked to verify a non-question.
+      const v = runRule(rule, "<html><body><Hero /><main>x</main></body></html>", {
+        filePath: "layout.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on a fragment file (no <body>)", () => {
+      // Same reasoning as path 1's fragment guard — a fragment has no
+      // document-level "first body child" notion. The composed layout
+      // would; the fragment doesn't.
+      const v = runRule(rule, "<Header /><main>x</main>", {
+        filePath: "_includes/layout.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when a literal multi-link <nav> is present (path 1 owns this case)", () => {
+      // Path 1 already checks the literal-nav case fully — whether by
+      // emitting "no skip link precedes the primary <nav>" or by
+      // staying silent because the skip link is correct. Path 3 must
+      // not also fire when path 1 was applicable, or every layout
+      // with both `<Header />` AND a literal `<nav>` (rare but real)
+      // would emit twice on the same underlying concern.
+      const html = `<html><body>
+          <Header />
+          <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          <main>x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      // Path 1 emits "no skip link precedes the primary <nav>" (one
+      // warning). Path 3 stays silent because path 1 was applicable.
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("No skip link");
+    });
+
+    it("ignores leading whitespace and comments before the opaque component", () => {
+      // A real layout file commonly has formatting whitespace and
+      // license/banner comments before the first element. Path 3 must
+      // see past them to the first significant child.
+      const html = `<html><body>
+          <!-- top of layout -->
+
+          <Header />
+          <main>x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+
+    it("suggestion names the opaque component and points at <main id=main>", () => {
+      const html = "<html><body><Topbar /><main>x</main></body></html>";
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("<Topbar />");
+      expect(v[0]?.suggestion).toContain("#main");
+    });
+  });
 });

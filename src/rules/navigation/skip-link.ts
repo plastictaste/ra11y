@@ -13,7 +13,7 @@
  * the N items in the primary nav without having to Tab through
  * each one on every page.
  *
- * Two detection paths:
+ * Three detection paths:
  *
  * 1. Primary-nav gating. On documents with a `<nav>` landmark
  *    containing multiple links, the first `<a href>` before that
@@ -30,6 +30,21 @@
  *    layout renders `<main>` without that id — path 1's nav-gating
  *    would miss that case on any route that doesn't happen to have
  *    a `<nav>` with ≥2 links in the same parsed file.
+ *
+ * 3. Opaque-navigation component. When path 1 finds no literal
+ *    multi-link `<nav>` but the layout's first significant `<body>`
+ *    child is a PascalCase component whose name reads like
+ *    navigation chrome (`<Header />`, `<Topbar />`, `<Sidebar />`,
+ *    `<AppBar />`, `<NavBar />`, …), the rendered page very likely
+ *    contains primary navigation we cannot see from in-file evidence
+ *    — and the layout it would compose into needs a skip link the
+ *    same way. We can't *prove* that from this file (the component's
+ *    body lives elsewhere), so this path emits at `info` severity
+ *    with a `reason` framing the question for the agent to verify
+ *    by reading the component source. Suppressed when any top-level
+ *    `<body>` child is already a skip-link-shaped anchor — the
+ *    agent has plausibly handled the case and we avoid a false
+ *    positive on layouts that wired the skip link correctly.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -86,8 +101,9 @@ export const rule = defineRule({
     const ids = collectIds(doc);
     const reportedAnchors = new Set<HtmlElement>();
 
-    checkPrimaryNavPath(ctx, doc, ids, reportedAnchors);
+    const primaryNavApplied = checkPrimaryNavPath(ctx, doc, ids, reportedAnchors);
     checkSkipLinkShapedAnchors(ctx, doc, ids, reportedAnchors);
+    if (!primaryNavApplied) checkOpaqueNavComponent(ctx, doc);
   },
 });
 
@@ -120,6 +136,125 @@ function checkSkipLinkShapedAnchors(
 }
 
 /**
+ * PascalCase component names that read like primary-navigation chrome.
+ * Pulled out as a top-level constant so a sibling check (e.g. the
+ * upcoming nested-nav-detector that also walks for opaque nav-shaped
+ * components inside `<header>` or further down the body) can reuse the
+ * same vocabulary without re-deriving it.
+ */
+const OPAQUE_NAV_NAME_RE = /header|nav|chrome|topbar|appbar|sidebar/i;
+
+/**
+ * `true` when the element's tag is a PascalCase component (first char
+ * uppercase, distinguishing `<Header />` from native `<header>`) whose
+ * name reads like primary-navigation chrome. Exposed at file scope so
+ * the upcoming nested-nav detector can apply the same predicate to
+ * non-first-child positions without duplicating the regex.
+ */
+function isOpaqueNavComponent(el: HtmlElement): boolean {
+  const name = el.tagName;
+  if (name.length === 0) return false;
+  const first = name.charCodeAt(0);
+  // PascalCase: ASCII A–Z. Native HTML elements are always lowercase
+  // after parsing — the parser preserves source casing on custom tags
+  // but never up-cases native ones, so this is a clean discriminator.
+  if (first < 65 || first > 90) return false;
+  return OPAQUE_NAV_NAME_RE.test(name);
+}
+
+/**
+ * First non-whitespace, non-comment `HtmlElement` child of `<body>`.
+ * Returns `null` when the document has no `<body>`, when `<body>` has
+ * no element children, or when only text/comment nodes precede a body
+ * with no real elements. Comments and pure-whitespace text are skipped
+ * because they are visually empty — the "first thing the user sees"
+ * notion the WCAG bypass-blocks pattern targets is the first rendered
+ * element, not the first source-order node.
+ */
+function firstSignificantBodyChild(doc: HtmlDocument): HtmlElement | null {
+  const bodies = findHtmlElementsByTag(doc, "body");
+  const body = bodies[0];
+  if (!body) return null;
+  for (const child of body.children) {
+    if (child.kind === "HtmlComment" || child.kind === "HtmlDoctype") continue;
+    if (child.kind === "HtmlText") {
+      if (child.value.trim().length === 0) continue;
+      // Non-whitespace text directly inside <body> is unusual but real
+      // (e.g. error-page HTML); treat it as a real element preceding
+      // any opaque component, which means the opaque-nav check stays
+      // silent — the agent can verify by reading.
+      return null;
+    }
+    if (child.kind === "HtmlElement") return child;
+  }
+  return null;
+}
+
+/**
+ * `true` when any direct child of `<body>` is a skip-link-shaped
+ * anchor — i.e. an `<a href="#…">` whose class or visible text
+ * matches `looksLikeSkipLink`. Used to suppress the opaque-nav-
+ * component path 3 emission: if the layout already has a top-level
+ * skip link, the agent has plausibly handled the case and we avoid a
+ * false positive. Direct-child scope (not deep walk) because a skip
+ * link buried inside the opaque component itself is the very thing
+ * the agent needs to verify — we can't see it from this file.
+ */
+function bodyHasTopLevelSkipLinkAnchor(doc: HtmlDocument): boolean {
+  const bodies = findHtmlElementsByTag(doc, "body");
+  const body = bodies[0];
+  if (!body) return false;
+  for (const child of body.children) {
+    if (child.kind !== "HtmlElement") continue;
+    if (child.tagName.toLowerCase() !== "a") continue;
+    const href = getHtmlAttribute(child, "href");
+    if (href === null || !href.startsWith("#") || href === "#") continue;
+    if (looksLikeSkipLink(child)) return true;
+  }
+  return false;
+}
+
+/**
+ * Path 3: opaque-navigation component. When path 1 found no literal
+ * multi-link `<nav>` to check against, but the layout's first
+ * significant `<body>` child is a PascalCase component whose name
+ * reads like navigation chrome (`<Header />`, `<Topbar />`,
+ * `<Sidebar />`, `<AppBar />`, `<NavBar />`), the rendered page very
+ * likely contains primary navigation that needs a skip link. We emit
+ * at `info` severity with a `reason` framing the question for the
+ * agent — this is a candidate to verify, not a deterministic finding,
+ * because the component's body lives in a different file and we
+ * cannot prove navigation is present from here. Per the AI-first
+ * doctrine, the right response is to surface and annotate, not
+ * suppress: silently passing because the literal `<nav>` is hidden
+ * inside an opaque wrapper is a real silent-miss failure mode.
+ *
+ * Suppressed when any top-level `<body>` child is already a
+ * skip-link-shaped anchor — the layout has plausibly handled the
+ * case (the skip link will land on whatever id the agent wired up,
+ * and path 2 separately checks id-existence for skip-link-shaped
+ * anchors). Also suppressed on fragments: a fragment has no `<body>`,
+ * `firstSignificantBodyChild` returns `null`, the path stays silent.
+ */
+function checkOpaqueNavComponent(ctx: FileContext, doc: HtmlDocument): void {
+  if (isHtmlFragment(doc)) return;
+  if (bodyHasTopLevelSkipLinkAnchor(doc)) return;
+  const first = firstSignificantBodyChild(doc);
+  if (!(first && isOpaqueNavComponent(first))) return;
+  const echoName = truncateForEcho(first.tagName);
+  ctx.emit({
+    severity: "info",
+    location: {
+      filePath: "",
+      line: first.loc.start.line,
+      column: first.loc.start.column,
+    },
+    message: `First <body> child is opaque component <${echoName} />; if it renders primary navigation, the page needs a skip link.`,
+    suggestion: `Verify a skip link is the first focusable descendant of <${echoName} />, or add a top-level <a href="#main">Skip to main content</a> before <${echoName} /> in this layout (with <main id="main"> as the landing target). If <${echoName} /> doesn't render navigation, no action is needed — this is a candidate, not a confirmed failure.`,
+  });
+}
+
+/**
  * Narrows a walked element to a skip-link-shaped anchor whose href is
  * a static in-page fragment. Returns the trimmed target id when the
  * caller should evaluate id-existence, or `null` to skip. Template-
@@ -140,12 +275,20 @@ function resolveSkipLinkTargetId(
   return href.slice(1);
 }
 
+/**
+ * Returns `true` when a literal multi-link `<nav>` was present in this
+ * file (whether or not the path emitted) — that signal lets the caller
+ * suppress path 3 (opaque-nav-component), which is only meant to fire
+ * when the file has *no* in-file nav evidence path 1 could have used.
+ * Returns `false` on fragments, on documents with no `<nav>`, or on
+ * docs where the first `<nav>` has too few links to be primary nav.
+ */
 function checkPrimaryNavPath(
   ctx: FileContext,
   doc: HtmlDocument,
   ids: Set<string>,
   reportedAnchors: Set<HtmlElement>,
-): void {
+): boolean {
   // Fragment files — Jekyll `_includes/header.html`, Hugo partials,
   // Astro slots, Handlebars include targets — have no `<html>` root
   // and no `<body>`. The primary-nav skip-link check assumes the
@@ -168,12 +311,12 @@ function checkPrimaryNavPath(
   // `analysisCoverage.fragmentFiles` signal surfaces the list of files
   // treated as fragments so an agent can verify the composed layout
   // elsewhere.
-  if (isHtmlFragment(doc)) return;
+  if (isHtmlFragment(doc)) return false;
   const navs = findHtmlElementsByTag(doc, "nav");
-  if (navs.length === 0) return;
+  if (navs.length === 0) return false;
   const firstNav = navs[0];
-  if (!firstNav) return;
-  if (linksInside(firstNav).length < NAV_LINK_MIN) return;
+  if (!firstNav) return false;
+  if (linksInside(firstNav).length < NAV_LINK_MIN) return false;
 
   const firstLink = firstFocusableAnchor(doc);
   if (!(firstLink && precedesElement(firstLink, firstNav))) {
@@ -189,7 +332,7 @@ function checkPrimaryNavPath(
       suggestion:
         'Add <a href="#main">Skip to main content</a> (or similar) as the first focusable element, with `#main` pointing to your <main> landmark. Visually hide it with CSS and reveal on :focus. See https://www.w3.org/WAI/WCAG22/Techniques/general/G1.',
     });
-    return;
+    return true;
   }
 
   const href = getHtmlAttribute(firstLink, "href") ?? "";
@@ -207,7 +350,7 @@ function checkPrimaryNavPath(
         'Point the first link at an in-page anchor, e.g. href="#main", matching your <main id="main"> landmark.',
     });
     reportedAnchors.add(firstLink);
-    return;
+    return true;
   }
 
   const targetId = href.slice(1);
@@ -215,7 +358,7 @@ function checkPrimaryNavPath(
   // runtime — we can't know whether the landing element exists.
   // Silencing here is consistent with path 2 and avoids echoing a
   // raw Liquid directive as the "missing target."
-  if (stripTemplateDirectives(targetId).stripped) return;
+  if (stripTemplateDirectives(targetId).stripped) return true;
   if (!ids.has(targetId)) {
     // `targetId` is a user-authored fragment — ids are conventionally
     // short but pathological inputs can blow the echo. Cap before
@@ -233,6 +376,7 @@ function checkPrimaryNavPath(
     });
     reportedAnchors.add(firstLink);
   }
+  return true;
 }
 
 /**

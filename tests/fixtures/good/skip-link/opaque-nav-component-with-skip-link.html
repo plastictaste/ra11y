@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>skip-link — good (opaque nav component, top-level skip link present)</title>
+  </head>
+  <body>
+    <!--
+      Same opaque-component layout shape as the bad fixture, but the
+      layout already wires a top-level skip link as the first focusable
+      element. Path 3 stays silent because the layout has plausibly
+      handled the case — the agent isn't asked to re-verify what the
+      file already shows.
+    -->
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <Header />
+    <main id="main">
+      <h1>Welcome</h1>
+      <p>Page content.</p>
+    </main>
+  </body>
+</html>

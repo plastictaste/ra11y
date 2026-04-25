@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>skip-link — bad (opaque nav component, no skip link)</title>
+  </head>
+  <body>
+    <!--
+      Opaque-component case: the layout's first <body> child is a
+      PascalCase component whose name reads like primary-navigation
+      chrome. The component's body lives in a different file we don't
+      parse here, so path 1 (literal-<nav> gating) sees no nav and
+      stays silent. Path 3 surfaces this as an info-severity candidate
+      so the agent reads <Header /> and verifies whether it renders
+      navigation needing a skip link — and adds one at the top of this
+      layout if so.
+    -->
+    <Header />
+    <main>
+      <h1>Welcome</h1>
+      <p>No skip link, no literal nav, just an opaque component.</p>
+    </main>
+  </body>
+</html>
