@@ -176,6 +176,100 @@ const x: string = "<Button/>";
   });
 });
 
+describe("parseMdx — inline code span strip", () => {
+  it("strips balanced single-backtick spans in prose", () => {
+    // Markdown inline code spans wrap a token like `<iframe>` so it
+    // renders as code text, not as a real DOM element. The TSX
+    // scanner happens to skip backtick-delimited template literals
+    // anyway, but the strip pass means downstream consumers (any
+    // future token-walking finder) see clean prose where the span
+    // sat. Mirrors `parseMarkdown`'s pass 3.
+    const src = `Skip the \`frameborder="0"\` attribute on your \`<iframe>\`s.
+
+<img alt="real" src="/x.png" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    // Exactly the real <img> survives — no <iframe> JSX element from
+    // the prose backticks. (Today's TSX scanner already produces this
+    // outcome via template-literal skip; the strip pass locks the
+    // contract one layer earlier so a tokenizer-based finder cannot
+    // regress on it.)
+    expect(root.jsxElements).toHaveLength(1);
+    expect(root.jsxElements[0]?.tagName).toBe("img");
+    const iframe = findElement(root.jsxElements, "iframe");
+    expect(iframe).toBeUndefined();
+  });
+
+  it("strips multi-backtick spans (CommonMark double-tick syntax)", () => {
+    // A double-tick span is the canonical way to embed a literal
+    // backtick: `` `tick` ``. The strip pass must require the close
+    // run to match the open run's length so it doesn't mis-count.
+    const src = `Use \`\`code with a \` tick inside\`\` for embedding.
+
+<a href="/docs">docs</a>
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const a = findElement(root.jsxElements, "a");
+    expect(a).toBeDefined();
+  });
+
+  it("preserves backticks inside <Example code={`…`}/> JSX expressions", () => {
+    // The docs-component code-prop extractor is load-bearing — it
+    // finds template-literal bodies inside `code={\`…\`}` props and
+    // synthesizes JSX elements at the original source positions. The
+    // strip pass tracks JSX `{` / `}` brace depth and only blanks
+    // backticks at depth 0; backticks inside `{…}` expressions are
+    // JS template literals and stay intact.
+    const src = `Some prose with \`<iframe>\` mention.
+
+<Example code={\`<input type="email" />\`} />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    // The Example template body survives — synthesized <input> is
+    // present, source: "mdx-example-code".
+    const input = findElement(root.jsxElements, "input");
+    expect(input).toBeDefined();
+    expect(input?.synthesized?.source).toBe("mdx-example-code");
+    // The prose `<iframe>` mention does not produce a JSX element.
+    const iframe = findElement(root.jsxElements, "iframe");
+    expect(iframe).toBeUndefined();
+  });
+
+  it("leaves unterminated single-tick prose openings alone", () => {
+    // An unterminated backtick has no close to find — strip pass
+    // leaves it intact (mirrors `parseMarkdown`'s same fallback).
+    // Downstream the TSX scanner's template-literal skip swallows
+    // trailing characters; that's the documented edge case.
+    const src = `A leftover \` tick in prose.
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    expect(root.jsxElements).toHaveLength(0);
+  });
+
+  it("preserves line numbers across blanked spans", () => {
+    // Blanking must replace characters with spaces so column /
+    // line offsets in the surviving AST stay aligned with the
+    // authored source. Verify the JSX element after a multi-line
+    // span resolves to its original line.
+    const src = `Line 1.
+
+Line 3 with \`code spanning
+multiple lines\` here.
+
+<img alt="line-6" src="/x.png" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const img = findElement(root.jsxElements, "img");
+    expect(img).toBeDefined();
+    expect(img?.loc.start.line).toBe(6);
+  });
+});
+
 describe("parseMdx — import / export line strip", () => {
   it("strips top-level import statements", () => {
     const src = `import { Card } from '@astro/starlight/components';

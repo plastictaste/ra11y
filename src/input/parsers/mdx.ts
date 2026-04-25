@@ -23,11 +23,20 @@
  *   2. Strip fenced code blocks (``` or ~~~). Their content is
  *      illustrative, not rendered; stripping prevents accidental JSX
  *      detection inside prose examples like ```` ```jsx\n<img/>\n``` ````.
- *   3. Strip top-level `import` / `export` statements. These are ESM
+ *   3. Strip inline code spans (`` `…` ``). Same rationale at the
+ *      paragraph-inline scale — `` `<iframe>` `` in prose is a
+ *      formatted code mention, not a rendered element. Symmetry with
+ *      `parseMarkdown`'s pass 3: both `.md` and `.mdx` pipelines
+ *      expose the same residual shape so downstream consumers (the
+ *      TSX scanner today, any future token-walking finder) cannot
+ *      drift on whether prose backticks are visible. Mirrors the
+ *      Q6/Q7 iframe-finder lineage (V1-CHECKLIST-IFRAME-FINDER-MDX-
+ *      BACKTICKS).
+ *   4. Strip top-level `import` / `export` statements. These are ESM
  *      module wiring — they can contain `<` characters (`Array<T>` in
  *      TS-style exports) that would confuse the TSX scanner. They also
  *      don't contribute authored DOM.
- *   4. Hand the residual to `parseTsx`. Its top-level scanner skips
+ *   5. Hand the residual to `parseTsx`. Its top-level scanner skips
  *      arbitrary prose between JSX tags via `#scanToJsx`, so naked
  *      markdown (headings, paragraphs, lists, bold/italic) just flows
  *      past until the next `<TagName` is found.
@@ -89,6 +98,7 @@ export function parseMdx(source: string, options: MdxParseOptions = {}): TsxPars
   const buf = source.split("");
   stripFrontmatter(source, buf);
   stripFencedCodeBlocks(source, buf);
+  stripInlineCodeSpans(source, buf);
   stripImportExportLines(source, buf);
   const transformed = buf.join("");
   const tsx = parseTsx(transformed);
@@ -272,7 +282,146 @@ function isClosingFence(line: string, open: CodeFenceInfo): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Pass 3 — import / export line strip
+// Pass 3 — inline code span strip
+// ---------------------------------------------------------------------------
+
+/**
+ * Blanks inline backtick code spans (`` `code` ``). Mirrors the
+ * matching pass in `parseMarkdown`: `.md` and `.mdx` should expose
+ * the same residual shape so the downstream TSX scanner (and any
+ * future token-walking finder) sees identical text in both pipelines.
+ *
+ * CommonMark allows multi-backtick delimiters (`` ``two backticks`` ``)
+ * for spans that themselves contain backticks; we honour that by
+ * requiring the close to have the same number of backticks as the
+ * open. Multi-line spans are tolerated. The line-alignment invariant
+ * is preserved via `blankRange`.
+ *
+ * MDX-specific: backticks inside a JSX expression (`={\`…\`}` or
+ * `{\`…\`}`) are JS template literals, not markdown inline code. The
+ * `<Example code={\`<input/>\`}/>` shape — load-bearing for the
+ * docs-component code-prop extractor — must keep its backticks. The
+ * pass tracks `{`/`}` brace depth (with string/comment skip) and only
+ * strips at depth 0; backticks inside expressions stay intact.
+ *
+ * Operates on `source` for backtick lookups (so a span already
+ * subsumed by a fenced block, blanked in pass 2, doesn't re-match),
+ * but reads `buf` to skip already-blanked regions. Unmatched openings
+ * at depth 0 are left intact — the TSX scanner's template-literal
+ * skip handles them as a fallback.
+ */
+function stripInlineCodeSpans(source: string, buf: string[]): void {
+  const state: StripState = { p: 0, braceDepth: 0 };
+  while (state.p < source.length) {
+    // Skip already-blanked regions (e.g., fenced code blocks).
+    if (buf[state.p] !== source[state.p]) {
+      state.p += 1;
+      continue;
+    }
+    if (advanceOverSkippable(source, state)) continue;
+    if (advanceOverBrace(source, state)) continue;
+    if (source[state.p] !== "`") {
+      state.p += 1;
+      continue;
+    }
+    if (state.braceDepth > 0) {
+      // Inside a JSX expression — backticks here are JS template
+      // literals (e.g., the `<Example code={`…`}/>` extractor's
+      // load-bearing shape). Skip them as strings without blanking.
+      state.p = skipStringFrom(source, state.p, "`");
+      continue;
+    }
+    consumeProseBacktickSpan(source, buf, state);
+  }
+}
+
+interface StripState {
+  p: number;
+  braceDepth: number;
+}
+
+/**
+ * Advances `state.p` past a quoted string or JS comment when one
+ * starts at the current position. Returns `true` when the cursor
+ * moved (so the caller can `continue` the outer loop). Backticks
+ * are NOT handled here — at depth 0 they are the strip trigger,
+ * at depth > 0 the caller handles them as template literals.
+ */
+function advanceOverSkippable(source: string, state: StripState): boolean {
+  const ch = source[state.p];
+  if (ch === '"' || ch === "'") {
+    state.p = skipStringFrom(source, state.p, ch);
+    return true;
+  }
+  if (ch === "/" && source[state.p + 1] === "*") {
+    state.p = skipBlockCommentFrom(source, state.p);
+    return true;
+  }
+  if (ch === "/" && source[state.p + 1] === "/") {
+    state.p = findLineEnd(source, state.p);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Updates `state.braceDepth` and advances past a `{` or `}` when one
+ * sits at the current position. Returns `true` when handled so the
+ * caller can `continue`.
+ */
+function advanceOverBrace(source: string, state: StripState): boolean {
+  const ch = source[state.p];
+  if (ch === "{") {
+    state.braceDepth += 1;
+    state.p += 1;
+    return true;
+  }
+  if (ch === "}") {
+    if (state.braceDepth > 0) state.braceDepth -= 1;
+    state.p += 1;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Consumes a markdown inline code span at brace-depth 0, blanking the
+ * delimiters and body in `buf` if a matching close is found. An
+ * unterminated open is left intact (the TSX scanner's template-literal
+ * skip swallows trailing characters as a fallback).
+ */
+function consumeProseBacktickSpan(source: string, buf: string[], state: StripState): void {
+  let openLen = 0;
+  while (source[state.p + openLen] === "`") openLen += 1;
+  const openEnd = state.p + openLen;
+  const closeStart = findMatchingBacktickClose(source, openEnd, openLen);
+  if (closeStart === -1) {
+    state.p = openEnd;
+    return;
+  }
+  blankRange(source, buf, state.p, closeStart + openLen);
+  state.p = closeStart + openLen;
+}
+
+function findMatchingBacktickClose(source: string, startPos: number, runLen: number): number {
+  let p = startPos;
+  while (p < source.length) {
+    if (source[p] !== "`") {
+      p += 1;
+      continue;
+    }
+    let run = 0;
+    while (source[p + run] === "`") run += 1;
+    if (run === runLen) return p;
+    // A run of different length doesn't match — skip past it so we
+    // don't mis-count backticks in `` ```text with a `short` span ``.
+    p += run;
+  }
+  return -1;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 4 — import / export line strip
 // ---------------------------------------------------------------------------
 
 /**
