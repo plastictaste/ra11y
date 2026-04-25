@@ -495,6 +495,119 @@ describe("review/multiple-ways", () => {
     });
   });
 
+  describe("empty-shell single-page reason hint", () => {
+    // Per AI-first doctrine the candidate still surfaces — the hint is
+    // additive context the agent uses to dismiss a single-page demo or
+    // template kit in one read. SC 2.4.5 scopes to "sets of Web pages",
+    // and an HTML doc with zero anchors AND no breadcrumb AND no nav
+    // landmark with anchors is the strongest in-file signal that this
+    // file is a standalone page in isolation.
+    it("annotates an HTML doc with zero anchors and an empty <nav>", () => {
+      // Body + empty <nav> satisfies the predicate gate (link/nav
+      // presence) but linkCount=0, no breadcrumb, no nav-with-anchors.
+      const source = `
+        <html>
+          <body>
+            <nav></nav>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("0 outbound links, 0 internal-fragment anchors");
+      expect(reason).toContain("likely single-page context");
+      expect(reason).toContain("Review before flagging");
+    });
+
+    it("annotates a JSX root layout with zero anchors / nav / breadcrumb", () => {
+      // The classic single-page-demo Layout: empty container, no nav.
+      const source = `
+        export function Shell() {
+          return (
+            <Layout>
+              <main>Dashboard</main>
+            </Layout>
+          );
+        }
+      `;
+      const out = runFinder(finder, source, { filePath: "shell.tsx" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("0 outbound links, 0 internal-fragment anchors");
+      expect(reason).toContain("likely single-page context");
+    });
+
+    it("does NOT add the empty-shell hint when any anchor is present", () => {
+      // Single fragment anchor → linkCount=1 → empty-shell predicate
+      // fails. The single-page-scope hint may still apply, but the
+      // strict empty-shell hint does not.
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).not.toContain("0 outbound links, 0 internal-fragment anchors");
+    });
+
+    it("does NOT add the empty-shell hint when a <nav> contains anchors", () => {
+      // A <nav> with anchors is a real navigation landmark — the
+      // empty-shell predicate doesn't fire even though linkCount might
+      // be small.
+      const source = `
+        <html>
+          <body>
+            <nav>
+              <a href="/a">A</a>
+            </nav>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).not.toContain("0 outbound links, 0 internal-fragment anchors");
+    });
+
+    it("appends the empty-shell hint AFTER existing annotations (additive, not replacement)", () => {
+      // Fragment-path file with no anchors / nav / breadcrumb — both
+      // hints apply. The empty-shell hint is appended on top of the
+      // fragment-path hint; neither replaces the other.
+      const source = `
+        <html>
+          <body>
+            <nav></nav>
+            <main>Content</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "_includes/page.html" });
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("fragment composed into a parent layout");
+      expect(reason).toContain("likely single-page context");
+    });
+
+    it("still emits all four cross-standard candidates (never suppresses)", () => {
+      // The empty-shell hint is reason-text enrichment, not a
+      // suppression gate — the candidate still ships across all four
+      // equivalent criterion IDs.
+      const source = `
+        <html>
+          <body>
+            <nav></nav>
+            <main>Dashboard</main>
+          </body>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out.length).toBe(4);
+    });
+  });
+
   describe("fragment-path reason hint (V1-FINDER-2.4.5-MULTIPLE-WAYS-REQUIRE-BODY)", () => {
     // Per AI-first doctrine the candidate still surfaces — the
     // path-derived hint is additive context redirecting the agent's

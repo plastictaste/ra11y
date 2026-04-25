@@ -120,6 +120,7 @@ function findHtmlCandidates(ctx: FileContext, root: HtmlDocument): readonly Revi
     location.column,
     signals,
     annotation,
+    isHtmlEmptyShellSinglePage(root, signals),
   );
 }
 
@@ -171,6 +172,7 @@ function findJsxCandidates(ctx: FileContext, root: TsxModule): readonly ReviewCa
     location.column,
     signals,
     annotation,
+    isJsxEmptyShellSinglePage(root, signals),
   );
 }
 
@@ -361,6 +363,7 @@ function candidatesForAllCriteria(
   column: number,
   signals: SignalSummary,
   annotation: string | null = null,
+  emptyShellSinglePage = false,
 ): readonly ReviewCandidate[] {
   // Base prose stays stable; counted signals get appended so the
   // agent can dismiss a test-harness or empty shell without reopening
@@ -370,7 +373,19 @@ function candidatesForAllCriteria(
     "Likely root layout has no search, sitemap, breadcrumb, or 3-link navigation signal; verify users have more than one way to locate pages";
   const counts = formatSignalSummary(signals);
   const withCounts = `${base} (${counts})`;
-  const reason = annotation === null ? withCounts : `${withCounts} — ${annotation}`;
+  const withAnnotation = annotation === null ? withCounts : `${withCounts} — ${annotation}`;
+  // Empty-shell single-page hint is APPENDED on top of any existing
+  // annotation chain — it answers a different question (is this even a
+  // multi-page set?) than fragment-path / SPA-shell / sibling-link
+  // hints. Fires only when the document has zero anchors of any kind
+  // (outbound or fragment) AND no breadcrumb signal AND no useful nav
+  // landmark — the strongest deterministic "single page in isolation"
+  // evidence available from in-file structure. Per AI-first doctrine
+  // the candidate still surfaces; this is reason-text enrichment, not
+  // a suppression gate.
+  const reason = emptyShellSinglePage
+    ? `${withAnnotation} — ${EMPTY_SHELL_SINGLE_PAGE_HINT}`
+    : withAnnotation;
   // Confidence "low": the finder infers the root-layout role from
   // filename/root-tag heuristics, and the "no multiple-ways signal"
   // determination rides on a small set of structural proxies
@@ -481,6 +496,9 @@ const SINGLE_PAGE_SCOPE_HINT =
 const FRAGMENT_PATH_HINT =
   "file path suggests this is a fragment composed into a parent layout (_includes/, _partials/, _components/) — verify multi-way nav lives in the parent file rather than treating this partial as the failure point";
 
+const EMPTY_SHELL_SINGLE_PAGE_HINT =
+  "Document has 0 outbound links, 0 internal-fragment anchors, and 0 breadcrumb/nav landmarks; likely single-page context. Review before flagging.";
+
 const HTML_PAGE_HREF_RE = /\.html?(?:$|[?#])/i;
 const NON_NAVIGABLE_SCHEME_RE = /^(?:mailto:|tel:|sms:|javascript:|data:|blob:|about:)/i;
 
@@ -573,4 +591,50 @@ function isModuleBundleScript(el: HtmlElement): boolean {
   if (type === "module" && src !== null) return true;
   if (src === null) return false;
   return /\/(?:assets|static\/js|build|_next)\//.test(src);
+}
+
+/**
+ * The strict empty-shell single-page predicate. Fires when:
+ *  - 0 outbound `<a>` links (covered by linkCount === 0)
+ *  - 0 internal-fragment `<a>` anchors (also covered by linkCount === 0)
+ *  - 0 breadcrumb or pagination/nav landmarks — no breadcrumb signal,
+ *    and no `<nav>` containing direct anchors (an empty `<nav>` that
+ *    only satisfies the body+link/nav predicate gate doesn't count as
+ *    a real navigation landmark).
+ *
+ * Hits the canonical case the backlog cites: hundreds of single-page
+ * demo / template-kit projects where SC 2.4.5 fires because static
+ * analysis cannot distinguish "SPA shell" from "multi-page site." When
+ * all three signal sources are zero, the evidence for "this is a
+ * standalone page in isolation" is as strong as in-file analysis can
+ * make it. The candidate still surfaces (per AI-first doctrine — the
+ * dismissal lives in the agent, not in the finder) but the reason
+ * carries the dismissal cue.
+ */
+function isHtmlEmptyShellSinglePage(root: HtmlDocument, signals: SignalSummary): boolean {
+  if (signals.linkCount > 0) return false;
+  if (signals.hasBreadcrumb) return false;
+  return !hasHtmlNavLandmarkWithAnchors(root);
+}
+
+function isJsxEmptyShellSinglePage(root: TsxModule, signals: SignalSummary): boolean {
+  if (signals.linkCount > 0) return false;
+  if (signals.hasBreadcrumb) return false;
+  return !hasJsxNavLandmarkWithAnchors(root);
+}
+
+function hasHtmlNavLandmarkWithAnchors(root: HtmlDocument): boolean {
+  for (const el of walkHtmlElements(root)) {
+    if (!isHtmlNavigationContainer(el)) continue;
+    if (countDirectHtmlAnchors(el) > 0) return true;
+  }
+  return false;
+}
+
+function hasJsxNavLandmarkWithAnchors(root: TsxModule): boolean {
+  for (const el of walkJsxElements(root)) {
+    if (!isJsxNavigationContainer(el)) continue;
+    if (countDirectJsxAnchors(el) > 0) return true;
+  }
+  return false;
 }
