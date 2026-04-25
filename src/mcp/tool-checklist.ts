@@ -564,7 +564,17 @@ export const checklistTool: McpTool = {
     // the thing the agent can work on right now above the volumetric
     // counters. The composite `manualReviewRequired` counter (formerly
     // `actionable + untargetedCriteria`) is deliberately absent — see
-    // the dishonest-composite note above.
+    // the dishonest-composite note above. The previous prose
+    // `headline: "N actionable · M untargeted · K likely irrelevant"`
+    // string is also gone — same shape, different layer: a leading
+    // composite that consumers read first, summing categorically
+    // different sub-buckets (grounded file:line work vs. bare-criterion
+    // WCAG prompts vs. provably-not-applicable items) into one summary
+    // line. Per CLAUDE.md §1 "Composite headline counts are dishonest"
+    // (ai-first-consumer.md worked precedent — `plan.totalFindings`
+    // deletion on 2026-04-24), deletion is the durable answer rather
+    // than label-stretching; callers compose their own summary line
+    // from the per-kind counters below if they need one.
     // Canonical count field is `untargetedCriteria` across all MCP tools.
     // scan_project uses it on `plan`; checklist matches here on `summary`;
     // coverage on its per-standard entry.
@@ -572,9 +582,6 @@ export const checklistTool: McpTool = {
     // removed — a minor shape break, called out in CHANGELOG so a
     // single grep surfaces the migration.
     const summary = {
-      headline:
-        `${actionable.length} actionable · ${untargeted.length} untargeted · ` +
-        `${filteredIrrelevant.length} likely irrelevant`,
       actionable: actionable.length,
       untargetedCriteria: untargeted.length,
       // One-line gloss: untargeted count is cryptic on its own — the

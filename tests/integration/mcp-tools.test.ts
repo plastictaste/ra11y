@@ -1339,6 +1339,16 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // example in docs/kb/architecture/ai-first-consumer.md. It is now
     // absent; callers read the two split counters separately.
     expect(body.summary).not.toHaveProperty("manualReviewRequired");
+    // Same shape, different layer: the prose `headline: "N actionable ·
+    // M untargeted · K likely irrelevant"` was a composite the agent
+    // read first, summing categorically different sub-buckets
+    // (grounded file:line work, bare-criterion WCAG prompts, and
+    // provably-not-applicable items) into one summary line. Per
+    // CLAUDE.md §1 "Composite headline counts are dishonest"
+    // (ai-first-consumer.md worked precedent — `plan.totalFindings`
+    // deletion), deletion is durable; consumers compose their own
+    // summary from the per-kind counters if they need one.
+    expect(body.summary).not.toHaveProperty("headline");
     // V1-CHECKLIST-PRIORITY-AXIS-DEGENERATE: the `byPriority`
     // composite shipped `{high: N, medium: 0, low: 0}` on every
     // corpus because `priorityFor()` returned `"high"` for every
