@@ -571,6 +571,70 @@ describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {
     expect(statement.scope.configSnapshot).toEqual({ standard: "wcag22", level: "AA" });
   });
 
+  it("forwards skippedFiles + skippedFilesCount into scope when caller supplies them", () => {
+    // V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: builder-level
+    // contract — when the tool layer hands the builder a non-empty
+    // `skippedFiles` list, the scope mirrors it verbatim with the
+    // paired count. Both fields are present-when-meaningful — the
+    // pairing prevents a reader from confusing "no skips happened"
+    // with "skips present but elided."
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      files: ["src/app.tsx"],
+      skippedFiles: [{ path: "vendor/bootstrap.min.css", reason: "definite-min-infix" }],
+    });
+    expect(statement.scope.filesCount).toBe(1);
+    expect(statement.scope.files).toEqual(["src/app.tsx"]);
+    expect(statement.scope.skippedFiles).toEqual([
+      { path: "vendor/bootstrap.min.css", reason: "definite-min-infix" },
+    ]);
+    expect(statement.scope.skippedFilesCount).toBe(1);
+  });
+
+  it("omits scope.skippedFiles + scope.skippedFilesCount when caller supplies no skips", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      files: ["src/app.tsx"],
+    });
+    expect(statement.scope.skippedFiles).toBeUndefined();
+    expect(statement.scope.skippedFilesCount).toBeUndefined();
+  });
+
+  it("omits scope.skippedFiles when caller passes empty array (no sentinel)", () => {
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      files: ["src/app.tsx"],
+      skippedFiles: [],
+    });
+    expect(statement.scope.skippedFiles).toBeUndefined();
+    expect(statement.scope.skippedFilesCount).toBeUndefined();
+  });
+
+  it("preserves caller-supplied skippedFilesCount when the array is elided by the tool layer", () => {
+    // Mirror the truncation path: the tool elides skippedFiles when
+    // the array would blow the cap, but still passes the real count
+    // so the statement names how much was skipped.
+    const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
+    const statement = buildConformanceStatement({
+      ledger: buildLedger(standard, { attestations: [mkAttestation("wcag22:1.4.3")] }),
+      profile: AA_PROFILE,
+      standards: [standard],
+      files: ["src/app.tsx"],
+      skippedFilesCount: 200,
+    });
+    expect(statement.scope.skippedFiles).toBeUndefined();
+    expect(statement.scope.skippedFilesCount).toBe(200);
+  });
+
   it("omits scope.commitHash when caller passes empty string (no sentinel)", () => {
     const standard = mkStandard([{ localId: "1.4.3", level: "AA" }]);
     const statement = buildConformanceStatement({

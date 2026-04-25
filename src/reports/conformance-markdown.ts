@@ -85,7 +85,15 @@ function renderMarkdownHeader(statement: ConformanceStatement): readonly string[
   ];
 }
 
-/** `## Scope` — root, file count, optional commit hash, optional config snapshot. */
+/**
+ * `## Scope` — root, file count, optional commit hash, optional config
+ * snapshot. V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: when the scan
+ * partitioned files into evaluated + build-artifact-flagged, the
+ * skipped count surfaces alongside `Files scanned` so a procurement
+ * reviewer reading the markdown sees the post-skip count is the
+ * load-bearing one — composite headline counts are dishonest at the
+ * procurement-surface layer just as much as on JSON tool responses.
+ */
 function renderMarkdownScope(scope: ConformanceStatementScope): readonly string[] {
   const lines: string[] = [
     "## Scope",
@@ -93,6 +101,9 @@ function renderMarkdownScope(scope: ConformanceStatementScope): readonly string[
     `- Root: \`${scope.root}\``,
     `- Files scanned: ${scope.filesCount}`,
   ];
+  if (scope.skippedFilesCount !== undefined && scope.skippedFilesCount > 0) {
+    lines.push(`- Files skipped (build artifacts): ${scope.skippedFilesCount}`);
+  }
   if (scope.commitHash !== undefined) lines.push(`- Commit: \`${scope.commitHash}\``);
   if (scope.configSnapshot !== undefined) {
     lines.push(

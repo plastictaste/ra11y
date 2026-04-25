@@ -38,6 +38,11 @@ import {
 import type { Standard } from "../types/standard.ts";
 import type { AttestationStalenessProbe } from "./attestation-surface.ts";
 import {
+  buildStatementScope,
+  type ConformanceStatementScope,
+  type SkippedConformanceFile,
+} from "./conformance-scope.ts";
+import {
   type ConfigFingerprint,
   type ConformanceSignature,
   type FileManifestEntry,
@@ -45,6 +50,8 @@ import {
   signConformanceBundleAt,
 } from "./conformance-signature.ts";
 import { RUNTIME_EVIDENCE_REQUIRED_CRITERIA } from "./runtime-evidence-criteria.ts";
+
+export type { ConformanceStatementScope, SkippedConformanceFile };
 
 /**
  * Local WCAG criterion IDs that can only be evaluated across a declared
@@ -153,55 +160,6 @@ export interface ConformanceBlocker {
    * blocker reasons.
    */
   readonly staleAttestedAt?: string;
-}
-
-/**
- * Scope of the conformance claim in a static-scanner context — a file
- * set (not a URL set, since ra11y inspects source trees rather than
- * deployed pages). ADR 0017 reserves space here for the commit anchor,
- * config snapshot, and process definitions; the commit/config fields
- * are optional and follow the AI-first consumer model's
- * present-when-meaningful rule. The signing flow
- * (V1-CERT-STATEMENT-SIGN) is the call site that wires the commit
- * hash through.
- */
-export interface ConformanceStatementScope {
-  /**
-   * Total count of files included in the scan — the load-bearing
-   * manifest size the claim stands on. Always present (including `0`
-   * when nothing was scanned) so a reader can distinguish "not
-   * truncated" from "field absent", and so the count stays honest even
-   * when {@link files} is capped or elided for response-size reasons.
-   */
-  readonly filesCount: number;
-  /**
-   * Scan root — typically the caller's `cwd`. Always present so a
-   * statement bundle dropped into release notes names the subtree the
-   * claim covers without cross-referencing the original tool call.
-   */
-  readonly root: string;
-  /**
-   * File paths included in the scan. Paths are mirrored verbatim from
-   * the caller; the builder does not normalize. Present-when-meaningful:
-   * the tool layer elides this array when it would exceed its configured
-   * cap (emitting the `scope_files_truncated_count_exceeded` warning in
-   * its stead). Callers wanting the full list flip `verboseMeta: true`
-   * on the MCP tool. When absent, rely on {@link filesCount} for size.
-   */
-  readonly files?: readonly string[];
-  /**
-   * Git commit hash at scan time. Omitted when the caller did not
-   * supply one (e.g., scan outside a git repo, or the signing flow is
-   * not yet wired). Never emitted as an empty string.
-   */
-  readonly commitHash?: string;
-  /**
-   * Snapshot of the `ra11y.config.ts` fields active during the scan —
-   * `standard`, `level`, `exclude`, `nativeWrappers`, etc. Reproduces
-   * the scan conditions from the statement alone. Omitted when the
-   * caller did not supply one; never `{}`.
-   */
-  readonly configSnapshot?: Record<string, unknown>;
 }
 
 export interface ConformanceStatement {
@@ -361,14 +319,37 @@ export interface BuildConformanceStatementInputs {
    */
   readonly files?: readonly string[];
   /**
-   * Total count of files in scope — mirrored verbatim into
-   * `statement.scope.filesCount` when supplied. Required when {@link files}
-   * is absent (tool-level truncation path) so the statement still names
-   * the real count. When both are supplied and disagree, the caller wins
-   * ({@link filesCount} is source of truth); the builder does not
-   * reconcile.
+   * Count of files actually evaluated for the claim — mirrored
+   * verbatim into `statement.scope.filesCount` when supplied. Required
+   * when {@link files} is absent (tool-level truncation path) so the
+   * statement still names the real count. When both are supplied and
+   * disagree, the caller wins ({@link filesCount} is source of truth);
+   * the builder does not reconcile.
+   *
+   * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: callers compute this as
+   * the post-skip count (parsed minus build-artifact-flagged) so the
+   * claim's headline never sums categorically different file kinds.
+   * The companion {@link skippedFilesCount} carries the skipped count.
    */
   readonly filesCount?: number;
+  /**
+   * Files the caller parsed but the build-artifact classifier flagged
+   * — surfaces as `statement.scope.skippedFiles` per
+   * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK. Present-when-meaningful:
+   * an `undefined` or empty list omits the field entirely. The tool
+   * layer is responsible for the array's size — the builder mirrors
+   * what's passed.
+   */
+  readonly skippedFiles?: readonly SkippedConformanceFile[];
+  /**
+   * Count of files excluded from the claim because of build-artifact
+   * classification — surfaces as `statement.scope.skippedFilesCount`.
+   * Required when {@link skippedFiles} is supplied but truncated by the
+   * tool layer; the builder treats `undefined` as "no skipped files"
+   * and omits both the count and the list when zero. When both are
+   * supplied and disagree, the caller wins.
+   */
+  readonly skippedFilesCount?: number;
   /**
    * Scan root — typically the caller's `cwd`. Forwarded into
    * `statement.scope.root`. When omitted, the builder defaults to `"."`
@@ -850,28 +831,6 @@ function buildStaleBlocker(
     staticSources: counts.static,
     candidateSources: counts.candidate,
     staleAttestedAt: attestedAt,
-  };
-}
-
-/**
- * Assembles the statement's {@link ConformanceStatementScope} from the
- * builder inputs. `filesCount` is always present (load-bearing: agents
- * reading a truncated response still need the real count); `files` is
- * present-when-meaningful (elided by the tool layer when it would blow
- * the response budget, per the `scope_files_truncated_count_exceeded`
- * warning). Commit hash and config snapshot are present-when-meaningful —
- * empty strings and empty objects map to field omission, not sentinel
- * values, per the AI-first consumer model's absent-vs-empty rule.
- */
-function buildStatementScope(inputs: BuildConformanceStatementInputs): ConformanceStatementScope {
-  const hasCommit = inputs.commitHash !== undefined && inputs.commitHash.length > 0;
-  const hasSnapshot = Object.keys(inputs.configSnapshot ?? {}).length > 0;
-  return {
-    filesCount: inputs.filesCount ?? inputs.files?.length ?? 0,
-    root: inputs.root ?? ".",
-    ...(inputs.files !== undefined && { files: inputs.files }),
-    ...(hasCommit && { commitHash: inputs.commitHash }),
-    ...(hasSnapshot && { configSnapshot: inputs.configSnapshot }),
   };
 }
 

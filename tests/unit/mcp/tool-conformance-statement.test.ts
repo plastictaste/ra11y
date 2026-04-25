@@ -516,3 +516,94 @@ describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-ARR
     expect(schema.properties["verboseMeta"]?.description).toContain("verboseMeta");
   });
 });
+
+describe("conformance_statement: build-artifact files excluded from claim scope", () => {
+  // Doctrine: composite headline counts are dishonest. A procurement
+  // reviewer reading "files in scope" should never see that count
+  // include files the build-artifact classifier flagged as minified
+  // bundles or sourcemap-paired output — those weren't honestly
+  // evaluated. The split surfaces evaluated count + skipped count as
+  // separate counters; skipped files surface in `scope.skippedFiles`
+  // with the classifier verdict as `reason`.
+  it("filters .min.css build artifacts out of scope.files into scope.skippedFiles with classifier reason", async () => {
+    await withScratch(async (cwd) => {
+      // Two authored TSX files plus one minified CSS bundle. The
+      // `.min.css` infix triggers the deterministic
+      // `definite-min-infix` classifier verdict.
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(join(cwd, "page.tsx"), "export const Page = () => null;\n");
+      await writeFile(join(cwd, "vendor.min.css"), ".a{color:red}\n");
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
+      const scope = body["scope"] as {
+        readonly filesCount: number;
+        readonly files?: readonly string[];
+        readonly skippedFiles?: readonly { path: string; reason: string }[];
+        readonly skippedFilesCount?: number;
+      };
+      // Evaluated count is 2 (two TSX), not 3.
+      expect(scope.filesCount).toBe(2);
+      expect(scope.files?.length).toBe(2);
+      // The build artifact does NOT appear in scope.files.
+      expect(scope.files?.some((p) => p.endsWith("vendor.min.css"))).toBe(false);
+      // It appears in skippedFiles with the deterministic classifier
+      // verdict as the reason.
+      expect(scope.skippedFilesCount).toBe(1);
+      expect(scope.skippedFiles?.length).toBe(1);
+      const skipped = scope.skippedFiles?.[0];
+      expect(skipped?.path.endsWith("vendor.min.css")).toBe(true);
+      expect(skipped?.reason).toBe("definite-min-infix");
+    });
+  });
+
+  it("omits scope.skippedFiles + scope.skippedFilesCount when no file was flagged", async () => {
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
+      const scope = body["scope"] as {
+        readonly filesCount: number;
+        readonly skippedFiles?: unknown;
+        readonly skippedFilesCount?: unknown;
+      };
+      expect(scope.filesCount).toBe(1);
+      expect(scope.skippedFiles).toBeUndefined();
+      expect(scope.skippedFilesCount).toBeUndefined();
+    });
+  });
+
+  it("scope.filesCount equals scope.files.length and skippedFilesCount equals skippedFiles.length", async () => {
+    // Invariant from the backlog acceptance: each counter matches its
+    // own array, so a reader cross-checking the count against the
+    // enumeration always sees the same value. Composite headline
+    // counters split by kind keep this honest at every layer.
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(join(cwd, "lib.min.js"), "var a=1;\n");
+      await writeFile(join(cwd, "tooling.min.css"), ".x{}\n");
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
+      const scope = body["scope"] as {
+        readonly filesCount: number;
+        readonly files?: readonly string[];
+        readonly skippedFiles?: readonly { path: string; reason: string }[];
+        readonly skippedFilesCount?: number;
+      };
+      expect(scope.files?.length).toBe(scope.filesCount);
+      expect(scope.skippedFiles?.length).toBe(scope.skippedFilesCount);
+      expect(scope.filesCount).toBe(1);
+      expect(scope.skippedFilesCount).toBe(2);
+    });
+  });
+
+  it("conformance markdown surfaces 'Files skipped (build artifacts)' line when skippedFilesCount > 0", async () => {
+    await withScratch(async (cwd) => {
+      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(join(cwd, "vendor.min.css"), ".a{}\n");
+      const session = new McpSession();
+      const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
+      expect(typeof body["markdown"]).toBe("string");
+      expect(body["markdown"]).toContain("Files skipped (build artifacts): 1");
+    });
+  });
+});

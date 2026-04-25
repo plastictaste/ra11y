@@ -36,6 +36,7 @@ import type { LoadedConfig } from "../types/config.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
 import { headSha } from "../utils/git.ts";
 import { VERSION } from "../version.ts";
+import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import {
   applyRuleSettings,
@@ -193,7 +194,7 @@ export const conformanceStatementTool: McpTool = {
 
     const stalenessProbe = createGitStalenessProbe(cwd);
     const scopeFilesView = resolveScopeFilesView({
-      filePaths: files.map((f) => f.filePath),
+      files: files.map((f) => ({ filePath: f.filePath, source: f.source })),
       verboseMeta: params["verboseMeta"] === true,
       cap: numParam(params, "scopeFilesCap") ?? DEFAULT_SCOPE_FILES_CAP,
     });
@@ -320,9 +321,18 @@ function mergeToolWarnings(args: {
   // the present-when-meaningful rule.
   const details: Record<string, unknown> = { ...(derivativeWarnings.warningsDetails ?? {}) };
   if (args.scopeFilesView.truncated) {
+    // V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: split the truncation
+    // payload by kind — `totalCount` names the evaluated count (load-
+    // bearing claim surface), `skippedFilesCount` names the build-
+    // artifact count when non-zero. Composite headline counts are
+    // dishonest; the agent reading the details sees which side of the
+    // partition tripped the cap rather than a sum that hides which.
     details["scope_files_truncated_count_exceeded"] = {
       totalCount: args.scopeFilesView.totalCount,
       cap: args.scopeFilesView.cap,
+      ...(args.scopeFilesView.skippedFilesCount > 0 && {
+        skippedFilesCount: args.scopeFilesView.skippedFilesCount,
+      }),
     };
   }
   return {
@@ -373,6 +383,12 @@ function assembleBuilderInputs(ctx: {
     filesCount: ctx.scopeFilesView.totalCount,
     root: ctx.root,
     ...(ctx.scopeFilesView.files !== undefined && { files: ctx.scopeFilesView.files }),
+    ...(ctx.scopeFilesView.skippedFiles !== undefined && {
+      skippedFiles: ctx.scopeFilesView.skippedFiles,
+    }),
+    ...(ctx.scopeFilesView.skippedFilesCount > 0 && {
+      skippedFilesCount: ctx.scopeFilesView.skippedFilesCount,
+    }),
     ...(ctx.signing !== undefined && { commitHash: ctx.signing.commitHash }),
     configSnapshot,
     ...(technologiesReliedUpon !== undefined && { technologiesReliedUpon }),
@@ -385,49 +401,85 @@ function assembleBuilderInputs(ctx: {
 }
 
 /**
- * View over the scanned file manifest after the scope-files cap is
- * applied. `totalCount` is the ground truth (always the real count,
- * even when the list is truncated). `files` is the (possibly elided)
- * manifest passed to the builder — `undefined` when truncation happened
- * under `verboseMeta: false`. `truncated` flips the
+ * View over the scanned file manifest after build-artifact partitioning
+ * AND the scope-files cap are applied. `totalCount` is the count of
+ * evaluated files (the load-bearing claim surface — parsed minus
+ * build-artifact-flagged), always present even when the array is
+ * truncated. `files` is the (possibly elided) evaluated manifest passed
+ * to the builder — `undefined` when truncation happened under
+ * `verboseMeta: false`. `truncated` flips the
  * `scope_files_truncated_count_exceeded` warning at the handler layer;
  * `cap` mirrors what was used so the warning payload can name it.
+ *
+ * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: `skippedFiles` /
+ * `skippedFilesCount` carry the build-artifact-flagged paths the
+ * classifier excluded from the claim. Each entry's `reason` is the
+ * classifier verdict (`definite-min-infix`, `likely-bundler-output-dir`,
+ * …) so the agent can route to a `propose_config` exclude or dismiss
+ * the skip without re-running the classifier. The same cap gates this
+ * array — when over the cap the list is elided but the count stays.
  */
 interface ScopeFilesView {
   readonly totalCount: number;
   readonly cap: number;
   readonly truncated: boolean;
   readonly files: readonly string[] | undefined;
+  readonly skippedFiles: readonly { readonly path: string; readonly reason: string }[] | undefined;
+  readonly skippedFilesCount: number;
 }
 
 /**
  * Resolves the scope-files view from the parsed manifest + the caller's
  * `verboseMeta` / `scopeFilesCap` params. When the caller explicitly
- * flips `verboseMeta: true`, the full list flows through regardless of
+ * flips `verboseMeta: true`, the full lists flow through regardless of
  * size. Otherwise the cap gates: under → full list ships inline; at/over
- * → files elided, truncation warning fires at the handler layer.
- * `scope.filesCount` in the response always reflects `totalCount` so an
- * agent can tell success-with-truncation from success-complete.
+ * → that array is elided, truncation warning fires at the handler layer.
+ * `scope.filesCount` / `scope.skippedFilesCount` in the response always
+ * reflect the real counts so an agent can tell success-with-truncation
+ * from success-complete.
+ *
+ * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: partitions the parsed file
+ * set against {@link collectBuildArtifacts} BEFORE applying the cap so
+ * the evaluated count is the post-skip count (composite headline
+ * counters split by kind, per the AI-first consumer model). The
+ * truncation predicate considers either array exceeding the cap so a
+ * scan with 5 evaluated + 200 skipped files still elides the
+ * skipped-files manifest with the warning fired.
  */
 function resolveScopeFilesView(args: {
-  readonly filePaths: readonly string[];
+  readonly files: readonly { readonly filePath: string; readonly source: string }[];
   readonly verboseMeta: boolean;
   readonly cap: number;
 }): ScopeFilesView {
-  const totalCount = args.filePaths.length;
-  if (args.verboseMeta || totalCount <= args.cap) {
-    return {
-      totalCount,
-      cap: args.cap,
-      truncated: false,
-      files: args.filePaths,
-    };
+  const artifacts = collectBuildArtifacts(args.files);
+  const skippedSet = new Set<string>();
+  const skippedFiles: { readonly path: string; readonly reason: string }[] = [];
+  for (const a of artifacts) {
+    if (skippedSet.has(a.path)) continue;
+    skippedSet.add(a.path);
+    skippedFiles.push({ path: a.path, reason: a.classification });
   }
+  const evaluatedFiles: string[] = [];
+  for (const f of args.files) {
+    if (!skippedSet.has(f.filePath)) evaluatedFiles.push(f.filePath);
+  }
+  const totalCount = evaluatedFiles.length;
+  const skippedFilesCount = skippedFiles.length;
+  const truncated = !args.verboseMeta && (totalCount > args.cap || skippedFilesCount > args.cap);
+  const filesField = !truncated || totalCount <= args.cap ? evaluatedFiles : undefined;
+  const skippedField =
+    skippedFilesCount === 0
+      ? undefined
+      : !truncated || skippedFilesCount <= args.cap
+        ? skippedFiles
+        : undefined;
   return {
     totalCount,
     cap: args.cap,
-    truncated: true,
-    files: undefined,
+    truncated,
+    files: filesField,
+    skippedFiles: skippedField,
+    skippedFilesCount,
   };
 }
 
