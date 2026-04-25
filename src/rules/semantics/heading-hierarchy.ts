@@ -13,7 +13,7 @@
  * Source: https://www.w3.org/TR/WCAG22/#info-and-relationships
  *         https://www.w3.org/TR/WCAG22/#headings-and-labels
  *
- * Flags three structural problems in heading order:
+ * Flags four structural problems in heading order:
  *   1. A full-page document with no <h1> at all (variant:
  *      `missing-h1-on-full-page`). Anchored at the <body> line so the
  *      finding sits at the natural insertion point for an h1, rather
@@ -29,6 +29,16 @@
  *      supplying the page title.
  *   3. A heading that skips a level (e.g., <h1> followed directly by
  *      <h3>, or <h2> followed by <h4>).
+ *   4. A document containing more than one <h1> (variant:
+ *      `multiple-h1`). The HTML living standard's outline algorithm was
+ *      never implemented by browsers and assistive tech, so a single
+ *      page-title <h1> remains the de-facto anchor screen-reader users
+ *      navigate to with the "1" hotkey. Each extra <h1> is emitted
+ *      individually so the agent can decide whether to demote each one
+ *      to <h2> or wrap it in a <section> with its own outline scope.
+ *      Keeps firing on fragments — multiple h1s in one fragment file
+ *      compose into multiple h1s in the rendered page regardless of
+ *      whether the parent layout supplies its own.
  *
  * Heading hierarchy is how screen-reader users navigate a page — the
  * virtual cursor jumps between headings with a shortcut key, and
@@ -173,6 +183,18 @@ export const rule = defineRule({
     if (headings.length > 0) {
       reportSkippedLevels(headings, partialShape, (v) => ctx.emit(v));
     }
+
+    // Variant: multiple-h1. Emits one finding per extra <h1> beyond the
+    // first one. The HTML5 outline algorithm that would have scoped each
+    // <h1> by its containing <section> was never implemented by browsers
+    // or AT — VoiceOver, NVDA, JAWS still treat every <h1> in the
+    // document as a top-level heading. A user pressing "1" lands on
+    // each, and the page outline reads as "two top-level topics" when
+    // the author meant "this is the page" + "this is a sub-region".
+    // Keeps firing on fragments because the composed page inherits the
+    // duplicate; the partial enrichment still applies because a partial
+    // may legitimately render its <h1> down to <h2> via composition.
+    reportMultipleH1(headings, partialShape, (v) => ctx.emit(v));
   },
 });
 
@@ -327,5 +349,44 @@ function reportSkippedLevels(
       });
     }
     previous = current;
+  }
+}
+
+/**
+ * Emits one finding per extra `<h1>` beyond the first. Anchored at each
+ * extra `<h1>`'s own location so the agent can act on each instance
+ * independently (some pages legitimately have a primary `<h1>` and a
+ * sibling `<h1>` that should be demoted to `<h2>`; others have two
+ * `<h1>`s where one should be wrapped in `<section>` to scope a new
+ * outline). Variant key `multiple-h1` keeps the emit distinct from the
+ * skipped-level branch's stamp so suppression pragmas can target
+ * individual instances.
+ */
+function reportMultipleH1(
+  headings: readonly HeadingEntry[],
+  partialShape: boolean,
+  emit: Emit,
+): void {
+  const h1s = headings.filter((h) => h.level === 1);
+  if (h1s.length <= 1) return;
+  const first = h1s[0];
+  if (!first) return;
+  const firstLine = first.element.loc.start.line;
+  for (let i = 1; i < h1s.length; i += 1) {
+    const extra = h1s[i];
+    if (!extra) continue;
+    const baseMessage = `Document has ${h1s.length} <h1> elements; expected exactly 1 page-title <h1>. The first <h1> is at line ${firstLine}; this is extra <h1> #${i + 1}. Subsequent h1s likely should be <h2> or sectioned with <section> to scope a new outline.`;
+    emit({
+      severity: "warning",
+      location: {
+        filePath: "",
+        line: extra.element.loc.start.line,
+        column: extra.element.loc.start.column,
+      },
+      message: partialShape ? `${baseMessage}${PARTIAL_NOTE_SUFFIX}` : baseMessage,
+      suggestion: `Change this <h1> to <h2> if it names a section under the page-title <h1> at line ${firstLine}, or wrap it in a <section> element to scope a new outline. Browsers and assistive tech ignore the HTML5 outline algorithm — every <h1> is exposed as a top-level heading regardless of nesting, so multiple <h1>s read to a screen reader user as multiple page titles.`,
+      variantKey: "multiple-h1",
+      ...(partialShape ? { couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE] } : {}),
+    });
   }
 }

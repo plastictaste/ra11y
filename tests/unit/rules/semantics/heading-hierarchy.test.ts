@@ -52,11 +52,12 @@ describe("rule semantics/heading-hierarchy", () => {
     });
 
     it("does not fire when levels decrease (jump back to top)", () => {
-      const v = runRule(
-        rule,
-        `<h1>Title</h1><h2>A</h2><h3>A.1</h3><h2>B</h2><h1>New section</h1>`,
-        { filePath: "index.html" },
-      );
+      // Single <h1> here so the multiple-h1 branch stays silent — the
+      // assertion is specifically that level-decrease (h3 → h2) does
+      // not count as a skip.
+      const v = runRule(rule, `<h1>Title</h1><h2>A</h2><h3>A.1</h3><h2>B</h2>`, {
+        filePath: "index.html",
+      });
       expect(v).toHaveLength(0);
     });
 
@@ -626,6 +627,117 @@ describe("rule semantics/heading-hierarchy", () => {
   // h1 variant fires at the <body> tag with the "no headings at all"
   // message branch.
   // ─────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // Multiple-h1 variant. The HTML5 outline algorithm that would have
+  // scoped each <h1> by its containing <section> was never implemented
+  // by browsers or assistive tech. VoiceOver, NVDA, JAWS still expose
+  // every <h1> as a top-level heading. Each extra <h1> is a separate
+  // structural anti-pattern from the level-skip and missing-h1 emits.
+  // WCAG SC 1.3.1: structure conveyed through presentation must be
+  // programmatically determinable, and an outline that asserts "two
+  // page titles" misrepresents the document's structure.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("multiple-h1 variant", () => {
+    // The variantKey is engine-internal — runRule's shapeViolation
+    // strips it from the returned Violation (it lands in the findingId
+    // hash but isn't a public field). Tests match on the marker phrase
+    // "expected exactly 1 page-title" instead, which is unique to this
+    // emit branch and survives any future copy-edit of the suffix.
+    const MARKER = "expected exactly 1 page-title";
+
+    it("fires once per extra <h1> (two h1s → one finding)", () => {
+      const source = "<html><body><h1>Title</h1><h1>Other Title</h1></body></html>";
+      const v = runRule(rule, source, { filePath: "page.html" });
+      const multi = v.filter((x) => x.message.includes(MARKER));
+      expect(multi).toHaveLength(1);
+    });
+
+    it("fires twice when there are three <h1>s (one per extra)", () => {
+      const source = `<html><body><h1>A</h1><h1>B</h1><h1>C</h1></body></html>`;
+      const v = runRule(rule, source, { filePath: "page.html" });
+      const multi = v.filter((x) => x.message.includes(MARKER));
+      expect(multi).toHaveLength(2);
+    });
+
+    it("anchors each emit at the extra <h1>'s own line", () => {
+      const source = `<h1>Page</h1>\n\n<h1>Section</h1>\n\n<h1>Another</h1>`;
+      const v = runRule(rule, source, { filePath: "page.html" });
+      const multi = v.filter((x) => x.message.includes(MARKER));
+      expect(multi).toHaveLength(2);
+      expect(multi[0]?.location.line).toBe(3);
+      expect(multi[1]?.location.line).toBe(5);
+    });
+
+    it("cites the first <h1>'s line in the message and suggestion", () => {
+      const source = `<h1>Page</h1>\n\n\n<h1>Other</h1>`;
+      const v = runRule(rule, source, { filePath: "page.html" });
+      const multi = v.find((x) => x.message.includes(MARKER));
+      expect(multi?.message).toContain("at line 1");
+      expect(multi?.suggestion).toContain("line 1");
+      expect(multi?.suggestion).toContain("<h2>");
+    });
+
+    it("does not fire when the document has exactly one <h1>", () => {
+      const v = runRule(rule, `<h1>Title</h1><h2>A</h2>`, { filePath: "index.html" });
+      expect(v.find((x) => x.message.includes(MARKER))).toBeUndefined();
+    });
+
+    it("does not fire when the document has zero <h1>s", () => {
+      // Zero h1s: missing-h1 fires, multiple-h1 does NOT.
+      const v = runRule(rule, `<h2>Section</h2>`, { filePath: "index.html" });
+      expect(v.find((x) => x.message.includes(MARKER))).toBeUndefined();
+    });
+
+    it("keeps firing on a fragment file (composed page inherits the duplicate)", () => {
+      // Bare <h1><h1> with no envelope: the fragment-file gate suppresses
+      // the missing-h1 branch but the multiple-h1 branch keeps firing
+      // because two h1s in one fragment compose into two h1s in the
+      // rendered page regardless of envelope.
+      const v = runRule(rule, `<h1>A</h1><h1>B</h1>`, { filePath: "fragment.html" });
+      const multi = v.filter((x) => x.message.includes(MARKER));
+      expect(multi).toHaveLength(1);
+    });
+
+    it("keeps firing on a `_includes/` partial path", () => {
+      const v = runRule(rule, `<html><body><h1>A</h1><h1>B</h1></body></html>`, {
+        filePath: "_includes/widget.html",
+      });
+      const multi = v.filter((x) => x.message.includes(MARKER));
+      expect(multi).toHaveLength(1);
+    });
+
+    it("enriches with partial-or-layout note on a `_docs/` path", () => {
+      const v = runRule(rule, `<html><body><h1>A</h1><h1>B</h1></body></html>`, {
+        filePath: "_docs/intro.html",
+      });
+      const multi = v.find((x) => x.message.includes(MARKER));
+      expect(multi?.message).toContain("partial / layout");
+      expect(multi?.couldBeWrongBecause).toContain(
+        "partial_or_layout_file_requires_composed_check",
+      );
+    });
+
+    it("co-fires with skipped-level when both apply", () => {
+      // Two h1s AND a level skip h1 → h3.
+      const source = `<h1>A</h1><h3>Skipped</h3><h1>B</h1>`;
+      const v = runRule(rule, source, { filePath: "page.html" });
+      expect(v.some((x) => x.message.includes(MARKER))).toBe(true);
+      expect(v.some((x) => x.message.includes("skipped"))).toBe(true);
+    });
+
+    it("does not fire on `.md` files (markdown ingestion skip)", () => {
+      // Markdown extension routes through parseMarkdown which strips ATX
+      // headings; the rule body returns early before any branch runs.
+      // A Markdown file with two embedded `<h1>` HTML tags would still
+      // be a multiple-h1 case in the rendered output, but the residue
+      // can't be honestly emitted on per the V1 markdown skip — same
+      // reason the missing-h1 branch returns early.
+      const source = "# Real title\n\n<h1>Embedded one</h1>\n<h1>Embedded two</h1>\n";
+      const v = runRule(rule, source, { filePath: "README.md" });
+      expect(v).toHaveLength(0);
+    });
+  });
+
   describe("branch E (empty-structural-shell missing-h1 variant)", () => {
     it("fires on a body of decorative <div>s with no headings and no landmarks", () => {
       // theme-clock canonical shape — no heading anywhere, no landmark
