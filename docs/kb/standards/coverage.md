@@ -85,7 +85,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `wcag22:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
-| `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
+| `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
 | `wcag22:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
 | `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `wcag22:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
@@ -124,7 +124,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha, password-inputs | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/disabled-link-surrogate +27 | pagination-glyph-accessible-name | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/disabled-link-surrogate +28 | pagination-glyph-accessible-name | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
 
 ## WCAG 2.1
@@ -180,7 +180,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `wcag21:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive | focus-order | **rule** |
-| `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
+| `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
 | `wcag21:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
 | `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `wcag21:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
@@ -211,7 +211,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +1 | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/disabled-link-surrogate +27 | pagination-glyph-accessible-name | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/disabled-link-surrogate +28 | pagination-glyph-accessible-name | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -244,7 +244,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `section508:2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
-| `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
+| `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
 | `section508:2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
 | `section508:2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `section508:2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |
@@ -259,7 +259,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/disabled-link-surrogate +27 | pagination-glyph-accessible-name | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/disabled-link-surrogate +28 | pagination-glyph-accessible-name | **rule** |
 
 ## EN 301 549
 
@@ -298,7 +298,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/skip-link +1 | — | **rule** |
 | `en301549:9.2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
 | `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive | focus-order | **rule** |
-| `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, pointer/stretched-link-multiple-in-container | pagination-glyph-accessible-name | **rule** |
+| `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name | **rule** |
 | `en301549:9.2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
 | `en301549:9.2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
 | `en301549:9.2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |
@@ -317,5 +317,5 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/disabled-link-surrogate +27 | pagination-glyph-accessible-name | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/disabled-link-surrogate +28 | pagination-glyph-accessible-name | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
