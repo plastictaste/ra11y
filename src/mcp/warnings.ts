@@ -91,6 +91,29 @@ export type ScanWarningCode =
   // truncation and an agent cannot tell whether raising `limit` will
   // help.
   | "response_token_budget_truncated"
+  // Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: even after the density
+  // cap (`response_token_budget_truncated`) trimmed trailing files,
+  // the assembled response was still over the MCP host token ceiling
+  // — most often because a single retained file (the density cap's
+  // progress guarantee keeps at least one) carried a payload that
+  // alone exceeded the budget, OR because verbose `meta` blocks
+  // (perRuleCoverage, scannedBuildArtifacts, scope.files) on a
+  // bulk-corpus scan inflated the envelope past the ceiling regardless
+  // of how many files were trimmed. Without this last-resort
+  // degradation, the host transport drops the full response and the
+  // agent gets a transport error that's indistinguishable from "tool
+  // never ran" — the canonical "oversize-success is ambiguous failure"
+  // shape per `docs/kb/architecture/ai-first-consumer.md`. When this
+  // code fires, `files[]` is dropped entirely (replaced with an empty
+  // array) and the response keeps `plan` + a slimmed `meta` (just
+  // `configSource` + `scanned` + `filesScanned`) + `nextStep`
+  // recommending a narrower scope. The agent can still route once on
+  // what arrived; without the envelope, it cannot. Paired payload
+  // under `warningsDetails.response_dropped_files_oversize` carries
+  // the pre-drop byte count, the dropped file count, and the
+  // sentinel that triggered the fallback so the agent knows how
+  // aggressive the over-budget was.
+  | "response_dropped_files_oversize"
   // Session wrappers were registered against one cwd and the current
   // scan's resolved root differs. Session state is connection-wide, so
   // the wrappers still apply — the warning tells the agent the
@@ -905,6 +928,44 @@ export interface ScanWarningDetails {
    */
   readonly scanned_minified_file?: {
     readonly files: readonly string[];
+  };
+  /**
+   * Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: payload for
+   * `response_dropped_files_oversize`. Surfaces the byte arithmetic
+   * the last-resort envelope-degradation path made — without it, an
+   * agent seeing the bare warning code can't tell a marginal overage
+   * (90KB → minimum envelope) from a catastrophic one (472KB →
+   * minimum envelope). All counts are character counts (the
+   * zero-dependency token-proxy basis described on
+   * {@link CHARS_PER_TOKEN_PROXY}).
+   *
+   * - `preDropBytes` — the assembled-but-not-yet-dropped envelope
+   *   size after the density cap (`response_token_budget_truncated`)
+   *   ran. This is the byte count that crossed the hard ceiling and
+   *   triggered the fallback.
+   * - `hardCeilingBytes` — the sentinel the response crossed. Echoed
+   *   so consumers branching on the warning don't have to read source
+   *   to know the ceiling, and so a future tightening of the constant
+   *   is observable on the wire.
+   * - `droppedFileCount` — how many file entries `files[]` was
+   *   carrying when the fallback fired. After the fallback, `files[]`
+   *   ships as `[]` (drop-all) so the agent's view is honest: every
+   *   file's findings are gone, not just the trailing tail.
+   *
+   * Present-when-meaningful: emitted only alongside the matching
+   * `response_dropped_files_oversize` warning code; omitted entirely
+   * otherwise via conditional spread at the call site per "ambiguous
+   * field shapes are dishonest." Pairs with — but does not subsume —
+   * `response_token_budget_truncated.requestedLimit/effectiveLimit`,
+   * which describe the earlier density-cap trim. When BOTH codes
+   * fire (the density cap trimmed but the resulting envelope was
+   * still oversized), both payloads ship so the agent sees the full
+   * chain of clip decisions.
+   */
+  readonly response_dropped_files_oversize?: {
+    readonly preDropBytes: number;
+    readonly hardCeilingBytes: number;
+    readonly droppedFileCount: number;
   };
 }
 

@@ -1062,19 +1062,50 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.ruleCatalog?.["contrast/minimum"]).toBeUndefined();
   });
 
-  it("includeRuleDetails: 'all' inlines every loaded rule, not just ones that fired", async () => {
+  it("includeRuleDetails: 'all' degrades to minimum-honest envelope when catalog crosses host ceiling", async () => {
+    // Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: the full rule catalog
+    // serialized at ~1.3KB per rule × ~85 rules = ~115KB on its own,
+    // which crosses the ~96K hard ceiling regardless of fixture size.
+    // The oversize guard correctly slims the response to the minimum-
+    // honest envelope; the agent's recovery for "I want all rule
+    // metadata" is to call `list_rules` separately (the canonical
+    // catalog tool, per the doctrine's "Don't duplicate capability the
+    // agent already has" rule). When the underlying response naturally
+    // fits under the ceiling — small enough rule registry, narrow
+    // scope — the catalog ships inline as before; this test captures
+    // the today-realistic over-ceiling regime so a regression that
+    // bypasses the oversize guard would re-fire.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR, includeRuleDetails: "all" }),
     ]);
     const body = bodyOf(responses[1]) as {
       ruleCatalog?: Record<string, { description: string }>;
+      warnings?: readonly string[];
+      warningsDetails?: {
+        response_dropped_files_oversize?: {
+          preDropBytes: number;
+          hardCeilingBytes: number;
+          droppedFileCount: number;
+        };
+      };
+      files?: readonly unknown[];
+      nextStep?: string;
+      nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    expect(body.ruleCatalog).toBeDefined();
-    // `all` includes the whole catalog — entries for rules that didn't
-    // fire in this scan must appear.
-    expect(body.ruleCatalog?.["contrast/minimum"]).toBeDefined();
-    expect(body.ruleCatalog?.["media/alt-text-missing"]).toBeDefined();
+    expect(body.warnings ?? []).toContain("response_dropped_files_oversize");
+    const dropPayload = body.warningsDetails?.response_dropped_files_oversize;
+    expect(dropPayload).toBeDefined();
+    expect(dropPayload?.preDropBytes).toBeGreaterThan(dropPayload?.hardCeilingBytes ?? 0);
+    // Slim envelope drops files[] entirely so the routing channel
+    // (plan + meta + nextStep) survives under the host wall.
+    expect(body.files).toEqual([]);
+    expect(body.nextStep).toContain("narrower scope");
+    expect(body.nextStepStructured?.tool).toBe("scan_project");
+    // The catalog itself was dropped on the slim path — the agent's
+    // canonical recovery for "I want all rule metadata" is `list_rules`,
+    // not re-inlining via `includeRuleDetails: "all"`.
+    expect(body.ruleCatalog).toBeUndefined();
   });
 
   it("includeRuleDetails omitted or 'none' keeps the baseline response shape", async () => {

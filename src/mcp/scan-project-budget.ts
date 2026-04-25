@@ -15,6 +15,11 @@ import {
   pickTopRuleByCount,
   shouldRerouteToPerRuleNarrowing,
 } from "./next-step.ts";
+import {
+  guardOversizeEnvelope,
+  type OversizeEnvelopeReason,
+  oversizeEnvelopeWarningsField,
+} from "./oversize-envelope.ts";
 import type { ReferenceGuide } from "./reference-guide.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
@@ -194,35 +199,63 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     files: hoisted.files,
     offset: pageOffset,
   });
-  if (budgeted.droppedCount === 0) return tentative;
-  // The caller's requested page size is the top-level `requestedLimit`
-  // — what the caller asked for, not the post-pagination page count
-  // the density cap saw entering. `page.paginationFields.requestedLimit`
-  // is stamped by the paginator on every page that carries pagination
-  // state; it's the clamped `limit` param. Falling back to
-  // `hoisted.files.length` covers the (unreachable in production) case
-  // where the paginator emitted no pagination fields but the density
-  // cap still fired.
-  const callerRequestedLimit = page.paginationFields.requestedLimit ?? hoisted.files.length;
-  return mergeBudgetedFields({
-    tentative,
-    budgeted,
-    ...(hasBaseCodes ? { baseWarnings } : {}),
-    ...(hasBaseDetails ? { baseWarningsDetails } : {}),
-    totalFilesWithFindings: formatted.files.length,
-    // `warningsDetails.response_token_budget_truncated.requestedLimit`
-    // keeps its original meaning — the file count the density cap saw
-    // entering the guard — so the payload echo (50→10 vs 50→48) stays
-    // anchored to the density cap's input, not the caller's kwarg. The
-    // top-level `requestedLimit` below uses the caller's kwarg. Both
-    // pivots are useful: the density echo for debugging the cap's
-    // decision; the top-level for "did the response honor my page
-    // size" at a glance.
-    densityRequestedLimit: hoisted.files.length,
-    densityEffectiveLimit: budgeted.files.length,
-    topLevelRequestedLimit: callerRequestedLimit,
-    topLevelEffectiveLimit: budgeted.files.length,
+  const postDensity =
+    budgeted.droppedCount === 0
+      ? tentative
+      : mergeBudgetedFields({
+          tentative,
+          budgeted,
+          ...(hasBaseCodes ? { baseWarnings } : {}),
+          ...(hasBaseDetails ? { baseWarningsDetails } : {}),
+          totalFilesWithFindings: formatted.files.length,
+          // `warningsDetails.response_token_budget_truncated.requestedLimit`
+          // keeps its original meaning — the file count the density cap saw
+          // entering the guard — so the payload echo (50→10 vs 50→48) stays
+          // anchored to the density cap's input, not the caller's kwarg. The
+          // top-level `requestedLimit` below uses the caller's kwarg. Both
+          // pivots are useful: the density echo for debugging the cap's
+          // decision; the top-level for "did the response honor my page
+          // size" at a glance.
+          densityRequestedLimit: hoisted.files.length,
+          densityEffectiveLimit: budgeted.files.length,
+          // The caller's requested page size is the top-level
+          // `requestedLimit` — what the caller asked for, not the post-
+          // pagination page count the density cap saw entering.
+          // `page.paginationFields.requestedLimit` is stamped by the
+          // paginator on every page that carries pagination state; it's
+          // the clamped `limit` param. Falling back to
+          // `hoisted.files.length` covers the (unreachable in production)
+          // case where the paginator emitted no pagination fields but the
+          // density cap still fired.
+          topLevelRequestedLimit: page.paginationFields.requestedLimit ?? hoisted.files.length,
+          topLevelEffectiveLimit: budgeted.files.length,
+        });
+  // Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: last-resort hard-ceiling
+  // guard. After the density cap settled, the response can still be
+  // over the MCP host's ~25k-token wall — single-file pathology (the
+  // density helper's progress guarantee keeps one entry even when its
+  // payload alone exceeds the budget) or verbose-meta dominance
+  // (perRuleCoverage + scannedBuildArtifacts + scope.files inflating
+  // the envelope independent of the file-count axis). When the
+  // post-density envelope crosses the hard ceiling exported from
+  // `./oversize-envelope.ts`, degrade to the minimum-honest envelope
+  // rather than letting the host drop the response (which reads to
+  // the agent as "tool never ran" — the canonical
+  // oversize-success-is-ambiguous-failure shape per doctrine). The
+  // slim-builder owns the replacement shape.
+  const guarded = guardOversizeEnvelope({
+    original: postDensity,
+    buildSlim: (reason) =>
+      buildSlimScanProjectEnvelope({
+        original: postDensity,
+        reason,
+        formatted,
+        fullMeta,
+        params,
+        session,
+      }),
   });
+  return guarded.response;
 }
 
 /**
@@ -389,4 +422,186 @@ function warningsWithDensityCode(base: readonly ScanWarningCode[] | undefined): 
   if (base === undefined) return ["response_token_budget_truncated"];
   if (base.includes("response_token_budget_truncated")) return [...base];
   return [...base, "response_token_budget_truncated"];
+}
+
+/**
+ * Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: builds the minimum-honest
+ * envelope when the post-density-cap response is still over the host
+ * ceiling. The shape is the smallest set of load-bearing fields the
+ * agent needs to route once: `plan` (so the agent sees the per-lane
+ * `fixesByClass` tally, the manual-review counters, the executive
+ * `summary`), `meta` slimmed to scan-confidence telemetry that fits
+ * (`configSource`, `scanned`, `filesScanned`, `durationMs`, `tool`,
+ * `version`, `standards`, `level`), `nextStep` rerouted to recommend
+ * narrower scope, and the `warnings` channel carrying every code that
+ * accumulated through the clip chain plus the new
+ * `response_dropped_files_oversize` code with its byte-arithmetic
+ * payload.
+ *
+ * Drops `files[]` entirely (`[]`) — surface-don't-suppress would
+ * normally argue against this, but the alternative when the host
+ * drops the whole envelope is no `files[]` AT ALL, plus no `plan`,
+ * meta, warnings, or nextStep. Trading per-file findings for the
+ * load-bearing routing channel is the doctrine's prescribed move
+ * ("the agent can still route once on what arrived; without the
+ * envelope, it cannot"). The agent's recovery path is to re-call
+ * scan_project with a narrower scope, reading the per-file findings
+ * one slice at a time.
+ *
+ * `nextStep` is rewritten to name the recovery — the original
+ * `nextStep` may have pointed at `suggest_fix` or `explain_rule` on a
+ * specific rule that survived the per-file trim, but that pointer is
+ * misleading once `files[]` is dropped (the agent has no per-finding
+ * `findingId` to feed to `suggest_fix`). The rewritten prose names
+ * "narrow scope" and the structured form points at `scan_project`
+ * with a hint to pass `additionalPaths` or a tighter `cwd`. We do
+ * NOT recommend `summaryOnly: true` — that mode does not exist yet
+ * (tracked under V1-TOOL-SCAN-PROJECT-SUMMARY-MODE). When the
+ * summary mode lands, this nextStep is the natural caller to thread
+ * it through.
+ */
+function buildSlimScanProjectEnvelope(args: {
+  readonly original: Record<string, unknown>;
+  readonly reason: OversizeEnvelopeReason;
+  readonly formatted: ScanFormatted;
+  readonly fullMeta: Record<string, unknown>;
+  readonly params: Record<string, unknown>;
+  readonly session: McpSession;
+}): Record<string, unknown> {
+  const { original, reason, formatted, fullMeta, params, session } = args;
+  // Slim the meta block to just the scan-confidence telemetry that
+  // fits comfortably under the minimum-envelope target. The full meta
+  // (perRuleCoverage, scannedBuildArtifacts, scope.files,
+  // analysisCoverage with per-extension maps) is the canonical bloat
+  // source on bulk-corpus repros — keeping it would defeat the
+  // fallback. Agents calling back with a narrower scope will get the
+  // full meta on the next response.
+  const slimMeta = buildSlimMeta(fullMeta);
+  // Original `warnings` / `warningsDetails` may exist (e.g. when the
+  // density cap fired its own code first). Read them off `original`
+  // so we preserve the full clip chain on the wire.
+  const baseWarnings = readWarnings(original);
+  const baseWarningsDetails = readWarningsDetails(original);
+  const merged = oversizeEnvelopeWarningsField({
+    reason,
+    ...(baseWarnings === undefined ? {} : { baseWarnings }),
+    ...(baseWarningsDetails === undefined ? {} : { baseWarningsDetails }),
+  });
+  return {
+    plan: formatted.plan,
+    files: [],
+    nextStep: SLIM_NEXT_STEP_PROSE,
+    nextStepStructured: buildSlimNextStepStructured(params),
+    warnings: merged.warnings,
+    warningsDetails: merged.warningsDetails,
+    meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta: slimMeta, session }),
+  };
+}
+
+/**
+ * Reads the `warnings` field off the original response if present and
+ * shaped as a string array. Defensive: the response object is typed
+ * `Record<string, unknown>`, so we narrow before propagating.
+ */
+function readWarnings(original: Record<string, unknown>): readonly ScanWarningCode[] | undefined {
+  const w = original["warnings"];
+  if (!Array.isArray(w)) return undefined;
+  return w as readonly ScanWarningCode[];
+}
+
+/**
+ * Reads the `warningsDetails` field off the original response if
+ * present and shaped as an object. Defensive narrowing matches
+ * {@link readWarnings} for the symmetric channel.
+ */
+function readWarningsDetails(original: Record<string, unknown>): ScanWarningDetails | undefined {
+  const d = original["warningsDetails"];
+  if (d === undefined || d === null || typeof d !== "object") return undefined;
+  return d as ScanWarningDetails;
+}
+
+/**
+ * Slims the full meta block to just the scan-confidence telemetry the
+ * agent needs to know the scan ran for real. Drops every per-rule /
+ * per-file / per-extension fan-out — those are the canonical bloat
+ * sources on bulk-corpus repros.
+ *
+ * Kept fields (in priority order):
+ *   - `tool`, `version`, `standards`, `level` — identity telemetry
+ *     stamped by the scan harness so the agent knows which scanner /
+ *     standards / conformance level produced this response.
+ *   - `filesScanned`, `durationMs` — top-line scan-completeness
+ *     telemetry. Without these the agent can't tell "tool ran on
+ *     small input" from "tool ran on bulk corpus and had to slim."
+ *   - `configSource` — the load-bearing config-resolution telemetry
+ *     per the doctrine's "verbose meta is signal" rule. Tells the
+ *     agent which `ra11y.config.ts` (if any) shaped the scan.
+ *   - `scanned` — root + extras envelope (paths, scan kind). Lets
+ *     the agent re-issue a narrower call against the same root.
+ *   - `rootSource`, `scanMode` — additional routing context.
+ *
+ * Everything else (perRuleCoverage, scannedBuildArtifacts,
+ * analysisCoverage, scope, additionalPathsScanned, …) is dropped on
+ * the slim path. The agent will get the full meta when it calls back
+ * with a narrower scope.
+ */
+function buildSlimMeta(fullMeta: Record<string, unknown>): Record<string, unknown> {
+  const slim: Record<string, unknown> = {};
+  for (const key of SLIM_META_KEYS) {
+    if (key in fullMeta) {
+      slim[key] = fullMeta[key];
+    }
+  }
+  return slim;
+}
+
+const SLIM_META_KEYS: readonly string[] = [
+  "tool",
+  "version",
+  "standards",
+  "level",
+  "filesScanned",
+  "durationMs",
+  "configSource",
+  "scanned",
+  "rootSource",
+  "scanMode",
+];
+
+/**
+ * Prose for the slim envelope's nextStep. Names the recovery the
+ * agent needs to perform: the response shape itself signals "I had
+ * to drop the per-file findings to fit," and the agent's next move
+ * is to call back with a narrower scope so the next response can
+ * carry the per-file detail. We name three concrete narrowing knobs
+ * — `cwd`, `additionalPaths`, `restrictToPaths` — so the agent can
+ * pick the one that matches its triage intent without re-reading
+ * tool docs. The `summaryOnly` mode is referenced as the future
+ * lighter-weight path (V1-TOOL-SCAN-PROJECT-SUMMARY-MODE) so the
+ * agent knows the doc surface is evolving.
+ */
+const SLIM_NEXT_STEP_PROSE =
+  "The full response was over the MCP host's token ceiling, so per-file findings were dropped to keep the envelope routable. " +
+  "Re-call `scan_project` with a narrower scope to recover the file detail: pass a tighter `cwd` (a single subdirectory), " +
+  "use `restrictToPaths` to scope to a specific file set, or use `additionalPaths` to scan only a few targeted paths. " +
+  "For a bulk-corpus first-pass, prefer the upcoming `summaryOnly` mode when it lands.";
+
+/**
+ * Structured nextStep for the slim envelope. Points at `scan_project`
+ * itself — the agent's recovery path is the same tool with narrower
+ * args. We pre-fill `cwd` from the original params if present so the
+ * agent's next call inherits the project root and only needs to add
+ * the narrowing knob. The args carry no `restrictToPaths` /
+ * `additionalPaths` literal — those are agent-specific scope
+ * decisions, not something the tool can guess.
+ */
+function buildSlimNextStepStructured(params: Record<string, unknown>): {
+  readonly tool: string;
+  readonly args: Record<string, unknown>;
+} {
+  const cwd = typeof params["cwd"] === "string" ? params["cwd"] : undefined;
+  return {
+    tool: "scan_project",
+    args: cwd === undefined ? {} : { cwd },
+  };
 }
