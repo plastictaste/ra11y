@@ -1,0 +1,17 @@
+<!--
+  Good: inline <svg> declares role="img" and carries an explicit
+  aria-label. The role exposes the SVG as an image; the aria-label
+  supplies the name. Both are required — role="img" alone (without a
+  label) would still fail.
+  Expect: no findings.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/cart">
+      <svg role="img" aria-label="Shopping cart" viewBox="0 0 24 24">
+        <path d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2 9"/>
+      </svg>
+    </a>
+  </body>
+</html>

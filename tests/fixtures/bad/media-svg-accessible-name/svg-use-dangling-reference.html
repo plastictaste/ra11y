@@ -1,0 +1,18 @@
+<!--
+  Bad: inline <svg> inside an <a href> uses a sprite reference, but the
+  referenced #id does not match any <symbol id="…"> in this file. From
+  static analysis the reference is dangling and the SVG carries no
+  accessible name.
+  Expect: rule media/svg-accessible-name fires once with reason text
+  pointing at the dangling reference.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <a href="/cart" class="icon-link">
+      <svg width="24" height="24">
+        <use href="#cart-icon"/>
+      </svg>
+    </a>
+  </body>
+</html>

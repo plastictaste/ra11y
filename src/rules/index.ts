@@ -56,6 +56,7 @@ import { rule as textSpacing } from "./layout/text-spacing.ts";
 import { rule as altTextMissing } from "./media/alt-text-missing.ts";
 import { rule as altTextPlaceholder } from "./media/alt-text-placeholder.ts";
 import { rule as autoplaySound } from "./media/autoplay-sound.ts";
+import { rule as svgAccessibleName } from "./media/svg-accessible-name.ts";
 import { rule as videoCaptionsMissing } from "./media/video-captions-missing.ts";
 import { rule as animationFromInteractions } from "./motion/animation-from-interactions.ts";
 import { rule as pauseStopHide } from "./motion/pause-stop-hide.ts";
@@ -160,6 +161,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   skipLink,
   stretchedLinkMultipleInContainer,
   submitNotButtonOrInput,
+  svgAccessibleName,
   svgTitleMissing,
   tabindexPositive,
   tableCaptionMissing,
@@ -245,6 +247,7 @@ export {
   skipLink,
   stretchedLinkMultipleInContainer,
   submitNotButtonOrInput,
+  svgAccessibleName,
   svgTitleMissing,
   tabindexPositive,
   tableCaptionMissing,

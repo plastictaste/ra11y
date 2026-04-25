@@ -1,0 +1,17 @@
+<!--
+  Bad: bare inline <svg> inside an unnamed <button>. No <title>, no
+  role="img" + aria-label, no <use> reference. The button has no
+  visible text and no aria-label, so there is no accessible-name
+  pathway at all.
+  Expect: rule media/svg-accessible-name fires once on the <svg>.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <button>
+      <svg viewBox="0 0 24 24" width="20" height="20">
+        <path d="M21 21l-4.35-4.35M5 11a6 6 0 1 1 12 0 6 6 0 0 1-12 0z"/>
+      </svg>
+    </button>
+  </body>
+</html>
