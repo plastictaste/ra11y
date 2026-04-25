@@ -31,16 +31,42 @@
  */
 
 import { defineRule } from "../../api/plugin.ts";
-import {
-  findHtmlElementsByTag,
-  findJsxElementsByTag,
-  getHtmlAttribute,
-  getJsxAttribute,
-} from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
+import { getHtmlAttribute, getJsxAttribute } from "../../engine/ast-helpers.ts";
+import type {
+  HtmlDocument,
+  HtmlNode,
+  JsxElement,
+  TsxModule,
+} from "../../types/ast.ts";
 import { isDomOriginExtension } from "../../utils/path.ts";
 
 type PlaceholderKind = "bare-fragment" | "empty";
+
+/**
+ * Pagination-context class tokens. When any ancestor `class` /
+ * `className` attribute contains one of these (case-insensitive,
+ * substring match on space-split tokens), the placeholder anchor is
+ * almost certainly a pagination control — Bootstrap, Tailwind,
+ * Foundation, and bespoke designs all converge on these names. The
+ * fix path then branches in the suggestion text: for action-only
+ * controls (e.g. dynamic page-jump buttons firing client-side scripts)
+ * → `<button type="button">`; for navigation controls → supply a real
+ * href pointing at the target page.
+ *
+ * The substring match is intentional: `page-link` is the Bootstrap
+ * leaf class, `pagination` / `paginator` are the wrapper-list classes,
+ * `pager` is older Bootstrap 3 / common bespoke. A class like
+ * `mypagination` will match — that's fine: a class containing the
+ * word "pagination" is a pagination context by every reasonable read,
+ * and the suggestion text is honest in that frame too.
+ */
+const PAGINATION_CLASS_TOKENS = [
+  "pagination",
+  "paginator",
+  "pager",
+  "page-link",
+  "page-item",
+] as const;
 
 /**
  * Classifies a raw href string as `bare-fragment` (`"#"`), `empty` (`""`),
@@ -108,6 +134,22 @@ export const rule = defineRule({
   },
 });
 
+/**
+ * `true` when any space-split token of `className` matches a known
+ * pagination-context class (case-insensitive substring). Returns the
+ * matched token so callers can echo it in suggestion text — the agent
+ * sees `pagination` / `pager` / `page-link` directly rather than a
+ * boolean. Returns `null` when no token matches.
+ */
+function matchPaginationClass(className: string | null): string | null {
+  if (!className) return null;
+  const lowered = className.toLowerCase();
+  for (const token of PAGINATION_CLASS_TOKENS) {
+    if (lowered.includes(token)) return token;
+  }
+  return null;
+}
+
 type Emit = (v: {
   severity: "error" | "warning" | "info";
   location: { filePath: string; line: number; column: number };
@@ -116,30 +158,72 @@ type Emit = (v: {
 }) => void;
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
-  for (const anchor of findHtmlElementsByTag(doc, "a")) {
-    const hrefValue = getHtmlAttribute(anchor, "href");
-    const kind = classifyPlaceholder(hrefValue);
-    if (!kind) continue;
-    emit(buildViolation(anchor.loc.start, kind));
+  walkHtmlWithPaginationContext(doc.children, null, emit);
+}
+
+function walkHtmlWithPaginationContext(
+  nodes: readonly HtmlNode[],
+  paginationToken: string | null,
+  emit: Emit,
+): void {
+  for (const child of nodes) {
+    if (child.kind !== "HtmlElement") continue;
+    const ownToken = matchPaginationClass(getHtmlAttribute(child, "class"));
+    const inheritedToken = paginationToken ?? ownToken;
+    if (child.tagName.toLowerCase() === "a") {
+      const hrefValue = getHtmlAttribute(child, "href");
+      const kind = classifyPlaceholder(hrefValue);
+      if (kind) emit(buildViolation(child.loc.start, kind, inheritedToken));
+    }
+    walkHtmlWithPaginationContext(child.children, inheritedToken, emit);
   }
 }
 
 function checkJsx(module: TsxModule, emit: Emit): void {
-  for (const anchor of findJsxElementsByTag(module, "a")) {
-    const attr = getJsxAttribute(anchor, "href");
-    if (!attr?.value) continue;
+  for (const root of module.jsxElements) {
+    walkJsxWithPaginationContext(root, null, emit);
+  }
+}
+
+function walkJsxWithPaginationContext(
+  element: JsxElement,
+  paginationToken: string | null,
+  emit: Emit,
+): void {
+  // `className` is JSX's spelling; `class` is a valid alternate (some
+  // libraries forward it). Either one is enough to mark context.
+  const classAttr =
+    getJsxAttributeStringValue(element, "className") ??
+    getJsxAttributeStringValue(element, "class");
+  const ownToken = matchPaginationClass(classAttr);
+  const inheritedToken = paginationToken ?? ownToken;
+  if (element.tagName === "a") {
+    const hrefAttr = getJsxAttribute(element, "href");
+    if (hrefAttr?.value && hrefAttr.value.kind === "StringLiteral") {
+      const kind = classifyPlaceholder(hrefAttr.value.value);
+      if (kind) emit(buildViolation(element.loc.start, kind, inheritedToken));
+    }
     // Expression-form `href={…}` is opaque at static time — surface only
     // deterministic evidence per the AI-first consumer model.
-    if (attr.value.kind !== "StringLiteral") continue;
-    const kind = classifyPlaceholder(attr.value.value);
-    if (!kind) continue;
-    emit(buildViolation(anchor.loc.start, kind));
   }
+  for (const child of element.children) {
+    if (child.kind === "JsxElement") {
+      walkJsxWithPaginationContext(child, inheritedToken, emit);
+    }
+  }
+}
+
+function getJsxAttributeStringValue(element: JsxElement, name: string): string | null {
+  const attr = getJsxAttribute(element, name);
+  if (!attr?.value) return null;
+  if (attr.value.kind !== "StringLiteral") return null;
+  return attr.value.value;
 }
 
 function buildViolation(
   loc: { line: number; column: number },
   kind: PlaceholderKind,
+  paginationToken: string | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
@@ -151,13 +235,27 @@ function buildViolation(
       severity: "error",
       location: { filePath: "", line: loc.line, column: loc.column },
       message: `<a href=""> has an empty href — per HTML spec it resolves to the current page URL, so activating the link reloads the page rather than navigating. The anchor announces as a link but its destination is broken.`,
-      suggestion: `change \`<a href="">\` to either \`<a href="/real/path">\` (if it should navigate — empty href reloads the current page, almost never the author's intent) or \`<button type="button">\` (if the control triggers an action with a click handler attached elsewhere). Common case: "Forgot password?" links that the author meant to wire up later — supply the real route.`,
+      suggestion: paginationSuggestionEmpty(paginationToken),
     };
   }
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<a href="#"> has no fragment target — the anchor announces as a link but navigates nowhere.`,
-    suggestion: `change \`<a href="#">\` to \`<button type="button">\` — a bare \`#\` href announces as a link but navigates nowhere. If the control triggers an action, a <button> is the correct role. If it should navigate to an in-page section, use \`href="#section-id"\` pointing at an actual id on the page.`,
+    suggestion: paginationSuggestionBareFragment(paginationToken),
   };
+}
+
+function paginationSuggestionBareFragment(paginationToken: string | null): string {
+  if (paginationToken) {
+    return `this anchor sits inside a pagination context (ancestor class contains \`${paginationToken}\`) — the underlying issue is the placeholder \`#\` href, not the accessible name. Two fixes by behavior: (a) if the control performs client-side page navigation (loads page N via JS, no URL change), use \`<button type="button">\` so the role matches the action — buttons announce as buttons and don't promise navigation; (b) if it should navigate to a real page, replace \`#\` with the destination URL (e.g. \`href="?page=2"\` or \`href="/posts/page/2"\`). Don't paper over with \`aria-label\` — a labelled link that goes nowhere is still a link that goes nowhere.`;
+  }
+  return `change \`<a href="#">\` to \`<button type="button">\` — a bare \`#\` href announces as a link but navigates nowhere. If the control triggers an action, a <button> is the correct role. If it should navigate to an in-page section, use \`href="#section-id"\` pointing at an actual id on the page.`;
+}
+
+function paginationSuggestionEmpty(paginationToken: string | null): string {
+  if (paginationToken) {
+    return `this anchor sits inside a pagination context (ancestor class contains \`${paginationToken}\`) — empty href reloads the current page rather than navigating, which is almost never what a pagination control should do. Two fixes by behavior: (a) if the control performs client-side page navigation, use \`<button type="button">\` so the role matches the action; (b) if it should navigate to a real page, replace the empty href with the destination URL (e.g. \`href="?page=2"\` or \`href="/posts/page/2"\`). Don't paper over with \`aria-label\` — naming a link that reloads the page is still a link that reloads the page.`;
+  }
+  return `change \`<a href="">\` to either \`<a href="/real/path">\` (if it should navigate — empty href reloads the current page, almost never the author's intent) or \`<button type="button">\` (if the control triggers an action with a click handler attached elsewhere). Common case: "Forgot password?" links that the author meant to wire up later — supply the real route.`;
 }

@@ -193,6 +193,105 @@ describe("rule navigation/href-empty-fragment", () => {
     });
   });
 
+  describe("pagination-context fix suggestion", () => {
+    // The current `suggest_fix` output, before this branch, pointed at
+    // accessible-name fixes (aria-label, visible text) when a pagination
+    // anchor was emitted. The actual issue is the placeholder href, not
+    // the accessible name — labelling a link that goes nowhere is still a
+    // link that goes nowhere. When an ancestor's class contains a known
+    // pagination token (`pagination`, `pager`, `page-link`, `page-item`,
+    // `paginator`), the suggestion branches: <button type="button"> for
+    // action-only behaviors, real href for navigation behaviors.
+
+    it('HTML: bare # inside <ul class="pagination"> branches the suggestion', () => {
+      const violations = runRule(
+        rule,
+        `<ul class="pagination"><li><a href="#">Next</a></li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("pagination context");
+      expect(sugg).toContain("pagination");
+      expect(sugg).toContain(`<button type="button"`);
+      // The fix path also names supplying a real href as the alternative.
+      expect(sugg).toMatch(/href=/);
+      // Does NOT recommend aria-label as the fix — the underlying issue
+      // is the placeholder href, not the accessible name. (The reason
+      // text explicitly tells the agent not to paper over with aria-label.)
+      expect(sugg).toContain("Don't paper over with `aria-label`");
+    });
+
+    it('HTML: empty href inside <nav class="pager"> branches the suggestion', () => {
+      const violations = runRule(
+        rule,
+        `<nav class="pager"><a href="">Previous</a></nav>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("pagination context");
+      expect(sugg).toContain("pager");
+      expect(sugg).toContain(`<button type="button"`);
+    });
+
+    it('HTML: bare # on an <a class="page-link"> directly (token on the anchor itself) branches', () => {
+      const violations = runRule(rule, `<a class="page-link" href="#">2</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("pagination context");
+      expect(sugg).toContain("page-link");
+    });
+
+    it("HTML: bare # outside any pagination context keeps the original generic suggestion", () => {
+      const violations = runRule(
+        rule,
+        `<div class="content"><a href="#">x</a></div>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      // Generic suggestion mentions section-id (in-page nav) — pagination
+      // suggestion does not, so this asserts we did NOT branch.
+      expect(sugg).toContain("section-id");
+      expect(sugg).not.toContain("pagination context");
+    });
+
+    it("JSX: bare # inside className=pagination branches the suggestion", () => {
+      const violations = runRule(
+        rule,
+        `function F(){return <ul className="pagination"><li><a href="#">Next</a></li></ul>}`,
+        { filePath: "Page.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("pagination context");
+      expect(sugg).toContain(`<button type="button"`);
+    });
+
+    it("HTML: case-insensitive — class=Pagination still branches", () => {
+      const violations = runRule(
+        rule,
+        `<ul class="Pagination"><a href="#">x</a></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("pagination context");
+    });
+
+    it("HTML: deeper nesting — pagination class on grandparent still inherits", () => {
+      const violations = runRule(
+        rule,
+        `<nav class="pagination"><ul><li><span><a href="#">x</a></span></li></ul></nav>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("pagination context");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 + wcag22:2.1.1 and the 2.1 equivalents", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");
