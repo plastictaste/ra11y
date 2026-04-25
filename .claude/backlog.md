@@ -31,7 +31,7 @@ Owner: `release-captain` + `doc-writer`. Blocks nothing; can ship independently.
 
 ### v0.1.0
 
-- [ ] asciinema demo recording embedded in README (needs user: `brew install asciinema`, then interactive `asciinema rec docs/demo.cast` of a real terminal session scanning a sample project; can't be automated inside /continue because it requires a TTY)
+- [ ] Demo recording for README — switched from asciinema (`.cast`, doesn't render inline on github.com or npm.js) to charmbracelet/vhs (declarative `.tape` script → reproducible GIF; 2026-04-25 research turn). Two-part: (a) `/continue` agent scaffolds `docs/demo.tape` — declarative VHS script: `Set FontSize 18`, `Type "ra11y scan"`, `Sleep 2s`, `Enter`, `Output docs/demo.gif` — and a `.github/workflows/vhs.yml` using `charmbracelet/vhs-action` so the GIF regenerates on tape/CLI changes. (b) User runs once: `brew install vhs` (pulls `ttyd`+`ffmpeg`), `vhs docs/demo.tape`, commits `docs/demo.gif`, embeds `![ra11y demo](docs/demo.gif)` in README. CI then keeps the GIF fresh — no re-record loop needed when output drifts. Tape file IS automatable inside /continue; only the first render requires user-side install.
 - [x] Version bump confirmation (package.json already reads `0.1.0`; verify + commit a release-prep chore if anything else drifts) (a0a805b — README status note, terminal version example, config.md stale forward-ref, writing-a-rule.md afterProject note; no drift in CHANGELOG date, llms.txt absent)
 - [ ] Tag `v0.1.0` and push (triggers `release.yml` → npm publish with provenance)
 - [ ] GitHub release with changelog excerpt
