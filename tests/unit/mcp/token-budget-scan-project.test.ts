@@ -293,7 +293,7 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
         "vendor_occurrences",
         "message",
         "other",
-      ]).toContain(details?.dominantContributor);
+      ]).toContain(details?.dominantContributor ?? "");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
