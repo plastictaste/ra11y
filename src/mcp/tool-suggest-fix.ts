@@ -5,6 +5,7 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
+import { hasTailwindSignal } from "./analysis-coverage-hints.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
@@ -131,6 +132,17 @@ export const suggestFixTool: McpTool = {
         analysisCoverage: undefined,
         filesByExtension: undefined,
       }).warnings ?? [];
+    // V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: probe the parsed-file set
+    // for Tailwind utility usage. Reuses the same `hasTailwindSignal`
+    // detector that the `tailwind_detected_css_undercounted` warning
+    // dispatches on, so suggest_fix's "is this a Tailwind project?"
+    // judgment matches scan_project's. With only the violation file
+    // in scope (the suggest_fix scan is single-file), a CSS target
+    // resolves to `false` — the parsed-file set carries no JSX
+    // evidence — and the prose builder strips the rule's Tailwind
+    // escape-hatch sentence so vanilla CSS repos don't read
+    // context-blind advice.
+    const tailwindDetected = hasTailwindSignal([parsed]);
     const payload = buildSuggestFixPayload({
       ruleId,
       line,
@@ -138,6 +150,7 @@ export const suggestFixTool: McpTool = {
       sourceContext,
       source: parsed.source,
       filePath,
+      tailwindDetected,
       ...(scanWarnings.length > 0 ? { warnings: scanWarnings } : {}),
     });
     return textResult(payload as Record<string, unknown>);

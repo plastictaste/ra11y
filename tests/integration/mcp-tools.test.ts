@@ -350,21 +350,27 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(["high", "medium", "low"]).toContain(fix.confidence);
   });
 
-  it("suggest_fix carries verifyCommand + verifyCommandStructured pointing at scan_file (Q2-VERIFYCMD)", async () => {
-    // Every suggest_fix response — edit, guidance, or none — should
-    // carry the prose + structured verify pair. The structured form
-    // names scan_file (not scan_project) so the re-check is narrow
-    // and deterministic, with ruleId included so the agent can
-    // post-filter the re-scan's findings to the rule it just fixed.
+  it("suggest_fix carries verifyCommand + verifyCommandStructured pointing at scan_file on a fix-bearing line (Q2-VERIFYCMD)", async () => {
+    // Suggest_fix responses on a real violation line — `kind: "edit"`
+    // or `kind: "guidance"` — carry the prose + structured verify
+    // pair. The structured form names scan_file (not scan_project) so
+    // the re-check is narrow and deterministic, with `verifyRuleId` as
+    // a sibling of `args` so the agent can post-filter the re-scan's
+    // findings to the rule it just fixed. The `kind: "none"` lane
+    // omits the pair (V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE) — covered
+    // by the sibling test below.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "suggest_fix", {
         ruleId: "media/alt-text-missing",
         file: BAD_ALT_FILE,
-        line: 1,
+        // Line 5 is the `<img>` in tests/fixtures/bad/alt-text-missing/
+        // img-no-alt.html — a real violation site.
+        line: 5,
       }),
     ]);
     const fix = bodyOf(responses[1]) as {
+      kind: string;
       verifyCommand: string;
       verifyCommandStructured: {
         tool: string;
@@ -372,12 +378,35 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         verifyRuleId: string;
       };
     };
+    expect(fix.kind).not.toBe("none");
     expect(typeof fix.verifyCommand).toBe("string");
     expect(fix.verifyCommand).toContain("scan_file");
     expect(fix.verifyCommandStructured.tool).toBe("scan_file");
     expect(fix.verifyCommandStructured.args.path).toBe(BAD_ALT_FILE);
     expect(fix.verifyCommandStructured.verifyRuleId).toBe("media/alt-text-missing");
     expect(fix.verifyCommandStructured.args).not.toHaveProperty("ruleId");
+  });
+
+  it("suggest_fix OMITS verifyCommand on kind: 'none' (V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE)", async () => {
+    // When no violation exists at the cited line, the response is
+    // `kind: "none"` and OMITS `verifyCommand` +
+    // `verifyCommandStructured`. A populated verify pair next to "no
+    // finding here" is indistinguishable from "you already fixed it
+    // and verified" — the omission keeps the response honest
+    // (CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "suggest_fix", {
+        ruleId: "media/alt-text-missing",
+        file: BAD_ALT_FILE,
+        // Line 1 is `<!DOCTYPE html>` — no violation.
+        line: 1,
+      }),
+    ]);
+    const fix = bodyOf(responses[1]) as Record<string, unknown>;
+    expect(fix["kind"]).toBe("none");
+    expect(fix).not.toHaveProperty("verifyCommand");
+    expect(fix).not.toHaveProperty("verifyCommandStructured");
   });
 
   it("suggest_fix with an unknown rule returns a tool-level error envelope with code rule-not-found", async () => {

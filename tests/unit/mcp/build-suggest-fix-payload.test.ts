@@ -1,16 +1,17 @@
 /**
- * Tests for `buildSuggestFixPayload` — specifically Q2-VERIFYCMD, which
- * adds `verifyCommand` (prose) + `verifyCommandStructured` ({ tool:
- * "scan_file", args: { file, ruleId } }) to every response, regardless
- * of `kind`. Both fields are always populated — no conditional-spread —
- * because a suggest_fix response without a re-verify is never
- * meaningful.
+ * Tests for `buildSuggestFixPayload` — `verifyCommand` (prose) +
+ * `verifyCommandStructured` ({ tool: "scan_file", args: { path },
+ * verifyRuleId }) plumbing, plus the V1-SUGGEST-FIX-TAILWIND-HINT-
+ * SCOPED prose-strip behavior. The verify pair is present-when-
+ * meaningful: `kind: "edit"` and `kind: "guidance"` carry it; `kind:
+ * "none"` OMITS it (V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE — a populated
+ * verify on a "no finding here" response is indistinguishable from
+ * "you already fixed it and verified").
  *
  * Other shape concerns around this function (mechanical edits, widened
  * anchors, caveats, snippet omission) are covered by
  * tests/unit/mcp/unique-anchor.test.ts and the integration suite in
- * tests/integration/mcp-tools.test.ts. This file focuses on the
- * verifyCommand fields.
+ * tests/integration/mcp-tools.test.ts.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -182,18 +183,25 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'guidance'", () => {
 });
 
 describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
-  it("emits both fields even when no violation matches at the requested line", () => {
-    // `kind: "none"` is still a meaningful response — the agent may
-    // want to re-verify the file after inspecting other lines or
-    // after an unrelated edit. The verify hint is always honest.
+  // V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE: `kind: "none"` OMITS the
+  // verify pair. A populated `verifyCommand` next to "no violation
+  // found" reads as "you already fixed it and verified" —
+  // indistinguishable from "the finding never existed at this
+  // location." Present-when-meaningful (CLAUDE.md §1 "Ambiguous field
+  // shapes are dishonest") — the verify hint only belongs on the
+  // lanes that actually applied a fix.
+  it("OMITS verifyCommand + verifyCommandStructured when no violation matches at the requested line", () => {
     const payload = buildSuggestFixPayload(baseArgs(undefined));
     expect(payload["kind"]).toBe("none");
-    expect(typeof payload["verifyCommand"]).toBe("string");
-    expect(payload["verifyCommandStructured"]).toEqual({
-      tool: "scan_file",
-      args: { path: FILE_PATH },
-      verifyRuleId: RULE_ID,
-    });
+    expect(payload).not.toHaveProperty("verifyCommand");
+    expect(payload).not.toHaveProperty("verifyCommandStructured");
+  });
+
+  it("still emits the prose explanation + low-confidence header on kind: 'none' (omission is scoped to verify only)", () => {
+    const payload = buildSuggestFixPayload(baseArgs(undefined));
+    expect(payload["kind"]).toBe("none");
+    expect(typeof payload["explanation"]).toBe("string");
+    expect(payload["confidence"]).toBe("low");
   });
 });
 
@@ -636,5 +644,115 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple (Q6-SUGGEST-FIX-
     const primary = payload["primary"] as Record<string, unknown>;
     expect(primary).not.toHaveProperty("meta");
     expect(primary).not.toHaveProperty("mechanicalInPrinciple");
+  });
+});
+
+describe("buildSuggestFixPayload — Tailwind hint scoping (V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED)", () => {
+  // Doctrine: context-blind advice is dishonest (ai-first-consumer.md).
+  // The `focus/outline-visible` rule appends a Tailwind escape-hatch
+  // sentence to its `suggestion` text on scoped selectors. On a vanilla
+  // CSS repo (no Tailwind detected by the suggest_fix scan) that
+  // sentence reads as advice the agent can't act on; the prose builder
+  // strips the trailing block before emitting `explanation`. When
+  // Tailwind IS detected, the hint is real context for the agent and
+  // stays intact.
+  const TAILWIND_SUGGESTION =
+    "Add a visible focus indicator to '.btn:focus'. Replace `outline: none` with a custom outline. " +
+    "If this element uses Tailwind's `focus-visible:ring-*` or `focus-visible:outline-*` classes on the " +
+    "component, the focus indicator is already provided — suppress this note by adding " +
+    "`/* ra11y-disable-next-line focus/outline-visible */` on the line above the CSS rule. " +
+    "Criterion-level pragmas (`wcag22:2.4.7`) work too.";
+  const STRIPPED_PREFIX =
+    "Add a visible focus indicator to '.btn:focus'. Replace `outline: none` with a custom outline.";
+
+  function outlineViolation(overrides?: Partial<Violation>): Violation {
+    return {
+      ruleId: "focus/outline-visible",
+      fixClass: "verify-in-source",
+      criteria: ["wcag22:2.4.7"],
+      severity: "error",
+      location: { filePath: "src/styles.css", line: 3, column: 1 },
+      message: "'.btn:focus' removes the focus outline without a replacement indicator.",
+      suggestion: TAILWIND_SUGGESTION,
+      findingId: "fff111",
+      groupKey: "ggg222",
+      ...overrides,
+    };
+  }
+
+  it("no-fixPaths guidance: STRIPS the Tailwind hint when tailwindDetected is false", () => {
+    const payload = buildSuggestFixPayload(
+      baseArgs(outlineViolation(), { tailwindDetected: false }),
+    );
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).toBe(STRIPPED_PREFIX);
+    expect(primary.explanation).not.toContain("Tailwind");
+    expect(primary.explanation).not.toContain("focus-visible:ring");
+  });
+
+  it("no-fixPaths guidance: STRIPS the Tailwind hint when tailwindDetected is undefined (default)", () => {
+    // The `tailwindDetected` field is optional; an undefined value
+    // means "no signal" and the strip applies. Only an explicit `true`
+    // keeps the hint — the field is honest about meaning.
+    const payload = buildSuggestFixPayload(baseArgs(outlineViolation()));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).not.toContain("Tailwind");
+  });
+
+  it("no-fixPaths guidance: KEEPS the Tailwind hint when tailwindDetected is true", () => {
+    const payload = buildSuggestFixPayload(
+      baseArgs(outlineViolation(), { tailwindDetected: true }),
+    );
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).toContain("Tailwind");
+    expect(primary.explanation).toContain("focus-visible:ring");
+    expect(primary.explanation).toBe(TAILWIND_SUGGESTION);
+  });
+
+  it("no-op when the suggestion contains no Tailwind marker (other rules unaffected)", () => {
+    // `tailwindDetected: false` should never alter a suggestion from a
+    // different rule. The strip is a substring search anchored on the
+    // exact rule-emitted prefix; absence of the marker is a no-op.
+    const otherSuggestion = "Add an aria-label that names the action this button performs.";
+    const match = outlineViolation({
+      ruleId: "semantics/button-name-missing",
+      suggestion: otherSuggestion,
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: false }));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).toBe(otherSuggestion);
+  });
+
+  it("fixPaths-guidance lane: STRIPS the Tailwind hint when tailwindDetected is false", () => {
+    // Same suggestion-stripping behavior on the fixpaths-guidance lane
+    // (a rule with `fixPaths` but no mechanical edit). The strip
+    // applies to `match.suggestion ?? match.message` exactly once.
+    const match = outlineViolation({
+      fixPaths: {
+        primary: { label: "Add a visible focus indicator" },
+        alternatives: [],
+      },
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: false }));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).not.toContain("Tailwind");
+  });
+
+  it("fixPaths-guidance lane: KEEPS the Tailwind hint when tailwindDetected is true", () => {
+    const match = outlineViolation({
+      fixPaths: {
+        primary: { label: "Add a visible focus indicator" },
+        alternatives: [],
+      },
+    });
+    const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: true }));
+    expect(payload["kind"]).toBe("guidance");
+    const primary = payload["primary"] as { explanation: string };
+    expect(primary.explanation).toContain("Tailwind");
   });
 });

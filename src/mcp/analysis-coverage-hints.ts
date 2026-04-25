@@ -58,8 +58,16 @@ export function buildCssThinHint(files: readonly ParsedFile[], css: number, mark
  * enough to avoid false positives on class names like "site-header
  * active" and common enough to catch any real Tailwind project on the
  * first JSX file we look at.
+ *
+ * Exported so `suggest_fix` can reuse the same detector when deciding
+ * whether to surface Tailwind-specific guidance hints in its
+ * `kind: "guidance"` explanation prose
+ * (V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED). When the suggest_fix scan only
+ * parses a single CSS file, this returns `false` — there is no JSX in
+ * scope to evidence Tailwind usage — and the consumer strips the
+ * Tailwind escape-hatch sentence from the rule-emitted suggestion.
  */
-function hasTailwindSignal(files: readonly ParsedFile[]): boolean {
+export function hasTailwindSignal(files: readonly ParsedFile[]): boolean {
   for (const f of files) {
     if (f.ast.language !== "tsx" && f.ast.language !== "jsx") continue;
     if (fileHasTailwindClass(f.ast.root as TsxModule)) return true;

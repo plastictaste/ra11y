@@ -50,6 +50,34 @@ export interface BuildFixPathsOutcomeInputs {
   readonly mechanicalInPrincipleField: {
     readonly meta?: { readonly mechanicalInPrinciple: true };
   };
+  /**
+   * V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: forwarded verbatim from the
+   * caller (`buildSuggestFixPayload`). `false` / `undefined` triggers
+   * the strip of the rule-emitted Tailwind escape-hatch sentence from
+   * `explanation` (`focus/outline-visible` is the current sole emitter
+   * of that sentence); `true` keeps the hint intact for a Tailwind
+   * project. Local to suggest_fix's guidance-composition path —
+   * other formatters consume `match.suggestion` verbatim.
+   */
+  readonly tailwindDetected?: boolean;
+}
+
+/**
+ * See {@link tool-suggest-fix-internals.TAILWIND_HINT_PREFIX}. Local
+ * copy keeps the strip helper independent of the parent module so the
+ * `kind: "edit"` and `kind: "guidance"` lanes both apply the same
+ * V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED rule without a circular import.
+ */
+const TAILWIND_HINT_PREFIX = " If this element uses Tailwind's";
+
+function stripContextBlindTailwindHint(
+  text: string,
+  tailwindDetected: boolean | undefined,
+): string {
+  if (tailwindDetected === true) return text;
+  const index = text.indexOf(TAILWIND_HINT_PREFIX);
+  if (index === -1) return text;
+  return text.slice(0, index).trimEnd();
 }
 
 export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record<string, unknown> {
@@ -63,6 +91,7 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
     verify,
     warningsField,
     mechanicalInPrincipleField,
+    tailwindDetected,
   } = inputs;
   const fixPaths = match.fixPaths;
   if (fixPaths === undefined) {
@@ -109,7 +138,15 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
   if (anyPoisonDropped) caveatParts.push(POISONED_NEWTEXT_CAVEAT);
   if (widened?.caveat) caveatParts.push(widened.caveat);
   const caveatField = caveatParts.length > 0 ? { caveat: caveatParts.join(" ") } : {};
-  const explanation = match.suggestion ?? match.message;
+  // V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: strip the rule-emitted
+  // Tailwind escape-hatch sentence from the explanation when no
+  // Tailwind signal was detected in the suggest_fix scan. Applies to
+  // both the mechanical-edit lane and the guidance lane below since
+  // both surface this same `explanation` to the agent.
+  const explanation = stripContextBlindTailwindHint(
+    match.suggestion ?? match.message,
+    tailwindDetected,
+  );
   if (mechanical) {
     // Mechanical-edit lane: `primary` stays the structured `FixPath`
     // (carrying `edit` / optional `editCandidate`) so agents can apply
