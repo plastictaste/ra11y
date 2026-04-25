@@ -8,6 +8,7 @@
 
 import { isAbsolute, resolve } from "node:path";
 import { readAttestations } from "../config/attestation-store.ts";
+import { type RuleAlias, resolveRuleId } from "../engine/rule-aliases.ts";
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
 import {
   type DiscoveryDiagnostics,
@@ -756,8 +757,37 @@ export { applyRuleSettings };
 
 // ─── Registry lookups ───────────────────────────────────────────────────────
 
+/**
+ * Rule lookup for MCP tools. Resolves the input through the rule-ID
+ * alias table (V1-INFRA-RULE-ID-ALIAS-TABLE) before consulting the
+ * registry so explicit callers (e.g. `explain_rule`, `suggest_fix`,
+ * `suppress`) accept the old ID of a renamed rule for the duration of
+ * its alias window. The return shape is unchanged; tools that need to
+ * surface the `deprecated_rule_id:<old>:<new>` warning call
+ * {@link findRuleWithAlias} instead.
+ */
 export function findRule(ruleId: string, session: McpSession): Rule | undefined {
-  return session.registry.findRule(ruleId);
+  const { resolved } = resolveRuleId(ruleId);
+  return session.registry.findRule(resolved);
+}
+
+/**
+ * Alias-aware companion to {@link findRule}. Returns the resolved rule
+ * plus the alias record when the input was an old ID the table
+ * rewrote. Callers surfaced on response envelopes (`explain_rule`,
+ * `suggest_fix`, `suppress`) use this form so they can attach the
+ * `deprecated_rule_id:<from>:<to>` warning when the rewrite fires.
+ */
+export function findRuleWithAlias(
+  ruleId: string,
+  session: McpSession,
+): { readonly rule?: Rule; readonly deprecated?: RuleAlias } {
+  const resolution = resolveRuleId(ruleId);
+  const rule = session.registry.findRule(resolution.resolved);
+  return {
+    ...(rule === undefined ? {} : { rule }),
+    ...(resolution.deprecated === undefined ? {} : { deprecated: resolution.deprecated }),
+  };
 }
 
 export function findStandard(standardId: string, session: McpSession): Standard | undefined {

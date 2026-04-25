@@ -190,7 +190,9 @@ Enforced in CI by `scripts/bench.ts`; history in `docs/performance.md`.
 
 - **Patch** (0.1.x): bug fixes, refactors, docs, tightening detection on an existing rule.
 - **Minor** (0.x.0): new rules, standards, formatters, CLI flags, plugin API additions, widening or loosening a rule's detection.
-- **Major** (x.0.0): removing or renaming rules, breaking `Rule`/`Standard`/`Config` shapes, CLI flag removal, exit code semantics change. (No rule-ID alias mechanism exists at runtime — any rename is major. If we later add one, rule renames behind the alias become minor.)
+- **Major** (x.0.0): removing or renaming rules without the alias table, breaking `Rule`/`Standard`/`Config` shapes, CLI flag removal, exit code semantics change.
+
+Rule renames go through `src/engine/rule-aliases.ts` — add the entry `{ from, to, deprecatedSince, removeIn }` in the same commit that lands the rename. Under an active alias, the old ID still resolves in suppression pragmas, `ra11y.config.ts` `rules` keys, and MCP lookups; every resolution emits the structured `deprecated_rule_id:<old>:<new>` warning so agents can offer to rewrite. A rename behind the alias is **minor** (0.x.0). Dropping the alias entry at the declared `removeIn` version is the first moment the old ID stops being accepted — that commit is a **major** bump.
 
 v0.x is rapid iteration — treat the plugin API as semi-stable until v1.0.
 

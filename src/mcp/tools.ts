@@ -10,6 +10,7 @@
  * state. No MCP-specific logic leaks into `src/engine/`.
  */
 
+import { RULE_ALIASES } from "../engine/rule-aliases.ts";
 import { buildListRulesNextStep } from "./list-rules-next-step.ts";
 import { resolveActiveRules } from "./rules-evaluated.ts";
 import type { McpSession } from "./session.ts";
@@ -176,6 +177,42 @@ const listRulesTool: McpTool = {
       rules = rules.filter((r) => r.satisfies.some((s) => s.startsWith(prefix)));
     }
 
+    // V1-INFRA-RULE-ID-ALIAS-TABLE: surface active rule-ID aliases as
+    // additional entries with `deprecated: true` + `replacedBy` so
+    // agents enumerating the catalog see both the old and new IDs
+    // without a separate `explain_rule` call. Each alias points at its
+    // `to` target's metadata (description, severity, satisfies) so the
+    // old entry stays navigable — the user may already have
+    // `keyboard/handler-missing` in their pragmas and needs to know it
+    // still works. The standard filter applies to the aliased-to
+    // rule's `satisfies`, matching the behavior above so agents
+    // scoping by framework see only relevant aliases.
+    const aliasEntries = RULE_ALIASES.flatMap((alias) => {
+      const target = session.registry.findRule(alias.to);
+      if (target === undefined) return [];
+      if (standardFilter && !target.satisfies.some((s) => s.startsWith(`${standardFilter}:`))) {
+        return [];
+      }
+      return [
+        {
+          id: alias.from,
+          description: target.docs.description,
+          severity: target.severity,
+          satisfies: [...target.satisfies],
+          deprecated: true as const,
+          replacedBy: alias.to,
+          deprecatedSince: alias.deprecatedSince,
+          removeIn: alias.removeIn,
+        },
+      ];
+    });
+    const ruleEntries = rules.map((r) => ({
+      id: r.id,
+      description: r.docs.description,
+      severity: r.severity,
+      satisfies: [...r.satisfies],
+    }));
+
     // Envelope parity with the other onboarding tools (propose_config,
     // propose_baseline, list_suppressions, detect_native_wrappers):
     // `meta` carries deterministic scan-confidence telemetry, `nextStep`
@@ -185,7 +222,11 @@ const listRulesTool: McpTool = {
     // config load — so there's no delta to collapse across repeat
     // calls. The counts + standards list are the honest signal the
     // agent uses to cross-check that the filter resolved as expected
-    // (CLAUDE.md §1 "Verbose meta is signal, not clutter").
+    // (CLAUDE.md §1 "Verbose meta is signal, not clutter"). `matchedOf`
+    // counts canonical rules only — aliases are deprecated pointers,
+    // not independent evaluation targets; conflating them would inflate
+    // the rule-count headline the agent budgets against (CLAUDE.md §1
+    // "Composite headline counts are dishonest").
     const meta: Record<string, unknown> = {
       rulesTotal: total,
       rulesMatched: rules.length,
@@ -199,12 +240,7 @@ const listRulesTool: McpTool = {
       // apart from a filter that actually narrowed the list.
       ...(standardFilter ? { filter: { standard: standardFilter } } : {}),
       matchedOf: { total, matched: rules.length },
-      rules: rules.map((r) => ({
-        id: r.id,
-        description: r.docs.description,
-        severity: r.severity,
-        satisfies: [...r.satisfies],
-      })),
+      rules: [...ruleEntries, ...aliasEntries],
       meta,
       nextStep: nextStep.prose,
       nextStepStructured: nextStep.structured,

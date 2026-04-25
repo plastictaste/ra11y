@@ -43,6 +43,7 @@
  * real data.
  */
 
+import { type RuleAlias, resolveRuleId } from "../engine/rule-aliases.ts";
 import type { LoadedConfig } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
@@ -165,13 +166,57 @@ export function applyRuleSettings(
   rules: readonly Rule[],
   settings: Readonly<Record<string, string>>,
 ): readonly Rule[] {
+  const effective = normalizeRuleSettings(settings).settings;
   return rules
-    .filter((r) => settings[r.id] !== "off")
+    .filter((r) => effective[r.id] !== "off")
     .map((r) => {
-      const override = settings[r.id];
+      const override = effective[r.id];
       if (override === "error" || override === "warning" || override === "info") {
         return { ...r, severity: override };
       }
       return r;
     });
+}
+
+/**
+ * Rewrites a rule-settings map's keys through the rule-ID alias table
+ * (V1-INFRA-RULE-ID-ALIAS-TABLE), returning the canonical-keyed map
+ * plus a list of every alias that fired. Used at the apply-settings
+ * seam so `ra11y.config.ts` `rules: { "<old>": "off" }` and session
+ * `configure({ rules: { ... } })` honor both the old and new ID while
+ * the rename is under alias coverage.
+ *
+ * Precedence when BOTH the old and new keys are set: the new ID's
+ * setting wins (deterministic: the canonical ID is authoritative). The
+ * old-key entry is still translated but folded under the canonical
+ * key, so an agent doing a wholesale rewrite to the new ID doesn't
+ * accidentally flip behavior — the final effective setting tracks
+ * whichever the author intended to land on the canonical surface.
+ *
+ * Exposed so MCP tools that assemble a response after applying
+ * settings can surface `deprecated_rule_id:<old>:<new>` warnings
+ * based on `aliasHits`. `applyRuleSettings` itself discards the list
+ * (its callers don't always have a warnings channel); the rewrite is
+ * still applied unconditionally so the runtime stays honest.
+ */
+export function normalizeRuleSettings(settings: Readonly<Record<string, string>>): {
+  readonly settings: Readonly<Record<string, string>>;
+  readonly aliasHits: readonly RuleAlias[];
+} {
+  const out: Record<string, string> = {};
+  const aliasHits: RuleAlias[] = [];
+  // Two-pass: translate deprecated keys into the canonical form first;
+  // canonical keys override so the "both set" case is deterministic.
+  for (const [key, value] of Object.entries(settings)) {
+    const resolution = resolveRuleId(key);
+    if (resolution.deprecated === undefined) continue;
+    aliasHits.push(resolution.deprecated);
+    out[resolution.resolved] = value;
+  }
+  for (const [key, value] of Object.entries(settings)) {
+    const resolution = resolveRuleId(key);
+    if (resolution.deprecated !== undefined) continue;
+    out[key] = value;
+  }
+  return { settings: out, aliasHits };
 }

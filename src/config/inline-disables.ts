@@ -77,6 +77,8 @@
  * re-parsing the source.
  */
 
+import { type RuleAlias, resolveRuleId } from "../engine/rule-aliases.ts";
+
 const COMMENT_PATTERNS: readonly RegExp[] = [
   // Line comment: // ra11y-…
   /\/\/\s*(ra11y-(?:disable(?:-next-line)?|enable))\s*(.*)$/,
@@ -139,15 +141,31 @@ export function parseInlineDisables(source: string): DisableMap {
  * declaration (including any captured reason text). Consumers that
  * want to surface the audit trail — e.g. `scan_project` meta — can
  * read `declarations` instead of re-parsing the source.
+ *
+ * Rule-ID tokens flow through `resolveRuleId` so an old ID still under
+ * an active alias (V1-INFRA-RULE-ID-ALIAS-TABLE) keeps suppressing
+ * findings on the new ID. The original user-typed token stays in
+ * `declarations[].ruleIds` so audit surfaces show the source verbatim;
+ * only the `disableMap` (which the runtime consults via
+ * `ctx.isDisabled(line, ruleId)`) carries the resolved form. Every
+ * alias hit is recorded on `aliasHits` so `list_suppressions` (and
+ * future scan-family tools that parse pragmas directly) can emit the
+ * structured `deprecated_rule_id:<old>:<new>` warning on their
+ * response envelope. Criterion IDs (`wcag22:…`) and the wildcard
+ * `"*"` pass through unchanged — the resolver matches literally on
+ * the full token so those shapes never collide with rule-alias `from`
+ * values.
  */
 export function parseInlineDisablesDetailed(source: string): {
   readonly disableMap: DisableMap;
   readonly declarations: readonly SuppressionDeclaration[];
+  readonly aliasHits: readonly RuleAlias[];
 } {
   const lines = source.split("\n");
   const disableMap: DisableMap = new Map();
   const declarations: SuppressionDeclaration[] = [];
   const regionStack: Array<{ ruleIds: readonly string[] }> = [];
+  const aliasHits: RuleAlias[] = [];
 
   for (let idx = 0; idx < lines.length; idx += 1) {
     const lineNumber = idx + 1;
@@ -163,7 +181,8 @@ export function parseInlineDisablesDetailed(source: string): {
       ...(pragma.reason === undefined ? {} : { reason: pragma.reason }),
       tag: "ra11y-disable",
     });
-    handlePragma(pragma, lineNumber, regionStack, disableMap);
+    const resolvedPragma = resolvePragmaTokens(pragma, aliasHits);
+    handlePragma(resolvedPragma, lineNumber, regionStack, disableMap);
   }
 
   // JSDoc `@ra11y-intentional` tag — second pass so the source-level
@@ -188,7 +207,27 @@ export function parseInlineDisablesDetailed(source: string): {
       addToLine(disableMap, ln, ["*"]);
     }
   }
-  return { disableMap, declarations };
+  return { disableMap, declarations, aliasHits };
+}
+
+/**
+ * Translates each rule-ID token in `pragma.ruleIds` through
+ * {@link resolveRuleId} and collects any alias records that fired into
+ * the caller-supplied `aliasHits` accumulator. Returns a fresh
+ * `PragmaMatch` with the resolved tokens so the downstream
+ * `handlePragma` inserts the runtime-matching form into the
+ * `disableMap`. Wildcard (`"*"`) and criterion IDs (which the resolver
+ * does not rewrite since the alias table keys only on rule IDs) pass
+ * through unchanged.
+ */
+function resolvePragmaTokens(pragma: PragmaMatch, aliasHits: RuleAlias[]): PragmaMatch {
+  const resolvedIds: string[] = [];
+  for (const token of pragma.ruleIds) {
+    const resolution = resolveRuleId(token);
+    if (resolution.deprecated !== undefined) aliasHits.push(resolution.deprecated);
+    resolvedIds.push(resolution.resolved);
+  }
+  return { ...pragma, ruleIds: resolvedIds };
 }
 
 interface PragmaMatch {

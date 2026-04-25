@@ -4,11 +4,18 @@
  */
 
 import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
+import { formatDeprecatedRuleIdWarning, resolveRuleId } from "../../engine/rule-aliases.ts";
 import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
 export function runExplain(ruleId: string, registry: Registry = createBuiltinRegistry()): ScanExit {
-  const rule = registry.findRule(ruleId);
+  // V1-INFRA-RULE-ID-ALIAS-TABLE: accept the old ID of a renamed rule
+  // and look up the canonical form in the registry. The `deprecated`
+  // record stays visible in stderr so humans reading the CLI output
+  // see the same `deprecated_rule_id:<old>:<new>` signal MCP agents
+  // get on the `warnings[]` channel — no quiet aliasing.
+  const resolution = resolveRuleId(ruleId);
+  const rule = registry.findRule(resolution.resolved);
   if (!rule) {
     return {
       stdout: "",
@@ -21,6 +28,10 @@ export function runExplain(ruleId: string, registry: Registry = createBuiltinReg
   lines.push("");
   lines.push(`  ${rule.id}  [${rule.severity}]`);
   lines.push("");
+  const stderr =
+    resolution.deprecated === undefined
+      ? ""
+      : `ra11y: ${formatDeprecatedRuleIdWarning(resolution.deprecated)} (deprecated since ${resolution.deprecated.deprecatedSince}, removed in ${resolution.deprecated.removeIn})\n`;
   lines.push(`  Satisfies: ${rule.satisfies.join(", ")}`);
   lines.push("");
   lines.push(`  Description`);
@@ -52,7 +63,7 @@ export function runExplain(ruleId: string, registry: Registry = createBuiltinReg
     lines.push("");
   }
 
-  return { stdout: lines.join("\n"), stderr: "", exitCode: ExitCode.OK };
+  return { stdout: lines.join("\n"), stderr, exitCode: ExitCode.OK };
 }
 
 function indent(text: string, spaces: number): string {
