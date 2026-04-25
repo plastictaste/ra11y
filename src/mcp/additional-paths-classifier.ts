@@ -6,27 +6,58 @@
  * missing paths, unparseable extensions, config-excluded paths, and
  * the honest "directory exists but has no parseable files inside"
  * case. Classifier emits a structured `skipped` entry per-path for
- * the first three (deterministic) reasons; the fourth falls through
- * without an entry, because the response-level
- * `extensions_skipped_no_parser` warning already carries that signal.
+ * every deterministic reason, including the fourth case:
+ * `no-parseable-files` with `{ [ext]: count }` payload echoing the
+ * observed extensions so the agent can distinguish "Ruby-only tree"
+ * from "directory absent" from "path silently skipped."
  *
- * Judgment pin: for a directory entry that exists AND isn't matched
- * by an exclude pattern, we deliberately do NOT emit a skip entry
- * even when `filesAdded` is 0 for it — adding a
- * `no-parseable-files-inside-directory` enum would duplicate signal
- * the response-level warning already carries.
+ * V1-ADDITIONAL-PATHS-PRESENT-BUT-UNPARSEABLE: prior versions fell
+ * through without a skip entry when the directory held only
+ * non-parseable files, leaning on the response-level
+ * `extensions_skipped_no_parser` warning. That was dishonest — the
+ * aggregated warning doesn't tell the caller which `additionalPaths`
+ * entry was the one that contributed nothing, so `filesAdded: 0` on a
+ * `{additionalPaths: ["rake/"]}` call on a Ruby-only directory read
+ * as "silently skipped" to the agent. The per-path skip entry names
+ * the condition the caller can act on.
  */
 
-import { existsSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import type { Dirent } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { compileGlobs } from "../utils/glob.ts";
-import { hasParseableExtension } from "../utils/path.ts";
+import { extension, hasParseableExtension, PARSEABLE_EXTENSIONS } from "../utils/path.ts";
 
 /** Per-path skip reason surfaced on `additionalPathsScanned.skipped`. */
-export interface AdditionalPathSkip {
-  readonly path: string;
-  readonly reason: "not-found" | "unsupported-extension" | "excluded-by-glob";
-}
+export type AdditionalPathSkip =
+  | {
+      readonly path: string;
+      readonly reason: "not-found" | "unsupported-extension" | "excluded-by-glob";
+    }
+  | {
+      readonly path: string;
+      readonly reason: "no-parseable-files";
+      /**
+       * Observed extension histogram from the directory's files. Keys
+       * are lowercase extensions with a leading dot (e.g. `.rb`, `.py`,
+       * `""` for extensionless files). Values are the count of files
+       * with that extension observed in the bounded walk. Present only
+       * when at least one file was seen; empty directories don't emit
+       * this reason.
+       */
+      readonly extensions: Readonly<Record<string, number>>;
+    };
+
+/**
+ * Soft cap on the number of files enumerated while counting extensions
+ * for the `no-parseable-files` reason. An `additionalPaths` entry
+ * pointing at a huge off-tree vendor dump shouldn't turn the classifier
+ * into a full walk. The histogram is a signal about the dominant
+ * extensions, not an exhaustive tally — stopping early still gives the
+ * agent the answer it needs ("this tree is `.rb` plus a sprinkle of
+ * `.yml`").
+ */
+const NO_PARSEABLE_FILES_WALK_CAP = 500;
 
 /**
  * Classifies each `additionalPaths` entry into a skip reason so the
@@ -46,33 +77,136 @@ export function classifyAdditionalPathSkips(
   const matcher = compileGlobs(excludes);
   const out: AdditionalPathSkip[] = [];
   for (const entry of additionalPaths) {
-    const abs = isAbsolute(entry) ? entry : resolve(root, entry);
-    if (!existsSync(abs)) {
-      out.push({ path: entry, reason: "not-found" });
-      continue;
-    }
-    let isFile = false;
-    try {
-      isFile = statSync(abs).isFile();
-    } catch {
-      // existsSync passed but stat failed (permission race, etc.);
-      // treat as non-file and fall through to the glob check.
-    }
-    if (isFile && !hasParseableExtension(abs)) {
-      out.push({ path: entry, reason: "unsupported-extension" });
-      continue;
-    }
-    const relPath = relative(root, abs).replace(/\\/g, "/");
-    if (relPath.length > 0 && matcher.matches(relPath)) {
-      out.push({ path: entry, reason: "excluded-by-glob" });
-    }
-    // The path exists, is either a parseable-extension file or a
-    // directory, and isn't excluded. Either it contributed files OR
-    // (directory case) it exists and held no parseable files inside.
-    // The latter is deliberately NOT emitted as a skip entry —
-    // response-level `extensions_skipped_no_parser` already covers it.
+    const skip = classifyOneAdditionalPath(entry, root, matcher);
+    if (skip !== null) out.push(skip);
+    // When null: the path either contributed files OR was redundant
+    // with the base set (handled by `redundant_additional_paths`), OR
+    // was an empty directory. None of those warrant a skip entry.
   }
   return out;
+}
+
+/**
+ * Classifies a single caller-supplied entry and returns its skip
+ * record (or null if the entry contributed / was empty / was
+ * redundant). Extracted so the main function's cognitive complexity
+ * stays under the lint cap; the per-entry logic reads top-to-bottom
+ * as the checks fall through.
+ */
+function classifyOneAdditionalPath(
+  entry: string,
+  root: string,
+  matcher: ReturnType<typeof compileGlobs>,
+): AdditionalPathSkip | null {
+  const abs = isAbsolute(entry) ? entry : resolve(root, entry);
+  if (!existsSync(abs)) return { path: entry, reason: "not-found" };
+  const { isFile, isDir } = safeStat(abs);
+  if (isFile && !hasParseableExtension(abs)) {
+    return { path: entry, reason: "unsupported-extension" };
+  }
+  const relPath = relative(root, abs).replace(/\\/g, "/");
+  if (relPath.length > 0 && matcher.matches(relPath)) {
+    return { path: entry, reason: "excluded-by-glob" };
+  }
+  if (isDir) return classifyDirectoryForParseable(entry, abs);
+  return null;
+}
+
+/**
+ * Per-directory classification for the `no-parseable-files` reason.
+ * Walks the directory (bounded by
+ * {@link NO_PARSEABLE_FILES_WALK_CAP}) and emits a skip record when
+ * at least one file was seen but none carried a parseable extension.
+ */
+function classifyDirectoryForParseable(entry: string, abs: string): AdditionalPathSkip | null {
+  // V1-ADDITIONAL-PATHS-PRESENT-BUT-UNPARSEABLE: directory exists
+  // and isn't excluded — walk it (bounded) to count extensions. If
+  // we observed ≥1 file and none were parseable, the path
+  // contributed nothing to the scan and the caller deserves to know
+  // which extensions dominated so they can decide whether to (a) fix
+  // the path, (b) request parser coverage for that language, or
+  // (c) drop the flag.
+  const histogram = collectDirectoryExtensions(abs);
+  const totalFiles = sumHistogram(histogram);
+  const parseableFiles = sumParseable(histogram);
+  if (totalFiles > 0 && parseableFiles === 0) {
+    return { path: entry, reason: "no-parseable-files", extensions: histogram };
+  }
+  return null;
+}
+
+/** Wraps `statSync` so an EPERM/ETXTBSY race doesn't escape the classifier. */
+function safeStat(abs: string): { readonly isFile: boolean; readonly isDir: boolean } {
+  try {
+    const st = statSync(abs);
+    return { isFile: st.isFile(), isDir: st.isDirectory() };
+  } catch {
+    // existsSync passed but stat failed (permission race, etc.);
+    // treat as non-file/non-dir — the caller's glob check still runs.
+    return { isFile: false, isDir: false };
+  }
+}
+
+/**
+ * Recursively counts file extensions under `dir`, bounded by
+ * {@link NO_PARSEABLE_FILES_WALK_CAP}. Honors the scanner's
+ * `DEFAULT_IGNORED_DIRS` set in spirit by skipping dot-files and
+ * dot-directories; we deliberately do NOT skip `node_modules` etc.
+ * here because `additionalPaths` is the caller's escape hatch and
+ * excluding those would re-introduce the silent-skip the classifier
+ * exists to prevent.
+ */
+function collectDirectoryExtensions(dir: string): Readonly<Record<string, number>> {
+  const histogram: Record<string, number> = {};
+  const counter = { filesSeen: 0 };
+  walkForExtensions(dir, histogram, counter);
+  return histogram;
+}
+
+function walkForExtensions(
+  dir: string,
+  histogram: Record<string, number>,
+  counter: { filesSeen: number },
+): void {
+  if (counter.filesSeen >= NO_PARSEABLE_FILES_WALK_CAP) return;
+  // `readdirSync(..., { withFileTypes: true })` returns
+  // `Dirent<string>[]` at runtime, but the TS overload resolution
+  // picks the `Dirent<NonSharedBuffer>` shape without an explicit
+  // annotation. Name the shape directly — same pattern as
+  // `src/utils/fs.ts`.
+  let entries: Dirent<string>[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true }) as Dirent<string>[];
+  } catch {
+    return;
+  }
+  for (const dirent of entries) {
+    if (counter.filesSeen >= NO_PARSEABLE_FILES_WALK_CAP) return;
+    if (dirent.name.startsWith(".")) continue;
+    const full = join(dir, dirent.name);
+    if (dirent.isDirectory()) {
+      walkForExtensions(full, histogram, counter);
+      continue;
+    }
+    if (!dirent.isFile()) continue;
+    const ext = extension(dirent.name);
+    histogram[ext] = (histogram[ext] ?? 0) + 1;
+    counter.filesSeen += 1;
+  }
+}
+
+function sumHistogram(histogram: Readonly<Record<string, number>>): number {
+  let total = 0;
+  for (const count of Object.values(histogram)) total += count;
+  return total;
+}
+
+function sumParseable(histogram: Readonly<Record<string, number>>): number {
+  let total = 0;
+  for (const [ext, count] of Object.entries(histogram)) {
+    if (PARSEABLE_EXTENSIONS.has(ext)) total += count;
+  }
+  return total;
 }
 
 /**
