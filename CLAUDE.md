@@ -185,6 +185,9 @@ Enforced in CI by `scripts/bench.ts`; history in `docs/performance.md`.
 | 10 files, 1k LOC | ≤ 100 ms |
 | 100 files, 10k LOC | ≤ 500 ms |
 | 1000 files, 100k LOC | ≤ 3 s |
+| 4000 files, 400k LOC, vendor-heavy | ≤ 15 s |
+
+Above the 1000-file row, prefer `scan_diff` (CLI: `--changed`) for precommit and `additionalPaths` / a narrower `cwd` for scoped audits. The 4000-file row is the documented ceiling for whole-tree `scan_project`; beyond it, scope down rather than wait.
 
 ## 12. Semver policy
 

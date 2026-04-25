@@ -48,8 +48,14 @@
  * iteration-count = 1) cannot exceed 5s of runtime and is spec-exempt;
  * a 0.15s transition is similarly out of scope. The 5s threshold is
  * normative in the spec — this is a spec gate, not a heuristic
- * suppression. The duration + iteration-count is encoded into the
- * `message` text as additive context so the agent can confirm.
+ * suppression. Per the doctrinal "provable from the code 100% of the
+ * time" test in `docs/kb/architecture/ai-first-consumer.md`, the
+ * duration literal in CSS is the strongest evidence the scanner can
+ * have: a `transition: color 0.15s ease` definitionally cannot
+ * trigger 2.2.2, so routing it to 2.3.3 is correct criterion
+ * assignment, not a heuristic dismissal. The duration +
+ * iteration-count is encoded into the `message` text as additive
+ * context so the agent can confirm.
  */
 
 import { defineRule } from "../../api/plugin.ts";
