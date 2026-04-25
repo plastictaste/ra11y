@@ -193,14 +193,17 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      const doc = ctx.ast as HtmlDocument;
+      const externalScript = detectExternalScriptSrc(doc);
+      checkHtml(doc, (v) => ctx.emit(enrichForCrossFileScript(v, externalScript)));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
+      const siblingImport = detectSiblingModuleImport(ctx.source);
+      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(enrichForCrossFileScript(v, siblingImport)));
     }
   },
   afterFile(ctx) {
@@ -217,23 +220,33 @@ export const rule = defineRule({
     ) {
       return;
     }
+    const siblingImport = detectSiblingModuleImport(ctx.source);
     for (const finding of findExternalJsHandlerMissing(ctx.source)) {
-      ctx.emit({
-        severity: "error",
-        location: { filePath: ctx.filePath, line: finding.line, column: finding.column },
-        message: finding.message,
-        suggestion: finding.suggestion,
-      });
+      ctx.emit(
+        enrichForCrossFileScript(
+          {
+            severity: "error",
+            location: { filePath: ctx.filePath, line: finding.line, column: finding.column },
+            message: finding.message,
+            suggestion: finding.suggestion,
+          },
+          siblingImport,
+        ),
+      );
     }
   },
 });
 
-type Emit = (v: {
-  severity: "error" | "warning" | "info";
-  location: { filePath: string; line: number; column: number };
-  message: string;
-  suggestion: string;
-}) => void;
+interface EmittedShape {
+  readonly severity: "error" | "warning" | "info";
+  readonly location: { filePath: string; line: number; column: number };
+  readonly message: string;
+  readonly suggestion: string;
+  readonly confidence?: "high" | "medium" | "low";
+  readonly couldBeWrongBecause?: readonly string[];
+}
+
+type Emit = (v: EmittedShape) => void;
 
 // ---------------------------------------------------------------------------
 // HTML
@@ -774,4 +787,85 @@ function positionAtOffset(source: string, offset: number): JsPosition {
     }
   }
   return { line, column };
+}
+
+// ---------------------------------------------------------------------------
+// Cross-file handler enrichment
+//
+// SC 2.1.1 evidence is bounded to one file at scan time — a click attach
+// or a missing handler may be answered by JS in a sibling script. The
+// rule still surfaces the finding (per "surface-don't-suppress"), but
+// when a same-document `<script src="…">` (HTML) or a sibling-module
+// import (JSX/JS/TS) is present, we enrich the suggestion with that
+// follow-up signal and degrade per-finding `confidence` to `"medium"`
+// with a structured `couldBeWrongBecause` so the per-finding label
+// mirrors the per-rule `coverageConfidence` (ADR 0026,
+// docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+// must reflect per-rule coverage limitations").
+// ---------------------------------------------------------------------------
+
+/** Structured `couldBeWrongBecause` code for the cross-file ambiguity. */
+const CROSS_FILE_LISTENER_RESOLUTION_LIMITED = "cross_file_listener_resolution_limited";
+
+/**
+ * Returns the first `src` attribute value among the document's
+ * `<script src="…">` elements, or `null` if no external script is
+ * referenced. The first src is named verbatim in the suggestion so the
+ * agent has a concrete grep target. Inline `<script>` tags (no src) are
+ * excluded — their bodies are already in the same document and the rule
+ * can already see them on the JSX/TS branch.
+ */
+function detectExternalScriptSrc(doc: HtmlDocument): string | null {
+  for (const el of findHtmlElementsByTag(doc, "script")) {
+    const src = getHtmlAttribute(el, "src");
+    if (src !== null && src !== "") return src;
+  }
+  return null;
+}
+
+/**
+ * Matches `import` statements pulling from a relative path that ends
+ * in `.js` / `.jsx` / `.ts` / `.tsx` / `.mjs` / `.cjs`, OR an extension-
+ * less relative path (`./foo`, `../bar/baz`) — which Node/bundlers
+ * resolve to a sibling module. Bare-package imports (`import x from
+ * "react"`) are excluded: their handler bindings are library code, not
+ * user-authored sibling files the agent can grep.
+ *
+ * The match captures the import specifier (group 1) so the suggestion
+ * can name the file the agent should investigate.
+ */
+const SIBLING_MODULE_IMPORT =
+  /\bimport\s+(?:[^"'`;]+?\s+from\s+)?["'`](\.\.?\/[^"'`]+)["'`]/g;
+
+/**
+ * Returns the first sibling-module import specifier in the source, or
+ * `null` if no relative-path import is present. Side-effect imports
+ * (`import "./styles.css"`) and named-binding imports both match — the
+ * shape is "any import whose specifier starts with `./` or `../`."
+ */
+function detectSiblingModuleImport(source: string): string | null {
+  SIBLING_MODULE_IMPORT.lastIndex = 0;
+  const m = SIBLING_MODULE_IMPORT.exec(source);
+  if (m === null) return null;
+  return m[1] ?? null;
+}
+
+/**
+ * When a cross-file source is present, append a sentence to the
+ * existing suggestion naming the cross-file possibility and stamp
+ * `confidence: "medium"` with a structured `couldBeWrongBecause` code.
+ * When no cross-file source is detected, the violation passes through
+ * unchanged. Doctrine: surface-don't-suppress with reason-text
+ * enrichment so the agent can verify the binding rather than guess.
+ */
+function enrichForCrossFileScript(v: EmittedShape, externalSource: string | null): EmittedShape {
+  if (externalSource === null) return v;
+  const enrichmentSuffix =
+    ` Cross-file follow-up: this file has no inline keyboard handler, but the binding may live in an external script (\`${externalSource}\`) — verify the keyboard wiring there before treating this finding as live.`;
+  return {
+    ...v,
+    suggestion: `${v.suggestion}${enrichmentSuffix}`,
+    confidence: "medium",
+    couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
+  };
 }

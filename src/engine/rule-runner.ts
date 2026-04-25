@@ -211,6 +211,17 @@ function stampViolation(
     ...(emitted.couldBeWrongBecause && emitted.couldBeWrongBecause.length > 0
       ? { couldBeWrongBecause: emitted.couldBeWrongBecause }
       : {}),
+    // Per-finding scanner-confidence label, for rules whose evidence
+    // horizon is bounded on the substrate they ran against (e.g.
+    // `keyboard/handler-missing` on HTML referencing an external
+    // `<script src>` whose handler bindings live in a sibling JS file
+    // the rule can't see). Per CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest" + the AI-first per-finding-confidence rule
+    // (docs/kb/architecture/ai-first-consumer.md), the per-finding label
+    // mirrors the per-rule `coverageConfidence` so an agent reading
+    // both surfaces gets the same signal. Conditional spread keeps
+    // `confidence: undefined` off the wire.
+    ...(emitted.confidence !== undefined ? { confidence: emitted.confidence } : {}),
     // `classEvidence` is populated only by rules whose detection keys
     // off a class attribute (currently `aria/icon-font-hidden`). The
     // scanner surfaces it onto the Violation so the per-rule-coverage

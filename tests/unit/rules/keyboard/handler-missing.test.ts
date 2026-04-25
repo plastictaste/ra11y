@@ -634,4 +634,98 @@ el.onclick = toggle;`;
     expect(rule.satisfies).toContain("wcag22:2.1.1");
     expect(rule.satisfies).toContain("wcag21:2.1.1");
   });
+
+  // ---------------------------------------------------------------------------
+  // Cross-file handler enrichment — when the document references an
+  // external script (HTML `<script src>`) or imports a sibling module
+  // (JSX/JS/TS), the click/keyboard binding might live there. The rule
+  // surfaces the finding (surface-don't-suppress) but enriches the
+  // suggestion with the cross-file follow-up, degrades per-finding
+  // `confidence` to `"medium"`, and stamps the structured
+  // `cross_file_listener_resolution_limited` code so the per-finding
+  // label mirrors the per-rule `coverageConfidence`.
+  // ---------------------------------------------------------------------------
+  describe("cross-file handler enrichment", () => {
+    it("HTML: enriches when document has <script src=…>", () => {
+      const source = `<!DOCTYPE html><html><body>
+<script src="app.js"></script>
+<div onclick="doThing()">Click</div>
+</body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+      expect(v[0]?.suggestion).toContain("app.js");
+      expect(v[0]?.suggestion).toContain("external script");
+    });
+
+    it("HTML: does NOT enrich when document has no <script src>", () => {
+      const source = `<!DOCTYPE html><html><body>
+<div onclick="doThing()">Click</div>
+</body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBeUndefined();
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("HTML: inline <script> without src is not the cross-file signal", () => {
+      const source = `<!DOCTYPE html><html><body>
+<script>window.foo = 1;</script>
+<div onclick="doThing()">Click</div>
+</body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBeUndefined();
+    });
+
+    it("HTML: enrichment fires on the data-bs-toggle (attribute-interaction) branch too", () => {
+      const source = `<!DOCTYPE html><html><body>
+<script src="bootstrap-bundle.js"></script>
+<div data-bs-toggle="modal" data-bs-target="#m">Open</div>
+</body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.suggestion).toContain("bootstrap-bundle.js");
+    });
+
+    it("JSX: enriches when source imports a sibling module", () => {
+      const source = `import { wireHandlers } from "./handlers.js";
+const X = <div onClick={wireHandlers}>Click</div>;`;
+      const v = runRule(rule, source);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+      expect(v[0]?.suggestion).toContain("./handlers.js");
+    });
+
+    it("JSX: extension-less relative import counts as a sibling module", () => {
+      const source = `import { wire } from "./util";
+const X = <span onClick={wire}>x</span>;`;
+      const v = runRule(rule, source);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.suggestion).toContain("./util");
+    });
+
+    it("JSX: bare-package import (e.g. 'react') does NOT trigger enrichment", () => {
+      const source = `import { useState } from "react";
+const X = <div onClick={useState}>x</div>;`;
+      const v = runRule(rule, source);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBeUndefined();
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("external-JS branch: enriches when the JS file imports a sibling module", () => {
+      const source = `import { keyboardWiring } from "./keyboard.ts";
+const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.suggestion).toContain("./keyboard.ts");
+    });
+  });
 });
