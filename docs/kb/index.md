@@ -94,6 +94,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 ## rules
 
 - [aria/conflicting-role](./rules/aria__conflicting-role.md)
+- [aria/dialog-role-missing](./rules/aria__dialog-role-missing.md)
 - [aria/disabled-link-surrogate](./rules/aria__disabled-link-surrogate.md)
 - [aria/expanded-on-disclosure](./rules/aria__expanded-on-disclosure.md)
 - [aria/hidden-focus](./rules/aria__hidden-focus.md)
@@ -129,6 +130,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [forms/label-adjacent-unassociated](./rules/forms__label-adjacent-unassociated.md)
 - [forms/label-for-id-mismatch](./rules/forms__label-for-id-mismatch.md)
 - [forms/labels-required](./rules/forms__labels-required.md)
+- [forms/no-submit-control](./rules/forms__no-submit-control.md)
 - [forms/non-empty-label](./rules/forms__non-empty-label.md)
 - [forms/placeholder-as-label](./rules/forms__placeholder-as-label.md)
 - [forms/radio-group-without-fieldset](./rules/forms__radio-group-without-fieldset.md)
@@ -163,6 +165,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [parsing/invalid-id-shape](./rules/parsing__invalid-id-shape.md)
 - [pointer/cancellation](./rules/pointer__cancellation.md)
 - [pointer/drag-alternative](./rules/pointer__drag-alternative.md)
+- [pointer/draggable-no-keyboard-alt](./rules/pointer__draggable-no-keyboard-alt.md)
 - [pointer/stretched-link-multiple-in-container](./rules/pointer__stretched-link-multiple-in-container.md)
 - [pointer/target-size](./rules/pointer__target-size.md)
 - [semantics/button-name](./rules/semantics__button-name.md)
@@ -172,6 +175,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [semantics/heading-hierarchy](./rules/semantics__heading-hierarchy.md)
 - [semantics/label-in-name](./rules/semantics__label-in-name.md)
 - [semantics/landmark-main](./rules/semantics__landmark-main.md)
+- [semantics/layout-table-no-presentation-role](./rules/semantics__layout-table-no-presentation-role.md)
 - [semantics/list-structure](./rules/semantics__list-structure.md)
 - [semantics/nested-interactive](./rules/semantics__nested-interactive.md)
 - [semantics/section-accessible-name-missing](./rules/semantics__section-accessible-name-missing.md)
