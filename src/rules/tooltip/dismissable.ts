@@ -69,6 +69,7 @@ import {
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import { isDomOriginExtension } from "../../utils/path.ts";
 
 /** Native HTML tags whose default role is interactive for 1.4.13 purposes. */
 const INTERACTIVE_TAGS: ReadonlySet<string> = new Set([
@@ -107,7 +108,7 @@ export const rule = defineRule({
   scope: "node",
   fixClass: "runtime-only",
   appliesTo: {
-    fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
+    fileExtensions: [".html", ".htm", ".tsx", ".jsx", ".vue", ".svelte"],
   },
   docs: {
     description:
@@ -132,6 +133,13 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
+      // Belt-and-braces gate: a `title="…"` attribute substring inside a
+      // packed plugin or minified `.js` bundle is not a real interactive
+      // element — the surrounding code may be a string-template factory or
+      // a JS-API wrapper. Only act on JSX nodes parsed out of `.tsx` /
+      // `.jsx` (and the JSX-bearing `.mdx` / `.astro` aliases). See
+      // Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS.
+      if (!isDomOriginExtension(ctx.filePath)) return;
       checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
     }
   },

@@ -406,4 +406,31 @@ describe("rule tooltip/dismissable", () => {
       expect(suggestion).toMatch(/custom tooltip component/);
     });
   });
+
+  // Belt-and-braces gate (Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS): a
+  // `title="…"` attribute substring inside a packed plugin or minified
+  // `.js` bundle is not a real interactive element — the surrounding
+  // code may be a string-template factory, a JS-API wrapper, or a
+  // build-time interpolation. Only act on JSX nodes parsed out of
+  // `.tsx` / `.jsx` (and the JSX-bearing `.mdx` / `.astro` aliases).
+  describe("non-JSX JS gate", () => {
+    it("does not fire on a bare .js file containing a button-with-title substring", () => {
+      const source = `var html = '<button title="Save document">x</button>';`;
+      const violations = runRule(rule, source, { filePath: "vendor.js" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does not fire on a bare .ts file containing a button-with-title substring", () => {
+      const source = `const tpl = \`<button title="Save document">x</button>\`;`;
+      const violations = runRule(rule, source, { filePath: "build.ts" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("still fires on a .tsx file containing the same titled interactive element", () => {
+      const violations = runRule(rule, `function F(){return <button title="Save">x</button>}`, {
+        filePath: "Btn.tsx",
+      });
+      expect(violations).toHaveLength(1);
+    });
+  });
 });

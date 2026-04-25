@@ -132,3 +132,55 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
   if (!alias) return false;
   return alias.to.some((to) => allowList.includes(to));
 }
+
+/**
+ * Extensions whose source represents rendered DOM — HTML markup or
+ * JSX-bearing component files where the elements the parser surfaces
+ * correspond to the runtime element tree. HTML-shape rules
+ * (`document/iframe-title`, `navigation/href-empty-fragment`,
+ * `navigation/href-javascript-scheme`, `tooltip/dismissable`) consult
+ * this set as a belt-and-braces gate before acting on JSX nodes — the
+ * `appliesTo.fileExtensions` check earlier in the pipeline aliases
+ * `.js → .jsx` / `.ts → .tsx` to keep Next.js-style JSX-in-`.js` corpora
+ * scanning, but minified JS plugins and packed bundles can still parse
+ * to JSX-shaped substrings (Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS). For
+ * rules that depend on the *DOM-rendered* role of an element (the
+ * anchor's role at click time, the iframe's announced name, the native
+ * tooltip's keyboard behavior), bare `.js` / `.ts` is not the right
+ * substrate even when the parser confidently produced JSX nodes — the
+ * surrounding code may be a packed plugin embedding HTML strings, a
+ * JS-API wrapper, or anything else where the substring isn't
+ * a real DOM element. JSX-bearing extensions (`.jsx`, `.tsx`, `.mdx`,
+ * `.astro`) and HTML-family extensions (`.html`, `.htm`, `.svg`, `.md`,
+ * `.markdown`, `.erb`, `.vue`, `.svelte`) are trusted as DOM-origin.
+ *
+ * `.vue` and `.svelte` are listed for forward compatibility — the parser
+ * registry doesn't dispatch dedicated SFC parsers today, but when it does
+ * (the `<template>` block in either format is HTML-shape), the gate stays
+ * correct without per-rule churn.
+ */
+const DOM_ORIGIN_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".html",
+  ".htm",
+  ".jsx",
+  ".tsx",
+  ".mdx",
+  ".astro",
+  ".svg",
+  ".md",
+  ".markdown",
+  ".erb",
+  ".vue",
+  ".svelte",
+]);
+
+/**
+ * True when the file's extension represents rendered DOM markup or
+ * JSX-bearing component source. Used by HTML-shape rules to skip bare
+ * `.js` / `.ts` / `.mjs` / `.cjs` / `.mts` / `.cts` inputs even when the
+ * upstream `appliesTo` alias (`.js → .jsx`) would otherwise let those
+ * files through. See {@link DOM_ORIGIN_EXTENSIONS} for rationale.
+ */
+export function isDomOriginExtension(filePath: string): boolean {
+  return DOM_ORIGIN_EXTENSIONS.has(extension(filePath));
+}

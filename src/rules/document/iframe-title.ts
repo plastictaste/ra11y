@@ -38,6 +38,7 @@ import {
   truncateForEcho,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import { isDomOriginExtension } from "../../utils/path.ts";
 
 export const rule = defineRule({
   id: "document/iframe-title",
@@ -46,7 +47,7 @@ export const rule = defineRule({
   scope: "node",
   fixClass: "mechanical",
   appliesTo: {
-    fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
+    fileExtensions: [".html", ".htm", ".tsx", ".jsx", ".vue", ".svelte"],
   },
   docs: {
     description:
@@ -71,6 +72,18 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
+      // Belt-and-braces gate: HTML-shape rules must not act on JSX nodes
+      // that the parser surfaced from a bare `.js` / `.ts` / `.mjs` /
+      // `.cjs` / `.mts` / `.cts` file. The `appliesTo` extension list
+      // upstream aliases `.js → .jsx` so Next.js-style JSX-in-`.js`
+      // corpora keep scanning, but minified bundles, packed plugins, and
+      // JS-API wrappers can parse to JSX-shaped substrings even when no
+      // DOM element is present at runtime (Q-SHARED-TSX-PARSER-FALSE-JSX-
+      // CONTEXTS, Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS). The iframe rule
+      // only has meaning when the element it sees is a real frame the
+      // browser will render — which holds for `.tsx`/`.jsx`/`.mdx`/
+      // `.astro` and the HTML family, not bare JS.
+      if (!isDomOriginExtension(ctx.filePath)) return;
       checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
     }
   },

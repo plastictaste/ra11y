@@ -167,6 +167,33 @@ describe("rule navigation/href-empty-fragment", () => {
     });
   });
 
+  // Belt-and-braces gate (Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS): an
+  // `<a href="">` substring inside a packed plugin or minified `.js`
+  // bundle is not a real anchor — the surrounding code may be a
+  // string-template factory, a JS-API wrapper, or a build-time
+  // interpolation. Only act on JSX nodes parsed out of `.tsx` / `.jsx`
+  // (and the JSX-bearing `.mdx` / `.astro` aliases).
+  describe("non-JSX JS gate", () => {
+    it("does not fire on a bare .js file containing a placeholder anchor substring", () => {
+      const source = `var html = '<a href="">click</a>';`;
+      const violations = runRule(rule, source, { filePath: "vendor.js" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does not fire on a bare .ts file containing a bare-fragment anchor substring", () => {
+      const source = `const tpl = \`<a href="#">x</a>\`;`;
+      const violations = runRule(rule, source, { filePath: "build.ts" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("still fires on a .tsx file containing the same placeholder anchor", () => {
+      const violations = runRule(rule, `function F(){return <a href="">x</a>}`, {
+        filePath: "Link.tsx",
+      });
+      expect(violations).toHaveLength(1);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 + wcag22:2.1.1 and the 2.1 equivalents", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

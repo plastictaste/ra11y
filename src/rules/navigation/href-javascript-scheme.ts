@@ -34,6 +34,7 @@ import {
   getJsxAttribute,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
+import { isDomOriginExtension } from "../../utils/path.ts";
 
 /**
  * Returns true when the (trimmed, case-insensitive) href value uses the
@@ -61,7 +62,7 @@ export const rule = defineRule({
   scope: "node",
   fixClass: "verify-in-source",
   appliesTo: {
-    fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
+    fileExtensions: [".html", ".htm", ".tsx", ".jsx", ".vue", ".svelte"],
   },
   docs: {
     description:
@@ -87,6 +88,13 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
+      // Belt-and-braces gate: an `<a href="javascript:…">` substring inside
+      // a packed plugin or minified `.js` bundle is not a real anchor — it's
+      // a string the runtime injects somewhere else, or a JS-API wrapper, or
+      // a template literal that a build step interpolates. Only act on JSX
+      // nodes parsed out of `.tsx` / `.jsx` (and the JSX-bearing `.mdx` /
+      // `.astro` aliases). See Q7-HTML-SHAPE-RULES-GATE-NON-JSX-JS.
+      if (!isDomOriginExtension(ctx.filePath)) return;
       checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
     }
   },
