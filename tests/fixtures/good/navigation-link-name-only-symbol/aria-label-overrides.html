@@ -1,0 +1,19 @@
+<!--
+  Good: pagination anchors carrying chevron glyphs visually but with
+  aria-label attributes that supply the real accessible name. AT reads
+  the aria-label ("Previous page" / "Next page") and the user knows
+  where each link goes; the glyph is sighted decoration only.
+  Expect: rule navigation/link-name-only-symbol stays silent on every anchor.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <nav aria-label="Pagination">
+      <a href="/page-1" aria-label="Previous page">«</a>
+      <a href="/page-1">1</a>
+      <a href="/page-2">2</a>
+      <a href="/page-3">3</a>
+      <a href="/page-3" aria-label="Next page">›</a>
+    </nav>
+  </body>
+</html>

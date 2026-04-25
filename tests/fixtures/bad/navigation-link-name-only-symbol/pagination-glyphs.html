@@ -1,0 +1,22 @@
+<!--
+  Bad: pagination widget where the previous/next anchors carry only a
+  chevron glyph (« and ›) as their accessible name. Screen readers
+  announce these as their Unicode-category names ("LEFT-POINTING DOUBLE
+  ANGLE QUOTATION MARK") or skip them — the user hears "link" with no
+  destination cue, breaks the same way for «, ‹, », ›, ×, →, ★, etc.
+  Expect: rule navigation/link-name-only-symbol fires twice (once per
+  glyph anchor) at severity "warning". The numbered page anchors stay
+  silent — digits aren't punctuation/symbol category.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <nav aria-label="Pagination">
+      <a href="/page-1">«</a>
+      <a href="/page-1">1</a>
+      <a href="/page-2">2</a>
+      <a href="/page-3">3</a>
+      <a href="/page-3">›</a>
+    </nav>
+  </body>
+</html>

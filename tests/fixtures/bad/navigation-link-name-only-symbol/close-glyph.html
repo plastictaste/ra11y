@@ -1,0 +1,18 @@
+<!--
+  Bad: a "close" anchor whose accessible name is the multiplication sign
+  (×, U+00D7) used as a sighted-only convention for dismissal. AT
+  announces "multiplication sign" or skips it; the link carries no usable
+  name. Common in modal headers, dismissable banners, tag chips.
+  Expect: rule navigation/link-name-only-symbol fires once at severity
+  "warning"; suggestion text mentions Close as the canonical aria-label.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <div role="dialog" aria-labelledby="dialog-title">
+      <h2 id="dialog-title">Confirm action</h2>
+      <a href="/dismiss" class="close">×</a>
+      <p>Are you sure you want to proceed?</p>
+    </div>
+  </body>
+</html>

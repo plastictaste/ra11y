@@ -1,0 +1,17 @@
+<!--
+  Good: glyph anchors where a visually-hidden span inside the anchor
+  expands the chevron into words. The visible accessible name (after
+  whitespace collapse) is "« Previous page" and "Next page »" — well
+  above the symbol-only-codepoint threshold. AT reads the full phrase;
+  the glyph is decoration paired with the real name.
+  Expect: rule navigation/link-name-only-symbol stays silent on every anchor.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <nav aria-label="Pagination">
+      <a href="/page-1">« <span class="sr-only">Previous page</span></a>
+      <a href="/page-3"><span class="sr-only">Next page</span> »</a>
+    </nav>
+  </body>
+</html>

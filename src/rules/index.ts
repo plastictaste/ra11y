@@ -64,6 +64,7 @@ import { rule as pauseStopHide } from "./motion/pause-stop-hide.ts";
 import { rule as hrefEmptyFragment } from "./navigation/href-empty-fragment.ts";
 import { rule as hrefJavascriptScheme } from "./navigation/href-javascript-scheme.ts";
 import { rule as linkDescriptiveText } from "./navigation/link-descriptive-text.ts";
+import { rule as linkNameOnlySymbol } from "./navigation/link-name-only-symbol.ts";
 import { rule as linkNoHref } from "./navigation/link-no-href.ts";
 import { rule as linkTargetBlankAnnouncement } from "./navigation/link-target-blank-announcement.ts";
 import { rule as skipLink } from "./navigation/skip-link.ts";
@@ -136,6 +137,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   langAttribute,
   langOnParts,
   linkDescriptiveText,
+  linkNameOnlySymbol,
   linkNoHref,
   linkTargetBlankAnnouncement,
   listStructure,
@@ -223,6 +225,7 @@ export {
   langAttribute,
   langOnParts,
   linkDescriptiveText,
+  linkNameOnlySymbol,
   linkNoHref,
   linkTargetBlankAnnouncement,
   listStructure,
