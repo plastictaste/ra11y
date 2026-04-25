@@ -75,6 +75,7 @@ import { rule as htmlHasLang } from "./parsing/html-has-lang.ts";
 import { rule as invalidIdShape } from "./parsing/invalid-id-shape.ts";
 import { rule as cancellation } from "./pointer/cancellation.ts";
 import { rule as dragAlternative } from "./pointer/drag-alternative.ts";
+import { rule as draggableNoKeyboardAlt } from "./pointer/draggable-no-keyboard-alt.ts";
 import { rule as stretchedLinkMultipleInContainer } from "./pointer/stretched-link-multiple-in-container.ts";
 import { rule as targetSize } from "./pointer/target-size.ts";
 import { rule as buttonName } from "./semantics/button-name.ts";
@@ -113,6 +114,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   contrastNonText,
   disabledLinkSurrogate,
   dragAlternative,
+  draggableNoKeyboardAlt,
   duplicateId,
   duplicateLandmarkUnlabeled,
   emptyHeading,
@@ -203,6 +205,7 @@ export {
   contrastNonText,
   disabledLinkSurrogate,
   dragAlternative,
+  draggableNoKeyboardAlt,
   duplicateId,
   duplicateLandmarkUnlabeled,
   emptyHeading,
