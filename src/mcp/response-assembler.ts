@@ -65,6 +65,10 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import {
+  buildPerRuleLimitationMap,
+  enrichFindingsWithPerRuleLimitations,
+} from "./per-finding-confidence-parity.ts";
+import {
   buildReferenceGuide,
   hoistAndBuildReferenceGuide,
   type ReferenceGuide,
@@ -444,6 +448,20 @@ export function assembleScanFamilyResponse(
     activeRules,
     new Set(scssUnresolvedFiles),
   );
+  // Per-finding confidence parity (Q9-PER-FINDING-PARITY in the
+  // backlog; doctrine source: docs/kb/architecture/ai-first-consumer.md
+  // "Per-finding confidence must reflect per-rule coverage limitations").
+  // When the adjusted per-rule rows downgrade a rule's
+  // `coverageConfidence`, propagate the structured reason code into
+  // every per-finding `couldBeWrongBecause` for that rule so the
+  // per-rule and per-finding layers don't ship contradictory
+  // attention-budget signals in the same response. Additive — per-
+  // finding `confidence` stays whatever the rule emitted; the cross-
+  // file caveat the agent needs to triage with rides on the
+  // `couldBeWrongBecause` axis. No-op fast path when no rule is
+  // degraded (object identity stable on the common case).
+  const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
+  fileEntries = enrichFindingsWithPerRuleLimitations(fileEntries, perRuleLimitations);
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     files: parsedFiles,

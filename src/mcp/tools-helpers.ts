@@ -26,6 +26,10 @@ import type { Standard } from "../types/standard.ts";
 import type { Violation } from "../types/violation.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
+import {
+  buildPerRuleLimitationMap,
+  enrichFindingsWithPerRuleLimitations,
+} from "./per-finding-confidence-parity.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
@@ -706,6 +710,22 @@ export async function runScanAndFormat(
     activeRules,
     new Set(scssUnresolvedFiles),
   );
+  // Per-finding confidence parity with per-rule coverage limitations.
+  // When a rule's adjusted `coverageConfidence !== "high"`, propagate
+  // the structured reason code into every per-finding
+  // `couldBeWrongBecause` for that rule so the per-rule and per-finding
+  // layers don't ship contradictory attention-budget signals in the
+  // same response. Doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+  // must reflect per-rule coverage limitations." Additive — per-finding
+  // `confidence` stays whatever the rule emitted; the cross-file caveat
+  // the agent needs to triage with rides on the `couldBeWrongBecause`
+  // axis. No-op fast path when no rule is degraded.
+  const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
+  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(
+    fileEntries,
+    perRuleLimitations,
+  );
   // Per-rule trust telemetry (Q2R2-RULE-COV). The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
   // splits the 0-findings rules into "trust the clean tally" vs "scan
@@ -768,7 +788,7 @@ export async function runScanAndFormat(
       untargetedCriteria,
       fixesByClass,
     }),
-    files: fileEntries,
+    files: enrichedFileEntries,
     meta: scanMeta,
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
     ...(ruleCoverageDerivative === null ? {} : { ruleCoverage: ruleCoverageDerivative }),
