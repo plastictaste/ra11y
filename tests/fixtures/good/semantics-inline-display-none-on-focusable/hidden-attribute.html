@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><title>Hidden attribute used correctly</title></head>
+<body>
+  <nav>
+    <ul>
+      <!-- The HTML-spec-blessed `hidden` attribute removes the subtree from
+           rendering AND from the tab order, and stays paired with any
+           `[hidden]` selector if the inline state is later toggled. -->
+      <li hidden><a href="#topnav">HOME</a></li>
+      <li><a href="/about">About</a></li>
+    </ul>
+  </nav>
+</body>
+</html>

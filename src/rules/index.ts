@@ -93,6 +93,7 @@ import { rule as emptyHeading } from "./semantics/empty-heading.ts";
 import { rule as formLandmarkNameMissing } from "./semantics/form-landmark-name-missing.ts";
 import { rule as headingClassOnNonheading } from "./semantics/heading-class-on-nonheading.ts";
 import { rule as headingHierarchy } from "./semantics/heading-hierarchy.ts";
+import { rule as inlineDisplayNoneOnFocusable } from "./semantics/inline-display-none-on-focusable.ts";
 import { rule as labelInName } from "./semantics/label-in-name.ts";
 import { rule as landmarkMain } from "./semantics/landmark-main.ts";
 import { rule as layoutTableNoPresentationRole } from "./semantics/layout-table-no-presentation-role.ts";
@@ -148,6 +149,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   iconFontHidden,
   iframeTitle,
   inPageLinkFragmentMissing,
+  inlineDisplayNoneOnFocusable,
   invalidIdShape,
   invalidRole,
   labelAdjacentMismatch,
@@ -250,6 +252,7 @@ export {
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
+  inlineDisplayNoneOnFocusable,
   inPageLinkFragmentMissing,
   invalidIdShape,
   invalidRole,

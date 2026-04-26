@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><title>Display:none on a non-focusable subtree is fine</title></head>
+<body>
+  <!-- display:none on plain prose with no focusable descendants is not a
+       focus-order risk; the rule does not fire. -->
+  <div style="display:none">
+    <p>Build-time placeholder text. No interactive controls inside.</p>
+    <span>Decorative content.</span>
+  </div>
+</body>
+</html>

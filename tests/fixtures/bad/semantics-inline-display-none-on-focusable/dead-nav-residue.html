@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><title>Dead nav residue</title></head>
+<body>
+  <nav>
+    <ul>
+      <!-- Canonical case from the field: a hidden <li> wrapping a focusable
+           <a href>. While the inline display:none is active, no one can see
+           or tab to it. The moment a script flips the inline style off
+           (debug toggle, route swap, JS that didn't account for this list
+           item) the dead anchor rejoins the tab order with a stale href. -->
+      <li style="display:none;"><a href="#topnav">HOME</a></li>
+      <li><a href="/about">About</a></li>
+    </ul>
+  </nav>
+</body>
+</html>
