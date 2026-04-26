@@ -26,6 +26,7 @@ import { parseTsx } from "../../../src/input/parsers/index.ts";
 import { buildSuggestedConfigSnippet } from "../../../src/mcp/config-snippet.ts";
 import {
   classifyWrapperCandidates,
+  collectOpaquePascalCaseComponentNames,
   collectWrapperCandidates,
   hasOpaquePascalCaseComponents,
 } from "../../../src/mcp/detect-wrappers-core.ts";
@@ -616,5 +617,87 @@ describe("buildSuggestedConfigSnippet", () => {
         "\n",
       ),
     );
+  });
+});
+
+describe("collectOpaquePascalCaseComponentNames", () => {
+  // Companion to hasOpaquePascalCaseComponents that returns the full
+  // sorted, de-duplicated set of PascalCase tag names. Used by the
+  // `detect_native_wrappers` tool to inline the opaque-component
+  // inventory on the
+  // `no-jsx-onclick-candidates-found-but-opaque-components-present`
+  // branch (per "One tool call should answer 'what next?'") so an
+  // agent doesn't need a follow-up `scan_project` call to read the
+  // same names.
+
+  it("collects sorted, de-duplicated PascalCase tag names from JSX-bearing files", () => {
+    const files: ParsedFile[] = [
+      fileOf(
+        "app.tsx",
+        [
+          'export const A = () => <Button variant="primary">Save</Button>;',
+          'export const B = () => <Card title="Hello">content</Card>;',
+          // Repeated Button across files must dedupe.
+          "export const C = () => <Button>again</Button>;",
+        ].join("\n"),
+      ),
+    ];
+    expect(collectOpaquePascalCaseComponentNames(files)).toEqual(["Button", "Card"]);
+  });
+
+  it("returns an empty array when no PascalCase components are present", () => {
+    const files: ParsedFile[] = [
+      fileOf("app.tsx", "export const App = () => <div><span>hi</span></div>;"),
+    ];
+    expect(collectOpaquePascalCaseComponentNames(files)).toEqual([]);
+  });
+
+  it("skips phantom PascalCase tags from non-JSX-bearing extensions", () => {
+    // Same Q6 phantom-tag filter the boolean helper applies. A `.ts`
+    // file's parser-emitted JSX tags are minified-bundle artefacts —
+    // surfacing them would mislead an agent into adding `<Math>`-class
+    // names to its nativeWrappers config.
+    const files: ParsedFile[] = [
+      fileOf("bundle.min.js", "export const App = () => <Button>text</Button>;"),
+      fileOf("utils.ts", "export const App = () => <Card>text</Card>;"),
+    ];
+    expect(collectOpaquePascalCaseComponentNames(files)).toEqual([]);
+  });
+
+  it("filters out JS-globals and single-letter+digits noise", () => {
+    // The emission-time filter in opaque-tag-filter rejects names that
+    // look like minified-bundle leakage (`Math.abs` root → `Math`,
+    // `A1` → single-letter+digit) so they never reach the response.
+    // Real PascalCase components alongside the noise still surface.
+    const files: ParsedFile[] = [
+      fileOf(
+        "page.tsx",
+        [
+          "export const X = () => <Button>x</Button>;",
+          "export const Y = () => <Modal>y</Modal>;",
+        ].join("\n"),
+      ),
+    ];
+    expect(collectOpaquePascalCaseComponentNames(files)).toEqual(["Button", "Modal"]);
+  });
+
+  it("returns an empty array on an empty file list", () => {
+    expect(collectOpaquePascalCaseComponentNames([])).toEqual([]);
+  });
+
+  it("collapses dotted member-access tags to the root identifier (Motion.div → Motion)", () => {
+    // Mirrors the same root-identifier extraction `collectWrapperCandidates`
+    // applies — `Motion.div` and `Motion.span` both group under the
+    // importable root name `Motion`.
+    const files: ParsedFile[] = [
+      fileOf(
+        "Hero.tsx",
+        [
+          "export const a = () => <Motion.div>x</Motion.div>;",
+          "export const b = () => <Motion.span>x</Motion.span>;",
+        ].join("\n"),
+      ),
+    ];
+    expect(collectOpaquePascalCaseComponentNames(files)).toEqual(["Motion"]);
   });
 });

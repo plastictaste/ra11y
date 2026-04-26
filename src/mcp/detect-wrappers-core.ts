@@ -32,7 +32,11 @@ import {
   type ProbeFile,
 } from "../engine/wrapper-probe.ts";
 import type { JsxElement, TsxModule } from "../types/ast.ts";
-import { extractComponentIdentifier, isJsxBearingFile } from "./opaque-tag-filter.ts";
+import {
+  extractComponentIdentifier,
+  filterEmittedComponentNames,
+  isJsxBearingFile,
+} from "./opaque-tag-filter.ts";
 
 /** Max example call sites per component in the structured result. */
 const SAMPLE_LIMIT = 3;
@@ -166,6 +170,44 @@ export function hasOpaquePascalCaseComponents(files: readonly ParsedFile[]): boo
     }
   }
   return false;
+}
+
+/**
+ * Collects the sorted, de-duplicated set of PascalCase JSX tag names
+ * sighted in the scanned JSX/TSX files. The full-walk counterpart to
+ * {@link hasOpaquePascalCaseComponents} — used by `detect_native_wrappers`
+ * to inline the opaque-component inventory when the empty-candidates
+ * branch routes to the "PascalCase components present but no inline
+ * `onClick`" reason. Inlining is per AI-first doctrine "One tool call
+ * should answer 'what next?'": surfacing the names with the response
+ * lets an agent open each component directly without a follow-up
+ * `scan_project` round-trip just to read `analysisCoverage.opaqueCustomComponentNames`.
+ *
+ * Identical filtering rules as `analysis-coverage.ts`'s opaque-component
+ * extraction: JSX-bearing extensions only (so phantom tags from
+ * minified `.ts` / `.js` bundles never reach the list), tag-name text
+ * normalized through {@link extractComponentIdentifier} (rejects
+ * lowercase, single-letter, JS-globals, member-access into globals),
+ * and the emission-time {@link filterEmittedComponentNames} belt-and-
+ * braces filter applied so any name shipped in the response is
+ * independently verified against the same noise classes.
+ */
+export function collectOpaquePascalCaseComponentNames(
+  files: readonly ParsedFile[],
+): readonly string[] {
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (file.ast.language !== "tsx") continue;
+    if (!isJsxBearingFile(file.filePath)) continue;
+    const tsx = file.ast.root as TsxModule;
+    for (const el of walkJsxElements(tsx)) {
+      const name = extractComponentIdentifier(el.tagName);
+      if (name !== null) seen.add(name);
+    }
+  }
+  return filterEmittedComponentNames([...seen])
+    .slice()
+    .sort();
 }
 
 /**

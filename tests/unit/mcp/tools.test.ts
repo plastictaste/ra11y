@@ -1654,13 +1654,16 @@ describe("MCP tool: detect_native_wrappers", () => {
     expect(data.nextStep).toContain("No PascalCase");
   });
 
-  it("stamps emptyReason 'no-parseable-files' when parseFiles returns nothing", async () => {
-    // Separate discriminator token from the zero-candidate case: a
-    // directory with no parseable sources is a different failure
-    // from a parseable project that happened to lack PascalCase
-    // onClick components. Agents branching on emptyReason should see
-    // the former so they can prompt the user for a different cwd
-    // rather than concluding "no wrappers here."
+  it("returns inapplicable: { reason: 'no_jsx_in_tree' } when parseFiles returns nothing", async () => {
+    // An empty cwd has zero JSX-bearing files, so the detector's
+    // evidence model never had a surface to inspect. Per AI-first
+    // doctrine "Zero-output success is ambiguous failure" + "One
+    // tool call should answer 'what next?'" — we surface a top-level
+    // `inapplicable` block carrying a structured reason discriminator
+    // and a per-extension census. Distinct from the "tool ran clean"
+    // case (some JSX scanned, no wrappers detected): an agent
+    // branching on `inapplicable` can route once without re-calling
+    // on a different cwd to discriminate.
     const { mkdtemp } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join: joinPath } = await import("node:path");
@@ -1674,35 +1677,32 @@ describe("MCP tool: detect_native_wrappers", () => {
 
     const data = JSON.parse(result.content[0].text) as {
       candidates: unknown[];
+      inapplicable?: {
+        reason: string;
+        filesByExtension: Readonly<Record<string, number>>;
+      };
       emptyReason?: string;
-      note?: string;
     };
     expect(data.candidates).toEqual([]);
-    expect(data.emptyReason).toBe("no-parseable-files");
-    expect(data.note).toBe("No parseable files found.");
+    expect(data.inapplicable?.reason).toBe("no_jsx_in_tree");
+    expect(data.inapplicable?.filesByExtension).toEqual({});
+    // The "tool inapplicable" branch carries the structured
+    // discriminator; `emptyReason` is reserved for "tool ran clean
+    // but found nothing" cases.
+    expect("emptyReason" in data).toBe(false);
   });
 
-  it("stamps emptyReason 'no-parseable-jsx-files' on a pure-HTML/CSS project with zero JSX-bearing files", async () => {
-    // Q7-DETECT-NATIVE-WRAPPERS-EMPTY-REASON-DISCRIMINATOR. A project
-    // with parseable HTML/CSS/MD files but no `.tsx`/`.jsx`/`.mdx`/
-    // `.astro` source has no surface where a wrapper could be defined.
-    // Previously this scenario fell through to the
-    // `"no-pascalcase-onclick-components"` branch — semantically close
-    // but the prose nudged "no wrappers here" rather than the honest
-    // "the detector has no JSX surface to look at." Worse, when the
-    // project happened to carry a single `.mdx` file (docs-only sites
-    // tag themselves as "pure HTML"), the detector's JSX-walker DID
-    // see PascalCase tags from MDX components but those legitimately
-    // never carry inline `onClick` — that hit the
-    // `no-jsx-onclick-candidates-found-but-opaque-components-present`
-    // branch, whose `nextStep` told the agent to inspect
-    // `analysisCoverage.opaqueCustomComponentNames` on a
-    // `scan_project` response, a list that didn't exist in the same
-    // sense for a docs-MDX codebase. The discriminator must be
-    // computed deterministically from the parsed-file extension set
-    // (per "Heuristic-mislabeled meta sub-fields are dishonest" in
-    // ai-first-consumer.md) — the JSX-bearing count is provable from
-    // the input.
+  it("returns inapplicable: { reason: 'no_jsx_in_tree' } with a per-extension census on a pure-HTML/CSS project", async () => {
+    // A project with parseable HTML/CSS/MD files but no `.tsx`/`.jsx`/
+    // `.mdx`/`.astro` source has no surface where a wrapper could be
+    // defined. Per "Zero-output success is ambiguous failure," this
+    // is structurally distinct from "tool ran clean": the
+    // `inapplicable` block names the underlying reason and ships the
+    // per-extension file census so the agent can branch in one read
+    // (e.g. "this is a pure HTML site, skip wrapper-onboarding"
+    // vs "this is a JSX project — re-run with a different cwd"). The
+    // census combines parsed extensions and parser-rejected
+    // extensions into a single map.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join: joinPath } = await import("node:path");
@@ -1724,29 +1724,34 @@ describe("MCP tool: detect_native_wrappers", () => {
 
     const data = JSON.parse(result.content[0].text) as {
       candidates: unknown[];
+      inapplicable?: {
+        reason: string;
+        filesByExtension: Readonly<Record<string, number>>;
+      };
       emptyReason?: string;
       nextStep: string;
     };
     expect(data.candidates).toEqual([]);
-    expect(data.emptyReason).toBe("no-parseable-jsx-files");
+    expect(data.inapplicable?.reason).toBe("no_jsx_in_tree");
+    expect(data.inapplicable?.filesByExtension[".html"]).toBe(2);
+    expect(data.inapplicable?.filesByExtension[".css"]).toBe(1);
+    expect("emptyReason" in data).toBe(false);
     // The prose nextStep MUST NOT reference the opaque-components
     // inventory — that surface only makes sense when the JSX walker
-    // actually saw PascalCase tags. Sending the agent to a list that
-    // doesn't exist for this project is the silent-misroute the bug
-    // report flagged.
+    // actually saw PascalCase tags. The "no JSX in tree" prose points
+    // the agent at the structured `inapplicable` block instead.
     expect(data.nextStep).not.toContain("opaqueCustomComponentNames");
-    expect(data.nextStep).not.toContain("opaque components");
   });
 
-  it("stamps emptyReason 'no-jsx-onclick-candidates-found-but-opaque-components-present' when PascalCase components exist but none carry onClick", async () => {
+  it("inlines opaqueCustomComponentNames when emptyReason is no-jsx-onclick-candidates-found-but-opaque-components-present", async () => {
     // The Astro/MDX case. The scanned JSX/TSX carries PascalCase
     // wrappers but none have inline `onClick` handlers — wrappers in
     // MDX/Astro render as children and receive events at the leaf
-    // level, not the tag. The bare `candidates: []` reads as "nothing
-    // to wrap here" per "Zero-output success is ambiguous failure";
-    // the structured reason closes the ambiguity so the agent can
-    // branch into the opaque-components inventory on the scan
-    // surfaces instead.
+    // level, not the tag. Per AI-first doctrine "One tool call
+    // should answer 'what next?'", the response inlines the
+    // `opaqueCustomComponentNames` array on this branch so the
+    // agent can open each component directly rather than re-calling
+    // `scan_project` just to read the same inventory.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
     const { join: joinPath } = await import("node:path");
@@ -1777,13 +1782,41 @@ describe("MCP tool: detect_native_wrappers", () => {
     const data = JSON.parse(result.content[0].text) as {
       candidates: unknown[];
       emptyReason?: string;
+      opaqueCustomComponentNames?: readonly string[];
       nextStep: string;
     };
     expect(data.candidates).toEqual([]);
     expect(data.emptyReason).toBe("no-jsx-onclick-candidates-found-but-opaque-components-present");
-    // Prose nudge to the canonical follow-up surface so agents that
-    // read the string don't have to re-derive the next call.
+    // Inlined per "One tool call should answer 'what next?'" — sorted,
+    // deterministic.
+    expect(data.opaqueCustomComponentNames).toEqual(["Button", "Card"]);
+    // Prose still names the inlined surface so agents reading either
+    // string-matched or structurally-branched code land on the same
+    // next call.
     expect(data.nextStep).toContain("opaqueCustomComponentNames");
+  });
+
+  it("omits opaqueCustomComponentNames on the no-pascalcase-onclick-components branch", async () => {
+    // Present-when-meaningful: the inline inventory is inlined ONLY
+    // on the opaque-components branch. A JSX file with no PascalCase
+    // tags at all hits the bare-empty branch and the field is
+    // omitted entirely (rather than shipped as `[]`) per CLAUDE.md
+    // §1 "Ambiguous field shapes are dishonest."
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-no-pcc-"));
+    await writeFile(joinPath(dir, "app.tsx"), "export const x = 1;");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const raw = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(raw.candidates).toEqual([]);
+    expect(raw.emptyReason).toBe("no-pascalcase-onclick-components");
+    expect("opaqueCustomComponentNames" in raw).toBe(false);
   });
 
   it("omits emptyReason entirely when candidates are non-empty", async () => {
@@ -1878,10 +1911,10 @@ describe("MCP tool: detect_native_wrappers", () => {
   });
 
   // Guards the cwd-not-found error envelope — distinct from a
-  // successful zero-candidates / no-parseable-files response (which
-  // would be the silent-failure shape AI-first doctrine warns
-  // against). Mirrors the wrapper_introspect cwd-not-found test so
-  // onboarding tools share the same contract.
+  // successful zero-candidates / inapplicable response (which would
+  // be the silent-failure shape AI-first doctrine warns against).
+  // Mirrors the wrapper_introspect cwd-not-found test so onboarding
+  // tools share the same contract.
   it("hard-errors with code cwd-not-found when cwd does not exist", async () => {
     const tool = findTool("detect_native_wrappers");
     const session = new McpSession();
@@ -1977,13 +2010,18 @@ describe("MCP tool: detect_native_wrappers", () => {
       candidates: unknown[];
       projectKind?: string;
       emptyReason?: string;
+      inapplicable?: { reason: string; filesByExtension: Readonly<Record<string, number>> };
       nextStep?: string;
     };
     expect(data.candidates).toEqual([]);
     expect(data.projectKind).toBe("ruby");
-    // The `no-parseable-files` early-return path applies here — the
-    // walker rejected every file on the parseable-extension check.
-    expect(data.emptyReason).toBe("no-parseable-files");
+    // The "tool inapplicable" branch applies here — every `.rb` file
+    // was rejected by the parseable-extension check, so the scanned
+    // tree carries zero JSX-bearing files. The per-extension census
+    // surfaces the `.rb` count via the discovery walker's
+    // `skippedByExtension` map.
+    expect(data.inapplicable?.reason).toBe("no_jsx_in_tree");
+    expect(data.inapplicable?.filesByExtension[".rb"]).toBe(2);
   });
 
   it("stamps projectKind 'static-site' when only .html parses and no backend signature", async () => {
@@ -2028,11 +2066,14 @@ describe("MCP tool: detect_native_wrappers", () => {
 
     const data = JSON.parse(result.content[0].text) as {
       projectKind?: string;
-      // Note: the no-parseable-files branch returns a `note` only and
-      // does not currently emit a `nextStep` field — projectKind is
-      // the structured signal the agent reads on this branch.
+      inapplicable?: { reason: string };
+      nextStep?: string;
     };
     expect(data.projectKind).toBe("python");
+    // The "tool inapplicable" branch fires here too (no JSX-bearing
+    // files in tree); projectKind="python" is the deterministic
+    // backend-signature signal layered on top.
+    expect(data.inapplicable?.reason).toBe("no_jsx_in_tree");
   });
 
   it("projectKind: 'jsx' wins when JSX files coexist with backend-language files", async () => {
