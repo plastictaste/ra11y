@@ -35,12 +35,7 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type {
-  HtmlDocument,
-  HtmlElement,
-  JsxElement,
-  TsxModule,
-} from "../../types/ast.ts";
+import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import { isDomOriginExtension } from "../../utils/path.ts";
 
 /**
@@ -155,7 +150,8 @@ function findHtmlExampleHint(
 ): ExampleHint | null {
   let cursor: HtmlElement | undefined = parents.get(anchor);
   while (cursor !== undefined) {
-    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(cursor!.tagName));
+    const here = cursor;
+    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(here.tagName));
     if (tagHit) return { hint: tagHit.hint };
     const className = getHtmlAttribute(cursor, "class");
     const classHit = matchExampleClass(className);
@@ -171,12 +167,12 @@ function findJsxExampleHint(
 ): ExampleHint | null {
   let cursor: JsxElement | undefined = parents.get(anchor);
   while (cursor !== undefined) {
-    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(cursor!.tagName));
+    const here = cursor;
+    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(here.tagName));
     if (tagHit) return { hint: tagHit.hint };
     // JSX uses `className`; some authors still write `class` (pre-React-strict
     // codebases or non-React JSX). Probe both.
-    const attr =
-      getJsxAttribute(cursor, "className") ?? getJsxAttribute(cursor, "class");
+    const attr = getJsxAttribute(cursor, "className") ?? getJsxAttribute(cursor, "class");
     if (attr?.value?.kind === "StringLiteral") {
       const classHit = matchExampleClass(attr.value.value);
       if (classHit !== null) return { hint: `wrapper className="${classHit}"` };
