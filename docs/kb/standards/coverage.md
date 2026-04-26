@@ -81,7 +81,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.2.6` | Timeouts | AAA | manual | — | timing | **finder** |
 | `wcag22:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag22:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
-| `wcag22:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | — | **rule** |
+| `wcag22:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | reduced-motion-candidate | **rule** |
 | `wcag22:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `wcag22:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive, semantics/inline-display-none-on-focusable | focus-order | **rule** |
@@ -176,7 +176,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:2.2.6` | Timeouts | AAA | manual | — | timing | **finder** |
 | `wcag21:2.3.1` | Three Flashes or Below Threshold | A | manual | — | flashing-content | **finder** |
 | `wcag21:2.3.2` | Three Flashes | AAA | manual | — | — | **attestation-only** |
-| `wcag21:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | — | **rule** |
+| `wcag21:2.3.3` | Animation from Interactions | AAA | partial | motion/animation-from-interactions | reduced-motion-candidate | **rule** |
 | `wcag21:2.4.1` | Bypass Blocks | A | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `wcag21:2.4.2` | Page Titled | A | full | document/page-titled | — | **rule** |
 | `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive, semantics/inline-display-none-on-focusable | focus-order | **rule** |
