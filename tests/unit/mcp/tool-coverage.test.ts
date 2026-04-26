@@ -54,6 +54,10 @@ interface CoverageEnvelope {
       readonly topCount: number;
       readonly totalSkipped: number;
     };
+    // warnings-details schema discipline: presence-only codes ship
+    // the empty-object marker so every fired code has a key.
+    readonly deprecated_field_id_renamed_criterionId?: Record<string, never>;
+    readonly scanned_zero_files?: Record<string, never>;
   };
   readonly automatedCriteriaPassRate?: number;
   readonly criteriaTotal?: number;
@@ -116,16 +120,19 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(summary?.extensions).toEqual([".py", ".svelte", ".vue"]);
   });
 
-  it("omits `warningsDetails` when no payload-bearing warning code fires (shape discipline, not just `warnings: undefined`)", async () => {
+  it("ships the empty-object marker for the criterionId-deprecation code on `warningsDetails` (warnings-details schema discipline)", async () => {
     // Scan-side scenario: every file parseable, no template directives,
     // no Tailwind / storybook / build-artifact signal. None of the
     // scan-confidence warning codes fire — but
     // `deprecated_field_id_renamed_criterionId` always rides on
     // `coverage` while the legacy `id` alias on entry arrays still
-    // ships (Q7-CRITERION-ID-FIELD-NAME-DRIFT). Guard `warnings` to
-    // exactly the deprecation code and `warningsDetails` to absent —
-    // the dual-channel "no payload-bearing code fired" guarantee
-    // unaffected by the deprecation, which is presence-only signal.
+    // ships (criterion-id field-name drift compatibility shim). Per
+    // the warnings-details schema-discipline contract every fired
+    // code MUST have a corresponding key in `warningsDetails` — for
+    // this presence-only deprecation code, the empty-object marker
+    // is the deterministic "no further detail by design" signal that
+    // lets an agent reading the response distinguish "no payload
+    // defined" from "this surface didn't compute it."
     write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
     write(join(dir, "styles.css"), "main { color: black; }\n");
 
@@ -136,7 +143,11 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
     expect(data.warnings).toEqual(["deprecated_field_id_renamed_criterionId"]);
-    expect(data.warningsDetails).toBeUndefined();
+    expect(data.warningsDetails).toBeDefined();
+    expect(data.warningsDetails?.deprecated_field_id_renamed_criterionId).toEqual({});
+    expect(Object.keys(data.warningsDetails ?? {}).sort()).toEqual([
+      "deprecated_field_id_renamed_criterionId",
+    ]);
   });
 
   it("emits the criterionId-deprecation code on a clean all-parseable scan (warnings carries only the deprecation code, never `[]`)", async () => {

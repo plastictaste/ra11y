@@ -815,6 +815,19 @@ function buildChecklistWarnings(args: {
         }
       : {}),
   };
+  // Warnings-details schema discipline: stamp the empty-object
+  // marker for every fired code that didn't already get a rich
+  // entry. Covers tool-local presence-only codes
+  // (`results_truncated_use_nextcursor`) plus any
+  // `ScanWarningCode` from the derivative-scan channel that arrived
+  // without a payload. Without this, an agent reading the response
+  // sees a code in `warnings[]` but no key in `warningsDetails`
+  // and cannot tell "no payload defined" from "this surface didn't
+  // compute it."
+  for (const code of sorted) {
+    if (mergedDetails[code] !== undefined) continue;
+    mergedDetails[code] = {};
+  }
   return {
     ...(sorted.length > 0 ? { warnings: sorted } : {}),
     ...(Object.keys(mergedDetails).length > 0 ? { warningsDetails: mergedDetails } : {}),

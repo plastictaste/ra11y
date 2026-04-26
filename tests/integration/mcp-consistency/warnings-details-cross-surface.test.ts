@@ -209,37 +209,44 @@ describe("Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY — warnings + warningsDetails 
       { name: "checklist", env: warningsEnvelope(body<Record<string, unknown>>(responses[3])) },
     ];
 
-    // The set of codes that carry a payload in the current assembler.
-    // Keep in sync with `ScanWarningDetails` keys in
-    // `src/mcp/warnings.ts`; a code appearing only under `warnings`
-    // without a paired payload MUST be presence-only (no code in this
-    // set satisfies that condition).
-    const payloadBearingCodes = new Set([
-      "extensions_skipped_no_parser",
-      "content_files_skipped",
-      "source_language_unsupported",
-      "vendor_css_dominates_findings",
-      "response_token_budget_truncated",
-    ]);
-
+    // warnings-details schema discipline: every fired code MUST
+    // have a corresponding key on `warningsDetails`, regardless of
+    // whether the code is payload-bearing or presence-only. The
+    // membership invariant is the load-bearing contract: an agent
+    // reading the wire can always look up `warningsDetails[code]`
+    // and get a definite answer (rich payload OR `{}` marker)
+    // without prior knowledge of the per-code classification.
     for (const { name, env } of envelopes) {
       for (const code of env.warnings ?? []) {
-        if (payloadBearingCodes.has(code)) {
-          const detailKey = code as keyof NonNullable<typeof env.warningsDetails>;
-          const detail = env.warningsDetails?.[detailKey];
-          expect(
-            detail,
-            `${name} emitted warnings[${code}] but warningsDetails.${code} is missing — cross-surface consistency broken`,
-          ).toBeDefined();
-        }
+        const detailKey = code as keyof NonNullable<typeof env.warningsDetails>;
+        const detail = env.warningsDetails?.[detailKey];
+        expect(
+          detail,
+          `${name} emitted warnings[${code}] but warningsDetails.${code} is missing — schema-discipline invariant broken`,
+        ).toBeDefined();
+      }
+      // Mirror direction: every key on `warningsDetails` must
+      // correspond to a fired code in `warnings[]`. No stray keys.
+      const detailKeys = Object.keys(env.warningsDetails ?? {});
+      const warningCodes = new Set(env.warnings ?? []);
+      for (const key of detailKeys) {
+        expect(
+          warningCodes.has(key),
+          `${name} shipped warningsDetails.${key} without a matching code in warnings[] — membership invariant broken`,
+        ).toBe(true);
       }
     }
   });
 
-  it("every surface OMITS `warningsDetails` when no payload-bearing code fires (never ships empty `{}`)", async () => {
+  it("every surface that emits codes ships `warningsDetails` keyed by every fired code (warnings-details schema discipline)", async () => {
     // Clean fixture: one well-formed HTML file, no discovery-skip
-    // triggers. Scan surfaces should emit at most presence-only codes
-    // (or no warnings at all) and `warningsDetails` must be absent.
+    // triggers. Per warnings-details schema discipline, every
+    // fired code (rich-payload OR presence-only) must have a key on
+    // `warningsDetails`. Surfaces that fire no codes at all omit
+    // both fields entirely; surfaces that fire any code ship the
+    // matched-keys map. The `{}` marker is the deterministic "no
+    // further detail by design" signal — never the empty-sentinel
+    // anti-pattern (`warningsDetails: {}` with zero keys).
     const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-clean-"));
     await writeFile(
       join(dir, "page.html"),
@@ -259,16 +266,23 @@ describe("Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY — warnings + warningsDetails 
       { name: "scan_file", env: warningsEnvelope(body<Record<string, unknown>>(responses[4])) },
     ];
     for (const { name, env } of envelopes) {
-      // If `warningsDetails` is present, at least one key under it
-      // must correspond to a code actually in `warnings[]`. An
-      // empty-object `warningsDetails: {}` is a shape regression even
-      // under "surface cleanly emits warnings-only."
-      if (env.warningsDetails !== undefined) {
-        const keys = Object.keys(env.warningsDetails);
+      const codes = env.warnings ?? [];
+      if (codes.length === 0) {
+        // Zero codes fired → `warningsDetails` must be absent
+        // entirely (no empty-`{}` sentinel).
         expect(
-          keys.length,
-          `${name} shipped warningsDetails with 0 keys — empty sentinel is forbidden`,
-        ).toBeGreaterThan(0);
+          env.warningsDetails,
+          `${name} shipped warningsDetails alongside warnings:[] — empty sentinel is forbidden`,
+        ).toBeUndefined();
+      } else {
+        // At least one code fired → `warningsDetails` is present
+        // with one entry per fired code.
+        expect(
+          env.warningsDetails,
+          `${name} fired warnings but omitted warningsDetails — schema-discipline invariant broken`,
+        ).toBeDefined();
+        const detailKeys = Object.keys(env.warningsDetails ?? {}).sort();
+        expect(detailKeys).toEqual([...codes].sort());
       }
     }
   });

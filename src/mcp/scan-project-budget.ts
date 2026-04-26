@@ -28,6 +28,7 @@ import { applyTokenBudget } from "./token-budget.ts";
 import { analyzeTopContributor } from "./token-budget-contributor.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
 import {
+  fillMissingWarningDetails,
   type ScanWarningCode,
   type ScanWarningDetails,
   tokenBudgetTruncatedDetailsField,
@@ -312,11 +313,15 @@ function mergeBudgetedFields(args: {
   // `vendor_css_dominates_findings` that rode in from the scan
   // meta aren't lost when the truncation path overwrites the
   // field. Keys never overlap (density code is scan-assembly-
-  // only), so an object-spread is safe.
-  const mergedDetails: ScanWarningDetails = {
+  // only), so an object-spread is safe. Warnings-details schema
+  // discipline: stamp empty markers for any codes in `warnings`
+  // that don't already have keys (defensive — `baseWarningsDetails`
+  // came through `warningsField` so the codes already have keys,
+  // but the helper guarantees the invariant either way).
+  const mergedDetails: ScanWarningDetails = fillMissingWarningDetails(warnings, {
     ...(baseWarningsDetails ?? {}),
     ...densityDetails,
-  };
+  });
   // Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: when the density cap clipped
   // the page to ≤ 2 files AND the project carries > 100 files-with-
   // findings, the standard `nextStep` (suggest_fix on the first

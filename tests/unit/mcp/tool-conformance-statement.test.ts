@@ -398,7 +398,21 @@ describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-ARR
       expect(scope.files?.length).toBe(3);
       const warnings = (body["warnings"] as string[] | undefined) ?? [];
       expect(warnings).not.toContain("scope_files_truncated_count_exceeded");
-      expect(body["warningsDetails"]).toBeUndefined();
+      // Warnings-details schema discipline: when at least one code
+      // fires (e.g. `non_git_repo_signature_omitted` from the
+      // not-a-git-repo branch), `warningsDetails` ships with the
+      // empty-object marker per fired code; when zero codes fire,
+      // `warningsDetails` is absent entirely. Either honest shape is
+      // acceptable here — what we forbid is `warningsDetails: {}`
+      // (the empty-sentinel anti-pattern) or `warnings: [code]` with
+      // no key for `code` on `warningsDetails`.
+      const details = body["warningsDetails"] as Record<string, unknown> | undefined;
+      if (warnings.length === 0) {
+        expect(details).toBeUndefined();
+      } else {
+        expect(details).toBeDefined();
+        expect(Object.keys(details ?? {}).sort()).toEqual([...warnings].sort());
+      }
     });
   });
 

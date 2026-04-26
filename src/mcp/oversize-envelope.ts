@@ -32,7 +32,11 @@
  * `slim` callback the caller passes in.
  */
 
-import type { ScanWarningCode, ScanWarningDetails } from "./warnings.ts";
+import {
+  fillMissingWarningDetails,
+  type ScanWarningCode,
+  type ScanWarningDetails,
+} from "./warnings.ts";
 
 /**
  * Hard ceiling on the assembled response, in serialized-JSON
@@ -194,14 +198,19 @@ export function oversizeEnvelopeWarningsField(args: {
   if (!warnings.includes("response_dropped_files_oversize")) {
     warnings.push("response_dropped_files_oversize");
   }
-  const warningsDetails: ScanWarningDetails = {
+  // Warnings-details schema discipline: stamp the rich payload for
+  // `response_dropped_files_oversize` first, then run
+  // `fillMissingWarningDetails` to ensure every other code carried in
+  // from `baseWarnings` (binary-presence codes that the caller's
+  // base channel built without keys, defensively) also has a key.
+  const warningsDetails = fillMissingWarningDetails(warnings, {
     ...(baseWarningsDetails ?? {}),
     response_dropped_files_oversize: {
       preDropBytes: reason.preDropBytes,
       hardCeilingBytes: reason.hardCeilingBytes,
       droppedFileCount: reason.droppedFileCount,
     },
-  };
+  });
   return { warnings, warningsDetails };
 }
 

@@ -197,8 +197,17 @@ export const proposeConfigTool: McpTool = {
       // `warnings: []`). The code format
       // `foreign_ecosystem_detected: <language>` carries the ecosystem
       // tag inline so agents branching on bare `warnings[]` can
-      // discriminate without a paired `warningsDetails` lookup.
-      ...(foreignWarning === null ? {} : { warnings: [foreignWarning] }),
+      // discriminate without descending into structured data — the
+      // empty-object marker on `warningsDetails` keeps the
+      // warnings-details schema-discipline membership invariant honest
+      // (every fired code has a corresponding key on `warningsDetails`)
+      // while signaling "no further detail by design."
+      ...(foreignWarning === null
+        ? {}
+        : {
+            warnings: [foreignWarning],
+            warningsDetails: { [foreignWarning]: {} },
+          }),
     });
   },
 };

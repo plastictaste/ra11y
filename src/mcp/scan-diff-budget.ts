@@ -13,7 +13,11 @@
 
 import { applyTokenBudget } from "./token-budget.ts";
 import { analyzeTopContributor } from "./token-budget-contributor.ts";
-import { tokenBudgetTruncatedDetailsField } from "./warnings.ts";
+import {
+  fillMissingWarningDetails,
+  type ScanWarningCode,
+  tokenBudgetTruncatedDetailsField,
+} from "./warnings.ts";
 
 /**
  * Applies the ADR 0021 amendment token-density secondary budget to a
@@ -66,6 +70,23 @@ export function applyScanDiffTokenBudget<TFile>(
     effectiveLimit: budgeted.files.length,
     topContributor,
   });
+  // Warnings-details schema discipline: ensure every code in the
+  // merged `warnings[]` has a corresponding key on `warningsDetails`.
+  // The pre-existing tentative may have shipped binary-presence codes
+  // (e.g. `no_hunks_in_comparison`) without a paired `warningsDetails`
+  // entry — the `{}` marker fill closes that gap so the membership
+  // invariant holds across the response.
+  const tentativeDetails = tentative["warningsDetails"];
+  const tentativeDetailsRecord =
+    tentativeDetails === undefined ||
+    tentativeDetails === null ||
+    typeof tentativeDetails !== "object"
+      ? undefined
+      : (tentativeDetails as Record<string, unknown>);
+  const warningsDetails = fillMissingWarningDetails(warnings as readonly ScanWarningCode[], {
+    ...(tentativeDetailsRecord ?? {}),
+    ...detailsField.warningsDetails,
+  });
   return {
     ...tentative,
     [filesKey]: budgeted.files,
@@ -83,6 +104,6 @@ export function applyScanDiffTokenBudget<TFile>(
     effectiveLimit: budgeted.files.length,
     pageClipReason: "token_density" as const,
     warnings,
-    ...detailsField,
+    warningsDetails,
   };
 }

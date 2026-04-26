@@ -32,7 +32,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { computeTemplateDirectiveOverlap } from "./warnings.ts";
+import { computeTemplateDirectiveOverlap, fillMissingWarningDetails } from "./warnings.ts";
 
 export const coverageTool: McpTool = {
   def: {
@@ -575,21 +575,26 @@ function withTitles(
  *   - if `warnings` is already present, append.
  *   - if absent, create a fresh single-element array.
  *
- * `warningsDetails` is left untouched — the deprecation code is
- * presence-only signal (mirror of `proposed_config_deprecated_use_suggested_config`).
+ * Warnings-details schema discipline: the deprecation code is a
+ * binary-presence shape, so we stamp the empty-object marker on
+ * `warningsDetails` (via {@link fillMissingWarningDetails}) so every
+ * fired code has a key. When `base.warningsDetails` is absent the
+ * helper builds a fresh map from the code list; when present, the
+ * helper stamps the missing marker only.
  */
 function mergeDeprecatedFieldIdWarning(base: {
   readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
 }): {
   readonly warnings: readonly import("./warnings.ts").ScanWarningCode[];
-  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+  readonly warningsDetails: import("./warnings.ts").ScanWarningDetails;
 } {
   const code: import("./warnings.ts").ScanWarningCode = "deprecated_field_id_renamed_criterionId";
   const next = base.warnings === undefined ? [code] : [...base.warnings, code];
-  return base.warningsDetails === undefined
-    ? { warnings: next }
-    : { warnings: next, warningsDetails: base.warningsDetails };
+  return {
+    warnings: next,
+    warningsDetails: fillMissingWarningDetails(next, base.warningsDetails),
+  };
 }
 
 /**

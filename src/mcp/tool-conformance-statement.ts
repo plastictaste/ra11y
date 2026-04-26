@@ -335,9 +335,23 @@ function mergeToolWarnings(args: {
       }),
     };
   }
+  // Warnings-details schema discipline: stamp the empty-object
+  // marker for every fired code that didn't already get a rich
+  // entry. Covers tool-local presence-only codes
+  // (`non_git_repo_signature_omitted`, `stale_probe_unavailable`,
+  // etc.) plus any `ScanWarningCode` from the derivative-scan
+  // channel that arrived without a payload. Without this, an agent
+  // reading the response sees a code in `warnings[]` but no key in
+  // `warningsDetails` and cannot tell "no payload defined" from
+  // "this surface didn't compute it."
+  const sortedWarnings = [...toolWarnings].sort();
+  for (const code of sortedWarnings) {
+    if (details[code] !== undefined) continue;
+    details[code] = {};
+  }
   return {
-    warnings: [...toolWarnings].sort(),
-    warningsDetails: Object.keys(details).length > 0 ? details : undefined,
+    warnings: sortedWarnings,
+    warningsDetails: sortedWarnings.length > 0 ? details : undefined,
   };
 }
 

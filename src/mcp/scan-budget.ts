@@ -16,7 +16,11 @@
 
 import type { applyTokenBudget } from "./token-budget.ts";
 import { analyzeTopContributor } from "./token-budget-contributor.ts";
-import { type ScanWarningCode, tokenBudgetTruncatedDetailsField } from "./warnings.ts";
+import {
+  fillMissingWarningDetails,
+  type ScanWarningCode,
+  tokenBudgetTruncatedDetailsField,
+} from "./warnings.ts";
 
 /**
  * Merges the token-budget helper's decision into a `scan` response
@@ -53,6 +57,27 @@ export function mergeScanTokenBudget<TFile>(args: {
     ? (tentativeFiles as readonly { readonly findings?: readonly Record<string, unknown>[] }[])
     : [];
   const topContributor = analyzeTopContributor(filesForAnalysis);
+  const warnings: readonly ScanWarningCode[] = [
+    ...args.baseWarnings,
+    "response_token_budget_truncated",
+  ];
+  // Warnings-details schema discipline: stamp the density-cap rich
+  // payload first, then ensure every other code in `warnings[]` (the
+  // pre-existing `baseWarnings`) has a corresponding key. The base
+  // came in without the matched `warningsDetails` because `scan` does
+  // not currently thread the details map alongside the codes — until
+  // it does, the marker fill keeps the membership invariant on this
+  // surface.
+  const tentativeDetails = readTentativeWarningsDetails(args.tentative);
+  const densityFragment = tokenBudgetTruncatedDetailsField({
+    requestedLimit: args.requestedLimit,
+    effectiveLimit: args.effectiveLimit,
+    topContributor,
+  });
+  const warningsDetails = fillMissingWarningDetails(warnings, {
+    ...(tentativeDetails ?? {}),
+    ...densityFragment.warningsDetails,
+  });
   return {
     ...args.tentative,
     files: args.budgeted.files,
@@ -61,11 +86,23 @@ export function mergeScanTokenBudget<TFile>(args: {
     requestedLimit: args.requestedLimit,
     effectiveLimit: args.effectiveLimit,
     pageClipReason: "token_density" as const,
-    warnings: [...args.baseWarnings, "response_token_budget_truncated"] satisfies ScanWarningCode[],
-    ...tokenBudgetTruncatedDetailsField({
-      requestedLimit: args.requestedLimit,
-      effectiveLimit: args.effectiveLimit,
-      topContributor,
-    }),
+    warnings,
+    warningsDetails,
   };
+}
+
+/**
+ * Warnings-details schema discipline: reads any pre-existing
+ * `warningsDetails` map off the tentative response so the merge
+ * helper can fold it under the membership-invariant pass. Returns
+ * `undefined` when the field is absent or malformed — defensive
+ * narrowing mirrors the `readWarningsDetails` helper in
+ * `scan-project-budget.ts`.
+ */
+function readTentativeWarningsDetails(
+  tentative: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const d = tentative["warningsDetails"];
+  if (d === undefined || d === null || typeof d !== "object") return undefined;
+  return d as Record<string, unknown>;
 }

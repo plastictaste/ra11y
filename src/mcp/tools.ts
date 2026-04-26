@@ -396,6 +396,17 @@ const sessionConfigureTool: McpTool = {
       // or on a previous call this connection).
       warnings.push("session_allow_write_enabled");
     }
+    // Warnings-details schema discipline: stamp the empty-object
+    // marker for every fired code that didn't get a rich payload (here,
+    // `session_allow_write_enabled`) so the membership invariant
+    // "every code in `warnings[]` has a key on `warningsDetails`"
+    // holds. Without the marker an agent reading the response sees a
+    // code with no key and can't tell "no payload defined for this
+    // code" from "this surface didn't compute it."
+    for (const code of warnings) {
+      if (warningsDetails[code] !== undefined) continue;
+      warningsDetails[code] = {};
+    }
     return textResult({
       active: {
         standard: config.standard,

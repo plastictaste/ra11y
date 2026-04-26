@@ -1167,7 +1167,16 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(Object.keys(details)).toHaveLength(0);
   });
 
-  it("returns an empty object when the code fired but the map is empty (shouldn't happen in practice — guard against upstream drift)", () => {
+  it("falls back to the empty-object marker when the code fired but the map is empty (warnings-details schema discipline — upstream-drift guard)", () => {
+    // Pre-amendment contract: a degenerate-payload guard returned
+    // `undefined` and the call site conditional-spread the entry
+    // away. Post-amendment contract: every fired code in `codes`
+    // MUST have a key on the map. The summarizer still falls through on the
+    // empty-map input — but the dispatch loop stamps the marker so
+    // the wire shape stays honest. The membership invariant catches
+    // upstream-drift bugs (a caller that fires the code with no map
+    // to back it up) by surfacing the code's presence on
+    // `warningsDetails`, not by silently dropping it.
     const codes = ["extensions_skipped_no_parser"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 125,
@@ -1176,7 +1185,12 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       analysisCoverage: { skippedByExtension: {} },
       filesByExtension: { ".tsx": 125 },
     });
-    expect(details.extensions_skipped_no_parser).toBeUndefined();
+    // Read through `Record<string, unknown>` so the assertion
+    // accepts the empty-object marker shape that the dispatch's
+    // fall-through path stamps when the rich summarizer returns
+    // `undefined`.
+    const detailsMap = details as Record<string, unknown>;
+    expect(detailsMap.extensions_skipped_no_parser).toEqual({});
   });
 
   it("drops entries whose count is zero or non-numeric (hostile-input defense)", () => {
@@ -1352,7 +1366,7 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
     expect(out.warningsDetails?.extensions_skipped_no_parser?.totalSkipped).toBe(104);
   });
 
-  it("emits `warnings` alone when every fired code is presence-only (no payload mirror exists)", () => {
+  it("emits `warningsDetails` with the empty-object marker when every fired code is presence-only (warnings-details schema discipline)", () => {
     const out = warningsField({
       filesScanned: 10,
       rootSource: "explicit",
@@ -1361,10 +1375,18 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       filesByExtension: undefined,
       configSearchSawProjectMarker: true,
     });
-    // Only `no_config_found` fires; presence-only code with no payload.
+    // Only `no_config_found` fires; presence-only code with no
+    // structured payload — but per the schema-discipline amendment,
+    // every fired code MUST have a corresponding key in
+    // `warningsDetails` (use `{}` to deterministically signal "no
+    // further detail by design"). Without the key, an agent reading
+    // the response can't distinguish "no payload defined for this
+    // code" from "payload exists but this surface didn't compute
+    // it" — the asymmetric-discipline anti-pattern the doctrine
+    // names.
     expect(out.warnings).toEqual(["no_config_found"]);
-    // `warningsDetails` must be omitted (never `{}`) per "present-when-meaningful."
-    expect(out.warningsDetails).toBeUndefined();
+    expect(out.warningsDetails).toBeDefined();
+    expect(out.warningsDetails?.no_config_found).toEqual({});
   });
 
   it("omits both fields on a clean scan (no `warnings: []` and no `warningsDetails: {}`)", () => {
@@ -1427,21 +1449,28 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
     expect(Object.keys(out)).toEqual(["warningsDetails"]);
   });
 
-  it("`warnings[]` membership and `warningsDetails` keys never disagree — the code is both fired and mirrored (set-membership invariant)", () => {
+  it("warnings-details schema discipline — every fired code has a corresponding key in `warningsDetails` (rich payload OR empty-object marker)", () => {
     const out = warningsField({
       filesScanned: 42, // above the no_config_found threshold
-      rootSource: "spawn-cwd", // fires root_source_defaulted (no payload)
-      configSource: null, // fires no_config_found (no payload) w/ marker
+      rootSource: "spawn-cwd", // fires root_source_defaulted (presence)
+      configSource: null, // fires no_config_found (presence) w/ marker
       configSearchSawProjectMarker: true,
       analysisCoverage: {
-        skippedByExtension: { ".scss": 5 }, // fires extensions_skipped_no_parser (with payload)
+        skippedByExtension: { ".scss": 5 }, // fires extensions_skipped_no_parser (rich)
       },
       filesByExtension: undefined,
     });
+    // Rich payload retained for the payload-bearing code.
     expect(out.warnings).toContain("extensions_skipped_no_parser");
-    expect(out.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
-    // No stray keys — only payload-bearing codes show up under warningsDetails.
-    expect(Object.keys(out.warningsDetails ?? {})).toEqual(["extensions_skipped_no_parser"]);
+    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".scss");
+    // The two presence-only codes get the empty-object marker — the
+    // membership invariant holds: keys on `warningsDetails` exactly
+    // match the codes in `warnings[]`.
+    expect(out.warningsDetails?.no_config_found).toEqual({});
+    expect(out.warningsDetails?.root_source_defaulted).toEqual({});
+    const codes = out.warnings ?? [];
+    const detailKeys = Object.keys(out.warningsDetails ?? {}).sort();
+    expect(detailKeys).toEqual([...codes].sort());
   });
 
   it("Jekyll scan emits content_files_skipped + extensions_skipped_no_parser together with matching payloads", () => {
@@ -1572,7 +1601,13 @@ describe("computeScanWarningDetails — vendor_css_dominates_findings payload", 
     expect(details.vendor_css_dominates_findings?.topVendorFile.findingsCount).toBe(8940);
   });
 
-  it("omits the payload when the code fired but topVendorFile is absent (payload without a concrete pivot is weaker than the bare code)", () => {
+  it("falls back to the empty-object marker when the code fired but topVendorFile is absent (warnings-details schema discipline)", () => {
+    // Pre-amendment contract: a degenerate-payload guard returned
+    // `undefined` and the call site conditional-spread the entry
+    // away. Post-amendment contract: every fired code in `codes`
+    // MUST have a key on the map. The summarizer still falls through on the
+    // missing-pivot input — but the dispatch loop stamps the marker
+    // so the wire shape stays honest.
     const details = computeScanWarningDetails(["vendor_css_dominates_findings"] as const, {
       filesScanned: 42,
       rootSource: "explicit",
@@ -1584,10 +1619,17 @@ describe("computeScanWarningDetails — vendor_css_dominates_findings payload", 
         vendorFindingsCount: 300,
       },
     });
-    expect(details.vendor_css_dominates_findings).toBeUndefined();
+    // Read through `Record<string, unknown>` so the assertion
+    // accepts the empty-object marker the dispatch's fall-through
+    // path stamps when the rich summarizer returns `undefined`.
+    // (The interface keeps the rich-payload shape on the typed
+    // accessor; production callers never see the fall-through
+    // because they always supply a complete `vendorCssNoise`.)
+    const detailsMap = details as Record<string, unknown>;
+    expect(detailsMap.vendor_css_dominates_findings).toEqual({});
   });
 
-  it("omits the payload when vendorCssNoise is absent entirely", () => {
+  it("falls back to the empty-object marker when vendorCssNoise is absent entirely (warnings-details schema discipline)", () => {
     const details = computeScanWarningDetails(["vendor_css_dominates_findings"] as const, {
       filesScanned: 42,
       rootSource: "explicit",
@@ -1595,7 +1637,8 @@ describe("computeScanWarningDetails — vendor_css_dominates_findings payload", 
       analysisCoverage: undefined,
       filesByExtension: { ".css": 4 },
     });
-    expect(details.vendor_css_dominates_findings).toBeUndefined();
+    const detailsMap = details as Record<string, unknown>;
+    expect(detailsMap.vendor_css_dominates_findings).toEqual({});
   });
 });
 
@@ -1743,16 +1786,30 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
       scannedBuildArtifactsPresent: true,
     });
     expect(out.warnings).toContain("scanned_build_artifacts_present");
-    expect(out.warningsDetails?.scanned_build_artifacts_present).toBeUndefined();
+    // warnings-details schema discipline: the detector wasn't
+    // wired (no `scannedBuildArtifactsSummary`), so the rich
+    // summarizer falls through and the marker fills the slot
+    // instead. Without the marker the agent would read
+    // `warnings: [scanned_build_artifacts_present]` with no key in
+    // `warningsDetails` and could not tell "this surface didn't
+    // compute the count" from "no count is meaningful here."
+    // Read through `Record<string, unknown>` so the assertion
+    // accepts the empty-object marker shape that the dispatch's
+    // fall-through path stamps when the rich summarizer returns
+    // `undefined`.
+    const detailsMap = out.warningsDetails as Record<string, unknown> | undefined;
+    expect(detailsMap?.scanned_build_artifacts_present).toEqual({});
   });
 
-  it("binary-presence codes never emit a `warningsDetails` entry — `no_config_found`", () => {
+  it("warnings-details schema discipline — binary-presence code `no_config_found` ships the empty-object marker", () => {
     // `no_config_found` is the canonical binary code: the bare
     // emission IS the entire signal — `meta.configSource: null`
     // already carries the same bit, and the warning's prose names
     // the remediation. There's no follow-on quantity an agent
-    // would branch on differently. The contract: never a slot on
-    // `ScanWarningDetails`, never an entry on the wire.
+    // would branch on differently. Per the schema-discipline
+    // amendment, the code still carries an entry on the wire (as
+    // the empty-object marker `{}`) so the membership invariant
+    // holds across the whole `warnings[]` set.
     const out = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
@@ -1762,10 +1819,11 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
       configSearchSawProjectMarker: true,
     });
     expect(out.warnings).toContain("no_config_found");
-    expect(out.warningsDetails).toBeUndefined();
+    expect(out.warningsDetails).toBeDefined();
+    expect(out.warningsDetails?.no_config_found).toEqual({});
   });
 
-  it("binary-presence codes never emit a `warningsDetails` entry — `template_files_parsed_as_literal`", () => {
+  it("warnings-details schema discipline — binary-presence code `template_files_parsed_as_literal` ships the empty-object marker", () => {
     // `template_files_parsed_as_literal` is binary too: the
     // interpolation token list lives in
     // `meta.analysisCoverage.templateInterpolationFound` and the
@@ -1773,7 +1831,9 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
     // A count of tokens or fence presence bit doesn't change the
     // agent's next action — read the file, confirm the parse-as-
     // literal regime, decide whether to add a pragma — the bare
-    // code IS the entire top-level signal.
+    // code IS the entire top-level signal. The marker on
+    // `warningsDetails` keeps the membership invariant honest across
+    // the response.
     const out = warningsField({
       filesScanned: 5,
       rootSource: "explicit",
@@ -1789,7 +1849,7 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
       (out.warningsDetails as Record<string, unknown> | undefined)?.[
         "template_files_parsed_as_literal"
       ],
-    ).toBeUndefined();
+    ).toEqual({});
   });
 
   it("the membership-vs-payload invariant holds when the seven canonical regression codes all fire on one response", () => {
@@ -1827,26 +1887,32 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
     expect(codes).toContain("scanned_build_artifacts_present");
     expect(codes).toContain("template_files_parsed_as_literal");
     // Payload-bearing slots populated for every fired code that has
-    // a slot.
+    // a rich slot.
     expect(out.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
     expect(out.warningsDetails?.parse_errors_present).toBeDefined();
     expect(out.warningsDetails?.source_language_unsupported).toBeDefined();
     expect(out.warningsDetails?.scanned_build_artifacts_present).toBeDefined();
-    // Binary codes never produce a slot — explicit absence check
-    // against the payload map keys keeps the contract symmetric
-    // (no stray `no_config_found` / `template_files_parsed_as_literal`
-    // shape ever leaks through).
-    const detailsKeys = Object.keys(out.warningsDetails ?? {});
-    expect(detailsKeys).not.toContain("no_config_found");
-    expect(detailsKeys).not.toContain("template_files_parsed_as_literal");
+    // warnings-details schema discipline: presence-only codes get
+    // the empty-object marker so every fired code is keyed. Without
+    // the marker, an agent reading the response could not distinguish
+    // "no payload defined for this code" from "payload exists but
+    // this surface didn't compute it" — the asymmetric-discipline
+    // anti-pattern the doctrine names.
+    expect(out.warningsDetails?.no_config_found).toEqual({});
+    expect(out.warningsDetails?.template_files_parsed_as_literal).toEqual({});
+    // Membership invariant: keys on `warningsDetails` exactly match
+    // the codes in `warnings[]` (no extras, no omissions).
+    const detailsKeys = Object.keys(out.warningsDetails ?? {}).sort();
+    expect(detailsKeys).toEqual([...codes].sort());
   });
 
-  it("the membership-vs-payload invariant: every key on `warningsDetails` corresponds to a fired code in `warnings[]`", () => {
+  it("the membership-vs-payload invariant: every key on `warningsDetails` corresponds to a fired code in `warnings[]` (and no extras leak when codes is empty)", () => {
     // Drives `computeScanWarningDetails` directly with codes that
     // were NOT emitted (empty `codes` arg) — the helper must NOT
-    // leak any payload, even when the inputs would otherwise let
-    // a `summarize*` helper succeed. Prevents a refactor from
-    // detaching the gate that keeps the two channels in lock-step.
+    // leak any payload (rich OR `{}` marker), even when the inputs
+    // would otherwise let a `summarize*` helper succeed. Prevents a
+    // refactor from detaching the gate that keeps the two channels
+    // in lock-step.
     const details = computeScanWarningDetails([], {
       filesScanned: 250,
       rootSource: "explicit",
@@ -1862,6 +1928,67 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
       scannedBuildArtifactsSummary: { count: 17, topPath: "vendor/x.css" },
     });
     expect(Object.keys(details)).toHaveLength(0);
+  });
+
+  it("warnings-details schema discipline — canonical 8-codes-vs-1-detail regression: every code in warnings[] gets a key (rich OR marker)", () => {
+    // The canonical repro: 8 codes fired, only
+    // `response_token_budget_truncated` carried a payload, the
+    // other 7 codes had no key on `warningsDetails`. Asymmetric
+    // discipline made the wire shape dishonest — an agent reading
+    // a code without a key couldn't tell "no payload by design"
+    // from "payload exists but this surface didn't compute it."
+    //
+    // Schema-discipline contract: every fired code has a key. Rich
+    // payloads for the codes whose summarizers carry quantitative
+    // signal, empty `{}` markers for the rest. The membership
+    // invariant is load-bearing — the agent reads
+    // `warningsDetails[code]` and gets a definite answer,
+    // regardless of which code it is.
+    const out = warningsField({
+      filesScanned: 250,
+      rootSource: "spawn-cwd", // root_source_defaulted (presence)
+      configSource: null, // no_config_found (presence)
+      configSearchSawProjectMarker: true,
+      analysisCoverage: {
+        parseErrorFileCount: 4,
+        partialParseFileCount: 0,
+        // template directives + finding overlap fire
+        // template_files_parsed_as_literal (presence)
+        templateInterpolationFound: [{ token: "{%x%}", count: 1 }],
+        // skippedByExtension fires extensions_skipped_no_parser (rich)
+        skippedByExtension: { ".astro": 80, ".rb": 120 },
+      },
+      filesByExtension: { ".tsx": 250 },
+      // build artifacts present (rich payload — `{ count, topPath }`)
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsSummary: { count: 17, topPath: "vendor/x.css" },
+      // template-overlap gate — the warning fires only when at
+      // least one finding's line sits inside a directive range.
+      templateDirectivesOverlap: true,
+    });
+    const codes = out.warnings ?? [];
+    // Sample the canonical 5 codes the regression item names — the
+    // exact code set varies per fixture so the load-bearing
+    // assertion is the membership invariant on the next line.
+    expect(codes).toContain("no_config_found");
+    expect(codes).toContain("template_files_parsed_as_literal");
+    expect(codes).toContain("scanned_build_artifacts_present");
+    expect(codes).toContain("extensions_skipped_no_parser");
+    expect(codes).toContain("parse_errors_present");
+    // Membership invariant — keys on `warningsDetails` exactly
+    // match the codes in `warnings[]`. The integration test in
+    // `tests/integration/mcp-consistency/warnings-details-cross-surface.test.ts`
+    // pins this across the live MCP wire; this unit test pins it
+    // at the helper layer.
+    const detailKeys = Object.keys(out.warningsDetails ?? {}).sort();
+    expect(detailKeys).toEqual([...codes].sort());
+    // Spot-check rich + marker entries to lock both shapes.
+    expect(out.warningsDetails?.scanned_build_artifacts_present).toEqual({
+      count: 17,
+      topPath: "vendor/x.css",
+    });
+    expect(out.warningsDetails?.no_config_found).toEqual({});
+    expect(out.warningsDetails?.template_files_parsed_as_literal).toEqual({});
   });
 });
 
@@ -1977,7 +2104,14 @@ describe("computeScanWarnings — scanned_minified_file payload + warningsField 
     expect(fields.warningsDetails?.scanned_minified_file).toBeUndefined();
   });
 
-  it("omits the payload when scannedMinifiedFiles is supplied but empty (degenerate-payload guard)", () => {
+  it("falls back to the empty-object marker when scannedMinifiedFiles is supplied but empty (warnings-details schema discipline)", () => {
+    // Pre-amendment contract: a degenerate-payload guard returned
+    // `undefined` and the call site conditional-spread the entry
+    // away, leaving the code keyless on `warningsDetails`. Post-
+    // amendment contract: every fired code in `codes` MUST have a
+    // key on the map. The summarizer still falls through on the
+    // degenerate input — but the dispatch loop stamps the empty
+    // marker so the wire shape stays honest.
     const details = computeScanWarningDetails(["scanned_minified_file"], {
       filesScanned: 5,
       rootSource: "explicit",
@@ -1986,7 +2120,12 @@ describe("computeScanWarnings — scanned_minified_file payload + warningsField 
       filesByExtension: undefined,
       scannedMinifiedFiles: [],
     });
-    expect(details.scanned_minified_file).toBeUndefined();
+    // Read through `Record<string, unknown>` so the assertion
+    // accepts the empty-object marker shape that the dispatch's
+    // fall-through path stamps when the rich summarizer returns
+    // `undefined`.
+    const detailsMap = details as Record<string, unknown>;
+    expect(detailsMap.scanned_minified_file).toEqual({});
   });
 });
 

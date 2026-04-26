@@ -1008,59 +1008,77 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
 
 /**
  * Structured sibling to the bare-string `warnings[]` channel — see
- * ADR 0023. Keyed by `ScanWarningCode`; only codes whose signal is
- * enriched by a quantitative payload appear here. Codes whose presence
- * alone is the signal have no entry and the map may be empty as a whole
- * — in which case `warningsDetailsField` omits the field entirely per
- * "present-when-meaningful."
+ * ADR 0023 (and the schema-discipline amendment shipped under
+ * warnings-details schema discipline). Keyed by `ScanWarningCode`;
+ * **every** fired code carries a corresponding key on this map. Some
+ * keys carry a richer quantitative payload (counts, lists, ratios);
+ * others are intentionally empty (`{}`) — the empty object is the
+ * deterministic "no further detail by design" marker, not an
+ * unavailable-sentinel. When `warnings[]` is non-empty, this map ships
+ * alongside it with one entry per fired code, so an agent reading
+ * `warningsDetails[code]` always gets a definite answer (either a
+ * payload or `{}`) without having to know in advance which codes are
+ * payload-bearing.
  *
- * Payload-vs-binary contract (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION):
- * the doctrine is "warningsDetails carries quantitative signal the agent
- * uses to decide what next; bare codes carry binary signal." Both honest;
- * the schema must document which kind each code is. Concretely:
+ * Payload-vs-binary classification (same intent as the original
+ * payload-vs-binary contract on this interface — schematized so
+ * both kinds carry an explicit wire shape):
  *
- *   - PAYLOAD-BEARING (an entry on this interface): the code's "fired"
- *     state is enriched by a count, list, ratio, language enum, or
- *     other quantity the agent reads to branch on severity / kind /
- *     scope without descending into `meta`. The current set is
+ *   - PAYLOAD-BEARING (rich entry): the code's "fired" state is
+ *     enriched by a count, list, ratio, language enum, or other
+ *     quantity the agent reads to branch on severity / kind / scope
+ *     without descending into `meta`. The current set is
  *     `extensions_skipped_no_parser`, `response_token_budget_truncated`,
  *     `content_files_skipped`, `source_language_unsupported`,
  *     `vendor_css_dominates_findings`, `parse_errors_present`,
  *     `scanned_build_artifacts_present`, `scanned_minified_file`,
- *     `animation_library_without_reduced_motion_guard`, and
+ *     `bulk_catalog_detected`,
+ *     `animation_library_without_reduced_motion_guard`,
+ *     `response_dropped_files_oversize`, and
  *     `cwd_appears_misrooted`.
- *     Each carries a `summarize*`
- *     helper that returns `undefined` if the predicate fired but the
- *     payload would be degenerate (e.g. zero counts, missing pivot) —
- *     the call site conditional-spreads, so a degenerate payload is
- *     never on the wire.
+ *     Each carries a `summarize*` helper that returns `undefined` if
+ *     the predicate fired but the payload would be degenerate (e.g.
+ *     zero counts, missing pivot) — when the helper falls through, the
+ *     call site falls back to the empty-object marker so the
+ *     "every code is keyed" invariant still holds.
  *
- *   - BINARY-PRESENCE (no entry on this interface): the code's "fired"
- *     state is the entire signal; there is no follow-on quantity the
- *     agent would branch on differently. The current set is
- *     `scanned_zero_files`, `root_source_defaulted`, `no_config_found`,
+ *   - BINARY-PRESENCE (`{}` entry): the code's "fired" state is the
+ *     entire signal; there is no follow-on quantity the agent would
+ *     branch on differently. The current set is `scanned_zero_files`,
+ *     `root_source_defaulted`, `no_config_found`,
  *     `tailwind_detected_css_undercounted`, `template_files_parsed_as_literal`,
  *     `no_hunks_in_comparison`, `storybook_preset_active`,
  *     `session_wrappers_configured_for_different_cwd`,
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
  *     `response_meta_truncated`,
  *     `baseline_dry_run`,
- *     `proposed_config_deprecated_use_suggested_config`, and
- *     `dist_only_scan_detected`. Each names a
- *     condition whose remediation is documented in the code's prose
- *     comment alongside its declaration; meta sub-fields named there
- *     carry any incidental detail (paths, ext maps, directive lists)
- *     that an agent might want for triage. Adding a payload to a
- *     binary code is the same mistake as adding `newText: ""` under
- *     `kind: "edit"` — an ambiguous shape that forces the agent to
- *     re-read, not new signal.
+ *     `proposed_config_deprecated_use_suggested_config`,
+ *     `deprecated_field_id_renamed_criterionId`,
+ *     `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`,
+ *     `partial_parse_files_present`,
+ *     `parser_bailed_zero_findings`,
+ *     `scss_unresolved_variables` (the file list it carries is
+ *     declared payload-bearing — see helper),
+ *     and `dist_only_scan_detected`. Each names a condition whose
+ *     remediation is documented in the code's prose comment alongside
+ *     its declaration; meta sub-fields named there carry any
+ *     incidental detail (paths, ext maps, directive lists) that an
+ *     agent might want for triage. The empty-object entry is the
+ *     load-bearing wire signal: "this code fired, has no further
+ *     payload by design — go read the code's prose / `meta` mirror."
+ *     warnings-details schema discipline: the alternative shape
+ *     (omit binary codes from the map) was rejected because an agent
+ *     reading the wire could not distinguish "no payload defined for
+ *     this code" from "payload exists but this surface didn't compute
+ *     it" without prior knowledge of the per-code classification.
  *
- * Membership-vs-payload invariant: every key on this interface MUST
- * correspond to a {@link ScanWarningCode} member that fired in the
- * paired `codes[]` array. The {@link computeScanWarningDetails} helper
- * gates entry emission on `codes.includes(...)` so a payload never
- * lands without its corresponding code; the regression test in
- * `tests/unit/mcp/warnings.test.ts` locks the contract.
+ * Membership invariant: when `warnings[]` is non-empty, the keys of
+ * `warningsDetails` are EXACTLY the codes in `warnings[]` (no extras,
+ * no omissions). The {@link computeScanWarningDetails} helper enforces
+ * this by walking the codes list and either invoking the per-code
+ * summarizer (payload-bearing) or stamping the `{}` marker
+ * (binary-presence). The regression tests in
+ * `tests/unit/mcp/warnings.test.ts` lock the contract.
  */
 export interface ScanWarningDetails {
   /**
@@ -1417,7 +1435,54 @@ export interface ScanWarningDetails {
   readonly cwd_appears_misrooted?: {
     readonly nearestConfigAncestor: string;
   };
+  /**
+   * warnings-details schema discipline: binary-presence codes ship
+   * the empty-object marker (`{}`) so every fired code in `warnings[]`
+   * has a corresponding key on this map. The schema groups them under
+   * one tag rather than declaring `Record<string, never>` per code so
+   * the type still names which codes are payload-bearing (the rich
+   * fields above) and which are presence-only (the entries below). The
+   * {@link BinaryPresenceMarker} alias is the precise empty shape.
+   */
+  readonly scanned_zero_files?: BinaryPresenceMarker;
+  readonly root_source_defaulted?: BinaryPresenceMarker;
+  readonly no_config_found?: BinaryPresenceMarker;
+  readonly tailwind_detected_css_undercounted?: BinaryPresenceMarker;
+  readonly template_files_parsed_as_literal?: BinaryPresenceMarker;
+  readonly no_hunks_in_comparison?: BinaryPresenceMarker;
+  readonly storybook_preset_active?: BinaryPresenceMarker;
+  readonly session_wrappers_configured_for_different_cwd?: BinaryPresenceMarker;
+  readonly redundant_additional_paths?: BinaryPresenceMarker;
+  readonly restrict_to_paths_no_matches?: BinaryPresenceMarker;
+  readonly response_meta_truncated?: BinaryPresenceMarker;
+  readonly baseline_dry_run?: BinaryPresenceMarker;
+  readonly proposed_config_deprecated_use_suggested_config?: BinaryPresenceMarker;
+  // biome-ignore lint/style/useNamingConvention: field name mirrors the wire-shape `ScanWarningCode` literal verbatim so the map's keys exactly match the string codes in `warnings[]`.
+  readonly deprecated_field_id_renamed_criterionId?: BinaryPresenceMarker;
+  readonly deprecated_field_rules_by_extension_renamed_rules_fired_by_extension?: BinaryPresenceMarker;
+  readonly partial_parse_files_present?: BinaryPresenceMarker;
+  readonly parser_bailed_zero_findings?: BinaryPresenceMarker;
+  readonly dist_only_scan_detected?: BinaryPresenceMarker;
 }
+
+/**
+ * Empty-object marker for binary-presence codes on
+ * {@link ScanWarningDetails} — the wire shape is `{}` (no fields). The
+ * `Record<string, never>` shape forbids any property on the object so a
+ * future refactor that tries to add a sub-field to a binary code
+ * fails type-checking — the doctrinal answer is to graduate the code
+ * to a payload-bearing helper, not to widen the marker.
+ */
+export type BinaryPresenceMarker = Record<string, never>;
+
+/**
+ * The empty-object marker constant — typed and `Object.freeze`d so the
+ * dispatch table can reuse one instance across every binary-presence
+ * code without risk of accidental mutation. Using a shared frozen
+ * instance keeps the wire shape `{}` deterministic and saves the
+ * per-code allocation when many binary codes fire at once.
+ */
+const BINARY_PRESENCE_MARKER: BinaryPresenceMarker = Object.freeze({});
 
 function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
   return rootSource === "git" || rootSource === "spawn-cwd";
@@ -2213,12 +2278,20 @@ export function warningsFromScanMeta(args: ScanMetaWarningArgs): readonly ScanWa
 }
 
 /**
- * Builds the structured `warningsDetails` payload — see ADR 0023.
- * Returns entries only for codes that both fired and have a mirror
- * under `meta` worth lifting onto the top-level channel. Codes whose
- * presence alone is the signal (`no_config_found`, `scanned_zero_files`,
- * etc.) get no entry and the caller conditional-spreads the empty
- * object away.
+ * Builds the structured `warningsDetails` payload — see ADR 0023 plus
+ * the warnings-details schema discipline amendment. Returns one
+ * entry per code in `codes`: payload-bearing codes get the rich
+ * summarizer output (when the summarizer produces one) and binary-
+ * presence codes get the shared empty-object marker. The "every fired
+ * code is keyed" invariant is the load-bearing contract — an agent
+ * reading `warningsDetails[code]` always gets a definite answer
+ * (richer payload OR `{}`) without prior knowledge of which codes are
+ * payload-bearing on this surface.
+ *
+ * Payload-bearing codes whose summarizer falls through (e.g. zero
+ * counts, missing pivot — degenerate payload) fall back to the
+ * empty-object marker so the wire shape never carries a half-built
+ * payload but the membership invariant still holds.
  */
 export function computeScanWarningDetails(
   codes: readonly ScanWarningCode[],
@@ -2281,10 +2354,28 @@ export function computeScanWarningDetails(
       summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
     },
   ];
+  // warnings-details schema discipline: index payload helpers by
+  // code so the second pass (binary-presence codes that didn't claim a
+  // rich summary) can stamp the marker without duplicating the
+  // dispatch list. Order doesn't matter here — the rich pass below
+  // walks the dispatch list in declaration order.
+  const summarizerByCode = new Map<ScanWarningCode, () => unknown>();
+  for (const row of dispatch) summarizerByCode.set(row.code, row.summarize);
   for (const row of dispatch) {
     if (!codes.includes(row.code)) continue;
     const summary = row.summarize();
     if (summary !== undefined) details[row.code] = summary;
+  }
+  // warnings-details schema discipline: stamp the empty-object
+  // marker for every fired code that didn't already get a rich entry.
+  // Covers (a) binary-presence codes (no summarizer registered) and
+  // (b) payload-bearing codes whose summarizer fell through to a
+  // degenerate shape — for both paths the wire keeps the membership
+  // invariant ("every code in `warnings[]` has a key in
+  // `warningsDetails`") without leaking a half-built payload.
+  for (const code of codes) {
+    if (details[code] !== undefined) continue;
+    details[code] = BINARY_PRESENCE_MARKER;
   }
   return details as ScanWarningDetails;
 }
@@ -2622,12 +2713,16 @@ function summarizeSkippedExtensions(coverage: Record<string, unknown> | undefine
 }
 
 /**
- * Returns the spreadable response field — `{ warnings: [...] }` when at
- * least one code fired, paired with `warningsDetails: { ... }` when at
- * least one fired code has a structured payload, `{}` otherwise. Lets
+ * Returns the spreadable response field — `{ warnings: [...] }` paired
+ * with `warningsDetails: { ... }` when at least one code fired, `{}`
+ * otherwise. Per warnings-details schema discipline the two
+ * channels keep set membership in lock-step: every code in `warnings[]`
+ * has a corresponding key on `warningsDetails` (`{}` for binary-
+ * presence codes, a richer payload for payload-bearing ones). Lets
  * call sites collapse the compute + conditional-spread to a single
  * `...warningsField(...)`, keeping the handler's cognitive complexity
- * flat. See ADR 0023 for the two-channel rationale.
+ * flat. See ADR 0023 for the original two-channel rationale and ADR
+ * 0030 for the schema-discipline amendment.
  */
 export function warningsField(inputs: WarningInputs): {
   readonly warnings?: readonly ScanWarningCode[];
@@ -2635,11 +2730,53 @@ export function warningsField(inputs: WarningInputs): {
 } {
   const codes = computeScanWarnings(inputs);
   if (codes.length === 0) return {};
+  // `computeScanWarningDetails` stamps an entry for every fired code
+  // (rich payload OR the `{}` marker), so the result is always non-
+  // empty when `codes.length > 0`. The conditional spread is kept
+  // defensive in case a future invariant change drops the marker.
   const details = computeScanWarningDetails(codes, inputs);
   return {
     warnings: codes,
     ...(Object.keys(details).length > 0 ? { warningsDetails: details } : {}),
   };
+}
+
+/**
+ * warnings-details schema discipline: enforces the membership
+ * invariant ("every fired code has a key in `warningsDetails`") on a
+ * downstream merge site that adds codes outside the
+ * {@link computeScanWarningDetails} dispatch table. Returns
+ * `baseDetails` augmented with the empty-object marker for every code
+ * in `warnings` that doesn't already carry a key. Existing entries
+ * (rich payloads or pre-existing markers) are preserved verbatim —
+ * the helper is additive only.
+ *
+ * Used by:
+ *   - `oversize-envelope.ts` — adds `response_dropped_files_oversize`
+ *     plus its rich payload, but its `baseWarnings` may already carry
+ *     binary-presence codes that need markers stamped on the merged
+ *     `warningsDetails`.
+ *   - `tool-coverage.ts mergeDeprecatedFieldIdWarning` — appends a
+ *     binary-presence deprecation code; the helper stamps the marker.
+ *   - `scan-project-budget.ts` / `scan-budget.ts` — merge
+ *     `response_token_budget_truncated` (rich payload from
+ *     `tokenBudgetTruncatedDetailsField`) with the scan-meta channel's
+ *     `baseWarningsDetails`; the helper stamps markers for any
+ *     base-warning codes that landed without keys.
+ *
+ * The frozen marker constant is reused across all stamps so the wire
+ * shape stays a stable `{}` and no per-code allocation occurs.
+ */
+export function fillMissingWarningDetails(
+  warnings: readonly ScanWarningCode[],
+  baseDetails: ScanWarningDetails | undefined,
+): ScanWarningDetails {
+  const out: Record<string, unknown> = { ...(baseDetails ?? {}) };
+  for (const code of warnings) {
+    if (out[code] !== undefined) continue;
+    out[code] = BINARY_PRESENCE_MARKER;
+  }
+  return out as ScanWarningDetails;
 }
 
 /**
