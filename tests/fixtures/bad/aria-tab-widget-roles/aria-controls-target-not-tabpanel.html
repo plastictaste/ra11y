@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Inbox tabs</title>
+  </head>
+  <body>
+    <h1>Inbox</h1>
+    <!--
+      The role triple is mostly present (tablist parent, role="tab" on
+      each member, aria-selected) but the aria-controls target resolves
+      to an element with role="region" instead of role="tabpanel". The
+      tabs APG requires the controlled element to be a tabpanel; AT
+      announces "region" instead of "tab panel," breaking the widget's
+      programmatic shape. aria/tab-widget-roles should flag the
+      panel-role gap (with couldBeWrongBecause for cross-file panels).
+    -->
+    <div role="tablist" aria-label="Inbox views">
+      <button role="tab" aria-selected="true" aria-controls="region-unread" id="tab-unread">Unread</button>
+      <button role="tab" aria-selected="false" aria-controls="region-archive" id="tab-archive">Archive</button>
+    </div>
+    <div role="region" id="region-unread" aria-labelledby="tab-unread">Unread messages</div>
+    <div role="region" id="region-archive" aria-labelledby="tab-archive" hidden>Archived messages</div>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings tabs</title>
+  </head>
+  <body>
+    <h1>Settings</h1>
+    <!--
+      Bootstrap-5 idiom (data-bs-toggle="tab") with role="tab" added
+      but no aria-selected state on either member. AT can announce the
+      role but cannot tell which tab is currently active. The parent
+      <ul> is missing role="tablist" too. aria/tab-widget-roles should
+      fire once per member, naming both gaps.
+    -->
+    <ul class="nav nav-tabs">
+      <li class="nav-item">
+        <button role="tab" data-bs-toggle="tab" data-bs-target="#tab-general">General</button>
+      </li>
+      <li class="nav-item">
+        <button role="tab" data-bs-toggle="tab" data-bs-target="#tab-notifications">Notifications</button>
+      </li>
+    </ul>
+    <div class="tab-content">
+      <div role="tabpanel" id="tab-general">General settings</div>
+      <div role="tabpanel" id="tab-notifications">Notification settings</div>
+    </div>
+  </body>
+</html>

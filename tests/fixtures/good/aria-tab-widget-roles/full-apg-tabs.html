@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings tabs</title>
+  </head>
+  <body>
+    <h1>Settings</h1>
+    <!--
+      Full WAI-ARIA Authoring Practices tabs pattern. Every member of
+      the role triple is in place:
+        - role="tablist" on the parent
+        - role="tab" + aria-selected="…" on each tab
+        - role="tabpanel" on each panel
+      Plus the reciprocal-pair wiring (aria-controls / aria-labelledby).
+      aria/tab-widget-roles should NOT fire.
+    -->
+    <div role="tablist" aria-label="Account settings">
+      <button role="tab" aria-selected="true" aria-controls="panel-profile" id="tab-profile">Profile</button>
+      <button role="tab" aria-selected="false" aria-controls="panel-security" id="tab-security">Security</button>
+    </div>
+    <div role="tabpanel" id="panel-profile" aria-labelledby="tab-profile">
+      <p>Profile fields</p>
+    </div>
+    <div role="tabpanel" id="panel-security" aria-labelledby="tab-security" hidden>
+      <p>Security fields</p>
+    </div>
+  </body>
+</html>

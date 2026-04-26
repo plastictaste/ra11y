@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Account tabs</title>
+  </head>
+  <body>
+    <h1>Account</h1>
+    <!--
+      Bootstrap-4 tabs idiom (data-toggle="tab") with no role triple.
+      The JS hook switches panels visually, but assistive tech sees a
+      <ul> of <a> elements with no announced "tablist / tab / tabpanel"
+      semantics, no aria-selected state, and no programmatic link to
+      the panels. aria/tab-widget-roles should fire once per tab member.
+    -->
+    <ul class="nav nav-tabs">
+      <li><a data-toggle="tab" href="#panel-profile">Profile</a></li>
+      <li><a data-toggle="tab" href="#panel-security">Security</a></li>
+    </ul>
+    <div class="tab-content">
+      <div id="panel-profile">Profile fields</div>
+      <div id="panel-security">Security fields</div>
+    </div>
+  </body>
+</html>
