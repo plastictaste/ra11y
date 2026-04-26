@@ -15,20 +15,29 @@
  *
  * Three detection paths:
  *
- * 1. Primary-nav gating. On documents with a `<nav>` landmark
- *    containing multiple links, the first `<a href>` before that
- *    nav must (a) have an in-page href (`#something`) and (b)
- *    reference a valid id. Missing/non-matching → warning. The
- *    `<nav>` is found anywhere in the body (literal `<body><nav>`,
- *    nested `<body><header><nav>`, deeper wrappers, …) — the
- *    walker that collects `<nav>` elements does not gate on depth.
+ * 1. Primary-nav gating. On documents whose primary navigation is
+ *    structurally evident, the first `<a href>` before that nav must
+ *    (a) have an in-page href (`#something`) and (b) reference a
+ *    valid id. Missing/non-matching → warning. Two shapes count as
+ *    primary-nav evidence:
+ *      a. A `<nav>` landmark containing multiple links anywhere in
+ *         the body (literal `<body><nav>`, nested
+ *         `<body><header><nav>`, deeper wrappers, …) — the walker
+ *         that collects `<nav>` elements does not gate on depth.
+ *      b. When no `<nav>` exists, a top-level `<body><header>` whose
+ *         descendants include ≥2 anchors with no enclosed `<nav>` —
+ *         the bypass-blocks gap shape where authors implement primary
+ *         navigation as `<header>` containing sibling anchors directly
+ *         (or wrapped in `<ul>`) without a `<nav>` landmark.
  *    When the first matched `<nav>` lives inside the first `<header>`
  *    body child AND a top-level `<body>` skip-link-shaped anchor
  *    exists (regardless of source order vs the header), the
  *    emission is suppressed — same lenient "layout has plausibly
  *    handled the case" treatment path 3 applies to opaque-component
- *    layouts. The agent can read the file and verify the skip-link
- *    actually precedes the nav in tab order if needed.
+ *    layouts. Likewise the (b) header-as-nav shape suppresses when a
+ *    top-level body skip-link-shaped anchor exists. The agent can
+ *    read the file and verify the skip-link actually precedes the
+ *    nav in tab order if needed.
  *
  * 2. Any skip-link-shaped anchor. An `<a href="#foo">` whose class
  *    or visible text identifies it as a skip link ("Skip to main
@@ -332,12 +341,109 @@ function resolveSkipLinkTargetId(
 }
 
 /**
- * Returns `true` when a literal multi-link `<nav>` was present in this
- * file (whether or not the path emitted) — that signal lets the caller
+ * Discriminator for path 1's primary-nav reference element. The `kind`
+ * field lets the warning message name the actual element shape the
+ * user sees (`<nav>` vs `<header>`); the `element` is the reference
+ * for the precedence check (the skip link must come before it in
+ * source order).
+ */
+type PrimaryNav =
+  | { kind: "nav"; element: HtmlElement }
+  | { kind: "headerAsNav"; element: HtmlElement };
+
+/**
+ * Resolves the in-file primary-navigation reference element. Prefers
+ * a literal multi-link `<nav>` anywhere in the document; falls back
+ * to the no-`<nav>` shape where the first `<body><header>` child
+ * contains ≥2 anchor descendants and no enclosed `<nav>` (the
+ * bypass-blocks gap shape: primary navigation implemented as
+ * `<header>` containing sibling anchors directly or wrapped in
+ * `<ul>`). Returns `null` when neither shape is present.
+ */
+function resolvePrimaryNav(doc: HtmlDocument): PrimaryNav | null {
+  const navs = findHtmlElementsByTag(doc, "nav");
+  const firstNav = navs[0];
+  if (firstNav && linksInside(firstNav).length >= NAV_LINK_MIN) {
+    return { kind: "nav", element: firstNav };
+  }
+  // No `<nav>` (or `<nav>` with too few links to count as primary)
+  // → look for the header-as-nav fallback. Gated on `navs.length === 0`
+  // rather than "no qualifying nav" to keep the fallback aimed at the
+  // structurally-distinct case the dispatch describes (`<header>`
+  // containing sibling anchors with NO `<nav>` at all). A page with a
+  // single-link `<nav>` plus a header-anchor-list is unusual enough
+  // that we'd rather defer to the agent than guess which is primary.
+  if (navs.length > 0) return null;
+  const header = firstHeaderBodyChild(doc);
+  if (!header) return null;
+  if (countAnchorDescendants(header) < NAV_LINK_MIN) return null;
+  return { kind: "headerAsNav", element: header };
+}
+
+/**
+ * Counts anchor (`<a>`) descendants of `el` (transitively, any depth).
+ * Used by `resolvePrimaryNav` to recognize the `<header>`-as-nav
+ * fallback shape: a top-level `<body><header>` containing ≥2 anchors
+ * — whether direct children or wrapped in `<ul><li>` — qualifies as
+ * primary-nav evidence when no `<nav>` landmark exists.
+ */
+function countAnchorDescendants(el: HtmlElement): number {
+  let n = 0;
+  for (const descendant of walkHtmlElements(el)) {
+    if (descendant.tagName.toLowerCase() === "a") n += 1;
+  }
+  return n;
+}
+
+/**
+ * Emits the "no skip link precedes the primary nav" warning, applying
+ * the lenient header-wrapped suppression: when navigation evidence
+ * lives inside the first `<body><header>` child AND a top-level
+ * `<body>` skip-link-shaped anchor exists, the layout has plausibly
+ * handled the case and the warning is suppressed. Covers (a) the
+ * nested `<body><header><nav>` shape where the matched `<nav>` is
+ * enclosed by the header, and (b) the `<body><header>`-as-nav
+ * fallback shape where the header itself *is* the primary-nav
+ * reference (no inner `<nav>`). Without this branch, any layout that
+ * places its skip link as a sibling of `<header>` (rather than inside
+ * it, before the nav) would emit a stale warning that contradicts the
+ * visible top-level skip-link anchor. The agent can verify keyboard
+ * tab order by reading the file if needed.
+ */
+function emitNoSkipLinkPrecedesPrimaryNav(
+  ctx: FileContext,
+  doc: HtmlDocument,
+  primaryNav: PrimaryNav,
+): void {
+  const headerChild = firstHeaderBodyChild(doc);
+  const enclosedByHeader =
+    headerChild !== null &&
+    (primaryNav.kind === "headerAsNav"
+      ? primaryNav.element === headerChild
+      : elementContainsElement(headerChild, primaryNav.element));
+  if (enclosedByHeader && bodyHasTopLevelSkipLinkAnchor(doc)) return;
+  const navLabel = primaryNav.kind === "nav" ? "<nav>" : "<header>";
+  ctx.emit({
+    severity: "warning",
+    location: {
+      filePath: "",
+      line: primaryNav.element.loc.start.line,
+      column: primaryNav.element.loc.start.column,
+    },
+    message: `No skip link precedes the primary ${navLabel}. Keyboard users will Tab through every link in the nav on every page.`,
+    suggestion:
+      'Add <a href="#main">Skip to main content</a> (or similar) as the first focusable element, with `#main` pointing to your <main> landmark. Visually hide it with CSS and reveal on :focus. See https://www.w3.org/WAI/WCAG22/Techniques/general/G1.',
+  });
+}
+
+/**
+ * Returns `true` when in-file primary-navigation evidence was present
+ * (whether or not the path emitted) — that signal lets the caller
  * suppress path 3 (opaque-nav-component), which is only meant to fire
  * when the file has *no* in-file nav evidence path 1 could have used.
- * Returns `false` on fragments, on documents with no `<nav>`, or on
- * docs where the first `<nav>` has too few links to be primary nav.
+ * Returns `false` on fragments, on documents with neither a multi-link
+ * `<nav>` nor a top-level `<body><header>` containing ≥2 anchor
+ * descendants (the no-`<nav>` fallback shape).
  */
 function checkPrimaryNavPath(
   ctx: FileContext,
@@ -368,48 +474,12 @@ function checkPrimaryNavPath(
   // treated as fragments so an agent can verify the composed layout
   // elsewhere.
   if (isHtmlFragment(doc)) return false;
-  const navs = findHtmlElementsByTag(doc, "nav");
-  if (navs.length === 0) return false;
-  const firstNav = navs[0];
-  if (!firstNav) return false;
-  if (linksInside(firstNav).length < NAV_LINK_MIN) return false;
+  const primaryNav = resolvePrimaryNav(doc);
+  if (!primaryNav) return false;
 
   const firstLink = firstFocusableAnchor(doc);
-  if (!(firstLink && precedesElement(firstLink, firstNav))) {
-    // Nested `<body><header><nav>…` shape: when the matched `<nav>`
-    // lives inside the first `<header>` body child AND a top-level
-    // `<body>` skip-link-shaped anchor exists, suppress the
-    // emission. Same lenient "layout has plausibly handled it"
-    // treatment path 3 (opaque-component) applies to layouts where
-    // the navigation chrome is wrapped — without this branch, any
-    // page that puts its skip link as a sibling of `<header>`
-    // (rather than inside it, before the nav) would emit a stale
-    // "no skip link precedes the primary <nav>" warning that
-    // contradicts the visible top-level skip-link anchor. The
-    // suppression is path-1-only — paths 2 and 3 still run; the
-    // owner of "literal nav with valid skip link in body" is path 1
-    // and it returns `true` here so path 3 stays silent. The agent
-    // can verify keyboard tab order by reading the file if needed.
-    const headerChild = firstHeaderBodyChild(doc);
-    if (
-      headerChild &&
-      elementContainsElement(headerChild, firstNav) &&
-      bodyHasTopLevelSkipLinkAnchor(doc)
-    ) {
-      return true;
-    }
-    ctx.emit({
-      severity: "warning",
-      location: {
-        filePath: "",
-        line: firstNav.loc.start.line,
-        column: firstNav.loc.start.column,
-      },
-      message:
-        "No skip link precedes the primary <nav>. Keyboard users will Tab through every link in the nav on every page.",
-      suggestion:
-        'Add <a href="#main">Skip to main content</a> (or similar) as the first focusable element, with `#main` pointing to your <main> landmark. Visually hide it with CSS and reveal on :focus. See https://www.w3.org/WAI/WCAG22/Techniques/general/G1.',
-    });
+  if (!(firstLink && precedesElement(firstLink, primaryNav.element))) {
+    emitNoSkipLinkPrecedesPrimaryNav(ctx, doc, primaryNav);
     return true;
   }
 

@@ -333,6 +333,138 @@ describe("rule navigation/skip-link", () => {
     });
   });
 
+  describe("<header>-as-nav fallback (path 1, no <nav> landmark)", () => {
+    // The bypass-blocks gap the dispatch describes: layouts where
+    // primary navigation is implemented as a top-level `<header>`
+    // containing sibling anchors (or anchor-lists) directly, with no
+    // enclosed `<nav>` landmark. Path 1's nav-walker finds zero
+    // `<nav>` elements, so the rule used to stay silent — a real
+    // 2.4.1 failure that slipped through. The fallback widens the
+    // trigger: when no `<nav>` exists and the first `<body><header>`
+    // child contains ≥2 anchor descendants, the header itself is
+    // the primary-nav reference and the same skip-link precedence
+    // check applies.
+    it("fires when <header> with ≥2 sibling anchors has no preceding skip link", () => {
+      const html = `<html><body>
+          <header><a href="/">Home</a><a href="/about">About</a></header>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("No skip link");
+      expect(v[0]?.message).toContain("<header>");
+    });
+
+    it("fires when <header> wraps anchors in a list (<ul><li><a>) with no skip link", () => {
+      // Real layouts often wrap nav anchors in `<ul><li>` — the
+      // fallback counts transitive anchor descendants so the same
+      // emission applies whether the anchors are direct children or
+      // list-wrapped.
+      const html = `<html><body>
+          <header>
+            <ul>
+              <li><a href="/">Home</a></li>
+              <li><a href="/about">About</a></li>
+              <li><a href="/contact">Contact</a></li>
+            </ul>
+          </header>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("<header>");
+    });
+
+    it("does NOT fire when a valid skip-link anchor is the first focusable element", () => {
+      const html = `<html><body>
+          <a href="#main">Skip to main content</a>
+          <header><a href="/">Home</a><a href="/about">About</a></header>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when a top-level skip-link anchor follows the <header>", () => {
+      // Mirrors the nested-header lenient suppression: when a
+      // top-level body skip-link-shaped anchor exists, the layout
+      // has plausibly handled the case regardless of source order.
+      // The agent reads the file to confirm tab order if needed.
+      const html = `<html><body>
+          <header><a href="/">Home</a><a href="/about">About</a></header>
+          <a class="skip-link" href="#main">Skip to main content</a>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when <header> contains non-anchor content only", () => {
+      // A `<header>` whose contents are an `<h1>` (and no anchors)
+      // is not primary navigation — it's a page banner. The
+      // fallback gates on ≥2 anchor descendants so layouts whose
+      // header is just branding stay silent.
+      const html = `<html><body>
+          <header><h1>Site title</h1></header>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when <header> contains exactly one anchor", () => {
+      // Single-anchor header (e.g. just a logo link) is not "a list
+      // worth bypassing" — symmetric to the existing single-link
+      // `<nav>` exemption.
+      const html = `<html><body>
+          <header><a href="/">Home</a></header>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when first body child is a <div>, not <header>", () => {
+      // The fallback is gated on the first body element child being
+      // `<header>` specifically — a `<div>` wrapping anchors carries
+      // no semantic claim about being page chrome and would over-
+      // trigger on any layout with a top-level `<div>` of links.
+      const html = `<html><body>
+          <div><a href="/">Home</a><a href="/about">About</a></div>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on a fragment (no <body>) even with a <header>+anchors", () => {
+      // Same fragment-shape gate as path 1's `<nav>` branch: no
+      // `<body>` means no document-level first-focusable notion;
+      // the composed parent is responsible for the skip link.
+      const html = "<header><a href='/'>Home</a><a href='/about'>About</a></header>";
+      const v = runRule(rule, html, { filePath: "_includes/header.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("defers to the literal <nav> branch when both shapes exist (no double-emit)", () => {
+      // When both a `<nav>` (with multi-link content) and a
+      // `<header>`-with-anchors exist, the literal `<nav>` is the
+      // canonical primary-nav reference and the fallback stays
+      // silent — only one warning fires.
+      const html = `<html><body>
+          <header>
+            <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          </header>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("<nav>");
+    });
+  });
+
   describe("nested <header><nav> shape (path 1, header-wrapped chrome)", () => {
     // The dispatch-motivating shape: layouts where the literal nav
     // sits inside a top-level `<header>` body child rather than
