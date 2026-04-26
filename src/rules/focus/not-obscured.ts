@@ -53,6 +53,35 @@ const SCROLL_CONTAINER_SELECTORS: ReadonlySet<string> = new Set([
  */
 const TINY_AFFORDANCE_PX = 48;
 
+/**
+ * Matches a modal-family class token within a selector — `.modal`,
+ * `.modal-backdrop`, `.modal-dialog`, `.modal-content`, `.modal_header`,
+ * etc. Modal/dialog/backdrop elements default to `display: none` until
+ * shown by script (Bootstrap, common admin frameworks, …), so a
+ * sticky/fixed declaration on one of these classes is conditional, not
+ * persistent chrome — the rule below uses additional signals (display:none
+ * on the same rule, `:not(.show)` qualifier, sibling `.modal.show` rule)
+ * to confirm and skip.
+ */
+const MODAL_CLASS_RE = /\.(modal(?:[-_][a-z0-9-]+)?)\b/gi;
+
+/**
+ * Selector qualifiers that indicate the rule applies to the modal in its
+ * default-hidden state (e.g. `.modal:not(.show)`). Their presence means
+ * the rule is explicitly scoped to "the modal when it is NOT visible," so
+ * the sticky/fixed positioning isn't author-created persistent chrome.
+ */
+const HIDDEN_STATE_QUALIFIER_RE =
+  /:not\(\s*(?:\.(?:show|in|active|is-open|visible|open)|\[open\])\s*\)/i;
+
+/**
+ * Selector qualifiers that mark the *visible* state of a modal (e.g.
+ * `.modal.show`, `.modal[open]`). When a sibling rule in the same
+ * stylesheet uses one of these on the same modal class, the unqualified
+ * rule on that class is the default-hidden state and should be skipped.
+ */
+const VISIBLE_STATE_QUALIFIER_RE = /(?:\.(?:show|in|active|is-open|visible|open)\b|\[open\])/i;
+
 export const rule = defineRule({
   id: "focus/not-obscured",
   satisfies: ["wcag22:2.4.11"],
@@ -111,10 +140,12 @@ interface AnchorCandidate {
 
 function checkStylesheet(stylesheet: CssStylesheet, emit: Emit): void {
   const padding = collectScrollPadding(stylesheet);
+  const visibleStateModalClasses = collectVisibleStateModalClasses(stylesheet);
   for (const candidate of collectAnchorCandidates(stylesheet)) {
     if (candidate.tiny) continue;
     if (candidate.side === "top" && padding.top) continue;
     if (candidate.side === "bottom" && padding.bottom) continue;
+    if (isConditionalModalRule(candidate.cssRule, visibleStateModalClasses)) continue;
     emit({
       severity: "warning",
       location: {
@@ -126,6 +157,86 @@ function checkStylesheet(stylesheet: CssStylesheet, emit: Emit): void {
       suggestion: buildSuggestion(candidate),
     });
   }
+}
+
+/**
+ * Decides whether a candidate rule is the default-hidden state of a modal
+ * dialog and should not be treated as persistent author-created chrome.
+ *
+ * Three independent signals each suffice (any one means "skip"):
+ *   1. The rule declares `display: none` (the modal is hidden by default).
+ *   2. The selector itself contains a `:not(.show)` / `:not([open])` / etc.
+ *      qualifier that scopes the rule to the hidden state.
+ *   3. A sibling rule elsewhere in the same stylesheet targets the same
+ *      modal class together with a visibility-state qualifier
+ *      (`.modal.show`, `.modal[open]`, `.modal.in`, …) — that's the
+ *      "shown" state, which means the unqualified rule is the "hidden"
+ *      default that this sibling overrides.
+ *
+ * If the selector doesn't reference a modal class at all, this check
+ * returns false and the candidate is reported normally.
+ */
+function isConditionalModalRule(
+  cssRule: CssRule,
+  visibleStateModalClasses: ReadonlySet<string>,
+): boolean {
+  const modalClasses = extractModalClasses(cssRule.selector);
+  if (modalClasses.length === 0) return false;
+
+  // Signal 1: explicit `display: none` on this rule.
+  const displayDecl = findCssDeclaration(cssRule, "display");
+  if (displayDecl && displayDecl.value.trim().toLowerCase() === "none") return true;
+
+  // Signal 2: selector qualifier limits this rule to the hidden state.
+  if (HIDDEN_STATE_QUALIFIER_RE.test(cssRule.selector)) return true;
+
+  // Signal 3: a sibling rule provides the visible state for one of these
+  // modal classes — that confirms the unqualified rule here is the hidden
+  // default.
+  for (const cls of modalClasses) {
+    if (visibleStateModalClasses.has(cls)) return true;
+  }
+  return false;
+}
+
+/**
+ * Returns the lowercased modal class tokens (without leading `.`) referenced
+ * by a selector. `.modal` → `["modal"]`, `.modal-backdrop` → `["modal-backdrop"]`,
+ * `.modal.show` → `["modal"]`. Non-modal classes are ignored.
+ */
+function extractModalClasses(selector: string): readonly string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  // Reset the global regex's lastIndex so repeated calls don't skip matches.
+  MODAL_CLASS_RE.lastIndex = 0;
+  let match: RegExpExecArray | null = MODAL_CLASS_RE.exec(selector);
+  while (match !== null) {
+    const cls = match[1]?.toLowerCase();
+    if (cls && !seen.has(cls)) {
+      seen.add(cls);
+      out.push(cls);
+    }
+    match = MODAL_CLASS_RE.exec(selector);
+  }
+  return out;
+}
+
+/**
+ * Walks the stylesheet and collects every modal class that appears in a
+ * selector alongside a visibility-state qualifier — `.modal.show`,
+ * `.modal[open]`, `.modal-dialog.in`, etc. The presence of such a sibling
+ * rule means the same modal class is being toggled on and off, so any
+ * unqualified rule on that class is the default-hidden state.
+ */
+function collectVisibleStateModalClasses(stylesheet: CssStylesheet): ReadonlySet<string> {
+  const classes = new Set<string>();
+  for (const cssRule of walkCssRules(stylesheet)) {
+    if (!VISIBLE_STATE_QUALIFIER_RE.test(cssRule.selector)) continue;
+    for (const cls of extractModalClasses(cssRule.selector)) {
+      classes.add(cls);
+    }
+  }
+  return classes;
 }
 
 /** Walks the stylesheet and records non-zero scroll-padding on container selectors. */

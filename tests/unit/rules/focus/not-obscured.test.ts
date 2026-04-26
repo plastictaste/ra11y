@@ -149,6 +149,59 @@ describe("rule focus/not-obscured", () => {
       const v = runRule(rule, src, { filePath: "styles.css" });
       expect(v).toHaveLength(0);
     });
+
+    it("modal with display:none default is skipped (Bootstrap-style)", () => {
+      const src = `.modal { display: none; position: fixed; top: 0; left: 0; height: 100%; width: 100%; }`;
+      const v = runRule(rule, src, { filePath: "vendor.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("modal-backdrop with display:none default is skipped", () => {
+      const src = `.modal-backdrop { display: none; position: fixed; top: 0; height: 100%; width: 100%; }`;
+      const v = runRule(rule, src, { filePath: "vendor.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("modal with sibling .modal.show rule is treated as conditional and skipped", () => {
+      const src = `
+        .modal { position: fixed; top: 0; height: 100%; width: 100%; }
+        .modal.show { display: block; }
+      `;
+      const v = runRule(rule, src, { filePath: "vendor.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("modal with :not(.show) qualifier is treated as conditional and skipped", () => {
+      const src = `.modal:not(.show) { position: fixed; top: 0; height: 100%; width: 100%; }`;
+      const v = runRule(rule, src, { filePath: "vendor.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("modal with sibling .modal[open] rule is treated as conditional and skipped", () => {
+      const src = `
+        .modal-dialog { position: fixed; top: 0; height: 100%; width: 100%; }
+        .modal-dialog[open] { display: block; }
+      `;
+      const v = runRule(rule, src, { filePath: "vendor.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("modal-named class without display:none and without sibling toggle still fires", () => {
+      // No display:none default, no sibling .show / [open] rule — the predicate
+      // can't confirm conditional rendering, so persistent chrome remains the
+      // honest reading.
+      const src = `.modal { position: fixed; top: 0; height: 64px; width: 100%; }`;
+      const v = runRule(rule, src, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain(".modal");
+    });
+
+    it("non-modal persistent overlay with no display:none still fires", () => {
+      const src = `.persistent-overlay { position: fixed; top: 0; height: 64px; width: 100%; }`;
+      const v = runRule(rule, src, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain(".persistent-overlay");
+    });
   });
 
   describe("suggestion quality", () => {
