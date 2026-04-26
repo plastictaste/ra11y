@@ -151,6 +151,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [layout/text-spacing](./rules/layout__text-spacing.md)
 - [media/alt-text-missing](./rules/media__alt-text-missing.md)
 - [media/alt-text-placeholder](./rules/media__alt-text-placeholder.md)
+- [media/audio-controls-or-transcript-missing](./rules/media__audio-controls-or-transcript-missing.md)
 - [media/audio-video-no-controls](./rules/media__audio-video-no-controls.md)
 - [media/autoplay-sound](./rules/media__autoplay-sound.md)
 - [media/svg-accessible-name](./rules/media__svg-accessible-name.md)
