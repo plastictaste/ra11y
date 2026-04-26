@@ -113,7 +113,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.2.2` | On Input | A | manual | forms/select-onchange-context-change | on-input-change | **rule** |
 | `wcag22:3.2.3` | Consistent Navigation | AA | manual | — | consistent-navigation | **finder** |
 | `wcag22:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
-| `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
+| `wcag22:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | target-blank-no-warning | **rule** |
 | `wcag22:3.2.6` | Consistent Help | A | manual | — | — | **attestation-only** |
 | `wcag22:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
 | `wcag22:3.3.2` | Labels or Instructions | A | full | forms/asterisk-required-marker, forms/fieldset-legend +11 | otp-input-cluster | **rule** |
@@ -203,7 +203,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.2.2` | On Input | A | manual | forms/select-onchange-context-change | on-input-change | **rule** |
 | `wcag21:3.2.3` | Consistent Navigation | AA | manual | — | consistent-navigation | **finder** |
 | `wcag21:3.2.4` | Consistent Identification | AA | manual | — | consistent-identification | **finder** |
-| `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | — | **rule** |
+| `wcag21:3.2.5` | Change on Request | AAA | manual | document/meta-refresh, navigation/link-target-blank-announcement | target-blank-no-warning | **rule** |
 | `wcag21:3.3.1` | Error Identification | A | manual | forms/error-message-not-associated | error-identification, form-required-attrs +1 | **rule** |
 | `wcag21:3.3.2` | Labels or Instructions | A | full | forms/asterisk-required-marker, forms/fieldset-legend +11 | otp-input-cluster | **rule** |
 | `wcag21:3.3.3` | Error Suggestion | AA | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
