@@ -130,7 +130,7 @@ describe("rule semantics/svg-title-missing", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("skips inline <svg role=\"img\"> in HTML — media/alt-text-missing covers that", () => {
+    it('skips inline <svg role="img"> in HTML — media/alt-text-missing covers that', () => {
       const src = `<html><body>
   <svg xmlns="http://www.w3.org/2000/svg" role="img">
     <path d="M10 10" />
@@ -141,7 +141,7 @@ describe("rule semantics/svg-title-missing", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("does not fire for inline <svg aria-label=\"…\"> in HTML", () => {
+    it('does not fire for inline <svg aria-label="…"> in HTML', () => {
       const src = `<html><body>
   <svg xmlns="http://www.w3.org/2000/svg" aria-label="Loading spinner">
     <circle r="10" />
@@ -151,7 +151,7 @@ describe("rule semantics/svg-title-missing", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("fires for inline <svg> in a .tsx file with no title / aria-hidden / role=\"img\"", () => {
+    it('fires for inline <svg> in a .tsx file with no title / aria-hidden / role="img"', () => {
       const src = `export const Icon = () => (
   <button>
     <svg xmlns="http://www.w3.org/2000/svg">
@@ -185,7 +185,7 @@ describe("rule semantics/svg-title-missing", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("skips inline <svg role=\"img\"> in JSX — alt-text-missing covers that", () => {
+    it('skips inline <svg role="img"> in JSX — alt-text-missing covers that', () => {
       const src = `export const Icon = () => (
   <svg role="img">
     <path d="M10 10" />
@@ -262,13 +262,7 @@ describe("rule semantics/svg-title-missing", () => {
       // Standalone `.svg` plus the HTML- and JSX-family roots; alias
       // chains in `EXTENSION_ALIASES` extend the effective coverage to
       // `.astro`, `.md`, `.markdown`, `.erb`, `.mdx`, `.ts`, `.js`.
-      expect(rule.appliesTo?.fileExtensions).toEqual([
-        ".svg",
-        ".html",
-        ".htm",
-        ".tsx",
-        ".jsx",
-      ]);
+      expect(rule.appliesTo?.fileExtensions).toEqual([".svg", ".html", ".htm", ".tsx", ".jsx"]);
     });
   });
 });

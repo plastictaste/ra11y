@@ -97,7 +97,7 @@ export const rule = defineRule({
     description:
       "Every <svg> rendered to the user — standalone .svg file or inline in HTML / JSX — must expose an accessible name via a <title> child, aria-label, or aria-labelledby; otherwise mark it decorative with aria-hidden / role=presentation.",
     rationale:
-      'Whether a `<svg>` is a standalone `.svg` asset or inline markup inside an HTML page or JSX component, screen readers need a text alternative to announce what the graphic communicates. Without a `<title>` child (the SVG 2 accessibility primary name source), `aria-label`, or `aria-labelledby`, most assistive tech announces the file name at best or nothing at all. Inline `<svg>` is the routine miss: authors drop icons into buttons, links, and standalone graphics straight from a design tool (Figma, Illustrator, Sketch) — every export omits the `<title>`. Static detection is load-bearing because the runtime element is opaque without it.',
+      "Whether a `<svg>` is a standalone `.svg` asset or inline markup inside an HTML page or JSX component, screen readers need a text alternative to announce what the graphic communicates. Without a `<title>` child (the SVG 2 accessibility primary name source), `aria-label`, or `aria-labelledby`, most assistive tech announces the file name at best or nothing at all. Inline `<svg>` is the routine miss: authors drop icons into buttons, links, and standalone graphics straight from a design tool (Figma, Illustrator, Sketch) — every export omits the `<title>`. Static detection is load-bearing because the runtime element is opaque without it.",
     goodExample: `<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <title>Search</title>
@@ -119,59 +119,81 @@ export const rule = defineRule({
   check(ctx) {
     const isStandaloneSvgFile = ctx.filePath.toLowerCase().endsWith(".svg");
     if (ctx.language === "html") {
-      const doc = ctx.ast as HtmlDocument;
-      // Standalone `.svg`: only inspect root-level `<svg>` (the asset
-      // element). Inline HTML markup: every non-nested `<svg>` in the
-      // document is a candidate.
-      const candidates = isStandaloneSvgFile
-        ? findRootSvgElements(doc)
-        : findInlineHtmlSvgElements(doc);
-      for (const svg of candidates) {
-        if (isDecorativeHtmlElement(svg)) continue;
-        if (hasAccessibleNameSvg(svg)) continue;
-        // Inline-only dedup: `<svg role="img">` is already covered by
-        // `media/alt-text-missing` on inline surfaces. Standalone
-        // `.svg` files are not in that rule's scope, so we always
-        // handle the root `<svg>` of a `.svg` file regardless of role.
-        if (!isStandaloneSvgFile && hasHtmlRoleImg(svg)) continue;
-        ctx.emit({
-          severity: "error",
-          location: {
-            filePath: ctx.filePath,
-            line: svg.loc.start.line,
-            column: svg.loc.start.column,
-          },
-          message: buildMessage(ctx.filePath, isStandaloneSvgFile),
-          suggestion: buildSuggestion(svg, ctx.filePath, isStandaloneSvgFile),
-        });
-      }
-    } else if (
-      ctx.language === "tsx" ||
-      ctx.language === "jsx" ||
-      ctx.language === "ts" ||
-      ctx.language === "js"
-    ) {
-      const module = ctx.ast as TsxModule;
-      for (const svg of findInlineJsxSvgElements(module)) {
-        if (isDecorativeJsxElement(svg)) continue;
-        if (hasAccessibleNameSvgJsx(svg)) continue;
-        // Same dedup with `media/alt-text-missing` as the HTML branch.
-        if (hasJsxRoleImg(svg)) continue;
-        ctx.emit({
-          severity: "error",
-          location: {
-            filePath: ctx.filePath,
-            line: svg.loc.start.line,
-            column: svg.loc.start.column,
-          },
-          message: buildMessage(ctx.filePath, false),
-          suggestion: buildSuggestionJsx(svg),
-        });
-      }
+      checkHtml(ctx, isStandaloneSvgFile);
+    } else if (isJsxFamilyLanguage(ctx.language)) {
+      checkJsx(ctx);
     }
     return [];
   },
 });
+
+/** Languages the engine reports for `.tsx` / `.jsx` / `.mdx` / aliased JS-TS. */
+function isJsxFamilyLanguage(lang: string): boolean {
+  return lang === "tsx" || lang === "jsx" || lang === "ts" || lang === "js";
+}
+
+/**
+ * HTML branch: standalone `.svg` files inspect only root-level `<svg>`
+ * (the asset element); inline markup inspects every non-nested `<svg>`
+ * in the document. Inline-mode skips `<svg role="img">` to dedup with
+ * `media/alt-text-missing` (standalone `.svg` files are outside that
+ * rule's scope so the role check doesn't apply there).
+ */
+function checkHtml(
+  ctx: { ast: unknown; filePath: string; emit: (v: EmittedHtml) => void },
+  isStandaloneSvgFile: boolean,
+): void {
+  const doc = ctx.ast as HtmlDocument;
+  const candidates = isStandaloneSvgFile
+    ? findRootSvgElements(doc)
+    : findInlineHtmlSvgElements(doc);
+  for (const svg of candidates) {
+    if (isDecorativeHtmlElement(svg)) continue;
+    if (hasAccessibleNameSvg(svg)) continue;
+    if (!isStandaloneSvgFile && hasHtmlRoleImg(svg)) continue;
+    ctx.emit({
+      severity: "error",
+      location: {
+        filePath: ctx.filePath,
+        line: svg.loc.start.line,
+        column: svg.loc.start.column,
+      },
+      message: buildMessage(ctx.filePath, isStandaloneSvgFile),
+      suggestion: buildSuggestion(svg, ctx.filePath, isStandaloneSvgFile),
+    });
+  }
+}
+
+/**
+ * JSX branch: every non-nested inline `<svg>` is a candidate. The same
+ * decorative-marker / accessible-name escape hatches apply, plus the
+ * `role="img"` dedup with `media/alt-text-missing`.
+ */
+function checkJsx(ctx: { ast: unknown; filePath: string; emit: (v: EmittedHtml) => void }): void {
+  const module = ctx.ast as TsxModule;
+  for (const svg of findInlineJsxSvgElements(module)) {
+    if (isDecorativeJsxElement(svg)) continue;
+    if (hasAccessibleNameSvgJsx(svg)) continue;
+    if (hasJsxRoleImg(svg)) continue;
+    ctx.emit({
+      severity: "error",
+      location: {
+        filePath: ctx.filePath,
+        line: svg.loc.start.line,
+        column: svg.loc.start.column,
+      },
+      message: buildMessage(ctx.filePath, false),
+      suggestion: buildSuggestionJsx(svg),
+    });
+  }
+}
+
+interface EmittedHtml {
+  readonly severity: "error";
+  readonly location: { readonly filePath: string; readonly line: number; readonly column: number };
+  readonly message: string;
+  readonly suggestion: string;
+}
 
 /**
  * Root-level `<svg>` elements in the document — the ones that are
@@ -283,11 +305,7 @@ function buildMessage(filePath: string, isStandalone: boolean): string {
   return `Inline <svg> has no accessible name — without a <title> child, aria-label, or aria-labelledby (and not marked aria-hidden="true"), most screen readers announce nothing for this graphic.`;
 }
 
-function buildSuggestion(
-  svg: HtmlElement,
-  filePath: string,
-  isStandalone: boolean,
-): string {
+function buildSuggestion(svg: HtmlElement, filePath: string, isStandalone: boolean): string {
   if (isStandalone) {
     const derived = deriveAccessibleNameFromFilename(filePath);
     const hint = derived
