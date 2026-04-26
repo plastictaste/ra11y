@@ -141,6 +141,59 @@ describe("rule focus/outline-visible", () => {
     });
   });
 
+  // box-shadow is the canonical author replacement for the native focus
+  // outline (`:focus { outline: 0; box-shadow: 0 0 0 2px <color>; }`).
+  // It only counts as a replacement when it actually paints something —
+  // `box-shadow: none` is an explicit reset, and `box-shadow: var(...)`
+  // resolves at runtime to whatever the consuming theme defines, so
+  // static analysis has no honest way to confirm a focus ring.
+  describe("box-shadow as outline replacement", () => {
+    it("credits a real box-shadow value paired with outline: 0 (canonical pattern)", () => {
+      const v = runRule(rule, `a:focus { outline: 0; box-shadow: 0 0 0 2px #0066cc; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("credits a real box-shadow value paired with outline: 0 on :focus-visible", () => {
+      const v = runRule(
+        rule,
+        `button:focus-visible { outline: 0; box-shadow: 0 0 0 3px rgb(0 102 204 / 0.5); }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT credit box-shadow: none (decorative-only / explicit reset)", () => {
+      const v = runRule(rule, `a:focus { outline: 0; box-shadow: none; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("does NOT auto-credit box-shadow: var(--unresolved) (value unknown statically)", () => {
+      const v = runRule(rule, `a:focus { outline: 0; box-shadow: var(--ring); }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("does NOT auto-credit box-shadow with var() and a fallback", () => {
+      // Even with a fallback, the runtime value depends on theme
+      // resolution — refuse to invent confidence we don't have.
+      const v = runRule(rule, `a:focus { outline: 0; box-shadow: var(--ring, 0 0 0 2px blue); }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("still emits when only outline: 0 is set (no box-shadow at all)", () => {
+      const v = runRule(rule, `a:focus { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+    });
+  });
+
   describe("suggestion quality", () => {
     it("includes the selector and mentions outline replacement", () => {
       const v = runRule(rule, `a:focus { outline: none; }`, { filePath: "styles.css" });

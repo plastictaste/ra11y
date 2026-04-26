@@ -289,9 +289,41 @@ function removesOutline(cssRule: CssRule): boolean {
 function hasReplacementIndicator(cssRule: CssRule): boolean {
   if (hasNonNoneOutlineLater(cssRule)) return true;
   for (const indicator of REPLACEMENT_INDICATORS) {
-    if (findCssDeclaration(cssRule, indicator) !== undefined) return true;
+    const decl = findCssDeclaration(cssRule, indicator);
+    if (decl === undefined) continue;
+    if (indicator === "box-shadow" && !isMeaningfulBoxShadow(decl.value)) continue;
+    return true;
   }
   return false;
+}
+
+/**
+ * `box-shadow` only counts as a focus-indicator replacement when it
+ * actually paints something. Two failure modes the existing predicate
+ * silently credited:
+ *
+ *   - `box-shadow: none` — explicit reset; paints nothing.
+ *   - `box-shadow: var(--ring)` — value resolves at runtime to whatever
+ *     the consuming theme defines, possibly `none` or a non-ring shadow.
+ *     Static analysis has no honest way to confirm a focus ring, so we
+ *     don't silently credit (per AI-first doctrine: "Numeric-threshold
+ *     heuristics are suppression" applies symmetrically to "trust the
+ *     unresolved variable as positive evidence").
+ *
+ * The simplest safe predicate: any literal, non-`none`, non-`var(...)`
+ * value in the box-shadow declaration counts. The agent reading the
+ * source can verify the actual visual effect; we just refuse to invent
+ * confidence we don't have.
+ */
+function isMeaningfulBoxShadow(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  if (trimmed.length === 0) return false;
+  if (trimmed === "none") return false;
+  // Unresolved `var(...)` references — even with a fallback (`var(--x,
+  // 0 0 0 2px blue)`) we can't know whether the runtime resolution
+  // yields a focus ring. Don't auto-credit.
+  if (trimmed.includes("var(")) return false;
+  return true;
 }
 
 /** Handles the `outline: none; outline: 2px solid blue;` reset-then-replace pattern. */
