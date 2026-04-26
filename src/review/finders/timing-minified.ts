@@ -114,8 +114,16 @@ export function minifiedLocatorClause(filePath: string, source: string, offset: 
  * same file. The check stays O(source length) via a single linear
  * scan that short-circuits as soon as one line crosses the
  * threshold.
+ *
+ * Also exposed as a public predicate so finders can populate the
+ * structured `ReviewCandidate.vendorPathHint` field — the same
+ * "this looks like minified third-party / build-output code" signal
+ * the reason-text enrichment surfaces as prose, available as a
+ * typed boolean for agents that prefer not to parse free-form text.
+ * Strictly additive: never gates suppression or downgrades the
+ * candidate.
  */
-function isMinifiedForEnrichment(filePath: string, source: string): boolean {
+export function isMinifiedForEnrichment(filePath: string, source: string): boolean {
   const basename = basenameOf(filePath);
   if (MIN_INFIX_RE.test(basename)) return true;
   return hasLongSingleLine(source, MINIFIED_LINE_ENRICHMENT_THRESHOLD);

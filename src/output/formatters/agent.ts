@@ -117,6 +117,13 @@ function buildReviewCandidates(
         // doctrine; never `[]` for singleton candidates.
         ...(c.siblingOccurrences !== undefined &&
           c.siblingOccurrences.length > 0 && { siblingOccurrences: c.siblingOccurrences }),
+        // Structured additive evidence — vendor-path-shape boolean
+        // and duration literal/non-literal sentinel — surfaced
+        // present-when-meaningful so the agent-format consumer
+        // (CLI `--format agent`) reads the same dismissal fields
+        // an MCP review_candidates caller does.
+        ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+        ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
       };
     });
 }

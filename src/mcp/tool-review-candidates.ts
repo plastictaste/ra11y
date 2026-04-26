@@ -197,6 +197,17 @@ export const reviewCandidatesTool: McpTool = {
             c.siblingOccurrences.length > 0 && {
               siblingOccurrences: c.siblingOccurrences,
             }),
+          // Structured additive evidence — vendor-path-shape boolean
+          // and duration literal/non-literal sentinel. Both are set
+          // by the finder when its predicates fire and surfaced
+          // verbatim so an agent can read the dismissal evidence as
+          // typed fields instead of parsing free-form reason text.
+          // Per ai-first-consumer.md "Numeric-threshold heuristics
+          // are suppression" — these never gate suppression or
+          // adjust confidence; the candidate stays present at the
+          // same confidence regardless of the values.
+          ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+          ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
         };
       }),
       ...warningsField({

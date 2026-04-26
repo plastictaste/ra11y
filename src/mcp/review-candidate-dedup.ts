@@ -49,6 +49,21 @@ export interface DedupedReviewCandidate {
    * are dishonest."
    */
   readonly siblingOccurrences?: readonly ReviewCandidateSibling[];
+  /**
+   * Passes through the finder's structured vendor-path-shape evidence
+   * (see `ReviewCandidate.vendorPathHint`). Present-when-meaningful —
+   * omitted when the finder did not classify the file as a vendor /
+   * build-output drop.
+   */
+  readonly vendorPathHint?: boolean;
+  /**
+   * Passes through the finder's structured duration evidence for
+   * timing-related candidates (see `ReviewCandidate.durationLiteralMs`).
+   * `number` for literal-resolved millisecond counts, `"non-literal"`
+   * for non-literal duration expressions, omitted when no duration
+   * applies (HTML `<meta refresh>`, degenerate calls).
+   */
+  readonly durationLiteralMs?: number | "non-literal";
 }
 
 /**
@@ -69,6 +84,8 @@ export function dedupeReviewCandidatesForSingleFile(
       reason: string;
       snippet: string | undefined;
       siblingOccurrences: readonly ReviewCandidateSibling[] | undefined;
+      vendorPathHint: boolean | undefined;
+      durationLiteralMs: number | "non-literal" | undefined;
       order: number;
     }
   >();
@@ -92,6 +109,13 @@ export function dedupeReviewCandidatesForSingleFile(
       // location+reason key) and conditional-spreads it away when
       // undefined or empty.
       siblingOccurrences: c.siblingOccurrences,
+      // Structured vendor-path / duration evidence — preserved on the
+      // first-seen candidate. All sibling copies under the same
+      // location+reason key carry the same values because the finder
+      // populates them from the file path / call site, not from the
+      // criterion ID.
+      vendorPathHint: c.vendorPathHint,
+      durationLiteralMs: c.durationLiteralMs,
       order: nextOrder++,
     });
   }
@@ -108,5 +132,7 @@ export function dedupeReviewCandidatesForSingleFile(
       ...(g.siblingOccurrences === undefined || g.siblingOccurrences.length === 0
         ? {}
         : { siblingOccurrences: g.siblingOccurrences }),
+      ...(g.vendorPathHint ? { vendorPathHint: g.vendorPathHint } : {}),
+      ...(g.durationLiteralMs === undefined ? {} : { durationLiteralMs: g.durationLiteralMs }),
     }));
 }

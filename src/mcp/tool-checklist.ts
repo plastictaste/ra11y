@@ -108,6 +108,21 @@ interface ChecklistCandidateOut {
    * meaningful per CLAUDE.md §1) when the candidate is single-criterion.
    */
   readonly criteriaIds?: readonly string[];
+  /**
+   * Structured vendor-path-shape evidence passed through from the
+   * finder (see `ReviewCandidate.vendorPathHint`). True when the cited
+   * file's basename matches a canonical vendor library bundle name or
+   * looks like minified machine output. Present-when-meaningful —
+   * omitted when the file is an ordinary authored source.
+   */
+  readonly vendorPathHint?: boolean;
+  /**
+   * Structured duration evidence for timing-related candidates (see
+   * `ReviewCandidate.durationLiteralMs`). `number` for literal-resolved
+   * millisecond counts, `"non-literal"` for non-literal duration
+   * expressions, omitted when the candidate has no duration to report.
+   */
+  readonly durationLiteralMs?: number | "non-literal";
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -977,6 +992,13 @@ function mapCandidates(
           c.siblingOccurrences.length > 0 && {
             siblingOccurrences: c.siblingOccurrences,
           }),
+        // Structured additive evidence — vendor-path-shape boolean
+        // and duration literal/non-literal sentinel. Same semantics
+        // as on the review-candidates surface; surfaced here so a
+        // checklist consumer that filters by criterion does not have
+        // to re-call review_candidates to recover the typed fields.
+        ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+        ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
       };
     });
 }

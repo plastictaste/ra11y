@@ -67,8 +67,12 @@ import {
   type FlashEvidence,
   flashClause,
 } from "./timing-dom-mutation.ts";
-import { minifiedLocatorClause } from "./timing-minified.ts";
-import { durationClassClause, vendorBundleClause } from "./timing-vendor.ts";
+import { isMinifiedForEnrichment, minifiedLocatorClause } from "./timing-minified.ts";
+import {
+  durationClassClause,
+  isVendorBundleBasename,
+  vendorBundleClause,
+} from "./timing-vendor.ts";
 
 const CRITERION_IDS = [
   "wcag22:2.2.1",
@@ -249,6 +253,15 @@ function emitJsCandidates(
   const vendorClause = vendorBundleClause(ctx.filePath);
   const reason = buildReason(coreReason, pauseStopHide, flash, minifiedClause, vendorClause);
   const criteriaForSite = buildCriteriaForSite(pauseStopHide, flash !== null);
+  // Structured-evidence fields complementing the reason-text enrichment.
+  // Per ai-first-consumer.md the agent should not have to parse free-form
+  // text to read the dismissal evidence — surface the same signals as
+  // typed booleans / tagged numbers so threshold-free triage stays cheap.
+  // Both fields are present-when-meaningful (omitted when the predicate
+  // doesn't fire / no duration to report).
+  const vendorPathHint =
+    isVendorBundleBasename(ctx.filePath) || isMinifiedForEnrichment(ctx.filePath, ctx.source);
+  const durationLiteralMs = duration ? parseDurationLiteralMs(duration) : undefined;
   for (const criterionId of criteriaForSite) {
     // Confidence "medium": setTimeout/setInterval is concrete evidence
     // of a timer, but the reviewer's question — "does this govern a
@@ -263,8 +276,48 @@ function emitJsCandidates(
       location: { filePath: ctx.filePath, line, column },
       reason,
       confidence: "medium",
+      ...(vendorPathHint ? { vendorPathHint: true } : {}),
+      ...(durationLiteralMs === undefined ? {} : { durationLiteralMs }),
     });
   }
+}
+
+/**
+ * Parse the duration argument echoed by {@link extractDurationArg}
+ * into a millisecond count when the value is a numeric literal that
+ * resolves cleanly, or `"non-literal"` when it is any other shape
+ * (member access, identifier, call expression, computed expression,
+ * unary, parenthesised, etc.).
+ *
+ * Mirrors the literal/non-literal split used by
+ * {@link durationClassClause} so the structured field
+ * `ReviewCandidate.durationLiteralMs` and the reason-text clause
+ * agree on the same call site (a clause that says "member-access
+ * reference" cannot ship next to a structured `durationLiteralMs:
+ * 300` — the channels would silently disagree).
+ *
+ * Numeric literal forms accepted: integer, decimal, exponent, hex,
+ * binary, octal, and BigInt (truncated to Number — the agent reading
+ * the value still sees the cited verbatim string in the reason text
+ * if precision matters), with optional `_` separators. BigInt's `n`
+ * suffix is stripped before parsing. `+1000` / `-1000` /
+ * parenthesised forms fall through to `"non-literal"` to match the
+ * reason-text classifier's "expression" bucket.
+ */
+function parseDurationLiteralMs(duration: string): number | "non-literal" {
+  const text = duration.trim();
+  // Use the same literal-shape regex the reason-text classifier uses
+  // (NUMERIC_LITERAL_PATTERN in timing-vendor.ts). Mirroring the
+  // pattern locally avoids a circular import while keeping the two
+  // channels in lockstep — see classifyDurationExpression.
+  const literalMatch =
+    /^(?:0[xXbBoO][0-9a-fA-F_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)n?$/.exec(text);
+  if (!literalMatch) return "non-literal";
+  // Strip BigInt suffix and `_` separators before Number parsing.
+  const cleaned = text.replace(/n$/, "").replace(/_/g, "");
+  const parsed = Number(cleaned);
+  if (!Number.isFinite(parsed)) return "non-literal";
+  return parsed;
 }
 
 /**

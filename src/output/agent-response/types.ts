@@ -369,6 +369,25 @@ export interface AgentReviewCandidate {
     readonly alt?: string;
     readonly href?: string;
   }[];
+  /**
+   * Structured additive evidence that the cited file looks like
+   * third-party / build-output code. Surfaced as a typed boolean so
+   * the agent reads the dismissal evidence without parsing free-form
+   * reason text. Strictly additive per ai-first-consumer.md
+   * "Numeric-threshold heuristics are suppression" — the candidate
+   * still surfaces at the same confidence regardless of the value.
+   * Omitted for ordinary authored sources.
+   */
+  readonly vendorPathHint?: boolean;
+  /**
+   * Structured duration evidence for timing-related candidates
+   * (`setTimeout` / `setInterval`). `number` for literal-resolved
+   * millisecond counts, `"non-literal"` for non-literal duration
+   * expressions (member access, identifier, call, computed).
+   * Omitted when the candidate has no duration to report (HTML
+   * `<meta refresh>`, degenerate calls).
+   */
+  readonly durationLiteralMs?: number | "non-literal";
 }
 
 /**

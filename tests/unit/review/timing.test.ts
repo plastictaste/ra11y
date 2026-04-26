@@ -602,6 +602,128 @@ describe("review/timing", () => {
     });
   });
 
+  describe("structured additive evidence (vendorPathHint, durationLiteralMs)", () => {
+    // Companion to the reason-text enrichment: the same dismissal
+    // signals surface as typed structured fields so the agent does
+    // not have to parse free-form prose to read them. Per
+    // ai-first-consumer.md "Numeric-threshold heuristics are
+    // suppression" both fields are strictly additive — confidence
+    // stays "medium," every WCAG criterion stays attached, no
+    // suppression on either signal.
+
+    it("populates vendorPathHint:true on a minified-named file", () => {
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "vendor/bootstrap.min.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.vendorPathHint).toBe(true);
+    });
+
+    it("populates vendorPathHint:true on a canonical vendor-bundle filename", () => {
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "vendor/jquery-1.10.2.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.vendorPathHint).toBe(true);
+    });
+
+    it("omits vendorPathHint on ordinary authored source paths", () => {
+      const out = runFinder(finder, `setTimeout(() => tick(), 100);`, {
+        filePath: "src/components/Carousel.tsx",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit).toBeDefined();
+      // Present-when-meaningful: omitted, never `false`.
+      expect(hit?.vendorPathHint).toBeUndefined();
+    });
+
+    it("emits durationLiteralMs as a number for plain numeric literals", () => {
+      const out = runFinder(finder, `setTimeout(() => tick(), 100);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.durationLiteralMs).toBe(100);
+    });
+
+    it("emits durationLiteralMs for an underscore-separated session-timeout literal", () => {
+      // Canonical "looks like a session timeout" duration: 30000ms.
+      // The structured field carries the parsed value; the agent's
+      // dismissal path reads the same number verbatim from the
+      // reason text but no longer has to parse to see it.
+      const out = runFinder(finder, `setTimeout(() => logout(), 30_000);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.durationLiteralMs).toBe(30000);
+    });
+
+    it("emits durationLiteralMs:'non-literal' for a member-access duration", () => {
+      const src = `
+        function bootstrap() {
+          var self = this;
+          setTimeout(function() { self._tick(); }, self.options.interval);
+        }
+      `;
+      const out = runFinder(finder, src);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.durationLiteralMs).toBe("non-literal");
+    });
+
+    it("emits durationLiteralMs:'non-literal' for a bare identifier duration", () => {
+      const out = runFinder(finder, `setTimeout(cb, delay);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.durationLiteralMs).toBe("non-literal");
+    });
+
+    it("emits durationLiteralMs:'non-literal' for a call-expression duration", () => {
+      const out = runFinder(finder, `setTimeout(cb, getDelay());`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.durationLiteralMs).toBe("non-literal");
+    });
+
+    it("emits durationLiteralMs:'non-literal' for a computed-expression duration", () => {
+      const out = runFinder(finder, `setTimeout(cb, delay * 2);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.durationLiteralMs).toBe("non-literal");
+    });
+
+    it("omits durationLiteralMs when the call has no second argument", () => {
+      const out = runFinder(finder, `setTimeout(() => tick());`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit).toBeDefined();
+      expect(hit?.durationLiteralMs).toBeUndefined();
+    });
+
+    it("does NOT downgrade confidence on either field — additive only", () => {
+      // Doctrine pin: structured evidence never gates suppression
+      // or downgrades confidence. A vendor-pathed minified bundle
+      // with a tiny debounce still surfaces at medium with every
+      // WCAG criterion attached — the agent decides.
+      const out = runFinder(finder, `setTimeout(function(){},100);`, {
+        filePath: "vendor/bootstrap.min.js",
+      });
+      const hit = out.find(
+        (c) => c.criterionId === "wcag22:2.2.1" && c.reason.includes("setTimeout"),
+      );
+      expect(hit).toBeDefined();
+      expect(hit?.confidence).toBe("medium");
+      expect(hit?.vendorPathHint).toBe(true);
+      expect(hit?.durationLiteralMs).toBe(100);
+    });
+
+    it("does not attach the structured fields to <meta http-equiv='refresh'> candidates", () => {
+      // Both fields are scoped to JS setTimeout/setInterval call sites
+      // — the meta-refresh signal has neither a duration argument nor
+      // a vendor-path-shape question (the file is HTML, the
+      // predicate doesn't apply). Honest omission rather than
+      // populating them with sentinel values.
+      const out = runFinder(finder, `<meta http-equiv="refresh" content="30; url=/next">`, {
+        filePath: "a.html",
+      });
+      expect(out.length).toBeGreaterThan(0);
+      for (const c of out) {
+        expect(c.durationLiteralMs).toBeUndefined();
+        expect(c.vendorPathHint).toBeUndefined();
+      }
+    });
+  });
+
   describe("minified-file locator enrichment", () => {
     // When the cited file is a minified bundle (`.min.` infix OR a
     // single line > 1000 chars), the bare `line:column` pointer is

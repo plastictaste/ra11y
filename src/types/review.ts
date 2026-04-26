@@ -97,6 +97,48 @@ export interface ReviewCandidate {
    * per the "present-when-meaningful" rule.
    */
   readonly siblingOccurrences?: readonly ReviewCandidateSibling[];
+  /**
+   * Additive structured evidence that the cited file looks like
+   * third-party / build-output code rather than the page author's
+   * source. True when a finder's path-shape predicates (vendor library
+   * basename match such as `bootstrap.js` / `jquery-1.10.2.js`,
+   * `.min.` infix, or single-line minified shape) classify the file
+   * as a vendor / build-output drop. The agent reading the candidate
+   * uses this to decide whether the call site is library internals
+   * the page author can't change.
+   *
+   * Strictly additive per ai-first-consumer.md "Numeric-threshold
+   * heuristics are suppression" — the candidate still surfaces at the
+   * same confidence and every WCAG criterion stays attached. Omitted
+   * (not `false`) when the file is an ordinary authored source so
+   * presence reads as positive evidence (present-when-meaningful);
+   * `false` is reserved for finders that need to communicate "this
+   * predicate ran and answered no" alongside other vendor signals.
+   */
+  readonly vendorPathHint?: boolean;
+  /**
+   * Additive structured evidence for timing-related candidates: the
+   * duration argument of the underlying `setTimeout` / `setInterval`
+   * call. When the second argument is a numeric literal that resolves
+   * cleanly to a millisecond count (`300`, `60_000`, `0x100`, `5e2`,
+   * `1.5`), this is that number; when the duration is any non-literal
+   * shape — member access (`self.options.interval`), identifier
+   * (`delay`), call expression (`getDelay()`), computed expression
+   * (`delay * 2`) — this is the sentinel string `"non-literal"`.
+   *
+   * The tagged union is preferred over `number | undefined` so
+   * "duration was non-literal" reads as positive evidence rather than
+   * being indistinguishable from "the finder doesn't track durations"
+   * (per ai-first-consumer.md "Ambiguous field shapes are dishonest").
+   * Omitted when the candidate has no duration to report (e.g.
+   * `<meta http-equiv="refresh">` or a degenerate `setTimeout(fn)`
+   * with no second argument). Per the same doctrine the field is
+   * additive context only — never gates suppression, never adjusts
+   * confidence on a numeric threshold; the agent reading the
+   * surrounding code is the only correct arbiter of whether the
+   * duration governs a user-facing time limit.
+   */
+  readonly durationLiteralMs?: number | "non-literal";
 }
 
 /** Scope for a candidate finder — same semantics as RuleScope minus "project". */

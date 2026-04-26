@@ -143,6 +143,25 @@ export function vendorBundleClause(filePath: string): string {
 }
 
 /**
+ * Boolean predicate companion to {@link vendorBundleClause}: returns
+ * true when the cited file's basename matches a canonical vendor
+ * library bundle name. Exposes the same signal as a structured field
+ * so finders can populate `ReviewCandidate.vendorPathHint` for
+ * agents that prefer to read the dismissal evidence as a typed
+ * boolean instead of (or in addition to) parsing the reason text.
+ *
+ * Same predicate, same evidence — strictly additive on the response.
+ * Per ai-first-consumer.md the field never gates suppression: the
+ * candidate still surfaces at the same confidence with every WCAG
+ * criterion attached. The agent decides whether to dismiss after
+ * reading the file.
+ */
+export function isVendorBundleBasename(filePath: string): boolean {
+  const basename = vendorBasenameOf(filePath);
+  return VENDOR_BUNDLE_BASENAME_PATTERN.test(basename);
+}
+
+/**
  * Returns the basename portion of a file path, normalised to forward
  * slashes so Windows-style paths classify identically. Mirrors the
  * helper in `timing-minified.ts`; duplicated here so this module's
