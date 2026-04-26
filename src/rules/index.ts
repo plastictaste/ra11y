@@ -67,6 +67,7 @@ import { rule as altTextPlaceholder } from "./media/alt-text-placeholder.ts";
 import { rule as audioControlsOrTranscriptMissing } from "./media/audio-controls-or-transcript-missing.ts";
 import { rule as audioVideoNoControls } from "./media/audio-video-no-controls.ts";
 import { rule as autoplaySound } from "./media/autoplay-sound.ts";
+import { rule as imgEmptyAltInClickableGroup } from "./media/img-empty-alt-in-clickable-group.ts";
 import { rule as svgAccessibleName } from "./media/svg-accessible-name.ts";
 import { rule as videoCaptionsMissing } from "./media/video-captions-missing.ts";
 import { rule as animationFromInteractions } from "./motion/animation-from-interactions.ts";
@@ -150,6 +151,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
+  imgEmptyAltInClickableGroup,
   inPageLinkFragmentMissing,
   inlineDisplayNoneOnFocusable,
   invalidIdShape,
@@ -255,6 +257,7 @@ export {
   htmlHasLang,
   iconFontHidden,
   iframeTitle,
+  imgEmptyAltInClickableGroup,
   inlineDisplayNoneOnFocusable,
   inPageLinkFragmentMissing,
   invalidIdShape,
