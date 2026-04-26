@@ -11,6 +11,7 @@
 import { describeNodeShape, findTargetNodeAtLocation } from "../../src/engine/ast-helpers.ts";
 import { buildContext } from "../../src/engine/context-builder.ts";
 import {
+  parseAstro,
   parseCss,
   parseHtml,
   parseLess,
@@ -183,6 +184,23 @@ function parseSource(filePath: string, source: string): Ast {
     // Unit tests that point `filePath` at an `.md` file exercise the
     // same residue the HTML-family rules see at scan time.
     const result = parseMarkdown(source);
+    return { language: "html", root: result.root, errors: result.errors };
+  }
+  if (filePath.endsWith(".astro")) {
+    // `.astro` routes through `parseAstro` which strips the component
+    // script frontmatter and feeds the template region to `parseHtml`,
+    // producing `language: "html"`. Unit tests that point `filePath`
+    // at an `.astro` file exercise the same AST shape HTML-family
+    // rules see at scan time.
+    const result = parseAstro(source);
+    return { language: "html", root: result.root, errors: result.errors };
+  }
+  if (filePath.endsWith(".erb")) {
+    // `.erb` (Ruby embedded-templates — Rails / Middleman / Jekyll)
+    // routes straight to `parseHtml` in production: the HTML parser's
+    // `stripTemplateDirectives` pass removes `<%= … %>` / `<% … %>` /
+    // `<%# … %>` from text nodes so rules see the rendered-text shape.
+    const result = parseHtml(source);
     return { language: "html", root: result.root, errors: result.errors };
   }
   if (filePath.endsWith(".css")) {

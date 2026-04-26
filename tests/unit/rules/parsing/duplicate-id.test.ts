@@ -153,4 +153,60 @@ describe("rule parsing/duplicate-id", () => {
     expect(rule.satisfies).toContain("wcag22:4.1.2");
     expect(rule.satisfies).toContain("wcag21:4.1.2");
   });
+
+  it("fires on .astro source (HTML parser routes via parseAstro)", () => {
+    // The Astro adapter pipes through parseHtml after stripping the
+    // component-script frontmatter, so the rule sees an HtmlDocument
+    // with `language: "html"` exactly as a plain `.html` file would.
+    const v = runRule(rule, `<div id="dup"></div><div id="dup"></div>`, {
+      filePath: "page.astro",
+    });
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("dup");
+  });
+
+  it("fires on .md source — duplicate id inside an HTML island", () => {
+    // `.md` parses through parseMarkdown which feeds residual HTML to
+    // parseHtml. Embedded HTML islands (raw <div id="…">) parse as
+    // HTML elements; collisions are real and must surface.
+    const v = runRule(
+      rule,
+      `# Title\n\n<div id="anchor"></div>\n\nMore text\n\n<div id="anchor"></div>`,
+      { filePath: "page.md" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("anchor");
+  });
+
+  it("fires on .svg source — duplicate id inside <defs>", () => {
+    // SVG `<defs>` can carry id-bearing references that a `<use>`
+    // resolves at render time. Duplicate ids break that linkage.
+    const v = runRule(
+      rule,
+      `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="grad"></linearGradient><linearGradient id="grad"></linearGradient></defs></svg>`,
+      { filePath: "icon.svg" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("grad");
+  });
+
+  it("declares the HTML-parser-routed extensions explicitly", () => {
+    // Eligibility is derived from the parser-dispatch table — every
+    // extension whose adapter produces `language: "html"` is listed
+    // explicitly rather than inherited solely via EXTENSION_ALIASES.
+    const exts = rule.appliesTo?.fileExtensions ?? [];
+    expect(exts).toContain(".html");
+    expect(exts).toContain(".htm");
+    expect(exts).toContain(".astro");
+    expect(exts).toContain(".md");
+    expect(exts).toContain(".markdown");
+    expect(exts).toContain(".erb");
+    expect(exts).toContain(".svg");
+    // JSX-routed extensions are intentionally excluded — duplicate IDs
+    // inside JSX are out of scope (parseTsx → language="tsx", and the
+    // runtime guard filters them safely).
+    expect(exts).not.toContain(".tsx");
+    expect(exts).not.toContain(".jsx");
+    expect(exts).not.toContain(".mdx");
+  });
 });

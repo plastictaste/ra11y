@@ -12,6 +12,22 @@
  *
  * Walks an HTML document collecting every `id=…` value, then emits
  * a violation at every occurrence after the first. Document-scoped.
+ *
+ * Eligibility: every file routed through the HTML parser — that is,
+ * every file whose AST carries `language: "html"`. The literal
+ * extension set spans `.html`, `.htm`, `.astro`, `.md`, `.markdown`,
+ * `.erb`, and `.svg`; each routes through `parseHtml` (directly or
+ * via a sibling adapter that produces an `HtmlParseResult`). The
+ * runtime `ctx.language === "html"` guard is the source of truth —
+ * the explicit extension list mirrors the parser-dispatch table in
+ * `src/cli/commands/scan.ts` / `src/mcp/session.ts` so the
+ * eligibility set is self-documenting at the rule declaration
+ * (rather than relying solely on the EXTENSION_ALIASES table to
+ * silently widen `.html` into the rest). MDX and bare JSX/TSX route
+ * through `parseTsx` and emit `language: "tsx"` — duplicate IDs
+ * inside those substrates are out of scope today; the runtime guard
+ * filters them safely if a `.mdx`/`.tsx` file is ever explicitly
+ * declared eligible.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -24,8 +40,19 @@ export const rule = defineRule({
   severity: "error",
   scope: "document",
   fixClass: "mechanical",
+  // Every extension that routes through the HTML parser (producing
+  // `language: "html"` on the AST). The runtime `ctx.language` guard
+  // is the source of truth; this list mirrors the parser-dispatch
+  // table so the rule's eligibility is self-documenting at the
+  // declaration rather than depending on the EXTENSION_ALIASES table
+  // in `src/utils/path.ts` to silently widen `.html` into the rest.
+  // `.svg` is included because the SVG adapter pipes through parseHtml
+  // (an inline `<defs>` section can carry `id="…"` collisions same as
+  // an HTML document). `.mdx`/`.tsx`/`.jsx` route through `parseTsx`
+  // and are intentionally absent — duplicate IDs inside JSX are out
+  // of scope for this rule (the runtime guard filters them safely).
   appliesTo: {
-    fileExtensions: [".html", ".htm"],
+    fileExtensions: [".html", ".htm", ".astro", ".md", ".markdown", ".erb", ".svg"],
   },
   docs: {
     description:
