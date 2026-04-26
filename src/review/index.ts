@@ -37,6 +37,7 @@ import { finder as sectionHeadings } from "./finders/section-headings.ts";
 import { finder as sensoryCharacteristics } from "./finders/sensory-characteristics.ts";
 import { finder as serverErrorUntied } from "./finders/server-error-untied.ts";
 import { finder as suppressionNoReason } from "./finders/suppression-no-reason.ts";
+import { finder as targetBlankNoWarning } from "./finders/target-blank-no-warning.ts";
 import { finder as timing } from "./finders/timing.ts";
 import { finder as useOfColor } from "./finders/use-of-color.ts";
 import { finder as validationTiming } from "./finders/validation-timing.ts";
@@ -75,6 +76,7 @@ export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   sensoryCharacteristics,
   serverErrorUntied,
   suppressionNoReason,
+  targetBlankNoWarning,
   timing,
   useOfColor,
   validationTiming,
