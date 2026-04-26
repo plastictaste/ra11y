@@ -186,7 +186,7 @@ function emitIfMissingIndicator(
 ): void {
   const focusMatch = FOCUS_PSEUDO_PATTERN.test(cssRule.selector);
   const universalMatch = hasUniversalSubject(cssRule.selector);
-  if (!focusMatch && !universalMatch) return;
+  if (!(focusMatch || universalMatch)) return;
   if (!removesOutline(cssRule)) return;
   if (hasReplacementIndicator(cssRule)) return;
 
