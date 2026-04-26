@@ -426,4 +426,69 @@ describe("rule focus/outline-visible", () => {
       expect(v[0]?.severity).toBe("info");
     });
   });
+
+  // Universal-subject selectors strip the outline on every element in
+  // every state. Author-level `* { outline: 0 }` defeats the user-agent
+  // `:focus { outline: ... }` because UA rules have lower author
+  // priority — the canonical F78 failure pattern. Always error;
+  // independent of class-scoped cross-references.
+  describe("universal-selector outline removal", () => {
+    it("fires error on bare `* { outline: none }`", () => {
+      const v = runRule(rule, `* { outline: none; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("globally");
+    });
+
+    it("fires error on `* { outline: 0 }`", () => {
+      const v = runRule(rule, `* { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("fires error on `*, *:focus { outline: 0 }` (universal + focus-pseudo group)", () => {
+      const v = runRule(rule, `*, *:focus { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("fires error on `*[data-foo] { outline: none }` (universal subject with attribute)", () => {
+      const v = runRule(rule, `*[data-foo] { outline: none; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("preserves existing `:focus { outline: none }` behavior at error severity", () => {
+      const v = runRule(rule, `:focus { outline: none; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("does NOT fire on `* { outline: 1px solid red }` (visible outline)", () => {
+      const v = runRule(rule, `* { outline: 1px solid red; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on `* { outline: none; box-shadow: 0 0 0 2px blue }` (replacement provided)", () => {
+      const v = runRule(rule, `* { outline: none; box-shadow: 0 0 0 2px blue; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on `* + p { outline: 0 }` (sibling combinator — subject is `p`, not universal)", () => {
+      const v = runRule(rule, `* + p { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire on `* { color: red }` (no outline removal)", () => {
+      const v = runRule(rule, `* { color: red; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("suggestion mentions F78 / global scope", () => {
+      const v = runRule(rule, `* { outline: 0; }`, { filePath: "styles.css" });
+      expect(v[0]?.suggestion).toContain("F78");
+    });
+  });
 });

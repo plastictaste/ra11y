@@ -7,21 +7,32 @@
  * > the keyboard focus indicator is visible.
  *
  * Flags CSS rules that set `outline: none`/`0` or `outline-style: none`
- * on `:focus`/`:focus-visible` without a replacement focus indicator in
- * the same rule block.
+ * without a replacement focus indicator in the same rule block, when
+ * the selector targets focusable content. Two predicate branches:
+ *
+ *   - Focus-pseudo branch: selector contains `:focus` or
+ *     `:focus-visible` (`a:focus`, `.btn:focus-visible`).
+ *   - Universal branch: any comma-separated selector group has a
+ *     universal `*` subject (`*`, `*, p`, `*[data-x]`). A bare `*`
+ *     rule wipes the outline on every element in every state — the
+ *     UA stylesheet's `:focus { outline: ... }` has lower author
+ *     priority, so author-level `* { outline: 0 }` is the canonical
+ *     F78 focus-indicator failure pattern.
  *
  * Severity resolution (in precedence order):
- *   1. Bare-element selector (`a:focus`, `button:focus-visible`) →
- *      `error`. Selector targets interactivity itself; no further
- *      evidence needed.
- *   2. Class-scoped selector whose primary class is applied in the
+ *   1. Universal-subject selector (`*`, `*, *:focus`) → `error`. Most
+ *      severe — strips outline globally, no scoping at all.
+ *   2. Bare-element / focus-pseudo selector (`a:focus`,
+ *      `button:focus-visible`, `:focus`) → `error`. Selector targets
+ *      interactivity itself; no further evidence needed.
+ *   3. Class-scoped selector whose primary class is applied in the
  *      project to a concrete interactive element (`button`, `a[href]`,
  *      `input`, `select`, `textarea`, `summary`, or a `role` that
  *      implies interactivity) → `error`. Deterministic class-token
  *      link: the CSS rule DOES land on an interactive element, and
  *      `info` would silently mis-triage what is a high-confidence
- *      2.4.7 violation (Q5-FOCUS-OUTLINE-VISIBLE-BUTTON-SEVERITY).
- *   3. Class-scoped selector with no interactive-element evidence →
+ *      2.4.7 violation.
+ *   4. Class-scoped selector with no interactive-element evidence →
  *      `info`. Surface the candidate so the agent can investigate;
  *      the class may apply to non-interactive wrappers.
  *
@@ -173,9 +184,28 @@ function emitIfMissingIndicator(
   interactiveClasses: ClassSet,
   emit: Emit,
 ): void {
-  if (!FOCUS_PSEUDO_PATTERN.test(cssRule.selector)) return;
+  const focusMatch = FOCUS_PSEUDO_PATTERN.test(cssRule.selector);
+  const universalMatch = hasUniversalSubject(cssRule.selector);
+  if (!focusMatch && !universalMatch) return;
   if (!removesOutline(cssRule)) return;
   if (hasReplacementIndicator(cssRule)) return;
+
+  if (universalMatch) {
+    // Universal-subject selector strips outline on every element in
+    // every state. Author-level `* { outline: 0 }` defeats the UA
+    // stylesheet's `:focus { outline: ... }` because UA rules have
+    // lower author priority — F78 calls this out as the canonical
+    // focus-indicator failure pattern. Always error; no class-scoped
+    // cross-reference applies (there's no class to cross-reference
+    // with a focus-visible utility).
+    emit({
+      severity: "error",
+      location: { filePath, line: cssRule.loc.start.line, column: cssRule.loc.start.column },
+      message: buildUniversalMessage(cssRule.selector),
+      suggestion: buildUniversalSuggestion(cssRule.selector),
+    });
+    return;
+  }
 
   const scoped = isScopedSelector(cssRule.selector);
   const className = scoped ? extractPrimaryClass(cssRule.selector) : null;
@@ -190,7 +220,7 @@ function emitIfMissingIndicator(
   // Upgrade scoped candidate to `error` when its primary class is
   // applied to a concrete interactive element somewhere in the project.
   // Class-to-tag link is deterministic (string equality on the tag
-  // name), not a heuristic. Q5-FOCUS-OUTLINE-VISIBLE-BUTTON-SEVERITY.
+  // name), not a heuristic.
   const interactiveEvidence = scoped && className !== null && interactiveClasses.has(className);
   const severity: "error" | "info" = !scoped || interactiveEvidence ? "error" : "info";
   emit({
@@ -199,6 +229,33 @@ function emitIfMissingIndicator(
     message: buildMessage(cssRule.selector),
     suggestion: buildSuggestion(cssRule.selector),
   });
+}
+
+/**
+ * True if any comma-separated selector group is an *unconditional*
+ * universal — a single `*` compound with no combinator, no descendant
+ * ancestor, no class/id/attribute scoping. The unconditional case is
+ * the F78 failure pattern: a rule that wipes the outline from every
+ * element irrespective of state or context.
+ *
+ * Matches: `*`, `*, p`, `*[data-x]`, `*.foo`, `*:focus` (universal
+ * subject; `:focus` narrows by state but the rule still applies to
+ * every element when focused).
+ *
+ * Does NOT match: `:focus *` (descendant-of-focused — focused element
+ * keeps its outline), `* + p` (subject is `p`, universal is sibling
+ * matcher), `.x *` (descendant of `.x`).
+ */
+function hasUniversalSubject(selector: string): boolean {
+  for (const group of selector.split(",")) {
+    const trimmed = group.trim();
+    if (trimmed.length === 0) continue;
+    // Reject any combinator (descendant, child, sibling) — those
+    // narrow the rule to a context, not "every element."
+    if (/[\s>+~]/.test(trimmed)) continue;
+    if (trimmed.startsWith("*")) return true;
+  }
+  return false;
 }
 
 /** True if the selector targets a specific class, id, or attribute — not a bare element. */
@@ -405,4 +462,12 @@ function buildSuggestion(selector: string): string {
     return `${base} If this element uses Tailwind's \`focus-visible:ring-*\` or \`focus-visible:outline-*\` classes on the component, the focus indicator is already provided — suppress this note by adding \`/* ra11y-disable-next-line focus/outline-visible */\` on the line above the CSS rule (or \`/* ra11y-disable focus/outline-visible */\` at the top of the file). Criterion-level pragmas (\`wcag22:2.4.7\`) work too.`;
   }
   return base;
+}
+
+function buildUniversalMessage(selector: string): string {
+  return `'${selector}' removes the outline globally — every element loses its focus indicator on every state, leaving keyboard users with no way to see which element is focused.`;
+}
+
+function buildUniversalSuggestion(selector: string): string {
+  return `Drop the universal outline reset and add a focus-state indicator instead. Either delete the \`outline\` declaration from '${selector}' and let the browser's default :focus outline render, or replace it with explicit per-state styles (\`*:focus-visible { outline: 2px solid #0066cc; }\` or scoped per-component \`focus-visible\` rules with \`outline\` / \`box-shadow\` / \`border-color\`). Universal \`outline: 0\` is the F78 failure pattern — it overrides the user-agent focus ring everywhere.`;
 }
