@@ -22,6 +22,7 @@ import { rule as redundantRoleOnHostElement } from "./aria/redundant-role-on-hos
 import { rule as requiredAttrs } from "./aria/required-attrs.ts";
 import { rule as roleFromClassOnly } from "./aria/role-from-class-only.ts";
 import { rule as tabControlsMissing } from "./aria/tab-controls-missing.ts";
+import { rule as tabWidgetRoles } from "./aria/tab-widget-roles.ts";
 import { rule as validAttr } from "./aria/valid-attr.ts";
 import { rule as meaningByColorOnly } from "./color/meaning-by-color-only.ts";
 import { rule as stateClassColorOnly } from "./color/state-class-color-only.ts";
@@ -206,6 +207,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   svgAccessibleName,
   svgTitleMissing,
   tabControlsMissing,
+  tabWidgetRoles,
   tabindexPositive,
   tableCaptionMissing,
   tableHeaders,
@@ -314,6 +316,7 @@ export {
   svgAccessibleName,
   svgTitleMissing,
   tabControlsMissing,
+  tabWidgetRoles,
   tabindexPositive,
   tableCaptionMissing,
   tableHeaders,
