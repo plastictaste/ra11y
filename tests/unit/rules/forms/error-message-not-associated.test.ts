@@ -237,4 +237,251 @@ describe("rule forms/error-message-not-associated", () => {
       expect(violations[0]?.message).toContain('[role="alert"]');
     });
   });
+
+  // The classes `.invalid-feedback` / `.error-message` and `[role="alert"]`
+  // detect canonical, well-defined error-container conventions and emit
+  // at severity `error`. The patterns below — older Bootstrap
+  // `.alert.alert-{variant}` family and id-suffix conventions — are
+  // weaker signals (the container could be a page-level banner rather
+  // than a per-field message) and surface at severity `info` with reason
+  // text that names the uncertainty. The two tiers share the
+  // association-detection logic; only severity and framing differ.
+  describe("heuristic container detection (severity info)", () => {
+    it('HTML <div class="alert alert-danger"> adjacent to a form control fires at info', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="email" name="email">
+            <div class="alert alert-danger" id="email-error">Please enter a valid email.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      // The framing concedes the heuristic so reason and severity agree
+      expect(violations[0]?.message).toContain("Heuristic match");
+      expect(violations[0]?.message).toContain('<div class="alert alert-danger">');
+      expect(violations[0]?.suggestion).toContain('aria-describedby="email-error"');
+    });
+
+    it('HTML <div class="alert alert-error"> fires at info', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="text" name="username">
+            <div class="alert alert-error" id="username-error">Username is taken.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain('<div class="alert alert-error">');
+    });
+
+    it("the .alert.alert-{warning,success,info} variants all match at info severity", () => {
+      // One sample per remaining variant — all three should fire at
+      // info because all five variants share the heuristic tier.
+      const variants: readonly string[] = ["alert-warning", "alert-success", "alert-info"];
+      for (const variant of variants) {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><form>
+            <div>
+              <input type="text" name="x">
+              <div class="alert ${variant}" id="x-msg">Message text.</div>
+            </div>
+          </form></body></html>`,
+          { filePath: "input.html" },
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.severity).toBe("info");
+        expect(violations[0]?.message).toContain(`alert ${variant}`);
+      }
+    });
+
+    it("HTML id-suffix container (id ending in 'Error') fires at info", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="email" name="email">
+            <div id="contactError">Email is required.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain("Heuristic match");
+      expect(violations[0]?.message).toContain('id ending in "Error"');
+      expect(violations[0]?.suggestion).toContain('aria-describedby="contactError"');
+    });
+
+    it("HTML id-suffix container (id ending in 'Success') fires at info", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="email" name="email">
+            <p id="contactSuccess">Thanks — we will be in touch.</p>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain('id ending in "Success"');
+    });
+
+    it("HTML id-suffix container (id ending in 'Message') fires at info", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <textarea name="note"></textarea>
+            <span id="formMessage">Note must be at least 10 characters.</span>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain('id ending in "Message"');
+    });
+
+    it("does NOT match an id whose suffix is part of a longer word (e.g. 'errors', 'successful')", () => {
+      // The suffix must end the id at a camelCase boundary; `errors`
+      // is plural-suffixed and doesn't read as the canonical
+      // `*Error` / `*Success` / `*Message` shape the backlog item names.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="text" name="x">
+            <div id="errors">List of errors.</div>
+          </div>
+          <div>
+            <input type="text" name="y">
+            <div id="successful">Banner text.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT match a kebab-case id like 'summary-error' (different convention)", () => {
+      // Kebab-case error containers usually pair with class="error-message"
+      // already (canonical tier); the id-suffix heuristic is scoped to
+      // the camelCase convention the backlog item names.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="text" name="x">
+            <div id="summary-error">Summary text.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT match bare .alert without a variant", () => {
+      // .alert alone is too generic — it's the Bootstrap base class
+      // that all alert variants extend. Without a variant we cannot
+      // even claim the heuristic match.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="text" name="x">
+            <div class="alert" id="banner">Banner text.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does NOT fire when the alert variant is correctly wired via aria-describedby", () => {
+      // Heuristic-tier matches still respect a working association —
+      // the agent doesn't need to be pestered about a wired-up case
+      // even when the container classification was heuristic.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="email" name="email" aria-describedby="email-error">
+            <div class="alert alert-danger" id="email-error">Please enter a valid email.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("preserves canonical .invalid-feedback emission when both tiers could match", () => {
+      // A container with both `.invalid-feedback` AND a `*Error` id
+      // takes the canonical tier — severity stays at error and the
+      // framing prefix is empty.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><form>
+          <div>
+            <input type="email" name="email">
+            <div class="invalid-feedback" id="emailError">Please enter a valid email.</div>
+          </div>
+        </form></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.message).not.toContain("Heuristic match");
+    });
+
+    it('JSX <div className="alert alert-danger"> fires at info', () => {
+      const violations = runRule(
+        rule,
+        `export default function ContactForm() {
+          return (
+            <form>
+              <div>
+                <input type="email" name="email" />
+                <div className="alert alert-danger" id="email-error">Please enter a valid email.</div>
+              </div>
+            </form>
+          );
+        }`,
+        { filePath: "input.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain('<div class="alert alert-danger">');
+    });
+
+    it("JSX id-suffix container fires at info", () => {
+      const violations = runRule(
+        rule,
+        `export default function ContactForm() {
+          return (
+            <form>
+              <div>
+                <input type="email" name="email" />
+                <div id="contactError">Email is required.</div>
+              </div>
+            </form>
+          );
+        }`,
+        { filePath: "input.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain('id ending in "Error"');
+    });
+  });
 });
