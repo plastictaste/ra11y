@@ -63,7 +63,20 @@ const INTERACTIVE_TAGS: ReadonlySet<string> = new Set([
   "video",
 ]);
 
-/** ARIA roles that expose an interactive widget. */
+/**
+ * ARIA roles that expose an interactive widget — the inner-element
+ * predicate uses this set to recognize ARIA-roled descendants as
+ * nested-interactive evidence in addition to native interactive tags.
+ *
+ * Includes `progressbar` because per ARIA 1.2 it is classified as a
+ * widget role with values that can be programmatically determined; an
+ * `<a href>` wrapping a `<div role="progressbar">` produces the same
+ * undefined name/role behavior as wrapping a native `<progress>` —
+ * the inner element's role is no longer reachable when the outer
+ * link's role announces first.
+ *
+ * Spec: https://www.w3.org/TR/wai-aria-1.2/#widget_roles
+ */
 const INTERACTIVE_ROLES: ReadonlySet<string> = new Set([
   "button",
   "link",
@@ -81,6 +94,7 @@ const INTERACTIVE_ROLES: ReadonlySet<string> = new Set([
   "textbox",
   "slider",
   "spinbutton",
+  "progressbar",
 ]);
 
 /**

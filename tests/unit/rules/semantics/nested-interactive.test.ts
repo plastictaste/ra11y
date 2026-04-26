@@ -67,6 +67,42 @@ describe("rule semantics/nested-interactive", () => {
       expect(violations).toHaveLength(1);
     });
 
+    it("an element with role=progressbar is nested inside an a[href]", () => {
+      const violations = runRule(rule, `<a href="/x"><div role="progressbar">50%</div></a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`role="progressbar"`);
+      expect(violations[0]?.message).toContain("<a href>");
+    });
+
+    it("an element with role=slider is nested inside a button", () => {
+      const violations = runRule(rule, `<button><span role="slider">x</span></button>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`role="slider"`);
+    });
+
+    it("an element with role=checkbox is nested inside a button", () => {
+      const violations = runRule(rule, `<button><span role="checkbox">x</span></button>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`role="checkbox"`);
+    });
+
+    it("an element with role=link is nested inside an a[href]", () => {
+      const violations = runRule(
+        rule,
+        `<a href="/outer"><span role="link">Inner</span></a>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`role="link"`);
+      expect(violations[0]?.message).toContain("<a href>");
+    });
+
     it("deeply nested: reports the inner/outer pair (not every ancestor)", () => {
       const violations = runRule(
         rule,
@@ -117,6 +153,16 @@ describe("rule semantics/nested-interactive", () => {
       });
       expect(violations).toHaveLength(0);
     });
+
+    it("a non-interactive ARIA role (status) is inside an a[href]", () => {
+      // role="status" is a live-region role, not a widget — nesting it
+      // inside an interactive ancestor does not create a two-controls-
+      // one-element problem.
+      const violations = runRule(rule, `<a href="/x"><div role="status">Loading</div></a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires when", () => {
@@ -139,6 +185,15 @@ describe("rule semantics/nested-interactive", () => {
       const violations = runRule(rule, `const X = <a href="/x"><span role="Button">Go</span></a>;`);
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain(`role="button"`);
+    });
+
+    it("role=progressbar div is nested inside an a[href]", () => {
+      const violations = runRule(
+        rule,
+        `const X = <a href="/x"><div role="progressbar">50%</div></a>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`role="progressbar"`);
     });
   });
 
