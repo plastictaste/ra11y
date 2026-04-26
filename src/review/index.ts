@@ -9,6 +9,7 @@ import { finder as carouselPattern } from "./finders/carousel-pattern.ts";
 import { finder as colorClassCrossref } from "./finders/color-class-crossref.ts";
 import { finder as consistentIdentification } from "./finders/consistent-identification.ts";
 import { finder as consistentNavigation } from "./finders/consistent-navigation.ts";
+import { finder as crossFileClickHandler } from "./finders/cross-file-click-handler.ts";
 import { finder as decorativeImgWithAdjacentMeaning } from "./finders/decorative-img-with-adjacent-meaning.ts";
 import { finder as errorIdentification } from "./finders/error-identification.ts";
 import { finder as errorPrevention } from "./finders/error-prevention.ts";
@@ -49,6 +50,7 @@ export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   colorClassCrossref,
   consistentIdentification,
   consistentNavigation,
+  crossFileClickHandler,
   decorativeImgWithAdjacentMeaning,
   errorIdentification,
   errorPrevention,
