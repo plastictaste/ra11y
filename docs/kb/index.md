@@ -181,6 +181,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [semantics/form-landmark-name-missing](./rules/semantics__form-landmark-name-missing.md)
 - [semantics/heading-class-on-nonheading](./rules/semantics__heading-class-on-nonheading.md)
 - [semantics/heading-hierarchy](./rules/semantics__heading-hierarchy.md)
+- [semantics/inline-display-none-on-focusable](./rules/semantics__inline-display-none-on-focusable.md)
 - [semantics/label-in-name](./rules/semantics__label-in-name.md)
 - [semantics/landmark-main](./rules/semantics__landmark-main.md)
 - [semantics/layout-table-no-presentation-role](./rules/semantics__layout-table-no-presentation-role.md)

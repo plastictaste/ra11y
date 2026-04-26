@@ -8,11 +8,11 @@ satisfies: ["wcag22:1.1.1", "wcag21:1.1.1", "wcag22:4.1.2", "wcag21:4.1.2"]
 - **Severity:** error
 - **Scope:** node
 - **Satisfies:** `wcag22:1.1.1`, `wcag21:1.1.1`, `wcag22:4.1.2`, `wcag21:4.1.2`
-- **Applies to:** .svg
+- **Applies to:** .svg, .html, .htm, .tsx, .jsx
 ## What it checks
-Standalone SVG assets must expose an accessible name via a <title> child, aria-label, or aria-labelledby — otherwise screen readers announce nothing for the image.
+Every <svg> rendered to the user — standalone .svg file or inline in HTML / JSX — must expose an accessible name via a <title> child, aria-label, or aria-labelledby; otherwise mark it decorative with aria-hidden / role=presentation.
 ## Why it matters
-A standalone `.svg` file is an image asset. When referenced via `<img src="…svg">` or loaded directly, the root `<svg>` element is what assistive tech presents to the user. Without a `<title>` child (the SVG 2 accessibility primary name source), `aria-label`, or `aria-labelledby`, the image is silently opaque — screen readers announce the file name at best or nothing at all. Static detection is load-bearing because authors routinely forget the `<title>` child when exporting from design tools (Figma, Illustrator, Sketch) — every export defaults to omitting it.
+Whether a `<svg>` is a standalone `.svg` asset or inline markup inside an HTML page or JSX component, screen readers need a text alternative to announce what the graphic communicates. Without a `<title>` child (the SVG 2 accessibility primary name source), `aria-label`, or `aria-labelledby`, most assistive tech announces the file name at best or nothing at all. Inline `<svg>` is the routine miss: authors drop icons into buttons, links, and standalone graphics straight from a design tool (Figma, Illustrator, Sketch) — every export omits the `<title>`. Static detection is load-bearing because the runtime element is opaque without it.
 ## Normative quote
 > All non-text content that is presented to the user has a text alternative that serves the equivalent purpose, except for the situations listed below: controls, input, time-based media, tests, sensory, CAPTCHA, decoration/formatting/invisible.
 ## Good example
