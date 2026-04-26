@@ -150,6 +150,99 @@ describe("rule contrast/non-text", () => {
       });
       expect(v).toHaveLength(0);
     });
+
+    it("same-color border (border equals background) is not flagged — invisible by intent", () => {
+      // A border declared with the same color as the element's own
+      // background is intentionally invisible — the perimeter is
+      // conveyed by other means (shadow, layout). 1.4.11 measures
+      // the visual presentation of the component boundary against
+      // adjacent color; an invisible border is not the boundary the
+      // spec is asking about. Without this carve-out the rule fires
+      // at a misleading 1.00:1 ratio.
+      const v = runRule(rule, `.btn { background: #cccccc; border: 1px solid #cccccc; }`, {
+        filePath: "ui.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("same-color via border-color (separate declaration) is not flagged", () => {
+      const v = runRule(rule, `button { background-color: #ffffff; border-color: #ffffff; }`, {
+        filePath: "ui.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("same-color outline (outline equals background) is not flagged", () => {
+      const v = runRule(
+        rule,
+        `[role="button"] { background: #eeeeee; outline: 2px solid #eeeeee; }`,
+        { filePath: "ui.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("same-color via named-color equivalence still fires when channels differ by even one step", () => {
+      // Sanity guard: the carve-out is strict RGBA equality, not a
+      // luminance-tolerance band. `#cccccc` vs `#cccccd` differs by
+      // one channel — ratio is still ~1:1 so it fires (this exercises
+      // the contrast path, not the same-color skip).
+      const v = runRule(rule, `button { background: #cccccc; border: 1px solid #cccccd; }`, {
+        filePath: "ui.css",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("same-color border does not affect a separately failing outline on the same selector", () => {
+      // Mixed: border equals background (skipped), but outline is
+      // different and still fails 3:1. Interactive selectors check
+      // border + outline; the carve-out must apply per-property,
+      // not per-selector.
+      const v = runRule(
+        rule,
+        `button { background: #ffffff; border: 1px solid #ffffff; outline: 2px solid #e8e8e8; }`,
+        { filePath: "ui.css" },
+      );
+      // border is invisible-by-intent; outline is the legitimate failure.
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("outline");
+    });
+
+    it("same-color inline border on a <button> is not flagged (HTML inline-style path)", () => {
+      const v = runRule(
+        rule,
+        `<!doctype html><html><body><button style="border:1px solid #cccccc;background:#cccccc">x</button></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("same-color border does not suppress a sibling text-vs-background contrast check", () => {
+      // The fix targets only the boundary check — text/background
+      // contrast on the same selector must remain unaffected. A
+      // selector with same-color border AND a low-contrast text
+      // pair would be picked up by `contrast/minimum`, not
+      // `contrast/non-text`. Within `contrast/non-text` itself,
+      // the only adjacent assertion is that no spurious finding
+      // bleeds in for the same-color border.
+      const v = runRule(
+        rule,
+        `.btn { color: #999; background: #ffffff; border: 1px solid #ffffff; }`,
+        { filePath: "ui.css" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("differently-colored border on the same selector still fires when below 3:1", () => {
+      // Companion to the same-color test above: when the border
+      // color differs from the background and contrast is < 3:1,
+      // the rule must still emit. Guards against an over-broad
+      // skip that would mask real failures.
+      const v = runRule(rule, `.btn { background: #cccccc; border: 1px solid #999999; }`, {
+        filePath: "ui.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("border");
+    });
   });
 
   describe("inside at-rules", () => {

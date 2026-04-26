@@ -301,6 +301,15 @@ function checkInlineBoundary(
   const fg = parseColor(fgToken);
   if (!fg) return;
   if (fg.a === 0) return;
+  // Same-color border: when the boundary color resolves to the same
+  // RGBA as the background, the border is intentionally invisible —
+  // the perimeter is conveyed by other means (shadow, layout, sibling
+  // contrast). 1.4.11 measures the visual presentation of the
+  // component boundary against adjacent color; an invisible border
+  // is not the boundary the spec is asking about. Suppressing the
+  // 1.00:1 emission here is deterministic (RGBA equality), not a
+  // heuristic — see docs/kb/architecture/ai-first-consumer.md.
+  if (sameColor(fg, bg.rgb)) return;
   const ratio = contrast(fg, bg.rgb);
   if (ratio >= WCAG_AA_MIN_NON_TEXT) return;
   const pseudoSelector = `<${element.tagName.toLowerCase()} inline style ${prop}>`;
@@ -390,6 +399,10 @@ function checkBoundary(
 ): void {
   const fg = readColor(cssRule, prop);
   if (!fg) return;
+  // See note on `checkInlineBoundary` — same-RGBA boundary is
+  // intentionally invisible, not a 1.4.11 failure. Deterministic
+  // skip; not heuristic suppression.
+  if (sameColor(fg.rgb, bg.rgb)) return;
   const ratio = contrast(fg.rgb, bg.rgb);
   if (ratio >= WCAG_AA_MIN_NON_TEXT) return;
 
@@ -411,6 +424,20 @@ function checkBoundary(
 interface ColorRead {
   readonly rgb: Rgb;
   readonly source: string;
+}
+
+/**
+ * RGBA equality. A boundary color that resolves to the same channels
+ * (and same alpha) as the element's own background is intentionally
+ * invisible — the spec's "visual presentation of UI components"
+ * predicate doesn't apply when the author has explicitly painted the
+ * boundary out. We compare strictly: any channel difference, even a
+ * 1-step `#cccccc` vs `#cccccd`, falls through to the contrast check
+ * because the agent reading the file would consider the difference
+ * intentional.
+ */
+function sameColor(a: Rgb, b: Rgb): boolean {
+  return a.r === b.r && a.g === b.g && a.b === b.b && a.a === b.a;
 }
 
 function readColor(cssRule: CssRule, property: string): ColorRead | null {
