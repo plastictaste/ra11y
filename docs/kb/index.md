@@ -155,6 +155,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [media/audio-controls-or-transcript-missing](./rules/media__audio-controls-or-transcript-missing.md)
 - [media/audio-video-no-controls](./rules/media__audio-video-no-controls.md)
 - [media/autoplay-sound](./rules/media__autoplay-sound.md)
+- [media/img-empty-alt-in-clickable-group](./rules/media__img-empty-alt-in-clickable-group.md)
 - [media/svg-accessible-name](./rules/media__svg-accessible-name.md)
 - [media/video-captions-missing](./rules/media__video-captions-missing.md)
 - [motion/animation-from-interactions](./rules/motion__animation-from-interactions.md)

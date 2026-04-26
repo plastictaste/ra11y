@@ -40,7 +40,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `wcag22:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +3 | decorative-img-with-adjacent-meaning | **rule** |
+| `wcag22:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +4 | decorative-img-with-adjacent-meaning | **rule** |
 | `wcag22:1.2.1` | Audio-only and Video-only (Prerecorded) | A | manual | — | media-alternatives | **finder** |
 | `wcag22:1.2.2` | Captions (Prerecorded) | A | partial | media/video-captions-missing | — | **rule** |
 | `wcag22:1.2.3` | Audio Description or Media Alternative (Prerecorded) | A | manual | — | media-alternatives | **finder** |
@@ -124,7 +124,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha, password-inputs | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +35 | pagination-glyph-accessible-name | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +36 | pagination-glyph-accessible-name | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
 
 ## WCAG 2.1
@@ -135,7 +135,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `wcag21:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +3 | decorative-img-with-adjacent-meaning | **rule** |
+| `wcag21:1.1.1` | Non-text Content | A | partial | media/alt-text-missing, media/alt-text-placeholder +4 | decorative-img-with-adjacent-meaning | **rule** |
 | `wcag21:1.2.1` | Audio-only and Video-only (Prerecorded) | A | manual | — | media-alternatives | **finder** |
 | `wcag21:1.2.2` | Captions (Prerecorded) | A | partial | media/video-captions-missing | — | **rule** |
 | `wcag21:1.2.3` | Audio Description or Media Alternative (Prerecorded) | A | manual | — | media-alternatives | **finder** |
@@ -211,7 +211,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +2 | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +35 | pagination-glyph-accessible-name | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +36 | pagination-glyph-accessible-name | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -222,7 +222,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `section508:1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +3 | decorative-img-with-adjacent-meaning | **rule** |
+| `section508:1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +4 | decorative-img-with-adjacent-meaning | **rule** |
 | `section508:1.2.1` | Audio-only and Video-only (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `section508:1.2.2` | Captions (Prerecorded) | base | partial | media/video-captions-missing | — | **rule** |
 | `section508:1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
@@ -259,7 +259,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +35 | pagination-glyph-accessible-name | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +36 | pagination-glyph-accessible-name | **rule** |
 
 ## EN 301 549
 
@@ -269,7 +269,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
-| `en301549:9.1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +3 | decorative-img-with-adjacent-meaning | **rule** |
+| `en301549:9.1.1.1` | Non-text Content | base | partial | media/alt-text-missing, media/alt-text-placeholder +4 | decorative-img-with-adjacent-meaning | **rule** |
 | `en301549:9.1.2.1` | Audio-only and Video-only (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `en301549:9.1.2.2` | Captions (Prerecorded) | base | partial | media/video-captions-missing | — | **rule** |
 | `en301549:9.1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
@@ -317,5 +317,5 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +35 | pagination-glyph-accessible-name | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +36 | pagination-glyph-accessible-name | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
