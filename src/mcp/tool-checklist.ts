@@ -123,6 +123,22 @@ interface ChecklistCandidateOut {
    * expressions, omitted when the candidate has no duration to report.
    */
   readonly durationLiteralMs?: number | "non-literal";
+  /**
+   * Per-sibling trail for an aggregated/deduped candidate — present
+   * when the finder collapsed ≥2 same-shape siblings or ≥2 same-stem
+   * candidates into this consolidated entry. Omitted on singletons.
+   */
+  readonly siblingOccurrences?: readonly {
+    readonly line: number;
+    readonly alt?: string;
+    readonly href?: string;
+  }[];
+  /**
+   * Number of source occurrences this candidate represents — present
+   * when stem-dedup collapsed ≥2 candidates whose accessible names
+   * share a pattern stem. Omitted on singletons per CLAUDE.md §1.
+   */
+  readonly sourceCount?: number;
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -986,8 +1002,9 @@ function mapCandidates(
         ...(snippet === undefined ? {} : { snippet }),
         // Pass aggregated siblingOccurrences through to the checklist
         // surface so an agent paginating the checklist sees the full
-        // per-sibling trail on a consolidated candidate. Present-when-
-        // meaningful per CLAUDE.md §1.
+        // per-sibling trail on a consolidated candidate (whether the
+        // group came from same-parent aggregation or stem-dedup).
+        // Present-when-meaningful per CLAUDE.md §1.
         ...(c.siblingOccurrences !== undefined &&
           c.siblingOccurrences.length > 0 && {
             siblingOccurrences: c.siblingOccurrences,
@@ -999,6 +1016,10 @@ function mapCandidates(
         // to re-call review_candidates to recover the typed fields.
         ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
         ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+        // sourceCount carries through for stem-deduped candidates so
+        // checklist consumers see the source occurrence count on the
+        // consolidated row. Omitted on singletons.
+        ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
       };
     });
 }

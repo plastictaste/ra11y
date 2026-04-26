@@ -393,7 +393,15 @@ describe("review/images-of-text", () => {
       expect(hit?.siblingOccurrences?.[0]?.href).toBeUndefined();
     });
 
-    it("does NOT aggregate 3 siblings (below MIN_GROUP_SIZE)", () => {
+    it("falls below same-parent MIN_GROUP_SIZE but stem-dedup still collapses 3 same-stem siblings", () => {
+      // Same-parent aggregator requires ≥4 consecutive same-shape
+      // siblings (see images-of-text-aggregate.ts MIN_GROUP_SIZE). The
+      // post-emit stem-dedup pass groups by accessible-name pattern
+      // (alt with trailing enumeration token stripped), independent of
+      // adjacency or shape, and triggers at ≥2 — so 3 sponsor logos
+      // sharing the "sponsor" stem collapse to ONE candidate per
+      // criterion. Honest aggregation per AI-first doctrine: the stem
+      // is provable from the AST.
       const links = Array.from(
         { length: 3 },
         (_, i) =>
@@ -401,16 +409,22 @@ describe("review/images-of-text", () => {
       ).join("");
       const out = runFinder(finder, `<div>${links}</div>`, { filePath: "x.html" });
       const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      // Three imgs each emit individually — no aggregation.
-      expect(aa.length).toBe(3);
-      for (const c of aa) {
-        expect(c.siblingOccurrences).toBeUndefined();
-      }
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.sourceCount).toBe(3);
+      expect(hit?.siblingOccurrences?.length).toBe(3);
+      expect(hit?.siblingOccurrences?.[0]?.alt).toBe("Sponsor 1");
+      expect(hit?.siblingOccurrences?.[1]?.alt).toBe("Sponsor 2");
+      expect(hit?.siblingOccurrences?.[2]?.alt).toBe("Sponsor 3");
+      expect(hit?.reason).toContain('stem "sponsor"');
     });
 
-    it("does NOT aggregate when shapes differ (mix of bare and wrapped)", () => {
-      // Same parent, but the wrapping shape alternates — provable-from-
-      // AST same-shape predicate fails, so no group.
+    it("stem-dedup collapses mixed-shape same-stem siblings the same-parent aggregator would skip", () => {
+      // Same parent, alternating wrapping shape — the same-parent
+      // aggregator's same-shape predicate fails so it does NOT group
+      // these. The stem-dedup pass operates on post-emission candidates
+      // and is shape-agnostic — the four sponsor logos collapse to ONE
+      // candidate per criterion via stem grouping.
       const source = `<div>
         <a href="/1"><img class="sponsor-logo" src="/1.png" alt="Sponsor 1"/></a>
         <img class="sponsor-logo" src="/2.png" alt="Sponsor 2"/>
@@ -419,10 +433,10 @@ describe("review/images-of-text", () => {
       </div>`;
       const out = runFinder(finder, source, { filePath: "x.html" });
       const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBe(4);
-      for (const c of aa) {
-        expect(c.siblingOccurrences).toBeUndefined();
-      }
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.sourceCount).toBe(4);
+      expect(hit?.siblingOccurrences?.length).toBe(4);
     });
 
     it("does NOT aggregate when alt-text differs in more than one token position", () => {
@@ -472,6 +486,180 @@ describe("review/images-of-text", () => {
       // Singletons NEVER carry the field — present-when-meaningful per
       // CLAUDE.md §1 ("Ambiguous field shapes are dishonest").
       expect(hit?.siblingOccurrences).toBeUndefined();
+      expect(hit?.sourceCount).toBeUndefined();
+    });
+  });
+
+  describe("accessible-name stem dedup", () => {
+    // Post-emit stem-dedup pass: collapses ≥2 same-finder candidates
+    // whose normalized alt shares a stem (alt with trailing
+    // enumeration token stripped) into ONE consolidated candidate
+    // carrying `sourceCount: N` and a `siblingOccurrences` trail.
+    // Operates AFTER the same-parent aggregator (which handles
+    // adjacent ≥4 same-shape runs) and is independent of adjacency
+    // or wrapping shape — runs across all candidates the finder
+    // emitted for the file. Honest aggregation per the AI-first
+    // consumer model: the stem is provable from the AST (digit/
+    // ordinal-suffix-strip on the normalized alt), not a heuristic
+    // on weaker evidence.
+
+    it("collapses 3 same-stem candidates into ONE with sourceCount: 3 and 3 locations", () => {
+      // Canonical worked example: three sponsor images with sequential
+      // alt prefix "Sponsor 1/2/3". Stem "sponsor" matches across all
+      // three — collapse to one candidate per criterion carrying
+      // sourceCount: 3 and a 3-entry siblingOccurrences trail.
+      const links = Array.from(
+        { length: 3 },
+        (_, i) =>
+          `<a href="/s${i + 1}"><img class="sponsor-logo" src="/s${i + 1}.png" alt="Sponsor ${i + 1}"/></a>`,
+      ).join("");
+      const out = runFinder(finder, `<div>${links}</div>`, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.sourceCount).toBe(3);
+      expect(hit?.siblingOccurrences?.length).toBe(3);
+    });
+
+    it("3 unrelated images with distinct accnames stay as 3 separate candidates", () => {
+      // Disjoint stems (no shared "sponsor"/"avatar"/etc. prefix) —
+      // each image's accessible name normalizes to a different stem,
+      // so dedup yields three independent candidates carrying neither
+      // sourceCount nor siblingOccurrences (singletons).
+      const source = `<div>
+        <img class="logo" src="/a.png" alt="Alpha One"/>
+        <img class="logo" src="/b.png" alt="Beta Two"/>
+        <img class="logo" src="/c.png" alt="Gamma Three"/>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(3);
+      for (const c of aa) {
+        expect(c.sourceCount).toBeUndefined();
+        expect(c.siblingOccurrences).toBeUndefined();
+      }
+    });
+
+    it("groups by stem across non-adjacent siblings (different parents)", () => {
+      // Stem-dedup is independent of adjacency or parent. Two sponsor
+      // images in `<header>` and one in `<footer>` still collapse if
+      // their stems match.
+      const source = `<div>
+        <header>
+          <img class="logo" src="/h1.png" alt="Sponsor 1"/>
+        </header>
+        <main><p>unrelated</p></main>
+        <footer>
+          <img class="logo" src="/f1.png" alt="Sponsor 2"/>
+          <img class="logo" src="/f2.png" alt="Sponsor 3"/>
+        </footer>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      expect(aa[0]?.sourceCount).toBe(3);
+    });
+
+    it("strips trailing alphabet-letter ordinal markers (Item A / Item B / Item C)", () => {
+      // Trailing single-letter enumeration is in the dedup token set
+      // (per accessibleNameStem). "Item A" / "Item B" / "Item C" share
+      // stem "item" and collapse.
+      const source = `<div>
+        <img class="banner" src="/a.png" alt="Item A"/>
+        <img class="banner" src="/b.png" alt="Item B"/>
+        <img class="banner" src="/c.png" alt="Item C"/>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      expect(aa[0]?.sourceCount).toBe(3);
+    });
+
+    it("strips trailing roman-numeral ordinal markers (Chapter I / II / III)", () => {
+      const source = `<div>
+        <img class="heading" src="/a.png" alt="Chapter I"/>
+        <img class="heading" src="/b.png" alt="Chapter II"/>
+        <img class="heading" src="/c.png" alt="Chapter III"/>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      expect(aa[0]?.sourceCount).toBe(3);
+    });
+
+    it("does NOT dedup when alt has no trailing enumeration token", () => {
+      // Single-token alts ("Acme") have no enumeration suffix to
+      // strip — accessibleNameStem returns null for them, and they
+      // stay singletons. Same parent + same shape isn't enough on its
+      // own; the dedup pass requires a stripped enumeration token.
+      const source = `<div>
+        <img class="logo" src="/a.png" alt="Acme"/>
+        <img class="logo" src="/b.png" alt="Beta"/>
+        <img class="logo" src="/c.png" alt="Gamma"/>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(3);
+      for (const c of aa) {
+        expect(c.sourceCount).toBeUndefined();
+      }
+    });
+
+    it("keeps cross-standard cardinality intact — every criterion gets its own collapsed row", () => {
+      // The finder declares 6 criteria; the dedup pass is per-criterion
+      // so every member of the 1.4.5 family + the 1.4.9 AAA pair sees
+      // its own collapsed candidate with the same sourceCount/trail.
+      const links = Array.from(
+        { length: 3 },
+        (_, i) => `<img class="logo" src="/s${i + 1}.png" alt="Avatar ${i + 1}"/>`,
+      ).join("");
+      const out = runFinder(finder, `<div>${links}</div>`, { filePath: "x.html" });
+      const ids = new Set(out.map((c) => c.criterionId));
+      expect(ids.size).toBe(6);
+      for (const id of ids) {
+        const hits = out.filter((c) => c.criterionId === id);
+        expect(hits.length).toBe(1);
+        expect(hits[0]?.sourceCount).toBe(3);
+      }
+    });
+
+    it("dedups JSX img siblings sharing a stem (sourceCount on the JSX path)", () => {
+      const source = `
+        const x = (
+          <div>
+            <img className="logo" src="/s1.png" alt="Sponsor 1" />
+            <img className="logo" src="/s2.png" alt="Sponsor 2" />
+            <img className="logo" src="/s3.png" alt="Sponsor 3" />
+          </div>
+        );
+      `;
+      const out = runFinder(finder, source);
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      expect(aa[0]?.sourceCount).toBe(3);
+      expect(aa[0]?.siblingOccurrences?.length).toBe(3);
+    });
+
+    it("does NOT double-aggregate candidates the same-parent aggregator already collapsed", () => {
+      // Five sponsor links in one parent — same-parent aggregator
+      // collapses them to one candidate with siblingOccurrences. The
+      // stem-dedup pass skips candidates already carrying that field
+      // (else it would double-count). Result: ONE candidate, with
+      // siblingOccurrences but NO sourceCount (sourceCount is the
+      // stem-dedup signal).
+      const links = Array.from(
+        { length: 5 },
+        (_, i) =>
+          `<a href="/s${i + 1}"><img class="sponsor-logo" src="/s${i + 1}.png" alt="Sponsor ${i + 1}"/></a>`,
+      ).join("");
+      const out = runFinder(finder, `<div>${links}</div>`, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      expect(aa[0]?.siblingOccurrences?.length).toBe(5);
+      // sourceCount is reserved for stem-dedup-collapsed candidates;
+      // same-parent aggregation uses siblingOccurrences alone (the
+      // existing contract is unchanged).
+      expect(aa[0]?.sourceCount).toBeUndefined();
     });
   });
 

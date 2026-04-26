@@ -83,9 +83,256 @@ export const finder = defineCandidateFinder({
     } else if (ctx.language === "tsx" || ctx.language === "jsx") {
       findJsxCandidates(ctx.ast as TsxModule, ctx.filePath, candidates);
     }
-    return candidates;
+    return dedupeByAccessibleNameStem(candidates);
   },
 });
+
+/**
+ * Module-scope map of candidate identity → raw alt text. Populated at
+ * emit time inside {@link pushForAllCriteria} so the post-emit
+ * stem-dedup pass can group candidates by accessible-name pattern
+ * without re-deriving the alt from the reason string (which works for
+ * the repeated-text signal but not for keyword-only signals where the
+ * reason has no alt quote). `WeakMap` ensures entries are reclaimed
+ * when their candidates fall out of scope; identity-keying means there
+ * is no cross-file or cross-find contamination — every emit produces a
+ * fresh `ReviewCandidate` object identity.
+ */
+const altByCandidate = new WeakMap<ReviewCandidate, string>();
+
+/**
+ * Trailing tokens we treat as enumeration markers when computing a
+ * candidate's accessible-name stem. The stem is the normalized alt
+ * with each trailing enumeration token stripped. The set is small on
+ * purpose: only patterns provable from a single token's text shape
+ * qualify as "enumerated" — anything broader would tip into heuristic
+ * grouping. See {@link accessibleNameStem}.
+ *
+ * - Pure digits (`1`, `42`, `2024`).
+ * - Single roman-numeral letters and short combos (i, ii, iii, iv, v,
+ *   vi, vii, viii, ix, x, xi, xii) — the common "Chapter I/II/III"
+ *   shape. Longer numerals (l, c, d, m) aren't included because lone
+ *   "L" is more likely to be a real word/initial than a numeral.
+ * - Single alphabetic letter (`a` through `z`) — the "Item A / Item B"
+ *   shape. Single letters are the noisiest entry; require a non-empty
+ *   stem after stripping (so `<img alt="A">` next to `<img alt="B">`
+ *   doesn't dedup — both stems would be empty).
+ */
+const ENUMERATION_TOKEN = /^(\d+|i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|[a-z])$/;
+
+/**
+ * Computes the accessible-name stem used for dedup grouping. Returns
+ * `null` when the alt yields no usable stem (no alt, alt collapses to
+ * empty, or stripping the trailing enumeration token leaves nothing).
+ *
+ * Implementation: take the candidate's normalized alt (lowercase,
+ * non-alphanumerics collapsed to spaces — same shape the existing
+ * aggregator uses), drop the final whitespace-separated token IF it
+ * matches {@link ENUMERATION_TOKEN}, and return the remaining stem.
+ * Examples:
+ *   - "Sponsor 1" / "Sponsor 2" / "Sponsor 10" → all collapse to
+ *     "sponsor".
+ *   - "Avatar i" / "Avatar ii" / "Avatar iii" → "avatar".
+ *   - "Item A" / "Item B" → "item".
+ *   - "Mountains at sunset" → null (last token is a real word).
+ *   - "Sponsor" alone → null (no trailing token to strip; we don't
+ *     want stem-grouping to fold candidates with no enumeration into
+ *     each other).
+ */
+function accessibleNameStem(altRaw: string | null | undefined): string | null {
+  if (altRaw === null || altRaw === undefined) return null;
+  const normalized = normalizeForMatch(altRaw);
+  if (!normalized) return null;
+  const tokens = normalized.split(" ");
+  if (tokens.length < 2) return null;
+  const last = tokens[tokens.length - 1]!;
+  if (!ENUMERATION_TOKEN.test(last)) return null;
+  const stem = tokens.slice(0, -1).join(" ").trim();
+  if (stem.length === 0) return null;
+  return stem;
+}
+
+/**
+ * Post-emit dedup pass: collapses near-identical singleton candidates
+ * whose normalized alt shares an accessible-name stem (same pattern
+ * with a trailing enumeration token differing per source) into ONE
+ * consolidated candidate carrying `sourceCount: N` and a
+ * `siblingOccurrences` list of every group member's `{ line, alt? }`.
+ *
+ * Grouping key: `(criterionId, filePath, stem)`. Per-criterion grouping
+ * is required — every criterion in the bundle (1.4.5 family + 1.4.9
+ * AAA variant) must collapse independently or the cross-standard
+ * cardinality breaks. File-path grouping keeps candidates from
+ * different files independent (the finder runs per-file but
+ * defensively scoping the key matches the type surface).
+ *
+ * Skips:
+ *   - Candidates already carrying `siblingOccurrences` (the same-parent
+ *     aggregator already grouped them; re-grouping would double-count).
+ *   - Candidates whose reason has no alt quote to extract (keyword-only
+ *     signal, sibling-svg variant) — no stem available, leave singleton.
+ *   - Stems shared by only one candidate — singletons stay singleton
+ *     (present-when-meaningful: never emit `sourceCount: 1`).
+ *
+ * Reason text on the consolidated candidate names the stem and group
+ * size so an agent reading the primary reason sees "this is one of N
+ * siblings sharing the stem `<stem>`" without needing to drill into
+ * `siblingOccurrences`. Honest aggregation per the AI-first consumer
+ * model: the stem is provable from the AST (digit/ordinal-suffix-strip
+ * on the normalized alt), not a heuristic on weaker evidence.
+ */
+interface StemGroup {
+  readonly stem: string;
+  readonly criterionId: string;
+  readonly filePath: string;
+  readonly indices: number[];
+  readonly occurrences: ReviewCandidateSibling[];
+}
+
+interface StemAnchorDecoration {
+  readonly sourceCount: number;
+  readonly occurrences: readonly ReviewCandidateSibling[];
+  readonly stem: string;
+}
+
+interface StemDedupPlan {
+  /** Anchor index -> decoration metadata for the group it leads. */
+  readonly decorate: Map<number, StemAnchorDecoration>;
+  /** Member indices to drop (every member but the anchor of its group). */
+  readonly dropIndices: Set<number>;
+}
+
+/**
+ * Walks the candidates list once, building per-(criterion, file, stem)
+ * groups of candidates eligible for stem-dedup. Eligibility:
+ *   - No `siblingOccurrences` (the same-parent aggregator already
+ *     grouped this candidate; double-grouping would double-count).
+ *   - Has an alt registered in {@link altByCandidate} (no alt = no
+ *     stem).
+ *   - {@link accessibleNameStem} returns a non-null stem.
+ */
+function groupCandidatesByStem(
+  candidates: readonly ReviewCandidate[],
+): ReadonlyMap<string, StemGroup> {
+  const groups = new Map<string, StemGroup>();
+  for (let i = 0; i < candidates.length; i += 1) {
+    const c = candidates[i]!;
+    if (c.siblingOccurrences !== undefined) continue;
+    const altRaw = altByCandidate.get(c);
+    if (altRaw === undefined) continue;
+    const stem = accessibleNameStem(altRaw);
+    if (stem === null) continue;
+    addCandidateToStemGroup(groups, c, i, stem, altRaw);
+  }
+  return groups;
+}
+
+function addCandidateToStemGroup(
+  groups: Map<string, StemGroup>,
+  c: ReviewCandidate,
+  index: number,
+  stem: string,
+  altRaw: string,
+): void {
+  const key = `${c.criterionId} ${c.location.filePath} ${stem}`;
+  let group = groups.get(key);
+  if (!group) {
+    group = {
+      stem,
+      criterionId: c.criterionId,
+      filePath: c.location.filePath,
+      indices: [],
+      occurrences: [],
+    };
+    groups.set(key, group);
+  }
+  group.indices.push(index);
+  group.occurrences.push({ line: c.location.line, alt: altRaw });
+}
+
+function buildStemDedupPlan(groups: ReadonlyMap<string, StemGroup>): StemDedupPlan {
+  // Indices to drop after consolidation (every member but the anchor).
+  // Anchor index is the first member of the group — preserves source
+  // order and the per-sibling reason text the anchor already carries.
+  const dropIndices = new Set<number>();
+  // Per-anchor decoration: stem + count appended to the existing
+  // reason; siblingOccurrences and sourceCount populated.
+  const decorate = new Map<
+    number,
+    {
+      sourceCount: number;
+      occurrences: readonly ReviewCandidateSibling[];
+      stem: string;
+    }
+  >();
+  for (const group of groups.values()) {
+    if (group.indices.length < 2) continue;
+    const anchor = group.indices[0]!;
+    decorate.set(anchor, {
+      sourceCount: group.indices.length,
+      occurrences: group.occurrences,
+      stem: group.stem,
+    });
+    for (let i = 1; i < group.indices.length; i += 1) {
+      dropIndices.add(group.indices[i]!);
+    }
+  }
+  return { decorate, dropIndices };
+}
+
+function applyStemDedupPlan(
+  candidates: readonly ReviewCandidate[],
+  plan: StemDedupPlan,
+): ReviewCandidate[] {
+  const out: ReviewCandidate[] = [];
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (plan.dropIndices.has(i)) continue;
+    const c = candidates[i]!;
+    const dec = plan.decorate.get(i);
+    if (!dec) {
+      out.push(c);
+      continue;
+    }
+    const reason =
+      `${c.reason} — additionally aggregated from ${dec.sourceCount} candidates ` +
+      `whose accessible-name shares the stem "${dec.stem}" with a trailing ` +
+      `enumeration token (see siblingOccurrences for the per-source line/alt trail)`;
+    out.push({
+      ...c,
+      reason,
+      sourceCount: dec.sourceCount,
+      siblingOccurrences: dec.occurrences,
+    });
+  }
+  return out;
+}
+
+/**
+ * Post-emit dedup pass: collapses near-identical singleton candidates
+ * whose normalized alt shares an accessible-name stem (alt with the
+ * trailing enumeration token stripped) into ONE consolidated candidate
+ * carrying `sourceCount: N` plus a `siblingOccurrences` list of every
+ * group member's `{ line, alt? }`. Composed of three small steps —
+ * see {@link groupCandidatesByStem}, {@link buildStemDedupPlan},
+ * {@link applyStemDedupPlan}.
+ *
+ * Honest aggregation per the AI-first consumer model: the stem is
+ * provable from the AST (digit/ordinal-suffix-strip on the normalized
+ * alt), not a heuristic on weaker evidence. Per-criterion grouping is
+ * required — every criterion in the bundle (1.4.5 family + 1.4.9 AAA
+ * variant) must collapse independently or the cross-standard
+ * cardinality breaks. Same-parent-aggregator-collapsed candidates
+ * (those already carrying `siblingOccurrences`) are skipped to avoid
+ * double-counting.
+ */
+function dedupeByAccessibleNameStem(
+  candidates: readonly ReviewCandidate[],
+): readonly ReviewCandidate[] {
+  const groups = groupCandidatesByStem(candidates);
+  const plan = buildStemDedupPlan(groups);
+  if (plan.decorate.size === 0 && plan.dropIndices.size === 0) return candidates;
+  return applyStemDedupPlan(candidates, plan);
+}
 
 /**
  * True when the file is routed through `parseMarkdown` (ADR 0025).
@@ -269,6 +516,7 @@ function emitHtmlImageCandidate(
     svgDataUriTextFreeHint(srcVal),
     htmlSrOnlySiblingHint(siblings, index, parentElement),
     undefined,
+    alt?.raw ?? null,
   );
 }
 
@@ -333,6 +581,11 @@ function emitHtmlAggregationGroup(
     svgDataUriTextFreeHint(srcVal),
     null,
     group.occurrences,
+    // Aggregated groups already carry the per-sibling trail in
+    // `siblingOccurrences`; the post-emit stem-dedup pass skips
+    // candidates with siblingOccurrences set, so passing `null` here
+    // is a no-op for stem grouping but keeps the signature uniform.
+    null,
   );
 }
 
@@ -542,6 +795,7 @@ function emitJsxImageCandidate(
     svgDataUriTextFreeHint(srcVal),
     jsxSrOnlySiblingHint(siblings, index, parentElement),
     undefined,
+    alt?.raw ?? null,
   );
 }
 
@@ -596,6 +850,10 @@ function emitJsxAggregationGroup(
     svgDataUriTextFreeHint(srcVal),
     null,
     group.occurrences,
+    // Aggregated groups already carry the per-sibling trail; the
+    // post-emit stem-dedup pass skips candidates with siblingOccurrences
+    // set, so the alt is not needed for grouping here.
+    null,
   );
 }
 
@@ -902,6 +1160,7 @@ function pushForAllCriteria(
   svgDataUriHint: string | null,
   srOnlySiblingHint: string | null,
   siblingOccurrences: readonly ReviewCandidateSibling[] | undefined,
+  altRaw: string | null,
 ): void {
   for (const criterionId of CRITERION_IDS) {
     const withLogoHint =
@@ -921,7 +1180,7 @@ function pushForAllCriteria(
     // heuristics. Biased toward false positives by design (see
     // docstring); the finder is a prompt to confirm, not a failure
     // claim.
-    candidates.push({
+    const candidate: ReviewCandidate = {
       criterionId,
       location: { filePath, line, column },
       reason: augmented,
@@ -931,7 +1190,13 @@ function pushForAllCriteria(
       ...(siblingOccurrences !== undefined && siblingOccurrences.length > 0
         ? { siblingOccurrences }
         : {}),
-    });
+    };
+    candidates.push(candidate);
+    // Stash the raw alt against the candidate identity for the post-
+    // emit stem-dedup pass. Skipped when there is no alt (the finder
+    // only had a non-alt signal, e.g. keyword on a `data:` src) — the
+    // dedup pass treats unmapped candidates as having no stem.
+    if (altRaw !== null) altByCandidate.set(candidate, altRaw);
   }
 }
 

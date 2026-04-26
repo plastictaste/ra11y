@@ -113,8 +113,9 @@ function buildReviewCandidates(
         ...(prompt?.passExample !== undefined && { passExample: prompt.passExample }),
         ...(prompt !== undefined && { suggestedFix: prompt.suggestedFix }),
         // Surface siblingOccurrences when a finder aggregated ≥2
-        // same-shape siblings — present-when-meaningful per AI-first
-        // doctrine; never `[]` for singleton candidates.
+        // same-shape siblings (or deduped same-stem candidates) —
+        // present-when-meaningful per AI-first doctrine; never `[]`
+        // for singleton candidates.
         ...(c.siblingOccurrences !== undefined &&
           c.siblingOccurrences.length > 0 && { siblingOccurrences: c.siblingOccurrences }),
         // Structured additive evidence — vendor-path-shape boolean
@@ -124,6 +125,10 @@ function buildReviewCandidates(
         // an MCP review_candidates caller does.
         ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
         ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+        // sourceCount mirrors siblingOccurrences for stem-deduped
+        // candidates (count of source occurrences). Omitted on
+        // singletons.
+        ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
       };
     });
 }

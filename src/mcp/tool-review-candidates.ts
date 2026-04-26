@@ -191,8 +191,9 @@ export const reviewCandidatesTool: McpTool = {
           confidence: c.confidence,
           ...(snippet === undefined ? {} : { snippet }),
           // Pass through aggregated siblingOccurrences when the finder
-          // collapsed ≥2 same-shape siblings — present-when-meaningful
-          // per CLAUDE.md §1 ("Ambiguous field shapes are dishonest").
+          // collapsed ≥2 same-shape siblings (or deduped ≥2 same-stem
+          // candidates) — present-when-meaningful per CLAUDE.md §1
+          // ("Ambiguous field shapes are dishonest").
           ...(c.siblingOccurrences !== undefined &&
             c.siblingOccurrences.length > 0 && {
               siblingOccurrences: c.siblingOccurrences,
@@ -208,6 +209,9 @@ export const reviewCandidatesTool: McpTool = {
           // same confidence regardless of the values.
           ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
           ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+          // sourceCount counts the source occurrences for a stem-deduped
+          // candidate. Omitted on singletons (present-when-meaningful).
+          ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
         };
       }),
       ...warningsField({

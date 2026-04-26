@@ -359,10 +359,11 @@ export interface AgentReviewCandidate {
   /**
    * Present-when-meaningful enumeration of sibling occurrences when a
    * finder aggregated ≥2 adjacent same-shape siblings (same parent,
-   * same wrapping, alt-text differing only by enumerated token) into
-   * this consolidated candidate. Each entry carries `{ line, alt?,
-   * href? }` so an agent can iterate the group without re-parsing the
-   * file. Omitted (not `[]`) for singleton candidates.
+   * same wrapping, alt-text differing only by enumerated token) OR
+   * deduplicated ≥2 same-stem candidates by accessible-name pattern
+   * into this consolidated candidate. Each entry carries `{ line,
+   * alt?, href? }` so an agent can iterate the group without re-parsing
+   * the file. Omitted (not `[]`) for singleton candidates.
    */
   readonly siblingOccurrences?: readonly {
     readonly line: number;
@@ -388,6 +389,16 @@ export interface AgentReviewCandidate {
    * `<meta refresh>`, degenerate calls).
    */
   readonly durationLiteralMs?: number | "non-literal";
+  /**
+   * Number of source occurrences this candidate represents. Present
+   * when the finder collapsed ≥2 candidates whose accessible names
+   * share a pattern stem (e.g. ten `<img alt="Sponsor 1">` … `<img
+   * alt="Sponsor 10">`) into a single candidate carrying this count
+   * plus a matching {@link AgentReviewCandidate#siblingOccurrences}
+   * trail. Omitted on singleton candidates per CLAUDE.md §1
+   * "Ambiguous field shapes are dishonest."
+   */
+  readonly sourceCount?: number;
 }
 
 /**

@@ -42,11 +42,11 @@ export interface DedupedReviewCandidate {
   readonly snippet?: string;
   /**
    * Present when the finder aggregated ≥2 adjacent same-shape siblings
-   * into this candidate (e.g. ten sponsor-logo `<img>` siblings
-   * collapsed into one). Each entry names a group member by `line`
-   * plus optional `alt` / `href` for agent-facing enumeration. Omitted
-   * for singleton candidates per CLAUDE.md §1 "Ambiguous field shapes
-   * are dishonest."
+   * (or deduped ≥2 same-stem candidates) into this candidate (e.g. ten
+   * sponsor-logo `<img>` siblings collapsed into one). Each entry names
+   * a group member by `line` plus optional `alt` / `href` for agent-
+   * facing enumeration. Omitted for singleton candidates per CLAUDE.md
+   * §1 "Ambiguous field shapes are dishonest."
    */
   readonly siblingOccurrences?: readonly ReviewCandidateSibling[];
   /**
@@ -64,6 +64,13 @@ export interface DedupedReviewCandidate {
    * applies (HTML `<meta refresh>`, degenerate calls).
    */
   readonly durationLiteralMs?: number | "non-literal";
+  /**
+   * Number of source occurrences this candidate represents — present
+   * when stem-dedup collapsed ≥2 candidates into one. Mirrors
+   * {@link DedupedReviewCandidate#siblingOccurrences} for stem-dedup
+   * groups; omitted on singletons.
+   */
+  readonly sourceCount?: number;
 }
 
 /**
@@ -86,6 +93,7 @@ export function dedupeReviewCandidatesForSingleFile(
       siblingOccurrences: readonly ReviewCandidateSibling[] | undefined;
       vendorPathHint: boolean | undefined;
       durationLiteralMs: number | "non-literal" | undefined;
+      sourceCount: number | undefined;
       order: number;
     }
   >();
@@ -104,10 +112,10 @@ export function dedupeReviewCandidatesForSingleFile(
       reason: c.reason,
       snippet: c.snippet,
       // siblingOccurrences is set by the finder when it aggregated
-      // same-shape siblings; dedup preserves the first-seen list (all
-      // copies carry the same list because they share the same
-      // location+reason key) and conditional-spreads it away when
-      // undefined or empty.
+      // same-shape siblings (or deduped same-stem candidates); dedup
+      // preserves the first-seen list (all copies carry the same list
+      // because they share the same location+reason key) and
+      // conditional-spreads it away when undefined or empty.
       siblingOccurrences: c.siblingOccurrences,
       // Structured vendor-path / duration evidence — preserved on the
       // first-seen candidate. All sibling copies under the same
@@ -116,6 +124,9 @@ export function dedupeReviewCandidatesForSingleFile(
       // criterion ID.
       vendorPathHint: c.vendorPathHint,
       durationLiteralMs: c.durationLiteralMs,
+      // sourceCount mirrors siblingOccurrences for stem-deduped
+      // candidates; preserved verbatim across the cross-standard fold.
+      sourceCount: c.sourceCount,
       order: nextOrder++,
     });
   }
@@ -134,5 +145,6 @@ export function dedupeReviewCandidatesForSingleFile(
         : { siblingOccurrences: g.siblingOccurrences }),
       ...(g.vendorPathHint ? { vendorPathHint: g.vendorPathHint } : {}),
       ...(g.durationLiteralMs === undefined ? {} : { durationLiteralMs: g.durationLiteralMs }),
+      ...(g.sourceCount === undefined ? {} : { sourceCount: g.sourceCount }),
     }));
 }

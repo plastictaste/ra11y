@@ -139,6 +139,20 @@ export interface ReviewCandidate {
    * duration governs a user-facing time limit.
    */
   readonly durationLiteralMs?: number | "non-literal";
+  /**
+   * Number of source occurrences this candidate represents. When a finder
+   * deduplicates near-identical candidates by accessible-name pattern
+   * (e.g. ten `<img alt="Sponsor 1">` … `<img alt="Sponsor 10">` whose
+   * normalized alt collapses to the same `Sponsor <num>` stem), it
+   * collapses the run into ONE candidate carrying `sourceCount: N` and a
+   * matching `siblingOccurrences` list of the per-source `{ line, alt? }`
+   * entries. Omitted on singleton candidates — present-when-meaningful
+   * per CLAUDE.md §1 "Ambiguous field shapes are dishonest." Honest
+   * aggregation per the AI-first consumer model: the stem is provable
+   * from the AST (digit/ordinal-suffix-strip on the normalized alt), not
+   * a heuristic on weaker evidence.
+   */
+  readonly sourceCount?: number;
 }
 
 /** Scope for a candidate finder — same semantics as RuleScope minus "project". */
