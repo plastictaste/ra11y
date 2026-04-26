@@ -211,6 +211,78 @@ describe("rule navigation/href-javascript-scheme", () => {
     });
   });
 
+  // When the flagged anchor sits inside a docs-example wrapper, the rule
+  // appends a one-read dismissal hint to message + suggestion so the agent
+  // can recognize demonstration code in one pass. Reason-enrichment only —
+  // emission and severity stay unchanged.
+  describe("docs-example ancestor hint", () => {
+    it("JSX: anchor inside <Example> ancestor adds the component hint", () => {
+      const violations = runRule(
+        rule,
+        `function F(){return <Example><a href="javascript:void(0)">x</a></Example>}`,
+        { filePath: "Page.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.message).toContain("<Example> component");
+      expect(violations[0]?.suggestion).toContain("<Example> component");
+    });
+
+    it("JSX: anchor inside nested <CodeBlock> ancestor adds the component hint", () => {
+      const violations = runRule(
+        rule,
+        `function F(){return <CodeBlock><div><a href="javascript:;">x</a></div></CodeBlock>}`,
+        { filePath: "Page.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("<CodeBlock> component");
+    });
+
+    it("HTML: anchor inside <pre><code> adds the <pre> block hint", () => {
+      // The walk surfaces the closest matching ancestor first; <code> is
+      // matched before <pre> in DOM-traversal order, but the ancestor walk
+      // goes child→parent, so <code> wins. Either tag is a valid hint —
+      // assert on the substring "block" to keep the test robust to either.
+      const violations = runRule(
+        rule,
+        `<pre><code><a href="javascript:void(0)">x</a></code></pre>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("block");
+      // Specifically — the hint should name <code> as the closest ancestor.
+      expect(violations[0]?.message).toContain("<code> block");
+    });
+
+    it("HTML: anchor inside class-tagged wrapper adds the class-name hint", () => {
+      const violations = runRule(
+        rule,
+        `<div class="docs-example"><a href="javascript:void(0)">x</a></div>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("example");
+    });
+
+    it("HTML: anchor outside any docs-example wrapper has no hint appended", () => {
+      const violations = runRule(rule, `<div><a href="javascript:void(0)">x</a></div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("demonstration code");
+      expect(violations[0]?.suggestion).not.toContain("demonstration code");
+    });
+
+    it("JSX: existing emission is preserved when no example ancestor exists", () => {
+      // Regression guard — without a docs-example ancestor the message is
+      // unchanged from the pre-hint shape.
+      const violations = runRule(rule, `const X = <a href="javascript:void(0)">x</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.message).not.toContain("demonstration code");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 + wcag22:2.1.1 and the 2.1 equivalents", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

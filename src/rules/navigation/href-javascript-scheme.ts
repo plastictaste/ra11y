@@ -32,8 +32,15 @@ import {
   findJsxElementsByTag,
   getHtmlAttribute,
   getJsxAttribute,
+  walkHtmlElements,
+  walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlDocument,
+  HtmlElement,
+  JsxElement,
+  TsxModule,
+} from "../../types/ast.ts";
 import { isDomOriginExtension } from "../../utils/path.ts";
 
 /**
@@ -100,6 +107,123 @@ export const rule = defineRule({
   },
 });
 
+/**
+ * Tag/component names whose presence as an ancestor of a flagged anchor
+ * indicates the anchor is sitting inside docs-example markup — a
+ * demonstration of a (possibly anti-pattern) shape, not a live control
+ * the user can click. The agent reads the surrounding source to confirm;
+ * this hint just shortens the dismissal path.
+ *
+ * Reason-enrichment only — emission stays at the existing severity.
+ * Per AI-first doctrine ("No heuristic suppression," "Surface, don't
+ * suppress"), the rule still fires; the hint is additive context the
+ * agent reads per-finding. Matching is case-insensitive on the tag/
+ * component name, plus a class-substring probe for the author-defined
+ * docs-example wrappers (`example`, `codeblock`, `prism`, `highlight`).
+ */
+const EXAMPLE_WRAPPER_TAGS: ReadonlyArray<{
+  readonly match: (tag: string) => boolean;
+  readonly hint: string;
+}> = [
+  // Component wrappers — case-insensitive match on the tag name.
+  { match: (t) => t.toLowerCase() === "example", hint: "<Example> component" },
+  { match: (t) => t.toLowerCase() === "codeblock", hint: "<CodeBlock> component" },
+  { match: (t) => t.toLowerCase() === "demo", hint: "<Demo> component" },
+  { match: (t) => t.toLowerCase() === "playground", hint: "<Playground> component" },
+  // Native code-display elements.
+  { match: (t) => t.toLowerCase() === "pre", hint: "<pre> block" },
+  { match: (t) => t.toLowerCase() === "code", hint: "<code> block" },
+  { match: (t) => t.toLowerCase() === "samp", hint: "<samp> block" },
+];
+
+/** Class-name substrings (lowercased) that mark a wrapper as docs-example. */
+const EXAMPLE_CLASS_SUBSTRINGS = ["example", "codeblock", "prism", "highlight"] as const;
+
+interface ExampleHint {
+  readonly hint: string;
+}
+
+/**
+ * Returns the docs-example hint for the closest ancestor matching the
+ * configured tag-or-class set, or `null` if no such ancestor exists.
+ * The hint is the short label appended to the rule's reason text — e.g.
+ * `"<Example> component"`, `"<pre> block"`, `"wrapper.class~=\"example\""`.
+ */
+function findHtmlExampleHint(
+  anchor: HtmlElement,
+  parents: ReadonlyMap<HtmlElement, HtmlElement>,
+): ExampleHint | null {
+  let cursor: HtmlElement | undefined = parents.get(anchor);
+  while (cursor !== undefined) {
+    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(cursor!.tagName));
+    if (tagHit) return { hint: tagHit.hint };
+    const className = getHtmlAttribute(cursor, "class");
+    const classHit = matchExampleClass(className);
+    if (classHit !== null) return { hint: `wrapper class="${classHit}"` };
+    cursor = parents.get(cursor);
+  }
+  return null;
+}
+
+function findJsxExampleHint(
+  anchor: JsxElement,
+  parents: ReadonlyMap<JsxElement, JsxElement>,
+): ExampleHint | null {
+  let cursor: JsxElement | undefined = parents.get(anchor);
+  while (cursor !== undefined) {
+    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(cursor!.tagName));
+    if (tagHit) return { hint: tagHit.hint };
+    // JSX uses `className`; some authors still write `class` (pre-React-strict
+    // codebases or non-React JSX). Probe both.
+    const attr =
+      getJsxAttribute(cursor, "className") ?? getJsxAttribute(cursor, "class");
+    if (attr?.value?.kind === "StringLiteral") {
+      const classHit = matchExampleClass(attr.value.value);
+      if (classHit !== null) return { hint: `wrapper className="${classHit}"` };
+    }
+    cursor = parents.get(cursor);
+  }
+  return null;
+}
+
+/**
+ * Returns the matched class-name substring (lowercased), or `null`.
+ * Matching is whitespace-tokenized + substring-within-token so a token
+ * like `prism-highlight` matches both `prism` and `highlight`, while a
+ * token like `not-an-example` still matches `example`. The agent verifies
+ * by reading the file; this is additive context, not a gate.
+ */
+function matchExampleClass(value: string | null): string | null {
+  if (value === null) return null;
+  const lowered = value.toLowerCase();
+  for (const needle of EXAMPLE_CLASS_SUBSTRINGS) {
+    if (lowered.includes(needle)) return needle;
+  }
+  return null;
+}
+
+/** Builds the parent map for HTML elements in one walk. */
+function buildHtmlParentMap(doc: HtmlDocument): Map<HtmlElement, HtmlElement> {
+  const out = new Map<HtmlElement, HtmlElement>();
+  for (const el of walkHtmlElements(doc)) {
+    for (const child of el.children) {
+      if (child.kind === "HtmlElement") out.set(child, el);
+    }
+  }
+  return out;
+}
+
+/** Builds the parent map for JSX elements in one walk. */
+function buildJsxParentMap(module: TsxModule): Map<JsxElement, JsxElement> {
+  const out = new Map<JsxElement, JsxElement>();
+  for (const el of walkJsxElements(module)) {
+    for (const child of el.children) {
+      if (child.kind === "JsxElement") out.set(child, el);
+    }
+  }
+  return out;
+}
+
 type Emit = (v: {
   severity: "error" | "warning" | "info";
   location: { filePath: string; line: number; column: number };
@@ -108,15 +232,25 @@ type Emit = (v: {
 }) => void;
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
-  for (const anchor of findHtmlElementsByTag(doc, "a")) {
+  const anchors = findHtmlElementsByTag(doc, "a");
+  if (anchors.length === 0) return;
+  // Build the parent map lazily — only when there's at least one anchor.
+  // Pays the walk cost once per file rather than once per anchor.
+  let parents: Map<HtmlElement, HtmlElement> | null = null;
+  for (const anchor of anchors) {
     const hrefValue = getHtmlAttribute(anchor, "href");
     if (!isJavascriptScheme(hrefValue)) continue;
-    emit(buildViolation(anchor.loc.start, hrefValue ?? ""));
+    parents ??= buildHtmlParentMap(doc);
+    const exampleHint = findHtmlExampleHint(anchor, parents);
+    emit(buildViolation(anchor.loc.start, hrefValue ?? "", exampleHint));
   }
 }
 
 function checkJsx(module: TsxModule, emit: Emit): void {
-  for (const anchor of findJsxElementsByTag(module, "a")) {
+  const anchors = findJsxElementsByTag(module, "a");
+  if (anchors.length === 0) return;
+  let parents: Map<JsxElement, JsxElement> | null = null;
+  for (const anchor of anchors) {
     const attr = getJsxAttribute(anchor, "href");
     if (!attr?.value) continue;
     // Expression-form `href={…}` is opaque at static time — could be a real
@@ -125,13 +259,16 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     // if the call site looks suspicious.
     if (attr.value.kind !== "StringLiteral") continue;
     if (!isJavascriptScheme(attr.value.value)) continue;
-    emit(buildViolation(anchor.loc.start, attr.value.value));
+    parents ??= buildJsxParentMap(module);
+    const exampleHint = findJsxExampleHint(anchor, parents);
+    emit(buildViolation(anchor.loc.start, attr.value.value, exampleHint));
   }
 }
 
 function buildViolation(
   loc: { line: number; column: number },
   rawHref: string,
+  exampleHint: ExampleHint | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
@@ -139,10 +276,17 @@ function buildViolation(
   suggestion: string;
 } {
   const display = rawHref.length > 60 ? `${rawHref.slice(0, 60)}…` : rawHref;
+  // Reason-enrichment only — severity stays `error`. When the anchor sits
+  // inside a docs-example wrapper, the hint is a one-read dismissal signal
+  // for the agent (the violation is still real for live consumers, but the
+  // demonstration shape often explains why a real codebase has it).
+  const exampleSuffix = exampleHint
+    ? ` (inside ${exampleHint.hint} — likely demonstration code, verify the anchor renders for real users before fixing)`
+    : "";
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<a href="${display}"> uses a javascript: scheme — the anchor announces as a link but does not navigate, contradicting its role.`,
-    suggestion: `change \`<a href="${display}">\` to \`<button type="button">\` — this control does not navigate, so it should announce as a button, not a link. If you need anchor-style visuals, style the <button> with CSS instead of giving an anchor a non-URL href. If the handler actually navigates somewhere, put that URL directly in href and drop the javascript: wrapper.`,
+    message: `<a href="${display}"> uses a javascript: scheme — the anchor announces as a link but does not navigate, contradicting its role.${exampleSuffix}`,
+    suggestion: `change \`<a href="${display}">\` to \`<button type="button">\` — this control does not navigate, so it should announce as a button, not a link. If you need anchor-style visuals, style the <button> with CSS instead of giving an anchor a non-URL href. If the handler actually navigates somewhere, put that URL directly in href and drop the javascript: wrapper.${exampleSuffix}`,
   };
 }
