@@ -143,6 +143,49 @@ describe("rule media/alt-text-placeholder", () => {
       });
       expect(violations).toHaveLength(1);
     });
+
+    it("alt restates the src basename ('balloons.gif' / 'balloons')", () => {
+      const violations = runRule(rule, `<img src="balloons.gif" alt="balloons">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/restates the src filename/);
+      expect(violations[0]?.message).toMatch(/"balloons"/);
+      expect(violations[0]?.suggestion).toMatch(/already in the src/);
+    });
+
+    it("alt restates a hyphenated basename, case-insensitive ('team-photo.jpg' / 'Team Photo')", () => {
+      const violations = runRule(rule, `<img src="/path/to/team-photo.jpg" alt="Team Photo">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/restates the src filename/);
+      expect(violations[0]?.message).toMatch(/"team photo"/);
+    });
+
+    it("alt is a sub-word of a hyphenated basename ('team-photo.jpg' / 'photo')", () => {
+      // Single-token alt that's a strict subset of the basename's
+      // tokens — alt = {photo}, stem = {team, photo}. The author
+      // typed one of the filename pieces; same failure mode.
+      // (Note: alt="photo" alone would also trigger the medium-word
+      // category; pinning srcBasename via a token NOT in MEDIUM_WORDS
+      // is harder to construct without contriving the basename.)
+      const violations = runRule(rule, `<img src="team-photo.jpg" alt="team">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/restates the src filename/);
+    });
+
+    it("alt restates an underscore-separated basename ('hero_banner.png' / 'Hero Banner')", () => {
+      const violations = runRule(
+        rule,
+        `<img src="https://cdn.example.com/img/hero_banner.png?v=2" alt="Hero Banner">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"hero banner"/);
+    });
   });
 
   describe("HTML: does not fire when", () => {
@@ -235,6 +278,41 @@ describe("rule media/alt-text-placeholder", () => {
       );
       expect(violations).toHaveLength(0);
     });
+
+    it("alt is a real description even when the basename is descriptive ('balloons.gif' / 'Two children playing with balloons')", () => {
+      const violations = runRule(
+        rule,
+        `<img src="balloons.gif" alt="Two children playing with balloons">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("alt is empty (decorative) even when src basename is descriptive", () => {
+      const violations = runRule(rule, `<img src="balloons.gif" alt="">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("very short basename ('x.jpg') does not trigger basename match on coincidental alt", () => {
+      // Short stems coincidentally match short alts; we skip stems
+      // ≤ 2 chars so `x.jpg` / `a.png` don't fire. The alt itself
+      // also doesn't match any other category.
+      const violations = runRule(rule, `<img src="x.jpg" alt="xx">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("alt and basename share only stop-words / unrelated tokens (no match)", () => {
+      // alt = {a, sunset, over, the, lake} — none overlap with stem
+      // = {balloons}. Neither subset direction holds.
+      const violations = runRule(rule, `<img src="balloons.gif" alt="A sunset over the lake">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires a violation when", () => {
@@ -287,6 +365,21 @@ describe("rule media/alt-text-placeholder", () => {
       const violations = runRule(rule, `const X = <img src="i3.png" alt="Image 3" />;`);
       expect(violations).toHaveLength(1);
     });
+
+    it("alt prop restates the src basename ('balloons.gif' / 'balloons')", () => {
+      const violations = runRule(rule, `const X = <img src="balloons.gif" alt="balloons" />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/restates the src filename/);
+    });
+
+    it("alt prop restates a hyphenated basename, case-insensitive", () => {
+      const violations = runRule(
+        rule,
+        `const X = <img src="/assets/team-photo.jpg" alt="Team Photo" />;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"team photo"/);
+    });
   });
 
   describe("JSX: does not fire when", () => {
@@ -305,6 +398,22 @@ describe("rule media/alt-text-placeholder", () => {
 
     it("alt is empty (decorative)", () => {
       const violations = runRule(rule, `const X = <img src="f.png" alt="" />;`);
+      expect(violations).toHaveLength(0);
+    });
+
+    it("alt prop is descriptive even when basename overlaps", () => {
+      const violations = runRule(
+        rule,
+        `const X = <img src="balloons.gif" alt="Two children playing with balloons" />;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("dynamic src expression is not checked against alt (no static URL evidence)", () => {
+      // Parser exposes no string value for `src={imageUrl}`, so the
+      // basename check skips. The alt "balloons" matches no other
+      // category either.
+      const violations = runRule(rule, `const X = <img src={imageUrl} alt="balloons" />;`);
       expect(violations).toHaveLength(0);
     });
   });

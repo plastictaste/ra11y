@@ -54,6 +54,26 @@
  *      reader users hear "first slide" instead of what the slide
  *      shows. Matched as whole-alt by the patterns in
  *      `SEQUENTIAL_LABEL_PATTERNS`.
+ *   7. Alt restates the src basename — `<img src="balloons.gif"
+ *      alt="balloons">` or `<img src="/path/to/team-photo.jpg"
+ *      alt="Team Photo">`. The author has typed (or auto-generated)
+ *      the filename stem as the alt; screen-reader users hear the
+ *      filename verbatim and learn nothing about the image. The
+ *      basename stem is extracted from the URL (query / hash
+ *      stripped, extension dropped), normalized by replacing `-` /
+ *      `_` / `+` with spaces and lowercasing. The check fires when
+ *      the alt's normalized form equals the basename-stem, or when
+ *      the alt's tokens are a non-empty subset of the stem's tokens
+ *      (so `alt="Team Photo"` against `team-photo.jpg` fires, and
+ *      `alt="photo"` against `team-photo.jpg` also fires). The
+ *      inverse direction is intentionally NOT matched —
+ *      `<img src="logo.png" alt="Acme Corp logo">` adds brand
+ *      information beyond the filename and stays a good case. Very
+ *      short basenames (≤2 chars after normalization) are skipped
+ *      — `x.jpg` / `a.png` are too likely to coincidentally match
+ *      short alt text. Dynamic `src` (JSX expression value) is not
+ *      checked because the parser only exposes string-literal
+ *      attribute values.
  *
  * Matching is whole-alt-only outside of the bounded phrase form
  * above. `alt="Aerial image of Paris"` passes because the medium
@@ -238,12 +258,19 @@ type PlaceholderKind =
   | "meta"
   | "repetition"
   | "rolePhrase"
-  | "sequentialLabel";
+  | "sequentialLabel"
+  | "srcBasename";
 
 interface PlaceholderMatch {
   readonly kind: PlaceholderKind;
   /** The normalized (trimmed, collapsed-whitespace) alt value. */
   readonly normalized: string;
+  /**
+   * For `srcBasename` matches, the normalized basename-stem extracted
+   * from the `src` URL (used in the message / suggestion to make the
+   * filename overlap explicit). Empty for other kinds.
+   */
+  readonly basenameStem?: string;
 }
 
 /**
@@ -252,8 +279,14 @@ interface PlaceholderMatch {
  * must have already ensured the alt attribute is present and
  * non-whitespace — the `media/alt-text-missing` rule owns the
  * empty / absent cases.
+ *
+ * `src` is the literal string value of the element's `src` attribute
+ * (or null if absent / a dynamic JSX expression). When provided, the
+ * function additionally classifies as `srcBasename` if the alt
+ * restates the URL's basename-stem (the canonical
+ * `<img src="balloons.gif" alt="balloons">` antipattern).
  */
-function classifyAlt(alt: string): PlaceholderMatch | null {
+function classifyAlt(alt: string, src: string | null = null): PlaceholderMatch | null {
   const collapsed = alt.replace(/\s+/g, " ").trim();
   if (collapsed.length === 0) return null;
   const lower = collapsed.toLowerCase();
@@ -292,7 +325,92 @@ function classifyAlt(alt: string): PlaceholderMatch | null {
   ) {
     return { kind: "rolePhrase", normalized: collapsed };
   }
+  // Alt restates the src basename: extract the basename-stem from
+  // the URL (query / hash stripped, extension dropped), normalize
+  // separators, and compare. See `matchesSrcBasename` for the rules.
+  const stem = extractBasenameStem(src);
+  if (stem !== null && matchesSrcBasename(tokens, stem)) {
+    return { kind: "srcBasename", normalized: collapsed, basenameStem: stem };
+  }
   return null;
+}
+
+/**
+ * Extracts the normalized basename-stem from a `src` URL. Returns
+ * null when the URL has no usable filename component (empty, ends
+ * with `/`, or normalizes to an empty stem) or when the stem is too
+ * short to be a reliable signal (≤2 chars after normalization —
+ * `x.jpg`, `a.png` would coincidentally match short alts).
+ *
+ * Normalization:
+ *  - strip query string (`?…`) and hash (`#…`)
+ *  - take the last path segment after `/` or `\`
+ *  - drop the final extension (rightmost `.<ext>`)
+ *  - replace `-`, `_`, `+`, `.` with spaces
+ *  - lowercase, collapse whitespace, trim
+ *
+ * Examples:
+ *   `balloons.gif`                 → `balloons`
+ *   `/path/to/team-photo.jpg`      → `team photo`
+ *   `https://cdn/x/HERO_BANNER.png?v=2` → `hero banner`
+ *   `x.jpg`                        → null (too short)
+ *   `/foo/`                        → null (no filename)
+ */
+function extractBasenameStem(src: string | null): string | null {
+  if (src === null) return null;
+  // Strip query and hash. URL fragments / query strings are not
+  // part of the filename.
+  const noQuery = src.split(/[?#]/, 1)[0] ?? "";
+  // Take the last path segment. Handle both `/` and `\` since
+  // authors sometimes paste Windows paths into JSX.
+  const segments = noQuery.split(/[/\\]/);
+  const last = segments[segments.length - 1] ?? "";
+  if (last.length === 0) return null;
+  // Drop the rightmost extension. `team-photo.jpg` → `team-photo`,
+  // `photo.tar.gz` → `photo.tar` (good enough — only the final
+  // extension is dropped, the rest of the name is normalized).
+  const dot = last.lastIndexOf(".");
+  const stem = dot > 0 ? last.slice(0, dot) : last;
+  // Normalize separators to spaces, lowercase, collapse whitespace.
+  const normalized = stem
+    .replace(/[-_+.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (normalized.length <= 2) return null;
+  return normalized;
+}
+
+/**
+ * True when the alt's tokens (already lowercased, space-split) match
+ * the normalized basename-stem closely enough to count as restatement.
+ *
+ * Match conditions:
+ *  - exact equality of the joined alt and the stem, OR
+ *  - alt's tokens are a non-empty subset of the stem's tokens (the
+ *    `<img src="team-photo.jpg" alt="photo">` shape — alt is a
+ *    sub-word of the basename).
+ *
+ * The match is intentionally one-sided (alt ⊆ stem only). The
+ * inverse direction (stem ⊆ alt) would over-fire on the well-known
+ * good shape `<img src="logo.png" alt="Acme Corp logo">` — the alt
+ * adds a brand identifier that the src does not, and the existing
+ * role-noun-led-phrase logic already classifies bare `alt="logo"`
+ * via the `medium` kind. The backlog antipattern is "alt restates
+ * src," not "src restates alt."
+ */
+function matchesSrcBasename(altTokens: readonly string[], stem: string): boolean {
+  const altJoined = altTokens.join(" ");
+  if (altJoined === stem) return true;
+  const stemTokens = stem.split(" ").filter((t) => t.length > 0);
+  if (stemTokens.length === 0 || altTokens.length === 0) return false;
+  const stemSet = new Set(stemTokens);
+  const altSet = new Set(altTokens.filter((t) => t.length > 0));
+  if (altSet.size === 0) return false;
+  for (const t of altSet) {
+    if (!stemSet.has(t)) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +434,8 @@ function checkHtmlCandidate(element: HtmlElement, seen: Set<HtmlElement>, emit: 
   seen.add(element);
   const alt = getHtmlAttribute(element, "alt");
   if (alt === null) return;
-  const match = classifyAlt(alt);
+  const src = getHtmlAttribute(element, "src");
+  const match = classifyAlt(alt, src);
   if (!match) return;
   emitHtml(element, match, emit);
 }
@@ -356,7 +475,12 @@ function checkJsxCandidate(element: JsxElement, seen: Set<JsxElement>, emit: Emi
   seen.add(element);
   const alt = getJsxAttributeString(element, "alt");
   if (alt === null) return;
-  const match = classifyAlt(alt);
+  // `getJsxAttributeString` returns null for non-string-literal
+  // expressions, so dynamic `src={url}` won't trigger the basename
+  // check — we only have evidence to compare when the URL is a
+  // static literal.
+  const src = getJsxAttributeString(element, "src");
+  const match = classifyAlt(alt, src);
   if (!match) return;
   emitJsx(element, match, emit);
 }
@@ -382,19 +506,22 @@ function emitJsx(element: JsxElement, match: PlaceholderMatch, emit: Emit): void
 // Message / suggestion builders
 // ---------------------------------------------------------------------------
 
+const REASONS_BY_KIND: Record<Exclude<PlaceholderKind, "srcBasename">, string> = {
+  medium: "restates the medium instead of describing the content",
+  authoring: "is an authoring placeholder, not a description",
+  meta: "names the attribute instead of describing the content",
+  rolePhrase:
+    "wraps the subject in a role-noun phrase that adds no information beyond what the medium already implies",
+  sequentialLabel:
+    "is a sequential positional label (carousel-slide / numbered-image antipattern) — author intent is 'describe later' but it ships as production alt text",
+  repetition: "repeats a single word instead of describing the content",
+};
+
 function buildMessage(tag: string, match: PlaceholderMatch): string {
   const reason =
-    match.kind === "medium"
-      ? "restates the medium instead of describing the content"
-      : match.kind === "authoring"
-        ? "is an authoring placeholder, not a description"
-        : match.kind === "meta"
-          ? "names the attribute instead of describing the content"
-          : match.kind === "rolePhrase"
-            ? "wraps the subject in a role-noun phrase that adds no information beyond what the medium already implies"
-            : match.kind === "sequentialLabel"
-              ? "is a sequential positional label (carousel-slide / numbered-image antipattern) — author intent is 'describe later' but it ships as production alt text"
-              : "repeats a single word instead of describing the content";
+    match.kind === "srcBasename"
+      ? `restates the src filename ("${match.basenameStem ?? ""}") instead of describing the content`
+      : REASONS_BY_KIND[match.kind];
   return `<${tag}> has alt="${match.normalized}" which ${reason}; screen readers announce this boilerplate verbatim and users learn nothing about the image.`;
 }
 
@@ -404,6 +531,8 @@ function buildSuggestion(tag: string, match: PlaceholderMatch): string {
       ? `Replace the placeholder alt="${match.normalized}" with a description of what the image conveys in this context.`
       : match.kind === "sequentialLabel"
         ? `Replace alt="${match.normalized}" with a description of what THIS slide / image actually shows (its subject, headline, or caption text). Positional labels like "First slide" or "Image 3" are the carousel-doc default but ship as production placeholder; the slide's content is what the screen-reader user needs.`
-        : `Replace alt="${match.normalized}" with a description of what the image communicates — not the fact that it is an image.`;
+        : match.kind === "srcBasename"
+          ? `Replace alt="${match.normalized}" with a description of what the image communicates — the filename "${match.basenameStem ?? ""}" is already in the src attribute, so repeating it as alt text adds no information for screen-reader users.`
+          : `Replace alt="${match.normalized}" with a description of what the image communicates — not the fact that it is an image.`;
   return `${hint} If the image is purely decorative and the surrounding text already carries the same information, set alt="" so assistive tech skips it. If the <${tag}> is inside a link or button, the alt should describe the destination or action, not the picture.`;
 }
