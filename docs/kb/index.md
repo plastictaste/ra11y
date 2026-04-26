@@ -147,6 +147,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [keyboard/character-shortcuts](./rules/keyboard__character-shortcuts.md)
 - [keyboard/handler-missing](./rules/keyboard__handler-missing.md)
 - [keyboard/hover-only-no-focus-mirror](./rules/keyboard__hover-only-no-focus-mirror.md)
+- [layout/horizontal-scroll-no-keyboard](./rules/layout__horizontal-scroll-no-keyboard.md)
 - [layout/orientation-lock](./rules/layout__orientation-lock.md)
 - [layout/reflow-hardcoded-width](./rules/layout__reflow-hardcoded-width.md)
 - [layout/text-spacing](./rules/layout__text-spacing.md)
