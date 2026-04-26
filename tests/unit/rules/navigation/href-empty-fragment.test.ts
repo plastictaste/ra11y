@@ -362,8 +362,8 @@ describe("rule navigation/href-empty-fragment", () => {
   // When the flagged anchor is one of those, the hint names the code-prop
   // origin so an agent can dismiss in one read.
   describe("docs-example code-prop template-literal hint (MDX)", () => {
-    it("MDX: <Example code={`<a href=\"#\"></a>`}/> adds the code-prop hint", () => {
-      const source = "function F(){return <Example code={`<a href=\"#\"></a>`}/>}";
+    it('MDX: <Example code={`<a href="#"></a>`}/> adds the code-prop hint', () => {
+      const source = 'function F(){return <Example code={`<a href="#"></a>`}/>}';
       const violations = runRule(rule, source, { filePath: "Page.mdx" });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.severity).toBe("error");
@@ -384,7 +384,7 @@ describe("rule navigation/href-empty-fragment", () => {
       // The synthesized marker propagates to every element produced by
       // the extractor, so a nested `<div><a href="#"/></div>` in the
       // template body still names the code-prop origin.
-      const source = "function F(){return <Example code={`<div><a href=\"#\"></a></div>`}/>}";
+      const source = 'function F(){return <Example code={`<div><a href="#"></a></div>`}/>}';
       const violations = runRule(rule, source, { filePath: "Page.mdx" });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain("code prop in JSX template literal");
@@ -393,7 +393,7 @@ describe("rule navigation/href-empty-fragment", () => {
     it("MDX: a real (non-synthesized) anchor in MDX body has no code-prop hint", () => {
       // Regression guard — only synthesized anchors get the code-prop
       // hint; an anchor authored directly as MDX content does not.
-      const source = "function F(){return <a href=\"#\">x</a>}";
+      const source = 'function F(){return <a href="#">x</a>}';
       const violations = runRule(rule, source, { filePath: "Page.mdx" });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).not.toContain("code prop in JSX template literal");
