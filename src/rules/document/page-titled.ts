@@ -109,7 +109,24 @@ export const rule = defineRule({
 
     for (const title of docTitles) {
       const text = htmlTextContent(title);
-      if (text.length > 0) continue;
+      if (text.length > 0) {
+        // Scaffold-placeholder title: the <title> has literal content,
+        // but it matches a known boilerplate token (`index`, `Untitled`,
+        // `Page Title`, `New Page`, etc.) emitted by editor scaffolds
+        // and CMS templates and never edited by the author. The literal
+        // is provable from the code in this file alone — no guess about
+        // composition or rendering — so emission is deterministic, not
+        // speculative. Severity is `warning` rather than `error` because
+        // a real page might legitimately title itself "Welcome" (e.g. a
+        // greeting page); the agent reading the file is the correct
+        // arbiter. Per docs/kb/architecture/ai-first-consumer.md
+        // §"Surface, don't suppress" we emit; the source-level disable
+        // pragma is the durable dismissal path.
+        if (isScaffoldPlaceholderTitle(text)) {
+          ctx.emit(buildPlaceholderEmit(doc, title, text));
+        }
+        continue;
+      }
       // Template-interpolated title (Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP):
       // `<title>{{ page.title }}</title>` — the parser stripped the
       // directive span so `htmlTextContent` returns "", but the static
@@ -220,6 +237,83 @@ function buildTemplateInterpolatedEmit(
     message: MESSAGE_TEMPLATE_INTERPOLATED,
     suggestion: buildSuggestion(doc),
     couldBeWrongBecause: [TITLE_IS_TEMPLATE_INTERPOLATED],
+  };
+}
+
+/**
+ * Lowercased scaffold-placeholder titles emitted by editor templates,
+ * CMS new-page wizards, and HTML boilerplates and never customized by
+ * the author. Each entry is the fully-trimmed, lowercased form so the
+ * predicate is case-insensitive and whitespace-tolerant. Detection is
+ * by literal-string match — no fuzzy comparison, no substring — so
+ * `<title>Index of /docs</title>` (a real listing page) does not fire.
+ *
+ * Membership criterion: only tokens whose appearance as a `<title>` is
+ * overwhelmingly the result of an unedited scaffold (NOT plausible
+ * page-topic phrases). "Welcome" and "Home Page" are borderline — a
+ * real greeting page might title itself "Welcome" — which is why the
+ * emit severity is `warning` rather than `error` and the agent reading
+ * the file is the correct arbiter.
+ */
+const SCAFFOLD_PLACEHOLDER_TITLES: ReadonlySet<string> = new Set([
+  "index",
+  "page1",
+  "page 1",
+  "untitled",
+  "untitled document",
+  "untitled page",
+  "document",
+  "page title",
+  "new page",
+  "welcome",
+  "home page",
+  "html",
+  "html document",
+]);
+
+const MESSAGE_PLACEHOLDER =
+  "<title> reads like an unedited scaffold default — verify it actually describes this page's topic or purpose.";
+
+const TITLE_LOOKS_LIKE_SCAFFOLD_DEFAULT = "title_looks_like_scaffold_default";
+
+/**
+ * Returns true when the trimmed, lowercased title text is in the
+ * scaffold-placeholder dictionary. Pure literal-string membership
+ * check — no substring matching, so document-topic phrases that
+ * legitimately *contain* a placeholder word ("Index of /docs",
+ * "Welcome Letter Templates") do not fire.
+ */
+function isScaffoldPlaceholderTitle(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return SCAFFOLD_PLACEHOLDER_TITLES.has(normalized);
+}
+
+/**
+ * Emit shape for the scaffold-placeholder branch. Severity is
+ * `warning` because the scanner cannot tell whether the placeholder
+ * was deliberate ("Welcome" might be a real greeting page) — the agent
+ * reading the file is the correct arbiter, and the structured
+ * `title_looks_like_scaffold_default` code on `couldBeWrongBecause`
+ * carries the dismissal signal so an agent can route to a one-line
+ * pragma when the title was intentional.
+ */
+function buildPlaceholderEmit(
+  doc: HtmlDocument,
+  title: HtmlElement,
+  text: string,
+): {
+  severity: "warning";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+  couldBeWrongBecause: readonly string[];
+} {
+  return {
+    severity: "warning",
+    location: { filePath: "", line: title.loc.start.line, column: title.loc.start.column },
+    message: `${MESSAGE_PLACEHOLDER} Found <title>${text}</title>.`,
+    suggestion: buildSuggestion(doc),
+    couldBeWrongBecause: [TITLE_LOOKS_LIKE_SCAFFOLD_DEFAULT],
   };
 }
 

@@ -285,4 +285,100 @@ describe("rule document/page-titled", () => {
     expect(v).toHaveLength(1);
     expect(v[0]?.message).toContain("missing a <title>");
   });
+
+  // Scaffold-placeholder titles. Editor templates, CMS new-page wizards,
+  // and HTML boilerplates ship literal `<title>index</title>` /
+  // `<title>Untitled Document</title>` / `<title>Page Title</title>`
+  // that authors forget to customize. The literal is provable from the
+  // code in this file alone (no composition guess), so emission is
+  // deterministic — but severity is `warning` because a real page
+  // might legitimately title itself "Welcome." Per docs/kb/architecture/
+  // ai-first-consumer.md §"Surface, don't suppress" the agent reading
+  // the file is the correct arbiter; the source-level disable pragma
+  // makes a verified-intentional title durable.
+  it("flags <title>index</title> as a scaffold-placeholder default", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>index</title></head><body><p>x</p></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("warning");
+    expect(v[0]?.message).toContain("scaffold default");
+    expect(v[0]?.message).toContain("<title>index</title>");
+    expect(v[0]?.couldBeWrongBecause).toContain("title_looks_like_scaffold_default");
+  });
+
+  it("flags <title>Untitled</title> as a scaffold-placeholder default (case-insensitive)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>Untitled</title></head><body><p>x</p></body></html>`,
+      { filePath: "untitled.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("warning");
+    expect(v[0]?.couldBeWrongBecause).toContain("title_looks_like_scaffold_default");
+  });
+
+  it("flags <title>Page Title</title> as a scaffold-placeholder default", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>Page Title</title></head><body><p>x</p></body></html>`,
+      { filePath: "page.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("warning");
+    expect(v[0]?.message).toContain("<title>Page Title</title>");
+  });
+
+  it("flags <title>Untitled Document</title> (multi-word boilerplate variant)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>  Untitled Document  </title></head><body><p>x</p></body></html>`,
+      { filePath: "doc.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("warning");
+    expect(v[0]?.couldBeWrongBecause).toContain("title_looks_like_scaffold_default");
+  });
+
+  it("does NOT flag a real title that merely contains a placeholder word", () => {
+    // Substring match would fire on "Index of /docs" or "Welcome Letter
+    // Templates" — both are legitimate page-topic phrases. The dictionary
+    // check is by literal trimmed-lowercase membership, so these pass.
+    const inputs = [
+      `<!DOCTYPE html><html lang="en"><head><title>Index of /docs</title></head><body></body></html>`,
+      `<!DOCTYPE html><html lang="en"><head><title>Welcome Letter Templates</title></head><body></body></html>`,
+      `<!DOCTYPE html><html lang="en"><head><title>About Acme Inc</title></head><body></body></html>`,
+      `<!DOCTYPE html><html lang="en"><head><title>Contact — Acme</title></head><body></body></html>`,
+    ];
+    for (const html of inputs) {
+      const v = runRule(rule, html, { filePath: "page.html" });
+      expect(v).toHaveLength(0);
+    }
+  });
+
+  it("does NOT downgrade the existing missing-title error to the placeholder warning", () => {
+    // Sanity guard: a missing <title> still emits the ERROR-severity
+    // missing-title finding, not a warning-severity placeholder finding.
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head></head><body><p>x</p></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.message).toContain("missing a <title>");
+  });
+
+  it("routes the placeholder branch through the same suggestion ladder", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><title>Untitled</title></head><body><h1>Pricing</h1></body></html>`,
+      { filePath: "pricing.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("Pricing");
+    expect(v[0]?.suggestion).toContain("existing <h1>");
+  });
 });

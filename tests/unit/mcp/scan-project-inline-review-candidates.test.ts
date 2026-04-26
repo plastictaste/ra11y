@@ -227,7 +227,7 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
           [
             "<!doctype html>",
             '<html lang="en">',
-            `  <head><meta charset="utf-8"><title>Page ${i}</title></head>`,
+            `  <head><meta charset="utf-8"><title>Sample Audio Test ${i}</title></head>`,
             `  <body><audio src="t${i}.mp3" controls></audio></body>`,
             "</html>",
             "",
