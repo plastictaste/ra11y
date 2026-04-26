@@ -58,6 +58,7 @@ export interface BuildVendorOverrideOutcomeInputs {
     readonly verifyCommandStructured: VerifyCommandStructured;
   };
   readonly warningsField: { readonly warnings?: readonly string[] };
+  readonly disambiguationNoteField: { readonly disambiguationNote?: string };
   readonly vendorContextField: { readonly vendorContext?: VendorContext };
 }
 
@@ -94,6 +95,7 @@ export function buildVendorOverrideOutcome(
     snippetField,
     verify,
     warningsField,
+    disambiguationNoteField,
     vendorContextField,
   } = inputs;
   // Snippet (when the rule emitted one) is the most reliable hint at
@@ -134,6 +136,7 @@ export function buildVendorOverrideOutcome(
     ...snippetField,
     ...verify,
     ...warningsField,
+    ...disambiguationNoteField,
     ...vendorContextField,
   };
 }

@@ -38,6 +38,17 @@ export interface BuildFixPathsOutcomeInputs {
   };
   readonly warningsField: { readonly warnings?: readonly string[] };
   /**
+   * Conditional-spread for the criterion-input → rule resolution note
+   * (suggest_fix criterion-id bridge). When the caller passed a
+   * criterion ID and multiple rules satisfy it, the handler resolves to
+   * the most-specific rule (smallest `satisfies.length`, alphabetic
+   * tiebreak) and threads the explanation here. Singleton resolution
+   * and rule-ID input both leave the spread empty. Forwarded onto the
+   * mechanical-edit AND guidance lanes so the resolution disclosure is
+   * visible regardless of outcome shape.
+   */
+  readonly disambiguationNoteField: { readonly disambiguationNote?: string };
+  /**
    * Pre-built `{ meta: { mechanicalInPrinciple: true } }` spread (or
    * `{}` when not applicable) computed by the caller from the matched
    * violation's `fixClass`. Forwarded verbatim onto the guidance lane
@@ -90,6 +101,7 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
     snippetField,
     verify,
     warningsField,
+    disambiguationNoteField,
     mechanicalInPrincipleField,
     tailwindDetected,
   } = inputs;
@@ -164,6 +176,7 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
       confidence,
       ...verify,
       ...warningsField,
+      ...disambiguationNoteField,
     };
   }
   // Guidance lane (Q-SHARED-SUGGEST-FIX-GUIDANCE-PRIMARY): nest
@@ -186,6 +199,7 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
     ...caveatField,
     ...verify,
     ...warningsField,
+    ...disambiguationNoteField,
     ...mechanicalInPrincipleField,
   };
 }

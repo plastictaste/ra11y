@@ -142,6 +142,19 @@ export interface BuildSuggestFixPayloadArgs {
    */
   readonly warnings?: readonly string[];
   /**
+   * Set when the caller invoked `suggest_fix` with a criterion-ID
+   * (`wcag22:N.N.N`, `section508:…`, `en301549:…`) instead of a rule ID
+   * AND multiple rules satisfy that criterion. The handler resolves the
+   * input to the most-specific rule (smallest `satisfies.length`,
+   * alphabetic tie-break) and threads this note onto every outcome so
+   * the agent can see which rule was chosen and how. Singleton
+   * resolution leaves the field absent — there's no ambiguity to
+   * disclose. Free-form ID + non-criterion calls also leave it absent.
+   * Conditional-spread per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest" — sentinel-empty would force the agent to disambiguate.
+   */
+  readonly disambiguationNote?: string;
+  /**
    * Whether the suggest_fix scan parsed any JSX/HTML evidence of
    * Tailwind utility usage. Computed by the handler via
    * `hasTailwindSignal` over the parsed-file set
@@ -264,6 +277,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     source,
     filePath,
     warnings,
+    disambiguationNote,
     tailwindDetected,
     sameFileFindings,
     vendorContext,
@@ -274,6 +288,13 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // and passes them here; `warningsSpreadField` handles the
   // conditional-spread so the field is absent when empty.
   const warningsField = warningsSpreadField(warnings);
+  // Criterion-input → rule resolution note (suggest_fix criterion-id
+  // bridge). Present-when-meaningful: omitted on rule-ID input AND on
+  // singleton criterion resolution where there's no ambiguity to
+  // disclose. Conditional-spread per CLAUDE.md §1 "Ambiguous field
+  // shapes are dishonest."
+  const disambiguationNoteField: { readonly disambiguationNote?: string } =
+    disambiguationNote === undefined ? {} : { disambiguationNote };
   // Q7-SUGGEST-FIX-VENDOR-CONTEXT: present-when-meaningful spread for
   // the vendor-context payload. When the handler's classifier didn't
   // fire on this file, the field is absent — behavior identical to
@@ -308,6 +329,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
       confidence: "low",
       ...nearestSpread,
       ...warningsField,
+      ...disambiguationNoteField,
       ...vendorContextField,
     };
   }
@@ -339,6 +361,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
       snippetField,
       verify,
       warningsField,
+      disambiguationNoteField,
       vendorContextField,
     });
   }
@@ -352,6 +375,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
       snippetField,
       verify,
       warningsField,
+      disambiguationNoteField,
       mechanicalInPrincipleField: mechanicalInPrincipleField(match),
       // exactOptionalPropertyTypes: conditional-spread the optional
       // boolean so `undefined` doesn't satisfy `boolean | undefined`
@@ -391,6 +415,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     ...snippetField,
     ...verify,
     ...warningsField,
+    ...disambiguationNoteField,
     ...mechanicalInPrincipleField(match),
   };
 }

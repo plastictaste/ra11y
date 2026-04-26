@@ -539,6 +539,90 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(result.structuredContent?.details?.requested).toBe("nonsense/rule");
   });
 
+  it("suggest_fix accepts a criterion ID with one satisfying rule and OMITS disambiguationNote", async () => {
+    // `wcag22:1.4.3` is satisfied by exactly one rule (`contrast/minimum`)
+    // — singleton resolution leaves the note absent because there's no
+    // ambiguity to disclose. This is the "criterion-id bridge" success
+    // path that makes the manual-review-candidate handoff
+    // (review_candidates → suggest_fix) work without a hard-error round
+    // trip. See `docs/kb/architecture/ai-first-consumer.md`: "One tool
+    // call should answer 'what next?'" + "Surface, don't suppress."
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "suggest_fix", {
+        ruleId: "wcag22:1.4.3",
+        file: BAD_ALT_FILE,
+        line: 1,
+      }),
+    ]);
+    const result = responses[1].result as { isError?: boolean };
+    // Not an error envelope — the criterion bridge resolved successfully.
+    expect(result.isError).toBeFalsy();
+    const body = bodyOf(responses[1]) as { disambiguationNote?: string };
+    // Singleton resolution → no disclosure note (no ambiguity to declare).
+    expect(body.disambiguationNote).toBeUndefined();
+  });
+
+  it("suggest_fix accepts a criterion ID with multiple satisfying rules and attaches a disambiguationNote naming the chosen rule", async () => {
+    // `wcag22:1.1.1` is satisfied by 6+ rules; the most-specific tiebreak
+    // (smallest satisfies-list, alphabetic on ties) selects
+    // `media/alt-text-missing`. The note must name the chosen rule and
+    // disclose the others so the agent can re-call against a sibling if
+    // the chosen rule isn't the right one for this finding. The
+    // disambiguation is the criterion-id bridge's honesty surface: the
+    // tool resolved your input but did so by deterministic tiebreak, not
+    // an oracle.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "suggest_fix", {
+        ruleId: "wcag22:1.1.1",
+        file: BAD_ALT_FILE,
+        line: 5,
+      }),
+    ]);
+    const result = responses[1].result as { isError?: boolean };
+    expect(result.isError).toBeFalsy();
+    const body = bodyOf(responses[1]) as { disambiguationNote?: string };
+    expect(typeof body.disambiguationNote).toBe("string");
+    expect(body.disambiguationNote).toContain("wcag22:1.1.1");
+    expect(body.disambiguationNote).toContain("media/alt-text-missing");
+    // Names the tiebreak (smallest satisfies-list, alphabetic) so the
+    // agent reads the resolution as deterministic, not heuristic.
+    expect(body.disambiguationNote).toMatch(/satisfies|alphabetic|most-specific/);
+  });
+
+  it("suggest_fix with a criterion ID that no rule satisfies returns rule-not-found naming the criterion", async () => {
+    // `wcag22:2.4.5` is a manual-only criterion — no automated rule
+    // satisfies it. The criterion bridge falls through to a rule-not-
+    // found envelope; the message must name the criterion (not echo
+    // it as a `ruleId`) so the agent reads the failure honestly. The
+    // remediation hint points at `explain_standard` so the agent has a
+    // next-call pivot beyond `list_rules`.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "suggest_fix", {
+        ruleId: "wcag22:2.4.5",
+        file: BAD_ALT_FILE,
+        line: 1,
+      }),
+    ]);
+    const result = responses[1].result as {
+      isError?: boolean;
+      structuredContent?: {
+        code?: string;
+        message?: string;
+        details?: { requested?: string };
+        remediation?: string;
+      };
+    };
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.code).toBe("rule-not-found");
+    expect(result.structuredContent?.message).toContain("wcag22:2.4.5");
+    expect(result.structuredContent?.message).toMatch(/criterion/i);
+    expect(result.structuredContent?.details?.requested).toBe("wcag22:2.4.5");
+    expect(result.structuredContent?.remediation).toContain("explain_standard");
+  });
+
   it("coverage returns automated pass-rate counts for the session standard", async () => {
     const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: BAD_ALT_DIR })]);
     const body = bodyOf(responses[1]) as {

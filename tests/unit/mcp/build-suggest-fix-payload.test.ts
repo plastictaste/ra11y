@@ -1083,3 +1083,52 @@ describe("buildSuggestFixPayload — Q7-SUGGEST-FIX-VENDOR-CONTEXT lanes", () =>
     expect(primary.explanation).toContain("`.btn-primary`");
   });
 });
+
+describe("buildSuggestFixPayload — disambiguationNote (criterion-id bridge)", () => {
+  // Payload-builder verification for the criterion-id bridge: the note
+  // is a forward-only string passed by the handler; the builder's job
+  // is to thread it onto every outcome shape (kind: "none" / "edit" /
+  // "guidance") via conditional-spread. Singleton resolution and rule-
+  // ID input both leave the field absent — the present-when-meaningful
+  // shape per CLAUDE.md §1 "Ambiguous field shapes are dishonest." End-
+  // to-end resolution behavior is covered in tests/integration/mcp-
+  // tools.test.ts.
+  const NOTE =
+    "Criterion 'wcag22:1.1.1' is satisfied by 6 rules. Selected 'media/alt-text-missing' as the most-specific rule (smallest satisfies-list, alphabetic tiebreak).";
+
+  it("kind: 'none' carries disambiguationNote when supplied", () => {
+    const payload = buildSuggestFixPayload(baseArgs(undefined, { disambiguationNote: NOTE }));
+    expect(payload["kind"]).toBe("none");
+    expect(payload["disambiguationNote"]).toBe(NOTE);
+  });
+
+  it("kind: 'edit' carries disambiguationNote when supplied", () => {
+    const payload = buildSuggestFixPayload(
+      baseArgs(violationWithFixPaths(), { disambiguationNote: NOTE }),
+    );
+    expect(payload["kind"]).toBe("edit");
+    expect(payload["disambiguationNote"]).toBe(NOTE);
+  });
+
+  it("kind: 'guidance' (no fixPaths) carries disambiguationNote when supplied", () => {
+    const payload = buildSuggestFixPayload(
+      baseArgs(violationGuidanceOnly(), { disambiguationNote: NOTE }),
+    );
+    expect(payload["kind"]).toBe("guidance");
+    expect(payload["disambiguationNote"]).toBe(NOTE);
+  });
+
+  it("OMITS disambiguationNote when undefined (rule-ID input or singleton resolution)", () => {
+    // The critical present-when-meaningful guard: an undefined note
+    // must NEVER surface as `disambiguationNote: ""` (that's the
+    // sentinel-empty failure mode CLAUDE.md §1 "Ambiguous field shapes
+    // are dishonest" calls out). Conditional-spread keeps the field
+    // absent.
+    const noneShape = buildSuggestFixPayload(baseArgs(undefined));
+    expect(noneShape).not.toHaveProperty("disambiguationNote");
+    const editShape = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
+    expect(editShape).not.toHaveProperty("disambiguationNote");
+    const guidanceShape = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    expect(guidanceShape).not.toHaveProperty("disambiguationNote");
+  });
+});

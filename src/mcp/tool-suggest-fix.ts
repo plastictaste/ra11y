@@ -7,7 +7,8 @@
 import { runScan } from "../engine/scanner.ts";
 import { hasTailwindSignal } from "./analysis-coverage-hints.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
-import { detectVendorContext, type VendorContext } from "./suggest-fix-vendor-context.ts";
+import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
+import { detectVendorContext } from "./suggest-fix-vendor-context.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
@@ -43,28 +44,6 @@ async function checkCwdContainment(
 }
 
 /**
- * Conditional-spread of the two optional `BuildSuggestFixPayloadArgs`
- * fields the handler computes inline (`warnings` from the scan-confidence
- * helper, `vendorContext` from `detectVendorContext`). Extracted to its
- * own helper so the handler stays under the cognitive-complexity cap;
- * the spread arity grows by one each time a new optional field is added,
- * so centralizing the present-when-meaningful logic here keeps the call
- * site flat.
- */
-function optionalSuggestFixFields(
-  scanWarnings: readonly string[],
-  vendorContext: VendorContext | null,
-): {
-  readonly warnings?: readonly string[];
-  readonly vendorContext?: VendorContext;
-} {
-  return {
-    ...(scanWarnings.length > 0 ? { warnings: scanWarnings } : {}),
-    ...(vendorContext === null ? {} : { vendorContext }),
-  };
-}
-
-/**
  * Param-validation preflight. Returns the canonical
  * `missing-required-param` envelope when any of the three required
  * params is absent, or null when all three are present. Extracted to
@@ -95,11 +74,15 @@ export const suggestFixTool: McpTool = {
   def: {
     name: "suggest_fix",
     description:
-      "Get resolution paths for a violation. Returns either `kind: 'edit'` with a direct oldText/newText pair that Edit can apply, or `kind: 'guidance'` with a ranked `primary` fix and `alternatives` — each a short labeled path you can act on. Prefer the primary; fall through alternatives when context rules it out. The `sourceContext` and `snippet` are included so you can compose the edit yourself when no mechanical fix is available.",
+      "Get resolution paths for a violation. Returns either `kind: 'edit'` with a direct oldText/newText pair that Edit can apply, or `kind: 'guidance'` with a ranked `primary` fix and `alternatives` — each a short labeled path you can act on. Prefer the primary; fall through alternatives when context rules it out. The `sourceContext` and `snippet` are included so you can compose the edit yourself when no mechanical fix is available.\n\nThe `ruleId` parameter accepts EITHER a rule ID (e.g. `keyboard/handler-missing`) OR a criterion ID (e.g. `wcag22:2.4.5`, `section508:1194.22.c`, `en301549:9.2.4.5`) — pass through whatever the manual-review candidate carries. When a criterion ID is passed and multiple rules satisfy it, the handler resolves to the most-specific rule (smallest `satisfies` list, alphabetic tiebreak) and attaches a `disambiguationNote` naming the chosen rule and the others; singleton resolution leaves the note absent.",
     inputSchema: {
       type: "object",
       properties: {
-        ruleId: { type: "string", description: "Rule ID of the violation." },
+        ruleId: {
+          type: "string",
+          description:
+            "Rule ID of the violation, OR a criterion ID (`wcag22:2.4.5`, `section508:…`, `en301549:…`) — the latter resolves to the most-specific satisfying rule.",
+        },
         file: { type: "string", description: "File path containing the violation." },
         line: { type: "number", description: "Line number of the violation." },
         sourceContext: {
@@ -116,13 +99,25 @@ export const suggestFixTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
-    const ruleId = strParam(params, "ruleId");
+    const inputRuleId = strParam(params, "ruleId");
     const filePath = strParam(params, "file");
     const line = numParam(params, "line");
 
-    if (!(ruleId && filePath) || line === undefined) {
-      return checkRequiredParams(ruleId, filePath, line) as McpToolResult;
+    if (!(inputRuleId && filePath) || line === undefined) {
+      return checkRequiredParams(inputRuleId, filePath, line) as McpToolResult;
     }
+
+    // Criterion-id bridge: when the caller passes a criterion ID
+    // (`wcag22:N.N.N`, `section508:…`, `en301549:…`) instead of a rule
+    // ID, resolve it to the most-specific rule that satisfies it.
+    // Manual-review candidates carry criterion IDs; without this bridge
+    // the handoff `review_candidates → suggest_fix` hard-errors with
+    // `Rule not found. Call list_rules.` See
+    // `docs/kb/architecture/ai-first-consumer.md`: "One tool call
+    // should answer 'what next?'" + "Surface, don't suppress."
+    const bridge = applyCriterionBridge(inputRuleId, session);
+    if ("error" in bridge) return bridge.error;
+    const { ruleId, disambiguationNote } = bridge;
 
     if (!findRule(ruleId, session)) {
       return errorResult({
@@ -213,7 +208,7 @@ export const suggestFixTool: McpTool = {
       // suggest_fix scan is single-file, so `result.violations` IS the
       // per-file set — no further filtering needed here.
       sameFileFindings: result.violations,
-      ...optionalSuggestFixFields(scanWarnings, vendorContext),
+      ...optionalSuggestFixFields(scanWarnings, vendorContext, disambiguationNote),
     });
     return textResult(payload as Record<string, unknown>);
   },
