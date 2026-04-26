@@ -33,6 +33,10 @@
  *      auto-advancing content (typically a 5-second default cycle):
  *        - Bootstrap 5: `data-bs-ride="carousel"` / `="true"`.
  *        - Bootstrap 4 (legacy): `data-ride="carousel"` / `="true"`.
+ *        - Bootstrap 3 / legacy themes: `data-interval="<ms>"` paired
+ *          with a whole-token `carousel` class. Older themes omit the
+ *          `data-ride` attribute and rely on the BS3 plugin's
+ *          `.carousel[data-interval]` selector to start the timer.
  *        - jQuery slider plugins that auto-init from a documented class
  *          on page load: `flexslider` (jQuery FlexSlider), `camera_wrap`
  *          (Camera slideshow), `sl-slider-wrapper` (Slicebox / sl-slider).

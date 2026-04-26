@@ -577,6 +577,112 @@ describe("rule motion/pause-stop-hide", () => {
     });
   });
 
+  describe("Bootstrap 3 / legacy data-interval attribute on .carousel: fires when", () => {
+    // Older Bootstrap 3 themes (and forks) omit `data-ride` and rely on
+    // the `.carousel[data-interval]` selector the BS3 plugin scans for to
+    // start its auto-advance timer. The signal is provable from the code:
+    // a literal `data-interval` attribute paired with a whole-token
+    // `carousel` class. Per the AI-first doctrine, the rule still surfaces
+    // even when adjacent pause controls are present — it cannot prove
+    // those controls are keyboard-operable or announce pause semantics
+    // to AT, so it surfaces and annotates rather than suppresses.
+    it("data-interval='5000' on a .carousel wrapper fires", () => {
+      const v = runRule(
+        rule,
+        `<div id="myCarousel" class="carousel slide" data-interval="5000"></div>`,
+        { filePath: "c.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(`data-interval="5000"`);
+      expect(v[0]?.message).toContain("Bootstrap 3");
+      expect(v[0]?.message).toContain("auto-advance");
+    });
+
+    it("data-interval='3000' fires (echoes the configured cycle in the message)", () => {
+      const v = runRule(rule, `<div class="carousel" data-interval="3000"></div>`, {
+        filePath: "c.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("3000ms");
+    });
+
+    it("class with extra tokens still matches as long as `carousel` is a whole token", () => {
+      const v = runRule(
+        rule,
+        `<div class="container carousel slide js-mod" data-interval="4000"></div>`,
+        { filePath: "c.html" },
+      );
+      expect(v).toHaveLength(1);
+    });
+
+    it("rule still fires when an adjacent pause-style button is present (surface-don't-suppress)", () => {
+      // Per the AI-first doctrine, pause-on-hover and visible pause
+      // buttons are not provable from static markup as keyboard-
+      // operable WCAG-conformant controls. The rule surfaces every
+      // auto-init signal so the agent verifies; it does not suppress
+      // on speculative pause-control evidence.
+      const src = [
+        `<!doctype html><html><body>`,
+        `<div class="carousel slide" data-interval="5000">`,
+        `  <div class="carousel-inner"><div class="carousel-item active">…</div></div>`,
+        `  <button type="button" class="carousel-control-prev"><span aria-label="pause">‖</span></button>`,
+        `</div>`,
+        `</body></html>`,
+      ].join("\n");
+      const v = runRule(rule, src, { filePath: "c.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(`data-interval="5000"`);
+      // The descendant-controls note still annotates so the agent has
+      // the verification anchor without losing the finding.
+      expect(v[0]?.message).toContain("carousel-control-prev");
+    });
+  });
+
+  describe("Bootstrap 3 / legacy data-interval attribute on .carousel: does NOT fire when", () => {
+    it("data-interval is present but the element has no `carousel` class token", () => {
+      const v = runRule(rule, `<div class="slide my-rotator" data-interval="5000"></div>`, {
+        filePath: "c.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("data-interval='false' opts out of auto-advance (Bootstrap's documented opt-out)", () => {
+      const v = runRule(rule, `<div class="carousel" data-interval="false"></div>`, {
+        filePath: "c.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("`carousel` substring inside another token (e.g. `my-carousel-x`) is NOT a whole-token match", () => {
+      const v = runRule(rule, `<div class="my-carousel-x" data-interval="5000"></div>`, {
+        filePath: "c.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("regular non-carousel content with no data-interval is unchanged", () => {
+      const v = runRule(rule, `<div class="container"><p>Hello</p></div>`, {
+        filePath: "c.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("data-bs-ride takes precedence over data-interval (only one finding emitted)", () => {
+      const v = runRule(
+        rule,
+        `<div class="carousel" data-bs-ride="carousel" data-interval="5000"></div>`,
+        { filePath: "c.html" },
+      );
+      // Element-level walk emits exactly one finding; the
+      // highest-precedence signal (Bootstrap 5 data-bs-ride) wins so the
+      // reason text isn't duplicated.
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("Bootstrap 5");
+    });
+  });
+
   describe("legacy Bootstrap 4 data-ride attribute: fires when", () => {
     // Legacy BS4 carousels use `data-ride="carousel"` (no `bs` prefix).
     // The same auto-advance semantics apply, so they belong in the
