@@ -93,11 +93,9 @@ describe("rule semantics/nested-interactive", () => {
     });
 
     it("an element with role=link is nested inside an a[href]", () => {
-      const violations = runRule(
-        rule,
-        `<a href="/outer"><span role="link">Inner</span></a>`,
-        { filePath: "index.html" },
-      );
+      const violations = runRule(rule, `<a href="/outer"><span role="link">Inner</span></a>`, {
+        filePath: "index.html",
+      });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain(`role="link"`);
       expect(violations[0]?.message).toContain("<a href>");
