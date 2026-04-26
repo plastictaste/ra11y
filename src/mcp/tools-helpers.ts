@@ -722,10 +722,7 @@ export async function runScanAndFormat(
   // the agent needs to triage with rides on the `couldBeWrongBecause`
   // axis. No-op fast path when no rule is degraded.
   const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
-  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(
-    fileEntries,
-    perRuleLimitations,
-  );
+  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(fileEntries, perRuleLimitations);
   // Per-rule trust telemetry (Q2R2-RULE-COV). The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
   // splits the 0-findings rules into "trust the clean tally" vs "scan
