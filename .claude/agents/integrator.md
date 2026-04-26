@@ -48,6 +48,8 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
    - `git branch -D <branch>` if the branch still exists.
    - If the Agent tool already cleaned up (no-change case), these commands no-op — that is fine.
 
+3a. **Pre-build dist if any pick touched src/.** Empirically every other turn loses one round-trip to mcp-dist-freshness flagging stale `dist/cli.js` after a cherry-pick — rule registries, MCP handler signatures, scanner internals all bundle into the shipped dist. Cheap pre-emptive `bun run build` skips that recovery cycle. Run it when `git diff HEAD~<N> HEAD --name-only` (where N = number of integrated picks) shows any path under `src/`. Skip for doc-only / test-only / .claude/ picks. Do NOT commit `dist/` (gitignored, not tracked).
+
 4. **Final verify.** Run `bun run verify` on clean `main`.
    - If green: proceed to step 5.
    - If red AND attributable to the most recent pick: `git reset --hard HEAD~1`, move that pick from `integrated` to `blocked` as `{ item, sha: null }`, append `"verify_red: <item> — <first failing line>"` to top-level `errors[]`, re-run verify. If still red after the revert, set `verifyOk: false`, append `"cross_pick_interaction: verify still red after reverting <item>"` to `errors[]`, and stop — the orchestrator will investigate.
