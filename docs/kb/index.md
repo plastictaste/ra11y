@@ -98,6 +98,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/disabled-link-surrogate](./rules/aria__disabled-link-surrogate.md)
 - [aria/expanded-on-disclosure](./rules/aria__expanded-on-disclosure.md)
 - [aria/hidden-focus](./rules/aria__hidden-focus.md)
+- [aria/icon-child-missing-aria-hidden](./rules/aria__icon-child-missing-aria-hidden.md)
 - [aria/icon-font-hidden](./rules/aria__icon-font-hidden.md)
 - [aria/invalid-role](./rules/aria__invalid-role.md)
 - [aria/labelledby-target-exists](./rules/aria__labelledby-target-exists.md)
