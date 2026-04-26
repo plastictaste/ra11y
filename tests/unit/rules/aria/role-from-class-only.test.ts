@@ -116,11 +116,55 @@ describe("rule aria/role-from-class-only", () => {
       });
       expect(v).toHaveLength(0);
     });
+  });
 
-    it("the SSG admonition pattern places an h5 as the first element child", () => {
-      // <div class="note info"><h5>Topic</h5><p>…</p></div> — the heading
-      // carries the structural severity signal (AT announces "heading
-      // level 5: Topic"), so the role-from-class premise does not hold.
+  describe("HTML: heading-as-label refinement", () => {
+    it("soft-fires at info severity when the first child heading text IS a severity word ('Tip')", () => {
+      // <div class="note info"><h5>Tip</h5><p>…</p></div> — AT announces
+      // "heading level 5: Tip", so the severity label is announced via
+      // the heading. Surface as a soft candidate rather than a warning
+      // so the agent verifies the visual/AT mapping rather than
+      // reflexively adding role.
+      const v = runRule(
+        rule,
+        `<div class="note info">
+  <h5>Tip</h5>
+  <p>Press Ctrl+K to open the command palette.</p>
+</div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain('first child heading reads "tip"');
+      expect(v[0]?.suggestion).toContain("severity-word dictionary");
+    });
+
+    it("soft-fires at info when the heading text is 'Warning' (severity word)", () => {
+      const v = runRule(
+        rule,
+        `<div class="warning"><h3>Warning</h3><p>This action cannot be undone.</p></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain('reads "warning"');
+    });
+
+    it("soft-fires at info even with trailing punctuation in heading ('Note:')", () => {
+      const v = runRule(
+        rule,
+        `<div class="note"><h4>Note:</h4><p>Friendly aside about the next step.</p></div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain('reads "note"');
+    });
+
+    it("still warns when the first child heading text is NOT a severity word ('Topic')", () => {
+      // The heading provides structure but no severity signal — AT
+      // announces "heading level 5: Topic" which conveys topic but not
+      // severity. The role/severity gap is unchanged.
       const v = runRule(
         rule,
         `<div class="note info">
@@ -129,53 +173,76 @@ describe("rule aria/role-from-class-only", () => {
 </div>`,
         { filePath: "index.html" },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
     });
 
-    it("the warning admonition wraps an h3 as the first element child", () => {
+    it("still warns when the heading text is a multi-word topic label ('Breaking change')", () => {
       const v = runRule(
         rule,
         `<div class="warning"><h3>Breaking change</h3><p>Migration steps below.</p></div>`,
         { filePath: "index.html" },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+    });
+
+    it("still warns when the heading text contains a severity word but is multi-word ('Performance note')", () => {
+      // "Performance note" — the heading is a topic label that happens
+      // to include "note", not a severity announcement. The dictionary
+      // match is whole-word-only on a single-word heading.
+      const v = runRule(
+        rule,
+        `<div class="caution">\n    <h4>Performance note</h4>\n    <p>Body.</p>\n  </div>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
     });
   });
 
-  describe("HTML: heading-first-child exception", () => {
-    it("still fires when the wrapper has only prose (no heading first child)", () => {
+  describe("HTML: heading-first-child structural cases", () => {
+    it("still warns when the wrapper has only prose (no heading first child)", () => {
       const v = runRule(rule, `<div class="note info"><p>just prose, no heading.</p></div>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
     });
 
-    it("still fires when leading text precedes the heading (heading is no longer the announced label)", () => {
-      // Non-whitespace text before the heading defeats the pattern — AT
-      // hears the prose first, so the heading is not functioning as the
-      // block's announced label.
+    it("still warns when leading text precedes the heading (heading is no longer the announced label)", () => {
+      // Non-whitespace text before the heading defeats the heading-as-
+      // label pattern — AT hears the prose first, so the heading is not
+      // functioning as the block's announced label.
       const v = runRule(
         rule,
         `<div class="warning">Heads up: <h3>Important</h3><p>Body.</p></div>`,
         { filePath: "index.html" },
       );
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
     });
 
-    it("still fires when the first element child is a non-heading (p, div, span)", () => {
+    it("still warns when the first element child is a non-heading (p, div, span)", () => {
       const v = runRule(rule, `<div class="alert"><span>just a span</span><h3>X</h3></div>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
     });
 
-    it("skips when whitespace-only text precedes the heading first child", () => {
+    it("soft-fires at info when whitespace-only text precedes a severity-word heading", () => {
+      // Whitespace formatting between the open tag and the heading is
+      // ignored, so <h4>Tip</h4> is still recognised as the first
+      // element child and the severity-word match applies.
       const v = runRule(
         rule,
-        `<div class="caution">\n    <h4>Performance note</h4>\n    <p>Body.</p>\n  </div>`,
+        `<div class="caution">\n    <h4>Caution</h4>\n    <p>Body.</p>\n  </div>`,
         { filePath: "index.html" },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain('reads "caution"');
     });
   });
 
@@ -224,8 +291,25 @@ describe("rule aria/role-from-class-only", () => {
       );
       expect(v).toHaveLength(0);
     });
+  });
 
-    it("the JSX admonition's first element child is an h5", () => {
+  describe("JSX: heading-as-label refinement", () => {
+    it("soft-fires at info when the first child heading is a severity word ('Tip')", () => {
+      const v = runRule(
+        rule,
+        `export const X = () => (
+  <div className="note info">
+    <h5>Tip</h5>
+    <p>Body.</p>
+  </div>
+);`,
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain('reads "tip"');
+    });
+
+    it("still warns when the first child heading is a non-severity topic ('Topic')", () => {
       const v = runRule(
         rule,
         `export const X = () => (
@@ -235,7 +319,8 @@ describe("rule aria/role-from-class-only", () => {
   </div>
 );`,
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
     });
   });
 
