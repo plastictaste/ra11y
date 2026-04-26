@@ -631,108 +631,135 @@ describe("per-rule coverage end-to-end", () => {
   it("per-finding couldBeWrongBecause carries the per-rule degradation reason for every degraded rule", () => {
     // Two HTML files: one parses cleanly and emits a keyboard/handler-
     // missing finding (`<div onclick=…>` with no keyboard sibling); the
-    // second deliberately fails to parse (truncated tag) so it lands
-    // in `parseErrorFiles` and the per-rule row drops to
-    // `coverageConfidence: "low"` with
-    // `coverageConfidenceReason: "file-parse-error"`. Without the
-    // parity fix, the per-rule row would carry the substrate-level
-    // signal but the per-finding entry would still ship at
-    // `confidence: "high"` with no `couldBeWrongBecause` — the
-    // contradictory shape the doctrine names.
-    const cleanHtml = `<!doctype html><html lang="en"><head><title>t</title></head><body><div onclick="doit()">Click</div></body></html>`;
-    // Truncated open-tag in the middle — the HTML parser records an
-    // error and produces no recovered AST that fires rules, so the
-    // file lands in `parseErrorFiles`.
-    const brokenHtml = `<!doctype html><html lang="en"><head><title>t</title></head><body><div onclick="doit()">unterminated`;
-    const files = [htmlFile("site/clean.html", cleanHtml), htmlFile("site/broken.html", brokenHtml)];
-    const { result, perRuleCoverage } = runScan({
-      standards: [wcag22],
-      rules: BUILTIN_RULES,
-      enabled: ["wcag22"],
-      files,
-    });
-
-    const response = assembleScanFamilyResponse({
-      violations: result.violations,
-      rawViolations: result.violations,
-      parsedFiles: files,
-      activeRules: BUILTIN_RULES,
-      durationMs: result.durationMs,
-      enabledStandards: result.enabledStandards,
-      perRuleCoverage,
-      reviewCandidates: [],
-      wrappers: {
-        wrappers: [],
-        sessionOnly: [],
-        bySource: {
-          fromConfig: [],
-          fromSession: [],
-          fromAutoDetect: { confirmed: [], assumed: [] },
-        },
-        elements: {},
-      },
-      unusedWrappers: [],
-      suppressions: [],
-      verboseMeta: true,
-      preset: undefined,
-      actionableManual: 0,
-      untargetedCriteria: 0,
-      configSource: null,
-      rootSource: "explicit",
-    });
-
-    // Build the same lookup the helper uses so the test names exactly
-    // which rules it expects to see propagated. Read off the meta block
-    // — that's the surface the agent sees, and any drift between meta
-    // and per-finding is the silent-miss the parity fix exists to
-    // close.
+    // second deliberately fails to parse (truncated tag) so the file
+    // lands in `partialParseFiles` and every rule whose gate matched it
+    // drops to `coverageConfidence: "low"` with
+    // `coverageConfidenceReason: "partial-parse"`. Without the parity
+    // fix, the per-rule rows would carry the substrate-level signal
+    // but per-finding entries would still ship at `confidence: "high"`
+    // with no `couldBeWrongBecause` — the contradictory shape the
+    // doctrine names.
+    const response = assembleParityFixture();
     const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
-    const degradedRuleIds = new Set(
-      adjustedRows.filter((r) => r.coverageConfidence !== "high").map((r) => r.ruleId),
-    );
+    const degradedRuleIds = collectDegradedRuleIds(adjustedRows);
     expect(degradedRuleIds.size).toBeGreaterThan(0);
 
-    // Sanity: at least one degraded rule actually emitted a finding on
-    // this fixture — otherwise the parity invariant is vacuous because
-    // there's nothing to enrich.
-    let observedAtLeastOneEnrichedFinding = false;
-    for (const file of response.files) {
-      for (const finding of file.findings) {
-        if (!degradedRuleIds.has(finding.ruleId)) continue;
-        // Every per-finding emission of a degraded rule must carry
-        // SOME `couldBeWrongBecause` codes — either the propagated
-        // substrate code or a rule-emitted code that already covered
-        // the gap.
-        expect(finding.couldBeWrongBecause).toBeDefined();
-        expect(finding.couldBeWrongBecause!.length).toBeGreaterThan(0);
-        observedAtLeastOneEnrichedFinding = true;
-      }
-    }
-    expect(observedAtLeastOneEnrichedFinding).toBe(true);
+    // Every per-finding emission of a degraded rule must carry SOME
+    // `couldBeWrongBecause` codes — either the propagated substrate
+    // code or a rule-emitted code that already covered the gap.
+    expect(observeEnrichedFinding(response, degradedRuleIds)).toBe(true);
 
     // Stronger invariant: the substrate-level reason code surfaces on
     // at least one per-finding entry whose rule's adjusted row carries
-    // a `coverageConfidenceReason` (kebab-case at the source). The
-    // propagated code is snake_case so the `couldBeWrongBecause` axis
-    // stays uniform across substrate and rule-family codes.
-    const partialParseRules = new Set(
-      adjustedRows
-        .filter((r) => r.coverageConfidenceReason === "partial-parse")
-        .map((r) => r.ruleId),
-    );
+    // `coverageConfidenceReason: "partial-parse"`. The propagated code
+    // is snake_case (`partial_parse`) so the `couldBeWrongBecause`
+    // axis stays uniform across substrate and rule-family codes.
+    const partialParseRules = collectRulesWithReason(adjustedRows, "partial-parse");
     expect(partialParseRules.size).toBeGreaterThan(0);
-    let observedSubstrateCodeOnFinding = false;
-    for (const file of response.files) {
-      for (const finding of file.findings) {
-        if (!partialParseRules.has(finding.ruleId)) continue;
-        if (finding.couldBeWrongBecause?.includes("partial_parse")) {
-          observedSubstrateCodeOnFinding = true;
-        }
-      }
-    }
-    expect(observedSubstrateCodeOnFinding).toBe(true);
+    expect(observeSubstrateCode(response, partialParseRules, "partial_parse")).toBe(true);
   });
 });
+
+/**
+ * Builds the per-finding-parity fixture and assembles the scan-family
+ * response. Extracted so the test body stays inside Biome's cognitive-
+ * complexity ceiling.
+ */
+function assembleParityFixture() {
+  const cleanHtml = `<!doctype html><html lang="en"><head><title>t</title></head><body><div onclick="doit()">Click</div></body></html>`;
+  // Truncated open-tag in the middle — the HTML parser records an error
+  // and produces a partial AST that still fires rules, so the file
+  // lands in `partialParseFiles`.
+  const brokenHtml = `<!doctype html><html lang="en"><head><title>t</title></head><body><div onclick="doit()">unterminated`;
+  const files = [
+    htmlFile("site/clean.html", cleanHtml),
+    htmlFile("site/broken.html", brokenHtml),
+  ];
+  const { result, perRuleCoverage } = runScan({
+    standards: [wcag22],
+    rules: BUILTIN_RULES,
+    enabled: ["wcag22"],
+    files,
+  });
+  return assembleScanFamilyResponse({
+    violations: result.violations,
+    rawViolations: result.violations,
+    parsedFiles: files,
+    activeRules: BUILTIN_RULES,
+    durationMs: result.durationMs,
+    enabledStandards: result.enabledStandards,
+    perRuleCoverage,
+    reviewCandidates: [],
+    wrappers: {
+      wrappers: [],
+      sessionOnly: [],
+      bySource: {
+        fromConfig: [],
+        fromSession: [],
+        fromAutoDetect: { confirmed: [], assumed: [] },
+      },
+      elements: {},
+    },
+    unusedWrappers: [],
+    suppressions: [],
+    verboseMeta: true,
+    preset: undefined,
+    actionableManual: 0,
+    untargetedCriteria: 0,
+    configSource: null,
+    rootSource: "explicit",
+  });
+}
+
+/** Set of rule IDs whose adjusted coverage row is degraded below `"high"`. */
+function collectDegradedRuleIds(rows: readonly PerRuleCoverage[]): ReadonlySet<string> {
+  return new Set(rows.filter((r) => r.coverageConfidence !== "high").map((r) => r.ruleId));
+}
+
+/** Set of rule IDs whose adjusted row carries the named substrate-level reason. */
+function collectRulesWithReason(
+  rows: readonly PerRuleCoverage[],
+  reason: PerRuleCoverage["coverageConfidenceReason"],
+): ReadonlySet<string> {
+  return new Set(rows.filter((r) => r.coverageConfidenceReason === reason).map((r) => r.ruleId));
+}
+
+/**
+ * Walks per-file findings and asserts each finding from a degraded rule
+ * carries a non-empty `couldBeWrongBecause`. Returns whether at least
+ * one such finding was observed (the parity invariant is vacuous if no
+ * degraded rule actually emitted on the fixture).
+ */
+function observeEnrichedFinding(
+  response: ReturnType<typeof assembleScanFamilyResponse>,
+  degradedRuleIds: ReadonlySet<string>,
+): boolean {
+  let any = false;
+  for (const file of response.files) {
+    for (const finding of file.findings) {
+      if (!degradedRuleIds.has(finding.ruleId)) continue;
+      expect(finding.couldBeWrongBecause).toBeDefined();
+      expect(finding.couldBeWrongBecause!.length).toBeGreaterThan(0);
+      any = true;
+    }
+  }
+  return any;
+}
+
+/** Returns true when at least one finding from `targetRules` lists `code` in `couldBeWrongBecause`. */
+function observeSubstrateCode(
+  response: ReturnType<typeof assembleScanFamilyResponse>,
+  targetRules: ReadonlySet<string>,
+  code: string,
+): boolean {
+  for (const file of response.files) {
+    for (const finding of file.findings) {
+      if (!targetRules.has(finding.ruleId)) continue;
+      if (finding.couldBeWrongBecause?.includes(code)) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Builds the heterogeneous file pool used by the appliesTo-parity
