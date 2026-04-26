@@ -255,5 +255,106 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
   });
 });
 
+// Cross-surface count invariant — second-pass coverage. The first
+// describe blocks above pin equality on the manual-review tally and the
+// untargetedCriteria sub-counter. The blocks below extend the invariant
+// to the two remaining counters the field-test sweeps observed
+// drifting on real corpora: `actionableManualItems` agreement with
+// `coverage[].manualWithCandidates.length`, and `parseErrorFileCount`
+// agreement between `scan_project` and `coverage` on the same cwd.
+//
+// Doctrine: every shared cross-tool counter must be derived from one
+// shared helper, and an integration test must pin equality on
+// identical cwd. See `docs/kb/architecture/ai-first-consumer.md`
+// "Cross-surface count invariant."
+/**
+ * `coverage` returns the spread per-standard entry at the top level
+ * when only one standard is enabled (single-entry response shape per
+ * `tool-coverage.ts` `entries.length === 1` branch). Multi-standard
+ * scans surface as a top-level array. Tests below use the default
+ * single-standard path, so the envelope flattens `manualWithCandidates`
+ * to the top level alongside `analysisCoverage`.
+ */
+interface FullCoverageEnvelope extends CoverageBody {
+  readonly manualWithCandidates?: ReadonlyArray<unknown>;
+  readonly analysisCoverage?: { readonly parseErrorFileCount?: number };
+}
+interface ScanBodyExt extends ScanBody {
+  readonly meta?: {
+    readonly analysisCoverage?: { readonly parseErrorFileCount?: number };
+  };
+}
+
+/**
+ * Builds a fixture where one file errors at parse time so the
+ * `parseErrorFiles` bucket has at least one path. The TSX parser
+ * bails on `<div ` without a matching `</div>`, which is the
+ * canonical "fully-failed parse" shape — no recoverable AST, the
+ * file lands in `parseErrorFiles` (not `partialParseFiles`).
+ *
+ * The clean `page.html` sibling keeps `filesScanned > 0` so the
+ * `scanned_zero_files` warning doesn't fire and the response carries
+ * an `analysisCoverage` block to compare across tools.
+ */
+async function makeParseErrorFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-parse-error-"));
+  await writeFile(join(dir, "page.html"), `<html><body><p>hello</p></body></html>`);
+  await writeFile(join(dir, "broken.tsx"), `const x = function(){return <div without close;`);
+  return dir;
+}
+
+describe("MCP invariant: actionable count matches coverage's manualWithCandidates list", () => {
+  it("scan.plan.actionableManualItems === coverage.entries[0].manualWithCandidates.length", async () => {
+    const dir = await makeFiredManualCriterionFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const scanBody = body<ScanBody>(responses[1]);
+    const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
+    const checklistBody = body<ChecklistBody>(responses[3]);
+    const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates?.length ?? 0;
+    expect(scanBody.plan.actionableManualItems).toBe(manualWithCandidatesLen);
+    expect(checklistBody.summary.actionable).toBe(manualWithCandidatesLen);
+  });
+});
+
+describe("MCP invariant: parseErrorFileCount agrees between scan_project and coverage", () => {
+  it("emits identical parseErrorFileCount on identical cwd with parse failures", async () => {
+    const dir = await makeParseErrorFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+      toolCall(3, "coverage", { cwd: dir, verboseMeta: true }),
+    ]);
+    const scanBody = body<ScanBodyExt>(responses[1]);
+    const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
+    const scanCount = scanBody.meta?.analysisCoverage?.parseErrorFileCount ?? 0;
+    const coverageCount = coverageEnvelope.analysisCoverage?.parseErrorFileCount ?? 0;
+    // The fixture intentionally seeds a parse-error file (`broken.tsx`
+    // with an unclosed `<div`); both surfaces must observe at least
+    // one. A 0/0 result here would mean the fixture isn't tripping
+    // the parser and the test passes trivially.
+    expect(scanCount).toBeGreaterThan(0);
+    expect(scanCount).toBe(coverageCount);
+  });
+
+  it("emits identical parseErrorFileCount on a clean fixture (zero on both sides)", async () => {
+    const dir = await makeMediaFreeFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+    ]);
+    const scanBody = body<ScanBodyExt>(responses[1]);
+    const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
+    const scanCount = scanBody.meta?.analysisCoverage?.parseErrorFileCount ?? 0;
+    const coverageCount = coverageEnvelope.analysisCoverage?.parseErrorFileCount ?? 0;
+    expect(scanCount).toBe(coverageCount);
+  });
+});
+
 // Silence the unused warning on the helper used implicitly above.
 void mkdir;

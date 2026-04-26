@@ -676,8 +676,20 @@ export async function runScanAndFormat(
   // anything emerge from this file?", and a file with grounded review
   // candidates from a source-text finder must NOT land in the
   // `invisible-to-rules` bucket (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
-  const violationFilePaths = new Set(filtered.map((v) => v.location.filePath));
-  const outputFilePaths = outputFilePathSet(filtered, report.candidates ?? []);
+  //
+  // Cross-surface invariant: both sets are derived from the raw
+  // scanner output (`result.violations`, `report.candidates`) — NOT
+  // the post-filter `filtered` view. The `coverage` and `checklist`
+  // tools take the same raw view (they apply no severity / criterion-
+  // skip / wrapper-noise filters before computing their parseError
+  // split), so deriving the scan-confidence telemetry from the same
+  // raw scanner output is the only way `analysisCoverage.parseErrorFileCount`
+  // agrees across all three project-rooted surfaces on identical
+  // input. The post-filter shape is what the consumer reads on
+  // `files[]`/`plan`; the parser/finder honesty signal is upstream
+  // of the consumer-facing filters.
+  const violationFilePaths = new Set(result.violations.map((v) => v.location.filePath));
+  const outputFilePaths = outputFilePathSet(result.violations, report.candidates ?? []);
   // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: detect token-only `.scss`
   // partials so the per-rule coverage downgrade and the response-level
   // `scss_unresolved_variables` warning agree on the same file list.

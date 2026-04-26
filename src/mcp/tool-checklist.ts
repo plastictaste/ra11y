@@ -24,6 +24,7 @@ import {
   irrelevanceReason,
   isLikelyIrrelevant,
 } from "./manual-applicability.ts";
+import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
@@ -273,6 +274,29 @@ function detectPerCriterionClamp(
 }
 
 /**
+ * Cross-surface count invariant: `summary.actionable` and
+ * `summary.untargetedCriteria` are derived from the shared
+ * `tallyManualCriteriaFromCoverage` helper — the same algorithm
+ * `scan_project` and `coverage` use over identical inputs. Extracted
+ * to a helper so the handler stays under the lint's cognitive-
+ * complexity ceiling and so the conditional-skip-set spread (the
+ * only branch on this seam) lives next to the helper call.
+ */
+function computeChecklistSummaryTally(
+  coverage: readonly PerStandardCoverage[],
+  applicability: Applicability,
+  candidates: readonly ReviewCandidate[],
+  skipSet: ReadonlySet<string> | undefined,
+): { readonly actionable: number; readonly untargeted: number } {
+  if (skipSet === undefined) {
+    return tallyManualCriteriaFromCoverage(coverage, applicability, candidates);
+  }
+  return tallyManualCriteriaFromCoverage(coverage, applicability, candidates, {
+    skipCriteria: skipSet,
+  });
+}
+
+/**
  * V1-UNTARGETED-CRITERIA-DEFAULT-EMIT: builds the conditional-spread
  * fragment for `untargetedCriteriaList` based on the tri-state
  * `showUntargeted` input. Default (unset) emits a bare criterion-ID
@@ -460,9 +484,10 @@ export const checklistTool: McpTool = {
     // per-item builder then omits `stale` across the board, which is
     // honest rather than guessing.
     const stalenessProbe = createGitStalenessProbe(cwd);
+    const reportCandidates = report.candidates ?? [];
     const { needsReview, likelyIrrelevant } = bucketChecklistItems(
       coverage,
-      report.candidates ?? [],
+      reportCandidates,
       applicability,
       sources,
       attestationsByCriterion,
@@ -581,9 +606,26 @@ export const checklistTool: McpTool = {
     // Previous names (`untargeted` count, `manualUntargetedCount`) are
     // removed — a minor shape break, called out in CHANGELOG so a
     // single grep surfaces the migration.
+    //
+    // Cross-surface count invariant: `actionable` and `untargetedCriteria`
+    // are derived from the shared `tallyManualCriteriaFromCoverage` helper
+    // — the same algorithm `scan_project` and `coverage` use over
+    // identical `coverage[].manualCriteria` + `applicability` +
+    // `candidates` inputs. Computing them off `needsReview.length` (the
+    // pre-helper recipe) silently drifted on real corpora when the
+    // bucket-iteration order, the shared-candidate dedup pass, or
+    // the `findStandard` lookup diverged from the helper's set
+    // semantics. The helper subtracts caller `skipCriterion` so the
+    // counts match the items the response surfaces.
+    const summaryTally = computeChecklistSummaryTally(
+      coverage,
+      applicability,
+      reportCandidates,
+      skipSet,
+    );
     const summary = {
-      actionable: actionable.length,
-      untargetedCriteria: untargeted.length,
+      actionable: summaryTally.actionable,
+      untargetedCriteria: summaryTally.untargeted,
       // One-line gloss: untargeted count is cryptic on its own — the
       // agent's read-order goes summary → items, so the definition
       // belongs here, not buried in the tool docstring.

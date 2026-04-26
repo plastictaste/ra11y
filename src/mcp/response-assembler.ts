@@ -100,6 +100,21 @@ import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
  */
 export interface ScanFamilyResponseInput {
   readonly violations: readonly Violation[];
+  /**
+   * Raw scanner-emitted violations BEFORE caller-side filters
+   * (severity / criterion-skip / wrapper-noise / vendor-CSS dedupe).
+   * Drives the `parseErrorFiles` vs `partialParseFiles` split so
+   * `analysisCoverage.parseErrorFileCount` reports the same number on
+   * every project-rooted tool consuming the same scan input — the
+   * cross-surface count invariant doctrine in
+   * `docs/kb/architecture/ai-first-consumer.md` makes this load-bearing.
+   * Without this, the post-filter `violations` field above silently
+   * shrinks the parseError split on the scan-family path while
+   * `coverage` / `checklist` (which apply no filters) keep the raw
+   * view, drifting the count between tools on the same `cwd`.
+   * Omit to fall back to `violations` (legacy callers).
+   */
+  readonly rawViolations?: readonly Violation[];
   readonly parsedFiles: readonly ParsedFile[];
   readonly activeRules: readonly Rule[];
   readonly durationMs: number;
@@ -323,6 +338,7 @@ export function assembleScanFamilyResponse(
 ): ScanFamilyResponse {
   const {
     violations,
+    rawViolations,
     parsedFiles,
     activeRules,
     durationMs,
@@ -344,6 +360,16 @@ export function assembleScanFamilyResponse(
     sessionWrappersMismatchCwd,
     configSearchSawProjectMarker,
   } = input;
+  // Cross-surface count invariant: when the caller supplied raw
+  // (pre-filter) violations, derive the parser/finder-honesty
+  // `findingFilePaths` from them so this seam agrees with `coverage`
+  // / `checklist` on identical input. Falls back to the post-filter
+  // `violations` for legacy callers that didn't thread `rawViolations`
+  // through; on those paths the count drifts the same way it did
+  // before this change, but the documented `coverage` / `checklist`
+  // surfaces (which always pass through `runScan` directly without
+  // filters) stay aligned.
+  const parseErrorViolations = rawViolations ?? violations;
 
   // (1) Group + build per-file findings. Thread the per-file source
   // text through so `buildAgentFinding` can run the same
@@ -394,8 +420,8 @@ export function assembleScanFamilyResponse(
   // a file with grounded review candidates from a source-text finder
   // must NOT land in the `invisible-to-rules` bucket
   // (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
-  const violationFilePaths = violationFilePathSet(violations);
-  const outputFilePaths = outputFilePathSet(violations, reviewCandidates);
+  const violationFilePaths = violationFilePathSet(parseErrorViolations);
+  const outputFilePaths = outputFilePathSet(parseErrorViolations, reviewCandidates);
   // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS: route the rows
   // through the parse-error adjustment once so the meta block and the
   // top-level `ruleCoverage` derivative agree on which rules

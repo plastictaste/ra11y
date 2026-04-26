@@ -121,10 +121,39 @@ export function tallyManualCriteria(input: TallyManualCriteriaInputs): ManualCri
 }
 
 /**
+ * Optional filters for {@link tallyManualCriteriaFromCoverage}. Lets the
+ * `checklist` surface route its caller-supplied `skipCriterion` filter
+ * through the shared helper so the counts it surfaces stay derived from
+ * the same algorithm `scan_project` and `coverage` use — without
+ * forking a parallel "checklist's actionable" definition that would
+ * silently drift on real corpora.
+ *
+ * Cross-surface invariant: when `checklist` is invoked without
+ * `skipCriterion` (and `scan_project` / `coverage` never pass one
+ * through), the helper produces identical numbers across all three
+ * surfaces by construction. With a non-empty set, skipped criteria
+ * are subtracted from `applicableManualIds` (and therefore from both
+ * `actionable` and `untargeted`) so the count the agent sees matches
+ * the items the response surfaces.
+ */
+export interface TallyManualCriteriaFilters {
+  /**
+   * Criterion IDs the caller asked to drop from the manual queue.
+   * Treated identically to "this criterion was never applicable" —
+   * subtracted from `applicableManualIds` before the actionable /
+   * untargeted split runs. Empty / undefined = no filter applied.
+   */
+  readonly skipCriteria?: ReadonlySet<string>;
+}
+
+/**
  * Variant for callers that already have a coverage report (`coverage`
  * and `checklist` both build one for their own per-standard counters).
- * Keeps both surfaces walking the same fired-aware list as
- * `scan_project` would compute via {@link tallyManualCriteria}.
+ * Keeps all three surfaces (`scan_project`, `coverage`, `checklist`)
+ * walking the same fired-aware list as `scan_project` would compute
+ * via {@link tallyManualCriteria} — the cross-surface count invariant
+ * doctrine in `docs/kb/architecture/ai-first-consumer.md` makes
+ * sharing this single helper load-bearing for every caller.
  *
  * `enabledStandards` filtering is implicit: `buildCoverageReport`
  * already filters by `result.enabledStandards`, so coverage entries
@@ -137,12 +166,17 @@ export function tallyManualCriteriaFromCoverage(
   coverage: readonly PerStandardCoverage[],
   applicability: Applicability,
   candidates: readonly ReviewCandidate[],
+  filters?: TallyManualCriteriaFilters,
 ): ManualCriteriaTally {
   const candidateCriteria = new Set(candidates.map((c) => c.criterionId));
+  const skipCriteria = filters?.skipCriteria;
   const applicableManualIds = new Set<string>();
   for (const entry of coverage) {
     const { applicable } = splitManualCriteria(entry.manualCriteria, applicability);
-    for (const id of applicable) applicableManualIds.add(id);
+    for (const id of applicable) {
+      if (skipCriteria !== undefined && skipCriteria.has(id)) continue;
+      applicableManualIds.add(id);
+    }
   }
   let actionable = 0;
   for (const id of applicableManualIds) {

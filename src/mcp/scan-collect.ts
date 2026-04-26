@@ -53,6 +53,19 @@ import {
  */
 export interface ScanCollected {
   readonly violations: readonly Violation[];
+  /**
+   * Raw scanner-emitted violations BEFORE wrapper-noise / severity /
+   * criterion-skip / vendor-CSS-dedupe filtering. The post-filter
+   * `violations` field above is what the consumer reads on
+   * `files[]`/`plan`; the raw stream is what scan-confidence telemetry
+   * (the `parseErrorFiles` vs `partialParseFiles` split inside
+   * `buildAnalysisCoverage`) must derive from so the count agrees
+   * with `coverage` and `checklist` on identical input — those tools
+   * apply no filters and always classify against the raw scanner
+   * output. Cross-surface count invariant doctrine in
+   * `docs/kb/architecture/ai-first-consumer.md`.
+   */
+  readonly rawViolations: readonly Violation[];
   readonly parsedFiles: readonly ParsedFile[];
   readonly activeRules: readonly Rule[];
   readonly durationMs: number;
@@ -158,6 +171,7 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
 
   return {
     violations: filtered,
+    rawViolations: result.violations,
     parsedFiles: files,
     activeRules,
     durationMs: result.durationMs,
