@@ -1923,6 +1923,140 @@ describe("MCP tool: detect_native_wrappers", () => {
     expect(a.suggestedConfigSnippet).toBeDefined();
     expect(a.suggestedConfigSnippet).toBe(b.suggestedConfigSnippet);
   });
+
+  // ---------------------------------------------------------------------
+  // projectKind hint — derived deterministically from the parsed-file
+  // extension set + discovery walker's `skippedByExtension` map. The
+  // empty-candidates branch was previously ambiguous between "no
+  // components in a JSX repo (coverage miss)" and "this isn't a JSX
+  // repo at all (tool doesn't apply)"; the structured field rides on
+  // every response so agents can short-circuit speculative re-calls.
+  // ---------------------------------------------------------------------
+
+  it("stamps projectKind 'jsx' when the scan saw a parseable .tsx file", async () => {
+    // Provable: the parsed-file set contains at least one
+    // JSX-bearing extension. Wins over any other classification
+    // signal (a Rails repo with one stray .tsx is still a JSX project
+    // for the detector's purposes).
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-projectkind-jsx-"));
+    await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <Button onClick={x} />;");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as { projectKind?: string };
+    expect(data.projectKind).toBe("jsx");
+  });
+
+  it("stamps projectKind 'ruby' when the discovery walker rejected .rb files", async () => {
+    // V1-DETECT-NATIVE-WRAPPERS-PROJECTKIND-HINT. A Rails-shaped repo
+    // with .rb files but no JSX/HTML drops to candidates: [] under
+    // the previous shape — indistinguishable from "JSX project with
+    // no PascalCase onClick." The named-language label closes that
+    // ambiguity in one read, and the prose nextStep tells the agent
+    // the empty result is "tool doesn't apply" rather than a
+    // coverage miss.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-projectkind-ruby-"));
+    await writeFile(joinPath(dir, "app.rb"), "puts 'hello'");
+    await writeFile(joinPath(dir, "model.rb"), "class User; end");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      candidates: unknown[];
+      projectKind?: string;
+      emptyReason?: string;
+      nextStep?: string;
+    };
+    expect(data.candidates).toEqual([]);
+    expect(data.projectKind).toBe("ruby");
+    // The `no-parseable-files` early-return path applies here — the
+    // walker rejected every file on the parseable-extension check.
+    expect(data.emptyReason).toBe("no-parseable-files");
+  });
+
+  it("stamps projectKind 'static-site' when only .html parses and no backend signature", async () => {
+    // Pure HTML/CSS — the walker parsed the documents but there's no
+    // JSX surface and no .rb/.py/.go signature. The agent can read
+    // projectKind=static-site once and skip wrapper-onboarding for
+    // this codebase.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-projectkind-static-"));
+    await writeFile(
+      joinPath(dir, "index.html"),
+      "<!doctype html><html><body><h1>Hi</h1></body></html>",
+    );
+    await writeFile(joinPath(dir, "styles.css"), "body { color: black; }");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as { projectKind?: string };
+    expect(data.projectKind).toBe("static-site");
+  });
+
+  it("named-language projectKind drives the empty-result nextStep prose", async () => {
+    // The structured discriminator and the prose nudge must stay in
+    // lockstep. On a Python-shaped repo the agent reading either
+    // surface should land on "tool doesn't apply, skip
+    // detect_native_wrappers" rather than the JSX-coverage prose.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-projectkind-py-prose-"));
+    await writeFile(joinPath(dir, "app.py"), "print('hello')");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      projectKind?: string;
+      // Note: the no-parseable-files branch returns a `note` only and
+      // does not currently emit a `nextStep` field — projectKind is
+      // the structured signal the agent reads on this branch.
+    };
+    expect(data.projectKind).toBe("python");
+  });
+
+  it("projectKind: 'jsx' wins when JSX files coexist with backend-language files", async () => {
+    // Order-of-precedence guard. A monorepo subtree with a `.tsx`
+    // component file alongside `.rb` scripts must classify as
+    // `"jsx"` — the JSX surface is the strongest signal that the
+    // detector applies, and surfacing `"ruby"` here would route the
+    // agent away from a real wrapper-onboarding opportunity.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-detect-projectkind-mixed-"));
+    await writeFile(joinPath(dir, "script.rb"), "puts 'hi'");
+    await writeFile(joinPath(dir, "another.rb"), "puts 'bye'");
+    await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <Button onClick={x} />;");
+
+    const tool = findTool("detect_native_wrappers");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    const data = JSON.parse(result.content[0].text) as { projectKind?: string };
+    expect(data.projectKind).toBe("jsx");
+  });
 });
 
 describe("MCP tool: sessionConfigure", () => {

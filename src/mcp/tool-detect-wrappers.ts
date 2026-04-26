@@ -17,15 +17,22 @@ import { existsSync } from "node:fs";
 import { gitRoot } from "../utils/git.ts";
 import { buildSuggestedConfigSnippet } from "./config-snippet.ts";
 import { collectWrapperCandidates, hasOpaquePascalCaseComponents } from "./detect-wrappers-core.ts";
+import { classifyProjectKind, type ProjectKind } from "./detect-wrappers-project-kind.ts";
 import { isJsxBearingFile } from "./opaque-tag-filter.ts";
 import { scannedProject } from "./scanned-envelope.ts";
-import { errorResult, type McpTool, parseFiles, strParam, textResult } from "./tools-helpers.ts";
+import {
+  errorResult,
+  type McpTool,
+  parseFilesWithDiagnostics,
+  strParam,
+  textResult,
+} from "./tools-helpers.ts";
 
 export const detectNativeWrappersTool: McpTool = {
   def: {
     name: "detect_native_wrappers",
     description:
-      'Scan the project and list unique PascalCase components with onClick — onboarding aid for `nativeWrappers` in ra11y.config.ts. Each candidate carries a `definitionFile` pointer (absolute path resolved by one-hop basename match, or `null` when the source lives outside the scanned set) so you can open the wrapper directly to verify it wraps a native <button>/<a>/<input>. When `candidates` is empty the response carries a structured `emptyReason` discriminator (`"no-parseable-files"` for an empty cwd; `"no-parseable-jsx-files"` when parseable HTML/CSS exists but the scan saw no JSX-bearing source — `.tsx`/`.jsx`/`.mdx`/`.astro` — so the detector has no surface to inspect; `"no-pascalcase-onclick-components"` when JSX-bearing files exist but contain no PascalCase tags; or `"no-jsx-onclick-candidates-found-but-opaque-components-present"` when PascalCase components exist but none carry the detector\'s required `onClick` / controlled-input props — common in Astro/MDX where wrappers rarely ship inline handlers) so agents can branch without string-matching the prose `nextStep`; the field is omitted when candidates are non-empty. The tool does not modify files.',
+      'Scan the project and list unique PascalCase components with onClick — onboarding aid for `nativeWrappers` in ra11y.config.ts. Each candidate carries a `definitionFile` pointer (absolute path resolved by one-hop basename match, or `null` when the source lives outside the scanned set) so you can open the wrapper directly to verify it wraps a native <button>/<a>/<input>. Every response (success or empty) also carries a `projectKind` discriminator (`"jsx"` when any `.tsx`/`.jsx`/`.mdx`/`.astro` was parsed; `"ruby"`/`"python"`/`"go"` when the discovery walker rejected `.rb`/`.py`/`.go` files as non-parseable and that language dominates; `"static-site"` when only `.html`/`.htm` was parsed; `"unknown"` otherwise) so agents can short-circuit speculative re-calls on non-JSX repos — empty candidates on a Rails site are the tool not applying, not a coverage miss. When `candidates` is empty the response carries a structured `emptyReason` discriminator (`"no-parseable-files"` for an empty cwd; `"no-parseable-jsx-files"` when parseable HTML/CSS exists but the scan saw no JSX-bearing source — `.tsx`/`.jsx`/`.mdx`/`.astro` — so the detector has no surface to inspect; `"no-pascalcase-onclick-components"` when JSX-bearing files exist but contain no PascalCase tags; or `"no-jsx-onclick-candidates-found-but-opaque-components-present"` when PascalCase components exist but none carry the detector\'s required `onClick` / controlled-input props — common in Astro/MDX where wrappers rarely ship inline handlers) so agents can branch without string-matching the prose `nextStep`; the field is omitted when candidates are non-empty. The tool does not modify files.',
     inputSchema: {
       type: "object",
       properties: {
@@ -59,12 +66,19 @@ export const detectNativeWrappersTool: McpTool = {
     const root = explicitCwd ?? gitRoot(spawnCwd) ?? spawnCwd;
 
     const projectConfig = await session.loadProjectConfig(root);
-    const files = await parseFiles([root], session, root);
+    // Switched from `parseFiles` to the with-diagnostics variant so
+    // `projectKind` can read the `skippedByExtension` map — without it
+    // the tool can't distinguish "no parseable files in a Rails repo"
+    // (where `.rb` files were the dominant input the walker rejected)
+    // from "no parseable files in an empty cwd."
+    const { files, diagnostics } = await parseFilesWithDiagnostics([root], session, root);
+    const projectKind = classifyProjectKind(files, diagnostics.skippedByExtension);
     if (files.length === 0) {
       return textResult({
         scanned: scannedProject(root),
         candidates: [],
         emptyReason: "no-parseable-files",
+        projectKind,
         note: "No parseable files found.",
       });
     }
@@ -138,9 +152,10 @@ export const detectNativeWrappersTool: McpTool = {
       scanned: scannedProject(root),
       candidates,
       ...emptyReasonField,
+      projectKind,
       ...(absent.length > 0 ? { absentDeclaredWrappers: absent } : {}),
       ...snippetField,
-      nextStep: buildNextStep(candidates, absent, emptyKind),
+      nextStep: buildNextStep(candidates, absent, emptyKind, projectKind),
     });
   },
 };
@@ -174,10 +189,11 @@ function buildNextStep(
   candidates: readonly { component: string }[],
   absent: readonly string[],
   emptyKind: EmptyKind | null,
+  projectKind: ProjectKind,
 ): string {
   const parts: string[] = [];
   if (candidates.length === 0) {
-    parts.push(emptyNextStep(emptyKind));
+    parts.push(emptyNextStep(emptyKind, projectKind));
   } else {
     const names = candidates.map((c) => `"${c.component}"`).join(", ");
     parts.push(
@@ -199,8 +215,19 @@ function buildNextStep(
  * `no-parseable-jsx-files` case to a JSX-surface message rather than
  * the opaque-components nudge is the silent-misroute fix at the heart
  * of Q7-DETECT-NATIVE-WRAPPERS-EMPTY-REASON-DISCRIMINATOR.
+ *
+ * When `projectKind` is a named backend language (`"ruby"` / `"python"`
+ * / `"go"`), the prose explicitly tells the agent that
+ * `nativeWrappers` is a JSX-only concept and the empty result is
+ * "tool doesn't apply," not a coverage miss — closes
+ * V1-DETECT-NATIVE-WRAPPERS-PROJECTKIND-HINT's silent-misroute on
+ * non-JSX repos.
  */
-function emptyNextStep(emptyKind: EmptyKind | null): string {
+function emptyNextStep(emptyKind: EmptyKind | null, projectKind: ProjectKind): string {
+  if (projectKind === "ruby" || projectKind === "python" || projectKind === "go") {
+    const langLabel = projectKind === "ruby" ? "Ruby" : projectKind === "python" ? "Python" : "Go";
+    return `Project signature reads as ${langLabel} (the discovery walker saw \`${BACKEND_EXT_LABEL[projectKind]}\` files alongside the scanned set). \`nativeWrappers\` is a JSX-only concept — no React/JSX components means nothing to register here, and this empty result is "tool doesn't apply," not a coverage miss. Skip \`detect_native_wrappers\` on this project; if a sibling JSX/TSX subtree exists, re-run with a \`cwd\` rooted in that subtree.`;
+  }
   if (emptyKind === "no-parseable-jsx-files") {
     return "No JSX-bearing source files in the scanned set — the detector saw only HTML/CSS/MD files (and possibly plain `.ts` / `.js` modules, which cannot legally carry JSX). There is no surface where a `nativeWrappers` candidate would be defined. If the project genuinely has no React/JSX components, no `nativeWrappers` config is needed. If you expected JSX (e.g. an `app/` folder with `.tsx`), re-run with a `cwd` that includes those files, or pass them via `additionalPaths` on `scan_project`.";
   }
@@ -215,3 +242,14 @@ function emptyNextStep(emptyKind: EmptyKind | null): string {
   }
   return "No PascalCase onClick components detected — nothing to register.";
 }
+
+/**
+ * Human-readable extension labels for the named backend languages,
+ * used when the `projectKind` branch in {@link emptyNextStep} cites
+ * the deterministic signature evidence in the prose.
+ */
+const BACKEND_EXT_LABEL: Readonly<Record<"ruby" | "python" | "go", string>> = {
+  ruby: ".rb",
+  python: ".py",
+  go: ".go",
+};
