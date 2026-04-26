@@ -109,6 +109,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/required-attrs](./rules/aria__required-attrs.md)
 - [aria/role-from-class-only](./rules/aria__role-from-class-only.md)
 - [aria/tab-controls-missing](./rules/aria__tab-controls-missing.md)
+- [aria/tab-widget-roles](./rules/aria__tab-widget-roles.md)
 - [aria/valid-attr](./rules/aria__valid-attr.md)
 - [color/meaning-by-color-only](./rules/color__meaning-by-color-only.md)
 - [color/state-class-color-only](./rules/color__state-class-color-only.md)
