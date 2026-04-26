@@ -122,6 +122,87 @@ describe("rule forms/labels-required", () => {
     expect(rule.satisfies).toContain("wcag21:3.3.2");
   });
 
+  // Invariant: every WHATWG text-bearing input type emits identically
+  // when unlabeled. The predicate must NOT branch on `type=` — only the
+  // implicit-submit set (hidden/submit/reset/button/image) is excluded;
+  // every other type-with-text-input shares the same accessible-name
+  // requirement. Locks against a future refactor accidentally dropping
+  // a type from coverage and silently losing findings.
+  describe("invariant: all WHATWG text-bearing input types emit identically when unlabeled", () => {
+    const TEXT_BEARING_TYPES = [
+      "text",
+      "search",
+      "email",
+      "tel",
+      "url",
+      "password",
+      "number",
+      "date",
+      "time",
+      "datetime-local",
+      "month",
+      "week",
+    ] as const;
+
+    for (const type of TEXT_BEARING_TYPES) {
+      it(`HTML: fires on bare unlabeled <input type="${type}"> (no form, no aria-label)`, () => {
+        const v = runRule(rule, `<input type="${type}">`, { filePath: "index.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.severity).toBe("error");
+        expect(v[0]?.message).toContain("accessible name");
+      });
+
+      it(`HTML: fires on lone <input type="${type}"> outside any <form> wrapper`, () => {
+        // Search-style inputs, dialog inputs, and inline filters are
+        // commonly authored as bare top-level controls. The accessible-
+        // name requirement is independent of form context.
+        const v = runRule(rule, `<main><input type="${type}" name="q"></main>`, {
+          filePath: "index.html",
+        });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.severity).toBe("error");
+      });
+
+      it(`JSX: fires on bare unlabeled <input type="${type}" />`, () => {
+        const v = runRule(rule, `const X = <input type="${type}" />;`);
+        expect(v).toHaveLength(1);
+        expect(v[0]?.severity).toBe("error");
+      });
+
+      it(`HTML: <input type="${type}"> with aria-label does NOT fire`, () => {
+        const v = runRule(rule, `<input type="${type}" aria-label="Field">`, {
+          filePath: "index.html",
+        });
+        expect(v).toHaveLength(0);
+      });
+
+      it(`HTML: <input type="${type}"> wired to <label for> does NOT fire`, () => {
+        const v = runRule(
+          rule,
+          `<label for="x">Field</label><input id="x" type="${type}">`,
+          { filePath: "index.html" },
+        );
+        expect(v).toHaveLength(0);
+      });
+    }
+
+    it("HTML: emits one error per unlabeled text-bearing type when all 12 share a parent", () => {
+      // Same parent, distinct fingerprints (one of each type) — the
+      // sibling-collapse pass should NOT collapse heterogeneous types
+      // into one rollup, so every type surfaces as its own finding.
+      const inputs = TEXT_BEARING_TYPES.map(
+        (t) => `<input type="${t}" name="${t}">`,
+      ).join("\n");
+      const v = runRule(rule, `<form>\n${inputs}\n</form>`, { filePath: "all-types.html" });
+      expect(v).toHaveLength(TEXT_BEARING_TYPES.length);
+      for (const finding of v) {
+        expect(finding.severity).toBe("error");
+        // No collapse — each finding stands on its own.
+        expect(finding.siblingInstances).toBeUndefined();
+      }
+    });
+  });
+
   describe("nativeWrapperElements mapping (Q2-WRAPMAP-RULES)", () => {
     it("opts in to the native `input` tag so mapped wrappers fire", () => {
       expect(rule.wrapperTreatsAsElement).toBe("input");
