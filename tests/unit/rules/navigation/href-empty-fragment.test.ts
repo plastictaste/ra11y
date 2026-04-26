@@ -286,6 +286,120 @@ describe("rule navigation/href-empty-fragment", () => {
     });
   });
 
+  // When the flagged anchor sits inside a docs-example wrapper (or is
+  // synthesized from a docs-component template-literal `code` prop), the
+  // rule appends a one-read dismissal hint to message + suggestion so the
+  // agent can recognize demonstration code in one pass. Reason-enrichment
+  // only — emission and severity stay unchanged.
+  describe("docs-example ancestor hint", () => {
+    it("JSX: anchor inside <Example> ancestor adds the component hint", () => {
+      const violations = runRule(
+        rule,
+        `function F(){return <Example><a href="#">x</a></Example>}`,
+        { filePath: "Page.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.message).toContain("<Example> component");
+      expect(violations[0]?.suggestion).toContain("<Example> component");
+    });
+
+    it("JSX: anchor inside nested <CodeBlock> ancestor adds the component hint", () => {
+      const violations = runRule(
+        rule,
+        `function F(){return <CodeBlock><div><a href="">x</a></div></CodeBlock>}`,
+        { filePath: "Page.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("<CodeBlock> component");
+    });
+
+    it("HTML: anchor inside <pre><code> adds a code-display block hint", () => {
+      // The ancestor walk goes child → parent, so <code> is the closest
+      // matching ancestor and wins. Either tag is a valid hint — assert
+      // on the substring "block" to keep the test robust to either.
+      const violations = runRule(rule, `<pre><code><a href="#">x</a></code></pre>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("block");
+      expect(violations[0]?.message).toContain("<code> block");
+    });
+
+    it("HTML: anchor inside class-tagged wrapper adds the class-name hint", () => {
+      const violations = runRule(rule, `<div class="docs-example"><a href="#">x</a></div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("example");
+    });
+
+    it("HTML: anchor outside any docs-example wrapper has no hint appended", () => {
+      const violations = runRule(rule, `<div><a href="#">x</a></div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("demonstration code");
+      expect(violations[0]?.suggestion).not.toContain("demonstration code");
+    });
+
+    it("JSX: existing emission is preserved when no example ancestor exists", () => {
+      // Regression guard — without a docs-example ancestor the message is
+      // unchanged from the pre-hint shape.
+      const violations = runRule(rule, `const X = <a href="#">x</a>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.message).not.toContain("demonstration code");
+    });
+  });
+
+  // MDX docs-component template-literal `code` prop — Starlight /
+  // Docusaurus / Next MDX docs ship rendered HTML previews inside a JSX
+  // attribute whose value is a substitution-free template literal. The
+  // in-house MDX parser extracts that body and synthesizes JSX elements
+  // for it (see `src/input/parsers/mdx-example-extractor.ts`); each
+  // synthesized element carries `synthesized.source === "mdx-example-code"`.
+  // When the flagged anchor is one of those, the hint names the code-prop
+  // origin so an agent can dismiss in one read.
+  describe("docs-example code-prop template-literal hint (MDX)", () => {
+    it("MDX: <Example code={`<a href=\"#\"></a>`}/> adds the code-prop hint", () => {
+      const source = "function F(){return <Example code={`<a href=\"#\"></a>`}/>}";
+      const violations = runRule(rule, source, { filePath: "Page.mdx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("error");
+      expect(violations[0]?.message).toContain("code prop in JSX template literal");
+      expect(violations[0]?.message).toContain("<Example>");
+      expect(violations[0]?.suggestion).toContain("code prop in JSX template literal");
+    });
+
+    it('MDX: <Demo code={`<a href=""></a>`}/> names the Demo component in the hint', () => {
+      const source = 'function F(){return <Demo code={`<a href=""></a>`}/>}';
+      const violations = runRule(rule, source, { filePath: "Page.mdx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("code prop in JSX template literal");
+      expect(violations[0]?.message).toContain("<Demo>");
+    });
+
+    it("MDX: nested anchor inside a wrapper element in the template body inherits the code-prop hint", () => {
+      // The synthesized marker propagates to every element produced by
+      // the extractor, so a nested `<div><a href="#"/></div>` in the
+      // template body still names the code-prop origin.
+      const source = "function F(){return <Example code={`<div><a href=\"#\"></a></div>`}/>}";
+      const violations = runRule(rule, source, { filePath: "Page.mdx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("code prop in JSX template literal");
+    });
+
+    it("MDX: a real (non-synthesized) anchor in MDX body has no code-prop hint", () => {
+      // Regression guard — only synthesized anchors get the code-prop
+      // hint; an anchor authored directly as MDX content does not.
+      const source = "function F(){return <a href=\"#\">x</a>}";
+      const violations = runRule(rule, source, { filePath: "Page.mdx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("code prop in JSX template literal");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 + wcag22:2.1.1 and the 2.1 equivalents", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");

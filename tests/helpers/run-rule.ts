@@ -16,6 +16,7 @@ import {
   parseHtml,
   parseLess,
   parseMarkdown,
+  parseMdx,
   parseScss,
   parseTsx,
 } from "../../src/input/parsers/index.ts";
@@ -185,6 +186,17 @@ function parseSource(filePath: string, source: string): Ast {
     // same residue the HTML-family rules see at scan time.
     const result = parseMarkdown(source);
     return { language: "html", root: result.root, errors: result.errors };
+  }
+  if (filePath.endsWith(".mdx")) {
+    // `.mdx` routes through `parseMdx` in production: TSX-frame parse
+    // plus a docs-component code-prop pass that extracts `<Example
+    // code={`…`}/>` template-literal HTML and synthesizes JSX elements
+    // for it (see `mdx-example-extractor.ts`). Unit tests that point
+    // `filePath` at an `.mdx` file exercise the same AST shape rules
+    // see at scan time, including the `synthesized` origin marker on
+    // elements derived from code-prop bodies.
+    const result = parseMdx(source);
+    return { language: "tsx", root: result.root, errors: result.errors };
   }
   if (filePath.endsWith(".astro")) {
     // `.astro` routes through `parseAstro` which strips the component

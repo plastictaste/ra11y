@@ -32,10 +32,44 @@
 
 import { defineRule } from "../../api/plugin.ts";
 import { getHtmlAttribute, getJsxAttribute } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlNode, JsxElement, TsxModule } from "../../types/ast.ts";
+import type { HtmlDocument, HtmlElement, HtmlNode, JsxElement, TsxModule } from "../../types/ast.ts";
 import { isDomOriginExtension } from "../../utils/path.ts";
 
 type PlaceholderKind = "bare-fragment" | "empty";
+
+/**
+ * Tag/component names whose presence as an ancestor of a flagged anchor
+ * indicates the anchor is sitting inside docs-example markup — a
+ * demonstration of a (possibly anti-pattern) shape, not a live control
+ * the user can click. The agent reads the surrounding source to confirm;
+ * this hint just shortens the dismissal path.
+ *
+ * Reason-enrichment only — emission stays at the existing severity.
+ * Per AI-first doctrine ("No heuristic suppression," "Surface, don't
+ * suppress"), the rule still fires; the hint is additive context the
+ * agent reads per-finding. Mirrors `navigation/href-javascript-scheme`.
+ */
+const EXAMPLE_WRAPPER_TAGS: ReadonlyArray<{
+  readonly match: (tag: string) => boolean;
+  readonly hint: string;
+}> = [
+  // Component wrappers — case-insensitive match on the tag name.
+  { match: (t) => t.toLowerCase() === "example", hint: "<Example> component" },
+  { match: (t) => t.toLowerCase() === "codeblock", hint: "<CodeBlock> component" },
+  { match: (t) => t.toLowerCase() === "demo", hint: "<Demo> component" },
+  { match: (t) => t.toLowerCase() === "playground", hint: "<Playground> component" },
+  // Native code-display elements.
+  { match: (t) => t.toLowerCase() === "pre", hint: "<pre> block" },
+  { match: (t) => t.toLowerCase() === "code", hint: "<code> block" },
+  { match: (t) => t.toLowerCase() === "samp", hint: "<samp> block" },
+];
+
+/** Class-name substrings (lowercased) that mark a wrapper as docs-example. */
+const EXAMPLE_CLASS_SUBSTRINGS = ["example", "codeblock", "prism", "highlight"] as const;
+
+interface ExampleHint {
+  readonly hint: string;
+}
 
 /**
  * Pagination-context class tokens. When any ancestor `class` /
@@ -62,6 +96,85 @@ const PAGINATION_CLASS_TOKENS = [
   "page-link",
   "page-item",
 ] as const;
+
+/**
+ * Returns the docs-example hint for a synthesized JSX element extracted
+ * from an MDX docs component's template-literal `code` prop, or `null`
+ * when the element is not synthesized from that origin. The synthesized
+ * marker is set by `mdx-example-extractor.ts` for every JSX element
+ * derived from a `<Example code={`…`}/>` / `<Demo …/>` / `<Playground …/>`
+ * template body — a deterministic signal (no heuristic), so the hint
+ * label is honest about what the agent will see when it reads the file.
+ */
+function findCodePropTemplateHint(element: JsxElement): ExampleHint | null {
+  if (element.synthesized?.source !== "mdx-example-code") return null;
+  return { hint: `code prop in JSX template literal (<${element.synthesized.componentName}>)` };
+}
+
+/**
+ * Returns the docs-example hint for the closest JSX ancestor matching
+ * the configured tag-or-class set, or `null` if no such ancestor exists.
+ * Used when the flagged anchor sits inside a non-template-literal
+ * docs-example wrapper — `<Example><a href="#"/></Example>` — where
+ * the wrapper is a real JSX parent, not a synthesized container.
+ */
+function findJsxExampleHint(
+  anchor: JsxElement,
+  parents: ReadonlyMap<JsxElement, JsxElement>,
+): ExampleHint | null {
+  let cursor: JsxElement | undefined = parents.get(anchor);
+  while (cursor !== undefined) {
+    const here = cursor;
+    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(here.tagName));
+    if (tagHit) return { hint: tagHit.hint };
+    // JSX uses `className`; some authors still write `class` (pre-React-strict
+    // codebases or non-React JSX). Probe both.
+    const attr = getJsxAttribute(cursor, "className") ?? getJsxAttribute(cursor, "class");
+    if (attr?.value?.kind === "StringLiteral") {
+      const classHit = matchExampleClass(attr.value.value);
+      if (classHit !== null) return { hint: `wrapper className="${classHit}"` };
+    }
+    cursor = parents.get(cursor);
+  }
+  return null;
+}
+
+/**
+ * Returns the docs-example hint for the closest HTML ancestor matching
+ * the configured tag-or-class set, or `null` if no such ancestor exists.
+ */
+function findHtmlExampleHint(
+  anchor: HtmlElement,
+  parents: ReadonlyMap<HtmlElement, HtmlElement>,
+): ExampleHint | null {
+  let cursor: HtmlElement | undefined = parents.get(anchor);
+  while (cursor !== undefined) {
+    const here = cursor;
+    const tagHit = EXAMPLE_WRAPPER_TAGS.find(({ match }) => match(here.tagName));
+    if (tagHit) return { hint: tagHit.hint };
+    const className = getHtmlAttribute(cursor, "class");
+    const classHit = matchExampleClass(className);
+    if (classHit !== null) return { hint: `wrapper class="${classHit}"` };
+    cursor = parents.get(cursor);
+  }
+  return null;
+}
+
+/**
+ * Returns the matched class-name substring (lowercased), or `null`.
+ * Matching is whitespace-tokenized + substring-within-token so a token
+ * like `prism-highlight` matches both `prism` and `highlight`. The
+ * agent verifies by reading the file; this is additive context, not a
+ * gate.
+ */
+function matchExampleClass(value: string | null): string | null {
+  if (value === null) return null;
+  const lowered = value.toLowerCase();
+  for (const needle of EXAMPLE_CLASS_SUBSTRINGS) {
+    if (lowered.includes(needle)) return needle;
+  }
+  return null;
+}
 
 /**
  * Classifies a raw href string as `bare-fragment` (`"#"`), `empty` (`""`),
@@ -153,12 +266,18 @@ type Emit = (v: {
 }) => void;
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
-  walkHtmlWithPaginationContext(doc.children, null, emit);
+  // Parent map is built lazily — only when at least one offending anchor
+  // is found inside the walk. Keeps the no-finding fast path free of an
+  // extra walk.
+  const parentRef: { value: Map<HtmlElement, HtmlElement> | null } = { value: null };
+  walkHtmlWithPaginationContext(doc.children, null, doc, parentRef, emit);
 }
 
 function walkHtmlWithPaginationContext(
   nodes: readonly HtmlNode[],
   paginationToken: string | null,
+  doc: HtmlDocument,
+  parentRef: { value: Map<HtmlElement, HtmlElement> | null },
   emit: Emit,
 ): void {
   for (const child of nodes) {
@@ -168,21 +287,29 @@ function walkHtmlWithPaginationContext(
     if (child.tagName.toLowerCase() === "a") {
       const hrefValue = getHtmlAttribute(child, "href");
       const kind = classifyPlaceholder(hrefValue);
-      if (kind) emit(buildViolation(child.loc.start, kind, inheritedToken));
+      if (kind) {
+        parentRef.value ??= buildHtmlParentMap(doc);
+        const exampleHint = findHtmlExampleHint(child, parentRef.value);
+        emit(buildViolation(child.loc.start, kind, inheritedToken, exampleHint));
+      }
     }
-    walkHtmlWithPaginationContext(child.children, inheritedToken, emit);
+    walkHtmlWithPaginationContext(child.children, inheritedToken, doc, parentRef, emit);
   }
 }
 
 function checkJsx(module: TsxModule, emit: Emit): void {
+  // Parent map is built lazily — only on the first offending anchor.
+  const parentRef: { value: Map<JsxElement, JsxElement> | null } = { value: null };
   for (const root of module.jsxElements) {
-    walkJsxWithPaginationContext(root, null, emit);
+    walkJsxWithPaginationContext(root, null, module, parentRef, emit);
   }
 }
 
 function walkJsxWithPaginationContext(
   element: JsxElement,
   paginationToken: string | null,
+  module: TsxModule,
+  parentRef: { value: Map<JsxElement, JsxElement> | null },
   emit: Emit,
 ): void {
   // `className` is JSX's spelling; `class` is a valid alternate (some
@@ -196,15 +323,63 @@ function walkJsxWithPaginationContext(
     const hrefAttr = getJsxAttribute(element, "href");
     if (hrefAttr?.value && hrefAttr.value.kind === "StringLiteral") {
       const kind = classifyPlaceholder(hrefAttr.value.value);
-      if (kind) emit(buildViolation(element.loc.start, kind, inheritedToken));
+      if (kind) {
+        // Synthesized JSX elements derived from MDX docs-component
+        // template-literal `code` props carry a deterministic origin
+        // marker — prefer that hint when present so the agent sees the
+        // exact docs-component path; otherwise walk ancestors for the
+        // wrapper-tag/class hint that mirrors the sibling rule.
+        let exampleHint = findCodePropTemplateHint(element);
+        if (exampleHint === null) {
+          parentRef.value ??= buildJsxParentMap(module);
+          exampleHint = findJsxExampleHint(element, parentRef.value);
+        }
+        emit(buildViolation(element.loc.start, kind, inheritedToken, exampleHint));
+      }
     }
     // Expression-form `href={…}` is opaque at static time — surface only
     // deterministic evidence per the AI-first consumer model.
   }
   for (const child of element.children) {
     if (child.kind === "JsxElement") {
-      walkJsxWithPaginationContext(child, inheritedToken, emit);
+      walkJsxWithPaginationContext(child, inheritedToken, module, parentRef, emit);
     }
+  }
+}
+
+/** Builds the parent map for HTML elements in one walk. */
+function buildHtmlParentMap(doc: HtmlDocument): Map<HtmlElement, HtmlElement> {
+  const out = new Map<HtmlElement, HtmlElement>();
+  walkHtmlForParents(doc.children, null, out);
+  return out;
+}
+
+function walkHtmlForParents(
+  nodes: readonly HtmlNode[],
+  parent: HtmlElement | null,
+  out: Map<HtmlElement, HtmlElement>,
+): void {
+  for (const child of nodes) {
+    if (child.kind !== "HtmlElement") continue;
+    if (parent !== null) out.set(child, parent);
+    walkHtmlForParents(child.children, child, out);
+  }
+}
+
+/** Builds the parent map for JSX elements in one walk. */
+function buildJsxParentMap(module: TsxModule): Map<JsxElement, JsxElement> {
+  const out = new Map<JsxElement, JsxElement>();
+  for (const root of module.jsxElements) {
+    walkJsxForParents(root, out);
+  }
+  return out;
+}
+
+function walkJsxForParents(element: JsxElement, out: Map<JsxElement, JsxElement>): void {
+  for (const child of element.children) {
+    if (child.kind !== "JsxElement") continue;
+    out.set(child, element);
+    walkJsxForParents(child, out);
   }
 }
 
@@ -219,25 +394,34 @@ function buildViolation(
   loc: { line: number; column: number },
   kind: PlaceholderKind,
   paginationToken: string | null,
+  exampleHint: ExampleHint | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
 } {
+  // Reason-enrichment only — severity stays `error`. When the anchor sits
+  // inside a docs-example wrapper (or is synthesized from a docs-component
+  // template-literal `code` prop), the hint is a one-read dismissal signal
+  // for the agent — the violation is still real for live consumers, but the
+  // demonstration shape often explains why a real codebase has it.
+  const exampleSuffix = exampleHint
+    ? ` (inside ${exampleHint.hint} — likely demonstration code, verify the anchor renders for real users before fixing)`
+    : "";
   if (kind === "empty") {
     return {
       severity: "error",
       location: { filePath: "", line: loc.line, column: loc.column },
-      message: `<a href=""> has an empty href — per HTML spec it resolves to the current page URL, so activating the link reloads the page rather than navigating. The anchor announces as a link but its destination is broken.`,
-      suggestion: paginationSuggestionEmpty(paginationToken),
+      message: `<a href=""> has an empty href — per HTML spec it resolves to the current page URL, so activating the link reloads the page rather than navigating. The anchor announces as a link but its destination is broken.${exampleSuffix}`,
+      suggestion: `${paginationSuggestionEmpty(paginationToken)}${exampleSuffix}`,
     };
   }
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<a href="#"> has no fragment target — the anchor announces as a link but navigates nowhere.`,
-    suggestion: paginationSuggestionBareFragment(paginationToken),
+    message: `<a href="#"> has no fragment target — the anchor announces as a link but navigates nowhere.${exampleSuffix}`,
+    suggestion: `${paginationSuggestionBareFragment(paginationToken)}${exampleSuffix}`,
   };
 }
 
