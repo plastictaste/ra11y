@@ -11,6 +11,7 @@ import { rule as dialogRoleMissing } from "./aria/dialog-role-missing.ts";
 import { rule as disabledLinkSurrogate } from "./aria/disabled-link-surrogate.ts";
 import { rule as expandedOnDisclosure } from "./aria/expanded-on-disclosure.ts";
 import { rule as hiddenFocus } from "./aria/hidden-focus.ts";
+import { rule as iconChildMissingAriaHidden } from "./aria/icon-child-missing-aria-hidden.ts";
 import { rule as iconFontHidden } from "./aria/icon-font-hidden.ts";
 import { rule as invalidRole } from "./aria/invalid-role.ts";
 import { rule as labelledbyTargetExists } from "./aria/labelledby-target-exists.ts";
@@ -151,6 +152,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   hrefEmptyFragment,
   hrefJavascriptScheme,
   htmlHasLang,
+  iconChildMissingAriaHidden,
   iconFontHidden,
   iframeTitle,
   imgEmptyAltInClickableGroup,
@@ -258,6 +260,7 @@ export {
   hrefEmptyFragment,
   hrefJavascriptScheme,
   htmlHasLang,
+  iconChildMissingAriaHidden,
   iconFontHidden,
   iframeTitle,
   imgEmptyAltInClickableGroup,
