@@ -177,11 +177,9 @@ describe("rule forms/labels-required", () => {
       });
 
       it(`HTML: <input type="${type}"> wired to <label for> does NOT fire`, () => {
-        const v = runRule(
-          rule,
-          `<label for="x">Field</label><input id="x" type="${type}">`,
-          { filePath: "index.html" },
-        );
+        const v = runRule(rule, `<label for="x">Field</label><input id="x" type="${type}">`, {
+          filePath: "index.html",
+        });
         expect(v).toHaveLength(0);
       });
     }
@@ -190,9 +188,7 @@ describe("rule forms/labels-required", () => {
       // Same parent, distinct fingerprints (one of each type) — the
       // sibling-collapse pass should NOT collapse heterogeneous types
       // into one rollup, so every type surfaces as its own finding.
-      const inputs = TEXT_BEARING_TYPES.map(
-        (t) => `<input type="${t}" name="${t}">`,
-      ).join("\n");
+      const inputs = TEXT_BEARING_TYPES.map((t) => `<input type="${t}" name="${t}">`).join("\n");
       const v = runRule(rule, `<form>\n${inputs}\n</form>`, { filePath: "all-types.html" });
       expect(v).toHaveLength(TEXT_BEARING_TYPES.length);
       for (const finding of v) {
