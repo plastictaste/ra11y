@@ -8,7 +8,7 @@ satisfies: ["wcag21:4.1.1", "wcag22:1.3.1", "wcag21:1.3.1", "wcag22:4.1.2", "wca
 - **Severity:** error
 - **Scope:** document
 - **Satisfies:** `wcag21:4.1.1`, `wcag22:1.3.1`, `wcag21:1.3.1`, `wcag22:4.1.2`, `wcag21:4.1.2`
-- **Applies to:** .html, .htm
+- **Applies to:** .html, .htm, .astro, .md, .markdown, .erb, .svg
 ## What it checks
 Element IDs must be unique within a document. Duplicate IDs break aria-labelledby, label associations, and anchor navigation.
 ## Why it matters
