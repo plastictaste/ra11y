@@ -91,10 +91,38 @@ describe("rule semantics/svg-title-missing", () => {
     });
   });
 
-  describe("scope", () => {
-    it("does not fire for inline <svg> in an .html file (alt-text-missing covers that)", () => {
+  describe("scope — inline <svg> in markup-bearing extensions", () => {
+    it("fires for inline <svg> in an .html file with no <title> and no aria-hidden", () => {
       const src = `<html><body>
-  <svg xmlns="http://www.w3.org/2000/svg" role="img">
+  <button>
+    <svg xmlns="http://www.w3.org/2000/svg">
+      <path d="M10 10" />
+    </svg>
+  </button>
+</body></html>`;
+      const violations = runRule(rule, src, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/Inline <svg>/);
+      expect(violations[0]?.suggestion).toMatch(/<title>/);
+    });
+
+    it('does not fire for inline <svg aria-hidden="true"> in HTML', () => {
+      const src = `<html><body>
+  <button>
+    Submit
+    <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M10 10" />
+    </svg>
+  </button>
+</body></html>`;
+      const violations = runRule(rule, src, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does not fire for inline <svg><title>X</title></svg> in HTML", () => {
+      const src = `<html><body>
+  <svg xmlns="http://www.w3.org/2000/svg">
+    <title>Search</title>
     <path d="M10 10" />
   </svg>
 </body></html>`;
@@ -102,7 +130,62 @@ describe("rule semantics/svg-title-missing", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("does not fire for inline <svg> in a .tsx file", () => {
+    it("skips inline <svg role=\"img\"> in HTML — media/alt-text-missing covers that", () => {
+      const src = `<html><body>
+  <svg xmlns="http://www.w3.org/2000/svg" role="img">
+    <path d="M10 10" />
+  </svg>
+</body></html>`;
+      const violations = runRule(rule, src, { filePath: "page.html" });
+      // No double-flag: the role="img" channel is owned by alt-text-missing.
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does not fire for inline <svg aria-label=\"…\"> in HTML", () => {
+      const src = `<html><body>
+  <svg xmlns="http://www.w3.org/2000/svg" aria-label="Loading spinner">
+    <circle r="10" />
+  </svg>
+</body></html>`;
+      const violations = runRule(rule, src, { filePath: "page.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("fires for inline <svg> in a .tsx file with no title / aria-hidden / role=\"img\"", () => {
+      const src = `export const Icon = () => (
+  <button>
+    <svg xmlns="http://www.w3.org/2000/svg">
+      <path d="M10 10" />
+    </svg>
+  </button>
+);`;
+      const violations = runRule(rule, src, { filePath: "Icon.tsx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/Inline <svg>/);
+    });
+
+    it("does not fire for inline <svg> with a <title> child in JSX", () => {
+      const src = `export const Icon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg">
+    <title>Search</title>
+    <path d="M10 10" />
+  </svg>
+);`;
+      const violations = runRule(rule, src, { filePath: "Icon.tsx" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it('does not fire for inline <svg aria-hidden="true"> in JSX', () => {
+      const src = `export const Icon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M10 10" />
+  </svg>
+);`;
+      const violations = runRule(rule, src, { filePath: "Icon.tsx" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("skips inline <svg role=\"img\"> in JSX — alt-text-missing covers that", () => {
       const src = `export const Icon = () => (
   <svg role="img">
     <path d="M10 10" />
@@ -110,6 +193,20 @@ describe("rule semantics/svg-title-missing", () => {
 );`;
       const violations = runRule(rule, src, { filePath: "Icon.tsx" });
       expect(violations).toHaveLength(0);
+    });
+
+    it("preserves the existing standalone .svg behavior", () => {
+      // Regression guard: the standalone-file path still produces the
+      // standalone-shaped message ("Standalone SVG '<file>'…") so the
+      // pre-existing surface stays intact while the inline surface is
+      // additive.
+      const src = `<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <path d="M10 10L20 20" />
+</svg>`;
+      const violations = runRule(rule, src, { filePath: "icons/search.svg" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/Standalone SVG 'search\.svg'/);
     });
   });
 
@@ -161,8 +258,17 @@ describe("rule semantics/svg-title-missing", () => {
       expect(rule.docs.references.some((r) => r.includes("SVG2"))).toBe(true);
     });
 
-    it("only applies to .svg files", () => {
-      expect(rule.appliesTo?.fileExtensions).toEqual([".svg"]);
+    it("applies to .svg plus markup-bearing HTML / JSX extensions", () => {
+      // Standalone `.svg` plus the HTML- and JSX-family roots; alias
+      // chains in `EXTENSION_ALIASES` extend the effective coverage to
+      // `.astro`, `.md`, `.markdown`, `.erb`, `.mdx`, `.ts`, `.js`.
+      expect(rule.appliesTo?.fileExtensions).toEqual([
+        ".svg",
+        ".html",
+        ".htm",
+        ".tsx",
+        ".jsx",
+      ]);
     });
   });
 });
