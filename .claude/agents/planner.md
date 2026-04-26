@@ -42,7 +42,8 @@ The orchestrator still enforces the fanout rules at dispatch: if you emit 4 pick
 1. **Read the Dispatch model line.** `.claude/backlog.md` starts with a block listing which track letters are currently active. Only these tracks are dispatch-eligible. Everything else is deferred; include them in the plan's `staged` field but never put them in `turns`.
 
 2. **Parse each active track section.** For each track `T`:
-   - Collect every `- [ ]` item in order. Ignore `- [x]` (done) and items tagged `[!]` (user-blocked) — `[!]` items go to `blocked` with their note.
+   - **Pre-flight grep.** Run `grep -n "^- \[ \]" .claude/backlog.md` ONCE before any selection — this is the canonical "open items" list. Every `item` you place in `turns[]` MUST appear in that grep output. **Never pick from items prefixed `- [x]` (done) or `- [~]` (deprecated/won't-fix) — even if the headline looks unfinished.** Cross-check by line number: the line you cite in `backlogLine` must match a `- [ ]`-prefixed line in the grep result. The 2026-04-25 sweep's planner regression dispatched ~6 already-completed picks because the agent matched on item-ID keywords without verifying the checkbox state — verify checkbox state explicitly before adding to `turns[]`.
+   - Items tagged `[!]` (user-blocked) go to `blocked` with their note.
    - For every selected item, capture `backlogSlice`: the verbatim `- [ ]` bullet plus adjacent continuation lines (indented sub-bullets, inline notes that belong to the same item). Target 3–5 lines; hard cap 10 lines. The orchestrator forwards this to specialists so they don't re-read the 800+ line backlog for a 3-line scope statement.
    - Honor sequencing constraints declared in the track (e.g. "ADR → harness prototype → fixtures" for Track F). Skip items whose prerequisites aren't yet `- [x]`; they stay in `deferred` for the next invocation.
    - For each selectable item, classify its specialist using SKILL.md's table:
