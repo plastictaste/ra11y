@@ -512,7 +512,7 @@ export interface WarningInputs {
   readonly configSource: string | null | undefined;
   /**
    * The analysisCoverage block as returned by `buildAnalysisCoverage` —
-   * we read `hints` for the Tailwind signal and `templateDirectivesFound`
+   * we read `hints` for the Tailwind signal and `templateInterpolationFound`
    * for the literal-template signal. Pass the full block; the helper
    * does the field lookups so callers don't duplicate them.
    */
@@ -622,7 +622,7 @@ export interface WarningInputs {
    * directives but no finding intersected a directive line — the
    * warning would be noise on every Liquid/Jekyll/Hugo/Eleventy scan,
    * so it drops and the directive info still surfaces via
-   * `meta.analysisCoverage.templateDirectivesFound` +
+   * `meta.analysisCoverage.templateInterpolationFound` +
    * `templateDirectiveHandling`. See the doctrine rule "Surface, don't
    * suppress" in `docs/kb/architecture/ai-first-consumer.md`: the
    * directive telemetry stays visible on meta; only the top-level
@@ -1587,7 +1587,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // constant-on-template-repo — a silent "noise, not signal"
     // shape that violates the "warnings are for genuinely out-of-
     // band signals" doctrine. The directive telemetry itself still
-    // surfaces on `meta.analysisCoverage.templateDirectivesFound`
+    // surfaces on `meta.analysisCoverage.templateInterpolationFound`
     // + `templateDirectiveHandling`, so an agent that needs the
     // handling summary still sees it; the top-level warning is
     // now gated by the evidence that the parse-as-literal actually
@@ -1958,8 +1958,8 @@ function cssCount(filesByExtension: Readonly<Record<string, number>> | undefined
 
 function hasTemplateDirectives(coverage: Record<string, unknown> | undefined): boolean {
   if (coverage === undefined) return false;
-  const directives = coverage["templateDirectivesFound"];
-  return Array.isArray(directives) && directives.length > 0;
+  const tokens = coverage["templateInterpolationFound"];
+  return Array.isArray(tokens) && tokens.length > 0;
 }
 
 /**
@@ -2000,7 +2000,7 @@ function shouldEmitTemplateFilesLiteral(inputs: WarningInputs): boolean {
 /**
  * Matches any template-directive token on a line. Intentionally looser
  * than the per-file family classifier in
- * `src/mcp/analysis-coverage.ts::detectTemplateEngines` — here we only
+ * `src/mcp/analysis-coverage.ts::detectTemplateInterpolation` — here we only
  * need to know "does this line contain a directive the parser treated as
  * literal text?", not which family it belongs to.
  *

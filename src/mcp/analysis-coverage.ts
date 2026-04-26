@@ -6,13 +6,25 @@
  *     don't look inside. Rules that need to verify an underlying
  *     element (e.g. "does this button have an accessible name?") can't
  *     see through custom components except via `nativeWrappers`.
- *   - `templateDirectivesFound`: template-engine syntax (Jinja, Liquid,
- *     Handlebars) we detected in scanned HTML. Cross-template `extends`
- *     / `include` relationships are not resolved — a fragment with
- *     "view above" may render inside a parent that changes the meaning.
+ *   - `templateInterpolationFound`: template-interpolation tokens
+ *     (`{{x}}`, `{%x%}`, `<%x%>`, `${{x}}`) detected in scanned HTML
+ *     along with the per-token occurrence count. The shape is the raw
+ *     evidence — the agent disambiguates dialect (Handlebars vs.
+ *     Mustache vs. Liquid vs. Jinja vs. Vue vs. Angular vs. ERB vs.
+ *     EJS vs. GitHub-Actions workflow expression) by reading the
+ *     surrounding files. The earlier `templateDirectivesFound` shape
+ *     stamped a deterministic-sounding family token
+ *     ("handlebars-or-mustache", "jinja-or-liquid") on what was at
+ *     best a heuristic guess; that label fired on Vue / Angular /
+ *     `${{ ... }}` GitHub-Actions corpora and on Markdown prose
+ *     quoting `{{ }}` inline. Surfacing the literal token + count
+ *     keeps the evidence honest. Cross-template `extends` / `include`
+ *     relationships are still not resolved — a fragment with "view
+ *     above" may render inside a parent that changes the meaning.
  *   - `templateDirectiveHandling`: plain-English summary of *what* the
- *     scanner does with those directives, so agents don't have to guess
- *     whether a Jinja-laced file was partially analyzed or skipped.
+ *     scanner does with those tokens, so agents don't have to guess
+ *     whether an interpolation-laced file was partially analyzed or
+ *     skipped.
  *   - `parseErrorFileCount`: files where the parser emitted errors AND
  *     the downstream rules produced zero findings on that file — the
  *     scanner effectively couldn't see the file. Agents should treat
@@ -134,13 +146,27 @@ interface CoverageBlock {
   opaqueCustomComponentsTop?: readonly { readonly name: string; readonly callSites: number }[];
   opaqueCustomComponentNames?: readonly string[];
   opaqueCustomComponentsExcludedByAutoDetect?: number;
-  templateDirectivesFound?: readonly string[];
+  /**
+   * Per-token occurrence counts for template-interpolation evidence
+   * detected in scanned HTML. Tokens use a compact normalized literal
+   * — `"{{x}}"` for bare interpolation, `"{%x%}"` for control blocks,
+   * `"<%x%>"` for ERB-style scriptlets, `"${{x}}"` for the
+   * GitHub-Actions / template-literal dollar-double-brace form.
+   * Ordered by descending `count`, with the literal as the
+   * deterministic tiebreak. The agent disambiguates dialect from the
+   * token + the surrounding file content; the scanner does not stamp
+   * a family label because the evidence is ambiguous between
+   * Handlebars, Mustache, Liquid, Jinja, Vue, Angular, ERB, EJS, and
+   * the GitHub-Actions workflow-expression form. Present-when-
+   * meaningful: omitted when no qualifying token was detected.
+   */
+  templateInterpolationFound?: readonly { readonly token: string; readonly count: number }[];
   templateDirectiveHandling?: string;
   /**
    * V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: true when at least one
    * parsed HTML-family file (including markdown routed through the HTML
    * parser per ADR 0025) opened with a YAML frontmatter fence
-   * (`^---\n…\n---\n`). Tracked alongside `templateDirectivesFound`
+   * (`^---\n…\n---\n`). Tracked alongside `templateInterpolationFound`
    * because the fence itself is a template substrate the HTML parser
    * sees as literal text — a Jekyll / Hugo / Eleventy / Astro post
    * header. The warnings layer ORs this into the
@@ -272,7 +298,17 @@ interface CoverageAccumulator {
    * without a hardcoded carve-out list.
    */
   readonly opaqueComponents: Map<string, OpaqueComponentUsage>;
-  readonly templateEngines: Set<string>;
+  /**
+   * Map of normalized interpolation-token literal → occurrence count
+   * across every scanned source pass. Tokens are the compact forms
+   * `"{{x}}"`, `"{%x%}"`, `"<%x%>"`, `"${{x}}"`. The accumulator stays
+   * a count so the response can surface the densest token first
+   * without a separate sort pass — agents triaging template-heavy
+   * scans branch on which shape dominates (a single `${{x}}` in a
+   * `.md` README is very different from 200 `{%x%}` blocks across a
+   * Jinja site).
+   */
+  readonly templateInterpolation: Map<string, number>;
   readonly parseErrorEntries: ParseErrorEntry[];
   /**
    * Paths of HTML files that parsed as fragments — no `<html>` root
@@ -387,7 +423,7 @@ export function buildAnalysisCoverage(
 ): { analysisCoverage?: Record<string, unknown>; metaArrayTruncated?: boolean } {
   const acc: CoverageAccumulator = {
     opaqueComponents: new Map(),
-    templateEngines: new Set(),
+    templateInterpolation: new Map(),
     parseErrorEntries: [],
     fragmentFiles: [],
     hasFrontmatterFence: false,
@@ -415,13 +451,17 @@ export function buildAnalysisCoverage(
       coverage.opaqueCustomComponentsExcludedByAutoDetect = autoDetectConfirmedCount;
     }
   }
-  if (acc.templateEngines.size > 0) {
-    coverage.templateDirectivesFound = [...acc.templateEngines].sort();
-    coverage.templateDirectiveHandling = describeTemplateDirectiveHandling(acc.templateEngines);
+  if (acc.templateInterpolation.size > 0) {
+    coverage.templateInterpolationFound = [...acc.templateInterpolation.entries()]
+      .map(([token, count]) => ({ token, count }))
+      .sort((a, b) => b.count - a.count || a.token.localeCompare(b.token));
+    coverage.templateDirectiveHandling = describeTemplateDirectiveHandling(
+      acc.templateInterpolation,
+    );
   }
   if (acc.hasFrontmatterFence) {
     // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: surface the
-    // substrate signal alongside `templateDirectivesFound` so the
+    // substrate signal alongside `templateInterpolationFound` so the
     // warnings layer can fire `template_files_parsed_as_literal`
     // on Jekyll / Hugo / Eleventy / Astro posts whose header is the
     // only template evidence. Present-when-meaningful — omitted when
@@ -786,22 +826,34 @@ function stripMarkdownCodeRegions(source: string): string {
 }
 
 /**
- * Explains what the HTML parser does with the template directives we
- * detected. The parser treats `{% ... %}` and `{{ ... }}` as literal
- * text, so attribute values and text content containing directives are
- * parsed verbatim; rules evaluate against the template source, not the
- * rendered output. Calling this out explicitly replaces the silent
- * "templateDirectivesFound" signal, which told the agent *that* we saw
- * directives but not how we handled them.
+ * Explains what the HTML parser does with the template-interpolation
+ * tokens we detected. The parser treats `{% ... %}`, `{{ ... }}`, and
+ * `<% ... %>` as literal text, so attribute values and text content
+ * containing the tokens are parsed verbatim; rules evaluate against
+ * the template source, not the rendered output. Calling this out
+ * explicitly replaces the silent token list, which told the agent
+ * *that* we saw interpolation tokens but not how we handled them.
+ *
+ * The token list is rendered as the densest-token-first ranking — the
+ * same shape an agent reads from `templateInterpolationFound` — so
+ * the prose stays grounded in the actual evidence rather than naming
+ * a heuristic family. Doctrine ("Heuristic-mislabeled meta sub-fields
+ * are dishonest"): an `${{ x }}` GitHub-Actions corpus and a
+ * `{{ x }}` Vue template share the same surface token, and any
+ * family-name guess we stamp on top fires wrong on at least one of
+ * them.
  */
-function describeTemplateDirectiveHandling(engines: ReadonlySet<string>): string {
-  const list = [...engines].sort().join(", ");
+function describeTemplateDirectiveHandling(tokens: ReadonlyMap<string, number>): string {
+  const ranked = [...tokens.entries()]
+    .sort(([aToken, aCount], [bToken, bCount]) => bCount - aCount || aToken.localeCompare(bToken))
+    .map(([token]) => token)
+    .join(", ");
   return (
-    `${list} directives are parsed as literal HTML text — the rendered output is not ` +
-    "reconstructed. Rules run against the template source, so attributes like " +
-    '`class="{% if x %}foo{% endif %}"` are evaluated as the raw string containing ' +
-    "the directive. Cross-template `extends`/`include` relationships are not resolved. " +
-    "Verify findings in files flagged with directives by reading the rendered output " +
+    `${ranked} interpolation tokens are parsed as literal HTML text — the rendered ` +
+    "output is not reconstructed. Rules run against the template source, so attributes " +
+    'like `class="{% if x %}foo{% endif %}"` are evaluated as the raw string containing ' +
+    "the token. Cross-template `extends`/`include` relationships are not resolved. " +
+    "Verify findings in files carrying these tokens by reading the rendered output " +
     "rather than the template."
   );
 }
@@ -915,7 +967,7 @@ function rulesFiredByExtension(
  */
 function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulator): void {
   const src = isMarkdownFile(file.filePath) ? stripMarkdownCodeRegions(file.source) : file.source;
-  detectTemplateEngines(src, acc.templateEngines);
+  detectTemplateInterpolation(src, acc.templateInterpolation);
   acc.hasFrontmatterFence ||= FRONTMATTER_FENCE_RE.test(file.source);
   if (isHtmlFragment(file.ast.root as HtmlDocument)) acc.fragmentFiles.push(file.filePath);
 }
@@ -1047,231 +1099,108 @@ function recordOpaqueSighting(
 }
 
 /**
- * Per-file syntax-family classifier. Not trying to distinguish dialects
- * precisely — the signal "this file isn't plain HTML" plus the family is
- * what the agent needs to know cross-file reasoning is limited.
+ * Counts template-interpolation tokens in `source`, accumulating them
+ * by normalized literal into `into`. Replaces the earlier
+ * `detectTemplateEngines` family classifier — that function stamped
+ * deterministic-sounding family tokens
+ * ("handlebars-or-mustache", "jinja-or-liquid", "erb-or-ejs") on what
+ * was at best a heuristic guess: the same `{{ x }}` shape appears in
+ * Handlebars, Mustache, Liquid, Jinja, Vue, Angular, and (with a `$`
+ * prefix) GitHub-Actions workflow expressions. Stamping a family on
+ * top of the surface evidence misled an agent every time the corpus
+ * happened to be the wrong dialect for the label.
  *
- * Families (the labels are disjoint — one file gets at most one `{{...}}`
- * family, plus optionally the `<%...%>` family):
- *   - jinja-or-liquid: uses `{% ... %}` control blocks (Jinja / Liquid /
- *     Nunjucks). Whitespace-control variants `{%-` and `-%}` count.
- *     Also wins on Liquid-only evidence in `{{ ... }}` interpolation —
- *     specifically the `{{-` / `-}}` whitespace-stripping variant, which
- *     Handlebars and Mustache do not support. `{{ ... }}` interpolation
- *     (without whitespace control) in the same file is part of THIS
- *     family when any Liquid evidence is present, not a separate
- *     handlebars signal.
- *   - handlebars-or-mustache: uses `{{ ... }}` interpolation but no
- *     `{% ... %}` control blocks AND no `{{- -}}` whitespace-control
- *     variant — the plain `{{ }}`-only shape.
- *   - erb-or-ejs: uses `<% ... %>`. Independent of the `{{...}}` axis.
+ * Doctrine ("Heuristic-mislabeled meta sub-fields are dishonest"):
+ * the field's `reason`-shaped sub-tokens must clear the same
+ * "provable from the code" bar as a labeled bucket. Family attribution
+ * fails that bar — Vue, Angular, and Liquid all share `{{ x }}` with
+ * no in-file way to distinguish them, and `${{ x }}` GitHub-Actions
+ * expressions in `.yml` documentation embedded in `.md` files inflated
+ * the false-positive rate further. The honest shape surfaces the raw
+ * interpolation token + count and lets the agent disambiguate dialect
+ * by reading the surrounding file.
  *
- * The per-file scoping matters for `scan_project`: a prior implementation
- * accumulated labels across the whole scan via the shared `into` set, so
- * the first file with bare `{{ x }}` would stamp `handlebars-or-mustache`
- * and a later `{% extends %}` would stamp `jinja-or-liquid` — yielding
- * a mixed classification on projects that are pure Liquid. Classify
- * THIS file's source; the caller unions the per-file result into the
- * accumulator.
+ * Tokens emitted:
+ *   - `"{{x}}"` — bare double-brace interpolation (Handlebars,
+ *     Mustache, Liquid plain interpolation, Jinja interpolation, Vue,
+ *     Angular). JSX/Astro attribute-spread `={{ ... }}` (`overrides=
+ *     {{ body: x }}`) is excluded — the outer `{` is the JSX
+ *     expression boundary, not template evidence.
+ *   - `"{%x%}"` — control block (Jinja `{% extends %}`, Liquid
+ *     `{% include %}`, Nunjucks, Twig). Whitespace-control `{%-` and
+ *     `-%}` variants count as the same token shape — surfacing the
+ *     Liquid-specific dash to the agent is the agent's concern, not
+ *     the scanner's.
+ *   - `"<%x%>"` — ERB / EJS scriptlet (and the `<%=` / `<%-` variants).
+ *   - `"${{x}}"` — GitHub-Actions workflow expression (or the
+ *     same shape inside a JS template literal). Surfaced as a
+ *     distinct token so an agent reading a `.yml`-documenting `.md`
+ *     can immediately tell the evidence is workflow expressions, not
+ *     Handlebars.
  *
- * A separate single-file variant (Q4-TEMPLATE-CLASSIFIER-LIQUID-AS-
- * MUSTACHE-SINGLE-FILE): a pure-Liquid layout that uses only
- * `{{- content -}}` / `{{- page.title -}}` whitespace-control
- * interpolation — no `{% %}` blocks — was mis-tagged handlebars-or-
- * mustache because the earlier classifier only treated `{% %}` blocks
- * as Liquid evidence. `{{-` and `-}}` are decisive Liquid signals:
- * Handlebars and Mustache don't support whitespace-stripping markers
- * in interpolation. Treating that form as equivalent to a control
- * block for classification purposes restores the honest family label
- * so downstream rules reach for the correct strip helpers.
- *
- * A second axis of the same misclassification (V1-TEMPLATE-CLASSIFIER-
- * LIQUID-PIPE-FILTER-EVIDENCE): Jekyll `_includes/top.html` and
- * similar SSG partials use Liquid filter pipes inside interpolation —
- * `{{ page.lang | default: "en" }}`, `{{ title | escape }}`,
- * `{{ items | first }}`. The pipe inside a `{{ ... }}` expression is
- * Liquid-exclusive syntax — Handlebars and Mustache use sub-expression
- * helper invocation (`{{helper foo}}`) rather than postfix pipes.
- * `{{ x | filter }}` (with a real filter pipe) is therefore decisive
- * Liquid evidence and outweighs any co-occurring bare `{{ plain }}`
- * tokens in the same file. Two non-Liquid look-alikes are excluded:
- * `||` (JS or-expression in a JSX attribute spread) and `|>` (pipeline
- * operator) — neither is a Liquid filter separator.
+ * The function is invoked once per parsed HTML-family file. The
+ * caller-supplied `into` map accumulates counts across the scan; the
+ * outer assembler later sorts the densest token first for the wire
+ * shape. Liquid whitespace-strip (`{{-` / `-}}`) and Liquid filter-
+ * pipe evidence are intentionally NOT given their own tokens — those
+ * are dialect-disambiguation signals the agent reads from the file
+ * itself, and giving them a stamp recreates the family-label problem
+ * one level down.
  */
-function detectTemplateEngines(source: string, into: Set<string>): void {
-  // `\{%-?\s*` accepts both the plain `{%` opener and Liquid/Jinja's
-  // whitespace-control `{%-` variant. Jekyll `_includes/` partials
-  // routinely open with `{%- include 'foo.html' -%}` — missing the
-  // dash-prefixed form caused pure-Liquid partials to miss the
-  // jinja-or-liquid tag and fall through to handlebars-or-mustache.
-  const hasControlBlock =
-    /\{%-?\s*(?:extends|include|block|if|for|set|assign|capture|unless|case|comment|raw|render|layout|tablerow|cycle)\b/.test(
-      source,
-    );
-  // `{{- ... -}}` / `{{ ... -}}` / `{{- ... }}` whitespace-stripping
-  // interpolation is Liquid-only. Handlebars and Mustache do not
-  // recognize the leading/trailing `-` as a whitespace-control marker.
-  // A Jekyll `_layouts/default.html` that uses only `{{- content -}}`
-  // (no `{% %}` blocks) is decisively Liquid even though its other
-  // interpolations are the shared `{{ ... }}` form. Checking either
-  // `{{-` or `-}}` is enough — the whitespace-strip pair is always
-  // parenthesized together by convention, but one side is sufficient
-  // evidence for the classifier.
-  const hasLiquidWhitespaceInterp = /\{\{-|-\}\}/.test(source);
-  // V1-TEMPLATE-CLASSIFIER-LIQUID-PIPE-FILTER-EVIDENCE: a `|` inside
-  // `{{ ... }}` that is NOT `||` (JS or) or `|>` (pipeline) is a
-  // Liquid filter separator. Jekyll `docs/_includes/top.html` was
-  // tagged handlebars-or-mustache because per-file majority-vote
-  // didn't credit the pipe as Liquid-only evidence — `{{ page.lang |
-  // default: "en" }}` is decisive Liquid syntax that no Handlebars or
-  // Mustache template would carry.
-  const hasLiquidFilterPipe = hasLiquidFilterPipeEvidence(source);
-  const hasInterpolation = hasNonJsxInterpolation(source);
-  if (hasControlBlock || hasLiquidWhitespaceInterp || hasLiquidFilterPipe) {
-    into.add("jinja-or-liquid");
-  } else if (hasInterpolation) {
-    // `{{ }}`-only shape — handlebars/mustache's syntactic signature.
-    // Note: a pure-interpolation Liquid file (no control tags, no
-    // whitespace-strip variant) will also land here and be labeled
-    // handlebars-or-mustache; that's the honest reading of the
-    // evidence — `{{ x }}` alone is ambiguous between the families,
-    // and the tag's combined name reflects the ambiguity rather than
-    // guessing.
-    into.add("handlebars-or-mustache");
-  }
-  if (/<%[=-]?[\s\S]*?%>/.test(source)) into.add("erb-or-ejs");
+function detectTemplateInterpolation(source: string, into: Map<string, number>): void {
+  const doubleBrace = countDoubleBraceTokens(source);
+  if (doubleBrace.bare > 0) into.set("{{x}}", (into.get("{{x}}") ?? 0) + doubleBrace.bare);
+  if (doubleBrace.dollar > 0) into.set("${{x}}", (into.get("${{x}}") ?? 0) + doubleBrace.dollar);
+
+  // Control blocks: `{% ... %}` plus the `{%-` / `-%}` whitespace-
+  // control variants. Counted by raw occurrences — a Jekyll layout
+  // with eight `{% include %}` stamps the token eight times so the
+  // densest-first ranking surfaces real-volume signals over a stray
+  // example block.
+  const controlBlocks = countMatches(source, /\{%-?[\s\S]*?-?%\}/g);
+  if (controlBlocks > 0) into.set("{%x%}", (into.get("{%x%}") ?? 0) + controlBlocks);
+
+  // ERB/EJS scriptlets: `<% ... %>`, `<%= ... %>`, `<%- ... %>`.
+  const erbScriptlets = countMatches(source, /<%[=-]?[\s\S]*?%>/g);
+  if (erbScriptlets > 0) into.set("<%x%>", (into.get("<%x%>") ?? 0) + erbScriptlets);
 }
 
 /**
- * True when `source` contains at least one `{{ ... }}` interpolation
- * whose prefix is NOT a known false-positive shape. Two shapes are
- * filtered out because they collapse to the same `{{ ... }}` shape
- * without being template evidence:
- *
- *   - `={{ ... }}` — JSX / Astro attribute-value object-literal spread
- *     (`overrides={{ body: bodyProps }}`). The outer `{` is the JSX
- *     expression boundary; the inner `{...}` is the object literal.
- *     A real Handlebars/Mustache interpolation is never prefixed by
- *     `=` — the attribute would be quoted (`title="{{ title }}"`).
- *     `.astro` files flow through `parseAstro` → HTML AST, so this
- *     source shape routinely reaches the classifier for Starlight /
- *     Astro docs projects.
- *   - `${{ ... }}` — GitHub Actions workflow expression syntax
- *     (`${{ github.event.pull_request.number }}`). The `$` prefix is
- *     decisive: Handlebars does not recognize `${{ ... }}`. While
- *     `.yml` files are not in PARSEABLE_EXTENSIONS, the shape can
- *     reach the classifier through embedded `.md` / `.html` fragments
- *     documenting workflow usage.
- *
- * Both filters are pre-match exclusions on the evidence corpus — they
- * do not drop real `{{ x }}` interpolations that coexist in the same
- * file. The classifier already unions per-file decisions into the
- * scan-level accumulator, so a mixed file with both Astro spreads
- * AND a real Handlebars interpolation still tags honestly.
- *
- * Doctrine (AI-first consumer model): this tightens a misclassified
- * label (wrong evidence → wrong family tag), not suppression of real
- * findings. `templateDirectivesFound` is scan-confidence telemetry an
- * agent uses to decide whether template directives are parsed as
- * literal — tagging a Starlight docs repo as "handlebars-or-mustache"
- * when no Handlebars is present misleads that decision. The shape-
- * honest fix is to exclude shapes that aren't template evidence.
+ * Splits `{{ ... }}` occurrences in `source` by their immediate
+ * prefix: `=` (JSX attribute-spread, dropped), `$` (GitHub-Actions /
+ * template-literal expression — its own token), everything else
+ * (bare double-brace interpolation). Extracted from
+ * {@link detectTemplateInterpolation} so the outer dispatcher stays
+ * under the cognitive-complexity cap.
  */
-function hasNonJsxInterpolation(source: string): boolean {
-  const pattern = /\{\{[^}]+\}\}/g;
-  for (const match of source.matchAll(pattern)) {
+function countDoubleBraceTokens(source: string): {
+  readonly bare: number;
+  readonly dollar: number;
+} {
+  let bare = 0;
+  let dollar = 0;
+  for (const match of source.matchAll(/\{\{[^}]+\}\}/g)) {
     const start = match.index;
     if (start === undefined) continue;
     const prevChar = start > 0 ? source[start - 1] : "";
-    // `={{...}}` → JSX attribute-spread (Astro / React / Solid).
-    // `${{...}}` → GitHub Actions / template-literal expression.
-    if (prevChar === "=" || prevChar === "$") continue;
-    return true;
-  }
-  return false;
-}
-
-/**
- * V1-TEMPLATE-CLASSIFIER-LIQUID-PIPE-FILTER-EVIDENCE: true when any
- * `{{ … | … }}` interpolation in `source` carries a pipe that is a
- * Liquid filter separator rather than a JS look-alike operator.
- *
- * A pipe inside `{{ ... }}` is Liquid-exclusive syntax — Handlebars
- * and Mustache express transforms via sub-expression helper invocation
- * (`{{helper foo}}`), never a postfix `|`. One pipe is enough evidence
- * to force the file's classification to `jinja-or-liquid`, outweighing
- * any bare `{{ x }}` tokens that co-occur (per-file majority-vote
- * would otherwise mis-tag a layout that has one `{{ lang | default }}`
- * alongside several `{{ plain }}` spans — the canonical Jekyll
- * `_includes/top.html` shape).
- *
- * Two JS look-alikes are excluded because they collapse to the same
- * shape without being Liquid evidence:
- *
- *   - `||` → JS or-expression (`{{ a || b }}` — can appear inside a
- *     JSX attribute-spread object literal). Liquid does not use `||`.
- *   - `|>` → pipeline operator (Stage-2 proposal, Elixir-style).
- *     Liquid filters are `|` followed by an identifier, not `|>`.
- *
- * Same pre-match exclusions as {@link hasNonJsxInterpolation}:
- * `={{ … }}` (JSX attribute spread) and `${{ … }}` (GitHub Actions
- * workflow expression) are filtered from the evidence corpus before
- * pipe detection. A real Liquid filter interpolation is never
- * prefixed by `=` (the attribute would be quoted) or `$` (not a
- * Liquid shape).
- */
-function hasLiquidFilterPipeEvidence(source: string): boolean {
-  const pattern = /\{\{([^}]+)\}\}/g;
-  for (const match of source.matchAll(pattern)) {
-    const start = match.index;
-    if (start === undefined) continue;
-    const prevChar = start > 0 ? source[start - 1] : "";
-    if (prevChar === "=" || prevChar === "$") continue;
-    const body = match[1] ?? "";
-    if (containsLiquidFilterPipe(body)) return true;
-  }
-  return false;
-}
-
-/**
- * Scans the interior of a `{{ … }}` interpolation for a pipe that is
- * a Liquid filter separator. A bare `|` qualifies; `||` (JS or) and
- * `|>` (pipeline operator) do not. Bare `|` with no right-hand
- * identifier (trailing whitespace only) is not credited as evidence —
- * the Liquid shape is always `value | filterName` or
- * `value | filterName: arg`. Keeping the right-hand identifier
- * requirement avoids false positives on malformed templates whose
- * trailing `|` carries no filter at all.
- */
-function containsLiquidFilterPipe(body: string): boolean {
-  for (let i = 0; i < body.length; i++) {
-    if (body.charCodeAt(i) !== 0x7c) continue; // '|'
-    const next = body[i + 1] ?? "";
-    if (next === "|" || next === ">") {
-      i += 1; // skip the second char of the pair, don't re-match '|' on next iter
+    if (prevChar === "=") continue;
+    if (prevChar === "$") {
+      dollar += 1;
       continue;
     }
-    if (filterIdentifierFollows(body, i + 1)) return true;
+    bare += 1;
   }
-  return false;
+  return { bare, dollar };
 }
 
 /**
- * True when the first non-whitespace character at or after `start` in
- * `body` begins an ASCII identifier (Liquid filter names — `default`,
- * `escape`, `upcase`, plugin-authored). Extracted from
- * {@link containsLiquidFilterPipe} so the per-pipe scanner stays under
- * the cognitive-complexity cap while keeping the RHS shape requirement
- * explicit (the Liquid filter form is always `value | name[: arg]`,
- * never a trailing `|` with no identifier).
+ * Returns the count of regex matches in `source`. The match objects
+ * are intentionally discarded — only the count matters for token
+ * tally accumulation. Pulled out of the dispatcher so each shape
+ * counter is one `countMatches` call instead of an inline loop.
  */
-function filterIdentifierFollows(body: string, start: number): boolean {
-  let j = start;
-  while (j < body.length && (body[j] === " " || body[j] === "\t")) j += 1;
-  if (j >= body.length) return false;
-  const rhs = body.charCodeAt(j);
-  const isUpper = rhs >= 0x41 && rhs <= 0x5a;
-  const isLower = rhs >= 0x61 && rhs <= 0x7a;
-  const isUnderscore = rhs === 0x5f;
-  return isUpper || isLower || isUnderscore;
+function countMatches(source: string, pattern: RegExp): number {
+  let n = 0;
+  for (const _ of source.matchAll(pattern)) n += 1;
+  return n;
 }

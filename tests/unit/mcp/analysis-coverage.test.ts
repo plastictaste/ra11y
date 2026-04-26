@@ -749,275 +749,186 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
-  describe("template directive handling", () => {
-    it("surfaces a plain-English handling note alongside the engines list", () => {
-      const jinja = htmlFile("t.html", "{% extends 'base.html' %}<p>{{ x }}</p>");
-      const { analysisCoverage } = buildAnalysisCoverage([jinja], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+  // Doctrine ("Heuristic-mislabeled meta sub-fields are dishonest"):
+  // dialect attribution is impossible from token shape alone — `{{ x }}`
+  // is shared by Handlebars, Mustache, Liquid, Jinja, Vue, and Angular,
+  // and the GitHub-Actions form `${{ x }}` reused the bare-double-brace
+  // surface. Earlier passes shipped a deterministic-sounding family
+  // token (`templateDirectivesFound: ["handlebars-or-mustache"]`,
+  // `["jinja-or-liquid"]`) that fired wrong on every Vue/Angular/
+  // workflow corpus that crossed the parser. The honest shape is the
+  // raw evidence: surface the literal interpolation token + its
+  // occurrence count, and let the agent disambiguate dialect from the
+  // surrounding files.
+  describe("template-interpolation token surfacing", () => {
+    it("surfaces a plain-English handling note alongside the token list", () => {
+      const liquid = htmlFile("t.html", "{% extends 'base.html' %}<p>{{ x }}</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([liquid], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const tokenLiterals = (tokens ?? []).map((entry) => entry.token);
+      expect(tokenLiterals).toContain("{%x%}");
+      expect(tokenLiterals).toContain("{{x}}");
       const handling = analysisCoverage?.["templateDirectiveHandling"] as string | undefined;
       expect(handling).toBeDefined();
       expect(handling).toContain("parsed as literal");
       expect(handling).toContain("rendered output is not reconstructed");
     });
 
-    it("omits the handling note when no directives are detected", () => {
+    it("omits the token list and handling note when no interpolation is detected", () => {
       const plain = htmlFile("p.html", "<p>hello</p>");
       const { analysisCoverage } = buildAnalysisCoverage([plain], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
       expect(analysisCoverage?.["templateDirectiveHandling"]).toBeUndefined();
     });
 
-    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: Jekyll `_includes/`
-    // partials routinely open with the whitespace-control variant
-    // `{%- include 'foo.html' -%}` — the original classifier's regex
-    // required `\s*` immediately after `{%`, so the dash-prefixed form
-    // slipped through and the partial was mis-tagged handlebars-or-
-    // mustache on the strength of its `{{ }}` interpolations alone.
-    it("recognizes Liquid whitespace-control `{%-` as jinja-or-liquid", () => {
-      const liquidPartial = htmlFile(
+    // Whitespace-control variants of `{%- ... -%}` count as the same
+    // `{%x%}` token shape — the dash is a Liquid-specific signal the
+    // agent reads from the source itself, not a separate scanner-
+    // emitted token. This invariant prevents the field from re-
+    // accreting a heuristic dialect axis under another name.
+    it("counts `{%- ... -%}` whitespace-control as the same `{%x%}` token", () => {
+      const partial = htmlFile(
         "header.html",
         "{%- include 'top.html' -%}\n<h1>{{ page.title }}</h1>",
       );
-      const { analysisCoverage } = buildAnalysisCoverage([liquidPartial], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+      const { analysisCoverage } = buildAnalysisCoverage([partial], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const map = new Map((tokens ?? []).map((entry) => [entry.token, entry.count]));
+      expect(map.get("{%x%}")).toBe(1);
+      expect(map.get("{{x}}")).toBe(1);
     });
 
-    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: a file with both `{% %}`
-    // and `{{ }}` is Jinja/Liquid — the `{{ }}` is interpolation within
-    // the same family, not a separate handlebars signal. The previous
-    // classifier used a cross-file accumulator (`!into.has("jinja-or-
-    // liquid")`), so the ordering of files within a scan decided
-    // whether `handlebars-or-mustache` got stamped alongside.
-    it("does not double-tag `{% %}` + `{{ }}` in the same file", () => {
-      const liquid = htmlFile("base.html", "{% if user %}<p>{{ user.name }}</p>{% endif %}");
-      const { analysisCoverage } = buildAnalysisCoverage([liquid], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
-    });
-
-    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: cross-file invariant for
-    // `scan_project`. A pure-Liquid project where one file has only
-    // `{{ }}` (partial) and another has `{% %}` (layout) must classify
-    // per-file; the accumulator unions the per-file decisions. The
-    // bug: the first file (bare `{{ }}`) stamped handlebars-or-
-    // mustache, the second (control block) stamped jinja-or-liquid,
-    // and the final set contained both — inconsistent with `scan_file`
-    // on either file alone.
-    it("classifies per-file so mixed Liquid projects don't yield both tags", () => {
-      const partial = htmlFile("_includes/header.html", "<h1>{{ page.title }}</h1>");
+    it("counts every occurrence of each token across one file (densest token first)", () => {
+      // Three control blocks, two interpolations — the response shape
+      // sorts by descending count so an agent reading the first entry
+      // sees the densest evidence on the corpus.
       const layout = htmlFile(
-        "_layouts/default.html",
-        "{% include 'header.html' %}<main>{{ content }}</main>",
+        "page.html",
+        "{% if a %}{% include 'h.html' %}{% endif %}<p>{{ x }}{{ y }}</p>",
       );
-      const { analysisCoverage } = buildAnalysisCoverage([partial, layout], [], NO_RULES, false);
-      // The `{{ }}`-only partial legitimately lands in handlebars-or-
-      // mustache (ambiguous evidence); the layout lands in jinja-or-
-      // liquid. Both appear because the scan genuinely contains both
-      // syntactic shapes — but each file's label is decided in
-      // isolation, which is the invariant that was broken.
-      const tags = analysisCoverage?.["templateDirectivesFound"] as string[] | undefined;
-      expect(tags).toContain("jinja-or-liquid");
-      // Pure-Handlebars regression: a project with ONLY `{{ }}` files
-      // should still be tagged handlebars-or-mustache. Verified below
-      // in a dedicated test.
+      const { analysisCoverage } = buildAnalysisCoverage([layout], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      expect(tokens?.[0]?.token).toBe("{%x%}");
+      expect(tokens?.[0]?.count).toBe(3);
+      expect(tokens?.[1]?.token).toBe("{{x}}");
+      expect(tokens?.[1]?.count).toBe(2);
     });
 
-    // Q4-TEMPLATE-DIRECTIVE-CLASSIFIER-DRIFT: pure Handlebars file.
-    // A `{{ }}`-only file with no `{% %}` anywhere stays tagged
-    // handlebars-or-mustache — the classifier change must not break
-    // the honest handlebars case.
-    it("tags pure Handlebars (`{{ }}` only, no `{% %}`) as handlebars-or-mustache", () => {
-      const handlebars = htmlFile("template.hbs", "<h1>{{title}}</h1><p>{{body}}</p>");
-      const { analysisCoverage } = buildAnalysisCoverage([handlebars], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
+    it("aggregates token counts across all scanned files", () => {
+      // scan_project should sum per-file tallies — an agent budgeting
+      // against the densest token reads the cross-file total, not a
+      // single file's count.
+      const a = htmlFile("a.html", "<h1>{{ title }}</h1>");
+      const b = htmlFile("b.html", "<h1>{{ x }}</h1><p>{{ y }}</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([a, b], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const map = new Map((tokens ?? []).map((entry) => [entry.token, entry.count]));
+      expect(map.get("{{x}}")).toBe(3);
     });
 
-    // Q4-TEMPLATE-CLASSIFIER-LIQUID-AS-MUSTACHE-SINGLE-FILE:
-    // a Jekyll `_layouts/default.html` that uses only the Liquid
-    // whitespace-stripping interpolation form `{{- content -}}`
-    // (no `{% %}` blocks anywhere) was mis-tagged
-    // handlebars-or-mustache because the earlier classifier only
-    // treated `{% %}` as Liquid evidence. `{{-` / `-}}` is a
-    // decisive Liquid-only signal — Handlebars and Mustache don't
-    // recognize the dash as a whitespace-control marker — so a
-    // file carrying it classifies as jinja-or-liquid even when
-    // every other interpolation is the shared `{{ x }}` form.
-    it("tags pure-Liquid layouts using only `{{- ... -}}` whitespace-control as jinja-or-liquid", () => {
-      const liquidLayout = htmlFile(
-        "_layouts/default.html",
-        [
-          "<!DOCTYPE html>",
-          "<html>",
-          "<head><title>{{- page.title -}}</title></head>",
-          "<body>",
-          "{{- content -}}",
-          "</body>",
-          "</html>",
-        ].join("\n"),
-      );
-      const { analysisCoverage } = buildAnalysisCoverage([liquidLayout], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+    it("breaks ties on token literal so output is deterministic across runs", () => {
+      // Equal counts → token literal is the deterministic tiebreak
+      // (via `localeCompare`). The exact ordering follows JS locale-
+      // sort semantics; the invariant the test pins is "running the
+      // same input twice yields the same order," which a comparator
+      // built on `localeCompare` provides.
+      const mixed = htmlFile("demo.html", "<pre><% scrap %>{{ value }}</pre>");
+      const a = buildAnalysisCoverage([mixed], [], NO_RULES, false).analysisCoverage;
+      const b = buildAnalysisCoverage([mixed], [], NO_RULES, false).analysisCoverage;
+      const tokensA = a?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const tokensB = b?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      expect(tokensA).toBeDefined();
+      expect(tokensA).toEqual(tokensB);
+      // Both shapes are present at count=1 — the corpus genuinely
+      // contains one of each. Order is stable but locale-dependent.
+      const literalsA = (tokensA ?? []).map((entry) => entry.token).sort();
+      expect(literalsA).toEqual(["<%x%>", "{{x}}"]);
     });
 
-    // Same invariant, one-sided whitespace-strip: Jekyll authors
-    // routinely write `{{ foo -}}` or `{{- foo }}` where only one
-    // end strips whitespace. Either half is decisive Liquid evidence.
-    it("tags files with one-sided `{{- x }}` or `{{ x -}}` strips as jinja-or-liquid", () => {
-      const leftStrip = htmlFile("_layouts/left.html", "<p>{{- page.title }}</p>");
-      const rightStrip = htmlFile("_layouts/right.html", "<p>{{ page.title -}}</p>");
-      const left = buildAnalysisCoverage([leftStrip], [], NO_RULES, false).analysisCoverage;
-      const right = buildAnalysisCoverage([rightStrip], [], NO_RULES, false).analysisCoverage;
-      expect(left?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
-      expect(right?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
-    });
-
-    // Q3-TEMPLATE-DIRECTIVE-STARLIKE-MISDETECT: Astro/JSX attribute
-    // spreads of object literals look like `overrides={{ body: bodyProps }}`
-    // — the outer `{` is the JSX expression boundary, the inner `{...}`
-    // is the object literal, and the pair collapses to the `{{ ... }}`
-    // shape the classifier was keying off. Bootstrap's Starlight docs
-    // surfaced `templateDirectivesFound: ["handlebars-or-mustache"]`
-    // because `.astro` files flow through `parseAstro` → HTML AST
-    // (language "html"), and `detectTemplateEngines` then scanned the
-    // stripped-frontmatter source. The `={{ ... }}` shape is decisive
-    // JSX-attribute evidence, not Handlebars — a real Handlebars
-    // interpolation is never preceded by `=` (the attribute would be
-    // quoted). Filter `={{ ... }}` out of the evidence corpus.
-    it("does not tag JSX/Astro attribute spreads (`={{ body: x }}`) as handlebars-or-mustache", () => {
+    // The existing `={{ ... }}` JSX-attribute-spread filter survives:
+    // an Astro / React expression-boundary `{` is not template
+    // evidence. Without this filter, every Astro doc page mis-emitted
+    // a token.
+    it("excludes JSX/Astro attribute spread `={{ ... }}` from the bare-double-brace token", () => {
       const astroLike = htmlFile(
         "index.astro.html",
         "<Component overrides={{ body: bodyProps }} />",
       );
       const { analysisCoverage } = buildAnalysisCoverage([astroLike], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
     });
 
-    // Q3-TEMPLATE-DIRECTIVE-STARLIKE-MISDETECT: GitHub Actions workflow
-    // expressions (the dollar-double-brace form, e.g. `github.event.pr.number`
-    // wrapped in `${{ ... }}`) share the `{{ ... }}` shape but are
-    // prefixed with `$` — a decisive non-Handlebars signal. While
-    // `.yml` files aren't parseable, the pattern can surface inside
-    // markdown fence stripping edge cases or template strings that
-    // flow through the HTML path. Treat `$`+`{{ ... }}` as non-evidence
-    // for the same reason as `={{ ... }}`. (The string below is
-    // concatenated so the `$` does not literally sit next to `{{` in
-    // this source file — Biome's noTemplateCurlyInString lints the
-    // co-located shape even in plain double-quoted strings.)
-    it("does not tag workflow-expression `$`+`{{ ... }}` as handlebars-or-mustache", () => {
-      // Build `${{ github.event.pull_request.number }}` at runtime so the
-      // literal `${` never sits in this source file (Biome's
-      // noTemplateCurlyInString lints the co-located shape even in plain
-      // double-quoted strings).
+    // The `${{ ... }}` GitHub-Actions / template-literal expression
+    // shape gets its OWN token rather than being silently dropped or
+    // mis-emitted as bare interpolation. An agent reading the literal
+    // recognizes the workflow-expression form immediately.
+    it("emits `${{x}}` as a distinct token for the dollar-double-brace shape", () => {
+      // Build the literal at runtime so the source file doesn't carry
+      // `${` adjacent to `{{` (Biome's noTemplateCurlyInString lints
+      // the shape even in plain double-quoted strings).
       const dollar = "$";
       const workflowExpr = `${dollar}{{ github.event.pull_request.number }}`;
       const workflowEmbed = htmlFile("embed.html", `<pre>run: echo ${workflowExpr}</pre>`);
       const { analysisCoverage } = buildAnalysisCoverage([workflowEmbed], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const literals = (tokens ?? []).map((entry) => entry.token);
+      expect(literals).toContain("${{x}}");
+      expect(literals).not.toContain("{{x}}");
     });
 
-    // Q3-TEMPLATE-DIRECTIVE-STARLIKE-MISDETECT: mixed-evidence guard.
-    // A file that carries an Astro attribute spread AND a real
-    // Handlebars interpolation should still tag handlebars-or-mustache
-    // — the spread is filtered, but the honest `{{ title }}` survives.
-    // This is the regression we care about in the other direction:
-    // tightening the evidence corpus must not silently drop real
-    // template evidence that happens to coexist with JSX props.
-    it("still tags handlebars-or-mustache when a real `{{ x }}` coexists with a JSX spread", () => {
+    // Mixed evidence: a JSX spread (filtered) AND a real `{{ x }}`
+    // interpolation in the same file. The bare token survives; the
+    // spread is excluded. Tightening the evidence corpus must not
+    // drop real template evidence.
+    it("counts a real `{{ x }}` even when a JSX spread coexists in the same file", () => {
       const mixed = htmlFile(
         "mixed.html",
         "<Component overrides={{ body: bodyProps }} />\n<h1>{{ title }}</h1>",
       );
       const { analysisCoverage } = buildAnalysisCoverage([mixed], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const map = new Map((tokens ?? []).map((entry) => [entry.token, entry.count]));
+      expect(map.get("{{x}}")).toBe(1);
     });
 
-    // V1-TEMPLATE-CLASSIFIER-LIQUID-PIPE-FILTER-EVIDENCE: a Liquid
-    // filter pipe inside `{{ ... }}` is decisive Liquid syntax.
-    // Jekyll `_includes/top.html` was tagged handlebars-or-mustache
-    // because per-file majority-vote treated `{{ page.lang | default:
-    // "en" }}` as ambiguous interpolation alongside other bare
-    // `{{ x }}` tokens. The pipe is the discriminator: Handlebars and
-    // Mustache use sub-expression helper invocation, never a postfix
-    // `|`. A single qualifying pipe forces jinja-or-liquid.
-    it('tags `{{ x | default: "en" }}` Liquid filter pipe as jinja-or-liquid', () => {
-      const liquidInclude = htmlFile(
-        "_includes/top.html",
-        // Use single-quoted attribute so the `default: "en"` literal can stay
-        // double-quoted (Jekyll's idiomatic shape) without escaping.
-        "<html lang='{{ page.lang | default: \"en\" }}'>\n<body>{{ content }}</body>\n</html>",
+    // Cross-corpus invariants: Vue and Angular templates use the same
+    // `{{ x }}` shape as Handlebars, and earlier passes mis-stamped
+    // them as `handlebars-or-mustache`. The token-only shape now
+    // surfaces the same evidence on every corpus and lets the agent
+    // disambiguate dialect from the surrounding files.
+    it("emits the bare `{{x}}` token on a Vue-shaped template (no dialect attribution)", () => {
+      const vue = htmlFile(
+        "App.vue.html",
+        "<div class='greeting'>{{ user.name }} signed in at {{ formatTime(time) }}</div>",
       );
-      const { analysisCoverage } = buildAnalysisCoverage([liquidInclude], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
-    });
-
-    // Bare-filter form (`{{ y | escape }}` — no argument) is the
-    // shorthand Jekyll authors use most often. Same Liquid-only shape
-    // as the colon-arg form, so the same classification.
-    it("tags `{{ y | escape }}` bare-filter form as jinja-or-liquid", () => {
-      const liquidLayout = htmlFile(
-        "_layouts/post.html",
-        "<title>{{ page.title | escape }}</title>\n<p>{{ body }}</p>",
-      );
-      const { analysisCoverage } = buildAnalysisCoverage([liquidLayout], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
-    });
-
-    // Negative: `{{ a || b }}` is JS or-expression (can appear inside
-    // a JSX attribute-spread object literal `prop={{ a: x || y }}`),
-    // NOT a Liquid filter. Must not flip the classification.
-    it("does not tag JS or-expression `{{ a || b }}` as jinja-or-liquid", () => {
-      const jsOr = htmlFile("plain.html", "<h1>{{ a || b }}</h1>\n<p>{{ title }}</p>");
-      const { analysisCoverage } = buildAnalysisCoverage([jsOr], [], NO_RULES, false);
-      // Falls to the existing Handlebars-or-Mustache classifier on the
-      // strength of the bare `{{ title }}` interpolation; the `||`
-      // does NOT add Liquid evidence on top.
-      const tags = analysisCoverage?.["templateDirectivesFound"] as string[] | undefined;
-      expect(tags).toEqual(["handlebars-or-mustache"]);
-    });
-
-    // Negative: `{{ x |> y }}` is the Stage-2 pipeline operator,
-    // not a Liquid filter separator. Liquid filters are `|`
-    // immediately followed by an identifier — never `|>`.
-    it("does not tag pipeline-operator `{{ x |> y }}` as jinja-or-liquid", () => {
-      const pipeline = htmlFile("plain.html", "<h1>{{ x |> y }}</h1>\n<p>{{ title }}</p>");
-      const { analysisCoverage } = buildAnalysisCoverage([pipeline], [], NO_RULES, false);
-      const tags = analysisCoverage?.["templateDirectivesFound"] as string[] | undefined;
-      expect(tags).toEqual(["handlebars-or-mustache"]);
-    });
-
-    // Negative: a file whose only interpolations are bare `{{ x }}`
-    // / `{{ y }}` (no pipes anywhere) preserves the existing
-    // handlebars-or-mustache tag. This is the regression check that
-    // the pipe-axis evidence didn't accidentally widen the Liquid
-    // signal to non-pipe shapes.
-    it("preserves handlebars-or-mustache for bare `{{ x }}{{ y }}` files (no pipe)", () => {
-      const mustache = htmlFile("template.mustache", "<h1>{{title}}</h1>\n<p>{{body}}</p>");
-      const { analysisCoverage } = buildAnalysisCoverage([mustache], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["handlebars-or-mustache"]);
-    });
-
-    // Mixed-evidence: a single Liquid pipe outweighs co-occurring
-    // bare `{{ x }}` tokens in the same file. Per-file majority-vote
-    // (the historical bug) would have stamped handlebars-or-mustache
-    // here; the pipe-axis high-confidence override forces
-    // jinja-or-liquid regardless of the bare-token count.
-    it("forces jinja-or-liquid when a Liquid pipe coexists with multiple bare `{{ x }}` tokens", () => {
-      const mixed = htmlFile(
-        "_includes/header.html",
-        "<h1>{{ title }}</h1>\n<h2>{{ subtitle }}</h2>\n<p>{{ body | escape }}</p>",
-      );
-      const { analysisCoverage } = buildAnalysisCoverage([mixed], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
-    });
-
-    // Negative: a JSX attribute spread `={{ a | b }}` is decisively
-    // non-Liquid evidence (real Liquid is never preceded by `=` —
-    // the attribute would be quoted). Same pre-match exclusion as
-    // {@link hasNonJsxInterpolation}. Without the exclusion this file
-    // would be mis-tagged jinja-or-liquid even though there's no
-    // actual template directive present.
-    it("does not tag JSX attribute spread `={{ a | b }}` as jinja-or-liquid", () => {
-      const jsxSpread = htmlFile("page.astro.html", "<Component overrides={{ a | b }} />");
-      const { analysisCoverage } = buildAnalysisCoverage([jsxSpread], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      const { analysisCoverage } = buildAnalysisCoverage([vue], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const map = new Map((tokens ?? []).map((entry) => [entry.token, entry.count]));
+      expect(map.get("{{x}}")).toBe(2);
+      // No dialect string ever ships under this field — the literal
+      // token is the only sub-shape allowed.
+      const literals = (tokens ?? []).map((entry) => entry.token);
+      for (const literal of literals) {
+        expect(literal).toMatch(/^[<{$]/);
+      }
     });
   });
 
@@ -1045,7 +956,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["hasFrontmatterFence"]).toBe(true);
     });
 
-    it("flags hasFrontmatterFence on a 1-line-body post with no template directives — the V1 repro", () => {
+    it("flags hasFrontmatterFence on a 1-line-body post with no interpolation tokens — the V1 repro", () => {
       // Jekyll `test/source/properties.html`: frontmatter + single
       // body line, zero `{{ }}` / `{% %}` / `<% %>` tokens. Before the
       // fix, this scan returned `warnings: ["no_config_found"]` only
@@ -1056,10 +967,10 @@ describe("buildAnalysisCoverage — hints", () => {
       );
       const { analysisCoverage } = buildAnalysisCoverage([v1Repro], [], NO_RULES, false);
       expect(analysisCoverage?.["hasFrontmatterFence"]).toBe(true);
-      // The substrate is the frontmatter, not a Liquid/Handlebars tag
-      // — templateDirectivesFound stays empty because no directive
-      // token exists in the source.
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      // The substrate is the frontmatter, not a `{{ }}` / `{% %}` /
+      // `<% %>` token — templateInterpolationFound stays empty because
+      // no qualifying token exists in the source.
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
     });
 
     it("does NOT flag hasFrontmatterFence on a plain HTML file with no fence", () => {
@@ -1093,16 +1004,17 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
-  // V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE: prose in
-  // `.md` / `.markdown` files routinely QUOTES template directives
-  // inside fenced code blocks and inline-code spans. A Jekyll docs
-  // page that shows `<%= Time.now %>` as an ERB usage example stamped
-  // `erb-or-ejs` on the whole scan's telemetry — despite zero `.erb`
-  // files reaching the parser. Strip markdown code regions before
-  // classification so prose examples stop tripping the detector.
-  describe("markdown code-region stripping for template classifier", () => {
-    it("does not tag `erb-or-ejs` when `<%= x %>` lives in a fenced code block in a .md file", () => {
-      // Jekyll `docs/_docs/troubleshooting.md:261` — canonical repro.
+  // Prose in `.md` / `.markdown` files routinely QUOTES template
+  // tokens inside fenced code blocks and inline-code spans. A Jekyll
+  // docs page that shows `<%= Time.now %>` as an ERB usage example
+  // would emit a `<%x%>` token on the whole scan's telemetry — despite
+  // zero `.erb` files reaching the parser. Strip markdown code
+  // regions before classification so prose examples stop tripping
+  // the detector. The rules here mirror the previous classifier-era
+  // behavior because the strip happens BEFORE token detection in
+  // `accumulateHtmlCoverageForFile`.
+  describe("markdown code-region stripping for token detection", () => {
+    it("does not emit `<%x%>` when `<%= x %>` lives in a fenced code block in a .md file", () => {
       const mdDocs = htmlFile(
         "docs/troubleshooting.md",
         [
@@ -1118,11 +1030,10 @@ describe("buildAnalysisCoverage — hints", () => {
         ].join("\n"),
       );
       const { analysisCoverage } = buildAnalysisCoverage([mdDocs], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
     });
 
-    it("does not tag `jinja-or-liquid` when `{% tag %}` lives in a fenced code block in a .markdown file", () => {
-      // Jekyll release-notes prose — `History.markdown` style.
+    it("does not emit `{%x%}` when `{% tag %}` lives in a fenced code block in a .markdown file", () => {
       const releaseNotes = htmlFile(
         "History.markdown",
         ["## Release 4.0", "", "```liquid", "{% assign foo = 'bar' %}", "{{ foo }}", "```"].join(
@@ -1130,29 +1041,29 @@ describe("buildAnalysisCoverage — hints", () => {
         ),
       );
       const { analysisCoverage } = buildAnalysisCoverage([releaseNotes], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
     });
 
-    it("does not tag `erb-or-ejs` when `<% ... %>` lives in an inline-code span in a .md file", () => {
+    it("does not emit `<%x%>` when `<% ... %>` lives in an inline-code span in a .md file", () => {
       const mdInline = htmlFile("docs/tutorial.md", "Use the `<% end %>` tag to close a block.");
       const { analysisCoverage } = buildAnalysisCoverage([mdInline], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
     });
 
-    it("does not tag `handlebars-or-mustache` when `{{ x }}` lives in an inline-code span in a .md file", () => {
+    it("does not emit `{{x}}` when `{{ x }}` lives in an inline-code span in a .md file", () => {
       const mdInline = htmlFile(
         "docs/tutorial.md",
         "The `{{ page.title }}` expression renders the page title.",
       );
       const { analysisCoverage } = buildAnalysisCoverage([mdInline], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
     });
 
-    it("still tags directives that appear OUTSIDE a fenced block in the same .md file", () => {
-      // Mixed: a real directive in body prose (rare but possible — a
-      // Hugo theme README that literally renders `{{ .Title }}`) plus
-      // a quoted example in a fence. The fence is stripped; the live
-      // directive stays. Over-stripping would silently drop honest
+    it("still emits tokens that appear OUTSIDE a fenced block in the same .md file", () => {
+      // Mixed: a real token in body prose (rare but possible — a Hugo
+      // theme README that literally renders `{{ .Title }}`) plus a
+      // quoted example in a fence. The fence is stripped; the live
+      // token stays. Over-stripping would silently drop honest
       // template evidence.
       const mixed = htmlFile(
         "README.md",
@@ -1167,20 +1078,27 @@ describe("buildAnalysisCoverage — hints", () => {
         ].join("\n"),
       );
       const { analysisCoverage } = buildAnalysisCoverage([mixed], [], NO_RULES, false);
-      // Real `{% assign %}` outside the fence is decisive Liquid.
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["jinja-or-liquid"]);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const literals = (tokens ?? []).map((entry) => entry.token);
+      expect(literals).toEqual(["{%x%}"]);
     });
 
     it("does not strip code regions in non-markdown HTML files — prose + fences are an .md concern only", () => {
       // A plain `.html` file with literal backticks does not go
       // through the markdown stripper (backticks are not HTML
-      // code-block syntax). The classifier sees the full source; a
-      // `<%= %>` inside a `<pre><code>` block still surfaces as
-      // `erb-or-ejs` because stripping `<pre><code>` requires AST
+      // code-block syntax). The detector sees the full source; a
+      // `<%= %>` inside a `<pre><code>` block still surfaces as the
+      // `<%x%>` token because stripping `<pre><code>` requires AST
       // analysis, out of scope for this fix.
       const htmlWithPre = htmlFile("example.html", "<pre><code><%= Time.now %></code></pre>");
       const { analysisCoverage } = buildAnalysisCoverage([htmlWithPre], [], NO_RULES, false);
-      expect(analysisCoverage?.["templateDirectivesFound"]).toEqual(["erb-or-ejs"]);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const literals = (tokens ?? []).map((entry) => entry.token);
+      expect(literals).toEqual(["<%x%>"]);
     });
   });
 

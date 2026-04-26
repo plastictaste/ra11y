@@ -1139,12 +1139,23 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       meta: {
         analysisCoverage?: {
           opaqueCustomComponents?: number;
-          templateDirectivesFound?: readonly string[];
+          templateInterpolationFound?: readonly {
+            readonly token: string;
+            readonly count: number;
+          }[];
         };
       };
     };
     expect(body.meta.analysisCoverage?.opaqueCustomComponents).toBeGreaterThanOrEqual(2);
-    expect(body.meta.analysisCoverage?.templateDirectivesFound).toContain("jinja-or-liquid");
+    // `{% extends 'base.html' %}` surfaces as the `{%x%}` token literal —
+    // the scanner does not attempt dialect attribution (Jinja vs. Liquid
+    // vs. Nunjucks vs. Twig); the agent disambiguates from the file
+    // content. See `docs/kb/architecture/ai-first-consumer.md`,
+    // "Heuristic-mislabeled meta sub-fields are dishonest."
+    const tokens = (body.meta.analysisCoverage?.templateInterpolationFound ?? []).map(
+      (entry) => entry.token,
+    );
+    expect(tokens).toContain("{%x%}");
   });
 
   it("sessionConfigure is listed in tools/list; the legacy `configure` alias is not", async () => {

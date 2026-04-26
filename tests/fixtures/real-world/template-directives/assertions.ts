@@ -1,33 +1,21 @@
 /**
- * template-directives — guards commit a554d27 (feat(mcp): actionable
- * hints and explicit template-directive handling).
+ * template-directives — guards the explicit handling note that ships
+ * alongside detected interpolation tokens.
  *
- * Commit a554d27 added `templateDirectiveHandling: string` alongside the
- * existing `templateDirectivesFound` array. The new field emits plain-
- * English text explaining that the HTML parser treats `{% ... %}` and
- * `{{ ... }}` as literal text — the rendered output is not reconstructed
- * and cross-template `extends`/`include` relationships are not resolved.
+ * The handling field emits plain-English text explaining that the HTML
+ * parser treats `{% ... %}`, `{{ ... }}`, and `<% ... %>` tokens as
+ * literal text — the rendered output is not reconstructed and cross-
+ * template `extends`/`include` relationships are not resolved.
  *
- * Two source files exercise distinct directive styles:
- *   - base.jinja.html: Jinja control directives (`{% extends %}`,
- *     `{% block %}`, `{% if %}`, `{% for %}`) + interpolation.
- *     Detected as `jinja-or-liquid`.
- *   - partial.html: mustache-style interpolation only (`{{ }}`).
- *     Detected as `handlebars-or-mustache`.
- *
- * Live meta evidence (bun probe run 2026-04-16):
- *   meta.analysisCoverage.templateDirectiveHandling ==
- *   "handlebars-or-mustache, jinja-or-liquid directives are parsed as
- *    literal HTML text — the rendered output is not reconstructed.
- *    Rules run against the template source, so attributes like
- *    `class=\"{% if x %}foo{% endif %}\"` are evaluated as the raw string
- *    containing the directive. Cross-template `extends`/`include`
- *    relationships are not resolved. Verify findings in files flagged
- *    with directives by reading the rendered output rather than the
- *    template."
+ * Two source files exercise distinct token shapes:
+ *   - base.jinja.html: control-block tokens (`{% extends %}`,
+ *     `{% block %}`, `{% if %}`, `{% for %}`) + bare double-brace
+ *     interpolation. Surfaces `{%x%}` and `{{x}}` tokens.
+ *   - partial.html: bare double-brace interpolation only (`{{ }}`).
+ *     Surfaces the `{{x}}` token alone.
  *
  * The assertions lock in:
- *   1. Zero parse errors — the HTML parser must accept template-directive
+ *   1. Zero parse errors — the HTML parser must accept template-token
  *      syntax without producing a broken AST.
  *   2. The handling field is present under analysisCoverage.
  *   3. The phrase "parsed as literal" appears — if a future refactor
@@ -40,16 +28,15 @@ import type { FixtureAssertions } from "../runner.ts";
 
 export const assertions: FixtureAssertions = {
   description:
-    "HTML templates with Jinja control directives and mustache interpolation produce " +
+    "HTML templates with control-block and double-brace interpolation tokens produce " +
     "meta.analysisCoverage.templateDirectiveHandling containing 'parsed as literal' " +
     "and 'rendered output is not reconstructed', with zero parse errors.",
   origin: {
     commit: "a554d27",
     notes:
-      "feat(mcp): actionable hints and explicit template-directive handling. Before this " +
-      "commit, templateDirectivesFound told the agent *that* directives were detected but " +
-      "not what the scanner did with them. templateDirectiveHandling replaces the silent " +
-      "signal with an explicit statement that directives are parsed as literal text.",
+      "feat(mcp): actionable hints and explicit template-directive handling. The handling " +
+      "field replaces the silent token list with an explicit statement that interpolation " +
+      "tokens are parsed as literal text.",
   },
   expectations: [
     // The HTML parser must not error on template-directive syntax. If the

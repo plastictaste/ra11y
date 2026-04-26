@@ -251,13 +251,13 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("tailwind_detected_css_undercounted");
   });
 
-  it("fires `template_files_parsed_as_literal` when templateDirectivesFound is populated AND a finding overlaps a directive", () => {
+  it("fires `template_files_parsed_as_literal` when templateInterpolationFound is populated AND a finding overlaps a directive", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        templateDirectivesFound: ["jinja-or-liquid"],
+        templateInterpolationFound: [{ token: "{%x%}", count: 3 }],
       },
       filesByExtension: { ".html": 5 },
       templateDirectivesOverlap: true,
@@ -265,13 +265,13 @@ describe("computeScanWarnings", () => {
     expect(codes).toContain("template_files_parsed_as_literal");
   });
 
-  it("does NOT fire `template_files_parsed_as_literal` when directives present but no finding overlaps", () => {
+  it("does NOT fire `template_files_parsed_as_literal` when interpolation tokens present but no finding overlaps", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        templateDirectivesFound: ["jinja-or-liquid"],
+        templateInterpolationFound: [{ token: "{%x%}", count: 3 }],
       },
       filesByExtension: { ".html": 5 },
       templateDirectivesOverlap: false,
@@ -279,12 +279,12 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
-  it("does NOT fire `template_files_parsed_as_literal` when templateDirectivesFound is empty/absent", () => {
+  it("does NOT fire `template_files_parsed_as_literal` when templateInterpolationFound is empty/absent", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
-      analysisCoverage: { templateDirectivesFound: [] },
+      analysisCoverage: { templateInterpolationFound: [] },
       filesByExtension: { ".html": 5 },
     });
     expect(codes).not.toContain("template_files_parsed_as_literal");
@@ -316,7 +316,7 @@ describe("computeScanWarnings", () => {
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
         hasFrontmatterFence: true,
-        templateDirectivesFound: ["jinja-or-liquid"],
+        templateInterpolationFound: [{ token: "{%x%}", count: 3 }],
       },
       filesByExtension: { ".html": 5 },
       templateDirectivesOverlap: false,
@@ -1767,18 +1767,19 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
 
   it("binary-presence codes never emit a `warningsDetails` entry — `template_files_parsed_as_literal`", () => {
     // `template_files_parsed_as_literal` is binary too: the
-    // directive list lives in `meta.analysisCoverage.templateDirectivesFound`
-    // and the code's prose names the dispatch (overlap or
-    // frontmatter fence). A count of directives or fence presence
-    // bit doesn't change the agent's next action — read the file,
-    // confirm the parse-as-literal regime, decide whether to add a
-    // pragma — the bare code IS the entire top-level signal.
+    // interpolation token list lives in
+    // `meta.analysisCoverage.templateInterpolationFound` and the
+    // code's prose names the dispatch (overlap or frontmatter fence).
+    // A count of tokens or fence presence bit doesn't change the
+    // agent's next action — read the file, confirm the parse-as-
+    // literal regime, decide whether to add a pragma — the bare
+    // code IS the entire top-level signal.
     const out = warningsField({
       filesScanned: 5,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        templateDirectivesFound: ["jinja-or-liquid"],
+        templateInterpolationFound: [{ token: "{%x%}", count: 3 }],
       },
       filesByExtension: { ".html": 5 },
       templateDirectivesOverlap: true,
@@ -1807,7 +1808,7 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
         parseErrorFileCount: 4,
         partialParseFileCount: 2,
         skippedByExtension: { ".astro": 80, ".rb": 120, ".haml": 60, ".md": 5 },
-        templateDirectivesFound: ["jinja-or-liquid"],
+        templateInterpolationFound: [{ token: "{%x%}", count: 3 }],
       },
       filesByExtension: { ".tsx": 250, ".css": 4 },
       scannedBuildArtifactsPresent: true,
