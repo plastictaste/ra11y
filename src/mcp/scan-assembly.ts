@@ -347,29 +347,80 @@ export function buildScanMeta(args: {
     // both `retained` is empty AND `count` is zero — otherwise the
     // counter rides even at zero so the agent has a deterministic
     // field to read.
-    ...perRuleCoverageMetaFragment(perRuleCoverage, activeRules),
+    //
+    // V1-TOOL-VERBOSE-META-INVERTED-DEFAULT: the full
+    // `perRuleCoverage[]` array is the largest per-rule meta block
+    // (~250 chars/row × N rules — measured at >40KB on whole-tree
+    // scans). It is now gated behind `verboseMeta: true`. At default
+    // verbosity the meta carries `perRuleCoverageSummary: { ruleCount,
+    // ruleIds }` so cross-tool invariants ("every rule the scanner saw
+    // is discoverable via list_rules") still hold and agents triaging
+    // a scan can verify rule presence without the per-row payload.
+    // The complementary signals — `rulesEvaluated` (loaded /
+    // withEligibleInputs / fired counters) and
+    // `rulesNotEvaluatedDueToInputType` — stay inline at every
+    // verbosity since they are scan-confidence telemetry per the
+    // "verbose meta is signal" rule.
+    ...perRuleCoverageMetaFragment(perRuleCoverage, activeRules, verboseMeta),
   };
 }
 
 /**
- * Builds the spreadable `perRuleCoverage` + `rulesNotEvaluatedDueToInputType`
- * meta fragment from the adjusted rows. Extracted so {@link buildScanMeta}'s
- * cognitive complexity stays inside the lint cap and the partition + emit
- * rules live in one place. The counter is always present — including the
- * zero/empty case — so the agent has a deterministic field to branch on.
- * `perRuleCoverage` is conditional-spread per the existing presence rule
- * (omitted when no rows survive partition).
+ * Builds the spreadable `perRuleCoverage` / `perRuleCoverageSummary` +
+ * `rulesNotEvaluatedDueToInputType` meta fragment from the adjusted
+ * rows. Extracted so {@link buildScanMeta}'s cognitive complexity
+ * stays inside the lint cap and the partition + emit rules live in
+ * one place.
+ *
+ * V1-TOOL-VERBOSE-META-INVERTED-DEFAULT: the full per-rule rows
+ * `perRuleCoverage[]` are the largest single meta block — they ride
+ * inline only under `verboseMeta: true`. At default verbosity the
+ * fragment carries the compact `perRuleCoverageSummary: { ruleCount,
+ * ruleIds }` so the canonical "list_rules ⊇ scan.perRuleCoverage rule
+ * IDs" invariant still holds and an agent that needs the full
+ * per-row payload (parse-error confidence reasons, vendor
+ * concentration, cross-file limitation reasons) flips
+ * `verboseMeta: true` once. Note the `_Summary` suffix is unique:
+ * the field never collides with the verbose `perRuleCoverage` key,
+ * and the two are mutually exclusive (the response carries either
+ * the array or the summary, never both).
+ *
+ * `rulesNotEvaluatedDueToInputType` is unconditional — including the
+ * zero/empty case — so the agent has a deterministic field to branch
+ * on. `perRuleCoverage` is conditional-spread per the existing
+ * presence rule (omitted when no rows survive partition);
+ * `perRuleCoverageSummary` mirrors that presence so the two surfaces
+ * agree on emptiness.
  */
 function perRuleCoverageMetaFragment(
   rows: readonly PerRuleCoverage[],
   activeRules: readonly Rule[],
+  verboseMeta: boolean,
 ): {
   readonly perRuleCoverage?: readonly PerRuleCoverage[];
+  readonly perRuleCoverageSummary?: {
+    readonly ruleCount: number;
+    readonly ruleIds: readonly string[];
+  };
   readonly rulesNotEvaluatedDueToInputType: RulesNotEvaluatedDueToInputType;
 } {
   const { retained, notEvaluatedDueToInputType } = partitionPerRuleCoverage(rows, activeRules);
+  if (retained.length === 0) {
+    return { rulesNotEvaluatedDueToInputType: notEvaluatedDueToInputType };
+  }
+  if (verboseMeta) {
+    return {
+      perRuleCoverage: retained,
+      rulesNotEvaluatedDueToInputType: notEvaluatedDueToInputType,
+    };
+  }
+  // Default verbosity: ship the compact summary. `ruleIds` is sorted
+  // (codepoint order) so the field is deterministic across runs.
   return {
-    ...(retained.length > 0 ? { perRuleCoverage: retained } : {}),
+    perRuleCoverageSummary: {
+      ruleCount: retained.length,
+      ruleIds: retained.map((r) => r.ruleId).sort(),
+    },
     rulesNotEvaluatedDueToInputType: notEvaluatedDueToInputType,
   };
 }

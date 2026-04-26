@@ -64,6 +64,10 @@ interface ScanMetaShape {
   readonly meta: {
     readonly rulesEvaluated: { readonly loaded: number };
     readonly perRuleCoverage?: ReadonlyArray<{ readonly ruleId: string }>;
+    readonly perRuleCoverageSummary?: {
+      readonly ruleCount: number;
+      readonly ruleIds: readonly string[];
+    };
   };
 }
 
@@ -100,11 +104,21 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
       );
       const listedIds = new Set(listRules.rules.map((r) => r.id));
 
+      // V1-TOOL-VERBOSE-META-INVERTED-DEFAULT: at default verbosity the
+      // scan-family meta carries the compact `perRuleCoverageSummary`
+      // (rule IDs + count) instead of the full per-row array. The
+      // containment invariant still holds against the summary's
+      // ruleIds — the per-rule CONFIDENCE rows live behind
+      // `verboseMeta: true`, but the rule-set the scanner saw is
+      // identical at both verbosities.
       const scan = await callJson<ScanMetaShape>(scanProjectTool, { cwd: dir }, session);
-      const coverage = scan.meta.perRuleCoverage ?? [];
-      expect(coverage.length).toBeGreaterThan(0);
-      for (const row of coverage) {
-        expect(listedIds.has(row.ruleId)).toBe(true);
+      const coverageRuleIds: readonly string[] =
+        scan.meta.perRuleCoverage === undefined
+          ? (scan.meta.perRuleCoverageSummary?.ruleIds ?? [])
+          : scan.meta.perRuleCoverage.map((r) => r.ruleId);
+      expect(coverageRuleIds.length).toBeGreaterThan(0);
+      for (const ruleId of coverageRuleIds) {
+        expect(listedIds.has(ruleId)).toBe(true);
       }
     });
   });

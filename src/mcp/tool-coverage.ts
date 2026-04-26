@@ -63,7 +63,7 @@ export const coverageTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, `analysisCoverage.parseErrorFiles` and `partialParseFiles` ship the full per-entry `{ path, parser, reason }` arrays uncapped. Default false: at counts ≤ 20 the inline arrays still ship; above 20 the response surfaces the `parseErrorTopReasons` / `partialParseTopReasons` rollup (top distinct reasons by frequency) and omits the path list to keep the response bounded on bulk-template scans. The count scalar (`parseErrorFileCount` / `partialParseFileCount`) is the authoritative total at every shape. Off by default; flip when triaging which specific files failed to parse.",
+            "When true, the meta block expands its compact summaries into the underlying per-row payloads. Affects: `perRuleCoverage[]` (full per-rule coverage rows — at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) and `analysisCoverage.parseErrorFiles` / `partialParseFiles` (full per-entry `{ path, parser, reason }` arrays uncapped — at default verbosity, counts ≤ 20 still ship inline; above 20 the response surfaces the `parseErrorTopReasons` / `partialParseTopReasons` rollup of top distinct reasons by frequency). The count scalar (`parseErrorFileCount` / `partialParseFileCount`) and the scan-confidence telemetry (`rulesEvaluated`, `rulesNotEvaluatedDueToInputType`) stay inline at every verbosity. Off by default to keep responses bounded on bulk-template scans; flip when triaging which specific files failed to parse or auditing per-rule confidence.",
         },
         metaMode: metaModeSchema,
       },

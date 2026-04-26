@@ -246,6 +246,11 @@ describe("runScanAndFormat — V1-META-COUNTS-BY-SURFACE-REGRESSION", () => {
       session.config.rules,
       undefined,
       undefined,
+      // verboseMeta: true — this assertion inspects per-row
+      // coverageConfidenceReason values, which only ride inline under
+      // verbose mode (V1-TOOL-VERBOSE-META-INVERTED-DEFAULT). Default
+      // verbosity surfaces only the compact perRuleCoverageSummary.
+      true,
     );
     const perRuleCoverage = formatted.meta["perRuleCoverage"] as readonly PerRuleCoverage[];
     expect(perRuleCoverage).toBeDefined();
@@ -313,6 +318,10 @@ describe("runScanAndFormat — V1-META-COUNTS-BY-SURFACE-REGRESSION", () => {
       session.config.rules,
       undefined,
       undefined,
+      // verboseMeta: true — assertions read per-row coverageConfidenceReason
+      // values which only ride inline under verbose mode
+      // (V1-TOOL-VERBOSE-META-INVERTED-DEFAULT).
+      true,
     );
     const perRuleCoverage = formatted.meta["perRuleCoverage"] as readonly PerRuleCoverage[];
     const partialRows = perRuleCoverage.filter(

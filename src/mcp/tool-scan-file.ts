@@ -79,7 +79,7 @@ export const scanFileTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, the response includes an `analysisCoverage` block with parse-error and opaque-component details, plus `rulesFiredByExtension` (legacy alias `rulesByExtension` ships alongside for one minor release per ADR 0028) so you can verify which rules were eligible to run on this file's type. Off by default.",
+            "When true, the response includes the full `meta.perRuleCoverage[]` array (per-rule coverage rows with concentration / parse-error confidence reasons; at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) plus the `analysisCoverage` block with parse-error and opaque-component details, plus `rulesFiredByExtension` (legacy alias `rulesByExtension` ships alongside for one minor release per ADR 0028) so you can verify which rules were eligible to run on this file's type. The scan-confidence telemetry (`rulesEvaluated`, `rulesNotEvaluatedDueToInputType`) stays inline at every verbosity. Off by default to keep per-file responses bounded on dense HTML; enable when triaging which rules ran on this file.",
         },
         metaMode: metaModeSchema,
       },

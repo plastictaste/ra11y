@@ -509,7 +509,11 @@ describe("per-rule coverage end-to-end", () => {
         fromSession: [],
       },
       wrapperElements: {},
-      verboseMeta: false,
+      // verboseMeta: true — this assertion inspects the per-row
+      // perRuleCoverage[] array (skipReason / coverageConfidence / etc).
+      // Default verbosity surfaces only the compact summary
+      // (V1-TOOL-VERBOSE-META-INVERTED-DEFAULT).
+      verboseMeta: true,
       preset: undefined,
       suppressions: [],
       perRuleCoverage,

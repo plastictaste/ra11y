@@ -1446,7 +1446,11 @@ describe("MCP tool: scan_file", () => {
 
     const tool = findTool("scan_file");
     const session = new McpSession();
-    const result = await tool.handler({ path: scssPath }, session);
+    // verboseMeta: true — assertion inspects the per-row
+    // perRuleCoverage[] (filesEligible per rule). Default verbosity
+    // surfaces only the compact summary (V1-TOOL-VERBOSE-META-INVERTED-
+    // DEFAULT).
+    const result = await tool.handler({ path: scssPath, verboseMeta: true }, session);
 
     // Not the file-unsupported error the Jekyll agent observed.
     expect(result.isError).toBeUndefined();
