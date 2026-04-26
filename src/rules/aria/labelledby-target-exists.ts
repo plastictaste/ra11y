@@ -167,8 +167,17 @@ export const rule = defineRule({
     ],
   },
   check(ctx) {
+    // Cross-file-candidate signal: every IDREF attribute on this file
+    // is a token whose target id might live in a sibling layout
+    // partial / include / wrapper component. Bumping the tracker once
+    // per observed attribute lets the per-rule-coverage builder gate
+    // its `crossFileCapable: false` confidence downgrade on actual
+    // observation rather than default-pessimism. Files with zero IDREF
+    // attributes carry no cross-file question and stay at `"high"`.
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      const doc = ctx.ast as HtmlDocument;
+      markIdrefCandidatesHtml(doc, ctx.markCrossFileCandidate);
+      checkHtml(doc, (v) => ctx.emit(v));
       return;
     }
     if (
@@ -177,10 +186,37 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
+      const module = ctx.ast as TsxModule;
+      markIdrefCandidatesJsx(module, ctx.markCrossFileCandidate);
+      checkJsx(module, (v) => ctx.emit(v));
     }
   },
 });
+
+/**
+ * Bumps the cross-file-candidate counter once per IDREF attribute
+ * present on the document. Called when `markCrossFileCandidate` is
+ * available (the rule runner wires it for `crossFileCapable: false`
+ * rules); a no-op when missing (test harnesses that build a context
+ * directly).
+ */
+function markIdrefCandidatesHtml(doc: HtmlDocument, mark: (() => void) | undefined): void {
+  if (mark === undefined) return;
+  for (const el of walkHtmlElements(doc)) {
+    for (const attr of IDREF_ATTRS) {
+      if (hasHtmlAttribute(el, attr)) mark();
+    }
+  }
+}
+
+function markIdrefCandidatesJsx(module: TsxModule, mark: (() => void) | undefined): void {
+  if (mark === undefined) return;
+  for (const el of walkJsxElements(module)) {
+    for (const attr of IDREF_ATTRS) {
+      if (getJsxAttribute(el, attr) !== null) mark();
+    }
+  }
+}
 
 type Severity = "error" | "warning" | "info";
 type Emit = (v: {

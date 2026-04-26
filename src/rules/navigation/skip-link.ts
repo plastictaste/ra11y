@@ -120,11 +120,33 @@ export const rule = defineRule({
     const ids = collectIds(doc);
     const reportedAnchors = new Set<HtmlElement>();
 
+    // Cross-file-candidate signal: any in-page anchor (`<a href="#x">`)
+    // is a token whose target id might live in a sibling layout
+    // partial / include. Bumping once per such anchor lets the per-rule
+    // -coverage builder gate the `crossFileCapable: false` confidence
+    // downgrade on actual observation. Files with zero in-page anchors
+    // carry no cross-file question — confidence stays `"high"`.
+    markInPageAnchorCandidates(doc, ctx.markCrossFileCandidate);
+
     const primaryNavApplied = checkPrimaryNavPath(ctx, doc, ids, reportedAnchors);
     checkSkipLinkShapedAnchors(ctx, doc, ids, reportedAnchors);
     if (!primaryNavApplied) checkOpaqueNavComponent(ctx, doc);
   },
 });
+
+/**
+ * Bumps the cross-file-candidate counter once per in-page anchor
+ * (`<a href="#x">`) on the document. No-op when `mark` is undefined
+ * (test harnesses that build a context directly).
+ */
+function markInPageAnchorCandidates(doc: HtmlDocument, mark: (() => void) | undefined): void {
+  if (mark === undefined) return;
+  for (const el of walkHtmlElements(doc)) {
+    if (el.tagName.toLowerCase() !== "a") continue;
+    const href = getHtmlAttribute(el, "href");
+    if (href !== null && href.startsWith("#") && href.length > 1) mark();
+  }
+}
 
 /**
  * Second path: any skip-link-shaped anchor with an in-page href whose

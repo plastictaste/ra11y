@@ -197,6 +197,16 @@ export const rule = defineRule({
       minLarge: WCAG_AA_MIN_LARGE,
       scLabel: SC_LABEL,
     };
+    // Cross-file-candidate signal: any `var(--name)` reference in any
+    // CSS/SCSS/LESS source on this scan is a token whose declaration
+    // might live in a sibling `tokens.css` we never saw. Files with
+    // zero `var(--*)` references carry no cross-file question — the
+    // per-rule-coverage row stays at `"high"`. The check runs once
+    // over all CSS-language sources (cheap regex on raw text — the
+    // same `VAR_REFERENCE_RE` shape `_shared.ts` uses for resolution).
+    if (cssSourcesReferenceCustomProperties(ctx.files)) {
+      ctx.markCrossFileCandidate?.();
+    }
     for (const file of ctx.files) {
       if (file.language === "css") {
         checkCssFile(ctx, file.filePath, file.ast as CssStylesheet, opts, overrideClasses);
@@ -212,6 +222,32 @@ export const rule = defineRule({
     }
   },
 });
+
+/**
+ * `true` when at least one CSS-language source in the project references
+ * a `var(--name)` custom property — the scan-level cross-file-candidate
+ * predicate for `contrast/minimum`'s `crossFileCapable: false` downgrade.
+ * Single regex pass over each file's source; cheaper than walking the
+ * AST when the only question is "did the author write var(--…)
+ * anywhere". Files that don't parse as CSS-language are skipped (HTML
+ * `<style>` blocks are CSS-language inside the inline-style path).
+ */
+function cssSourcesReferenceCustomProperties(files: ProjectContext["files"]): boolean {
+  for (const file of files) {
+    if (file.language !== "css") continue;
+    if (CONTRAST_VAR_REFERENCE_RE.test(file.source)) return true;
+  }
+  return false;
+}
+
+/**
+ * Bare `var(--name)` reference — same shape as the resolution-path
+ * regex in `_shared.ts`, kept local here so this scan-level gate has
+ * no rule-internal coupling. A `g` flag is intentionally absent; the
+ * gate is a binary "any reference at all" question, not a per-token
+ * walk.
+ */
+const CONTRAST_VAR_REFERENCE_RE = /\bvar\(\s*--[A-Za-z_][\w-]*\s*\)/u;
 
 function checkCssFile(
   ctx: ProjectContext,

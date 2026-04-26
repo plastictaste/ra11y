@@ -210,6 +210,12 @@ export const rule = defineRule({
     if (ctx.language === "html") {
       const doc = ctx.ast as HtmlDocument;
       const externalScript = detectExternalScriptSrc(doc);
+      // Cross-file-candidate signal: an external `<script src>` is the
+      // exact token whose body might wire the keyboard handler. Bump
+      // the tracker once when the document carries one — files with
+      // no external script have no cross-file question for the rule
+      // to have missed (per-rule-coverage stays at `"high"`).
+      if (externalScript !== null && ctx.markCrossFileCandidate) ctx.markCrossFileCandidate();
       checkHtml(doc, (v) => ctx.emit(enrichForCrossFileScript(v, externalScript)));
     } else if (
       ctx.language === "tsx" ||
@@ -218,6 +224,9 @@ export const rule = defineRule({
       ctx.language === "js"
     ) {
       const siblingImport = detectSiblingModuleImport(ctx.source);
+      // Same gate, JSX axis: a sibling-module import is the cross-file
+      // candidate. Bump only when one is detected.
+      if (siblingImport !== null && ctx.markCrossFileCandidate) ctx.markCrossFileCandidate();
       checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(enrichForCrossFileScript(v, siblingImport)));
     }
   },

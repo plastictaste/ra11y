@@ -94,7 +94,16 @@ describe("per-rule coverage end-to-end", () => {
     expect(derivative!.confidentlyClean).not.toContain("contrast/minimum");
   });
 
-  it("scan that includes CSS files lifts contrast/minimum off zero-eligible but holds at medium (crossFileCapable:false)", () => {
+  it("css file with no var(--…) references stays at 'high' on contrast/minimum (no cross-file candidate observed)", () => {
+    // Predicate-strength gate: a `crossFileCapable: false` rule
+    // downgrades to `"medium"` only when it observed at least one
+    // candidate token whose resolution may extend beyond the file. A
+    // stylesheet with no `var(--name)` references carries no
+    // cross-file question — the row stays at `"high"` rather than
+    // defaulting to a pessimistic `"medium"` that would lie about what
+    // evidence the rule actually had. See
+    // docs/kb/architecture/ai-first-consumer.md "Reason text and
+    // severity must agree."
     const files = [
       tsxFile("src/App.tsx", `export function App() { return <main><h1>Hi</h1></main>; }`),
       cssFile("src/styles.css", `body { color: #000; background: #fff; }`),
@@ -109,26 +118,44 @@ describe("per-rule coverage end-to-end", () => {
     const contrastMinRow = perRuleCoverage.find((r) => r.ruleId === "contrast/minimum");
     expect(contrastMinRow).toBeDefined();
     expect(contrastMinRow!.filesEligible).toBeGreaterThan(0);
-    // V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION: contrast/minimum resolves
-    // `:root` custom properties same-file only, so a clean tally on any
-    // single-file CSS substrate is cross-file bounded (ADR 0026) — the
-    // row downgrades to `"medium"` with a structured reason. Not
-    // `"high"`: the scanner cannot know whether a sibling `tokens.css`
-    // would have changed the pair outcome.
-    expect(contrastMinRow!.coverageConfidence).toBe("medium");
-    expect(contrastMinRow!.reason).toBe(
-      "cross_file_custom_property_resolution_limited_on_this_input",
-    );
-    // V1-SHAPE-RULECOV-COUNT: the field is present even when the rule
-    // ran cleanly — zero here is "ran on N files, found nothing,"
-    // which paired with the cross-file-bounded reason reads as "ran
-    // but may have missed a token-file pair."
+    expect(contrastMinRow!.coverageConfidence).toBe("high");
+    expect(contrastMinRow!.reason).toBeUndefined();
     expect(contrastMinRow!.findingsEmitted).toBe(
       result.violations.filter((v) => v.ruleId === "contrast/minimum").length,
     );
     for (const row of perRuleCoverage) {
       expect(typeof row.findingsEmitted).toBe("number");
     }
+  });
+
+  it("css file referencing var(--…) downgrades contrast/minimum to 'medium' (candidate observed)", () => {
+    // Counterpart: when the same rule observes a candidate token
+    // (`var(--fg)` reference whose declaration may live in a sibling
+    // tokens stylesheet), the cross-file-bounded downgrade fires
+    // honestly. The fixture inlines `:root` so the rule's pair logic
+    // resolves locally and emits no findings; the downgrade reflects
+    // the substrate-level limit, not whether a finding was emitted.
+    const files = [
+      tsxFile("src/App.tsx", `export function App() { return <main><h1>Hi</h1></main>; }`),
+      cssFile(
+        "src/styles.css",
+        `:root { --fg: #111; --bg: #fff; }\nbody { color: var(--fg); background: var(--bg); }`,
+      ),
+    ];
+    const { perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const contrastMinRow = perRuleCoverage.find((r) => r.ruleId === "contrast/minimum");
+    expect(contrastMinRow).toBeDefined();
+    expect(contrastMinRow!.filesEligible).toBeGreaterThan(0);
+    expect(contrastMinRow!.coverageConfidence).toBe("medium");
+    expect(contrastMinRow!.reason).toBe(
+      "cross_file_custom_property_resolution_limited_on_this_input",
+    );
   });
 
   // V1-NOISE-RULE-PER-FILE-ROLLUP: the per-rule concentration hint

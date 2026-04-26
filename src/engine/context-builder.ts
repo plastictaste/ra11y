@@ -35,24 +35,41 @@ export interface ContextInput {
 }
 
 /**
+ * Engine-internal hook the rule runner passes through `buildContext` so
+ * {@link RuleContext.markCrossFileCandidate} can bump the per-rule
+ * `crossFileCandidates` counter on the active tracker. The runner is
+ * the only caller that supplies one; unit tests that build a context
+ * directly omit it and the method becomes a no-op.
+ */
+export type CrossFileCandidateMarker = () => void;
+
+/**
  * Builds a fresh RuleContext. The returned object's `emit` pushes into
  * the supplied array. `wrapperTreatsAsElement` is the per-rule opt-in
  * tag (`"a"`, `"img"`, `"input"`) — when set, the resulting context's
  * `wrappersForElement` carries the wrapper component names whose
  * `nativeWrapperElements` mapping targets that tag. When unset, the set
  * is always empty and the rule sees identical behaviour to pre-Q2-WRAPMAP-RULES.
+ *
+ * `markCrossFileCandidate`, when supplied by the rule runner, lets a
+ * rule signal "I observed a cross-file-resolution-candidate token on
+ * this file" — the per-rule-coverage builder gates the
+ * `crossFileCapable: false` confidence downgrade on that signal so a
+ * rule that never observed any candidate token stays at `"high"`
+ * confidence (instead of defaulting to a pessimistic `"medium"`).
  */
 export function buildContext(
   input: ContextInput,
   violationSink: EmittedViolation[],
   wrapperTreatsAsElement?: string,
+  markCrossFileCandidate?: CrossFileCandidateMarker,
 ): RuleContext {
   const language = input.ast.language as Language;
   const wrappersForElement = resolveWrappersForElement(
     input.nativeWrapperElements,
     wrapperTreatsAsElement,
   );
-  return {
+  const ctx: RuleContext = {
     filePath: input.filePath,
     source: input.source,
     language,
@@ -71,7 +88,9 @@ export function buildContext(
       // Either an exact rule-id match or a wildcard entry for "disable all".
       return disabled.has(ruleId) || disabled.has("*");
     },
+    ...(markCrossFileCandidate ? { markCrossFileCandidate } : {}),
   };
+  return ctx;
 }
 
 /**

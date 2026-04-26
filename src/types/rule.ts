@@ -209,6 +209,33 @@ export interface RuleContext {
   emit(violation: EmittedViolation): void;
   /** Is the given (line, ruleId) suppressed by an inline disable pragma? */
   isDisabled(line: number, ruleId: string): boolean;
+  /**
+   * Marks that the rule observed at least one candidate token whose
+   * resolution may extend beyond the current file — `aria-labelledby="x"`
+   * (an IDREF that may live in a sibling layout partial), `var(--name)`
+   * (a CSS custom property that may be declared in a sibling tokens
+   * stylesheet), `<a href="#main">` (an in-page anchor whose target may
+   * live in an include), an attribute that wires up an external
+   * listener (`onclick="…"`, `data-bs-toggle`, …).
+   *
+   * The scanner uses this signal to gate the `crossFileCapable: false`
+   * coverage-confidence downgrade: a rule that declares
+   * `crossFileCapable: false` but never observed any candidate token on
+   * this scan stays at `coverageConfidence: "high"` rather than
+   * defaulting to a pessimistic `"medium"` that lies about what
+   * evidence the rule actually had. Rules SHOULD call this once per
+   * observed candidate token (not once per scan) — duplicates are
+   * safe (the count is collapsed to ≥1 vs 0 at consumption time), but
+   * the contract names per-token bumps so future per-file telemetry
+   * can read the count meaningfully.
+   *
+   * Optional — rules whose `crossFileCapable` is `true` or unset don't
+   * need to call this. The method is a no-op when no tracker is wired
+   * (test harnesses that build a context directly without going through
+   * the rule runner). See docs/kb/architecture/ai-first-consumer.md
+   * "Reason text and severity must agree."
+   */
+  markCrossFileCandidate?(): void;
 }
 
 /**
@@ -264,6 +291,18 @@ export interface ProjectContext {
    */
   readonly nativeWrapperElements: Readonly<Record<string, string>>;
   emit(violation: EmittedViolation): void;
+  /**
+   * Marks that the rule observed at least one cross-file-resolution
+   * candidate token on this scan. Mirrors
+   * {@link RuleContext.markCrossFileCandidate} on the project-scoped
+   * lifecycle so an `afterProject` rule (e.g. `contrast/minimum`) can
+   * gate the `crossFileCapable: false` confidence downgrade on actual
+   * observation rather than default-pessimism. Optional — rules that
+   * declare `crossFileCapable: true` (or unset) don't need to call
+   * this; the method is a no-op when no tracker is wired (test
+   * harnesses that build a project context directly).
+   */
+  markCrossFileCandidate?(): void;
 }
 
 /**

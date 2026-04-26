@@ -132,6 +132,12 @@ export const rule = defineRule({
     if (ctx.language === "html") {
       const doc = ctx.ast as HtmlDocument;
       const fragment = isFragmentFile(doc, ctx.source, ctx.filePath);
+      // Cross-file-candidate signal: any element carrying a tab-pattern
+      // role (`role="tab"` / `role="tabpanel"`) is a token whose
+      // reciprocal half might live in a sibling layout / include /
+      // wrapper component. Files with zero tab-pattern roles carry
+      // no cross-file question — confidence stays `"high"`.
+      markTabPatternCandidatesHtml(doc, ctx.markCrossFileCandidate);
       checkHtml(doc, fragment, (v) => ctx.emit(v));
       return;
     }
@@ -146,10 +152,33 @@ export const rule = defineRule({
       // the same cross-file `couldBeWrongBecause` enrichment fires —
       // the panel might render in a sibling component the scanner
       // doesn't see.
-      checkJsx(ctx.ast as TsxModule, true, (v) => ctx.emit(v));
+      const module = ctx.ast as TsxModule;
+      markTabPatternCandidatesJsx(module, ctx.markCrossFileCandidate);
+      checkJsx(module, true, (v) => ctx.emit(v));
     }
   },
 });
+
+/**
+ * Bumps the cross-file-candidate counter once per tab-pattern element
+ * (any element with `role="tab"` or `role="tabpanel"`) on the
+ * document. No-op when `mark` is undefined.
+ */
+function markTabPatternCandidatesHtml(doc: HtmlDocument, mark: (() => void) | undefined): void {
+  if (mark === undefined) return;
+  for (const el of walkHtmlElements(doc)) {
+    const role = getHtmlAttribute(el, "role");
+    if (role === "tab" || role === "tabpanel") mark();
+  }
+}
+
+function markTabPatternCandidatesJsx(module: TsxModule, mark: (() => void) | undefined): void {
+  if (mark === undefined) return;
+  for (const el of walkJsxElements(module)) {
+    const role = getJsxAttributeString(el, "role");
+    if (role === "tab" || role === "tabpanel") mark();
+  }
+}
 
 type Severity = "error" | "warning" | "info";
 type Loc = { readonly line: number; readonly column: number };

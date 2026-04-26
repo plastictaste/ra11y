@@ -73,10 +73,19 @@ const passAllFilter: StandardFilter = {
 };
 
 function tracker(
-  entries: Record<string, { eligible: number; evaluated: number }>,
+  entries: Record<string, { eligible: number; evaluated: number; crossFileCandidates?: number }>,
 ): RuleEvaluationTracker {
-  const counts = new Map<string, { eligible: number; evaluated: number }>();
-  for (const [k, v] of Object.entries(entries)) counts.set(k, { ...v });
+  const counts = new Map<
+    string,
+    { eligible: number; evaluated: number; crossFileCandidates: number }
+  >();
+  for (const [k, v] of Object.entries(entries)) {
+    counts.set(k, {
+      eligible: v.eligible,
+      evaluated: v.evaluated,
+      crossFileCandidates: v.crossFileCandidates ?? 0,
+    });
+  }
   return { counts };
 }
 
@@ -734,17 +743,22 @@ describe("buildPerRuleCoverage", () => {
     expect(cluster!.samples).toEqual(["fa fa-cog", "fa fa-home", "fa fa-user"]);
   });
 
-  // ADR 0026 + Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT:
-  // rules that declare `crossFileCapable: false` must downgrade a
-  // would-be-high entry to `"medium"` with a structured reason code,
-  // because their target spec encompasses cross-file wiring their
-  // current implementation can't see.
-  it("downgrades crossFileCapable:false rule from 'high' to 'medium' on eligible inputs", () => {
+  // ADR 0026: rules that declare `crossFileCapable: false` must
+  // downgrade a would-be-high entry to `"medium"` with a structured
+  // reason code, because their target spec encompasses cross-file
+  // wiring their current implementation can't see — but ONLY when the
+  // rule actually observed at least one candidate token whose
+  // resolution may extend beyond the file. Predicate-strength gate:
+  // with zero candidates the row stays `"high"` (see "stays at 'high'
+  // with no observed candidate token" below).
+  it("downgrades crossFileCapable:false rule from 'high' to 'medium' on eligible inputs with observed candidate", () => {
     const rules = [
       mkRule("keyboard/handler-missing", [".html", ".htm"], { crossFileCapable: false }),
     ];
     const entries = buildPerRuleCoverage(
-      tracker({ "keyboard/handler-missing": { eligible: 2, evaluated: 2 } }),
+      tracker({
+        "keyboard/handler-missing": { eligible: 2, evaluated: 2, crossFileCandidates: 1 },
+      }),
       rules,
       passAllFilter,
       [],
@@ -760,6 +774,35 @@ describe("buildPerRuleCoverage", () => {
     // spread at the builder keeps the field out of the row entirely.
     expect(row!.remediation).toBeUndefined();
     // File counts still honest: the rule did run on 2 eligible files.
+    expect(row!.filesEligible).toBe(2);
+    expect(row!.filesEvaluated).toBe(2);
+    expect(row!.findingsEmitted).toBe(0);
+  });
+
+  // Predicate-strength gate (the slices-1+2 fix): a `crossFileCapable:
+  // false` rule whose tracker reports zero observed candidate tokens
+  // stays at `"high"` rather than defaulting to a pessimistic
+  // `"medium"`. Default-pessimism is the same dishonesty as a `reason`
+  // text that concedes the predicate is satisfied — the agent reads
+  // `medium` as scan-confidence telemetry it should budget against,
+  // and the substrate carries no cross-file question for the rule to
+  // have missed.
+  it("stays at 'high' on a crossFileCapable:false rule with no observed candidate token", () => {
+    const rules = [
+      mkRule("aria/labelledby-target-exists", [".html", ".htm"], { crossFileCapable: false }),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({
+        "aria/labelledby-target-exists": { eligible: 2, evaluated: 2, crossFileCandidates: 0 },
+      }),
+      rules,
+      passAllFilter,
+      [],
+      2,
+    );
+    const [row] = entries;
+    expect(row!.coverageConfidence).toBe("high");
+    expect(row!.reason).toBeUndefined();
     expect(row!.filesEligible).toBe(2);
     expect(row!.filesEvaluated).toBe(2);
     expect(row!.findingsEmitted).toBe(0);
@@ -803,10 +846,18 @@ describe("buildPerRuleCoverage", () => {
     ];
     const entries = buildPerRuleCoverage(
       tracker({
-        "aria/labelledby-target-exists": { eligible: 1, evaluated: 1 },
-        "forms/error-message-not-associated": { eligible: 1, evaluated: 1 },
-        "navigation/skip-link": { eligible: 1, evaluated: 1 },
-        "pointer/drag-alternative": { eligible: 1, evaluated: 1 },
+        "aria/labelledby-target-exists": {
+          eligible: 1,
+          evaluated: 1,
+          crossFileCandidates: 1,
+        },
+        "forms/error-message-not-associated": {
+          eligible: 1,
+          evaluated: 1,
+          crossFileCandidates: 1,
+        },
+        "navigation/skip-link": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
+        "pointer/drag-alternative": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
       }),
       rules,
       passAllFilter,
@@ -846,7 +897,9 @@ describe("buildPerRuleCoverage", () => {
       mkRule("future/hypothetical-rule", [".html", ".htm"], { crossFileCapable: false }),
     ];
     const entries = buildPerRuleCoverage(
-      tracker({ "future/hypothetical-rule": { eligible: 1, evaluated: 1 } }),
+      tracker({
+        "future/hypothetical-rule": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
+      }),
       rules,
       passAllFilter,
       [],

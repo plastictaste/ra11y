@@ -103,15 +103,38 @@ export const rule = defineRule({
   },
   afterFile(ctx) {
     if (ctx.language === "html") {
+      // Cross-file-candidate signal: any element with `draggable="true"`
+      // is a token whose keyboard wiring may live in a parent
+      // component / hook the rule cannot see. Files with zero such
+      // elements carry no cross-file question — confidence stays
+      // `"high"`.
+      const doc = ctx.ast as HtmlDocument;
+      if (htmlHasDraggable(doc)) ctx.markCrossFileCandidate?.();
       checkHtml(ctx as FileContext & { ast: HtmlDocument });
       return;
     }
     if (ctx.language === "tsx" || ctx.language === "jsx") {
+      const module = ctx.ast as TsxModule;
+      if (jsxHasDraggable(module)) ctx.markCrossFileCandidate?.();
       checkJsx(ctx as FileContext & { ast: TsxModule });
       return;
     }
   },
 });
+
+function jsxHasDraggable(module: TsxModule): boolean {
+  for (const el of walkJsxElements(module)) {
+    if (getJsxAttributeString(el, "draggable") === "true") return true;
+  }
+  return false;
+}
+
+function htmlHasDraggable(doc: HtmlDocument): boolean {
+  for (const el of walkHtmlElements(doc)) {
+    if (getHtmlAttribute(el, "draggable") === "true") return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // JSX

@@ -134,6 +134,13 @@ export const rule = defineRule({
   },
   afterFile(ctx) {
     if (ctx.language === "html") {
+      // Cross-file-candidate signal: any element with a drag signal is
+      // a token whose alternative-pointer pathway might live in a
+      // parent component / sibling JS — file-scoped on this scan but
+      // composition-bounded in spec. Files with no drag signals carry
+      // no cross-file question — confidence stays `"high"`.
+      const doc = ctx.ast as HtmlDocument;
+      if (htmlHasDragSignal(doc)) ctx.markCrossFileCandidate?.();
       checkHtml(ctx as RuleContext & { ast: HtmlDocument });
       return;
     }
@@ -143,11 +150,38 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
+      const module = ctx.ast as TsxModule;
+      if (jsxHasDragSignal(module) || detectDragLibraryImport(ctx.source) !== null) {
+        ctx.markCrossFileCandidate?.();
+      }
       checkJsx(ctx as RuleContext & { ast: TsxModule });
       return;
     }
   },
 });
+
+/**
+ * `true` when at least one element in the JSX module carries a
+ * drag-pattern signal — used as the cross-file-candidate gate so the
+ * per-rule-coverage downgrade stays gated on actual observation.
+ */
+function jsxHasDragSignal(module: TsxModule): boolean {
+  for (const el of walkJsxElements(module)) {
+    if (jsxDragSignal(el).length > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * `true` when at least one element in the HTML document carries a
+ * drag-pattern signal — same purpose as {@link jsxHasDragSignal}.
+ */
+function htmlHasDragSignal(doc: HtmlDocument): boolean {
+  for (const el of walkHtmlElements(doc)) {
+    if (htmlDragSignal(el).length > 0) return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers

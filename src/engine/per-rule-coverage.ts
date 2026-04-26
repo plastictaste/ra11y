@@ -246,6 +246,7 @@ export function buildPerRuleCoverage(
     if (extensions && extensions.length > 0) {
       const eligible = counts?.eligible ?? 0;
       const evaluated = counts?.evaluated ?? 0;
+      const crossFileCandidates = counts?.crossFileCandidates ?? 0;
       out.push(
         buildExtensionGatedEntry(
           rule.id,
@@ -256,6 +257,7 @@ export function buildPerRuleCoverage(
           concentration,
           classPatternConcentration,
           rule.crossFileCapable,
+          crossFileCandidates,
         ),
       );
       continue;
@@ -402,6 +404,7 @@ function buildExtensionGatedEntry(
     | readonly { file: string; count: number; classPattern: string; samples: readonly string[] }[]
     | undefined,
   crossFileCapable: boolean | undefined,
+  crossFileCandidates: number,
 ): PerRuleCoverage {
   const concentrationSpread = concentration ? { concentration } : {};
   const classPatternSpread =
@@ -434,17 +437,29 @@ function buildExtensionGatedEntry(
       ...classPatternSpread,
     };
   }
-  // Cross-file downgrade (ADR 0026,
-  // Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT): the rule ran
-  // on eligible inputs — normally `"high"` — but its `crossFileCapable`
-  // flag declares the spec *could* require cross-file evidence while
-  // the implementation is bounded to the current file. Reporting
-  // `"high"` on a clean tally here is the same silent-miss shape as
-  // reporting `"high"` on a rule that never found its target
-  // extension. The conservative-honest answer is to downgrade to
-  // `"medium"` with a structured reason — the rule *ran*, its evidence
-  // *was bounded*, and the agent reads the cited code to decide.
-  if (crossFileCapable === false) {
+  // Cross-file downgrade (ADR 0026): the rule ran on eligible inputs —
+  // normally `"high"` — but its `crossFileCapable` flag declares the
+  // spec *could* require cross-file evidence while the implementation
+  // is bounded to the current file. Reporting `"high"` on a clean tally
+  // here is the same silent-miss shape as reporting `"high"` on a rule
+  // that never found its target extension. The conservative-honest
+  // answer is to downgrade to `"medium"` with a structured reason —
+  // the rule *ran*, its evidence *was bounded*, and the agent reads
+  // the cited code to decide.
+  //
+  // Predicate-strength gate: only downgrade when the rule actually
+  // observed at least one candidate token whose resolution may extend
+  // beyond the file. With zero candidates the substrate carries no
+  // cross-file question for the rule to have missed — the row stays
+  // `"high"` (`reason` "stays unset, `confidence` honest about the
+  // evidence the rule had access to). The default-pessimism `"medium"`
+  // on a token-free file is the same dishonesty as a `reason` text that
+  // concedes "the predicate is satisfied, but I'm still emitting" —
+  // the agent reads `medium` as scan-confidence telemetry it should
+  // budget against, and there's nothing to budget for. See
+  // docs/kb/architecture/ai-first-consumer.md "Reason text and
+  // severity must agree."
+  if (crossFileCapable === false && crossFileCandidates > 0) {
     return {
       ruleId,
       filesEvaluated: evaluated,
@@ -516,7 +531,13 @@ function buildProjectScopedEntry(
   // project-scoped rule that authors its own cross-file gate
   // incorrectly — or that inherits from a per-file predecessor —
   // still honors the downgrade. When unset or `true`, confidence
-  // stays `"high"`.
+  // stays `"high"`. The candidate-token gate the extension-gated
+  // branch carries does NOT apply here: project-scoped rules walk the
+  // whole file set in `afterProject`, so the question of "did the
+  // rule observe a candidate token" is collapsed at the file-set
+  // level, not per-file. The lone in-tree case is `contrast/minimum`
+  // resolving `:root { --name }` same-file only — the substrate-level
+  // bound is structural, not predicate-strength dependent.
   if (crossFileCapable === false) {
     return {
       ruleId,

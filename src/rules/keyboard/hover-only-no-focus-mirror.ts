@@ -124,6 +124,14 @@ export const rule = defineRule({
     if (ctx.language !== "css") return;
     const stylesheet = ctx.ast as CssStylesheet;
     const allRules = [...walkCssRules(stylesheet)];
+    // Cross-file-candidate signal: any `:hover` rule in this stylesheet
+    // is a token whose focus mirror might live in a sibling stylesheet
+    // imported via `@import` or layered after this file. Stylesheets
+    // with zero `:hover` rules carry no cross-file question —
+    // confidence stays `"high"`.
+    if (allRules.some((r) => HOVER_PSEUDO_RE.test(r.selector))) {
+      ctx.markCrossFileCandidate?.();
+    }
     for (const cssRule of allRules) {
       if (!HOVER_PSEUDO_RE.test(cssRule.selector)) continue;
       const mutatedProps = listLayoutMutations(cssRule);

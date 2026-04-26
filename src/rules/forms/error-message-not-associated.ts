@@ -208,8 +208,18 @@ export const rule = defineRule({
     ],
   },
   check(ctx) {
+    // Cross-file-candidate signal: any element classified as an
+    // error-message container is a token whose `aria-describedby`
+    // wiring may be applied at a parent composition site rather than
+    // on the leaf component. Bumping per observed container lets the
+    // per-rule-coverage builder gate the `crossFileCapable: false`
+    // confidence downgrade on actual observation. Files with zero
+    // error-message containers carry no cross-file question — the
+    // row stays `"high"`.
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      const doc = ctx.ast as HtmlDocument;
+      markErrorContainerCandidatesHtml(doc, ctx.markCrossFileCandidate);
+      checkHtml(doc, (v) => ctx.emit(v));
       return;
     }
     if (
@@ -218,10 +228,32 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
-      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
+      const module = ctx.ast as TsxModule;
+      markErrorContainerCandidatesJsx(module, ctx.markCrossFileCandidate);
+      checkJsx(module, (v) => ctx.emit(v));
     }
   },
 });
+
+/**
+ * Bumps the cross-file-candidate counter once per error-message
+ * container the rule sees — same predicate the rule uses to decide
+ * whether to investigate. No-op when `mark` is undefined (test
+ * harnesses that build a context directly).
+ */
+function markErrorContainerCandidatesHtml(doc: HtmlDocument, mark: (() => void) | undefined): void {
+  if (mark === undefined) return;
+  for (const el of walkHtmlElements(doc)) {
+    if (classifyHtmlContainer(el) !== null) mark();
+  }
+}
+
+function markErrorContainerCandidatesJsx(module: TsxModule, mark: (() => void) | undefined): void {
+  if (mark === undefined) return;
+  for (const el of walkJsxElements(module)) {
+    if (classifyJsxContainer(el) !== null) mark();
+  }
+}
 
 type EmittedSeverity = "error" | "info";
 

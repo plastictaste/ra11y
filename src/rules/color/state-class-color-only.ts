@@ -209,9 +209,11 @@ export const rule = defineRule({
   afterFile(ctx) {
     if (ctx.language !== "css") return;
     const stylesheet = ctx.ast as CssStylesheet;
+    let observedAnyStateMarker = false;
     for (const cssRule of walkCssRules(stylesheet)) {
       const stateMarker = detectStateMarker(cssRule.selector);
       if (stateMarker === null) continue;
+      observedAnyStateMarker = true;
       if (cssRule.declarations.length === 0) continue;
       if (!declarationsAreColorOnly(cssRule.declarations)) continue;
       const colorProps = listColorProps(cssRule.declarations);
@@ -226,6 +228,14 @@ export const rule = defineRule({
         suggestion: buildSuggestion(cssRule.selector, stateMarker, colorProps),
       });
     }
+    // Cross-file-candidate signal: any state-marker selector is a token
+    // whose paired non-color cue might live in a sibling stylesheet
+    // (component-base styles imported alongside the state stylesheet)
+    // or in HTML/JSX as an `aria-current` / `aria-selected`
+    // declaration this CSS-only check can't see. Stylesheets with
+    // zero state-marker selectors carry no cross-file question —
+    // confidence stays `"high"`.
+    if (observedAnyStateMarker) ctx.markCrossFileCandidate?.();
   },
 });
 

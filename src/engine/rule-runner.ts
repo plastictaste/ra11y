@@ -29,9 +29,29 @@ import type { StandardFilter } from "./standard-filter.ts";
  * engine folds the resulting map into `ScanProducts.perRuleCoverage`
  * at scan end — see `src/engine/scanner.ts` and
  * `src/types/violation.ts` for the surface shape.
+ *
+ * `crossFileCandidates` is an opt-in counter rules bump (via
+ * {@link RuleContext.markCrossFileCandidate}) whenever they observe a
+ * token whose resolution may extend beyond the current file —
+ * `aria-labelledby="x"` (idref), `var(--name)` (custom property),
+ * `<a href="#main">` (in-page anchor), an attribute that wires up an
+ * external listener. The per-rule-coverage builder gates the
+ * `crossFileCapable: false` confidence downgrade on this counter:
+ * downgrade to `"medium"` only fires when the rule actually saw at
+ * least one candidate token it couldn't fully resolve. With zero
+ * candidates the row stays `"high"` — the rule ran on eligible inputs
+ * and saw nothing the cross-file blindspot could have hidden, so the
+ * default-pessimism `"medium"` would lie about what evidence the rule
+ * had. See docs/kb/architecture/ai-first-consumer.md "Reason text and
+ * severity must agree" — a `medium` row whose `reason` admits the rule
+ * never saw a candidate token is the same dishonesty at the
+ * scan-confidence layer.
  */
 export interface RuleEvaluationTracker {
-  readonly counts: Map<string, { eligible: number; evaluated: number }>;
+  readonly counts: Map<
+    string,
+    { eligible: number; evaluated: number; crossFileCandidates: number }
+  >;
 }
 
 /** Per-file input to the rule runner. */
@@ -75,12 +95,29 @@ export function runRulesForFile(input: RuleRunnerInput): readonly Violation[] {
  */
 function bumpTracker(tracker: RuleEvaluationTracker, ruleId: string, eligible: boolean): void {
   const existing = tracker.counts.get(ruleId);
-  const entry = existing ?? { eligible: 0, evaluated: 0 };
+  const entry = existing ?? { eligible: 0, evaluated: 0, crossFileCandidates: 0 };
   if (eligible) {
     entry.eligible += 1;
     entry.evaluated += 1;
   }
   if (!existing) tracker.counts.set(ruleId, entry);
+}
+
+/**
+ * Bumps the `crossFileCandidates` counter for a rule, ensuring the
+ * tracker entry exists. Called from {@link RuleContext.markCrossFileCandidate}
+ * whenever a rule observes a token whose resolution may extend beyond
+ * the current file. Idempotent on missing entries — the rule may
+ * mark candidates before its eligibility row has been set up if a
+ * test harness wires a custom flow, so we initialize the row defensively.
+ */
+export function bumpCrossFileCandidate(tracker: RuleEvaluationTracker, ruleId: string): void {
+  const existing = tracker.counts.get(ruleId);
+  if (existing) {
+    existing.crossFileCandidates += 1;
+    return;
+  }
+  tracker.counts.set(ruleId, { eligible: 0, evaluated: 0, crossFileCandidates: 1 });
 }
 
 /**
@@ -93,7 +130,18 @@ function runOneRule(rule: Rule, input: RuleRunnerInput, out: Violation[]): void 
   const citedCriteria = input.filter.citedCriteria(rule);
   const citedCriteriaTitles = input.filter.citedCriteriaTitles(rule);
   const sink: EmittedViolation[] = [];
-  const ctx = buildContext(input, sink, rule.wrapperTreatsAsElement);
+  // Wire `markCrossFileCandidate` only for `crossFileCapable: false`
+  // rules — there is no scan-confidence signal to derive for rules
+  // that already resolve cross-file evidence in their own
+  // implementation, and the unused method on every other rule's
+  // context would be misleading. Tracker may be undefined in
+  // unit-test call sites; the method becomes a no-op then.
+  const tracker = input.tracker;
+  const marker =
+    tracker && rule.crossFileCapable === false
+      ? () => bumpCrossFileCandidate(tracker, rule.id)
+      : undefined;
+  const ctx = buildContext(input, sink, rule.wrapperTreatsAsElement, marker);
 
   try {
     invokeLifecycle(rule, ctx, input.ast.root, sink);

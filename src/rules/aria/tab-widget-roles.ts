@@ -126,6 +126,11 @@ export const rule = defineRule({
     if (ctx.language === "html") {
       const doc = ctx.ast as HtmlDocument;
       const fragment = isFragmentFile(doc, ctx.source, ctx.filePath);
+      // Cross-file-candidate signal: a tab-pattern member is a token
+      // whose reciprocal half (the panel) might live in a sibling
+      // file. Files with zero tab members carry no cross-file
+      // question — confidence stays `"high"`.
+      if (collectHtmlTabMembers(doc).length > 0) ctx.markCrossFileCandidate?.();
       checkHtml(doc, fragment, (v) => ctx.emit(v));
       return;
     }
@@ -137,7 +142,9 @@ export const rule = defineRule({
     ) {
       // JSX modules are file-scoped by design — treat as a fragment so
       // the same panel-may-live-elsewhere enrichment fires.
-      checkJsx(ctx.ast as TsxModule, true, (v) => ctx.emit(v));
+      const module = ctx.ast as TsxModule;
+      if (collectJsxTabMembers(module).length > 0) ctx.markCrossFileCandidate?.();
+      checkJsx(module, true, (v) => ctx.emit(v));
     }
   },
 });

@@ -49,7 +49,11 @@ import { CriteriaRegistry } from "./registry/criteria.ts";
 import { RulesRegistry } from "./registry/rules.ts";
 import { StandardsRegistry } from "./registry/standards.ts";
 import { resolvePragmaAttestations } from "./resolve-pragma-attestations.ts";
-import { type RuleEvaluationTracker, runRulesForFile } from "./rule-runner.ts";
+import {
+  bumpCrossFileCandidate,
+  type RuleEvaluationTracker,
+  runRulesForFile,
+} from "./rule-runner.ts";
 import { stampProjectEmission } from "./stamp-project-emission.ts";
 import {
   type ConformanceLevel,
@@ -175,7 +179,7 @@ export function runScan(inputs: ScanInputs): ScanProducts {
     });
     for (const v of perFile) allViolations.push(v);
   }
-  for (const v of runProjectRules(inputs, enabled, filter)) {
+  for (const v of runProjectRules(inputs, enabled, filter, tracker)) {
     allViolations.push(v);
   }
   // Q2R2-INHERITED post-pass (ADR 0012): attribute definition-site findings
@@ -258,6 +262,7 @@ function runProjectRules(
   inputs: ScanInputs,
   enabled: ReadonlySet<string>,
   filter: StandardFilter,
+  tracker: RuleEvaluationTracker,
 ): readonly Violation[] {
   const projectFiles: ProjectRuleFile[] = inputs.files.map((f) => ({
     filePath: f.filePath,
@@ -285,6 +290,7 @@ function runProjectRules(
       sourcesByPath,
       astsByPath,
       inputs.nativeWrapperElements ?? {},
+      tracker,
       out,
     );
   }
@@ -300,16 +306,24 @@ function invokeOneProjectRule(
   sourcesByPath: ReadonlyMap<string, string>,
   astsByPath: ReadonlyMap<string, Ast>,
   nativeWrapperElements: Readonly<Record<string, string>>,
+  tracker: RuleEvaluationTracker,
   out: Violation[],
 ): void {
   if (!rule.afterProject) return;
   if (!filter.isRuleActive(rule)) return;
   const sink: EmittedViolation[] = [];
+  // Wire `markCrossFileCandidate` only for `crossFileCapable: false`
+  // rules — there is no scan-confidence signal to derive for rules
+  // that already resolve cross-file evidence in their own
+  // implementation.
   const ctx: ProjectContext = {
     files: projectFiles,
     enabledStandards: enabled,
     nativeWrapperElements,
     emit: (v) => sink.push(v),
+    ...(rule.crossFileCapable === false
+      ? { markCrossFileCandidate: () => bumpCrossFileCandidate(tracker, rule.id) }
+      : {}),
   };
   try {
     const maybe = rule.afterProject(ctx);
