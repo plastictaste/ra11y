@@ -92,6 +92,7 @@ import {
 import {
   htmlSubtreeHasStrippedDirective,
   stripTemplateDirectives,
+  TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
 } from "../../input/parsers/html-template-directives.ts";
 import type {
   HtmlDocument,
@@ -316,10 +317,23 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
 
 function emitIconOnlyHtml(a: HtmlElement, emit: Emit): void {
   const iconEvidence = collectIconEvidenceHtml(a);
+  // Surface-don't-suppress (per docs/kb/architecture/ai-first-consumer.md):
+  // when the link's only rendered content was a Liquid/Jinja/ERB
+  // expression stripped by the parser (`<a>{{ post.title }}</a>`,
+  // `<a><%= name %></a>`), keep the candidate at severity `warning` —
+  // static analysis can't see whether the expression resolves non-empty
+  // — but rephrase the reason so the agent routes to "verify rendered
+  // output" in one read instead of looping through suggest_fix on a
+  // template-directive false positive. Mirrors the parallel handling in
+  // semantics/empty-heading.
+  const templateStripped = htmlSubtreeHasStrippedDirective(a);
+  const baseMessage = templateStripped
+    ? buildIconOnlyTemplateMessage("a")
+    : buildIconOnlyMessage("a", iconEvidence);
   emit({
     severity: "warning",
     location: { filePath: "", line: a.loc.start.line, column: a.loc.start.column },
-    message: buildIconOnlyMessage("a", iconEvidence),
+    message: templateStripped ? `${baseMessage}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : baseMessage,
     suggestion: buildIconOnlySuggestion(getHtmlAttribute(a, "href"), iconEvidence),
     variantKey: "icon-only",
   });
@@ -694,6 +708,23 @@ function buildIconOnlyMessage(tagName: string, evidence: readonly string[]): str
     `<${tagName}> has no accessible name — no text, no aria-label, no aria-labelledby, ` +
     `and every child is presentational${evidenceText}. Screen readers announce "link" with ` +
     "nothing behind it; keyboard users land on an unlabeled control (SC 2.4.4 + 4.1.2)."
+  );
+}
+
+/**
+ * Reason text for the icon-only branch when the link's content was a
+ * template directive (`{{ … }}`, `{% … %}`, `<%= … %>`) that the parser
+ * stripped before the visible-text computation. Static analysis cannot
+ * see the rendered string; framing the finding as "interpolated content
+ * — verify rendered output" rather than "no accessible name" matches
+ * what the agent actually needs to investigate.
+ */
+function buildIconOnlyTemplateMessage(tagName: string): string {
+  return (
+    `<${tagName}> link content is interpolated by a template directive (Liquid/Jinja/ERB) — ` +
+    "static analysis cannot see what the expression renders, so the link may be silent at " +
+    "runtime if the value resolves to an empty string. SC 2.4.4 / 4.1.2 require a non-empty " +
+    "accessible name; verify the rendered output describes the link's destination."
   );
 }
 

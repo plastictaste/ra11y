@@ -322,6 +322,53 @@ describe("rule navigation/link-descriptive-text", () => {
     });
   });
 
+  // Mirrors the parallel template-directive enrichment in
+  // semantics/empty-heading: when the link's only rendered content was
+  // a Liquid/Jinja/ERB expression stripped by the parser, the finding
+  // still emits at severity `warning` (surface-don't-suppress) but the
+  // reason is rephrased to "interpolated content — verify rendered
+  // output" so the agent doesn't loop through suggest_fix on a
+  // template-directive false positive.
+  describe("HTML template-directive enrichment", () => {
+    it("rephrases reason when sole child is a Liquid interpolation", () => {
+      const v = runRule(rule, `<a href="/x">{{ post.title }}</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("interpolated");
+      expect(v[0]?.message).toContain("template");
+      expect(v[0]?.message).toContain("ra11y-disable");
+    });
+
+    it("rephrases reason when sole child is an ERB expression", () => {
+      const v = runRule(rule, `<a href="/x"><%= name %></a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("interpolated");
+    });
+
+    it("rephrases reason when sole child is a Liquid tag", () => {
+      const v = runRule(rule, `<a href="/x">{% include "label.html" %}</a>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("interpolated");
+    });
+
+    it("keeps the original generic-phrase reason when no template directive is present", () => {
+      const v = runRule(rule, `<a href="/x">Click here</a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("not descriptive");
+      expect(v[0]?.message).not.toContain("interpolated");
+    });
+
+    it("keeps the original icon-only reason when the anchor is truly empty", () => {
+      const v = runRule(rule, `<a href="/x"></a>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no accessible name");
+      expect(v[0]?.message).not.toContain("interpolated");
+    });
+  });
+
   describe("JSX icon-only links", () => {
     it("fires on <a><i className='fa fa-twitter' /></a>", () => {
       const v = runRule(rule, `const X = <a href="/twitter"><i className="fa fa-twitter" /></a>;`);
