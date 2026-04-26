@@ -595,6 +595,90 @@ if (btn.onclick === originalHandler) restore();`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(0);
     });
+
+    // Same-file backward resolution: the click-attach target was bound
+    // from `document.createElement('<native-interactive>')`. The
+    // receiver IS a native interactive element — focusable and
+    // keyboard-activatable by construction — so the missing keyboard
+    // sibling is not a 2.1.1 failure.
+    it("target was bound from document.createElement('button')", () => {
+      const source = `const btn = document.createElement('button');
+btn.addEventListener('click', save);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("target was bound from document.createElement('a')", () => {
+      const source = `const a = document.createElement('a');
+a.addEventListener('click', navigate);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("target was bound from document.createElement('input')", () => {
+      const source = `const field = document.createElement('input');
+field.onclick = handle;`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("target was bound from document.createElement('select')", () => {
+      const source = `const sel = document.createElement('select');
+sel.addEventListener('click', open);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("target was bound from document.createElement('BUTTON') (case-insensitive)", () => {
+      const source = `const btn = document.createElement('BUTTON');
+btn.addEventListener('click', save);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("target was bound from document.createElement with let binding", () => {
+      const source = `let btn = document.createElement('button');
+btn.addEventListener('click', save);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("external JS: createElement gate still fires when", () => {
+    // Negative cases for the createElement gate — the target was bound
+    // from a non-interactive tag, so the missing keyboard sibling is
+    // still a 2.1.1 failure.
+    it("target was bound from document.createElement('div')", () => {
+      const source = `const div = document.createElement('div');
+div.addEventListener('click', handle);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("target was bound from document.createElement('span')", () => {
+      const source = `const span = document.createElement('span');
+span.addEventListener('click', handle);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("target was bound from document.createElement('section')", () => {
+      const source = `const section = document.createElement('section');
+section.onclick = handle;`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("createElement appears AFTER the click-attach site (not a backward binding)", () => {
+      // The declarator follows the click-attach site, so the target on
+      // the click-attach site cannot be the createElement-returned
+      // element — different scope. Still emits.
+      const source = `btn.addEventListener('click', save);
+const btn = document.createElement('button');`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+    });
   });
 
   describe("external JS: suggestion quality", () => {
