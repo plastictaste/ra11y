@@ -244,7 +244,12 @@ function containsCdOutOfWorktree(command: string, worktreeRoot: string): boolean
 }
 
 function gitStatusPorcelain(cwd: string): string[] | null {
-  const result = spawnSync("git", ["status", "--porcelain"], {
+  // --untracked-files=all expands new directories so individual filenames
+  // appear as separate entries. Without it, `??` collapses a brand-new
+  // directory to one line and PostToolUse's basename check can't find the
+  // file the agent just wrote — producing a spurious "suspected escape"
+  // warning on every Write into a fresh fixture directory.
+  const result = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
     cwd,
     encoding: "utf8",
     timeout: 3000,
