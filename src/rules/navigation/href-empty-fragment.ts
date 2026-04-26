@@ -32,7 +32,13 @@
 
 import { defineRule } from "../../api/plugin.ts";
 import { getHtmlAttribute, getJsxAttribute } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement, HtmlNode, JsxElement, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlDocument,
+  HtmlElement,
+  HtmlNode,
+  JsxElement,
+  TsxModule,
+} from "../../types/ast.ts";
 import { isDomOriginExtension } from "../../utils/path.ts";
 
 type PlaceholderKind = "bare-fragment" | "empty";
@@ -320,31 +326,48 @@ function walkJsxWithPaginationContext(
   const ownToken = matchPaginationClass(classAttr);
   const inheritedToken = paginationToken ?? ownToken;
   if (element.tagName === "a") {
-    const hrefAttr = getJsxAttribute(element, "href");
-    if (hrefAttr?.value && hrefAttr.value.kind === "StringLiteral") {
-      const kind = classifyPlaceholder(hrefAttr.value.value);
-      if (kind) {
-        // Synthesized JSX elements derived from MDX docs-component
-        // template-literal `code` props carry a deterministic origin
-        // marker — prefer that hint when present so the agent sees the
-        // exact docs-component path; otherwise walk ancestors for the
-        // wrapper-tag/class hint that mirrors the sibling rule.
-        let exampleHint = findCodePropTemplateHint(element);
-        if (exampleHint === null) {
-          parentRef.value ??= buildJsxParentMap(module);
-          exampleHint = findJsxExampleHint(element, parentRef.value);
-        }
-        emit(buildViolation(element.loc.start, kind, inheritedToken, exampleHint));
-      }
-    }
-    // Expression-form `href={…}` is opaque at static time — surface only
-    // deterministic evidence per the AI-first consumer model.
+    maybeEmitJsxAnchor(element, inheritedToken, module, parentRef, emit);
   }
   for (const child of element.children) {
     if (child.kind === "JsxElement") {
       walkJsxWithPaginationContext(child, inheritedToken, module, parentRef, emit);
     }
   }
+}
+
+/**
+ * Per-anchor emission path. Extracted from the JSX walker to keep the
+ * walker's cognitive complexity inside the project lint budget — the
+ * walker handles tree traversal + pagination-context inheritance; this
+ * function handles the placeholder classification + example-hint
+ * resolution + emission.
+ *
+ * Expression-form `href={…}` is opaque at static time and intentionally
+ * not flagged — surface only deterministic evidence per the AI-first
+ * consumer model.
+ */
+function maybeEmitJsxAnchor(
+  element: JsxElement,
+  paginationToken: string | null,
+  module: TsxModule,
+  parentRef: { value: Map<JsxElement, JsxElement> | null },
+  emit: Emit,
+): void {
+  const hrefAttr = getJsxAttribute(element, "href");
+  if (!hrefAttr?.value || hrefAttr.value.kind !== "StringLiteral") return;
+  const kind = classifyPlaceholder(hrefAttr.value.value);
+  if (!kind) return;
+  // Synthesized JSX elements derived from MDX docs-component template-
+  // literal `code` props carry a deterministic origin marker — prefer
+  // that hint when present so the agent sees the exact docs-component
+  // path; otherwise walk ancestors for the wrapper-tag/class hint that
+  // mirrors the sibling rule.
+  let exampleHint = findCodePropTemplateHint(element);
+  if (exampleHint === null) {
+    parentRef.value ??= buildJsxParentMap(module);
+    exampleHint = findJsxExampleHint(element, parentRef.value);
+  }
+  emit(buildViolation(element.loc.start, kind, paginationToken, exampleHint));
 }
 
 /** Builds the parent map for HTML elements in one walk. */
