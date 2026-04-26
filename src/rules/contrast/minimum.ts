@@ -62,11 +62,18 @@
  * knows the descendant relationship was assumed from the cascade idiom
  * rather than proved — the scanner cannot prove '.btn' actually
  * renders inside `<body>`, but the idiom is dominant enough to surface
- * honestly (CLAUDE.md §1 "Surface, don't suppress"). Unresolvable cases
- * (compound ancestor selector, cross-file document default, missing
- * half of the pair) stay silent on the rule; the rule-level
- * `crossFileCapable: false` flag downgrades the coverage row to
- * `"medium"` with a structured reason per ADR 0026.
+ * honestly (CLAUDE.md §1 "Surface, don't suppress"). Severity on these
+ * findings is `warning`, not `error` — the message text concedes
+ * "verify this rule's element actually renders inside that ancestor"
+ * and a `reason` that hedges while severity claims certainty is the
+ * dishonest shape the AI-first consumer model's "reason text and
+ * severity must agree" rule guards against (conceded-uncertainty
+ * branch). `error` is reserved for same-rule pairs where both halves
+ * are determined within the rule. Unresolvable cases (compound ancestor
+ * selector, cross-file document default, missing half of the pair) stay
+ * silent on the rule; the rule-level `crossFileCapable: false` flag
+ * downgrades the coverage row to `"medium"` with a structured reason
+ * per ADR 0026.
  *
  * User-state pseudo-classes: when the matched selector contains
  * `:hover`, `:focus`, `:focus-visible`, `:focus-within`, or `:active`,
@@ -311,8 +318,25 @@ function emitFinding(
   // docs/kb/architecture/ai-first-consumer.md). Downgrade to warning
   // and scope the message to the named state so the agent reads the
   // claim accurately.
+  //
+  // Cross-selector cascade fallback findings carry the same
+  // severity/reason agreement constraint. The fallback resolves the
+  // missing half of the contrast pair from a `:root` / `html` / `body`
+  // document default and surfaces a `reason` text that concedes "verify
+  // this rule's element actually renders inside that ancestor" — the
+  // scanner cannot prove the descendant relationship from selectors
+  // alone (`.btn` may render outside `<body>` in a portal, may be
+  // unmounted, may be redefined elsewhere). A `reason` that hedges with
+  // "verify ..." while severity stays `error` is the same dishonest
+  // shape the user-state branch already addresses (per the second-pass
+  // sweep extension covering conceded uncertainty alongside conceded
+  // satisfaction). Demote to `warning` so the framing matches "please
+  // verify"; reserve `error` for same-rule pairs where both halves are
+  // determined within the rule and no inheritance chain is assumed.
   const userStatePseudo = detectUserStatePseudo(finding.selector);
-  const severity: EmittedViolation["severity"] = userStatePseudo ? "warning" : "error";
+  const cascadeInherited = finding.cascadeSource !== undefined;
+  const severity: EmittedViolation["severity"] =
+    userStatePseudo || cascadeInherited ? "warning" : "error";
   const baseMessage = buildContrastMessage(finding, SC_LABEL);
   const message = userStatePseudo
     ? `${baseMessage} Note: this selector targets the ${userStatePseudo} user state — SC 1.4.3 AA measures resting-state text contrast; verify whether the brief duration of the user state warrants raising the active-state ratio.`

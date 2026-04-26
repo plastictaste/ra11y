@@ -294,7 +294,14 @@ describe("rule contrast/minimum", () => {
         { filePath: "styles.css" },
       );
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("error");
+      // Cascade-inherited findings emit at `warning`, not `error` —
+      // the message text concedes "verify this rule's element actually
+      // renders inside that ancestor" and a hedged reason against an
+      // error-severity claim is the dishonest shape the AI-first
+      // consumer model's "reason text and severity must agree" rule
+      // guards against. Same-rule pairs (no inheritance assumption)
+      // keep `error`; see the dedicated suite below.
+      expect(v[0]?.severity).toBe("warning");
       // The message cites the consumer selector (`.btn`), not `body`.
       expect(v[0]?.message).toContain(".btn");
       // And it names the cascade source so the agent knows the pair
@@ -445,6 +452,86 @@ describe("rule contrast/minimum", () => {
       // the body default so the agent can pick which level to change.
       expect(v[0]?.suggestion).toContain("inherited from 'body'");
       expect(v[0]?.suggestion).toContain(".btn");
+    });
+  });
+
+  // Cascade-inherited severity/reason agreement (per AI-first consumer
+  // model "reason text and severity must agree", second-pass sweep
+  // extension covering conceded uncertainty). When the contrast pair
+  // was assembled by inheriting one half from a `:root` / `html` /
+  // `body` document default, the message text hedges with "verify this
+  // rule's element actually renders inside that ancestor" — the scanner
+  // cannot prove the descendant relationship from selectors alone. A
+  // hedged `reason` against an `error`-severity claim is the dishonest
+  // shape the doctrine guards against. Demote to `warning`; reserve
+  // `error` for same-rule pairs where both halves are determined within
+  // the rule and no inheritance chain is assumed.
+  describe("cascade-inherited severity/reason agreement", () => {
+    it("demotes inherited-background findings from error to warning", () => {
+      const v = runRule(
+        rule,
+        `body { color: #ffffff; }
+         .btn { background-color: #add8e6; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      // The hedge is what justifies the demotion — keep the assertion
+      // colocated so a future edit that drops the hedge from the message
+      // text also has to reconsider the severity downgrade.
+      expect(v[0]?.message).toContain("verify this rule's element actually renders inside");
+      expect(v[0]?.couldBeWrongBecause).toContain("cascade_inherited_context");
+    });
+
+    it("demotes inherited-foreground findings from error to warning", () => {
+      const v = runRule(
+        rule,
+        `html { background-color: #ffffff; }
+         article { color: #bababa; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("verify this rule's element actually renders inside");
+    });
+
+    it("same-rule pairs (no inheritance assumption) stay at error", () => {
+      // Both halves declared on the same rule — no descendant-renders-
+      // inside-ancestor assumption is required, so the predicate is
+      // proved from the code in this file alone. Severity stays at
+      // `error` and the message does NOT carry the inheritance hedge.
+      const v = runRule(rule, `.btn { color: #ffffff; background-color: #add8e6; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).not.toContain("verify this rule's element actually renders inside");
+    });
+
+    it("same-rule pair on a `body` selector itself stays at error", () => {
+      // `body` declaring both halves is itself a same-rule pair — the
+      // ancestor selector IS the rule, no inheritance chain is assumed,
+      // and the cascade-fallback path is bypassed entirely. Demotion
+      // would silently mask a real `body`-level resting-state failure.
+      const v = runRule(rule, `body { color: #ffffff; background-color: #add8e6; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("`:root`-inherited findings also downgrade to warning", () => {
+      // The inheritance chain `:root` → descendant carries the same
+      // unproven assumption as `body` → descendant; demote consistently
+      // across all three ancestor-default selectors.
+      const v = runRule(
+        rule,
+        `:root { color: #ffffff; }
+         .chip { background-color: #add8e6; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
     });
   });
 
