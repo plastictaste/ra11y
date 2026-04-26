@@ -770,4 +770,119 @@ describe("rule contrast/minimum", () => {
       expect(rule.appliesTo?.fileExtensions).toContain(".less");
     });
   });
+
+  // SC 1.4.3 AA measures resting-state text contrast. Selectors that
+  // target a user-state pseudo-class (`:hover`, `:focus`, `:active`,
+  // `:focus-visible`, `:focus-within`) describe a transient
+  // presentation; contrast on those states is governed by SC 1.4.11
+  // (Non-text Contrast) for UI component states when applicable, not
+  // by 1.4.3 AA's text rule. The rule still surfaces the pair so the
+  // agent can verify whether the active-state ratio is acceptable for
+  // the brief duration of the user state, but downgrades severity to
+  // `warning` and scopes the message to the named state — keeping
+  // reason text and severity in agreement per the AI-first consumer
+  // model.
+  describe("user-state pseudo-class downgrade", () => {
+    it("downgrades :hover failures from error to warning", () => {
+      const v = runRule(
+        rule,
+        `.text-warning:hover { color: #f5b04a; background-color: #ffffff; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+    });
+
+    it("plain selector without a user-state pseudo still errors", () => {
+      const v = runRule(rule, `.text-warning { color: #f5b04a; background-color: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("downgrades :focus-visible failures and the message names the state", () => {
+      const v = runRule(rule, `.btn:focus-visible { color: #aaaaaa; background-color: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(":focus-visible");
+      // Message scopes the failure to the user state and routes the
+      // agent to the right SC for component-state contrast.
+      expect(v[0]?.message).toContain("user state");
+    });
+
+    it("downgrades :active failures", () => {
+      const v = runRule(rule, `.btn:active { color: #aaaaaa; background: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(":active");
+    });
+
+    it("downgrades :focus-within failures", () => {
+      const v = runRule(rule, `.field:focus-within { color: #aaaaaa; background: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(":focus-within");
+    });
+
+    it("compound selector with `:hover` and a class still downgrades", () => {
+      const v = runRule(rule, `.btn:hover.active { color: #aaaaaa; background-color: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(":hover");
+    });
+
+    it("descendant combinator with `:focus-within` on an ancestor still downgrades", () => {
+      const v = runRule(
+        rule,
+        `.parent:focus-within .child { color: #aaaaaa; background-color: #ffffff; }`,
+        { filePath: "styles.css" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain(":focus-within");
+    });
+
+    it("selector that contains `focus` as part of an identifier (not a pseudo) is not downgraded", () => {
+      // `.focus-ring` is a plain class name — no `:` prefix, not a
+      // pseudo-class. The downgrade must not fire on identifier-spelled
+      // tokens; resting-state contrast on a class named `focus-ring`
+      // is still SC 1.4.3 territory.
+      const v = runRule(rule, `.focus-ring { color: #aaaaaa; background: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("`::before` pseudo-element (double-colon) is not a user-state pseudo and stays at error", () => {
+      // Pseudo-elements describe a generated box, not a user state.
+      // SC 1.4.3 still applies to their resting contrast.
+      const v = runRule(rule, `.tip::before { color: #aaaaaa; background: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("`:not(:hover)` is the resting-state selector and stays at error", () => {
+      // `.btn:not(:hover)` selects the element when it is NOT hovered
+      // — that's the resting state, which SC 1.4.3 AA measures.
+      // Treating the negated state name as the user state would
+      // silently downgrade a real resting-state failure to a warning.
+      const v = runRule(rule, `.btn:not(:hover) { color: #aaaaaa; background: #ffffff; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+  });
 });

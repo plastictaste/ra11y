@@ -891,3 +891,5 @@ export function extractPrimarySelectorClass(selector: string): string | null {
   const head = subject.split(/:(?!:)/)[0] ?? subject;
   return /\.([A-Za-z_][\w-]*)/.exec(head)?.[1] ?? null;
 }
+
+export { detectUserStatePseudo } from "./_user-state-pseudo.ts";

@@ -68,6 +68,17 @@
  * `crossFileCapable: false` flag downgrades the coverage row to
  * `"medium"` with a structured reason per ADR 0026.
  *
+ * User-state pseudo-classes: when the matched selector contains
+ * `:hover`, `:focus`, `:focus-visible`, `:focus-within`, or `:active`,
+ * the finding describes a transient presentation rather than the
+ * resting visual state SC 1.4.3 AA measures. Contrast on those states
+ * is governed by SC 1.4.11 (Non-text Contrast) for UI component states
+ * when applicable. The rule still emits a finding (the agent should
+ * still verify whether the active-state ratio is acceptable for the
+ * brief duration of the user state) but downgrades severity to
+ * `warning` and scopes the message to the named state so reason text
+ * and severity agree (see docs/kb/architecture/ai-first-consumer.md).
+ *
  * v0.0.x coverage: in-file CSS rules (standalone .css and <style>
  * blocks). Custom properties resolve one level same-file (V1-CSS-
  * CONTRAST-VAR-ROOT-RESOLUTION); inherited document defaults resolve
@@ -93,6 +104,7 @@ import {
   type ContrastCheckOptions,
   collectBgImageUnresolvable,
   collectTailwindOverrideClasses,
+  detectUserStatePseudo,
   extractPrimarySelectorClass,
   findContrastFailures,
   TAILWIND_CLASS_ON_CONSUMER,
@@ -286,10 +298,29 @@ function emitFinding(
   const reasons: string[] = [];
   if (finding.cascadeSource) reasons.push(CASCADE_INHERITED_CONTEXT);
   if (tailwindOverride) reasons.push(TAILWIND_CLASS_ON_CONSUMER);
+  // User-state pseudo-classes (`:hover` / `:focus` / `:active` /
+  // `:focus-visible` / `:focus-within`) describe a transient
+  // presentation, not the resting visual state SC 1.4.3 AA measures.
+  // Contrast on those states is governed by SC 1.4.11 (Non-text
+  // Contrast) for UI component states when applicable, not by 1.4.3
+  // AA's text rule. The agent still benefits from reading the pair —
+  // an active-state ratio of 1.5:1 may still be too low for a user
+  // whose focus stays parked on the element — but firing at
+  // severity-error against the resting-state predicate is dishonest
+  // ("reason text and severity must agree" — see
+  // docs/kb/architecture/ai-first-consumer.md). Downgrade to warning
+  // and scope the message to the named state so the agent reads the
+  // claim accurately.
+  const userStatePseudo = detectUserStatePseudo(finding.selector);
+  const severity: EmittedViolation["severity"] = userStatePseudo ? "warning" : "error";
+  const baseMessage = buildContrastMessage(finding, SC_LABEL);
+  const message = userStatePseudo
+    ? `${baseMessage} Note: this selector targets the ${userStatePseudo} user state — SC 1.4.3 AA measures resting-state text contrast; verify whether the brief duration of the user state warrants raising the active-state ratio.`
+    : baseMessage;
   const emitted: EmittedViolation = {
-    severity: "error",
+    severity,
     location: { filePath, line: finding.line, column: finding.column },
-    message: buildContrastMessage(finding, SC_LABEL),
+    message,
     suggestion: buildContrastSuggestion(finding),
     // Conditional spread — `couldBeWrongBecause: []` would be a
     // dishonest empty-vs-unpopulated sentinel per CLAUDE.md §1.
