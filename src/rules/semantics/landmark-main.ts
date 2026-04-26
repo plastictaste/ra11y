@@ -181,6 +181,24 @@ function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
  * produced the same prose. Encoding the body's direct-child tally and
  * the sibling-landmark presence into the message gives the agent
  * per-finding evidence it can act on without re-reading the source.
+ *
+ * On the full-confidence branch (non-layout-partial) we additionally
+ * check the body for an "isolated component demo page" shape — a body
+ * whose only visible direct child is a single component wrapper, with
+ * an optional `<script>` tag (the visual-test / examples / demos
+ * shape). When the shape matches we attach `couldBeWrongBecause:
+ * ["isolated_component_demo_page"]` so the agent can route the finding
+ * to a real-page consumer rather than dismissing at full confidence
+ * without context, while severity stays at `warning` (per
+ * docs/kb/architecture/ai-first-consumer.md "Surface, don't suppress"
+ * + "Don't downgrade priority to hide things"). The predicate is in-
+ * file only — we don't depend on cross-context build-artifact
+ * classification because the agent already has that signal from
+ * `scannedBuildArtifacts` in scan_project meta. The layout-partial
+ * branch already carries its own stronger code and is not double-
+ * tagged: a layout/partial is provably not a demo page (it has a
+ * composition directive), and stacking codes dilutes the per-finding
+ * signal the agent reads first.
  */
 function emitMissingMain(
   ctx: FileContext,
@@ -196,13 +214,61 @@ function emitMissingMain(
     return;
   }
   const shapeSuffix = shape ? ` ${shape}` : "";
+  const isolatedDemo = body ? isIsolatedComponentBodyShape(body) : false;
   ctx.emit({
     severity: "warning",
     location: { filePath: "", line, column },
     message: `Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.${shapeSuffix}`,
     suggestion:
       'Document has no <main>. Wrap the primary content region — typically the main article/content below the header/nav — in <main> or add role="main" to an existing container. Do not wrap the <header>, <nav>, or <footer> regions in the main landmark.',
+    ...(isolatedDemo ? { couldBeWrongBecause: [ISOLATED_COMPONENT_DEMO_CODE] } : {}),
   });
+}
+
+/**
+ * Structured `couldBeWrongBecause` code surfaced when the body looks
+ * like a single-component demo / visual-test / examples page rather
+ * than a real consumer-facing page. The shape we recognise: ≤2 direct
+ * element children of `<body>`, with at most one non-`<script>` element
+ * — i.e. one component wrapper plus an optional script tag. Pages
+ * under `tests/visual/`, `examples/`, `demos/` typically render a
+ * single component into a bare body shell with no surrounding chrome,
+ * and a confident "missing <main>" emit on every such file produces
+ * dozens of identical fires the agent has to dismiss one-by-one.
+ *
+ * The code is additive enrichment, not suppression — the candidate
+ * stays in the primary list at warning severity, the agent reads the
+ * code and decides whether the file is in fact a real page that lacks
+ * a landmark or an isolated component demo composed elsewhere. Per
+ * docs/kb/architecture/ai-first-consumer.md "No heuristic suppression"
+ * + "Surface, don't suppress," `couldBeWrongBecause` is the right slot
+ * for additive doubt at warning severity.
+ *
+ * Predicate is in-file only (does not consult cross-context
+ * `scannedBuildArtifacts` or path-segment classification) — when a
+ * page-tree-wide build-artifact signal is available, the agent
+ * already reads it from scan_project meta.
+ */
+const ISOLATED_COMPONENT_DEMO_CODE = "isolated_component_demo_page";
+
+/**
+ * True when `<body>` has at most 2 direct element children AND at most
+ * 1 of them is a non-`<script>` element. This is the "single component
+ * + maybe a script" shape used by demo / visual-test / examples
+ * pages. See {@link ISOLATED_COMPONENT_DEMO_CODE} for rationale.
+ *
+ * Counts elements only — text and comment nodes are ignored, matching
+ * the body-shape descriptor's accounting.
+ */
+function isIsolatedComponentBodyShape(body: HtmlElement): boolean {
+  let elementChildren = 0;
+  let nonScriptElementChildren = 0;
+  for (const child of directHtmlChildren(body)) {
+    if (child.kind !== "HtmlElement") continue;
+    elementChildren += 1;
+    if (child.tagName.toLowerCase() !== "script") nonScriptElementChildren += 1;
+  }
+  return elementChildren <= 2 && nonScriptElementChildren <= 1;
 }
 
 /**

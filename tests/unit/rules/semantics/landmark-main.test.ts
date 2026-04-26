@@ -1038,4 +1038,164 @@ describe("rule semantics/landmark-main", () => {
       });
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Isolated-component-demo body-shape qualifier.
+  //
+  // Visual-test / examples / demos pages typically render a single
+  // component into a bare <body> with no surrounding chrome — one
+  // wrapper element plus maybe a <script> tag. A confident "missing
+  // <main>" emit on every such file produces dozens of identical fires
+  // the agent has to dismiss one-by-one. Per the AI-first consumer
+  // model, the qualifier is *additive* (couldBeWrongBecause) rather
+  // than suppressive: the candidate stays in the primary list at
+  // warning severity, the agent reads the code and decides whether the
+  // file is a real page that lacks a landmark or a component demo
+  // composed elsewhere. Predicate is in-file only — ≤2 direct element
+  // children of <body> with at most one non-<script> element.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("isolated-component-demo qualifier", () => {
+    it("attaches couldBeWrongBecause when body has a single wrapper element", () => {
+      // theme-clock canonical demo shape: a single <div> wrapper. The
+      // missing-<main> emit still fires (surface-don't-suppress) but
+      // carries the demo-page code so the agent can route the finding
+      // to the real-page consumer rather than acting on it directly.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div class="container">',
+          '      <div class="needle hour"></div>',
+          '      <div class="needle minute"></div>',
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "clock.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
+    });
+
+    it("attaches couldBeWrongBecause when body has one wrapper + a <script>", () => {
+      // examples / demo SPA shape: one component wrapper with the
+      // bootstrap script. The script is the "+ maybe a script" allowance.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div id="gallery">',
+          '      <img src="a.jpg" alt="A">',
+          '      <img src="b.jpg" alt="B">',
+          '      <img src="c.jpg" alt="C">',
+          "    </div>",
+          '    <script src="demo.js"></script>',
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "gallery.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
+    });
+
+    it("does NOT attach the qualifier on a full-page chrome shape", () => {
+      // counter-style page: h1 + p + 2 buttons + script = 5 visible
+      // body children. Real authored content with multiple sibling
+      // elements — the demo-page heuristic must not fire so the agent
+      // does not mis-route a real page as "probably composed elsewhere."
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <h1>Counter</h1>",
+          '    <p id="value">0</p>',
+          '    <button id="decrease">Decrease</button>',
+          '    <button id="increase">Increase</button>',
+          '    <script src="script.js"></script>',
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "counter.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT attach the qualifier when body has 3+ element children", () => {
+      // Multi-section page — header + 3 sections + footer = 5 element
+      // children. Above the ≤2 threshold; the page is structurally a
+      // real consumer-facing layout that just happens to lack <main>.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          "    <section>one</section>",
+          "    <section>two</section>",
+          "    <section>three</section>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "multi.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT attach the qualifier when body has two non-script elements (header + content)", () => {
+      // <body> = <header> + <div>content</div> — 2 element children but
+      // both non-script. Real pages routinely start as a header-plus-
+      // content shape; tagging them as "demo page" would mis-route the
+      // agent. The predicate requires AT MOST 1 non-script element to
+      // claim demo-page shape.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <div>only thing</div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "small.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT attach the qualifier on the layout-partial branch", () => {
+      // Layout / partial files already carry the stronger
+      // partial_or_layout_file_requires_composed_check code. Stacking
+      // the demo-page code on top would dilute the per-finding signal
+      // the agent reads first; the layout-partial branch is provably
+      // not a demo page (it has a composition directive). Layout files
+      // also frequently have ≤2 element body children (header +
+      // footer around the {{ content }} site) so without this guard
+      // they would double-tag.
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          "    {{ content }}",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "default.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+    });
+  });
 });
