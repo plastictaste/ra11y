@@ -15,9 +15,12 @@
  */
 
 import { isAbsolute, resolve } from "node:path";
+import { filterPerRuleCoverageForSingleFile } from "../engine/per-rule-coverage.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { LoadedConfig } from "../types/config.ts";
-import { parseableExtensions } from "../utils/path.ts";
+import type { Rule } from "../types/rule.ts";
+import type { PerRuleCoverage } from "../types/violation.ts";
+import { extension as fileExtension, parseableExtensions } from "../utils/path.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
@@ -203,6 +206,7 @@ export const scanFileTool: McpTool = {
         scanFileCwd,
         params,
         session,
+        activeRules: collected.activeRules,
       }),
     );
   },
@@ -287,8 +291,18 @@ function buildScanFileResponse(args: {
   readonly scanFileCwd: string | undefined;
   readonly params: Record<string, unknown>;
   readonly session: McpSession;
+  readonly activeRules: readonly Rule[];
 }): Record<string, unknown> {
-  const { assembled, parsed, projectConfig, configSearchBase, scanFileCwd, params, session } = args;
+  const {
+    assembled,
+    parsed,
+    projectConfig,
+    configSearchBase,
+    scanFileCwd,
+    params,
+    session,
+    activeRules,
+  } = args;
   // scan_file's historical top-level shape is `{ findings,
   // reviewCandidates? }` rather than the grouped `files[]` the rest
   // of the scan family emits. Agents iterating the fix-verify loop
@@ -319,8 +333,29 @@ function buildScanFileResponse(args: {
     { singleFilePath: parsed.filePath },
   );
   const scannedEnvelope = scannedFile(parsed.filePath);
+  // Single-file extension filter: scan_file knows the scanned file's
+  // extension up front, so rules whose `appliesTo.fileExtensions` gate
+  // doesn't intersect produced no signal AT ALL on this file. Reporting
+  // them in `perRuleCoverage` (or `perRuleCoverageSummary.ruleIds`) with
+  // a "no files matching .css were scanned" reason inflates the array
+  // (~half the rows on a single-file scan) without telling the agent
+  // anything actionable the simpler `rulesSkippedExtensionMismatch: N`
+  // counter doesn't already carry. The shared
+  // {@link filterPerRuleCoverageForSingleFile} helper handles the
+  // alias-aware extension match (`.scss → .css`, `.md → .html`, etc.)
+  // and returns the count of dropped rows. Project-scoped rules (no
+  // extension gate) survive the filter unchanged. The
+  // `rulesNotEvaluatedDueToInputType` field that the assembler emits
+  // for multi-file scan-family tools is dropped on `scan_file` — the
+  // single-file filter subsumes it with cleaner semantics; carrying
+  // both would surface two counters with overlapping signal.
+  const metaSpread = applySingleFileExtensionFilterToMeta(
+    assembled.meta,
+    activeRules,
+    parsed.filePath,
+  );
   const fullMeta: Record<string, unknown> = {
-    ...assembled.meta,
+    ...metaSpread,
     filesScanned: 1,
     scanned: scannedEnvelope,
     configSource: projectConfig.sourcePath,
@@ -376,4 +411,125 @@ function buildScanFileResponse(args: {
     ...(nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured }),
     meta: applyMetaCacheMode({ toolName: "scan_file", params, fullMeta, session }),
   };
+}
+
+/**
+ * Filters the assembler-built `meta` block down to the single-file
+ * scope by dropping per-rule rows whose `appliesTo.fileExtensions`
+ * gate doesn't match the scanned file's extension. Returns a fresh
+ * object keyed for spread into `fullMeta`.
+ *
+ * Three meta keys are touched:
+ *
+ *   - `perRuleCoverage` (verbose mode): replaced with the filter's
+ *     `retained` array. Omitted entirely when `retained` is empty
+ *     so the assembler's existing conditional-spread shape stays
+ *     intact.
+ *   - `perRuleCoverageSummary` (default mode): `ruleIds` narrowed
+ *     to the IDs of `retained`; `ruleCount` updated. Omitted when
+ *     `retained` is empty.
+ *   - `rulesNotEvaluatedDueToInputType`: dropped — the `scan_file`
+ *     surface uses the cleaner `rulesSkippedExtensionMismatch`
+ *     counter instead. Carrying both would surface two counters
+ *     with overlapping signal on the single-file shape.
+ *
+ * Adds `rulesSkippedExtensionMismatch: N` (always present, including
+ * zero — scan-confidence telemetry per the always-present-on-zero
+ * rule for fields the agent branches on).
+ *
+ * Other meta keys pass through unchanged.
+ */
+function applySingleFileExtensionFilterToMeta(
+  meta: Record<string, unknown>,
+  activeRules: readonly Rule[],
+  filePath: string,
+): Record<string, unknown> {
+  const ext = fileExtension(filePath);
+  const verboseRows = meta["perRuleCoverage"] as readonly PerRuleCoverage[] | undefined;
+  const summary = meta["perRuleCoverageSummary"] as
+    | { readonly ruleCount: number; readonly ruleIds: readonly string[] }
+    | undefined;
+  // The shared assembler routes rows through `partitionPerRuleCoverage`
+  // before they reach this seam — that partition collapses
+  // extension-gated rows whose runner-tracker tally hit zero into a
+  // sibling `rulesNotEvaluatedDueToInputType: { count, byExtension }`
+  // counter. On `scan_file`'s single-file substrate the partition's
+  // predicate (`filesEvaluated === 0 && filesEligible === 0` AND
+  // extension-gated) is functionally equivalent to this seam's static
+  // extension match, so the bulk of the count flows in via that
+  // partition. Re-running the static filter here catches the rare
+  // residual case where the runner-tracker reported `eligible > 0`
+  // for an extension-mismatched rule (defensive — should not occur,
+  // but the agent reads `rulesSkippedExtensionMismatch` as an
+  // honest total either way) and folds the partition count in.
+  const partitionCount = readPartitionCount(meta["rulesNotEvaluatedDueToInputType"]);
+  // Source rows: prefer the verbose array when present; otherwise
+  // synthesize a placeholder array from the summary's rule IDs by
+  // looking up each ID in `activeRules`. Default-verbosity scans only
+  // ship the summary, so the filter operates on the rule-ID list and
+  // re-narrows the `ruleIds` field below.
+  let filtered: PerRuleCoverage[] | undefined;
+  let extraSkipped = 0;
+  if (verboseRows !== undefined) {
+    const result = filterPerRuleCoverageForSingleFile(verboseRows, activeRules, ext);
+    filtered = [...result.retained];
+    extraSkipped = result.skippedExtensionMismatch;
+  } else if (summary !== undefined) {
+    // Synthesize minimal rows from the summary's rule IDs so the
+    // shared filter applies its alias-aware extension match without
+    // duplicating logic at this seam. The synthesized fields are
+    // placeholders — only `ruleId` is consumed by the filter — and the
+    // re-emit below uses just `retained.map(r => r.ruleId)`.
+    const synthetic: PerRuleCoverage[] = summary.ruleIds.map((ruleId) => ({
+      ruleId,
+      filesEvaluated: 0,
+      filesEligible: 0,
+      findingsEmitted: 0,
+      coverageConfidence: "low" as const,
+    }));
+    const result = filterPerRuleCoverageForSingleFile(synthetic, activeRules, ext);
+    filtered = [...result.retained];
+    extraSkipped = result.skippedExtensionMismatch;
+  }
+  const skippedExtensionMismatch = partitionCount + extraSkipped;
+  // Build the new meta. Drop `rulesNotEvaluatedDueToInputType` so the
+  // single-file response carries one canonical counter
+  // (`rulesSkippedExtensionMismatch`) for the same conceptual signal.
+  // Two counters with overlapping signal force the agent to
+  // disambiguate which is canonical and risk silent drift.
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(meta)) {
+    if (key === "perRuleCoverage" || key === "perRuleCoverageSummary") continue;
+    if (key === "rulesNotEvaluatedDueToInputType") continue;
+    out[key] = value;
+  }
+  if (filtered !== undefined && filtered.length > 0) {
+    if (verboseRows === undefined) {
+      out["perRuleCoverageSummary"] = {
+        ruleCount: filtered.length,
+        ruleIds: filtered.map((r) => r.ruleId).sort(),
+      };
+    } else {
+      out["perRuleCoverage"] = filtered;
+    }
+  }
+  out["rulesSkippedExtensionMismatch"] = skippedExtensionMismatch;
+  return out;
+}
+
+/**
+ * Reads the count out of the assembler's
+ * `meta.rulesNotEvaluatedDueToInputType` field. The shared
+ * `RulesNotEvaluatedDueToInputType` shape is
+ * `{ count: number, byExtension: Record<string, number> }` and rides
+ * unconditionally — but at this seam the field arrives as
+ * `unknown` (the meta block is keyed by string, value `unknown`), so
+ * the read is defensive against a future shape change. Returns 0 on
+ * any shape mismatch — honest fallback (the static filter still
+ * catches its share) rather than throwing in an MCP request handler.
+ */
+function readPartitionCount(value: unknown): number {
+  if (typeof value !== "object" || value === null) return 0;
+  const count = (value as { readonly count?: unknown }).count;
+  return typeof count === "number" ? count : 0;
 }

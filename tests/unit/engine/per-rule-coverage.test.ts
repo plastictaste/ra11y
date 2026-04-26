@@ -32,6 +32,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildPerRuleCoverage,
+  filterPerRuleCoverageForSingleFile,
   partitionPerRuleCoverage,
 } from "../../../src/engine/per-rule-coverage.ts";
 import type { RuleEvaluationTracker } from "../../../src/engine/rule-runner.ts";
@@ -1130,5 +1131,95 @@ describe("partitionPerRuleCoverage", () => {
     const partition = partitionPerRuleCoverage([], []);
     expect(partition.retained).toHaveLength(0);
     expect(partition.notEvaluatedDueToInputType).toEqual({ count: 0, byExtension: {} });
+  });
+});
+
+// `filterPerRuleCoverageForSingleFile` is the single-file companion to
+// `partitionPerRuleCoverage`. On `scan_file`, the input is one file
+// whose extension is known up-front, so the question "could this rule
+// apply at all?" is answerable from `appliesTo.fileExtensions`
+// directly — no need to wait for the runner's tracker output. Rules
+// whose gate doesn't intersect produced no signal AT ALL on the
+// scanned file (by definition of an extension gate); reporting them
+// in `perRuleCoverage` with a "no files matching .css were scanned"
+// reason inflates the array without telling the agent anything
+// actionable the simpler `rulesSkippedExtensionMismatch` counter
+// doesn't already carry.
+describe("filterPerRuleCoverageForSingleFile", () => {
+  function mkRow(ruleId: string): PerRuleCoverage {
+    return {
+      ruleId,
+      filesEvaluated: 1,
+      filesEligible: 1,
+      findingsEmitted: 0,
+      coverageConfidence: "high",
+    };
+  }
+
+  it("retains rows whose rule's extension gate matches the scanned file extension", () => {
+    const rules = [
+      mkRule("aria/conflicting-role", [".jsx", ".tsx"]),
+      mkRule("forms/labels-required", [".jsx", ".tsx"]),
+    ];
+    const rows = [mkRow("aria/conflicting-role"), mkRow("forms/labels-required")];
+    const result = filterPerRuleCoverageForSingleFile(rows, rules, ".tsx");
+    expect(result.retained.map((r) => r.ruleId)).toEqual([
+      "aria/conflicting-role",
+      "forms/labels-required",
+    ]);
+    expect(result.skippedExtensionMismatch).toBe(0);
+  });
+
+  it("drops rows whose extension gate does not match and counts them in skippedExtensionMismatch", () => {
+    const rules = [
+      mkRule("contrast/minimum", [".css"]),
+      mkRule("document/lang-attribute", [".html", ".htm"]),
+      mkRule("aria/conflicting-role", [".jsx", ".tsx"]),
+    ];
+    const rows = [
+      mkRow("contrast/minimum"),
+      mkRow("document/lang-attribute"),
+      mkRow("aria/conflicting-role"),
+    ];
+    const result = filterPerRuleCoverageForSingleFile(rows, rules, ".tsx");
+    expect(result.retained.map((r) => r.ruleId)).toEqual(["aria/conflicting-role"]);
+    expect(result.skippedExtensionMismatch).toBe(2);
+  });
+
+  it("honors the alias table (a .scss file matches a .css-gated rule)", () => {
+    // EXTENSION_ALIASES in src/utils/path.ts maps `.scss → [".css"]`,
+    // so a rule gated on `.css` should still apply when the scanned
+    // file is `.scss` — Sass partials route through the same parser
+    // and the rule's extension filter must agree.
+    const rules = [mkRule("contrast/minimum", [".css"])];
+    const rows = [mkRow("contrast/minimum")];
+    const result = filterPerRuleCoverageForSingleFile(rows, rules, ".scss");
+    expect(result.retained.map((r) => r.ruleId)).toEqual(["contrast/minimum"]);
+    expect(result.skippedExtensionMismatch).toBe(0);
+  });
+
+  it("retains project-scoped rules (no extension gate) regardless of file extension", () => {
+    // Project-scoped rules walk the whole file set in `afterProject`;
+    // the substrate-level question "did the file match an extension
+    // gate?" doesn't apply to them.
+    const rules = [mkRule("focus/outline-visible", undefined)];
+    const rows = [mkRow("focus/outline-visible")];
+    const result = filterPerRuleCoverageForSingleFile(rows, rules, ".tsx");
+    expect(result.retained.map((r) => r.ruleId)).toEqual(["focus/outline-visible"]);
+    expect(result.skippedExtensionMismatch).toBe(0);
+  });
+
+  it("retains rows whose rule isn't in the lookup map (defensive — silently dropping unknown rows would hide signal)", () => {
+    const rules: Rule[] = [];
+    const rows = [mkRow("orphan/no-rule")];
+    const result = filterPerRuleCoverageForSingleFile(rows, rules, ".tsx");
+    expect(result.retained.map((r) => r.ruleId)).toEqual(["orphan/no-rule"]);
+    expect(result.skippedExtensionMismatch).toBe(0);
+  });
+
+  it("returns zero-counter and empty retained when input is empty", () => {
+    const result = filterPerRuleCoverageForSingleFile([], [], ".tsx");
+    expect(result.retained).toHaveLength(0);
+    expect(result.skippedExtensionMismatch).toBe(0);
   });
 });

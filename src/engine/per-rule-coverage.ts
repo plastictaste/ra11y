@@ -31,6 +31,7 @@
 
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { extensionMatches } from "../utils/path.ts";
 import type { RuleEvaluationTracker } from "./rule-runner.ts";
 import type { StandardFilter } from "./standard-filter.ts";
 
@@ -1025,4 +1026,86 @@ export function partitionPerRuleCoverage(
     retained: collapsedAny ? retained : rows,
     notEvaluatedDueToInputType: { count, byExtension },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Single-file scope filter (scan_file)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of {@link filterPerRuleCoverageForSingleFile}: the rows that
+ * could plausibly apply to the scanned file's extension, plus a count
+ * of the rows whose extension gate excluded them outright.
+ */
+export interface PerRuleCoverageSingleFileFilter {
+  readonly retained: readonly PerRuleCoverage[];
+  readonly skippedExtensionMismatch: number;
+}
+
+/**
+ * Filters `perRuleCoverage` rows to only those whose owning rule could
+ * plausibly apply to the scanned file's extension. The companion to
+ * {@link partitionPerRuleCoverage}, scoped specifically to the
+ * single-file `scan_file` surface.
+ *
+ * Why this exists alongside the partition: `partitionPerRuleCoverage`
+ * is reactive — it inspects each row's `filesEvaluated` /
+ * `filesEligible` tally and collapses the zero-eligibility tail. That
+ * works on multi-file scans where the tally honestly reflects each
+ * rule's eligibility against the scanned set. On `scan_file` the input
+ * is one file, so the question "could this rule apply at all?" is
+ * answerable from the rule's static `appliesTo.fileExtensions`
+ * metadata directly — no need to wait for the runner's tracker output.
+ *
+ * Doctrine balance per `docs/kb/architecture/ai-first-consumer.md`:
+ * "Verbose meta is signal" cuts both ways. A row reporting
+ * `coverageConfidence: "low"` because the rule's CSS extension gate
+ * never matched a `.tsx` file is informational noise — the rule
+ * produced no signal AT ALL on this file, by definition. Reporting it
+ * with a "no files matching .css were scanned" reason inflates the
+ * `perRuleCoverage` array (~half the rows on a single-file scan of
+ * any one extension) without telling the agent anything actionable
+ * the simpler `rulesSkippedExtensionMismatch: N` counter doesn't
+ * already carry. This is the surface-don't-suppress rule's symmetric
+ * opposite: surfacing rows the rule never even looked at would
+ * mis-budget agent attention against scan-confidence telemetry that
+ * was structurally inapplicable.
+ *
+ * Behavior:
+ *   - Extension-gated rules (`appliesTo.fileExtensions !== undefined`)
+ *     whose gate does not match `fileExtension` (via
+ *     {@link extensionMatches}, which honors the alias table —
+ *     `.scss → .css`, `.md → .html`, etc.) are dropped from
+ *     `retained` and counted in `skippedExtensionMismatch`.
+ *   - Project-scoped rules (no `appliesTo.fileExtensions`, lifecycle
+ *     is `afterProject` only) are retained unchanged — they walk the
+ *     full file set in one shot and the substrate-level question
+ *     "did the file match an extension gate?" doesn't apply.
+ *   - Rows whose owning rule isn't in the lookup map are retained
+ *     verbatim (defensive — silently dropping an unknown row would
+ *     hide signal).
+ *
+ * Pure over its inputs.
+ */
+export function filterPerRuleCoverageForSingleFile(
+  rows: readonly PerRuleCoverage[],
+  rules: readonly Rule[],
+  fileExtension: string,
+): PerRuleCoverageSingleFileFilter {
+  const ruleById = new Map<string, Rule>();
+  for (const r of rules) ruleById.set(r.id, r);
+  const retained: PerRuleCoverage[] = [];
+  let skippedExtensionMismatch = 0;
+  for (const row of rows) {
+    const rule = ruleById.get(row.ruleId);
+    const extensions = rule?.appliesTo?.fileExtensions;
+    if (extensions !== undefined && extensions.length > 0) {
+      if (!extensionMatches(fileExtension, extensions)) {
+        skippedExtensionMismatch += 1;
+        continue;
+      }
+    }
+    retained.push(row);
+  }
+  return { retained, skippedExtensionMismatch };
 }
