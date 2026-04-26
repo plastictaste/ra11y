@@ -33,12 +33,14 @@
  *   9. Apply the token-density budget via {@link applyTokenBudget}
  *      when enabled — secondary guard that fires only when per-file
  *      density pushes past the MCP host ceiling.
- *  10. Stamp the cross-surface tripwire via {@link buildCountsBySurface}
- *      so `meta.countsBySurface` lands on the wire whenever the three
- *      scan-family totals (`sum(plan.fixesByClass)+plan.notes`,
- *      `sum(perRuleCoverage.findingsEmitted)`,
- *      `sum(files[*].findings)`) disagree
- *      (Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS).
+ *
+ * Note: the former step 10 (`meta.countsBySurface` cross-surface
+ * tripwire) was dropped per "Composite headline counts are dishonest"
+ * — a 4-way internal spread of disagreeing finding totals framed as
+ * cross-surface reconciliation but read like an additional contested
+ * headline. Consumers that want the totals read the structured
+ * siblings (`plan.fixesByClass`, `meta.perRuleCoverage`, the per-file
+ * `findings.length` rollup) directly.
  *
  * This module is pure — no I/O, no global state. The caller owns
  * loading the config, running the scanner, and threading the resulting
@@ -61,7 +63,7 @@ import type { ConfigPreset } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
-import { hasMetaArrayTruncation } from "./meta-array-cap.ts";
+import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import {
   buildReferenceGuide,
   hoistAndBuildReferenceGuide,
@@ -82,9 +84,6 @@ import {
   buildScanPlan,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
-  sumFindingsAcrossFiles,
-  sumFindingsEmitted,
-  withCountsBySurface,
 } from "./scan-assembly.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
@@ -295,12 +294,13 @@ function buildAssemblerWarningsField(args: {
   // Q-SHARED-META-ARRAY-BUDGET-CAP: the assembler-seam meta block
   // already carries the capped `analysisCoverage.*` arrays with
   // their per-array `*Truncated: { shown, total }` siblings; derive
-  // the top-level `response_meta_truncated` code by scanning meta
-  // for any truncation summary. `scannedBuildArtifacts` is NOT
-  // assembled through this seam (`scan_project` handles it) so
-  // only the coverage block's flags surface here — safe because
-  // `hasMetaArrayTruncation` handles both containers uniformly.
-  const metaArrayTruncated = hasMetaArrayTruncation(args.meta);
+  // the top-level `response_meta_truncated` code AND its paired
+  // `warningsDetails.response_meta_truncated.fields` payload by
+  // scanning meta for any truncation summary. `scannedBuildArtifacts`
+  // is NOT assembled through this seam (`scan_project` handles it)
+  // so only the coverage block's flags surface here — safe because
+  // `getTruncatedMetaArrayFields` handles both containers uniformly.
+  const metaArrayTruncatedFields = getTruncatedMetaArrayFields(args.meta);
   return warningsField({
     filesScanned: args.parsedFiles.length,
     rootSource: args.rootSource,
@@ -320,7 +320,7 @@ function buildAssemblerWarningsField(args: {
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
-    ...(metaArrayTruncated ? { metaArrayTruncated: true } : {}),
+    ...(metaArrayTruncatedFields.length > 0 ? { metaArrayTruncatedFields } : {}),
     ...(args.scssUnresolvedVariableFiles === undefined ||
     args.scssUnresolvedVariableFiles.length === 0
       ? {}
@@ -386,24 +386,20 @@ export function assembleScanFamilyResponse(
   const { editsWithInlineFixPath, proseOnlySuggestions } = countFixes(nonNote);
   const violationsWithoutAnyFix = nonNote.length - editsWithInlineFixPath - proseOnlySuggestions;
   const fixesByClass = countFixesByClass(nonNote);
-  const fixClassCounts = {
-    mechanical: fixesByClass.mechanical,
-    guidance: fixesByClass.guidance,
-    "runtime-only": fixesByClass.runtimeOnly,
-    "verify-in-source": fixesByClass.verifyInSource,
-  };
 
   // (3) Plan — honest conditional-spread counters live inside buildScanPlan.
   // The former `safeEdits` arg was removed per
   // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT; the structured
-  // `fixesByClass` carries the honest per-lane signal.
+  // `fixesByClass` carries the honest per-lane signal. `summary` was
+  // dropped per "Composite headline counts are dishonest" — the
+  // structured siblings on the plan carry the same data without a
+  // duplicated prose composite.
   const plan = buildScanPlan({
     violations: nonNote.length,
     notes: notes.length,
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,
-    fixClassCounts,
     fixesByClass,
   });
 
@@ -506,33 +502,27 @@ export function assembleScanFamilyResponse(
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
   });
 
-  // Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS: three totals a scan-family
-  // consumer can read off one response have diverged in field reports
-  // (sum(plan.fixesByClass)+plan.notes vs sum(perRuleCoverage.findingsEmitted)
-  // vs sum(files[*].findings)). The filters between the scanner-raw stream
-  // (`perRuleCoverage`) and the filtered stream (`plan` + `files`) —
-  // wrapper-noise drop, severity, criterion-skip — eat findings the
-  // per-rule rows still count, and trim steps (token-density below,
-  // plus scan_project's caller-driven pagination) can further reduce
-  // what actually ships in `files[]`. Emit `meta.countsBySurface` whenever
-  // the three disagree so the drift is a visible tripwire instead of a
-  // silent miss the agent has to discover by summation. Pre-trim
-  // computation here ensures the `plan` and `perRuleCoverage` numbers
-  // are always paired; the `filesSurface` figure is stamped below on the
-  // final path so it reflects what actually rides on the wire.
-  const planTotal = nonNote.length + notes.length;
-  const perRuleCoverageTotal = sumFindingsEmitted(perRuleCoverage);
+  // The three-totals `meta.countsBySurface` tripwire was dropped per
+  // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+  // counts are dishonest": a 4-way internal spread of disagreeing
+  // finding totals (`plan` vs `perRuleCoverage` vs `filesSurface`,
+  // each itself a sum across categorically different sub-buckets) was
+  // the worst-case shape — it framed as cross-surface reconciliation
+  // but read like an additional contested headline. Consumers that
+  // need cross-surface reconciliation read the structured siblings
+  // directly (`plan.fixesByClass`, `meta.perRuleCoverage`, the
+  // per-file `findings.length` rollup); the headline summary the
+  // tripwire collapsed those into hid the disagreement rather than
+  // surfaced it. Deletion is the durable answer (same precedent as
+  // `plan.totalFindings` / `plan.safeEditsAvailable` /
+  // `plan.violations` / `plan.summary`).
 
   // Base response — every optional field conditional-spread per
   // CLAUDE.md §1 "Ambiguous field shapes are dishonest."
   const baseResponse: ScanFamilyResponse = {
     plan,
     files: fileEntries,
-    meta: withCountsBySurface(meta, {
-      plan: planTotal,
-      perRuleCoverage: perRuleCoverageTotal,
-      filesSurface: sumFindingsAcrossFiles(fileEntries),
-    }),
+    meta,
     ...warnFields,
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
     ...(dedupedCandidates !== undefined && dedupedCandidates.length > 0
@@ -554,18 +544,10 @@ export function assembleScanFamilyResponse(
   });
   if (!budgetResult.truncated) return baseResponse;
 
-  // Truncation dropped trailing files — `filesSurface` now lags the
-  // `plan` total by the dropped findings, so re-stamp the tripwire with
-  // the post-trim count.
   const trimmedFiles = budgetResult.files as readonly AssembledFile[];
   return {
     ...baseResponse,
     files: trimmedFiles,
-    meta: withCountsBySurface(meta, {
-      plan: planTotal,
-      perRuleCoverage: perRuleCoverageTotal,
-      filesSurface: sumFindingsAcrossFiles(trimmedFiles),
-    }),
     truncated: true,
     ...(budgetResult.nextOffset === undefined ? {} : { nextOffset: budgetResult.nextOffset }),
   };

@@ -1,20 +1,20 @@
 /**
- * buildFixClassBreakdown — shared parenthetical prose for the violations
- * headline across the CLI agent formatter and the MCP plan-summary.
+ * buildFixClassBreakdown — parenthetical prose for the violations
+ * headline on the CLI agent formatter (`AgentPlan.summary`).
  *
- * Extracted from `src/mcp/plan-summary.ts` so both surfaces share one
- * source of truth per option (c) in V1-SHAPE-CLI-AGENT-HEADLINE. Placing
- * it under `src/output/agent-response/` keeps the dependency direction
- * correct: MCP imports from output/agent-response, never the reverse.
+ * The MCP plan no longer carries a `summary` blurb (the duplicate
+ * prose composite was dropped per "Composite headline counts are
+ * dishonest"; the structured `plan.fixesByClass` sibling is now the
+ * single surface). Kept under `src/output/agent-response/` for the
+ * CLI surface, which still emits a human-readable headline.
  *
- * Per CLAUDE.md §1 "Composite headline counts are dishonest": the summary
- * prose must count violations by their rule-level `fixClass` lane, not by
- * whether the Violation carries a prose `suggestion` or a `fixPaths.edit`.
- * Those are orthogonal axes — `fixClass` describes the *nature* of the fix
- * the rule demands; `fixPaths` / `suggestion` describe what the Violation
- * *ships*. Conflating them produces the old "131 guidance fixes" label that
- * bucketed `runtime-only` and `verify-in-source` findings as if they were
- * prose-rewrite work.
+ * The breakdown counts violations by their rule-level `fixClass` lane,
+ * not by whether the Violation carries a prose `suggestion` or a
+ * `fixPaths.edit`. Those are orthogonal axes — `fixClass` describes
+ * the *nature* of the fix the rule demands; `fixPaths` / `suggestion`
+ * describe what the Violation *ships*. Conflating them produces the
+ * old "131 guidance fixes" label that bucketed `runtime-only` and
+ * `verify-in-source` findings as if they were prose-rewrite work.
  */
 
 import type { FixClass } from "../../types/rule.ts";

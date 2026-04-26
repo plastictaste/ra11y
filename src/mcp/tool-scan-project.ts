@@ -30,7 +30,7 @@ import { nearestConfigAncestorPath, sawProjectMarkerInWalk } from "./config-sear
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { buildFileLimitation } from "./file-limitations.ts";
 import type { Hint } from "./hint-codes.ts";
-import { hasMetaArrayTruncation } from "./meta-array-cap.ts";
+import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
@@ -728,7 +728,7 @@ function buildBaseWarningsForScanProject(args: {
     // sub-object the caller just mixed in — so every capped array
     // in scope is covered. Pure over the assembled meta; no
     // duplicated predicate at each cap call site.
-    metaArrayTruncated: hasMetaArrayTruncation({
+    metaArrayTruncatedFields: getTruncatedMetaArrayFields({
       ...formatted.meta,
       ...buildArtifacts.metaField,
     }),

@@ -105,54 +105,91 @@ export function capMetaArray<T>(
 }
 
 /**
- * Known keys that carry a {@link MetaArrayTruncationSummary} when the
- * corresponding sibling array was trimmed. Used by
- * {@link hasMetaArrayTruncation} to derive the `metaArrayTruncated`
- * warning-input boolean from a materialized scan-meta block without
- * forcing every cap callsite to thread a separate boolean up the
- * assembly chain. Add new entries here whenever a fresh meta array
- * enters the cap regime.
+ * Map of `{ container, truncationKey, fieldPath }` for every meta
+ * sibling array that participates in the cap regime. The
+ * `truncationKey` is the wire field stamped on `meta.<container>` when
+ * the sibling array was head-sliced; the `fieldPath` is the dotted
+ * path the `warningsDetails.response_meta_truncated.fields` payload
+ * surfaces so an agent reading the warning can name the array to
+ * re-fetch under `verboseMeta: true` (or scope down) without descending
+ * into `meta` to figure out which array trimmed.
+ *
+ * Add new entries here whenever a fresh meta array enters the cap
+ * regime — the {@link getTruncatedMetaArrayFields} predicate, its
+ * {@link hasMetaArrayTruncation} boolean shim, and the
+ * `warningsDetails.response_meta_truncated.fields` summarizer all read
+ * from the same table so additions can't silently miss any of the
+ * downstream consumers.
  */
-const META_ARRAY_TRUNCATION_KEYS = [
+const META_ARRAY_TRUNCATION_ENTRIES: ReadonlyArray<{
+  readonly container: string;
+  readonly truncationKey: string;
+  readonly fieldPath: string;
+}> = [
   // `meta.analysisCoverage.*`. `parseErrorFilesTruncated` and
   // `partialParseFilesTruncated` were removed in V1-COVERAGE-PARSE-
   // ERROR-FILES-UNCAPPED — those two arrays now switch to the
-  // {@link parseErrorTopReasons} / {@link partialParseTopReasons}
-  // rollup at the inline-threshold rather than head-slicing under a
-  // {@link META_ARRAY_CAP}, so no `*Truncated` sibling can fire on
-  // either field. `fragmentFiles` keeps the cap regime because its
-  // signal is the path identity (`_includes/footer.html` etc.), not
-  // a reason rollup that would aggregate cleanly.
-  "fragmentFilesTruncated",
+  // `parseErrorTopReasons` / `partialParseTopReasons` rollup at the
+  // inline-threshold rather than head-slicing under {@link META_ARRAY_CAP},
+  // so no `*Truncated` sibling can fire on either field. `fragmentFiles`
+  // keeps the cap regime because its signal is the path identity
+  // (`_includes/footer.html` etc.), not a reason rollup that would
+  // aggregate cleanly.
+  {
+    container: "analysisCoverage",
+    truncationKey: "fragmentFilesTruncated",
+    fieldPath: "analysisCoverage.fragmentFiles",
+  },
   // `meta.scannedBuildArtifacts.ungroupedTruncated`
-  "ungroupedTruncated",
-] as const;
+  {
+    container: "scannedBuildArtifacts",
+    truncationKey: "ungroupedTruncated",
+    fieldPath: "scannedBuildArtifacts.ungrouped",
+  },
+];
 
 /**
- * Scans a materialized `meta` block for any of the known
- * {@link MetaArrayTruncationSummary}-carrying sibling keys. Returns
- * `true` the first time it finds one on `meta.analysisCoverage` or
- * `meta.scannedBuildArtifacts`. Pure over its input; callers feed the
- * post-assembly meta record so the boolean reflects exactly what
- * shipped on the wire.
+ * Scans a materialized `meta` block and returns the dotted field paths
+ * of every sibling meta array whose head-slice cap actually trimmed
+ * something. Pure over its input; callers feed the post-assembly meta
+ * record so the result reflects exactly what shipped on the wire.
+ *
+ * Drives both the binary `metaArrayTruncatedFields` warning-input slot
+ * and the structured
+ * `warningsDetails.response_meta_truncated.fields` payload — agents
+ * branching on the bare `warnings[]` channel still see
+ * `response_meta_truncated`, but a payload-bearing entry now names
+ * which structured fields were elided so the agent can decide which
+ * arrays to re-fetch under `verboseMeta: true` instead of probing each
+ * possible array blind. Per "Verbose meta is signal" (doctrine) the
+ * fields list rides at default verbosity.
  *
  * Extracted here (rather than in `warnings.ts`) so the cap helper
  * co-locates with the predicate that consumes the per-array
  * `*Truncated` signals it emits — moving one requires touching the
- * other.
+ * other. Returns paths in the table-declared order so the wire shape
+ * is deterministic across runs.
+ */
+export function getTruncatedMetaArrayFields(meta: Record<string, unknown>): readonly string[] {
+  const out: string[] = [];
+  for (const entry of META_ARRAY_TRUNCATION_ENTRIES) {
+    const container = meta[entry.container];
+    if (container === null || typeof container !== "object") continue;
+    if (entry.truncationKey in (container as Record<string, unknown>)) {
+      out.push(entry.fieldPath);
+    }
+  }
+  return out;
+}
+
+/**
+ * Boolean shim over {@link getTruncatedMetaArrayFields} for callers
+ * that only need the presence bit (legacy seam — most call sites have
+ * migrated to the field-paths form so the agent can branch on which
+ * array trimmed). Returns `true` iff at least one capped array was
+ * head-sliced. Kept as a thin wrapper so the membership table lives in
+ * one place.
  */
 export function hasMetaArrayTruncation(meta: Record<string, unknown>): boolean {
-  const coverage = meta["analysisCoverage"];
-  if (coverage !== null && typeof coverage === "object") {
-    for (const key of META_ARRAY_TRUNCATION_KEYS) {
-      if (key in (coverage as Record<string, unknown>)) return true;
-    }
-  }
-  const buildArtifacts = meta["scannedBuildArtifacts"];
-  if (buildArtifacts !== null && typeof buildArtifacts === "object") {
-    for (const key of META_ARRAY_TRUNCATION_KEYS) {
-      if (key in (buildArtifacts as Record<string, unknown>)) return true;
-    }
-  }
-  return false;
+  return getTruncatedMetaArrayFields(meta).length > 0;
 }

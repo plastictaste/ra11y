@@ -859,9 +859,15 @@ function buildChecklistWarnings(args: {
       sourcesByPath: new Map(args.files.map((f) => [f.filePath, f.source])),
     }),
     // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage helper's
-    // truncation bit so `response_meta_truncated` fires honestly when a
-    // parse-error dump was head-sliced.
-    ...(args.analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
+    // truncation bit so `response_meta_truncated` fires AND the paired
+    // `warningsDetails.response_meta_truncated.fields` payload names
+    // the structured field elided. The coverage helper only caps
+    // `analysisCoverage.fragmentFiles` on this seam (build-artifact
+    // arrays don't assemble through `checklist`), so the field list
+    // resolves to a single dotted path when the cap fired.
+    ...(args.analysisCoverageField.metaArrayTruncated === true
+      ? { metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"] }
+      : {}),
   });
   const merged = new Set<string>(derivative.warnings ?? []);
   if (args.nextCursor !== undefined) merged.add("results_truncated_use_nextcursor");

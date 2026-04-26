@@ -21,7 +21,6 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
-import { buildPlanSummary, type FixClassCounts } from "./plan-summary.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
@@ -42,22 +41,14 @@ export function buildScanPlan(args: {
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
   /**
-   * Violation count per `fixClass` lane — powers the honest breakdown
-   * in the plan-summary prose. Distinct axis from payload-availability
-   * ("does the Violation ship an inline `fixPaths.primary.edit`?")
-   * which is no longer surfaced separately — see the
-   * Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT drop rationale below.
-   */
-  readonly fixClassCounts: FixClassCounts;
-  /**
    * Per-{@link FixClass} tally surfaced as the structured sibling
    * `plan.fixesByClass`. Replaces the former `guidanceFixesAvailable`
    * headline, which summed four categorically different lanes under
    * one label — see `src/output/agent-response/build-plan.ts` for the
-   * rationale and CLAUDE.md §1 "Composite headline counts are
-   * dishonest." Always present on the response (zero-count lanes
-   * surface as `0` so consumers never have to disambiguate "absent"
-   * from "zero").
+   * rationale and `docs/kb/architecture/ai-first-consumer.md`
+   * "Composite headline counts are dishonest." Always present on the
+   * response (zero-count lanes surface as `0` so consumers never have
+   * to disambiguate "absent" from "zero").
    *
    * Agents that want the former `safeEditsAvailable` slice (violations
    * whose `fixPaths.primary.edit` is populated — apply-fix can
@@ -79,14 +70,13 @@ export function buildScanPlan(args: {
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,
-    fixClassCounts,
     fixesByClass,
   } = args;
   // `fixesByClass` is meaningful only when the scan actually produced
   // violations to bucket — emitting an all-zeros tally on a clean scan
   // is noise that forces the agent to read a field whose only signal
-  // is "no violations." Conditional-spread per CLAUDE.md §1 keeps the
-  // present-when-meaningful shape honest.
+  // is "no violations." Conditional-spread per "Ambiguous field shapes
+  // are dishonest" keeps the present-when-meaningful shape honest.
   const emitFixesByClass = violations > 0;
   // `totalFindings` was removed — it summed severity-distinct lanes
   // (violations + info-severity notes) under a single composite
@@ -117,6 +107,21 @@ export function buildScanPlan(args: {
   // "first thing the agent reads" slot — the silent-miss failure
   // mode is identical, so deletion is the durable answer.
   //
+  // `summary` (the human-readable prose blurb) was removed for the
+  // same reason: it embedded 5+ counts (per-lane fixClass tally,
+  // notes, actionable manual review, untargeted criteria) duplicating
+  // structured siblings (`fixesByClass`, `notes`, `actionableManualItems`,
+  // `untargetedCriteria`) into a single composite sentence the agent
+  // would read first. Two surfaces (the prose and the structured
+  // tally) framed as "how many of X" disagree silently whenever the
+  // numbers drift between assembly steps, and an agent budgeting
+  // against the prose first never notices. Per the deletion-not-
+  // renaming precedent on `plan.totalFindings` /
+  // `plan.safeEditsAvailable` / `plan.violations`, the durable answer
+  // is to drop the field; consumers that want a human-readable
+  // headline stitch one together from the structured siblings
+  // themselves.
+  //
   // `violationsByScanKind` is stamped one layer up by
   // {@link withViolationsByScanKind} (called from `tool-scan-project.ts`
   // after the build-artifact classifier resolves) — the split between
@@ -128,10 +133,9 @@ export function buildScanPlan(args: {
   // sibling.
   //
   // `violations` is still consumed inside this function (for the
-  // `emitFixesByClass` gate above and the summary-prose builder
-  // below) but is NOT emitted onto the wire — it's the upstream
-  // count the consumer-visible `fixesByClass` sums to, kept
-  // local-only so the public shape stays honest.
+  // `emitFixesByClass` gate above) but is NOT emitted onto the wire
+  // — it's the upstream count the consumer-visible `fixesByClass`
+  // sums to, kept local-only so the public shape stays honest.
   return {
     notes,
     ...(emitFixesByClass ? { fixesByClass } : {}),
@@ -144,13 +148,6 @@ export function buildScanPlan(args: {
       "Static analysis can prove failure but not conformance: a clean scan is necessary, not sufficient. Do not claim WCAG conformance on this result alone.",
       "Runtime-only checks — live-region announcements, focus traps, ARIA state transitions, post-render contrast — are out of scope here.",
     ],
-    summary: buildPlanSummary({
-      violations,
-      notes,
-      fixClassCounts,
-      actionableManual,
-      untargetedCriteria,
-    }),
   };
 }
 
@@ -679,102 +676,6 @@ function countByExtension(files: readonly ParsedFile[]): Record<string, number> 
     counts.set(ext, (counts.get(ext) ?? 0) + 1);
   }
   return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
-}
-
-/**
- * Three totals `scan_project` consumers have reported reading from the
- * same response and found disagreeing on the same wire:
- *
- *   - `plan` — `sum(plan.fixesByClass) + plan.notes`, the post-filter
- *     total computed from the `filtered` violation stream (post
- *     wrapper-noise drop, post severity filter, post criterion-skip).
- *     This is what `buildScanPlan`'s structured per-lane tally and
- *     the `notes` counter sum to. Per Q7-PLAN-VIOLATIONS-COMPOSITE
- *     the flat `plan.violations` headline was deleted; consumers that
- *     want the error+warning count sum the four `fixesByClass` lanes.
- *   - `perRuleCoverage` — `sum(perRuleCoverage[*].findingsEmitted)`, the
- *     scanner-raw total computed by {@link buildPerRuleCoverage} over
- *     every violation the engine emitted. Runs BEFORE wrapper-noise
- *     drop / severity / criterion-skip, so a non-trivial delta vs the
- *     `plan` surface means one of those filters consumed findings.
- *   - `filesSurface` — `sum(response.files[*].findings.length)` of the
- *     per-file buckets that actually landed on the wire. Starts at the
- *     same `filtered`-derived grouping the plan counts, but the token-
- *     density budget / file-count pagination can trim trailing file
- *     entries before the response ships. Paginated tools accumulate
- *     files over multiple calls; the scan-assembler path trims
- *     in-place.
- *
- * {@link PerRuleCoverage.findingsEmitted} aside, there is no place on
- * the current shape where all three numbers are written for the agent
- * to cross-check. When they disagree, the agent either treats one as
- * the headline and silently misses the drift (CLAUDE.md §1 "Composite
- * headline counts are dishonest") or makes a third round-trip to
- * reconcile. Surfacing the triple under a single `meta.countsBySurface`
- * object whenever they disagree is the additive tripwire this helper
- * produces.
- *
- * Honest shape (CLAUDE.md §1 "Ambiguous field shapes are dishonest"):
- *
- *   - Returns an empty spread when all three counts agree — no field on
- *     the wire for the common case.
- *   - Returns `{ countsBySurface: { plan, perRuleCoverage, filesSurface } }`
- *     when any pair differs. All three numbers are included so the
- *     agent doesn't have to guess which one is the outlier.
- *   - `filesSurface` is omitted when the caller doesn't know it yet
- *     (e.g. meta is being built before pagination). Inside the present
- *     field, `filesSurface` is therefore a required-when-present number
- *     — never a sentinel zero.
- */
-export function buildCountsBySurface(args: {
-  readonly plan: number;
-  readonly perRuleCoverage: number;
-  readonly filesSurface?: number;
-}): { countsBySurface?: CountsBySurface } {
-  const { plan, perRuleCoverage, filesSurface } = args;
-  const disagree =
-    plan !== perRuleCoverage || (filesSurface !== undefined && filesSurface !== plan);
-  if (!disagree) return {};
-  const payload: CountsBySurface = {
-    plan,
-    perRuleCoverage,
-    ...(filesSurface === undefined ? {} : { filesSurface }),
-  };
-  return { countsBySurface: payload };
-}
-
-/**
- * Shape of the {@link buildCountsBySurface} payload when present. Named
- * so tests and cross-tool callers can import the type instead of
- * re-stating the record shape.
- */
-export interface CountsBySurface {
-  readonly plan: number;
-  readonly perRuleCoverage: number;
-  readonly filesSurface?: number;
-}
-
-/**
- * Stamp {@link buildCountsBySurface}'s honest-shape output onto a meta
- * block. Spreads an empty record when the three counts agree so the
- * common case puts nothing on the wire; spreads
- * `{ countsBySurface: { … } }` when any pair differs. Exported so every
- * assembler seam that materializes its own response shape (the
- * {@link assembleScanFamilyResponse} path, plus the
- * `scan_project`/`scan_diff` paths that bypass it via
- * {@link runScanAndFormat}) stamps through the same helper and the
- * V1-META-COUNTS-BY-SURFACE-REGRESSION silent-miss never reopens.
- *
- * Caller passes a fresh `countsInput` each time because `filesSurface`
- * can drift between the pre-trim emit path (before pagination /
- * token-density truncation) and the post-trim emit path (after the
- * wire shape settles).
- */
-export function withCountsBySurface(
-  meta: Record<string, unknown>,
-  countsInput: Parameters<typeof buildCountsBySurface>[0],
-): Record<string, unknown> {
-  return { ...meta, ...buildCountsBySurface(countsInput) };
 }
 
 /**

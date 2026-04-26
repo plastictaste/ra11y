@@ -306,9 +306,16 @@ export const coverageTool: McpTool = {
       scannedBuildArtifactsPresent: buildArtifactEntries.length > 0,
       configSearchSawProjectMarker,
       // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate truncation so the
-      // response-level `response_meta_truncated` code fires when
-      // the coverage helper head-sliced any path-array.
-      ...(analysisCoverageField.metaArrayTruncated === true ? { metaArrayTruncated: true } : {}),
+      // response-level `response_meta_truncated` code fires AND its
+      // `warningsDetails.response_meta_truncated.fields` payload names
+      // the structured fields elided. The coverage helper only caps
+      // `analysisCoverage.fragmentFiles` (the build-artifact path
+      // arrays don't surface through this seam — `tool-coverage` doesn't
+      // assemble `scannedBuildArtifacts`), so the field list resolves
+      // to a single dotted path when the cap fired.
+      ...(analysisCoverageField.metaArrayTruncated === true
+        ? { metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"] }
+        : {}),
       // Q4-WARNING-DOWNGRADE-NOISE: gate
       // `template_files_parsed_as_literal` on actual overlap between
       // emitted findings and detected template-directive lines — the

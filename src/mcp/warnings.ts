@@ -694,18 +694,24 @@ export interface WarningInputs {
    */
   readonly scannedMinifiedFiles?: readonly string[];
   /**
-   * Q-SHARED-META-ARRAY-BUDGET-CAP: true when at least one of the
-   * path-list meta arrays (`scannedBuildArtifacts.ungrouped`,
-   * `analysisCoverage.parseErrorFiles`,
-   * `analysisCoverage.partialParseFiles`,
-   * `analysisCoverage.fragmentFiles`) was trimmed to its head slice
-   * during response assembly. Drives the `response_meta_truncated`
-   * code — an additive surface, not suppression: the deterministic
-   * head + count + per-array `*Truncated: { shown, total }` summary
-   * stay in `meta` unchanged. Omit or pass `false` when no cap
-   * applied; the code drops conservatively.
+   * Q-SHARED-META-ARRAY-BUDGET-CAP: dotted field paths of every sibling
+   * meta array (`scannedBuildArtifacts.ungrouped`,
+   * `analysisCoverage.fragmentFiles`, etc.) whose head-slice cap
+   * actually trimmed something during response assembly. Drives the
+   * `response_meta_truncated` code AND its payload-bearing
+   * `warningsDetails.response_meta_truncated.fields` summary — an agent
+   * branching on the bare-string `warnings[]` channel still sees the
+   * code, but the structured payload now names which arrays were
+   * elided so the agent can decide which to re-fetch under
+   * `verboseMeta: true` instead of probing each possible array blind.
+   * Omit or pass `[]` when no cap fired; the code drops conservatively.
+   *
+   * Computed once at the call site via
+   * {@link import("./meta-array-cap.ts").getTruncatedMetaArrayFields}
+   * so the membership table stays in one place — additions to the cap
+   * regime can't silently miss the warning channel.
    */
-  readonly metaArrayTruncated?: boolean;
+  readonly metaArrayTruncatedFields?: readonly string[];
   /**
    * V1-BULK-CATALOG-SCAN-PERF-12S: caller-supplied detection from
    * {@link import("./bulk-catalog.ts").detectBulkCatalog}. Drives the
@@ -1034,8 +1040,11 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `scanned_build_artifacts_present`, `scanned_minified_file`,
  *     `bulk_catalog_detected`,
  *     `animation_library_without_reduced_motion_guard`,
- *     `response_dropped_files_oversize`, and
- *     `cwd_appears_misrooted`.
+ *     `response_dropped_files_oversize`,
+ *     `cwd_appears_misrooted`, and
+ *     `response_meta_truncated` (carries the dotted field paths of
+ *     the meta sub-arrays that were elided so the agent can re-fetch
+ *     under `verboseMeta: true` without probing blind).
  *     Each carries a `summarize*` helper that returns `undefined` if
  *     the predicate fired but the payload would be degenerate (e.g.
  *     zero counts, missing pivot) — when the helper falls through, the
@@ -1050,7 +1059,6 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `no_hunks_in_comparison`, `storybook_preset_active`,
  *     `session_wrappers_configured_for_different_cwd`,
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
- *     `response_meta_truncated`,
  *     `baseline_dry_run`,
  *     `proposed_config_deprecated_use_suggested_config`,
  *     `deprecated_field_id_renamed_criterionId`,
@@ -1454,7 +1462,30 @@ export interface ScanWarningDetails {
   readonly session_wrappers_configured_for_different_cwd?: BinaryPresenceMarker;
   readonly redundant_additional_paths?: BinaryPresenceMarker;
   readonly restrict_to_paths_no_matches?: BinaryPresenceMarker;
-  readonly response_meta_truncated?: BinaryPresenceMarker;
+  /**
+   * Payload for `response_meta_truncated`. Names which structured
+   * meta sub-fields were elided when one or more linear-with-input
+   * meta path-arrays exceeded {@link META_ARRAY_CAP}. Without this
+   * payload, an agent reading the bare warning code knows truncation
+   * happened but not which array — it would have to re-fetch the
+   * whole meta block under `verboseMeta: true` (defeating the
+   * size-vs-signal tradeoff the cap exists to maintain) or probe
+   * each possible array blind. With `fields`, the agent decides
+   * per-array whether to re-fetch the named field under
+   * `verboseMeta: true`, or scope down via `additionalPaths` to
+   * narrow the input that drove the array length over the cap.
+   *
+   * `fields` always carries at least one entry when the warning
+   * fires (the predicate's "fired" branch requires
+   * `metaArrayTruncatedFields.length > 0`), and entries are dotted
+   * paths into the `meta` block so a downstream consumer can
+   * de-reference without parsing prose. Order is deterministic —
+   * `getTruncatedMetaArrayFields` returns paths in the table-declared
+   * order so the wire shape stays stable across runs.
+   */
+  readonly response_meta_truncated?: {
+    readonly fields: readonly string[];
+  };
   readonly baseline_dry_run?: BinaryPresenceMarker;
   readonly proposed_config_deprecated_use_suggested_config?: BinaryPresenceMarker;
   // biome-ignore lint/style/useNamingConvention: field name mirrors the wire-shape `ScanWarningCode` literal verbatim so the map's keys exactly match the string codes in `warnings[]`.
@@ -1743,7 +1774,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // so this function's cognitive complexity stays under the lint cap;
   // the emitted order is unchanged.
   out.push(...pathShapeCodes(inputs));
-  if (inputs.metaArrayTruncated === true) {
+  if (inputs.metaArrayTruncatedFields !== undefined && inputs.metaArrayTruncatedFields.length > 0) {
     // Q-SHARED-META-ARRAY-BUDGET-CAP: at least one linear-with-input
     // meta path-array exceeded META_ARRAY_CAP and the head slice
     // landed on the wire with a `*Truncated: { shown, total }`
@@ -1751,9 +1782,12 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // meta cannot tell whether the displayed list is the full signal
     // or a prefix. The counts (`parseErrorFileCount`,
     // `partialParseFileCount`, `fragmentFileCount`) and per-array
-    // truncation summaries carry the full-size signal; this code
-    // is the presence bit the agent can branch on without descending
-    // into meta.
+    // truncation summaries carry the full-size signal; the code is
+    // the presence bit the agent can branch on without descending
+    // into meta, and the paired
+    // `warningsDetails.response_meta_truncated.fields` payload names
+    // which structured fields were elided so the agent can re-fetch
+    // them under `verboseMeta: true` rather than probing blind.
     out.push("response_meta_truncated");
   }
   // Caller-supplied file-list codes — see `fileListDrivenCodes`.
@@ -2176,7 +2210,7 @@ type ScanMetaWarningArgs = {
   readonly additionalPathsRedundant?: boolean;
   readonly restrictToPathsEmpty?: boolean;
   readonly configSearchSawProjectMarker?: boolean;
-  readonly metaArrayTruncated?: boolean;
+  readonly metaArrayTruncatedFields?: readonly string[];
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly scannedMinifiedFiles?: readonly string[];
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
@@ -2233,7 +2267,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "additionalPathsRedundant",
   "restrictToPathsEmpty",
   "configSearchSawProjectMarker",
-  "metaArrayTruncated",
+  "metaArrayTruncatedFields",
   "scssUnresolvedVariableFiles",
   "scannedMinifiedFiles",
   "bulkCatalogDetection",
@@ -2352,6 +2386,10 @@ export function computeScanWarningDetails(
     {
       code: "cwd_appears_misrooted",
       summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
+    },
+    {
+      code: "response_meta_truncated",
+      summarize: () => summarizeResponseMetaTruncated(inputs.metaArrayTruncatedFields),
     },
   ];
   // warnings-details schema discipline: index payload helpers by
@@ -2578,6 +2616,29 @@ function summarizeCwdAppearsMisrooted(
 ): NonNullable<ScanWarningDetails["cwd_appears_misrooted"]> | undefined {
   if (typeof ancestor !== "string" || ancestor.length === 0) return undefined;
   return { nearestConfigAncestor: ancestor };
+}
+
+/**
+ * Builds the `response_meta_truncated` payload from the caller-supplied
+ * `metaArrayTruncatedFields` list. Returns `undefined` when the list is
+ * absent or empty so the dispatch table conditional-spreads the entry
+ * away — but the predicate that fires the bare warning code requires
+ * `length > 0`, so the empty branch is defensive only (the warning
+ * never fires without payload material).
+ *
+ * Drives the schema-discipline contract: `warningsDetails.response_meta_truncated`
+ * names which structured fields were elided so an agent reading the
+ * bare-string `warnings[]` channel can decide which to re-fetch under
+ * `verboseMeta: true` instead of probing each possible array blind.
+ * Field paths are dotted into the `meta` block (e.g.
+ * `analysisCoverage.fragmentFiles`) so a downstream consumer can
+ * de-reference without parsing prose. Pure shape-builder.
+ */
+function summarizeResponseMetaTruncated(
+  fields: WarningInputs["metaArrayTruncatedFields"],
+): NonNullable<ScanWarningDetails["response_meta_truncated"]> | undefined {
+  if (fields === undefined || fields.length === 0) return undefined;
+  return { fields: [...fields] };
 }
 
 /**

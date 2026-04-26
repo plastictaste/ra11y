@@ -11,6 +11,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   capMetaArray,
+  getTruncatedMetaArrayFields,
   hasMetaArrayTruncation,
   META_ARRAY_CAP,
 } from "../../../src/mcp/meta-array-cap.ts";
@@ -127,5 +128,67 @@ describe("hasMetaArrayTruncation", () => {
     expect(hasMetaArrayTruncation({ analysisCoverage: "wat", scannedBuildArtifacts: 42 })).toBe(
       false,
     );
+  });
+});
+
+describe("getTruncatedMetaArrayFields", () => {
+  // Slice 1 of the response-shape-honesty bundle
+  // (Q-SHARED-RESPONSE-META-TRUNCATED-FIELDS): the warning code's
+  // paired payload (`warningsDetails.response_meta_truncated.fields`)
+  // needs the dotted paths of every elided field, not a bare boolean.
+  // The helper walks the same membership table the boolean shim
+  // reads so additions to the cap regime show up on both surfaces
+  // without per-call-site plumbing.
+  it("returns the dotted field path of analysisCoverage.fragmentFiles when its cap fired", () => {
+    expect(
+      getTruncatedMetaArrayFields({
+        analysisCoverage: { fragmentFilesTruncated: { shown: 50, total: 75 } },
+      }),
+    ).toEqual(["analysisCoverage.fragmentFiles"]);
+  });
+
+  it("returns the dotted field path of scannedBuildArtifacts.ungrouped when its cap fired", () => {
+    expect(
+      getTruncatedMetaArrayFields({
+        scannedBuildArtifacts: {
+          grouped: [],
+          ungrouped: [],
+          ungroupedTruncated: { shown: 50, total: 120 },
+        },
+      }),
+    ).toEqual(["scannedBuildArtifacts.ungrouped"]);
+  });
+
+  it("returns both paths in table-declared order when both arrays trimmed (deterministic wire shape)", () => {
+    expect(
+      getTruncatedMetaArrayFields({
+        analysisCoverage: { fragmentFilesTruncated: { shown: 50, total: 75 } },
+        scannedBuildArtifacts: {
+          grouped: [],
+          ungrouped: [],
+          ungroupedTruncated: { shown: 50, total: 120 },
+        },
+      }),
+    ).toEqual(["analysisCoverage.fragmentFiles", "scannedBuildArtifacts.ungrouped"]);
+  });
+
+  it("returns an empty array when no truncation summaries are present", () => {
+    expect(
+      getTruncatedMetaArrayFields({
+        analysisCoverage: { parseErrorFileCount: 3 },
+        scannedBuildArtifacts: { grouped: [], ungrouped: [] },
+      }),
+    ).toEqual([]);
+  });
+
+  it("does NOT report legacy parseErrorFilesTruncated / partialParseFilesTruncated keys", () => {
+    expect(
+      getTruncatedMetaArrayFields({
+        analysisCoverage: {
+          parseErrorFilesTruncated: { shown: 50, total: 120 },
+          partialParseFilesTruncated: { shown: 50, total: 80 },
+        },
+      }),
+    ).toEqual([]);
   });
 });

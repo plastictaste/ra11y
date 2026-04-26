@@ -344,16 +344,15 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.warnings).toContain("session_wrappers_configured_for_different_cwd");
   });
 
-  // Q5-HEADLINE-COUNT-DRIFT-THREE-TOTALS: three totals a field report
-  // saw disagree on the same response — the `plan` totals,
-  // `sum(perRuleCoverage.findingsEmitted)`, and
-  // `sum(files[*].findings)`. When the three agree (the common case),
-  // `meta.countsBySurface` is absent; when any pair differs, it lands
-  // as an honest tripwire so the drift never reads as silent miss.
-  // Per Q7-PLAN-VIOLATIONS-COMPOSITE the `plan` total is now derived
-  // from `sum(plan.fixesByClass) + plan.notes` rather than read off a
-  // composite headline.
-  describe("meta.countsBySurface cross-surface tripwire", () => {
+  // The former `meta.countsBySurface` cross-surface tripwire — a 4-way
+  // internal spread of disagreeing finding totals — was dropped per
+  // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+  // counts are dishonest." A field whose name implied cross-surface
+  // reconciliation but whose contents were three competing summaries
+  // of the same response read like an additional contested headline
+  // rather than the disagreement tripwire it claimed to be. Consumers
+  // that want to reconcile read the structured siblings directly.
+  describe("meta.countsBySurface — dropped composite, doctrine pin", () => {
     it("cross-surface invariant — sum(files[*].findings) equals sum(plan.fixesByClass) + plan.notes on a non-truncated scan", () => {
       const note: Violation = {
         ...violation("/src/a.tsx", 1),
@@ -380,34 +379,15 @@ describe("assembleScanFamilyResponse", () => {
       expect(filesSurface).toBe(planTotal);
     });
 
-    it("omits meta.countsBySurface when the three surface totals agree", () => {
+    it("never emits meta.countsBySurface — even when perRuleCoverage disagrees with plan, the dropped composite stays absent", () => {
       const v = violation("/src/a.tsx", 1);
       const r = assembleScanFamilyResponse(
         baseInput({
           violations: [v],
-          perRuleCoverage: [
-            {
-              ruleId: "alt-text/missing",
-              filesEvaluated: 1,
-              filesEligible: 1,
-              findingsEmitted: 1,
-              coverageConfidence: "high",
-            },
-          ],
-        }),
-      );
-      expect(r.meta["countsBySurface"]).toBeUndefined();
-    });
-
-    it("surfaces meta.countsBySurface when perRuleCoverage disagrees with plan — records both totals", () => {
-      const v = violation("/src/a.tsx", 1);
-      // perRuleCoverage simulates the scanner-raw stream tallying more
-      // findings than the filtered plan view (wrapper-noise drop /
-      // severity filter / criterion-skip consumed 4 findings between
-      // the per-rule rows and the `violations` the caller surfaced).
-      const r = assembleScanFamilyResponse(
-        baseInput({
-          violations: [v],
+          // perRuleCoverage simulates the scanner-raw stream tallying
+          // more findings than the filtered plan view — the historical
+          // worst-case for cross-surface drift. The field is no longer
+          // emitted regardless.
           perRuleCoverage: [
             {
               ruleId: "alt-text/missing",
@@ -419,15 +399,7 @@ describe("assembleScanFamilyResponse", () => {
           ],
         }),
       );
-      const counts = r.meta["countsBySurface"] as
-        | { plan: number; perRuleCoverage: number; filesSurface?: number }
-        | undefined;
-      expect(counts).toBeDefined();
-      expect(counts?.plan).toBe(1);
-      expect(counts?.perRuleCoverage).toBe(5);
-      // filesSurface must be present on the emitted tripwire and
-      // reconcile with the plan surface on a non-truncated scan.
-      expect(counts?.filesSurface).toBe(1);
+      expect(r.meta["countsBySurface"]).toBeUndefined();
     });
   });
 });

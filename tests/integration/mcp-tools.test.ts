@@ -1878,89 +1878,23 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     expect(body.plan).not.toHaveProperty("fixSuggestionAvailable");
   });
 
-  it("plan.summary leads the manual-review fragment with the actionable count", async () => {
-    // The headline agents read first must match the count they budget
-    // against. The summary leads with "N actionable manual review
-    // items" before the "+ M untargeted criteria" tail, not the old
-    // `21 WCAG criteria still need human review` composite.
+  it("scan_project.plan does not carry a `summary` prose blurb — dropped composite", async () => {
+    // The former `plan.summary` embedded 5+ counts (per-lane fixClass
+    // tally, notes, actionable manual review, untargeted criteria) into
+    // a single composite sentence the agent would read first — a
+    // duplicate of the structured siblings (`fixesByClass`, `notes`,
+    // `actionableManualItems`, `untargetedCriteria`). Per the
+    // doctrine in `docs/kb/architecture/ai-first-consumer.md`
+    // "Composite headline counts are dishonest" the prose was
+    // dropped (not renamed) so the structured siblings carry the data
+    // without a duplicated composite. Same precedent as
+    // `plan.totalFindings` / `plan.safeEditsAvailable` /
+    // `plan.violations`.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
-    const body = bodyOf(responses[1]) as {
-      plan: {
-        summary: string;
-        actionableManualItems: number;
-        untargetedCriteria: number;
-      };
-    };
-    const { summary, actionableManualItems, untargetedCriteria } = body.plan;
-    // Old composite phrasing is gone.
-    expect(summary).not.toMatch(/WCAG criteri(on|a) still need human review/);
-    // New phrasing: when any manual-review total exists, the fragment
-    // uses the split labels. When both counts are > 0, actionable
-    // leads and untargeted follows via " + ".
-    if (actionableManualItems + untargetedCriteria > 0) {
-      if (actionableManualItems > 0 && untargetedCriteria > 0) {
-        expect(summary).toMatch(
-          new RegExp(
-            `${actionableManualItems} actionable manual review item.*\\+ ${untargetedCriteria} untargeted criteri`,
-          ),
-        );
-      } else if (actionableManualItems > 0) {
-        expect(summary).toMatch(
-          new RegExp(`${actionableManualItems} actionable manual review item`),
-        );
-      } else {
-        expect(summary).toMatch(new RegExp(`${untargetedCriteria} untargeted criteri`));
-      }
-    }
-  });
-
-  it("plan.summary violations phrasing breaks down by fixClass lane, not the old composite", async () => {
-    // V1-SHAPE-FIXCLASS-HEADLINE: the parenthetical used to read
-    // "(N mechanical edits, M guidance fixes)" — where "guidance fixes"
-    // was a composite label that swept `fixClass: "runtime-only"` and
-    // `fixClass: "verify-in-source"` findings under the same bucket as
-    // `fixClass: "guidance"`. Q7-PLAN-VIOLATIONS-COMPOSITE further
-    // dropped the leading "N findings" headline that summed across
-    // the four lanes. The prose names each lane it actually has
-    // violations in, per "Composite headline counts are dishonest."
-    const responses = await mcpSession([
-      initMsg(1),
-      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
-    ]);
-    const body = bodyOf(responses[1]) as {
-      plan: {
-        summary: string;
-        fixesByClass?: {
-          mechanical: number;
-          guidance: number;
-          runtimeOnly: number;
-          verifyInSource: number;
-        };
-      };
-    };
-    const lanes = body.plan.fixesByClass;
-    const errorWarning = lanes
-      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
-      : 0;
-    if (errorWarning === 0) return;
-    // At least one known fixClass lane name must appear in the prose —
-    // matching the enum values verbatim (no "edit"/"fix"/"fixes" suffix),
-    // which is the signal that the breakdown is per-lane rather than
-    // the old composite label.
-    expect(body.plan.summary).toMatch(
-      /\b\d+ (mechanical|guidance|runtime-only|verify-in-source)\b/,
-    );
-    // Old composite phrasings are gone.
-    expect(body.plan.summary).not.toMatch(/with fix suggestions\)/);
-    expect(body.plan.summary).not.toMatch(/\d+ mechanical edits?\b/);
-    expect(body.plan.summary).not.toMatch(/\d+ guidance fix(?:es)?\b/);
-    // Q7-PLAN-VIOLATIONS-COMPOSITE: no leading composite "N findings"
-    // or "N violations" headline summing across the lanes.
-    expect(body.plan.summary).not.toMatch(
-      new RegExp(`\\b${errorWarning}\\s+(findings?|violations?)\\b`),
-    );
+    const body = bodyOf(responses[1]) as { plan: Record<string, unknown> };
+    expect(body.plan).not.toHaveProperty("summary");
   });
 });

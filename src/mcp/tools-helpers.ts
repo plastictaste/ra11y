@@ -36,9 +36,6 @@ import {
   buildScanPlan,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
-  sumFindingsAcrossFiles,
-  sumFindingsEmitted,
-  withCountsBySurface,
 } from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
@@ -371,8 +368,13 @@ export function collectManualCriteria(
  *
  * Intentionally does NOT carry a top-level "pass" boolean — every prior
  * variant ("pass", "automatedPass") read as "the app is accessible",
- * which is a claim static analysis can't make. `plan.summary` and the
- * counts in `plan` convey the state without a load-bearing boolean.
+ * which is a claim static analysis can't make. The structured counts in
+ * `plan` (`fixesByClass`, `notes`, `actionableManualItems`,
+ * `untargetedCriteria`) convey the state without a load-bearing
+ * boolean — and without a duplicate prose `summary` headline that
+ * collapsed those siblings into a single composite (dropped per
+ * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest"; consumers read the structured siblings).
  */
 export interface ScanFormatted {
   readonly plan: Record<string, unknown>;
@@ -601,10 +603,14 @@ export async function runScanAndFormat(
   //     lane budgeting rides on `plan.fixesByClass` below.
   const { editsWithInlineFixPath, proseOnlySuggestions } = countFixes(violations);
   const violationsWithoutAnyFix = violations.length - editsWithInlineFixPath - proseOnlySuggestions;
-  // Tally violations by their rule-level `fixClass` lane. Two consumers:
-  //   1. `plan.fixesByClass` — structured per-lane tally the agent
-  //      reads for honest per-lane budgeting.
-  //   2. `plan.summary` parenthetical — prose breakdown by lane.
+  // Tally violations by their rule-level `fixClass` lane — surfaces as
+  // the structured `plan.fixesByClass` per-lane sibling the agent
+  // reads for honest per-lane budgeting. The former `plan.summary`
+  // prose blurb (which embedded the same lane breakdown as a
+  // parenthetical) was dropped per
+  // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+  // counts are dishonest"; the structured tally is now the single
+  // surface.
   // Distinct axis from the internal `editsWithInlineFixPath`: that
   // answers "does the Violation ship a ready-to-apply edit?"; this
   // answers "which remediation lane does the rule route into?". Per
@@ -613,12 +619,6 @@ export async function runScanAndFormat(
   // `guidance`, `runtime-only`, and `verify-in-source` under one
   // counter would be the dishonest shape this split replaces.
   const fixesByClass = countFixesByClass(violations);
-  const fixClassCounts = {
-    mechanical: fixesByClass.mechanical,
-    guidance: fixesByClass.guidance,
-    "runtime-only": fixesByClass.runtimeOnly,
-    "verify-in-source": fixesByClass.verifyInSource,
-  };
 
   // Plan-side split: grounded candidates (file:line) vs.
   // bare-criterion prompts. Routes through `tallyManualCriteria` so the
@@ -746,23 +746,19 @@ export async function runScanAndFormat(
     findingFilePaths: outputFilePaths,
     ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
   });
-  // V1-META-COUNTS-BY-SURFACE-REGRESSION: every scan-family consumer
-  // of `runScanAndFormat` (scan_project, scan_diff, plus downstream
-  // CLI / derivative-report callers) must see the three-totals
-  // tripwire, not just the `assembleScanFamilyResponse` path that
-  // `scan` / `scan_file` flow through. The filters between
-  // `perRuleCoverage` (scanner-raw) and the `plan`/`files` surface
-  // (post wrapper-noise drop, severity, criterion-skip, vendor
-  // dedupe) eat findings the per-rule rows still count; stamp the
-  // triple here so the drift is always visible when present. The
-  // `filesSurface` figure reflects `fileEntries` pre-pagination /
-  // pre-token-density-trim — downstream response assemblers
-  // (`assembleScanProjectResponse`, `scan_diff`'s hoist path,
-  // `assembleScanFamilyResponse`'s own stamper) re-call
-  // {@link withCountsBySurface} with the post-trim filesSurface when
-  // truncation fires, so the final wire shape is always in sync with
-  // what actually ships. Idempotent on meta when the three totals
-  // agree (the helper spreads an empty record).
+  // The cross-surface count tripwire `meta.countsBySurface` was
+  // dropped per `docs/kb/architecture/ai-first-consumer.md` "Composite
+  // headline counts are dishonest": a 4-way internal spread of
+  // disagreeing finding totals (`plan` vs `perRuleCoverage` vs
+  // `filesSurface`, each itself a sum across categorically different
+  // sub-buckets) was the worst-case shape. Consumers that need
+  // cross-surface reconciliation read the structured siblings
+  // directly (`plan.fixesByClass`, `meta.perRuleCoverage`, the
+  // per-file `findings.length` rollup); the headline summary the
+  // tripwire collapsed those into hid the disagreement rather than
+  // surfaced it. Deletion is the durable answer (same precedent as
+  // `plan.totalFindings` / `plan.safeEditsAvailable` /
+  // `plan.violations` / `plan.summary`).
   const formatted: ScanFormatted = {
     plan: buildScanPlan({
       violations: violations.length,
@@ -770,15 +766,10 @@ export async function runScanAndFormat(
       violationsWithoutAnyFix,
       actionableManual,
       untargetedCriteria,
-      fixClassCounts,
       fixesByClass,
     }),
     files: fileEntries,
-    meta: withCountsBySurface(scanMeta, {
-      plan: violations.length + notes.length,
-      perRuleCoverage: sumFindingsEmitted(perRuleCoverage),
-      filesSurface: sumFindingsAcrossFiles(fileEntries),
-    }),
+    meta: scanMeta,
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
     ...(ruleCoverageDerivative === null ? {} : { ruleCoverage: ruleCoverageDerivative }),
   };
@@ -947,5 +938,3 @@ export function groupViolationsByFile(violations: readonly Violation[]): Map<str
   }
   return map;
 }
-
-export { buildPlanSummary, type PlanSummaryArgs } from "./plan-summary.ts";

@@ -1672,31 +1672,31 @@ describe("warningsField — vendor_css_dominates_findings", () => {
 // is omitted or `false` (callers that didn't participate in the cap
 // regime stay unaffected).
 describe("computeScanWarnings — response_meta_truncated", () => {
-  it("fires when metaArrayTruncated is true", () => {
+  it("fires when metaArrayTruncatedFields names at least one elided field", () => {
     const codes = computeScanWarnings({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: undefined,
       filesByExtension: undefined,
-      metaArrayTruncated: true,
+      metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"],
     });
     expect(codes).toContain("response_meta_truncated");
   });
 
-  it("does NOT fire when metaArrayTruncated is false (every capped array fit)", () => {
+  it("does NOT fire when metaArrayTruncatedFields is empty (every capped array fit)", () => {
     const codes = computeScanWarnings({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: undefined,
       filesByExtension: undefined,
-      metaArrayTruncated: false,
+      metaArrayTruncatedFields: [],
     });
     expect(codes).not.toContain("response_meta_truncated");
   });
 
-  it("does NOT fire when metaArrayTruncated is omitted (caller didn't opt in)", () => {
+  it("does NOT fire when metaArrayTruncatedFields is omitted (caller didn't opt in)", () => {
     // Derivative-tool callers that don't participate in the cap regime
     // stay unaffected — the warning drops conservatively.
     const codes = computeScanWarnings({
@@ -1707,6 +1707,29 @@ describe("computeScanWarnings — response_meta_truncated", () => {
       filesByExtension: undefined,
     });
     expect(codes).not.toContain("response_meta_truncated");
+  });
+
+  it("warningsDetails.response_meta_truncated payload names every elided field path", () => {
+    // Slice 1 (Q-SHARED-RESPONSE-META-TRUNCATED-FIELDS): the
+    // payload now carries the dotted field paths so the agent can
+    // re-fetch under `verboseMeta: true` rather than probing each
+    // possible array blind. Order is the table-declared order so the
+    // wire shape stays deterministic.
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      metaArrayTruncatedFields: [
+        "analysisCoverage.fragmentFiles",
+        "scannedBuildArtifacts.ungrouped",
+      ],
+    });
+    expect(out.warnings).toContain("response_meta_truncated");
+    expect(out.warningsDetails?.response_meta_truncated).toEqual({
+      fields: ["analysisCoverage.fragmentFiles", "scannedBuildArtifacts.ungrouped"],
+    });
   });
 });
 
