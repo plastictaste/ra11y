@@ -1,0 +1,37 @@
+/*
+ * Good: same wrapper patterns, but `overflow` is `hidden` (no
+ * scrollable region created) or `overflow-y` only (vertical scroll
+ * on a narrow column has a built-in keyboard affordance via the
+ * arrow keys when the body is the scroll container; this rule is
+ * scoped to the horizontal-scroll wrapper case where the wrapper
+ * itself is the scroll container and arrow keys cannot reach it
+ * without focus). The rendered fix for a horizontally scrollable
+ * wrapper lives on the consuming HTML/JSX:
+ *
+ *   <div class="table-wrapper" tabindex="0" aria-label="Quarterly results">
+ *     <table>...</table>
+ *   </div>
+ *
+ * The CSS itself is fine; the rule fires on the *declaration* as a
+ * candidate so the agent can verify the rendered consumer carries
+ * the keyboard hooks.
+ */
+
+.no-overflow {
+  overflow: hidden;
+  width: 100%;
+}
+
+.column {
+  overflow-y: auto;
+  max-height: 20rem;
+}
+
+.visible {
+  overflow: visible;
+}
+
+.btn {
+  color: red;
+  padding: 1rem;
+}

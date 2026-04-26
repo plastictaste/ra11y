@@ -1,0 +1,37 @@
+/*
+ * Bad: responsive-table pattern that wraps a wide <table> in a div
+ * and lets it scroll horizontally on narrow viewports. The CSS makes
+ * the wrapper scrollable but the rendered HTML side typically does
+ * NOT add tabindex="0" + aria-label, so keyboard-only users cannot
+ * focus the wrapper and cannot scroll the table to read off-axis
+ * columns. This is the canonical SC 2.1.1 failure for horizontal
+ * scroll regions.
+ */
+
+.table-wrapper {
+  overflow-x: auto;
+  width: 100%;
+}
+
+/*
+ * Common alternate spelling — the shorthand `overflow: auto` applies
+ * to both axes. Same problem: a scrollable region with no keyboard
+ * affordance.
+ */
+
+.code-block {
+  overflow: auto;
+  font-family: monospace;
+}
+
+/*
+ * Two-value shorthand: `overflow: scroll hidden` sets overflow-x to
+ * scroll and overflow-y to hidden — still horizontally scrollable,
+ * still no keyboard hook on the wrapper.
+ */
+
+.card-row {
+  overflow: scroll hidden;
+  display: flex;
+  gap: 1rem;
+}
