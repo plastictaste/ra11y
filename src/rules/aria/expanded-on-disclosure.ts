@@ -50,9 +50,15 @@
  * (or will live) in its own rule:
  *
  *   - **Tabs** (`data-*-toggle="tab"`, `data-*-toggle="pill"`,
- *     `role="tab"`) — APG §tabs uses `aria-selected` on the active tab,
- *     not `aria-expanded`. Coverage will move to a companion rule
- *     `aria/tab-pattern-roles` (not yet scaffolded; tracked in backlog).
+ *     `data-*-toggle="list"`, `role="tab"`) — APG §tabs uses
+ *     `aria-selected` on the active tab, not `aria-expanded`. The
+ *     canonical APG tab markup carries `aria-controls` (pointing at
+ *     the `role="tabpanel"`), which would otherwise be a strong
+ *     disclosure signal — so the rule short-circuits via
+ *     {@link isHtmlTabWidgetTrigger} / {@link isJsxTabWidgetTrigger}
+ *     before any predicate branch runs. Coverage will move to a
+ *     companion rule `aria/tab-pattern-roles` (not yet scaffolded;
+ *     tracked in backlog).
  *   - **Modal / dialog triggers** (`data-*-toggle="modal"`) — APG
  *     §dialog-modal uses `aria-haspopup="dialog"` on the trigger; the
  *     dialog is a separate surface, not a show/hide region of the
@@ -122,10 +128,15 @@ import type {
  * are out of scope for this rule (see header docstring for the full
  * exclusion list and future companion-rule pointers):
  *
- *   - `tab` / `pill` — APG tabs pattern uses `aria-selected` on the
- *     `role="tab"` trigger, not `aria-expanded`. A separate companion
- *     rule (`aria/tab-pattern-roles`, not yet scaffolded) will cover
- *     the role+selected gap.
+ *   - `tab` / `pill` / `list` — APG tabs pattern uses `aria-selected`
+ *     on the `role="tab"` trigger, not `aria-expanded`. These values
+ *     drive an explicit short-circuit
+ *     ({@link TAB_WIDGET_TOGGLE_VALUES}) in addition to being absent
+ *     from this set, because the canonical APG tab markup also carries
+ *     `aria-controls` and would otherwise match the disclosure rule
+ *     via that branch. A separate companion rule
+ *     (`aria/tab-pattern-roles`, not yet scaffolded) will cover the
+ *     role+selected gap.
  *   - `modal` — APG dialog/modal pattern uses `aria-haspopup="dialog"`
  *     on the trigger, not `aria-expanded` (the dialog is not a
  *     show/hide region of the trigger's container; it is a separate
@@ -142,6 +153,38 @@ const DISCLOSURE_TOGGLE_VALUES: ReadonlySet<string> = new Set([
   "accordion",
   "offcanvas",
 ]);
+
+/**
+ * Values (on `data-*-toggle` / `data-toggle`) that mark the element as
+ * the WAI-ARIA Authoring Practices §tabs pattern
+ * (https://www.w3.org/WAI/ARIA/apg/patterns/tabs/) — a `role="tab"`
+ * trigger inside a `role="tablist"` whose state is exposed via
+ * `aria-selected`, NOT `aria-expanded`. Adding `aria-expanded` to a
+ * tab control misrepresents the widget.
+ *
+ * Carve-out tokens:
+ *   - `tab` — Bootstrap's `data-bs-toggle="tab"` / `data-toggle="tab"`
+ *     (tabs in a `nav-tabs` container).
+ *   - `pill` — Bootstrap's pill-styled tabs (`nav-pills` container);
+ *     same APG pattern, different visual.
+ *   - `list` — Bootstrap's `list-group` tabs alternative
+ *     (`data-bs-toggle="list"`); same APG pattern, list-group visual.
+ *
+ * Matched case-insensitively and token-exactly. When ANY `data-*-toggle`
+ * attribute on the element carries one of these values, the rule
+ * short-circuits — even if other branches (aria-controls, disclosure-
+ * class) would otherwise match — because the element is provably part
+ * of the tab pattern, not the disclosure pattern.
+ *
+ * Modal / popover / tooltip carve-outs are already covered upstream:
+ * those values are simply absent from `DISCLOSURE_TOGGLE_VALUES`, and
+ * the other predicate branches don't fire on those shapes in practice.
+ * The tab carve-out is special because the canonical Bootstrap tab
+ * markup carries `aria-controls` (pointing at the `role="tabpanel"`),
+ * which is one of the strongest disclosure-rule signals — without an
+ * explicit short-circuit, the rule would emit on correct tab markup.
+ */
+const TAB_WIDGET_TOGGLE_VALUES: ReadonlySet<string> = new Set(["tab", "pill", "list"]);
 
 /**
  * Class-token substrings that, when mentioned inside an inline
@@ -350,6 +393,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     if (!isHtmlInteractive(el)) continue;
     if (isSummaryInsideDetails(el)) continue;
+    if (isHtmlTabWidgetTrigger(el)) continue;
     const branch = matchHtmlPredicate(el, doc);
     if (!branch) continue;
     const finding = classifyFinding(branch, hasHtmlAttribute(el, "aria-expanded"));
@@ -383,6 +427,40 @@ function isHtmlInteractive(el: HtmlElement): boolean {
  */
 function isSummaryInsideDetails(el: HtmlElement): boolean {
   return el.tagName.toLowerCase() === "summary";
+}
+
+/**
+ * Returns true when the element is provably part of the WAI-ARIA tabs
+ * pattern (not the disclosure pattern) and therefore must NOT receive
+ * an `aria-expanded` finding — adding that attribute to a tab control
+ * is wrong per APG §tabs (state is exposed via `aria-selected`).
+ *
+ * Two short-circuit signals:
+ *   - Any `data-*-toggle` attribute with value in
+ *     {@link TAB_WIDGET_TOGGLE_VALUES} (`tab`, `pill`, `list`).
+ *   - `role="tab"` — the element is itself a tab per APG §tabs.
+ *
+ * Both are deterministic in-file evidence; the carve-out clears the
+ * "provable from the code" bar (per the AI-first consumer model — no
+ * heuristic suppression). When EITHER signal fires, the rule abstains
+ * regardless of what other disclosure branches would otherwise match
+ * (aria-controls, disclosure-class). This is the right shape: the
+ * canonical Bootstrap tab markup carries `aria-controls` pointing at
+ * the `role="tabpanel"`, and without this short-circuit the rule
+ * would mis-flag correctly-marked-up tabs.
+ */
+function isHtmlTabWidgetTrigger(el: HtmlElement): boolean {
+  const role = getHtmlAttribute(el, "role");
+  if (role !== null && role.toLowerCase() === "tab") return true;
+  for (const attr of el.attributes) {
+    if (!isToggleAttributeName(attr.name.toLowerCase())) continue;
+    const raw = attr.value;
+    if (raw === null || raw.trim().length === 0) continue;
+    for (const token of raw.split(/[\s,]+/)) {
+      if (TAB_WIDGET_TOGGLE_VALUES.has(token.trim().toLowerCase())) return true;
+    }
+  }
+  return false;
 }
 
 function matchHtmlPredicate(el: HtmlElement, doc: HtmlDocument): PredicateBranch | null {
@@ -509,6 +587,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const el of elements) {
     if (isJsxPascalCase(el.tagName)) continue;
     if (!isJsxInteractive(el)) continue;
+    if (isJsxTabWidgetTrigger(el)) continue;
     const branch = matchJsxPredicate(el, idIndex);
     if (!branch) continue;
     const finding = classifyFinding(branch, hasJsxAttribute(el, "aria-expanded"));
@@ -544,6 +623,26 @@ function isJsxInteractive(el: JsxElement): boolean {
 function isJsxPascalCase(tag: string): boolean {
   const first = tag[0];
   return first !== undefined && first >= "A" && first <= "Z";
+}
+
+/**
+ * JSX counterpart of {@link isHtmlTabWidgetTrigger}. Recognises
+ * literal `data-*-toggle="tab"|"pill"|"list"` attributes and literal
+ * `role="tab"` — dynamic expression bindings are not matched (the
+ * agent reads the file to confirm intent; per the AI-first consumer
+ * model, the tool points and the agent investigates).
+ */
+function isJsxTabWidgetTrigger(el: JsxElement): boolean {
+  const role = getJsxAttributeString(el, "role");
+  if (role === "tab") return true;
+  for (const attr of el.attributes) {
+    if (!isToggleAttributeName(attr.name.toLowerCase())) continue;
+    if (!attr.value || attr.value.kind !== "StringLiteral") continue;
+    for (const token of attr.value.value.split(/[\s,]+/)) {
+      if (TAB_WIDGET_TOGGLE_VALUES.has(token.trim().toLowerCase())) return true;
+    }
+  }
+  return false;
 }
 
 function matchJsxPredicate(el: JsxElement, idIndex: ReadonlySet<string>): PredicateBranch | null {

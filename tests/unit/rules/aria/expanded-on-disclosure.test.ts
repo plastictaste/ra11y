@@ -715,6 +715,131 @@ describe("rule aria/expanded-on-disclosure", () => {
     });
   });
 
+  describe("tab-widget toggle values are not disclosure (APG tabs uses aria-selected)", () => {
+    it('does not fire on <a role="tab" aria-controls="home" data-bs-toggle="tab"> (canonical APG tab markup)', () => {
+      // APG §tabs: a tab trigger announces its active state via
+      // aria-selected on the role="tab" element, and points at its
+      // panel via aria-controls. The disclosure rule must abstain on
+      // this shape — adding aria-expanded would misrepresent the tab
+      // as a disclosure trigger. The aria-controls reference here is
+      // strong evidence under the disclosure rule's other predicates,
+      // so an explicit tab-widget short-circuit is required.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a class="nav-link" data-bs-toggle="tab" href="#home" role="tab" aria-controls="home" aria-selected="true">Home</a>
+          <div id="home" role="tabpanel">x</div>
+        </body></html>`,
+        { filePath: "tab-canonical.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('does not fire on <button class="toggle" data-toggle="tab"> (tab value beats class signal)', () => {
+      // The class-name disclosure-pattern fallback (`class="toggle"`)
+      // would normally match. The tab-widget value on data-toggle
+      // takes precedence and the rule abstains.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="toggle" data-toggle="tab">Profile</button>
+        </body></html>`,
+        { filePath: "tab-with-toggle-class.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('does not fire on <button class="dropdown-toggle" data-bs-toggle="tab"> (tab value beats class signal)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="dropdown-toggle" data-bs-toggle="tab">Profile</button>
+        </body></html>`,
+        { filePath: "tab-with-dropdown-class.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('does not fire on <a data-bs-toggle="list"> (list-group-style tabs use aria-selected like tabs)', () => {
+      // Bootstrap's list-group tabs alternative uses
+      // `data-bs-toggle="list"` with the same APG tabs pattern
+      // semantics — the rule must abstain regardless of whether
+      // aria-controls points at an in-document panel.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a class="list-group-item-action" data-bs-toggle="list" href="#home" role="tab" aria-controls="home">Home</a>
+          <div id="home" role="tabpanel">x</div>
+        </body></html>`,
+        { filePath: "list-group-tabs.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('does not fire on <span role="tab" aria-controls="panel-1"> (tab role alone short-circuits)', () => {
+      // role="tab" is in itself sufficient evidence the element is
+      // part of the APG tabs pattern — even without a data-*-toggle
+      // attribute, the rule must abstain.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button role="tab" aria-controls="panel-1" aria-selected="true">Profile</button>
+          <div id="panel-1" role="tabpanel">x</div>
+        </body></html>`,
+        { filePath: "role-tab.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("still fires on real disclosure values (data-toggle=collapse, data-toggle=dropdown)", () => {
+      // Sanity: the carve-out narrows tab-widget toggle values, but
+      // the genuine disclosure values must continue to fire.
+      const collapse = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-toggle="collapse" data-target="#m">Toggle</button>
+        </body></html>`,
+        { filePath: "collapse.html" },
+      );
+      expect(collapse).toHaveLength(1);
+      const dropdown = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-toggle="dropdown">Menu</button>
+        </body></html>`,
+        { filePath: "dropdown.html" },
+      );
+      expect(dropdown).toHaveLength(1);
+    });
+
+    it('JSX: does not fire on <a role="tab" data-bs-toggle="tab" aria-controls="home">', () => {
+      const violations = runRule(
+        rule,
+        `function Tab() {
+           return (
+             <>
+               <a className="nav-link" data-bs-toggle="tab" href="#home" role="tab" aria-controls="home" aria-selected="true">Home</a>
+               <div id="home" role="tabpanel">x</div>
+             </>
+           );
+         }`,
+        { filePath: "Tab.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('JSX: does not fire on <button data-toggle="pill"> with disclosure class', () => {
+      const violations = runRule(
+        rule,
+        `function PillTab() {
+           return <button className="dropdown-toggle" data-toggle="pill">Contact</button>;
+         }`,
+        { filePath: "PillTab.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:4.1.2 and wcag21:4.1.2 in satisfies", () => {
       expect(rule.satisfies).toContain("wcag22:4.1.2");
