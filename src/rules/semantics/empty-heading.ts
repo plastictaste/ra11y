@@ -27,6 +27,7 @@ import {
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 import {
+  htmlElementOnlyChildIsTemplateDirective,
   htmlSubtreeHasStrippedDirective,
   TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
 } from "../../input/parsers/html-template-directives.ts";
@@ -99,14 +100,23 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     const el = findHtmlHeadingAt(doc, heading);
     if (el === null) continue;
     if (hasAccessibleContentHtml(el)) continue;
+    // Predicate-axis closure: when the heading's only child is a
+    // stripped template directive (`<h1>{{ page.title }}</h1>`), the
+    // static scanner has no evidence the rendered text is empty — the
+    // binding might resolve to a non-empty string. The rule must not
+    // assert "empty" as a violation. The review/headings-and-labels
+    // finder picks up the same shape at confidence "low" with reason
+    // text framing the binding-resolves question; suppressing here
+    // avoids double-surfacing while keeping the location visible to
+    // the agent through the manual-review surface.
+    if (htmlElementOnlyChildIsTemplateDirective(el)) continue;
     const preceding = findPrecedingNonEmpty(headings, i);
-    // Per docs/kb/architecture/ai-first-consumer.md §"Surface, don't
-    // suppress": when the only rendered content was a Liquid/Jinja/ERB
-    // expression stripped by the parser (`<h1>{{ page.title }}</h1>`),
-    // the finding still emits at severity `error` — static analysis
-    // can't see whether the expression resolves non-empty — but the
-    // reason text carries the template_directive_stripped signal so
-    // the agent routes to "verify rendered output" in one read.
+    // Mixed-content fallback: when a stripped directive sits alongside
+    // other empty/whitespace nodes (predicate above caught the
+    // canonical case) or in any other shape that survived
+    // `hasAccessibleContentHtml`, the finding still emits — reason
+    // text carries the template_directive_stripped signal so the
+    // agent routes to "verify rendered output" in one read.
     const templateStripped = htmlSubtreeHasStrippedDirective(el);
     emitViolation(heading, preceding, templateStripped, emit);
   }

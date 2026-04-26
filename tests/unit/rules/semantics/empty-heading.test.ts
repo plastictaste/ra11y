@@ -142,32 +142,53 @@ describe("rule semantics/empty-heading", () => {
     });
   });
 
-  // V1-LIQUID-TEMPLATE-EXPRESSION-AS-SOLE-CHILD-REASON-ENRICHMENT:
-  // when the only child was a Liquid/Jinja/ERB expression stripped by
-  // the parser, the finding still emits at severity `error` (surface-
-  // don't-suppress) but the reason text carries the
-  // `template_directive_stripped` signal so the agent verifies the
-  // rendered output instead of looping through apply_fix on a
-  // template-directive false positive.
-  describe("HTML: template-directive enrichment", () => {
-    it("enriches reason when sole child is a Liquid interpolation", () => {
+  // Predicate-axis closure: when the heading's only child is a
+  // stripped Liquid/Jinja/ERB template directive, the static scanner
+  // has no evidence the rendered text is empty. The rule must not
+  // emit a violation; the review/headings-and-labels finder picks up
+  // the same location at confidence "low" with reason text framing
+  // the binding-resolves question. See AI-first consumer doctrine
+  // §"Reason text and severity must agree."
+  describe("HTML: template-directive-only child suppresses rule emission", () => {
+    it("does NOT fire when sole child is a Liquid interpolation", () => {
       const v = runRule(rule, `<h1>{{ page.title }}</h1>`, { filePath: "index.html" });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("error");
-      expect(v[0]?.message).toContain("template expression");
-      expect(v[0]?.message).toContain("ra11y-disable");
+      expect(v).toHaveLength(0);
     });
 
-    it("enriches reason when sole child is an ERB expression", () => {
+    it("does NOT fire when sole child is a Liquid tag", () => {
+      const v = runRule(rule, `<h2>{% include title.html %}</h2>`, { filePath: "index.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when sole child is an ERB expression", () => {
       const v = runRule(rule, `<h2><%= @post.title %></h2>`, { filePath: "index.html" });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.message).toContain("template expression");
+      expect(v).toHaveLength(0);
     });
 
-    it("does NOT enrich reason when heading is plainly empty", () => {
+    it("still fires on a plainly empty heading (no template directive)", () => {
       const v = runRule(rule, `<h1></h1>`, { filePath: "index.html" });
       expect(v).toHaveLength(1);
       expect(v[0]?.message).not.toContain("template expression");
+    });
+
+    it("still fires on mixed content where literal text sits alongside the directive", () => {
+      // `htmlTextContent` strips the directive but the literal " static
+      // text" remains, so `hasAccessibleContentHtml` already passes
+      // before the predicate runs — no violation expected here, but
+      // recorded as the canonical "mixed content is fine" case.
+      const v = runRule(rule, `<h4>{{ x }} static text</h4>`, { filePath: "index.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("still fires on a heading whose only child is an empty <svg> alongside a stripped directive", () => {
+      // The non-text child (<svg>) takes the heading out of the
+      // template-directive-only predicate; the standard "empty heading
+      // with only a non-text child" branch still fires.
+      const v = runRule(rule, `<h2><svg aria-hidden="true"></svg>{{ x }}</h2>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
     });
   });
 

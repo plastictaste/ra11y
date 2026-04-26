@@ -91,4 +91,47 @@ describe("review/headings-and-labels", () => {
     const out = runFinder(finder, source);
     expect(out.length).toBeGreaterThan(0);
   });
+
+  // Predicate-axis pair to the semantics/empty-heading rule's
+  // template-directive-only-child suppression. When the heading's
+  // sole rendered child is a stripped Liquid/Jinja/ERB span, the rule
+  // does not fire (static scanner can't see whether the binding
+  // resolves to non-empty text); this finder picks up the location
+  // at confidence "low" with reason text framing the binding-resolves
+  // question.
+  describe("HTML: template-directive-only heading content", () => {
+    it("flags an h1 whose sole child is a Liquid interpolation", () => {
+      const source = `<h1>{{ page.title }}</h1>`;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      const heading = out.find((c) => c.criterionId === "wcag22:2.4.6");
+      expect(heading).toBeDefined();
+      expect(heading?.confidence).toBe("low");
+      expect(heading?.reason).toContain("template expression");
+      expect(heading?.reason).toContain("ra11y-disable");
+    });
+
+    it("flags an h2 whose sole child is an ERB expression", () => {
+      const source = `<h2><%= @post.title %></h2>`;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out.length).toBeGreaterThan(0);
+      expect(out[0]?.confidence).toBe("low");
+    });
+
+    it("does not flag a heading whose template directive sits alongside literal text", () => {
+      // Mixed content: literal text supplies the visible name; no
+      // template-directive-only candidate needed.
+      const source = `<h2>{{ x }} static text</h2>`;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out).toEqual([]);
+    });
+
+    it("does not flag a heading with a real text label even when descendants carry directives", () => {
+      // Template directive in a nested span doesn't match the
+      // only-child predicate (the heading's direct child is an
+      // element node, not a stripped text node).
+      const source = `<h2>Quarterly revenue: <span>{{ company }}</span></h2>`;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out).toEqual([]);
+    });
+  });
 });

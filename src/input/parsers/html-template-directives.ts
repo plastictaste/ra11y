@@ -252,6 +252,39 @@ export function htmlSubtreeHasStrippedDirective(element: HtmlElement): boolean {
   return false;
 }
 
+/**
+ * True when `element`'s only meaningful children are text nodes whose
+ * rendered text was entirely produced by template-directive interpolation
+ * — i.e. the parser stripped at least one Liquid/Jinja/ERB span and the
+ * remaining post-strip text is whitespace-only. Comments are ignored
+ * (they aren't visible). Element children, non-empty literal text, and
+ * the no-template case all return false.
+ *
+ * Used by the predicate-axis closure in rules that consume visible
+ * text: when the only rendered content is `{{ … }}` / `{% … %}` /
+ * `<%= … %>` / `<% … %>`, the static scanner has no evidence the
+ * heading/label/title is empty at render time, so the rule must not
+ * emit a violation. The corresponding review-candidate finder takes
+ * over with reason text framing the binding-resolves question.
+ *
+ * Distinct from `htmlSubtreeHasStrippedDirective`, which returns true
+ * whenever ANY descendant carried a stripped directive — including the
+ * mixed case `<h1>{{ x }} static text</h1>`. That mixed case has
+ * literal visible text the rule's "is empty" predicate already rejects;
+ * it is NOT a template-directive-only child.
+ */
+export function htmlElementOnlyChildIsTemplateDirective(element: HtmlElement): boolean {
+  let sawStrippedDirective = false;
+  for (const child of element.children) {
+    if (child.kind === "HtmlComment" || child.kind === "HtmlDoctype") continue;
+    if (child.kind === "HtmlElement") return false;
+    if (child.kind !== "HtmlText") return false;
+    if (child.value.trim().length > 0) return false;
+    if (child.containsTemplateDirective === true) sawStrippedDirective = true;
+  }
+  return sawStrippedDirective;
+}
+
 export function matchesTemplateEndTag(source: string, openPos: number, endTag: string): boolean {
   let cursor = openPos + 2;
   if (source[cursor] === "-") cursor += 1;

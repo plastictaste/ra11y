@@ -20,6 +20,7 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
+import { htmlElementOnlyChildIsTemplateDirective } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 
@@ -82,14 +83,46 @@ function findHtmlCandidates(
   for (const el of walkHtmlElements(root)) {
     const tag = el.tagName.toLowerCase();
     if (HEADING_TAGS.has(tag)) {
-      const text = htmlTextContent(el);
-      if (text && GENERIC_HEADING.test(text)) emitHeading(filePath, el, tag, text, candidates);
+      handleHtmlHeading(filePath, el, tag, candidates);
       continue;
     }
     if (tag === "label") {
       const text = htmlTextContent(el);
       if (text && GENERIC_LABEL.test(text)) emitLabel(filePath, el, text, candidates);
     }
+  }
+}
+
+/**
+ * Routes one HTML heading (`<h1>`–`<h6>`) to its finder branch:
+ *
+ *   1. Generic-phrase text content (`<h2>Overview</h2>`) → emit at
+ *      confidence "low" via the existing generic-heading regex.
+ *   2. Sole child is a stripped template directive
+ *      (`<h2>{{ page.title }}</h2>`) → predicate-axis pair to
+ *      `semantics/empty-heading`. The rule suppresses emission for
+ *      this shape because static evidence can't see whether the
+ *      binding resolves to non-empty text; this finder takes over
+ *      with reason text framing the binding-resolves question.
+ *   3. Anything else → no candidate (descriptive text or covered by
+ *      another rule/finder).
+ *
+ * Extracted from `findHtmlCandidates` to keep per-function complexity
+ * under the lint budget once the template-directive branch landed.
+ */
+function handleHtmlHeading(
+  filePath: string,
+  el: HtmlElement,
+  tag: string,
+  candidates: ReviewCandidate[],
+): void {
+  const text = htmlTextContent(el);
+  if (text && GENERIC_HEADING.test(text)) {
+    emitHeading(filePath, el, tag, text, candidates);
+    return;
+  }
+  if (htmlElementOnlyChildIsTemplateDirective(el)) {
+    emitHeadingTemplateInterpolated(filePath, el, tag, candidates);
   }
 }
 
@@ -121,6 +154,32 @@ function emitHeading(
     // "Overview" / "Introduction" / "Page 2" often really are fine in
     // context; the finder is a prompt to verify, not evidence of a
     // failure. Biased toward false positives per the docstring.
+    candidates.push({
+      criterionId,
+      location: { filePath, line: el.loc.start.line, column: el.loc.start.column },
+      reason,
+      confidence: "low",
+    });
+  }
+}
+
+function emitHeadingTemplateInterpolated(
+  filePath: string,
+  el: HtmlElement,
+  tag: string,
+  candidates: ReviewCandidate[],
+): void {
+  const reason =
+    `<${tag}> sole child is a template expression (Liquid/Jinja/ERB) stripped by the parser` +
+    " -- verify the binding resolves to non-empty descriptive text at render time;" +
+    " if the interpolation is trusted to always render, suppress at source with" +
+    " `<!-- ra11y-disable wcag22:2.4.6 -->`";
+  for (const criterionId of CRITERION_IDS) {
+    // Confidence "low": the static scanner saw `{{ … }}` / `<%= … %>`
+    // and stripped it; whether the rendered text is non-empty and
+    // descriptive is a runtime question. The candidate still surfaces
+    // so the agent verifies, per the AI-first consumer doctrine
+    // §"Surface, don't suppress."
     candidates.push({
       criterionId,
       location: { filePath, line: el.loc.start.line, column: el.loc.start.column },
