@@ -1,0 +1,33 @@
+/*
+ * Bad: a card-overlay reveal that fires only on pointer hover. Mouse
+ * users see the overview panel slide in when hovering a movie tile;
+ * keyboard users tabbing through the grid never trigger the reveal.
+ */
+
+.movie {
+  position: relative;
+  overflow: hidden;
+}
+
+.movie .overview {
+  transform: translateY(100%);
+  transition: transform 200ms ease-out;
+}
+
+.movie:hover .overview {
+  transform: translateY(0);
+}
+
+/*
+ * Independent failure: a tooltip that fades in on hover with no focus
+ * counterpart. Same problem — keyboard users get no version of the
+ * reveal.
+ */
+
+.tooltip-trigger .tooltip {
+  opacity: 0;
+}
+
+.tooltip-trigger:hover .tooltip {
+  opacity: 1;
+}

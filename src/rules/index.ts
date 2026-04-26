@@ -58,6 +58,7 @@ import { rule as accesskeyDuplicate } from "./keyboard/accesskey-duplicate.ts";
 import { rule as anchorButtonNotFocusable } from "./keyboard/anchor-button-not-focusable.ts";
 import { rule as characterShortcuts } from "./keyboard/character-shortcuts.ts";
 import { rule as handlerMissing } from "./keyboard/handler-missing.ts";
+import { rule as hoverOnlyNoFocusMirror } from "./keyboard/hover-only-no-focus-mirror.ts";
 import { rule as orientationLock } from "./layout/orientation-lock.ts";
 import { rule as reflowHardcodedWidth } from "./layout/reflow-hardcoded-width.ts";
 import { rule as textSpacing } from "./layout/text-spacing.ts";
@@ -143,6 +144,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   headingClassOnNonheading,
   headingHierarchy,
   hiddenFocus,
+  hoverOnlyNoFocusMirror,
   hrefEmptyFragment,
   hrefJavascriptScheme,
   htmlHasLang,
@@ -247,6 +249,7 @@ export {
   headingClassOnNonheading,
   headingHierarchy,
   hiddenFocus,
+  hoverOnlyNoFocusMirror,
   hrefEmptyFragment,
   hrefJavascriptScheme,
   htmlHasLang,

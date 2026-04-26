@@ -1,0 +1,53 @@
+/*
+ * Good: same card-overlay reveal pattern as the bad fixture, but the
+ * author paired :focus-within with :hover so keyboard users tabbing
+ * into the card trigger the same reveal. The revealed panel still
+ * needs a focusable descendant (or tabindex=0 on the card) for focus
+ * to enter the trigger in the first place — that wiring lives in
+ * the consumer JSX/HTML, not in the stylesheet.
+ */
+
+.movie {
+  position: relative;
+  overflow: hidden;
+}
+
+.movie .overview {
+  transform: translateY(100%);
+  transition: transform 200ms ease-out;
+}
+
+.movie:hover .overview,
+.movie:focus-within .overview {
+  transform: translateY(0);
+}
+
+/*
+ * Tooltip with a focus mirror declared as a separate sibling block —
+ * also acceptable. The mirror search matches by selector chain, not
+ * by surrounding rule structure.
+ */
+
+.tooltip-trigger .tooltip {
+  opacity: 0;
+}
+
+.tooltip-trigger:hover .tooltip {
+  opacity: 1;
+}
+
+.tooltip-trigger:focus-within .tooltip {
+  opacity: 1;
+}
+
+/*
+ * Color-only state changes are out of scope: a hover state that only
+ * shifts color does not reveal new content, so 1.4.13's "Content on
+ * Hover" predicate doesn't apply. The sibling color rule covers the
+ * "color-only state distinction" surface separately.
+ */
+
+.btn:hover {
+  background-color: #1a56db;
+  color: white;
+}
