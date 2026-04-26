@@ -15,29 +15,42 @@
  * entries stay in `ungrouped` with their `{ path, classification,
  * signal }` records intact. See {@link groupBuildArtifactsByBasename}.
  *
- * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the previous shape
- * shipped a `reason: BuildArtifactReason` token (`"minified"`,
- * `"hashed-filename"`, `"dist-path"`, `"contains-data-url-gradient"`,
- * `"tailwind-compiled-escape"`, `"sourcemap-sibling"`) that read to
- * the agent as a deterministic verdict. But four of those predicates
- * (long-line corroboration, hex-segment, build-dir segment, data-url
- * marker, tailwind-escape selector) are heuristics that fire on
- * authored content with non-trivial frequency — a single long
- * `calc()` line, an `app.a1b2c3d4.js` test artifact, an authored
- * `dist/` source directory, a CSS file inlining a tiny SVG mask icon
- * via `data:image/`, or a hand-authored `\:focus-visible:` rule. The
- * deterministic-sounding label propagated the lie into the agent's
- * downstream triage (skip the file, suppress findings, re-route
- * fixes). Per `docs/kb/architecture/ai-first-consumer.md`
- * "Heuristic-mislabeled meta sub-fields are dishonest," the field
- * was renamed `reason` → `classification` and the values were
- * reshaped into a confidence-graded enum: `definite-*` for the two
- * predicates whose verdict survives inspection of the path/scan-set
- * alone (`.min.` infix, paired `.map` sibling) and `likely-*` for
- * the five whose predicate is probabilistic. The agent reading
- * `classification: "likely-minified-by-line-stats"` budgets
- * correctly; reading `classification: "definite-min-infix"` knows
- * the verdict is path-anchored.
+ * History: the previous shape shipped a `reason: BuildArtifactReason`
+ * token (`"minified"`, `"hashed-filename"`, `"dist-path"`,
+ * `"contains-data-url-gradient"`, `"tailwind-compiled-escape"`,
+ * `"sourcemap-sibling"`) that read to the agent as a deterministic
+ * verdict. But four of those predicates (long-line corroboration,
+ * hex-segment, build-dir segment, tailwind-escape selector) are
+ * heuristics that fire on authored content with non-trivial frequency
+ * — a single long `calc()` line, an `app.a1b2c3d4.js` test artifact,
+ * an authored `dist/` source directory, or a hand-authored
+ * `\:focus-visible:` rule. The deterministic-sounding label propagated
+ * the lie into the agent's downstream triage (skip the file, suppress
+ * findings, re-route fixes). Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+ * meta sub-fields are dishonest," the field was renamed `reason` →
+ * `classification` and the values were reshaped into a
+ * confidence-graded enum: `definite-*` for the two predicates whose
+ * verdict survives inspection of the path/scan-set alone (`.min.`
+ * infix, paired `.map` sibling) and `likely-*` for the four whose
+ * predicate is probabilistic. The agent reading
+ * `classification: "likely-minified-by-line-stats"` budgets correctly;
+ * reading `classification: "definite-min-infix"` knows the verdict is
+ * path-anchored.
+ *
+ * Subsequent narrowing: the data-URL-image marker (`url(data:image/`
+ * in CSS source) was retired entirely as `likely-vendored-data-url-css`
+ * because hand-authored SCSS stylesheets routinely inline tiny
+ * data-URL gradients and SVG mask icons (a 1350-line authored
+ * `_icons.scss` is the canonical false-positive shape) — the
+ * predicate failed the doctrine bar and the right answer was deletion,
+ * not relabeling. The content-shape `likely-minified-by-line-stats`
+ * predicate was additionally gated to skip `.svg` sources entirely:
+ * single-line is the canonical SVG authoring shape, so the
+ * median-line-length corroborator fires trivially on every authored
+ * brand SVG. Files that genuinely are vendored bundles or build-pipeline
+ * SVG output still classify on the path-anchored predicates that
+ * survive the doctrine bar.
  *
  * Classifications, in classifier evaluation order (first-match wins;
  * the comment block at {@link classifyBuildArtifactDetailed}
@@ -65,15 +78,7 @@
  *      hand-authored source (a `dist/` of vendored deps, a `public/`
  *      of authored static assets a framework happens to serve), so
  *      the verdict is `likely-`, not `definite-`.
- *   4. `likely-vendored-data-url-css`. A `.css` / `.scss` source
- *      whose text contains `url(data:image/` — vendored bundles
- *      frequently inline SVG/PNG gradient backgrounds via base64
- *      data URLs; hand-authored stylesheets reach for external
- *      image references or CSS gradients instead. But authored CSS
- *      sometimes inlines a tiny SVG mask icon, so the verdict is
- *      `likely-`. CSS-only because JSX strings can legitimately
- *      mention `data:image/` as an asset URL builder.
- *   5. `likely-compiled-tailwind`. A `.css` / `.scss` source whose
+ *   4. `likely-compiled-tailwind`. A `.css` / `.scss` source whose
  *      text contains an escape-bracket Tailwind utility selector
  *      (`\[400px\]`, `\:focus-visible:`, `\[--…]`). These are
  *      typically emitted by Tailwind's JIT compiler as the CSS-
@@ -81,7 +86,7 @@
  *      a hand-authored stylesheet can produce the same selector
  *      literally — the predicate is strong evidence, not a
  *      guarantee.
- *   6. `definite-sourcemap-paired`. A sibling `.map` file is in the
+ *   5. `definite-sourcemap-paired`. A sibling `.map` file is in the
  *      scanned set with the matching basename. Pairing a `.js` /
  *      `.css` with its `.map` is unambiguous compiled-bundle
  *      evidence — agents don't pair sourcemaps with hand-authored
@@ -89,7 +94,7 @@
  *      the "provable from the code" bar. The `.map` file itself is
  *      *not* labelled here — agents don't author sourcemaps in-
  *      place and a manual-review prompt about one is noise.
- *   7. `likely-minified-by-line-stats`. The source text crosses the
+ *   6. `likely-minified-by-line-stats`. The source text crosses the
  *      single-long-line probe (> {@link MINIFIED_LINE_THRESHOLD}
  *      chars on one line) AND a second-tier corroborator also
  *      fires: either the median line length itself exceeds the
@@ -102,7 +107,29 @@
  *      500 chars on exactly one authored line. Even with the count-
  *      floor + ratio + median tightening, the predicate remains a
  *      heuristic over content shape — the `likely-` prefix names
- *      the residual uncertainty.
+ *      the residual uncertainty. Additionally gated to skip `.svg`
+ *      sources entirely: single-line is the canonical SVG authoring
+ *      shape (a hand-authored brand SVG is one well-formed `<svg>`
+ *      element), so the long-line probe is structurally inapplicable
+ *      and would silently mis-label authored brand assets as
+ *      minified bundles. SVGs caught by the path predicates above
+ *      (1–3, 5) still classify; content-shape alone does not earn a
+ *      label.
+ *
+ * What is NOT a classification (predicates retired): a CSS source
+ * containing `url(data:image/...)` used to land as
+ * `likely-vendored-data-url-css`. The predicate fired on every CSS
+ * file with an inline image data-URL — but hand-authored SCSS
+ * stylesheets routinely inline tiny SVG mask icons and base64-data
+ * gradients in design-system token files (a 1350-line authored
+ * `_icons.scss` is the canonical false-positive shape). A single
+ * `data:image/` occurrence is not provable evidence the file is
+ * vendored; the predicate failed the doctrine bar
+ * (`docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+ * meta sub-fields are dishonest"). The classification was dropped
+ * entirely — files that genuinely are vendored bundles still get
+ * caught by the path predicates above (`.min.` infix,
+ * hashed-filename, bundler-output dir, sibling `.map`).
  *
  * What is *not* a signal: the `_` filename prefix. That prefix is the
  * Sass partial convention for authored source (`_variables.scss`,
@@ -134,8 +161,8 @@ import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.
  * or the live scan set alone (`.min.` infix in the basename, paired
  * `.map` sibling); `likely-*` covers the heuristic predicates
  * (corroborated long-line probe, hex-segment basename, build-dir
- * segment, data-url marker, tailwind escape selector) that fire on
- * authored content with non-trivial frequency. The agent reading
+ * segment, tailwind escape selector) that fire on authored content
+ * with non-trivial frequency. The agent reading
  * `classification` budgets per the prefix — `definite-*` means
  * "skip per-file investigation, route to vendor exclude," `likely-*`
  * means "investigate to confirm before routing." See the file-level
@@ -151,7 +178,6 @@ export type BuildArtifactClassification =
   | "likely-minified-by-line-stats"
   | "likely-hashed-bundle"
   | "likely-bundler-output-dir"
-  | "likely-vendored-data-url-css"
   | "likely-compiled-tailwind";
 
 /**
@@ -204,9 +230,6 @@ export function isDefiniteBuildArtifactClassification(
  *     (without flanking dots) so the agent can grep for it.
  *   - `build-dir-segment` — a {@link BUILD_DIR_MARKERS} entry sits in
  *     the path; `value` is the matched marker (e.g. `dist/`).
- *   - `data-url-image-marker` — the source contains the literal
- *     `url(data:image/` substring; `value` echoes the marker so the
- *     agent can grep for it.
  *   - `tailwind-escape-selector` — the source matches
  *     {@link TAILWIND_ESCAPED_SELECTOR}; `value` is the matched
  *     substring (the first hit) so the agent can locate it.
@@ -224,7 +247,6 @@ export type BuildArtifactSignal =
   | { readonly kind: "min-infix"; readonly value: string }
   | { readonly kind: "hex-segment-in-basename"; readonly value: string }
   | { readonly kind: "build-dir-segment"; readonly value: string }
-  | { readonly kind: "data-url-image-marker"; readonly value: string }
   | { readonly kind: "tailwind-escape-selector"; readonly value: string }
   | {
       readonly kind: "max-line-length-exceeds-threshold";
@@ -283,19 +305,6 @@ export interface BuildArtifactClassificationResult {
  */
 const TAILWIND_ESCAPED_SELECTOR =
   /\\\[\d+px\\?\]|\\\[\d+rem\\?\]|\\\[\d+%\\?\]|\\:focus-visible:|\\\[--/u;
-
-/**
- * Marker substring for the `likely-vendored-data-url-css` classification.
- * Hand-authored CSS rarely inlines raw image bytes via base64 data
- * URLs; vendored bundles (Bootstrap, Font Awesome, Tailwind plugins
- * with image presets) routinely do. The probe is intentionally
- * narrow — `data:image/` rather than `data:` alone — so a CSS file
- * that inlines a tiny SVG mask icon via `data:image/svg+xml,...` is
- * caught while a non-image data URL (e.g. an `@font-face`
- * `url(data:application/font-woff2;…)` block, which is normal hand-
- * authored shape) does not trigger.
- */
-const DATA_URL_IMAGE_MARKER = "url(data:image/";
 
 /**
  * Substring markers for canonical bundler-output directories. The
@@ -366,21 +375,23 @@ const HASHED_FILENAME_RE = /\.[a-f0-9]{8,}\./u;
  *   2. Hashed-filename segment (8+ hex between dots) →
  *      `likely-hashed-bundle`.
  *   3. Bundler-output path ancestry → `likely-bundler-output-dir`.
- *   4. CSS-only: `data:image/` inline → `likely-vendored-data-url-css`.
- *   5. CSS-only: Tailwind escape-bracket selector →
+ *   4. CSS-only: Tailwind escape-bracket selector →
  *      `likely-compiled-tailwind`.
- *   6. Single-line-over-threshold + second-tier corroboration →
+ *   5. Single-line-over-threshold + second-tier corroboration →
  *      `likely-minified-by-line-stats`. The long-line probe alone
  *      is not enough: authored Astro/Starlight template-literal
  *      props, Google-Maps iframe URLs, SCSS type signatures, and
  *      MDX component prop bundles all cross the 500-char line cap
  *      once while the rest of the file reads short. At least one
  *      corroborator from {long-line ratio, median line length} must
- *      also fire (see {@link detectLongMinifiedLine}). The path-
- *      based signals above already handle the cases where the
- *      single-long-line probe lines up with a path marker; this
- *      final branch covers short-path bundles whose source text
- *      itself still suggests minification.
+ *      also fire (see {@link detectLongMinifiedLine}). Additionally
+ *      gated to skip `.svg` sources entirely — single-line is the
+ *      canonical SVG authoring shape, so the long-line probe is
+ *      structurally inapplicable. The path-based signals above
+ *      already handle the cases where the single-long-line probe
+ *      lines up with a path marker; this final branch covers
+ *      short-path bundles whose source text itself still suggests
+ *      minification.
  *
  * The `definite-sourcemap-paired` classification is NOT checked here
  * because it requires the full scanned set — use
@@ -389,9 +400,8 @@ const HASHED_FILENAME_RE = /\.[a-f0-9]{8,}\./u;
  * ambiguous). The path-based signals are intentionally extension-
  * agnostic: a file under `/dist/assets/` is a build artifact
  * regardless of whether it ends in `.css` or `.html`. The Tailwind-
- * escape and data-URL probes are gated to `.css` / `.scss` (JSX
- * sources can carry those patterns as string literals, which are
- * not compiled CSS).
+ * escape probe is gated to `.css` / `.scss` (JSX sources can carry
+ * those patterns as string literals, which are not compiled CSS).
  *
  * O(file size) — at most one linear pass on the source for the line-
  * statistics helper when the cheaper signals miss, plus a few O(1)
@@ -448,22 +458,27 @@ export function classifyBuildArtifactDetailed(
     return { classification: "likely-bundler-output-dir", signal: distSignal };
   }
   if (isCssPath(filePath)) {
-    const dataUrlSignal = detectDataUrlImageMarker(source);
-    if (dataUrlSignal !== null) {
-      return { classification: "likely-vendored-data-url-css", signal: dataUrlSignal };
-    }
     const tailwindSignal = detectTailwindEscape(source);
     if (tailwindSignal !== null) {
       return { classification: "likely-compiled-tailwind", signal: tailwindSignal };
     }
   }
-  // Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE: the standalone
-  // single-long-line probe was the root cause of 54 authored files
-  // mis-labeled on a Bootstrap docs scan and 101 on a website-
-  // templates scan — one long line in an Astro template literal, a
-  // Google Maps iframe URL, or an MDX prop bundle is not minification
-  // evidence. Require a corroborating content signal so the verdict
-  // stays defensible.
+  // The standalone single-long-line probe was the root cause of 54
+  // authored files mis-labeled on a Bootstrap docs scan and 101 on a
+  // website-templates scan — one long line in an Astro template
+  // literal, a Google Maps iframe URL, or an MDX prop bundle is not
+  // minification evidence. Require a corroborating content signal so
+  // the verdict stays defensible.
+  //
+  // SVG sources are skipped entirely: a hand-authored brand SVG is one
+  // well-formed `<svg>` element on a single line — the median-line-length
+  // corroborator fires trivially on every authored SVG (the whole content
+  // IS the one line, so its median equals its length). The long-line
+  // probe is structurally inapplicable to a one-line authoring norm; the
+  // path predicates above (1–3) and the `definite-sourcemap-paired`
+  // pairing in {@link collectBuildArtifacts} still classify SVGs whose
+  // path or scan-set evidence proves the verdict.
+  if (isSvgPath(filePath)) return null;
   const longLineSignal = detectLongMinifiedLine(source);
   if (longLineSignal !== null) {
     return { classification: "likely-minified-by-line-stats", signal: longLineSignal };
@@ -501,12 +516,6 @@ function detectHashedFilename(filePath: string): BuildArtifactSignal | null {
   return { kind: "hex-segment-in-basename", value: match[0].slice(1, -1) };
 }
 
-function detectDataUrlImageMarker(source: string): BuildArtifactSignal | null {
-  return source.includes(DATA_URL_IMAGE_MARKER)
-    ? { kind: "data-url-image-marker", value: DATA_URL_IMAGE_MARKER }
-    : null;
-}
-
 function detectTailwindEscape(source: string): BuildArtifactSignal | null {
   const match = source.match(TAILWIND_ESCAPED_SELECTOR);
   return match === null ? null : { kind: "tailwind-escape-selector", value: match[0] };
@@ -527,6 +536,29 @@ function isCssPath(filePath: string): boolean {
   // three identically.
   const lower = filePath.toLowerCase();
   return lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less");
+}
+
+/**
+ * True when `filePath` ends in `.svg` (case-insensitive). Used by
+ * {@link classifyBuildArtifactDetailed} to gate the content-shape
+ * `likely-minified-by-line-stats` predicate off SVG sources entirely.
+ *
+ * Single-line is the canonical SVG authoring shape — a hand-authored
+ * brand SVG is one well-formed `<svg ...>...</svg>` element, often
+ * exported from a design tool with no inter-tag whitespace. Under the
+ * shared long-line probe that body is one line over the 500-char
+ * threshold, totalLines = 1, and medianLineLength equals the whole
+ * content's length, so the median-line-length corroborator fires
+ * trivially. The verdict ("minified bundle") contradicts the source
+ * shape ("authored brand asset"); the only honest fix is to skip the
+ * probe on `.svg` and let the path predicates carry whatever evidence
+ * survives. SVGs that genuinely are build-pipeline output (sprite
+ * sheets in `dist/icons/`, `.min.svg`, hashed-filename outputs,
+ * `.svg` files paired with sourcemap siblings) still classify on the
+ * path-anchored predicates, which is the doctrine bar.
+ */
+function isSvgPath(filePath: string): boolean {
+  return filePath.toLowerCase().endsWith(".svg");
 }
 
 /**

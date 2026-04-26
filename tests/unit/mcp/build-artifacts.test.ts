@@ -4,24 +4,22 @@
  * `meta.scannedBuildArtifacts: { path, classification, signal }[]`
  * on `scan_project` responses.
  *
- * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: tests below pin the
- * confidence-graded {@link BuildArtifactClassification} enum that
- * replaced the previous deterministic-sounding `reason` token.
- * Predicates whose verdict is provable from the path or live scan
- * set alone emit `definite-*` (`definite-min-infix`,
- * `definite-sourcemap-paired`); heuristic predicates emit `likely-*`
- * (`likely-minified-by-line-stats`, `likely-hashed-bundle`,
- * `likely-bundler-output-dir`, `likely-vendored-data-url-css`,
+ * Tests below pin the confidence-graded
+ * {@link BuildArtifactClassification} enum that replaced the previous
+ * deterministic-sounding `reason` token. Predicates whose verdict is
+ * provable from the path or live scan set alone emit `definite-*`
+ * (`definite-min-infix`, `definite-sourcemap-paired`); heuristic
+ * predicates emit `likely-*` (`likely-minified-by-line-stats`,
+ * `likely-hashed-bundle`, `likely-bundler-output-dir`,
  * `likely-compiled-tailwind`).
  *
  * Two directions:
  *   1. Each signal (`.min.` infix, long minified line, hashed-
  *      filename infix, bundler-output path ancestry, sibling `.map`
- *      sourcemap, `data:image/` data-URL inline, escaped-bracket
- *      Tailwind selector) maps to its named
- *      {@link BuildArtifactClassification} AND only on its named
- *      condition. Over-labeling a hand-written stylesheet would
- *      push the agent to investigate non-generated code, the
+ *      sourcemap, escaped-bracket Tailwind selector) maps to its
+ *      named {@link BuildArtifactClassification} AND only on its
+ *      named condition. Over-labeling a hand-written stylesheet
+ *      would push the agent to investigate non-generated code, the
  *      expensive failure mode.
  *   2. Sass partials (`_variables.scss`, `_mixins.scss`) must NOT be
  *      labeled as artifacts — the leading `_` is the Sass partial
@@ -424,35 +422,121 @@ describe("classifyBuildArtifact — `likely-bundler-output-dir` classification (
   });
 });
 
-describe("classifyBuildArtifact — `likely-vendored-data-url-css` classification", () => {
-  it("classifies a CSS file containing `url(data:image/svg+xml,...)`", () => {
+describe("classifyBuildArtifact — data-URL CSS predicate retired (regression guard)", () => {
+  // The retired `likely-vendored-data-url-css` classification used to
+  // fire on any `.css` / `.scss` source containing the literal
+  // `url(data:image/` substring. The predicate failed the
+  // ai-first-consumer doctrine bar ("Heuristic-mislabeled meta
+  // sub-fields are dishonest") because hand-authored SCSS stylesheets
+  // routinely inline tiny SVG mask icons and base64 gradients in
+  // design-system token files — a 1350-line authored `_icons.scss`
+  // with embedded data-URL gradients was the field-report shape that
+  // forced the deletion. These tests pin the deletion: a bare
+  // `data:image/` occurrence in CSS source must NOT classify.
+  it("does NOT classify a CSS file containing `url(data:image/svg+xml,...)` on content alone", () => {
     const source =
       ".bg-icon { background: url(data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F...%22%2F%3E); }";
-    expect(classifyBuildArtifact("vendor/styles.css", source)).toBe("likely-vendored-data-url-css");
+    expect(classifyBuildArtifact("vendor/styles.css", source)).toBe(null);
   });
 
-  it("classifies a `.scss` file containing `url(data:image/png;base64,...)`", () => {
-    const source = ".gradient { background: url(data:image/png;base64,iVBORw0KGgoAAAA…); }";
-    expect(classifyBuildArtifact("assets/scss/icons.scss", source)).toBe(
-      "likely-vendored-data-url-css",
-    );
+  it("does NOT classify a hand-authored `.scss` partial with embedded data-URL gradients", () => {
+    // Canonical false-positive shape from the field: a design-system
+    // `_icons.scss` token file inlines a base64 PNG/SVG gradient as a
+    // compact background. The agent reading the file sees authored
+    // SCSS rules around it; the classifier must not pre-empt that read
+    // with a deterministic-sounding "vendored" label.
+    const source = "@mixin gradient { background: url(data:image/png;base64,iVBORw0KGgoAAAA…); }";
+    expect(classifyBuildArtifact("scss/_icons.scss", source)).toBe(null);
   });
 
   it("does NOT classify a CSS file with a non-image data URL (e.g. inline web font)", () => {
-    // `data:application/font-woff2` is normal `@font-face` shape, not
-    // an image-blob inline. The probe is anchored to `data:image/`
-    // specifically so this hand-authored case stays unflagged.
+    // Carryover negative: `data:application/font-woff2` is normal
+    // `@font-face` shape and was already untouched by the retired
+    // predicate. Pin it here so a future detector re-introducing a
+    // data-URL probe can't silently widen scope.
     const source =
       "@font-face { src: url(data:application/font-woff2;base64,d09GMgABAAAA…) format('woff2'); }";
     expect(classifyBuildArtifact("src/fonts.css", source)).toBe(null);
   });
 
   it("does NOT classify a JSX file mentioning `url(data:image/`...) as a string literal", () => {
-    // The probe is gated to `.css` / `.scss` paths because a JSX
-    // string literal carrying `data:image/...` is asset-builder
-    // code, not compiled CSS output.
+    // Carryover negative: a JSX string literal carrying
+    // `data:image/...` is asset-builder code, not compiled CSS output.
     const source = 'const url = "url(data:image/png;base64,...)";';
     expect(classifyBuildArtifact("src/Component.tsx", source)).toBe(null);
+  });
+
+  it("classifies a CSS file under `dist/` with an inline data-URL via the path predicate (no content credit)", () => {
+    // A CSS file under `dist/` with a data-URL still classifies — but
+    // the verdict comes from the path predicate
+    // (`likely-bundler-output-dir`), not the retired content marker.
+    // The agent reading `signal.kind: "build-dir-segment"` sees that
+    // the directory is the falsifiable evidence; the data-URL is
+    // incidental.
+    const source = ".bg { background: url(data:image/svg+xml,...); }";
+    expect(classifyBuildArtifact("dist/main.css", source)).toBe("likely-bundler-output-dir");
+  });
+});
+
+describe("classifyBuildArtifact — SVG single-line authoring norm (regression guard)", () => {
+  // Single-line is the canonical SVG authoring shape: a hand-authored
+  // brand SVG is one well-formed `<svg ...>...</svg>` element, often
+  // exported from a design tool with no inter-tag whitespace. Under
+  // the shared `likely-minified-by-line-stats` predicate the whole
+  // body becomes one line over the 500-char threshold, totalLines = 1,
+  // and `medianLineLength` equals the entire content's length — the
+  // median corroborator fires trivially. The classifier must NOT
+  // stamp `likely-minified-by-line-stats` on these files; the only
+  // honest closure is to skip the long-line probe on `.svg` entirely
+  // and let path predicates carry whatever evidence survives.
+  it("does NOT classify a hand-authored single-line brand SVG even when its one line crosses 500 chars", () => {
+    // Brand-asset shape: one `<svg>` element with several `<path>` /
+    // `<g>` children, exported as a single line. Length is well over
+    // the 500-char single-long-line probe threshold.
+    const path = "M".concat("1.234,5.678 ".repeat(60), "Z");
+    const source = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${path}"/></svg>`;
+    // Sanity — the source MUST cross the long-line threshold so the
+    // assertion isn't vacuously testing a short file.
+    expect(source.length).toBeGreaterThan(500);
+    expect(classifyBuildArtifact("assets/logo.svg", source)).toBe(null);
+  });
+
+  it("does NOT classify a 200-char inline brand SVG (well under the threshold but single-line)", () => {
+    // Compact inline brand SVG — the whole element is on one line,
+    // around the size of a typical icon. The classifier should be
+    // null here too: nothing in path or content earns a label.
+    const source =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="currentColor"/></svg>';
+    expect(classifyBuildArtifact("src/icons/dot.svg", source)).toBe(null);
+  });
+
+  it("does NOT classify a single-line uppercase-extension `.SVG` either (case-insensitive gate)", () => {
+    // Windows / design-tool exports sometimes use uppercase `.SVG`.
+    // The extension gate is case-insensitive; this case must follow.
+    const path = "M".concat("1,2 ".repeat(150), "Z");
+    const source = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${path}"/></svg>`;
+    expect(source.length).toBeGreaterThan(500);
+    expect(classifyBuildArtifact("assets/Logo.SVG", source)).toBe(null);
+  });
+
+  it("classifies an SVG under `dist/` via the path predicate (path evidence still credits)", () => {
+    // Sanity: the SVG gate only suppresses the content-shape
+    // `likely-minified-by-line-stats` probe. SVGs under canonical
+    // bundler-output directories still classify on path evidence,
+    // matching the doctrine bar — the directory is provable from the
+    // path alone.
+    const source = "<svg><path d='M0,0 Z'/></svg>";
+    expect(classifyBuildArtifact("dist/icons/sprite.svg", source)).toBe(
+      "likely-bundler-output-dir",
+    );
+  });
+
+  it("classifies a `.min.svg` via the min-infix predicate (path evidence still credits)", () => {
+    // Sanity: a `.min.` infix on an SVG basename still earns
+    // `definite-min-infix` — the predicate is path-anchored and
+    // independent of the content-shape probe.
+    const source = "<svg><path d='M0,0 Z'/></svg>";
+    expect(classifyBuildArtifact("public/logo.min.svg", source)).toBe("definite-min-infix");
   });
 });
 
@@ -513,12 +597,13 @@ describe("classifyBuildArtifact — first-match evaluation order", () => {
     expect(classifyBuildArtifact("dist/app.a1b2c3d4.js", "// bundle")).toBe("likely-hashed-bundle");
   });
 
-  it("prefers `likely-bundler-output-dir` over `likely-vendored-data-url-css` when both signals fire", () => {
-    // A file under `dist/` with a data URL is more usefully reported
-    // as a bundler-output-dir artifact (the directory tells the agent
-    // the entire tree is generated) than as a single-line content
-    // match.
-    const source = ".bg { background: url(data:image/svg+xml,...); }";
+  it("prefers `likely-bundler-output-dir` over the content-shape long-line probe when both apply", () => {
+    // A CSS file under `dist/` whose body is one minified-shape long
+    // line is reported as `likely-bundler-output-dir` — the path
+    // predicate is checked first and is the more specific (path-
+    // anchored) verdict, so the agent reads one classification, not
+    // two reconciled.
+    const source = `.a{${"x".repeat(600)}}`;
     expect(classifyBuildArtifact("dist/main.css", source)).toBe("likely-bundler-output-dir");
   });
 });
@@ -541,7 +626,6 @@ describe("isDefiniteBuildArtifactClassification — confidence-prefix contract",
     expect(isDefiniteBuildArtifactClassification("likely-minified-by-line-stats")).toBe(false);
     expect(isDefiniteBuildArtifactClassification("likely-hashed-bundle")).toBe(false);
     expect(isDefiniteBuildArtifactClassification("likely-bundler-output-dir")).toBe(false);
-    expect(isDefiniteBuildArtifactClassification("likely-vendored-data-url-css")).toBe(false);
     expect(isDefiniteBuildArtifactClassification("likely-compiled-tailwind")).toBe(false);
   });
 });
@@ -580,14 +664,6 @@ describe("classifyBuildArtifactDetailed — structured per-entry signal", () => 
     expect(classifyBuildArtifactDetailed("/proj/.next/static/css/app.css", ".a{}")).toEqual({
       classification: "likely-bundler-output-dir",
       signal: { kind: "build-dir-segment", value: ".next/" },
-    });
-  });
-
-  it("stamps `data-url-image-marker` with the canonical marker substring on CSS gradient files", () => {
-    const source = ".bg { background: url(data:image/svg+xml,...); }";
-    expect(classifyBuildArtifactDetailed("vendor/styles.css", source)).toEqual({
-      classification: "likely-vendored-data-url-css",
-      signal: { kind: "data-url-image-marker", value: "url(data:image/" },
     });
   });
 

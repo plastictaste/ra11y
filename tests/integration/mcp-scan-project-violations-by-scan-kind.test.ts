@@ -197,34 +197,36 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
     }
   });
 
-  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: the broader artifact label
-  // can fire WITHOUT this finer label — a CSS file that inlines a
-  // `data:image/...` gradient (canonical vendored-bundle marker) lands
-  // as `reason: "contains-data-url-gradient"`, NOT `reason: "minified"`.
-  // Lock the per-reason narrowing so the new code doesn't silently
-  // fire on every artifact regime.
-  it("does NOT emit warnings[scanned_minified_file] when the only artifact is non-minified (data-url-gradient classified)", async () => {
+  // The broader `scanned_build_artifacts_present` label fires for any
+  // classified artifact (any classification); the narrower
+  // `scanned_minified_file` label is gated to the two minified-shaped
+  // classifications (`definite-min-infix` for the `.min.` infix path
+  // predicate, `likely-minified-by-line-stats` for the corroborated
+  // long-line probe). A non-minified artifact must produce the broader
+  // label without the narrower one — pin that per-reason narrowing so
+  // the warning code doesn't silently fire on every artifact regime.
+  it("does NOT emit warnings[scanned_minified_file] when the only artifact is a non-minified path-predicate hit", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-scanned-minified-negative-"));
     try {
       writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
-      // Hand-shaped CSS with an inlined data:image/ gradient — the
-      // classifier emits `reason: "contains-data-url-gradient"`. The
-      // broader presence code still fires; the narrower minified code
-      // must not.
+      // Hand-shaped CSS with a content-hash basename — the classifier
+      // emits the path-anchored `likely-hashed-bundle` classification
+      // (8+ hex segment between dots). The broader presence code still
+      // fires; the narrower minified code must not.
       writeFileSync(
-        join(root, "vendor-icons.css"),
-        ".icon { background: url(data:image/svg+xml;base64,PHN2Zy8+) center; }\n",
+        join(root, "app.a1b2c3d4.css"),
+        ".icon { color: #444444; background-color: #5a5a5a; }\n",
       );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       const body = bodyOf(scan as JsonRpcResponse);
       const warnings = body["warnings"] as readonly string[] | undefined;
-      // Sanity — the broader presence label fires off the dist-path
-      // classifier, so the test isn't vacuously true (it would also
-      // pass if the artifact pipeline never ran).
+      // Sanity — the broader presence label fires off the hashed-
+      // bundle classification, so the test isn't vacuously true (it
+      // would also pass if the artifact pipeline never ran).
       expect(warnings ?? []).toContain("scanned_build_artifacts_present");
-      // The narrower minified label must NOT fire — `dist-path` is
-      // not minification evidence.
+      // The narrower minified label must NOT fire — a content-hash
+      // segment in the basename is not minification evidence.
       expect(warnings ?? []).not.toContain("scanned_minified_file");
       const details = body["warningsDetails"] as { scanned_minified_file?: unknown } | undefined;
       expect(details?.scanned_minified_file).toBeUndefined();
