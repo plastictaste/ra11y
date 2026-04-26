@@ -51,7 +51,7 @@ describe("rule tooltip/dismissable", () => {
     it("multiple interactive elements with title each fire", () => {
       const violations = runRule(
         rule,
-        `<div><button title="A">a</button><button title="B">b</button></div>`,
+        `<div><button title="alpha tooltip">A</button><button title="beta tooltip">B</button></div>`,
         { filePath: "page.html" },
       );
       expect(violations).toHaveLength(2);
@@ -336,73 +336,97 @@ describe("rule tooltip/dismissable", () => {
     });
   });
 
-  // When the flagged element's visible text already equals the title
-  // value (trimmed, case-insensitive), the "replace with visible text"
-  // and "use aria-label" alternatives just re-state the existing DOM —
-  // the accessible name is already there, the WCAG 1.4.13 failure is
-  // the keyboard-dismiss behavior. The rule still fires; only the
-  // suggestion drops the redundant alternatives. Per
-  // docs/kb/architecture/ai-first-consumer.md "the tool must not
-  // suggest alternatives that re-state the existing state of the DOM."
-  describe("suggestion: visible text equals title", () => {
-    it("HTML: button text == title — suggestion omits visible-text and aria-label alternatives", () => {
+  // Title-equals-visible-text gate: SC 1.4.13 governs "additional
+  // content" that appears on hover or focus. When the title duplicates
+  // the visible label exactly (trimmed, case-insensitive), no
+  // additional content is presented to a sighted user — the
+  // dismissability/hoverability/persistence tests of the success
+  // criterion do not apply. Suppress at the rule level. Whitespace and
+  // case differences between the two strings still count as
+  // equivalent. Expression-valued JSX `title={expr}` is opaque to
+  // static analysis and cannot be matched against visible text, so the
+  // gate does NOT engage on those — the rule fires as before. Per the
+  // rule header gate contract (deterministic from attribute +
+  // descendant text alone, no guessed composition).
+  describe("title-equals-visible-text gate", () => {
+    it("HTML: button text exactly equals title — does NOT fire", () => {
       const violations = runRule(rule, `<button title="Tooltip on top">Tooltip on top</button>`, {
         filePath: "page.html",
       });
-      expect(violations).toHaveLength(1);
-      const suggestion = violations[0]?.suggestion ?? "";
-      // Rule still fires at the same severity — this is reason-text
-      // adjustment, not suppression or downgrade.
-      expect(violations[0]?.severity).toBe("warning");
-      // Redundant alternatives must NOT appear when text already matches.
-      expect(suggestion).not.toMatch(/aria-label="Tooltip on top"/);
-      expect(suggestion).not.toMatch(/visible text label inside the element/);
-      // The remaining guidance is the keyboard-dismiss / library upgrade path.
-      expect(suggestion).toMatch(/Escape-to-dismiss/);
-      expect(suggestion).toMatch(/custom tooltip component/);
+      expect(violations).toHaveLength(0);
     });
 
-    it("HTML: text == title differs only in case/whitespace — same suppression of redundant alternatives", () => {
+    it("HTML: anchor text exactly equals title — does NOT fire", () => {
+      // The canonical real-world repro this gate closes: BizPage-style
+      // markup commonly emits an anchor with title= duplicating the
+      // visible label, e.g. <a title="front matter">front matter</a>.
+      const violations = runRule(rule, `<a href="/x" title="front matter">front matter</a>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: text differs from title only in case — does NOT fire", () => {
+      const violations = runRule(rule, `<button title="Tooltip on top">TOOLTIP ON TOP</button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: text differs from title only in surrounding whitespace — does NOT fire", () => {
+      const violations = runRule(rule, `<button title="Save">  Save  </button>`, {
+        filePath: "page.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("HTML: text combines case + whitespace differences — does NOT fire", () => {
       const violations = runRule(
         rule,
         `<button title="Tooltip on top">  TOOLTIP on TOP  </button>`,
         { filePath: "page.html" },
       );
-      expect(violations).toHaveLength(1);
-      const suggestion = violations[0]?.suggestion ?? "";
-      expect(suggestion).not.toMatch(/aria-label=/);
-      expect(suggestion).not.toMatch(/visible text label inside the element/);
+      expect(violations).toHaveLength(0);
     });
 
-    it("HTML: text != title — full three-alternative suggestion preserved", () => {
+    it("HTML: text differs from title — full three-alternative suggestion preserved", () => {
       const violations = runRule(rule, `<button title="Hover info">Help</button>`, {
         filePath: "page.html",
       });
       expect(violations).toHaveLength(1);
       const suggestion = violations[0]?.suggestion ?? "";
-      // All three alternatives must remain when the visible text does
-      // not already convey the title content.
       expect(suggestion).toMatch(/visible text label inside the element/);
       expect(suggestion).toMatch(/aria-label="Hover info"/);
       expect(suggestion).toMatch(/custom tooltip component/);
     });
 
-    it("JSX: text == title (string-literal title) drops redundant alternatives", () => {
+    it("JSX: button string-literal title equals visible text — does NOT fire", () => {
       const violations = runRule(
         rule,
         `const x = <button title="Tooltip on top">Tooltip on top</button>;`,
       );
-      expect(violations).toHaveLength(1);
-      const suggestion = violations[0]?.suggestion ?? "";
-      expect(suggestion).not.toMatch(/aria-label="Tooltip on top"/);
-      expect(suggestion).not.toMatch(/visible text label inside the element/);
+      expect(violations).toHaveLength(0);
     });
 
-    it("JSX: expression-valued title keeps the full three-alternative suggestion (text not statically known)", () => {
+    it("JSX: anchor string-literal title equals visible text — does NOT fire", () => {
+      const violations = runRule(
+        rule,
+        `const x = <a href="/x" title="front matter">front matter</a>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX: case-only difference between title and visible text — does NOT fire", () => {
+      const violations = runRule(rule, `const x = <button title="save">SAVE</button>;`);
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX: expression-valued title with matching visible text still fires (runtime opaque)", () => {
       // For title={expr}, static analysis cannot determine whether the
-      // runtime value equals the visible text, so we keep the full menu
-      // — agent reads the file and decides. Surfacing the full set is
-      // the correct conservative move.
+      // runtime value equals the visible text, so the gate does not
+      // engage and the rule fires as before. Agent reads the file and
+      // decides — this is the conservative ("surface, don't suppress")
+      // move on the unknown-runtime branch.
       const violations = runRule(
         rule,
         `const label = "Tooltip on top"; const x = <button title={label}>Tooltip on top</button>;`,

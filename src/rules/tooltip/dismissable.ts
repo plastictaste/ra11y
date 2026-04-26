@@ -77,6 +77,24 @@
  * it. Per CLAUDE.md §1 "Surface, don't suppress" the gate is narrow:
  * any additional name source — including descendant text or alt on a
  * descendant `<img>` — passes the gate and the rule fires as before.
+ *
+ * Title-equals-visible-text gate (deterministic, attribute-level):
+ * when the titled element's trimmed lowercased visible text content
+ * equals its trimmed lowercased `title` attribute value, the rule
+ * does NOT fire. SC 1.4.13 governs "additional content" that appears
+ * on hover or focus; when the title duplicates the visible label
+ * exactly, no additional content is presented to a sighted user, and
+ * the dismissability/hoverability/persistence tests of the success
+ * criterion do not apply. The redundant `title` may still be a
+ * best-practice nuisance (screen-readers may double-announce on some
+ * AT/browser pairings), but that is a separate concern best surfaced
+ * by a dedicated `parsing/redundant-title-attribute` rule rather
+ * than as a 1.4.13 violation. The gate is deterministic from a
+ * trimmed/lowercased string compare on attribute + descendant text —
+ * no guessed composition — so it satisfies "would the gate be
+ * correct 100% of the time from the evidence the scanner has." For
+ * JSX, expression-valued `title={expr}` is opaque to static analysis
+ * and must NOT take this branch; the rule fires on those as before.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -203,9 +221,14 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (title.trim().length === 0) continue;
     if (!isInteractiveHtml(el)) continue;
     if (!hasAdditionalNameSourceHtml(el)) continue;
+    // Title-equals-visible-text gate: when the visible text already
+    // exactly matches the title (trimmed, case-insensitive), no
+    // additional content is presented on hover and SC 1.4.13 does not
+    // apply. Suppress at the rule level rather than just trimming the
+    // suggestion. Per the rule header gate contract.
+    if (isTextEquivalentToTitle(htmlTextContent(el), title)) continue;
     const enhancer = detectHtmlEnhancer(el);
-    const textEqualsTitle = isTextEquivalentToTitle(htmlTextContent(el), title);
-    emit(buildViolation(el.tagName.toLowerCase(), title, el.loc.start, enhancer, textEqualsTitle));
+    emit(buildViolation(el.tagName.toLowerCase(), title, el.loc.start, enhancer));
   }
 }
 
@@ -237,14 +260,16 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (titleString !== null && titleString.trim().length === 0) continue;
     if (!isInteractiveJsx(el)) continue;
     if (!hasAdditionalNameSourceJsx(el)) continue;
+    // Title-equals-visible-text gate: only meaningful for string-literal
+    // titles — an expression-valued `title={expr}` runtime value is
+    // unknown to static analysis, so we cannot establish equivalence
+    // and the rule fires as before. Per the rule header gate contract.
+    if (titleString !== null && isTextEquivalentToTitle(jsxTextContent(el), titleString)) {
+      continue;
+    }
     const displayTitle = titleString ?? "<expression>";
     const enhancer = detectJsxEnhancer(el);
-    // Equivalence check only meaningful for string-literal titles —
-    // an expression-valued title's runtime value is unknown to static
-    // analysis, so we keep the full three-alternative suggestion.
-    const textEqualsTitle =
-      titleString !== null && isTextEquivalentToTitle(jsxTextContent(el), titleString);
-    emit(buildViolation(el.tagName, displayTitle, el.loc.start, enhancer, textEqualsTitle));
+    emit(buildViolation(el.tagName, displayTitle, el.loc.start, enhancer));
   }
 }
 
@@ -410,7 +435,6 @@ function buildViolation(
   title: string,
   loc: { line: number; column: number },
   enhancer: EnhancerSignal | null,
-  textEqualsTitle: boolean,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
@@ -442,7 +466,7 @@ function buildViolation(
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `${baseMessage}${gateClause}${enrichmentClause}`,
-    suggestion: buildSuggestion(tag, display, textEqualsTitle),
+    suggestion: buildSuggestion(tag, display),
     // Conditional spread — `couldBeWrongBecause: []` would be a dishonest
     // empty-vs-unpopulated sentinel per CLAUDE.md §1.
     ...(enhancer === null ? {} : { couldBeWrongBecause: [TOOLTIP_JS_ENHANCER_PRESENT] }),
@@ -451,15 +475,15 @@ function buildViolation(
 
 /**
  * Visible-text vs. title equivalence: trimmed, case-insensitive
- * comparison. When equal, the element already has the accessible name
- * the "visible text label" and "aria-label" alternatives recommend —
- * suggesting them again would re-state the existing DOM state. The rule
- * still fires (the underlying issue is keyboard-dismiss, not the
- * accessible name), but the suggestion drops the redundant alternatives
- * and offers only the tooltip-library upgrade path.
+ * comparison. When equal, the title duplicates the visible label
+ * exactly — no additional content is presented on hover, so the
+ * SC 1.4.13 dismissability/hoverability/persistence tests do not apply.
+ * The rule suppresses on this branch (rule-level skip in
+ * `checkHtml` / `checkJsx`); a separate `parsing/redundant-title-attribute`
+ * concern may surface that as a best-practice nudge in the future.
  *
- * Empty `text` → false: a present visible label is a precondition; an
- * empty body means there is no visible text to *be* equivalent.
+ * Empty `text` → false: there is no visible text to *be* equivalent,
+ * so the rule fires as before.
  */
 function isTextEquivalentToTitle(text: string, title: string): boolean {
   const t = text.trim();
@@ -468,18 +492,14 @@ function isTextEquivalentToTitle(text: string, title: string): boolean {
 }
 
 /**
- * Compose the fix suggestion. When the visible text already equals the
- * `title` value, the "visible text label" and "aria-label" alternatives
- * are no-ops on the existing DOM, so we emit only the
- * tooltip-library/keyboard-dismiss upgrade path. Otherwise we keep the
- * full three-alternative menu — the agent picks whichever fits the call
- * site. Per `docs/kb/architecture/ai-first-consumer.md` "the tool must
- * not suggest alternatives that re-state the existing state of the DOM."
+ * Compose the three-alternative fix suggestion: visible text label,
+ * aria-label, or a custom tooltip component. The agent picks whichever
+ * fits the call site. The title-equals-visible-text branch is handled
+ * upstream (rule-level suppression in `checkHtml` / `checkJsx`), so
+ * by the time `buildSuggestion` is called the visible text definitely
+ * does not already convey the title content.
  */
-function buildSuggestion(tag: string, display: string, textEqualsTitle: boolean): string {
-  if (textEqualsTitle) {
-    return `The visible text on this <${tag}> already matches title="${display}", so the accessible name is fine — the WCAG 1.4.13 failure is the title-only tooltip behavior (no keyboard dismiss, vanishes on pointer approach, no touch/AT support). Either remove the redundant title attribute (the visible label already conveys the same string) or replace the native tooltip with a custom tooltip component that supports Escape-to-dismiss, hover-bridging, and stays visible until the trigger loses focus.`;
-  }
+function buildSuggestion(tag: string, display: string): string {
   return `Replace title="${display}" on this <${tag}> with one of: (a) a visible text label inside the element, (b) aria-label="${display}" if a visible label is impractical, or (c) a custom tooltip component that supports Escape-to-dismiss, hover-bridging, and stays visible until the trigger loses focus. The native title attribute remains acceptable on non-interactive elements like <abbr> for term expansion.`;
 }
 

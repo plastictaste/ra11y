@@ -297,9 +297,13 @@ describe("propose_baseline: dedupe by findingId", () => {
   // therefore the same findingId; the handler must dedupe to one.
   it("collapses violations that share a findingId to a single proposed entry", async () => {
     await withScratch(async (dir) => {
+      // Titles are kept distinct from visible text so the
+      // tooltip/dismissable rule actually fires — the title-equals-
+      // visible-text gate suppresses elements where the trimmed
+      // case-insensitive textContent matches the title attribute.
       await writeFile(
         join(dir, "tooltip.html"),
-        '<!DOCTYPE html><html><head></head><body><button title="a">A</button><button title="b">B</button><button title="c">C</button></body></html>\n',
+        '<!DOCTYPE html><html><head></head><body><button title="alpha tooltip">A</button><button title="beta tooltip">B</button><button title="gamma tooltip">C</button></body></html>\n',
       );
       const body = await callTool(dir);
       const tooltipEntries = body.proposed.filter((e) => e.ruleId === "tooltip/dismissable");
