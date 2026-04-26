@@ -63,6 +63,7 @@ import { rule as reflowHardcodedWidth } from "./layout/reflow-hardcoded-width.ts
 import { rule as textSpacing } from "./layout/text-spacing.ts";
 import { rule as altTextMissing } from "./media/alt-text-missing.ts";
 import { rule as altTextPlaceholder } from "./media/alt-text-placeholder.ts";
+import { rule as audioControlsOrTranscriptMissing } from "./media/audio-controls-or-transcript-missing.ts";
 import { rule as audioVideoNoControls } from "./media/audio-video-no-controls.ts";
 import { rule as autoplaySound } from "./media/autoplay-sound.ts";
 import { rule as svgAccessibleName } from "./media/svg-accessible-name.ts";
@@ -114,6 +115,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   animationFromInteractions,
   ariaInvalidMissing,
   asteriskRequiredMarker,
+  audioControlsOrTranscriptMissing,
   audioVideoNoControls,
   autocompleteMissing,
   autoplaySound,
@@ -216,6 +218,7 @@ export {
   animationFromInteractions,
   ariaInvalidMissing,
   asteriskRequiredMarker,
+  audioControlsOrTranscriptMissing,
   audioVideoNoControls,
   autocompleteMissing,
   autoplaySound,
