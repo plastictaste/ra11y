@@ -71,6 +71,16 @@ export interface DedupedReviewCandidate {
    * groups; omitted on singletons.
    */
   readonly sourceCount?: number;
+  /**
+   * Byte offset of the literal token the finder matched, when known.
+   * Pairs with {@link DedupedReviewCandidate#matchLength} — passed through
+   * verbatim from the source candidate so a downstream consumer (CLI
+   * `--format agent`, custom formatter) can re-derive a tight snippet
+   * even after the cross-standard fold.
+   */
+  readonly matchOffset?: number;
+  /** Byte length of the matched token; pairs with `matchOffset`. */
+  readonly matchLength?: number;
 }
 
 /**
@@ -94,6 +104,8 @@ export function dedupeReviewCandidatesForSingleFile(
       vendorPathHint: boolean | undefined;
       durationLiteralMs: number | "non-literal" | undefined;
       sourceCount: number | undefined;
+      matchOffset: number | undefined;
+      matchLength: number | undefined;
       order: number;
     }
   >();
@@ -127,6 +139,11 @@ export function dedupeReviewCandidatesForSingleFile(
       // sourceCount mirrors siblingOccurrences for stem-deduped
       // candidates; preserved verbatim across the cross-standard fold.
       sourceCount: c.sourceCount,
+      // Pass-through of the literal match offset/length so downstream
+      // consumers can rebuild a tight snippet even after the cross-
+      // standard fold collapsed N per-criterion copies into one.
+      matchOffset: c.matchOffset,
+      matchLength: c.matchLength,
       order: nextOrder++,
     });
   }
@@ -146,5 +163,7 @@ export function dedupeReviewCandidatesForSingleFile(
       ...(g.vendorPathHint ? { vendorPathHint: g.vendorPathHint } : {}),
       ...(g.durationLiteralMs === undefined ? {} : { durationLiteralMs: g.durationLiteralMs }),
       ...(g.sourceCount === undefined ? {} : { sourceCount: g.sourceCount }),
+      ...(g.matchOffset === undefined ? {} : { matchOffset: g.matchOffset }),
+      ...(g.matchLength === undefined ? {} : { matchLength: g.matchLength }),
     }));
 }

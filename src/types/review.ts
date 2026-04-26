@@ -153,6 +153,34 @@ export interface ReviewCandidate {
    * a heuristic on weaker evidence.
    */
   readonly sourceCount?: number;
+  /**
+   * Byte offset (0-based, into the file's `source` string) of the
+   * literal token the finder matched. When present alongside
+   * {@link ReviewCandidate#matchLength}, the snippet builder can anchor
+   * a tight clamped window on the matched evidence (the literal
+   * sentence/clause containing the match) rather than emitting a
+   * fixed-width ±N-line window — addressing the "snippet doesn't show
+   * the matched evidence" failure mode the agent hits when the cited
+   * `line` carries multiple sentences and the fixed window picks the
+   * wrong one.
+   *
+   * Present-when-meaningful per CLAUDE.md §1 — finders that don't track
+   * the literal byte offset (AST-element finders that emit at the
+   * element's source position rather than a regex match offset) omit
+   * the field. The snippet builder falls back to its existing
+   * fixed-window mode when the pair is absent. Strictly additive: never
+   * gates suppression, never alters confidence.
+   */
+  readonly matchOffset?: number;
+  /**
+   * Byte length of the literal token at {@link ReviewCandidate#matchOffset}.
+   * Pairs with that field — both must be present together for the tight-
+   * snippet path to fire. Omitted alongside `matchOffset` (per the
+   * "present-when-meaningful" rule); a `matchOffset` without a
+   * `matchLength` is treated as "no anchor" and falls back to the
+   * fixed-window snippet builder.
+   */
+  readonly matchLength?: number;
 }
 
 /** Scope for a candidate finder — same semantics as RuleScope minus "project". */

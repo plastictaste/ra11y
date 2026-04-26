@@ -826,4 +826,44 @@ describe("review/timing", () => {
       expect(minIdx).toBeGreaterThan(durationIdx);
     });
   });
+
+  describe("matchOffset / matchLength (tight-snippet anchoring)", () => {
+    // The finder threads the literal byte offset of the matched
+    // `setTimeout(` / `setInterval(` token so the snippet builder can
+    // anchor a tight window on the exact call site rather than emit a
+    // fixed-width ±3-line window. Per ai-first-consumer.md the agent
+    // reads the pair as additive structured evidence, never gates on it.
+
+    it("emits matchOffset and matchLength on every JS-call candidate", () => {
+      const src = `setTimeout(() => tick(), 100);`;
+      const out = runFinder(finder, src);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.matchOffset).toBe(0);
+      expect(hit?.matchLength).toBe("setTimeout(".length);
+    });
+
+    it("two same-line matches carry distinct matchOffsets", () => {
+      const src = `var x=1;setTimeout(a,1);setTimeout(b,2);`;
+      const out = runFinder(finder, src);
+      const offsets = new Set(
+        out
+          .filter((c) => c.reason.includes("setTimeout") && typeof c.matchOffset === "number")
+          .map((c) => c.matchOffset),
+      );
+      expect(offsets.size).toBeGreaterThanOrEqual(2);
+    });
+
+    it("does NOT attach matchOffset/matchLength to <meta refresh> candidates", () => {
+      const out = runFinder(finder, `<meta http-equiv="refresh" content="30; url=/next">`, {
+        filePath: "a.html",
+      });
+      // <meta refresh> uses the AST element's source position, not a
+      // regex match offset — fields stay omitted (present-when-
+      // meaningful per CLAUDE.md §1).
+      for (const hit of out) {
+        expect(hit.matchOffset).toBeUndefined();
+        expect(hit.matchLength).toBeUndefined();
+      }
+    });
+  });
 });

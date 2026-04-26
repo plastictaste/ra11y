@@ -104,6 +104,74 @@ export function buildSnippet(source: string, line: number): string | undefined {
   return buildFixedWindow(source, line, SNIPPET_NARROW_LINES, SNIPPET_NARROW_CHAR_CAP);
 }
 
+/**
+ * Char radius for the tight-anchor snippet. ±40 chars around the match
+ * is enough to cover a typical sentence/clause containing a regex hit
+ * (e.g. `"the button below"` plus surrounding wording) while staying
+ * well under the narrow-mode cap so the snippet doesn't bleed into
+ * neighboring statements on minified or single-line files.
+ */
+const TIGHT_SNIPPET_CHAR_RADIUS = 40;
+
+/**
+ * Tight snippet anchored at the literal byte offset the finder matched.
+ * Returns just the line containing the match, clamped on both sides to
+ * a small character window centered on the match — avoiding the
+ * "snippet shows a different sentence on the same line" failure mode
+ * that bites when a fixed-width line window picks the wrong clause for
+ * regex/text-match-based finders. Strictly tighter than the ±3-line
+ * default; falls back to the fixed-line window via `undefined` return
+ * when offsets are out of bounds or the line is unrecoverable.
+ *
+ * @param source - Full file source as held in `ParsedFile.source`.
+ * @param matchOffset - 0-based byte offset of the literal token within
+ *   the source string.
+ * @param matchLength - Byte length of the matched token. Used to grow
+ *   the window when the match itself is wider than the radius (e.g.
+ *   long sponsor-name string).
+ * @returns A single-line string containing the matched evidence,
+ *   prefixed/suffixed with `…` ellipses when the line was clipped, or
+ *   `undefined` when the input is unusable.
+ */
+export function buildTightLineSnippet(
+  source: string,
+  matchOffset: number,
+  matchLength: number,
+): string | undefined {
+  if (typeof source !== "string" || source.length === 0) return undefined;
+  if (
+    !Number.isInteger(matchOffset) ||
+    matchOffset < 0 ||
+    matchOffset >= source.length ||
+    !Number.isInteger(matchLength) ||
+    matchLength < 0
+  ) {
+    return undefined;
+  }
+  // Find the bounds of the line containing matchOffset.
+  let lineStart = matchOffset;
+  while (lineStart > 0 && source.charCodeAt(lineStart - 1) !== 10 /* \n */) {
+    lineStart -= 1;
+  }
+  let lineEnd = matchOffset;
+  while (lineEnd < source.length && source.charCodeAt(lineEnd) !== 10) {
+    lineEnd += 1;
+  }
+  const matchEnd = Math.min(lineEnd, matchOffset + Math.max(0, matchLength));
+  // Center the window on the match, growing by the radius on either side.
+  const desiredStart = Math.max(lineStart, matchOffset - TIGHT_SNIPPET_CHAR_RADIUS);
+  const desiredEnd = Math.min(lineEnd, matchEnd + TIGHT_SNIPPET_CHAR_RADIUS);
+  if (desiredEnd <= desiredStart) return undefined;
+  const slice = source.slice(desiredStart, desiredEnd);
+  if (slice.length === 0) return undefined;
+  const prefix = desiredStart > lineStart ? "…" : "";
+  const suffix = desiredEnd < lineEnd ? "…" : "";
+  // Strip leading whitespace on the slice when we're at the line start
+  // — keeps the snippet readable when the indentation is large.
+  const trimmed = prefix === "" ? slice.replace(/^\s+/, "") : slice;
+  return `${prefix}${trimmed}${suffix}`;
+}
+
 /** Input to {@link buildSnippetForReason}. */
 export interface SnippetForReasonInput {
   readonly source: string;

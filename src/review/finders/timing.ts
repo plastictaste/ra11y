@@ -278,6 +278,13 @@ function emitJsCandidates(
       confidence: "medium",
       ...(vendorPathHint ? { vendorPathHint: true } : {}),
       ...(durationLiteralMs === undefined ? {} : { durationLiteralMs }),
+      // Anchor a tight snippet on the literal `setTimeout(` / `setInterval(`
+      // token. The matcher already knows the byte offset and the keyword
+      // length; emitting both lets the snippet builder show the matched
+      // call site rather than a fixed ±3-line window that can pick the
+      // wrong sibling on dense single-line minified files.
+      matchOffset: offset,
+      matchLength,
     });
   }
 }

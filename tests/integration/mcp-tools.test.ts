@@ -1540,17 +1540,17 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(typeof body.summary.untargetedCriteria).toBe("number");
   });
 
-  it("checklist annotates candidates that span multiple criteria with criteriaIds", async () => {
+  it("checklist annotates candidates that span multiple criteria with criteria array", async () => {
     // V1-CHECKLIST-CRITERION-GROUP-DEDUP: a <video> element surfaces
     // under wcag22:1.2.1 / 1.2.3 / 1.2.5 as separate items. Previously
     // the same file:line was re-read three times. The candidate now
-    // carries `criteriaIds: [...]` listing every criterion it covers
+    // carries `criteria: [...]` listing every criterion it covers
     // so an agent walks the group once. Items stay per-criterion
     // (ADR 0010 cross-tool invariant); the annotation is the dedup
     // signal the agent consumes.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir: _tmpdir } = await import("node:os");
-    const dir = await mkdtemp(join(_tmpdir(), "ra11y-criteriaIds-"));
+    const dir = await mkdtemp(join(_tmpdir(), "ra11y-criteria-"));
     await writeFile(
       join(dir, "page.html"),
       `<html><body><video src="x.mp4"></video></body></html>`,
@@ -1562,18 +1562,18 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         candidates: Array<{
           path: string;
           line: number;
-          criteriaIds?: readonly string[];
+          criteria?: readonly string[];
         }>;
       }>;
     };
-    // At least one candidate should carry criteriaIds spanning the
-    // 1.2.x family the media fixture surfaces.
+    // At least one candidate should carry the `criteria` array spanning
+    // the 1.2.x family the media fixture surfaces.
     const annotated = bodyData.items
       .flatMap((i) => i.candidates)
-      .filter((c) => Array.isArray(c.criteriaIds));
+      .filter((c) => Array.isArray(c.criteria));
     expect(annotated.length).toBeGreaterThan(0);
     for (const c of annotated) {
-      expect((c.criteriaIds ?? []).length).toBeGreaterThanOrEqual(2);
+      expect((c.criteria ?? []).length).toBeGreaterThanOrEqual(2);
     }
   });
 

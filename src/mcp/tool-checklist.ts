@@ -31,7 +31,12 @@ import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./
 import { outputFilePathSet } from "./scan-assembly.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
-import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
+import {
+  buildSnippetForReason,
+  buildTightLineSnippet,
+  type SourceEntry,
+  sourceIndex,
+} from "./source-snippet.ts";
 import { deriveTestableCriteria } from "./testable-criteria.ts";
 import {
   errorResult,
@@ -90,24 +95,39 @@ interface ChecklistCandidateOut {
   /**
    * Source-level `ra11y-disable` pragma spellings for the four comment
    * dialects the inline-disable parser accepts. Scoped to the owning
-   * criterion ID (or, when {@link ChecklistCandidateOut#criteriaIds}
+   * criterion ID (or, when {@link ChecklistCandidateOut#criteria}
    * lists multiple criteria, to the first criterion — see that field's
    * note on dedup). Always present so an agent dismissing in source
    * has the ready-to-paste form regardless of file type.
    */
   readonly suppressWith: SuppressWith;
   /**
-   * Extra criterion IDs this candidate also covers (beyond the owning
-   * item's `criterionId`). Present when the scanner emits the same
-   * file:line + reason under multiple criteria — e.g. a `<video>` at
-   * `Home.tsx:42` that surfaces under `wcag22:1.2.1` / `1.2.3` /
-   * `1.2.5` once each. Previously three separate item entries sharing
-   * one line; now one emitted candidate + `criteriaIds: [...ids...]`.
-   * Always populated with at least the owning `criterionId` when ≥1
-   * extra criterion shares the location. Omitted (present-when-
-   * meaningful per CLAUDE.md §1) when the candidate is single-criterion.
+   * Every criterion ID this candidate covers, sorted, when the same
+   * `(path, line, reason)` evidence supports more than one criterion —
+   * e.g. a `<video>` at `Home.tsx:42` that surfaces under `wcag22:1.2.1`
+   * / `1.2.3` / `1.2.5`. Previously three separate item entries sharing
+   * one line; now one emitted shape + `criteria: [...ids...]` so the
+   * agent reads the dedup signal as a typed list rather than parsing
+   * "this row also matches…" reason text. Always populated with ≥2 IDs
+   * when present; omitted (present-when-meaningful per CLAUDE.md §1)
+   * when the candidate is single-criterion.
+   *
+   * The candidate still ships on every owning item per ADR 0010's
+   * cross-tool count invariant (`coverage.manualWithCandidates`-vs-
+   * `checklist.items` parity is load-bearing — see
+   * `tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts`).
+   * The `criteria: [...]` array is the agent-side dedup tool: walk the
+   * group once via the array rather than re-reading the same file:line
+   * under N items.
+   *
+   * Renamed from `criteriaIds` (2026-04-26) — the new name makes the
+   * field a closer mirror of `Violation.criteria` on the rule surface
+   * (same shape, same semantics) and removes the awkward singular/
+   * plural mismatch between `criterionId` (the owning item's ID) and
+   * the array of co-covered criteria. No alias; this is a flat rename
+   * before the field had downstream consumers outside the MCP response.
    */
-  readonly criteriaIds?: readonly string[];
+  readonly criteria?: readonly string[];
   /**
    * Structured vendor-path-shape evidence passed through from the
    * finder (see `ReviewCandidate.vendorPathHint`). True when the cited
@@ -351,7 +371,7 @@ export const checklistTool: McpTool = {
   def: {
     name: "checklist",
     description:
-      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: { html, jsx, liquid, hugo }` — ready-to-paste `ra11y-disable` pragma spellings scoped to the owning criterion. When one file:line covers multiple criteria, it ships once with `criteriaIds: [...]` instead of repeating as separate item entries.",
+      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: { html, jsx, liquid, hugo }` — ready-to-paste `ra11y-disable` pragma spellings scoped to the owning criterion. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
     inputSchema: {
       type: "object",
       properties: {
@@ -536,7 +556,7 @@ export const checklistTool: McpTool = {
     const keep = (i: { criterionId: string }) =>
       skipSet === undefined || !skipSet.has(i.criterionId);
     // V1-CHECKLIST-CRITERION-GROUP-DEDUP: annotate candidates whose
-    // (file, line, reason) surfaces under ≥2 items with `criteriaIds:
+    // (file, line, reason) surfaces under ≥2 items with `criteria:
     // [...]` so an agent walking a shared candidate reads one entry
     // per location and knows which criteria it covers. Items stay
     // per-criterion (ADR 0010 cross-tool invariant) — the annotation
@@ -1033,13 +1053,13 @@ function mapCandidates(
 /**
  * V1-CHECKLIST-CRITERION-GROUP-DEDUP: when a candidate's
  * `(file, line, reason)` surfaces under multiple checklist items,
- * annotate every instance with `criteriaIds: string[]` listing every
+ * annotate every instance with `criteria: string[]` listing every
  * criterion the same location satisfies. This is the agent's signal
  * to dedup downstream: a candidate ships on every owning item (so the
  * per-criterion shape stays intact — `items.length` matches
  * `coverage.manualWithCandidates.length` across tools), but repeated
  * reads of "same file:line under wcag22:1.2.1, then 1.2.3, then 1.2.5"
- * carry the `criteriaIds: [1.2.1, 1.2.3, 1.2.5]` badge so the agent
+ * carry the `criteria: [1.2.1, 1.2.3, 1.2.5]` badge so the agent
  * walks the group once rather than three times.
  *
  * Per CLAUDE.md §1 "Ambiguous field shapes are dishonest": the field
@@ -1080,7 +1100,7 @@ function annotateSharedCandidates(items: readonly ChecklistItemOut[]): Checklist
       const key = `${c.path}\x00${c.line}\x00${c.reason}`;
       const ids = byKey.get(key);
       if (ids === undefined || ids.length <= 1) return c;
-      return { ...c, criteriaIds: [...ids] };
+      return { ...c, criteria: [...ids].sort() };
     }),
   }));
 }
@@ -1092,6 +1112,18 @@ function finderOrBuiltSnippet(
   if (typeof c.snippet === "string" && c.snippet.length > 0) return c.snippet;
   const entry = sources.get(c.location.filePath);
   if (entry === undefined) return undefined;
+  // Tight-snippet path: when the finder threaded the literal byte
+  // offset of the matched token (regex / text-match-based finders that
+  // know the exact span — `setTimeout(...)`, sensory-keyword phrases),
+  // anchor the snippet on the match so the cited line and the snippet's
+  // visible content describe the same evidence. Falls through to the
+  // fixed-window builder when offsets are absent (AST-element finders
+  // that emit at the element's source position) — preserves existing
+  // behavior for finders that haven't opted into the offset shape.
+  if (typeof c.matchOffset === "number" && typeof c.matchLength === "number") {
+    const tight = buildTightLineSnippet(entry.source, c.matchOffset, c.matchLength);
+    if (tight !== undefined) return tight;
+  }
   return buildSnippetForReason({
     source: entry.source,
     line: c.location.line,

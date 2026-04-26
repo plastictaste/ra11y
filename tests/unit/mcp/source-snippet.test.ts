@@ -15,6 +15,7 @@ import { describe, expect, it } from "bun:test";
 import {
   buildSnippet,
   buildSnippetForReason,
+  buildTightLineSnippet,
   findEnclosingBlock,
   sourceIndex,
 } from "../../../src/mcp/source-snippet.ts";
@@ -361,6 +362,45 @@ describe("buildSnippetForReason: TSX/JSX/TS/JS wide path uses brace-balance", ()
     // ±10 fallback — the whole file fits in the window.
     expect(snippet?.includes("<!doctype html>")).toBe(true);
     expect(snippet?.includes("</html>")).toBe(true);
+  });
+});
+
+describe("buildTightLineSnippet", () => {
+  it("returns the line containing the match clipped around the offset", () => {
+    const source = [
+      "alpha bravo",
+      "this is a sentence with setTimeout(fn, 500); more here",
+      "tail",
+    ].join("\n");
+    const matchOffset = source.indexOf("setTimeout");
+    const matchLength = "setTimeout".length;
+    const snippet = buildTightLineSnippet(source, matchOffset, matchLength);
+    expect(snippet).toBeDefined();
+    // The snippet must contain the matched token (the literal sentence/clause).
+    expect(snippet?.includes("setTimeout")).toBe(true);
+    // It must not bleed into adjacent lines.
+    expect(snippet?.includes("alpha bravo")).toBe(false);
+    expect(snippet?.includes("tail")).toBe(false);
+  });
+
+  it("anchors to the matched token when two same-line clauses exist", () => {
+    // Two sentences on one line — anchored snippet must show the
+    // matched clause, not whichever the fixed-window builder picks.
+    const source = "the quick brown fox jumps over. the lazy dog setTimeout(go, 1) wakes up.";
+    const matchOffset = source.indexOf("setTimeout");
+    const snippet = buildTightLineSnippet(source, matchOffset, "setTimeout".length);
+    expect(snippet).toBeDefined();
+    expect(snippet?.includes("setTimeout")).toBe(true);
+    // The default ±40-radius window starts well after "the quick brown fox"
+    // because the match is past character 60.
+    expect(snippet?.startsWith("…")).toBe(true);
+  });
+
+  it("returns undefined for out-of-bounds or empty input", () => {
+    expect(buildTightLineSnippet("", 0, 5)).toBeUndefined();
+    expect(buildTightLineSnippet("hello", -1, 1)).toBeUndefined();
+    expect(buildTightLineSnippet("hello", 100, 1)).toBeUndefined();
+    expect(buildTightLineSnippet("hello", 0, -1)).toBeUndefined();
   });
 });
 
