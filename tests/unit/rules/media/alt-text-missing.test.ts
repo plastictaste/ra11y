@@ -237,6 +237,84 @@ describe("rule media/alt-text-missing", () => {
     });
   });
 
+  describe("message reason drops the quoted identifier for placeholder-image src", () => {
+    // The companion to the suggestion-side guard above. The rule's
+    // `message` (== `reason` on the surfaced finding) previously
+    // quoted the URL basename as a meaningful identifier — for
+    // `http://placehold.it/700x400` that produced `<img> '700x400' is
+    // missing ...`, treating the dimension token as if it named the
+    // asset. Reason-enrichment fix: drop the quoted token and add
+    // "src looks like a placeholder image" as additive context. The
+    // candidate stays — only the framing of the reason changes.
+
+    it("drops the dimensions-token identifier from <img> message (placehold.it)", () => {
+      const violations = runRule(rule, `<img src="http://placehold.it/700x400">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("'700x400'");
+      expect(violations[0]?.message).toContain("src looks like a placeholder image");
+    });
+
+    it("drops the identifier for via.placeholder.com host", () => {
+      const violations = runRule(rule, `<img src="https://via.placeholder.com/150">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("'150'");
+      expect(violations[0]?.message).toContain("src looks like a placeholder image");
+    });
+
+    it("drops the identifier for picsum.photos host with a dimension path", () => {
+      const violations = runRule(rule, `<img src="https://picsum.photos/200/300">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("src looks like a placeholder image");
+    });
+
+    it("drops the identifier for an extension-less NxN basename", () => {
+      // No host match, but the basename `400x200` is dimension-only —
+      // the rule should still recognize this as placeholder-shaped.
+      const violations = runRule(rule, `<img src="/cdn/mock/400x200">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("'400x200'");
+      expect(violations[0]?.message).toContain("src looks like a placeholder image");
+    });
+
+    it("drops the identifier in the JSX path too", () => {
+      const violations = runRule(rule, `const X = <img src="http://placehold.it/700x400" />;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("'700x400'");
+      expect(violations[0]?.message).toContain("src looks like a placeholder image");
+    });
+
+    it("drops the identifier in the SVG <image> branch", () => {
+      const violations = runRule(rule, `<svg><image href="http://placehold.it/700x400"/></svg>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).not.toContain("'700x400'");
+      expect(violations[0]?.message).toContain("src looks like a placeholder image");
+    });
+
+    it("preserves the quoted identifier for a real descriptive filename (negative control)", () => {
+      // Negative control: a real CDN-hosted asset with a descriptive
+      // basename should still echo the filename — the placeholder
+      // signal must NOT fire on legitimate URLs.
+      const violations = runRule(
+        rule,
+        `<img src="https://cdn.example.com/revenue-chart-2026.png">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("'revenue-chart-2026.png'");
+      expect(violations[0]?.message).not.toContain("src looks like a placeholder image");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares both wcag22:1.1.1 and wcag21:1.1.1", () => {
       expect(rule.satisfies).toContain("wcag22:1.1.1");

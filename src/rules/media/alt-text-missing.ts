@@ -491,6 +491,16 @@ function emitJsxViolation(element: JsxElement, kind: SurfaceKind, emit: Emit): v
 function buildMessage(kind: SurfaceKind, tagName: string, src: string | null): string {
   if (kind === "svg-image") {
     if (src) {
+      // When the href is a placeholder-image URL (dimensions-only
+      // basename like `700x400`, a known placeholder host, or an
+      // extension-less mock path), quoting it as `'700x400'` reads
+      // as if the dimension token were a meaningful identifier.
+      // Drop the quoted identifier and surface the placeholder
+      // signal as additive context so the agent can decide whether
+      // the asset is real or stand-in.
+      if (isPlaceholderImageSrc(src)) {
+        return `SVG <image> is missing a text alternative — screen readers have no way to announce what the image represents (src looks like a placeholder image).`;
+      }
       // `name` derives from a user-authored `src` URL/path — long
       // filenames (data URLs, signed URLs) would otherwise blow the
       // echo size; cap before interpolation.
@@ -506,6 +516,15 @@ function buildMessage(kind: SurfaceKind, tagName: string, src: string | null): s
     return `<canvas> has neither fallback content nor an accessible name — assistive technology cannot describe what is rendered.`;
   }
   if (src) {
+    // Same dimension-token-as-identifier concern as the SVG branch:
+    // `<img src="http://placehold.it/700x400">` would otherwise
+    // produce `<img> '700x400' is missing ...`, treating the
+    // dimension blob as a meaningful name. Drop the quoted
+    // identifier and surface the placeholder signal as additive
+    // context.
+    if (isPlaceholderImageSrc(src)) {
+      return `<${tagName}> is missing a text alternative — screen readers will announce the file name or nothing at all (src looks like a placeholder image).`;
+    }
     const name = truncateForEcho(filenameFromPath(src));
     return `<${tagName}> '${name}' is missing a text alternative — screen readers will announce the file name or nothing at all.`;
   }
@@ -618,4 +637,71 @@ function isPlaceholderBasename(filename: string): boolean {
     if (pattern.test(stripped)) return true;
   }
   return false;
+}
+
+/**
+ * Known placeholder-image hostnames. Hits any of these and the URL is
+ * (by industry convention) a stand-in asset — no descriptive payload.
+ * A subdomain match (`fastly.placehold.co`) counts; the suffix bound
+ * keeps `myplacehold.it.example.com` from false-positiving.
+ */
+const PLACEHOLDER_IMAGE_HOSTS: readonly string[] = [
+  "placehold.it",
+  "placehold.co",
+  "placeholder.com",
+  "via.placeholder.com",
+  "picsum.photos",
+  "lorempixel.com",
+  "loremflickr.com",
+  "dummyimage.com",
+  "unsplash.it",
+];
+
+/**
+ * True when the `src` URL (or path) is shaped like a placeholder image
+ * reference whose basename / host carries no descriptive payload.
+ * Used by `buildMessage` to drop the quoted-identifier portion of the
+ * reason text — quoting a dimension token like `'700x400'` as if it
+ * named the asset misleads the agent reading the finding.
+ *
+ * Three triggers, evaluated in this order:
+ *
+ *   1. Known placeholder host (`placehold.it`, `via.placeholder.com`,
+ *      `picsum.photos`, etc.) — the host alone is enough; path shape
+ *      doesn't matter.
+ *   2. Extension-less basename matching `/^\d+x\d+$/` — covers
+ *      `placehold.it/700x400` and any CDN that serves a dimension-only
+ *      path.
+ *   3. Existing `isPlaceholderBasename` sieve — basename matches a
+ *      placeholder-shaped pattern (dimensions with extension,
+ *      `placeholder.png`, `IMG_2026.jpg`, lorem-ipsum filler, etc.).
+ */
+function isPlaceholderImageSrc(src: string): boolean {
+  const host = hostFromUrl(src);
+  if (host !== null) {
+    for (const knownHost of PLACEHOLDER_IMAGE_HOSTS) {
+      if (host === knownHost || host.endsWith(`.${knownHost}`)) return true;
+    }
+  }
+  const filename = filenameFromPath(src);
+  return isPlaceholderBasename(filename);
+}
+
+/**
+ * Best-effort hostname extraction without `URL` (which would require
+ * absolute URLs). Returns `null` for relative paths and anything that
+ * doesn't look URL-shaped. Lowercase-normalized for host comparison.
+ */
+function hostFromUrl(src: string): string | null {
+  // Accept `http://`, `https://`, and protocol-relative `//host/...`.
+  const match = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/([^/?#]+)/.exec(src);
+  if (match === null) return null;
+  const host = match[1];
+  if (host === undefined || host.length === 0) return null;
+  // Strip user:pass@ and :port if present.
+  const atIndex = host.lastIndexOf("@");
+  const noAuth = atIndex === -1 ? host : host.slice(atIndex + 1);
+  const colonIndex = noAuth.indexOf(":");
+  const noPort = colonIndex === -1 ? noAuth : noAuth.slice(0, colonIndex);
+  return noPort.toLowerCase();
 }
