@@ -8,6 +8,7 @@
 import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
+import type { Violation } from "../types/violation.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
@@ -112,24 +113,7 @@ export const coverageTool: McpTool = {
     });
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
-    // Per-severity criterion sets used to split the
-    // legacy `failingCriteria` lump into honest fields. The internal
-    // `c.failingCriteria` set treats any non-info violation as
-    // "failing" — that conflates an `error`-severity blocker with a
-    // single `warning`-severity nudge under one label whose name
-    // (`failingAutomatedCriteria`) reads as test-runner fail/pass.
-    // Split at the tool boundary so the response carries discriminator
-    // info; the internal report shape stays unchanged because
-    // `certification.ts` and the CLI `coverage` command consume
-    // `failingCriteria` as a union-of-blockers count by design (any
-    // non-info finding still surfaces as a blocking item there).
-    const criteriaWithErrorViolations = new Set<string>();
-    for (const violation of result.violations) {
-      if (violation.severity !== "error") continue;
-      for (const criterionId of violation.criteria) {
-        criteriaWithErrorViolations.add(criterionId);
-      }
-    }
+    const criteriaWithErrorViolations = collectErrorSeverityCriteria(result.violations);
     const applicability = detectApplicability(files, discoveryDiagnostics);
     // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
     // perRuleCoverage so the coverage report can split automatable-pass
@@ -171,24 +155,10 @@ export const coverageTool: McpTool = {
       const { applicable, likelyIrrelevant } = splitManualCriteria(c.manualCriteria, applicability);
       const withCandidates = applicable.filter((id) => candidateCriteria.has(id));
       const untargeted = applicable.filter((id) => !candidateCriteria.has(id));
-      // Q11-COVERAGE-FAILINGAUTOMATEDCRITERIA-NAME-CONFLATES-SEVERITY:
-      // split `c.failingCriteria` (criteria with ≥1 non-info emission)
-      // by per-criterion error presence. A criterion lands in the
-      // tightened `failingAutomatedCriteria` only when ≥1 of its
-      // emissions was `severity: "error"`; criteria whose only
-      // emissions are `severity: "warning"` move to the new
-      // `warningAutomatedCriteria` field. The two arrays partition
-      // `c.failingCriteria` (no overlap, no orphans) so the legacy
-      // count splits exactly between the discriminator fields.
-      const failingErrorIds: string[] = [];
-      const warningOnlyIds: string[] = [];
-      for (const criterionId of c.failingCriteria) {
-        if (criteriaWithErrorViolations.has(criterionId)) {
-          failingErrorIds.push(criterionId);
-        } else {
-          warningOnlyIds.push(criterionId);
-        }
-      }
+      const { failingErrorIds, warningOnlyIds } = splitFailingByErrorPresence(
+        c.failingCriteria,
+        criteriaWithErrorViolations,
+      );
       return {
         standardId: c.standardId,
         // Named so the denominator is unmistakable: it's the share of
@@ -667,4 +637,56 @@ function countFilesByExtension(files: readonly ParsedFile[]): Record<string, num
     counts.set(ext, (counts.get(ext) ?? 0) + 1);
   }
   return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/**
+ * Indexes the criteria touched by ≥1 `error`-severity violation so the
+ * `failingAutomatedCriteria` field at the tool boundary can be tightened
+ * to error-only emissions. Warning-severity emissions are excluded by
+ * design — they ride alongside under `warningAutomatedCriteria` via
+ * {@link splitFailingByErrorPresence} so the response carries
+ * discriminator info instead of conflating severities under one label.
+ *
+ * Internal `PerStandardCoverage.failingCriteria` shape is unchanged
+ * (still "every non-info emission") because `certification.ts` and the
+ * CLI `coverage` command consume it as a union-of-blockers count by
+ * design — a warning-severity finding still surfaces as a blocking
+ * item there.
+ */
+function collectErrorSeverityCriteria(violations: readonly Violation[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const violation of violations) {
+    if (violation.severity !== "error") continue;
+    for (const criterionId of violation.criteria) out.add(criterionId);
+  }
+  return out;
+}
+
+/**
+ * Partitions the `PerStandardCoverage.failingCriteria` set (criteria
+ * with ≥1 non-info emission) into the two severity-discriminator lanes
+ * the tool surface emits:
+ *   - `failingErrorIds`: criteria with ≥1 `error`-severity emission;
+ *   - `warningOnlyIds`: criteria whose emissions are all
+ *     `warning`-severity (no error).
+ *
+ * The two arrays partition the input — no overlap, no orphans — so a
+ * caller summing `failingAutomatedCriteria.length +
+ * warningAutomatedCriteria.length` recovers the legacy single-field
+ * count exactly.
+ */
+function splitFailingByErrorPresence(
+  failingCriteria: readonly string[],
+  errorSet: ReadonlySet<string>,
+): { readonly failingErrorIds: readonly string[]; readonly warningOnlyIds: readonly string[] } {
+  const failingErrorIds: string[] = [];
+  const warningOnlyIds: string[] = [];
+  for (const criterionId of failingCriteria) {
+    if (errorSet.has(criterionId)) {
+      failingErrorIds.push(criterionId);
+    } else {
+      warningOnlyIds.push(criterionId);
+    }
+  }
+  return { failingErrorIds, warningOnlyIds };
 }
