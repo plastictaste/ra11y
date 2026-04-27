@@ -89,13 +89,65 @@ Persist this turn's co-firing pairs into the ledger entry's `co_signals[]` field
 
 **Late-arriving correlation half.** If the signal's correlation pair already has a patch in the ledger tail's `writes.harness[]` (the other half was patched on a prior turn), do NOT emit a separate patch — surface a `findings[].kind: "structural_flag"` with the note `"<this_signal> co-occurs with already-patched <other_signal>; check whether the prior patch covers both halves before patching independently."` Add a self-finding `{ code: "correlated_signals", evidence: "<this_signal> ↔ <other_signal>, prior patch <sha>" }` for next-turn occurrence counts.
 
+## 3b. Evaluate prior patches (patch-effect attribution)
+
+The meta-reviewer auto-commits `chore(meta): <signal_code> patch` when a signal recurs N≥2 times. Without measuring whether the patch actually reduced the signal's rate, a wrong patch sits in the harness forever, eating tokens. This step closes the loop.
+
+For each entry in the ledger tail's `writes.harness[]` whose `commit` SHA still exists on `main` (verify with `git cat-file -e <sha>^{commit} 2>/dev/null`):
+
+1. Identify the patch's signal code from `writes.harness[].signal` and its turn number `T_patch`.
+
+2. **Self-evaluation skip.** If the patch's commit subject contains `harness_patch_no_effect`, skip it. The no-effect commit itself is a meta-observation, not a patch whose effect should be re-evaluated. Without this guard, the agent recurses on its own emissions.
+
+3. **Already-evaluated skip.** If any ledger entry already carries `patch_effect[].patch_sha === <sha>` with `verdict: "effective"`, `"no_effect"`, `"user_reverted"`, or `"aged_out"`, the patch was finalized; skip.
+
+4. **Aged-out check.** If `T_patch < T_now - 19`, the patch is older than the rolling tail. Append a `patch_effect` entry with `verdict: "aged_out"` and stop tracking it. Add a self-finding `{ code: "patch_aged_out", evidence: "<sha>: signal <code>, no verdict reached" }` so the next-turn occurrence count notices when many patches age out without verdicts.
+
+5. **Window check.** Define `pre_window` = turns `[T_patch - 10, T_patch - 1]` and `post_window` = turns `[T_patch + 1, T_patch + 10]`. The post window must be fully covered by ledger entries (10 entries past T_patch); if not, append a `patch_effect` entry with `verdict: "too_early"` and move on. Otherwise compute:
+   - `pre_rate` = (count of `signal` occurrences in pre_window) / (turns in pre_window). Turns where the ledger entry is missing count as 0 occurrences, not as missing data.
+   - `post_rate` = (count of `signal` occurrences in post_window) / (turns in post_window).
+
+6. **Verdict:**
+   - `pre_rate < 2/10` AND `post_rate < 2/10` → `"inconclusive"` (signal too rare to attribute either way; do not write a no-effect record).
+   - `post_rate <= pre_rate * 0.5` → `"effective"`. Persist verdict in the ledger entry; no commit needed. (Gap B's memory consolidation triggers on this verdict — see §8a once that PR lands.)
+   - `post_rate > pre_rate * 0.5` AND `post_rate >= 2/10` → `"no_effect"`. Append a line to `.claude/meta/patch-effects.tsv` (in-repo, append-only) and commit the log change. See §3b step 7.
+
+7. **No-effect log emission.** When verdict is `"no_effect"`:
+   - Append one line to `.claude/meta/patch-effects.tsv`:
+     ```
+     <iso_ts>\t<patch_sha>\t<signal_code>\tno_effect\tpre=<pre_rate>\tpost=<post_rate>\twindow=10
+     ```
+     Tab-separated; no embedded newlines. The log is checked-in append-only; greppable from `git log -p --follow .claude/meta/patch-effects.tsv`.
+   - Commit:
+     ```
+     chore(meta): harness_patch_no_effect <signal_code>
+     
+     Auto-patch <patch_sha> did not reduce <signal_code> rate over a 10-turn
+     post-patch window. pre_rate=<X>, post_rate=<Y>. The original patch
+     remains on main; this commit is informational. Run
+     `git revert <patch_sha>` if you want it gone.
+     ```
+   - Add a self-finding `{ code: "harness_patch_no_effect", evidence: "<patch_sha>: <signal>, pre=<X>, post=<Y>" }` for next-turn occurrence counts.
+
+8. **Cross-machine duplicate suppression.** Before writing the no-effect commit (step 7), run:
+   ```bash
+   git log --all --grep="^chore(meta): harness_patch_no_effect <signal_code>" --grep="<patch_sha>" --all-match --oneline
+   ```
+   If a commit already exists citing this `<patch_sha>`, skip the commit but still persist the verdict locally — the conclusion is already on `main` from another machine. Do not duplicate.
+
+9. **Patch missing from main.** If `git cat-file -e <sha>` fails (the patch was reverted by the user), append a `patch_effect` entry with `verdict: "user_reverted"` and stop tracking it. Don't try to re-evaluate.
+
+Append all evaluations to this turn's ledger entry's `patch_effect[]` (step 10). Verdicts persist locally; the no-effect log/commit propagates via git.
+
 ## 4. Decide routing per signal
 
 Apply this decision tree:
 
+0. **No-effect lock-out** (gates all subsequent rules): for each signal observed this turn, check the ledger and `.claude/meta/patch-effects.tsv` for the most recent `patch_effect` covering this signal code. If a prior patch's verdict was `"no_effect"` and that no-effect commit landed within the last 20 turns, do NOT emit a new harness patch for this signal even if N≥2. Route to memory instead, AND emit a `findings[].kind: "structural_flag"` with note `"Auto-patch <sha> did not reduce <signal> rate (pre=<X>, post=<Y>); root cause may not be a harness mechanism."` Rationale: the previous patch didn't help; a second auto-patch would compound the wrong-direction harness change. **Correlation interaction:** if this signal also appears in this turn's `correlations[]`, append to the structural-flag note: `"co-occurs with <other_signal>; consider patching <other_signal> first instead of re-patching this one."`
+
 1. **Backlog re-open** (always, unconditional): if the integrator skipped a pick due to `cherry_pick_dropped_commits`, `branch_empty_sibling_has_work`, or any signal that suggests the work landed somewhere unexpected — re-open the corresponding `- [ ]` line in `.claude/backlog.md` if the orchestrator marked it closed (verify with `grep` first; the orchestrator does not always close prematurely). Do not re-open if the work cleanly integrated.
 
-2. **Structural flag** (back to user): if the signal indicates a class of problem the harness can't solve mechanically — repeated `classification_mismatch` on the same backlog item, `unknown_state` from the integrator, evidence of an item too large to dispatch — emit it as a `findings[].kind: "structural_flag"` in your return for the orchestrator to surface. Do not auto-patch.
+2. **Structural flag** (back to user): if the signal indicates a class of problem the harness can't solve mechanically — repeated `classification_mismatch` on the same backlog item, `unknown_state` from the integrator, evidence of an item too large to dispatch — emit it as a `findings[].kind: "structural_flag"` in your return for the orchestrator to surface. Do not auto-patch. Also surface as a structural flag any signal where rule 0 fired (no-effect lock-out) — the user needs to know the prior patch didn't help.
 
 3. **Harness patch** (only when ALL of these hold):
    - Occurrence count N ≥ 2 within the last 20 turns.
@@ -124,6 +176,7 @@ The ONLY harness files this agent may edit:
 - `.claude/skills/continue/SKILL.md`
 - `.claude/rules/worktree-discipline.md`
 - `.claude/rules/agent-return-envelope.md`
+- `.claude/meta/patch-effects.tsv` (APPEND-ONLY — `>>` only, never overwrite, never edit existing lines; format documented in §3b step 7)
 
 Anything outside this list — including `CLAUDE.md`, `docs/kb/`, `src/`, `tests/`, other agent files (`rule-implementer.md`, `code-reviewer.md`, etc.) — is forbidden. Lessons targeting those routes to memory or to a `findings[].kind: "structural_flag"`.
 
@@ -199,12 +252,14 @@ echo '<json>' >> .claude/turn-history.jsonl
 Schema (single line, no embedded newlines):
 
 ```json
-{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"signals":[{"code":"...","evidence":"..."}],"co_signals":[["code_a","code_b"]],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"backlog_reopens":[]}}
+{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"signals":[{"code":"...","evidence":"..."}],"co_signals":[["code_a","code_b"]],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"backlog_reopens":[]},"patch_effect":[{"signal":"branch_naming_drift","patch_sha":"a833c2f4","verdict":"no_effect","pre_rate":0.30,"post_rate":0.30,"no_effect_commit":"<sha>"}]}
 ```
 
 The `writes` block records what you actually did this turn — used for cross-turn dedup and for auditing the agent's behavior. Keep evidence strings short (≤200 chars); truncate with `...` if needed.
 
-`co_signals` is **present-when-meaningful** — omit when no pairs in this turn's `signals[]` co-fired. Each entry is a 2-element array of code strings, lexicographically sorted within the pair so cross-turn pair counting is deterministic. Pre-existing ledger entries that lack `co_signals` are read by future turns as "no co-firing pairs recorded for that turn"; the §1a derivation falls back to raw `signals[]` and is correct without migration.
+`co_signals` is **present-when-meaningful** — omit when no pairs in this turn's `signals[]` co-fired. Each entry is a 2-element array of code strings, lexicographically sorted within the pair so cross-turn pair counting is deterministic. Pre-existing ledger entries that lack `co_signals` are read by future turns as "no co-firing pairs recorded for that turn"; the §3a derivation falls back to raw `signals[]` and is correct without migration.
+
+`patch_effect[]` is **present-when-meaningful** — omit when no prior patches were evaluated this turn. Each entry is `{ signal, patch_sha, verdict, pre_rate?, post_rate?, no_effect_commit? }`. `verdict` ∈ `"too_early"`, `"effective"`, `"no_effect"`, `"inconclusive"`, `"user_reverted"`, `"aged_out"`. `pre_rate` / `post_rate` are emitted only for `"effective"` / `"no_effect"` / `"inconclusive"` (the verdicts where rates were actually computed). `no_effect_commit` is emitted only for `"no_effect"` and only when the agent landed the commit (not when cross-machine duplicate suppression skipped it). Pre-existing ledger entries lacking `patch_effect[]` mean "no patches were evaluated that turn" — §3b's already-evaluated-skip falls back to a re-evaluation, which is idempotent because step 3 short-circuits when a verdict already exists.
 
 The ledger is gitignored (`.gitignore` adds `.claude/turn-history.jsonl`). It is local to each user's working copy.
 
@@ -230,6 +285,9 @@ Single JSON block, no prose:
   "correlations": [
     { "pair": ["branch_naming_drift", "cherry_pick_dropped_commits"], "co_occurrences": 3 }
   ],
+  "patch_effects": [
+    { "signal": "branch_naming_drift", "patch_sha": "a833c2f4", "verdict": "no_effect", "pre_rate": 0.30, "post_rate": 0.30, "no_effect_commit": "<sha>" }
+  ],
   "findings": [
     { "kind": "structural_flag", "signal": "classification_mismatch", "note": "Same item failed dispatch 3× — backlog text may be too vague for the planner's classifier." }
   ],
@@ -237,7 +295,7 @@ Single JSON block, no prose:
 }
 ```
 
-`signals_observed` is the count from step 1. `correlations[]` is **present-when-meaningful** — omit when no pairs reached the ≥3 co-occurrence threshold this turn. `pair` is sorted lexicographically; `co_occurrences` is the count from §1a (current turn inclusive). `writes.harness[]` includes the commit SHA when a patch was made. `findings[].kind` is currently `structural_flag` (more kinds may be added). `ledger_appended: true` confirms step 10 succeeded; `false` if the append failed (do NOT skip silently — surface the failure).
+`signals_observed` is the count from step 1. `correlations[]` is **present-when-meaningful** — omit when no pairs reached the ≥3 co-occurrence threshold this turn. `pair` is sorted lexicographically; `co_occurrences` is the count from §3a (current turn inclusive). `patch_effects[]` is **present-when-meaningful** — omit when no prior patches were evaluated; per-entry shape matches §10 ledger's `patch_effect[]`. `writes.harness[]` includes the commit SHA when a patch was made. `findings[].kind` is currently `structural_flag` (more kinds may be added). `ledger_appended: true` confirms step 10 succeeded; `false` if the append failed (do NOT skip silently — surface the failure).
 
 When nothing fired and there is nothing to record, return:
 
@@ -257,6 +315,9 @@ Always append to the ledger even on a no-signal turn — the absence of signals 
 - **Never skip the ledger append.** Step 10 is unconditional.
 - **Never redispatch a specialist.** If a turn pattern suggests redispatch is needed, surface it as a `structural_flag`; the orchestrator decides.
 - **Don't try to be clever.** When the routing tree is ambiguous, prefer memory over harness patch and structural-flag over silent acceptance. The cost asymmetry (memory write is reversible by deletion; harness patch is reversible by revert; silent miss is unrecoverable) favors verbose surfacing.
+- **Never re-evaluate `harness_patch_no_effect` commits.** §3b step 2 — the no-effect commit's subject is recognized and skipped during patch-effect scanning. Without this guard, the agent recurses on its own emissions infinitely.
+- **Never auto-revert a no-effect patch.** §3b emits an informational commit and a log line only. The user runs `git revert <patch_sha>` if they want the patch gone. Auto-reverting would be an irreversible escalation that loses any partial value the patch had.
+- **Never overwrite or edit existing lines in `.claude/meta/patch-effects.tsv`.** APPEND-ONLY — `>>` redirection only. The log is the durable cross-machine record; mutating it loses history.
 
 # Why this agent exists
 

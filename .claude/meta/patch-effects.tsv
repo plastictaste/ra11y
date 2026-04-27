@@ -1,0 +1,16 @@
+# meta-reviewer patch-effects audit trail — append-only, in-repo, durable
+#
+# One tab-separated line per evaluated patch. Format:
+#   <iso_ts>\t<patch_sha>\t<signal_code>\tno_effect\tpre=<rate>\tpost=<rate>\twindow=<turns>
+#
+# Only "no_effect" verdicts land here. Other verdicts (effective,
+# inconclusive, too_early, aged_out, user_reverted) live in the
+# per-machine ledger at .claude/turn-history.jsonl (gitignored).
+#
+# Why this file exists: durable cross-machine record of patches that
+# did not reduce their target signal's rate. Greppable from
+# `git log -p --follow .claude/meta/patch-effects.tsv`. The user runs
+# `git revert <patch_sha>` to remove a flagged patch.
+#
+# DO NOT EDIT existing lines. The meta-reviewer appends only (`>>`).
+# Header lines (this block) survive forever; data lines below.

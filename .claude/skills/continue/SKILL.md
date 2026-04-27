@@ -238,7 +238,7 @@ After the integrator returns and before looping, dispatch the `meta-reviewer` su
 
 **Orchestrator handling of the meta-reviewer's return:**
 
-The agent returns `{ turn_n, signals_observed, writes: { memory, harness, backlog_reopens }, correlations?, findings, ledger_appended }`.
+The agent returns `{ turn_n, signals_observed, writes: { memory, harness, backlog_reopens }, correlations?, patch_effects?, findings, ledger_appended }`.
 
 | Return | Orchestrator action |
 |---|---|
@@ -247,6 +247,8 @@ The agent returns `{ turn_n, signals_observed, writes: { memory, harness, backlo
 | `writes.memory[]` non-empty | No action — memory is silent by design. |
 | `writes.backlog_reopens[]` non-empty | The pick was reopened. Treat as if it had returned `blocked` for purposes of the "picks dispatched this invocation" set so it can be re-picked next invocation. |
 | `correlations[]` non-empty | No action — informational. The pair is recorded in the ledger so next turn's meta-reviewer can decide whether to bundle a patch or escalate the unaddressed half. |
+| `patch_effects[]` contains `verdict: "no_effect"` | Note the no-effect commit SHA and the original patch SHA in the turn summary. Surface in the final `/continue` report so the user sees which auto-patches earned a `git revert` review. |
+| `patch_effects[]` only carries `"too_early"` / `"effective"` / `"inconclusive"` / `"aged_out"` / `"user_reverted"` | No action — informational; the verdicts live in the ledger and shape next-turn routing. |
 | `findings[].kind: "structural_flag"` | Surface in the final `/continue` report (not the per-turn summary) so the user sees the structural concern at end-of-run. |
 | `ledger_appended: false` | Surface in the per-turn summary as a warning. The next turn's occurrence counts will be off until the ledger is repaired. |
 
