@@ -489,12 +489,14 @@ describe("review/multiple-ways", () => {
     });
   });
 
-  describe("body+link/nav predicate gate", () => {
-    // The finder previously fired on every HTML root (including
-    // `<head>`-only template partials and standalone CSS-trick
-    // demos). The new predicate gates emission on BOTH a `<body>`
-    // element AND ≥1 anchor or `<nav>` — together those signal a
-    // file the agent would actually treat as a site-root layout.
+  describe("head-fragment classification", () => {
+    // SC 2.4.5 ("Multiple Ways") applies to renderable pages with
+    // navigable content. A file with no `<body>` element is a head
+    // fragment — a templating partial stitched into a parent layout
+    // by the engine, not a navigable page in any rendering. Skipping
+    // is spec-correctness, not heuristic suppression: the absence of
+    // `<body>` is deterministic from the AST, and the spec scope-out
+    // is unambiguous.
     it("does NOT fire on a <head>-only template partial (no <body>)", () => {
       // Realistic Jekyll/Eleventy `_includes/top.html` shape: opens
       // `<html><head>...` to be closed by a sibling partial. The
@@ -511,6 +513,50 @@ describe("review/multiple-ways", () => {
       expect(out).toEqual([]);
     });
 
+    it("does NOT fire on a closed <head>-only file that lacks any <body>", () => {
+      // A fully closed `<html><head>...</head></html>` shape with no
+      // `<body>` is still a head fragment — the finder must not
+      // emit. The 0 <nav>, 0 <a> evidence cited in field reports
+      // comes from this shape, where the head-only file slips past
+      // any predicate that doesn't explicitly check for <body>.
+      const source = `
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>Site</title>
+          </head>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out).toEqual([]);
+    });
+
+    it("does NOT fire on a head-only file even when an anchor is present", () => {
+      // Anchors can appear inside `<head>` in malformed markup or
+      // recovery-from-parse-error scenarios. A file with anchors but
+      // no `<body>` is still a head fragment — the renderable-page
+      // predicate fails on the missing body, regardless of anchor
+      // presence elsewhere in the tree.
+      const source = `
+        <html>
+          <head>
+            <title>Site</title>
+            <a href="/elsewhere">Stray</a>
+          </head>
+        </html>
+      `;
+      const out = runFinder(finder, source, { filePath: "index.html" });
+      expect(out).toEqual([]);
+    });
+  });
+
+  describe("body+link/nav predicate gate", () => {
+    // Once a file passes the head-fragment classification (it does
+    // contain a `<body>`), the finder gates emission on the presence
+    // of at least one anchor or `<nav>` element. A vanilla single-
+    // page CSS-trick demo with no link/nav structure is not a
+    // multi-way-nav root in any practical sense — the agent reading
+    // the file would dismiss it.
     it("does NOT fire on a single-page CSS-trick demo with no anchors and no <nav>", () => {
       // Vanilla single-page demo: full body but zero link / nav
       // structure. The agent reading the file would dismiss it; the

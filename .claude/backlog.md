@@ -328,8 +328,6 @@ Cross-cutting theme #18 (4/4 sites). Several criteria currently ship as `untarge
 
 ### v0.3.0 — accepted (P2 — checklist quality)
 
-- [ ] **Q7-CHECKLIST-2.4.5-FRAGMENT-FILE-CONTEXT** (1/4) 2.4.5 finder labels a `<head>`-only partial as "Likely root layout" because of `0 <nav>, 0 <a>` evidence. A `<head>`-only file (no `<body>`) cannot be a root layout — the conclusion is heuristic and wrong. Fix: the "Likely root layout" classifier should require the file to contain `<body>` OR be the only top-level `<html>` document in its directory tree. A `<head>`-only file should be classified as "head fragment" and skipped for 2.4.5 — the rule semantically applies to renderable pages with navigable content. Pairs with Q7-FRAGMENT-FILE-HEADING-HIERARCHY (same fragment-classification surface).
-
 ### Considered and rejected (per CLAUDE.md §1)
 
 - **Auto-suppress `motion/pause-stop-hide` on transitions ≤ Xms** → rejected per §1 "Numeric-threshold heuristics are suppression." A 200ms transition might be a hover-effect debounce or might be a fast-flashing annotation; static analysis cannot tell. The spec-correctness fix in Q7-RULE-MOTION-DURATION-AND-TRIGGER-GATE (above) does NOT use a single threshold to suppress — it gates the *criterion choice* (2.2.2 vs 2.3.3) on parsed evidence (infinite loop, auto-play attribute, user-pseudo-class scoping), and encodes the duration as additive reason context. Both lanes still emit candidates.

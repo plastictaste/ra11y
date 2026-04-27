@@ -122,18 +122,25 @@ function collectMatchesFromFile(file: ProjectFile, out: CandidateMatch[]): void 
 
 function matchHtmlFile(filePath: string, root: HtmlDocument): CandidateMatch | null {
   if (!looksLikeHtmlRootLayout(root, filePath)) return null;
-  // Predicate gate: a file qualifies as a candidate "site root" only
-  // when it has BOTH a `<body>` element AND ≥1 anchor or `<nav>`. A
-  // `<head>`-only template partial (e.g. Jekyll `_includes/top.html`
+  // Head-fragment classification: a file with no `<body>` element is a
+  // head fragment, not a renderable page. SC 2.4.5 ("Multiple Ways")
+  // applies to "sets of Web pages" — pages users navigate to and read.
+  // A `<head>`-only template partial (e.g. Jekyll `_includes/top.html`
   // that opens `<html><head>...</head>` to be closed by a sibling
-  // partial) has no `<body>` and is not a site root. A vanilla
-  // single-page CSS-trick demo with no anchors and no `<nav>` is also
-  // not a site root in any practical sense — the agent reading the
-  // file would dismiss it. The body+link/nav predicate is structural
-  // (deterministic from the AST), not a heuristic, so it earns a
-  // gate; everything else (SPA shell, fragment-path, single-page)
-  // remains additive reason context.
-  if (!hasHtmlBodyAndLinkOrNav(root)) return null;
+  // partial) cannot be a navigable page in any rendering, so the
+  // criterion's predicate ("renderable page with navigable content")
+  // is structurally not met. Skipping here is spec-correctness, not
+  // heuristic suppression: the absence of `<body>` is deterministic
+  // from the AST, and the spec scope-out is unambiguous.
+  if (!hasHtmlBody(root)) return null;
+  // Predicate gate: a candidate "site root" must contain ≥1 anchor or
+  // `<nav>` element. A vanilla single-page CSS-trick demo with no
+  // links and no nav is not a site root in any practical sense — the
+  // agent reading the file would dismiss it. Like the head-fragment
+  // skip above, this is a structural predicate (deterministic from
+  // the AST), not a heuristic; everything else (SPA shell,
+  // fragment-path, single-page) remains additive reason context.
+  if (!hasHtmlLinkOrNav(root)) return null;
   if (hasHtmlMultipleWaysSignal(root)) return null;
   const location = firstHtmlLocation(root);
   // SPA index shells (Vite/CRA/React Router root) carry no navigation
@@ -203,21 +210,31 @@ function looksLikeFragmentPath(filePath: string): boolean {
 }
 
 /**
- * Does the file have BOTH a `<body>` element AND at least one anchor
- * (`<a>`) or `<nav>` somewhere in the tree? This is the predicate gate
- * for HTML candidates — a true "site root" file participates in a
- * page set, which means a rendered body and at least some link/nav
- * structure. A `<head>`-only template partial fails the body check;
- * a CSS-trick demo with no links fails the link/nav check.
+ * Does the file contain a `<body>` element anywhere in the tree? Used
+ * to classify head-only fragments — files that open `<html><head>...`
+ * with no `<body>` and are stitched into a parent layout by the
+ * templating engine. SC 2.4.5 scopes to renderable pages with
+ * navigable content; a head-only file cannot satisfy that predicate,
+ * so the finder skips the file entirely rather than emitting a
+ * candidate the agent would dismiss in one read.
  */
-function hasHtmlBodyAndLinkOrNav(root: HtmlDocument): boolean {
-  let hasBody = false;
-  let hasLinkOrNav = false;
+function hasHtmlBody(root: HtmlDocument): boolean {
+  for (const el of walkHtmlElements(root)) {
+    if (el.tagName.toLowerCase() === "body") return true;
+  }
+  return false;
+}
+
+/**
+ * Does the file contain at least one anchor (`<a>`) or `<nav>` element
+ * anywhere in the tree? Predicate gate for "looks like a site root" —
+ * a file with no link or nav structure cannot be a multi-way-nav root
+ * in any practical sense.
+ */
+function hasHtmlLinkOrNav(root: HtmlDocument): boolean {
   for (const el of walkHtmlElements(root)) {
     const tag = el.tagName.toLowerCase();
-    if (!hasBody && tag === "body") hasBody = true;
-    if (!hasLinkOrNav && (tag === "a" || tag === "nav")) hasLinkOrNav = true;
-    if (hasBody && hasLinkOrNav) return true;
+    if (tag === "a" || tag === "nav") return true;
   }
   return false;
 }
