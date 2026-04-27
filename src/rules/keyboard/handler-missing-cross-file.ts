@@ -97,3 +97,52 @@ export function enrichForCrossFileScript<V extends CrossFileEnrichable>(
     couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
   };
 }
+
+/**
+ * Stamps `confidence: "medium"` + `couldBeWrongBecause:
+ * ["cross_file_listener_resolution_limited"]` on an external-JS
+ * finding unconditionally — and, when a sibling-module import was
+ * detected, additionally appends the cross-file follow-up sentence to
+ * the suggestion. The unconditional downgrade reflects a structural
+ * fact: external-JS click attaches resolve their target against the
+ * DOM (an HTML file separate from the `.js` source the rule scanned),
+ * so the per-finding confidence cannot honestly be `"high"` from a
+ * `.js`-only read — the receiver might be a native `<button>` /
+ * `<a href>` or it might be a bare `<div>`, and only the HTML knows.
+ *
+ * Mirrors the per-rule `coverageConfidence: "medium"` with reason
+ * `cross_file_listener_resolution_limited_on_this_input` that
+ * `CROSS_FILE_BOUND_REASONS_PER_INPUT` (in `src/engine/per-rule-coverage.ts`) already records, per the
+ * doctrine at docs/kb/architecture/ai-first-consumer.md "Per-finding
+ * confidence must reflect per-rule coverage limitations" —
+ * propagating the limitation to per-finding `confidence` keeps the
+ * per-rule and per-finding layers from shipping contradictory
+ * attention-budget signals on the same rule in the same response.
+ *
+ * Distinct from {@link enrichForCrossFileScript} which gates on the
+ * presence of an external script / sibling-module import: the JSX/HTML
+ * paths can have an in-file keyboard handler that the rule already
+ * verified absent, so when no cross-file source is present the binding
+ * is in-file and `"high"` confidence is honest. The external-JS path
+ * can never verify the receiver in-file — its target is always cross-
+ * file.
+ */
+export function enrichExternalJsFinding<V extends CrossFileEnrichable>(
+  v: V,
+  siblingImport: string | null,
+): V {
+  if (siblingImport === null) {
+    return {
+      ...v,
+      confidence: "medium",
+      couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
+    };
+  }
+  const enrichmentSuffix = ` Cross-file follow-up: this file has no inline keyboard handler, but the binding may live in an external script (\`${siblingImport}\`) — verify the keyboard wiring there before treating this finding as live.`;
+  return {
+    ...v,
+    suggestion: `${v.suggestion}${enrichmentSuffix}`,
+    confidence: "medium",
+    couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
+  };
+}

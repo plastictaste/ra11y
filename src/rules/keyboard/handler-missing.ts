@@ -95,6 +95,7 @@ import {
   type CrossFileEnrichable,
   detectExternalScriptSrc,
   detectSiblingModuleImport,
+  enrichExternalJsFinding,
   enrichForCrossFileScript,
 } from "./handler-missing-cross-file.ts";
 import { findExternalJsHandlerMissing } from "./handler-missing-external-js.ts";
@@ -246,8 +247,21 @@ export const rule = defineRule({
     }
     const siblingImport = detectSiblingModuleImport(ctx.source);
     for (const finding of findExternalJsHandlerMissing(ctx.source)) {
+      // External-JS click attaches always resolve their target against
+      // the DOM — an HTML file separate from this `.js`/`.ts` source —
+      // so the per-finding `confidence` cannot honestly be `"high"`
+      // from a JS-only read. The receiver might be a native `<button>`
+      // / `<a href>` (no 2.1.1 failure) or a bare `<div>` (real
+      // failure), and only the HTML knows. Stamp `confidence:
+      // "medium"` unconditionally to mirror the per-rule
+      // `coverageConfidence: "medium"` the engine records for this
+      // rule (`crossFileCapable: false`); when a sibling-module import
+      // is also present the suggestion is additionally enriched with
+      // the named follow-up file. See doctrine: "Per-finding
+      // confidence must reflect per-rule coverage limitations" in
+      // docs/kb/architecture/ai-first-consumer.md.
       ctx.emit(
-        enrichForCrossFileScript(
+        enrichExternalJsFinding(
           {
             severity: "error",
             location: { filePath: ctx.filePath, line: finding.line, column: finding.column },

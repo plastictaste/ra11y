@@ -811,5 +811,51 @@ btn.addEventListener('click', () => save());`;
       expect(v[0]?.confidence).toBe("medium");
       expect(v[0]?.suggestion).toContain("./keyboard.ts");
     });
+
+    // External-JS findings are inherently cross-file ambiguous: the
+    // click target resolves against the DOM (an HTML file, not the
+    // `.js` source the rule scanned). The receiver might be a native
+    // `<button id="save">` (no 2.1.1 failure) or a `<div id="save">`
+    // (real failure) — only the HTML knows. Per-finding `confidence`
+    // mirrors per-rule `coverageConfidence: "medium"` whether or not
+    // a sibling import is present.
+    it("external-JS branch: vanilla .js with no imports still carries confidence=medium", () => {
+      const source = `const btn = document.getElementById('save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+    });
+
+    it("external-JS branch: .onclick assignment without imports still carries confidence=medium", () => {
+      const source = `const tile = document.querySelector('.tile');
+tile.onclick = () => activate();`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+    });
+
+    it("external-JS branch: function-parameter target without selector resolution still carries confidence=medium", () => {
+      const source = `export function wire(btn) {
+  btn.addEventListener('click', doThing);
+}`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+    });
+
+    // JSX-walk findings (i.e. `<div onClick={…}>` in source) without
+    // a sibling import remain at `confidence: undefined` (high) —
+    // the binding is in-file and the rule has full evidence. Only
+    // the external-JS path is inherently cross-file-bounded.
+    it("JSX-walk finding without sibling import keeps confidence=undefined (high)", () => {
+      const source = `const X = <div onClick={doThing}>x</div>;`;
+      const v = runRule(rule, source);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBeUndefined();
+    });
   });
 });
