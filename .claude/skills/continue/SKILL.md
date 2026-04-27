@@ -238,13 +238,14 @@ After the integrator returns and before looping, dispatch the `meta-reviewer` su
 
 **Orchestrator handling of the meta-reviewer's return:**
 
-The agent returns `{ turn_n, signals_observed, writes: { memory, harness, backlog_reopens }, correlations?, patch_effects?, findings, ledger_appended }`.
+The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory_retired, backlog_reopens }, correlations?, patch_effects?, findings, ledger_appended }`.
 
 | Return | Orchestrator action |
 |---|---|
 | `signals_observed: 0`, `writes: { all empty }`, `findings: []` | Nothing to do. Append nothing to the user-facing turn summary. |
 | `writes.harness[]` non-empty | Note the patch SHA(s) in the turn summary so the user sees the auto-edit landed. Continue. |
 | `writes.memory[]` non-empty | No action — memory is silent by design. |
+| `writes.memory_retired[]` non-empty | No action — informational. The retired memory files are recorded per-machine in the ledger; the durable cross-machine reference is the harness patch SHA in the same turn. |
 | `writes.backlog_reopens[]` non-empty | The pick was reopened. Treat as if it had returned `blocked` for purposes of the "picks dispatched this invocation" set so it can be re-picked next invocation. |
 | `correlations[]` non-empty | No action — informational. The pair is recorded in the ledger so next turn's meta-reviewer can decide whether to bundle a patch or escalate the unaddressed half. |
 | `patch_effects[]` contains `verdict: "no_effect"` | Note the no-effect commit SHA and the original patch SHA in the turn summary. Surface in the final `/continue` report so the user sees which auto-patches earned a `git revert` review. |

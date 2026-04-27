@@ -177,8 +177,10 @@ The ONLY harness files this agent may edit:
 - `.claude/rules/worktree-discipline.md`
 - `.claude/rules/agent-return-envelope.md`
 - `.claude/meta/patch-effects.tsv` (APPEND-ONLY — `>>` only, never overwrite, never edit existing lines; format documented in §3b step 7)
+- `~/.claude/projects/-Users-van-dev-ra11y/memory/feedback_*.md` (DELETE-ONLY — for §8a memory consolidation; only `rm` of files matching the `feedback_*.md` glob; never write or edit files in this directory)
+- `~/.claude/projects/-Users-van-dev-ra11y/memory/MEMORY.md` (EDIT — only to remove pointer lines for retired memory files; never edit other lines, never delete `MEMORY.md` itself)
 
-Anything outside this list — including `CLAUDE.md`, `docs/kb/`, `src/`, `tests/`, other agent files (`rule-implementer.md`, `code-reviewer.md`, etc.) — is forbidden. Lessons targeting those routes to memory or to a `findings[].kind: "structural_flag"`.
+Anything outside this list — including `CLAUDE.md`, `docs/kb/`, `src/`, `tests/`, other agent files (`rule-implementer.md`, `code-reviewer.md`, etc.), and crucially `~/.claude/projects/-Users-van-dev-ra11y/memory/project_*.md` — is forbidden. Lessons targeting those routes to memory or to a `findings[].kind: "structural_flag"`.
 
 `CLAUDE.md` is explicitly off-limits even for clearly-generic lessons. CLAUDE.md is human-curated doctrine; structural changes belong on a structural-flag path that the user reviews.
 
@@ -230,6 +232,45 @@ The commit subject MUST start with `chore(meta):`. This is the trail the user us
 
 If the patch fails verify, abort the patch (`git reset --soft HEAD~1` and unstage; never `--hard` and never amend), record `{ code: "harness_patch_verify_red", evidence: "<signal>: <first failing line>" }` as a self-finding for next turn's tail, and do not retry within this turn.
 
+## 8a. Memory consolidation after harness patch
+
+When §8 lands a harness patch successfully (verify green, commit made) the underlying lesson is now durable in the harness file. Old memory entries that covered the same ground are now redundant context tax — they load into every conversation forever via `MEMORY.md`.
+
+This step runs in two cases:
+
+- **Case A** — §8 just landed a patch this turn. Run §8a once per landed patch.
+- **Case B** — §3b set `verdict: "effective"` for any prior patch this turn. Run §8a once per newly-effective patch using that patch's signal code as the search anchor.
+
+Workflow (identical in both cases):
+
+1. **Search memory for matches.** For each `<signal_code>` covered by the patch:
+   ```bash
+   grep -l -F "<signal_code>" \
+       ~/.claude/projects/-Users-van-dev-ra11y/memory/feedback_*.md \
+       2>/dev/null
+   ```
+   Then also grep for the patch's primary evidence phrase (the first ≤80 characters of the patch's first cited evidence) — if any memory file's body contains either the signal code or the evidence phrase, it is a candidate for retirement.
+
+2. **Apply the same gates as adoption, inverted (subsumption test).** Read the candidate memory file. Strip the same ra11y-specific tokens listed in §5 portability test. Read the harness patch's added text and strip the same. **If the harness patch's stripped text textually subsumes the memory file's stripped text** (treating each ≥40-char line of the memory file as a `grep -F` substring search target on the harness patch's body), retire. Otherwise leave the memory file intact. Substring-containment is the conservative test — false negatives leave the memory file alive (cheap), false positives delete a still-relevant lesson (expensive).
+
+3. **Allowlist scoping.** ONLY `feedback_*.md` files in `~/.claude/projects/-Users-van-dev-ra11y/memory/` are retirement targets. NEVER delete `MEMORY.md`, NEVER delete `project_*.md` files, NEVER delete files outside that exact directory. The `project_*.md` files are project-curated long-form context that should never be auto-retired regardless of subsumption.
+
+4. **Retire each qualifying file:**
+   - `rm ~/.claude/projects/-Users-van-dev-ra11y/memory/<file>.md`
+   - Edit `MEMORY.md` to delete the one-line `- [<title>](<file>.md) — ...` pointer.
+
+5. **Record in ledger.** Append to this turn's `writes.memory_retired[]` (per §10 schema):
+   ```json
+   { "file": "feedback_X.md", "signal": "<signal_code>", "patch_sha": "<sha>", "case": "A" | "B" }
+   ```
+   The ledger is gitignored — this is the per-machine retirement record. The harness patch SHA is the durable cross-machine reference.
+
+6. **Skip if memory directory absent** (running on a machine without seeded memory): emit a self-finding `{ code: "memory_dir_absent", evidence: "<path>" }` and return without retirement. Do NOT `mkdir` the memory directory — the agent does not seed user-local state.
+
+Memory consolidation is **opt-in by recurrence, not eager**: only run when §8 commits a patch this turn OR when §3b sets `"effective"` for a prior patch this turn. Do not crawl memory on no-patch turns — that's an O(N) read per turn the harness can't afford.
+
+**Note: no commit is made for retirement in case B.** When §3b sets `"effective"` for a prior patch and §8a fires, only the filesystem `rm` and `MEMORY.md` edit happen — both outside the repo. The audit trail is the ledger entry. The `chore(meta):` patch SHA the user can revert remains the durable record; `git revert <sha>` does NOT restore retired memory files (memory is per-machine and recoverable from the agent's grep at the time, not from git).
+
 ## 9. Backlog re-open rules
 
 When the routing tree calls for re-opening:
@@ -252,7 +293,7 @@ echo '<json>' >> .claude/turn-history.jsonl
 Schema (single line, no embedded newlines):
 
 ```json
-{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"signals":[{"code":"...","evidence":"..."}],"co_signals":[["code_a","code_b"]],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"backlog_reopens":[]},"patch_effect":[{"signal":"branch_naming_drift","patch_sha":"a833c2f4","verdict":"no_effect","pre_rate":0.30,"post_rate":0.30,"no_effect_commit":"<sha>"}]}
+{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"signals":[{"code":"...","evidence":"..."}],"co_signals":[["code_a","code_b"]],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"memory_retired":[{"file":"feedback_X.md","signal":"...","patch_sha":"...","case":"A"}],"backlog_reopens":[]},"patch_effect":[{"signal":"branch_naming_drift","patch_sha":"a833c2f4","verdict":"no_effect","pre_rate":0.30,"post_rate":0.30,"no_effect_commit":"<sha>"}]}
 ```
 
 The `writes` block records what you actually did this turn — used for cross-turn dedup and for auditing the agent's behavior. Keep evidence strings short (≤200 chars); truncate with `...` if needed.
@@ -278,6 +319,9 @@ Single JSON block, no prose:
     "harness": [
       { "file": ".claude/agents/integrator.md", "signal": "cherry_pick_dropped_commits", "occurrences": 2, "commit": "<sha>" }
     ],
+    "memory_retired": [
+      { "file": "feedback_branch_naming_drift.md", "signal": "branch_naming_drift", "patch_sha": "a833c2f4", "case": "A" }
+    ],
     "backlog_reopens": [
       { "item": "Q-7-foo", "reason": "cherry_pick_dropped_commits" }
     ]
@@ -295,12 +339,12 @@ Single JSON block, no prose:
 }
 ```
 
-`signals_observed` is the count from step 1. `correlations[]` is **present-when-meaningful** — omit when no pairs reached the ≥3 co-occurrence threshold this turn. `pair` is sorted lexicographically; `co_occurrences` is the count from §3a (current turn inclusive). `patch_effects[]` is **present-when-meaningful** — omit when no prior patches were evaluated; per-entry shape matches §10 ledger's `patch_effect[]`. `writes.harness[]` includes the commit SHA when a patch was made. `findings[].kind` is currently `structural_flag` (more kinds may be added). `ledger_appended: true` confirms step 10 succeeded; `false` if the append failed (do NOT skip silently — surface the failure).
+`signals_observed` is the count from step 1. `correlations[]` is **present-when-meaningful** — omit when no pairs reached the ≥3 co-occurrence threshold this turn. `pair` is sorted lexicographically; `co_occurrences` is the count from §3a (current turn inclusive). `patch_effects[]` is **present-when-meaningful** — omit when no prior patches were evaluated; per-entry shape matches §10 ledger's `patch_effect[]`. `writes.harness[]` includes the commit SHA when a patch was made. `writes.memory_retired[]` lists every memory file removed by §8a this turn — always present (`[]` when empty), like the rest of `writes`. `case: "A"` means the retirement bundled with a new patch this turn; `case: "B"` means it triggered on a prior patch's `verdict: "effective"`. `findings[].kind` is currently `structural_flag` (more kinds may be added). `ledger_appended: true` confirms step 10 succeeded; `false` if the append failed (do NOT skip silently — surface the failure).
 
 When nothing fired and there is nothing to record, return:
 
 ```json
-{ "turn_n": 3, "signals_observed": 0, "writes": { "memory": [], "harness": [], "backlog_reopens": [] }, "findings": [], "ledger_appended": true }
+{ "turn_n": 3, "signals_observed": 0, "writes": { "memory": [], "harness": [], "memory_retired": [], "backlog_reopens": [] }, "findings": [], "ledger_appended": true }
 ```
 
 Always append to the ledger even on a no-signal turn — the absence of signals on a turn is itself signal for future occurrence counts (a signal that fires once in 20 turns is not yet recurring; a signal that fires three times in five turns is).
@@ -318,6 +362,8 @@ Always append to the ledger even on a no-signal turn — the absence of signals 
 - **Never re-evaluate `harness_patch_no_effect` commits.** §3b step 2 — the no-effect commit's subject is recognized and skipped during patch-effect scanning. Without this guard, the agent recurses on its own emissions infinitely.
 - **Never auto-revert a no-effect patch.** §3b emits an informational commit and a log line only. The user runs `git revert <patch_sha>` if they want the patch gone. Auto-reverting would be an irreversible escalation that loses any partial value the patch had.
 - **Never overwrite or edit existing lines in `.claude/meta/patch-effects.tsv`.** APPEND-ONLY — `>>` redirection only. The log is the durable cross-machine record; mutating it loses history.
+- **Never delete files outside `~/.claude/projects/-Users-van-dev-ra11y/memory/feedback_*.md`.** Memory consolidation (§8a) targets only the `feedback_*.md` glob in that exact directory. Never `rm -rf`, never delete `MEMORY.md`, never delete `project_*.md`, never delete files outside the user-local memory directory. The `project_*.md` files are project-curated long-form context that should never be auto-retired regardless of subsumption.
+- **Never `mkdir` the memory directory.** §8a step 6 — if the directory is absent (running on a machine without seeded memory), skip retirement and emit `memory_dir_absent` as a self-finding. The agent does not seed user-local state.
 
 # Why this agent exists
 
