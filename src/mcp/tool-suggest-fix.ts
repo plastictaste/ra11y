@@ -5,14 +5,12 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
-import { hasTailwindSignal } from "./analysis-coverage-hints.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
+import { collectSuggestFixContext } from "./suggest-fix-context.ts";
 import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
-import { detectVendorContext } from "./suggest-fix-vendor-context.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
-  buildSourceContext,
   errorResult,
   findRule,
   type McpTool,
@@ -22,7 +20,6 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField } from "./warnings.ts";
 
 /**
  * preflight. Returns an error envelope
@@ -157,58 +154,34 @@ export const suggestFixTool: McpTool = {
     });
 
     const match = result.violations.find((v) => v.ruleId === ruleId && v.location.line === line);
-    const sourceContext =
-      strParam(params, "sourceContext") ?? buildSourceContext(parsed.source, line);
-    const scanWarnings =
-      warningsField({
-        filesScanned: result.filesScanned,
-        rootSource: null,
-        configSource: undefined,
-        analysisCoverage: undefined,
-        filesByExtension: undefined,
-      }).warnings ?? [];
-    // probe the parsed-file set
-    // for Tailwind utility usage. Reuses the same `hasTailwindSignal`
-    // detector that the `tailwind_detected_css_undercounted` warning
-    // dispatches on, so suggest_fix's "is this a Tailwind project?"
-    // judgment matches scan_project's. With only the violation file
-    // in scope (the suggest_fix scan is single-file), a CSS target
-    // resolves to `false` — the parsed-file set carries no JSX
-    // evidence — and the prose builder strips the rule's Tailwind
-    // escape-hatch sentence so vanilla CSS repos don't read
-    // context-blind advice.
-    const tailwindDetected = hasTailwindSignal([parsed]);
-    // detect whether the target file is
-    // a build artifact (matches the same predicates that power
-    // `meta.scannedBuildArtifacts`) or a vendor-library bundle (matches
-    // the curated banner table powering
-    // `meta.scannedBuildArtifacts.vendorLibraries`). Both signals are
-    // deterministic from the file's (path, source) inputs alone — no
-    // heuristic guessing — so the vendor-context payload reads as
-    // honest evidence the agent can re-derive. When detected, the
-    // payload builder restructures the response so the primary fix
-    // lane recommends overriding the failing selector in the
-    // consumer's own stylesheet, with the rule's original edit/guidance
-    // demoted to an alternative. Pairs with-
-    // CSS (closed): Q6 reroutes the `nextStep` target away from
-    // vendor; this reroutes the `suggest_fix` primary lane away from
-    // vendor edits.
-    const vendorContext = detectVendorContext(parsed.filePath, parsed.source);
+    const ctx = await collectSuggestFixContext({
+      session,
+      parsed,
+      result,
+      line,
+      sourceContextOverride: strParam(params, "sourceContext"),
+      cwd: suggestFixCwd,
+      filePath,
+      matchUndefined: match === undefined,
+    });
     const payload = buildSuggestFixPayload({
       ruleId,
       line,
       match,
-      sourceContext,
+      sourceContext: ctx.sourceContext,
       source: parsed.source,
       filePath,
-      tailwindDetected,
+      tailwindDetected: ctx.tailwindDetected,
       // forward every per-file
       // finding so the builder can attach `nearestFinding` /
       // `didYouMean` breadcrumbs on the `kind: "none"` branch. The
       // suggest_fix scan is single-file, so `result.violations` IS the
       // per-file set — no further filtering needed here.
       sameFileFindings: result.violations,
-      ...optionalSuggestFixFields(scanWarnings, vendorContext, disambiguationNote),
+      ...(ctx.inheritedFromWrapper === null
+        ? {}
+        : { inheritedFromWrapper: ctx.inheritedFromWrapper }),
+      ...optionalSuggestFixFields(ctx.scanWarnings, ctx.vendorContext, disambiguationNote),
     });
     return textResult(payload as Record<string, unknown>);
   },

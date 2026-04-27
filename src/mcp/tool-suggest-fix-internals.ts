@@ -49,6 +49,7 @@ import {
   deriveApproachFromProse,
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
+import { buildInheritedHintExplanation } from "./suggest-fix-inherited-hint.ts";
 import { nearestFindingSpread } from "./suggest-fix-nearest-finding.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
 import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
@@ -146,6 +147,24 @@ export interface BuildSuggestFixPayloadArgs {
    * identical to today (the original primary lane stays primary).
    */
   readonly vendorContext?: VendorContext;
+  /**
+   * Inherited-finding hint for the `kind: "none"` branch. Set by the
+   * handler when the requested `(filePath, line)` resolves to a
+   * registered native-element wrapper call site — i.e. the JSX element
+   * at the line is a wrapper name from
+   * `LoadedConfig.nativeWrapperElements` / session wrappers. The
+   * scan-family multi-file scan synthesized the inherited finding via
+   * the post-pass in `src/engine/inherited-findings.ts`, but the
+   * suggest_fix single-file rescan can't reproduce it (the wrapper
+   * definition file isn't in scope). Threading the hint through closes
+   * the dead-end shape so the agent learns the rule fires at the
+   * wrapper definition and can route its next call accordingly. See
+   * `src/mcp/suggest-fix-inherited-hint.ts` and the doctrine
+   * "Cross-surface count invariant" applied to the per-finding lookup
+   * channel. Conditional-spread per CLAUDE.md §1 "Ambiguous field
+   * shapes are dishonest" — undefined / null is omitted.
+   */
+  readonly inheritedFromWrapper?: { readonly wrapperName: string };
 }
 
 // `nearestFindingSpread` lives in
@@ -236,6 +255,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     tailwindDetected,
     sameFileFindings,
     vendorContext,
+    inheritedFromWrapper,
   } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
   // Response-level `warnings` for the zero-output-success doctrine
@@ -278,10 +298,27 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     // absent when no nearby same-rule finding exists (CLAUDE.md §1
     // "Ambiguous field shapes are dishonest").
     const nearestSpread = nearestFindingSpread(ruleId, line, sameFileFindings);
+    // when the requested
+    // (filePath, line) resolves to a registered native-element wrapper
+    // call site, the multi-file scan synthesized the finding via the
+    // inherited-findings post-pass — the rule never fired at this line
+    // single-file. The inherited-hint payload tells the agent the rule
+    // lives at the wrapper component definition so the next call can
+    // re-target there rather than re-running the same dead-end lookup.
+    // See `src/mcp/suggest-fix-inherited-hint.ts` and the doctrine
+    // "Cross-surface count invariant" applied to the per-finding lookup
+    // channel.
+    const inheritedSpread = inheritedFromWrapper
+      ? { inheritedFromWrapper: { wrapperName: inheritedFromWrapper.wrapperName } }
+      : {};
+    const explanation = inheritedFromWrapper
+      ? buildInheritedHintExplanation(ruleId, line, inheritedFromWrapper.wrapperName)
+      : `No violation for ${ruleId} at line ${line}.`;
     return {
       kind: "none",
-      explanation: `No violation for ${ruleId} at line ${line}.`,
+      explanation,
       confidence: "low",
+      ...inheritedSpread,
       ...nearestSpread,
       ...warningsField,
       ...disambiguationNoteField,

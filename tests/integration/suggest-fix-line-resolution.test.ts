@@ -34,6 +34,10 @@ import { describe, expect, it } from "bun:test";
 import { runScan } from "../../src/engine/scanner.ts";
 import { parseHtml } from "../../src/input/parsers/html.ts";
 import { parseTsx } from "../../src/input/parsers/index.ts";
+import {
+  collectWrapperNames,
+  detectWrapperElementAtLine,
+} from "../../src/mcp/suggest-fix-inherited-hint.ts";
 import { buildSuggestFixPayload } from "../../src/mcp/tool-suggest-fix-internals.ts";
 import { BUILTIN_RULES } from "../../src/rules/index.ts";
 import { BUILTIN_STANDARDS } from "../../src/standards/index.ts";
@@ -55,6 +59,69 @@ function parseFor(spec: FileSpec): { source: string; ast: Ast } {
   }
   const p = parseTsx(spec.source);
   return { source: spec.source, ast: { language: spec.lang, root: p.root, errors: p.errors } };
+}
+
+interface OffenderRecord {
+  ruleId: string;
+  file: string;
+  line: number;
+  payloadKind: unknown;
+  hasBreadcrumb: boolean;
+  sourceOfFinding?: string;
+}
+
+/**
+ * Mirrors what the suggest_fix handler does for one (ruleId, file,
+ * line) triple: rescan the cited file alone, look up the match,
+ * compose the inherited-from-wrapper hint when the rescan misses, and
+ * build the payload through the same `buildSuggestFixPayload` the
+ * handler calls. Returns an offender record when the payload is a
+ * dead-end `kind: "none"` (no match, no breadcrumb), otherwise null.
+ */
+function probeSuggestFixForViolation(args: {
+  readonly violation: Violation;
+  readonly fileSpec: FileSpec;
+  readonly wrapperNames: ReadonlySet<string>;
+}): OffenderRecord | null {
+  const { violation: v, fileSpec, wrapperNames } = args;
+  const ast = parseFor(fileSpec);
+  const { result: singleFile } = runScan({
+    standards: BUILTIN_STANDARDS,
+    rules: BUILTIN_RULES,
+    enabled: ["wcag22"],
+    files: [{ filePath: fileSpec.filePath, source: fileSpec.source, ast: ast.ast }],
+  });
+  const match = singleFile.violations.find(
+    (vv) => vv.ruleId === v.ruleId && vv.location.line === v.location.line,
+  );
+  const inheritedHint =
+    match === undefined ? detectWrapperElementAtLine(ast.ast, v.location.line, wrapperNames) : null;
+  const payload = buildSuggestFixPayload({
+    ruleId: v.ruleId,
+    line: v.location.line,
+    match: match as Violation | undefined,
+    sourceContext: fileSpec.source,
+    source: fileSpec.source,
+    filePath: fileSpec.filePath,
+    sameFileFindings: singleFile.violations,
+    ...(inheritedHint === null ? {} : { inheritedFromWrapper: inheritedHint }),
+  });
+  const kind = payload["kind"];
+  if (kind !== "none") return null;
+  const hasBreadcrumb =
+    "nearestFinding" in payload || "didYouMean" in payload || "inheritedFromWrapper" in payload;
+  if (hasBreadcrumb) return null;
+  const offender: OffenderRecord = {
+    ruleId: v.ruleId,
+    file: fileSpec.filePath,
+    line: v.location.line,
+    payloadKind: kind,
+    hasBreadcrumb,
+  };
+  if (v.sourceOfFinding !== undefined) {
+    offender.sourceOfFinding = `${v.sourceOfFinding.filePath}:${v.sourceOfFinding.line}`;
+  }
+  return offender;
 }
 
 describe("suggest_fix lookup must agree with rule emission", () => {
@@ -108,8 +175,9 @@ btn.addEventListener('click', () => save());
     ];
 
     const built = files.map((f) => ({ filePath: f.filePath, ...parseFor(f) }));
-    const sourceByPath = new Map(built.map((f) => [f.filePath, f.source]));
 
+    const wrapperConfig: Readonly<Record<string, string>> = { Tile: "div" };
+    const wrapperNames = collectWrapperNames(wrapperConfig, undefined);
     // Project-wide scan with wrapper inheritance enabled — mirrors what
     // scan_project does on a real codebase.
     const { result } = runScan({
@@ -117,84 +185,23 @@ btn.addEventListener('click', () => save());
       rules: BUILTIN_RULES,
       enabled: ["wcag22"],
       files: built,
-      nativeWrapperElements: { Tile: "div" },
+      nativeWrapperElements: wrapperConfig,
     });
 
-    const handlerMissing = result.violations.filter(
-      (v) => v.ruleId === "keyboard/handler-missing",
-    );
+    const handlerMissing = result.violations.filter((v) => v.ruleId === "keyboard/handler-missing");
     // Sanity: the corpus must produce findings of every shape (a)–(d)
     // for the test to actually exercise the invariant.
     expect(handlerMissing.length).toBeGreaterThan(0);
     const inheritedCount = handlerMissing.filter((v) => v.sourceOfFinding !== undefined).length;
     expect(inheritedCount).toBeGreaterThan(0);
 
-    const offenders: Array<{
-      ruleId: string;
-      file: string;
-      line: number;
-      payloadKind: unknown;
-      hasBreadcrumb: boolean;
-      sourceOfFinding?: string;
-    }> = [];
-
+    const offenders: OffenderRecord[] = [];
     for (const v of handlerMissing) {
-      const filePath = v.location.filePath;
-      const fileSource = sourceByPath.get(filePath) ?? "";
-      // Mirror the suggest_fix handler's single-file rescan — same parser
-      // for the same extension, same runScan invocation, identical
-      // standards / rules. This IS the lookup predicate the handler runs.
-      const fileSpec = files.find((f) => f.filePath === filePath);
-      if (!fileSpec) throw new Error(`missing source for ${filePath}`);
-      const ast = parseFor(fileSpec);
-      const { result: singleFile } = runScan({
-        standards: BUILTIN_STANDARDS,
-        rules: BUILTIN_RULES,
-        enabled: ["wcag22"],
-        files: [{ filePath, source: fileSource, ast: ast.ast }],
-      });
-      const match = singleFile.violations.find(
-        (vv) => vv.ruleId === v.ruleId && vv.location.line === v.location.line,
-      );
-      const payload = buildSuggestFixPayload({
-        ruleId: v.ruleId,
-        line: v.location.line,
-        match: match as Violation | undefined,
-        sourceContext: fileSource,
-        source: fileSource,
-        filePath,
-        sameFileFindings: singleFile.violations,
-      });
-      const kind = payload["kind"];
-      if (kind === "none") {
-        // A `nearestFinding` or `didYouMean` breadcrumb closes the
-        // dead-end shape — the agent at least learns where the rule
-        // does fire on this file. A bare `kind: "none"` is the
-        // contradiction this invariant forbids.
-        const hasBreadcrumb = "nearestFinding" in payload || "didYouMean" in payload;
-        if (!hasBreadcrumb) {
-          const offender: {
-            ruleId: string;
-            file: string;
-            line: number;
-            payloadKind: unknown;
-            hasBreadcrumb: boolean;
-            sourceOfFinding?: string;
-          } = {
-            ruleId: v.ruleId,
-            file: filePath,
-            line: v.location.line,
-            payloadKind: kind,
-            hasBreadcrumb,
-          };
-          if (v.sourceOfFinding !== undefined) {
-            offender.sourceOfFinding = `${v.sourceOfFinding.filePath}:${v.sourceOfFinding.line}`;
-          }
-          offenders.push(offender);
-        }
-      }
+      const fileSpec = files.find((f) => f.filePath === v.location.filePath);
+      if (!fileSpec) throw new Error(`missing source for ${v.location.filePath}`);
+      const offender = probeSuggestFixForViolation({ violation: v, fileSpec, wrapperNames });
+      if (offender !== null) offenders.push(offender);
     }
-
     // Empty offender list = invariant holds. When this fires, the
     // listed (ruleId, file, line) triples were emitted by the rule
     // engine but suggest_fix's lookup couldn't find them — the per-call
@@ -204,5 +211,73 @@ btn.addEventListener('click', () => save());
     // breadcrumb when single-file rescan can't reproduce a multi-file
     // fire like inherited-findings synthesis).
     expect(offenders).toEqual([]);
+  });
+
+  it("kind: none on an inherited-finding call site carries inheritedFromWrapper", () => {
+    // Direct positive shape assertion — a wrapper-call lookup should
+    // route the agent to the wrapper definition via the structured
+    // hint, not just emit "no violation" prose.
+    const wrapperDef: FileSpec = {
+      filePath: "/components/Tile.tsx",
+      lang: "tsx",
+      source: `export const Tile = ({onClick}) => <div onClick={onClick}>x</div>;\n`,
+    };
+    const callSite: FileSpec = {
+      filePath: "/page.tsx",
+      lang: "tsx",
+      source: `import { Tile } from "./components/Tile";\nexport const P = () => <Tile onClick={() => 1} />;\n`,
+    };
+    const built = [wrapperDef, callSite].map((f) => ({ filePath: f.filePath, ...parseFor(f) }));
+    const wrapperConfig: Readonly<Record<string, string>> = { Tile: "div" };
+    const wrapperNames = collectWrapperNames(wrapperConfig, undefined);
+
+    const { result } = runScan({
+      standards: BUILTIN_STANDARDS,
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files: built,
+      nativeWrapperElements: wrapperConfig,
+    });
+    const inherited = result.violations.find(
+      (v) =>
+        v.ruleId === "keyboard/handler-missing" &&
+        v.sourceOfFinding !== undefined &&
+        v.location.filePath === "/page.tsx",
+    );
+    expect(inherited).toBeDefined();
+    if (!inherited) return;
+
+    // Re-scan call-site file alone — mirrors suggest_fix's single-file
+    // rescan. The lookup will miss; the inherited-hint detection
+    // populates the structured field.
+    const callAst = parseFor(callSite);
+    const { result: singleFile } = runScan({
+      standards: BUILTIN_STANDARDS,
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files: [{ filePath: callSite.filePath, source: callSite.source, ast: callAst.ast }],
+    });
+    const match = singleFile.violations.find(
+      (vv) => vv.ruleId === inherited.ruleId && vv.location.line === inherited.location.line,
+    );
+    expect(match).toBeUndefined();
+    const hint = detectWrapperElementAtLine(callAst.ast, inherited.location.line, wrapperNames);
+    expect(hint).toEqual({ wrapperName: "Tile" });
+
+    const payload = buildSuggestFixPayload({
+      ruleId: inherited.ruleId,
+      line: inherited.location.line,
+      match: undefined,
+      sourceContext: callSite.source,
+      source: callSite.source,
+      filePath: callSite.filePath,
+      sameFileFindings: singleFile.violations,
+      inheritedFromWrapper: hint as { wrapperName: string },
+    });
+    expect(payload["kind"]).toBe("none");
+    expect(payload["inheritedFromWrapper"]).toEqual({ wrapperName: "Tile" });
+    // The explanation prose should name the wrapper so the agent can
+    // route to the wrapper definition without a second call.
+    expect(payload["explanation"]).toContain("Tile");
   });
 });
