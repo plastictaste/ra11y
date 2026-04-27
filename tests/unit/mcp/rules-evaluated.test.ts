@@ -1,6 +1,5 @@
 /**
  * Unit tests for the `rulesEvaluated` shape builder
- * (Q4-RULES-EVALUATED-COMPOSITE).
  *
  * The three shapes that matter — the scenarios named in the backlog
  * item — are each exercised here so regressions show up at the helper

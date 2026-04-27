@@ -60,7 +60,7 @@ describe("capMetaArray", () => {
 });
 
 describe("hasMetaArrayTruncation", () => {
-  // V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: `parseErrorFilesTruncated`
+  // `parseErrorFilesTruncated`
   // and `partialParseFilesTruncated` were removed from the truncation
   // key list — those two arrays now switch to the rollup form at
   // default verbosity and ship uncapped under `verboseMeta: true`. A
@@ -68,7 +68,7 @@ describe("hasMetaArrayTruncation", () => {
   // (e.g. from a stale subprocess or a test fixture) must NOT
   // re-trigger the warning, otherwise the warnings layer would emit
   // `response_meta_truncated` for a shape that no longer truncates.
-  it("does NOT signal truncation for legacy parseErrorFilesTruncated (key removed in V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED)", () => {
+  it("does NOT signal truncation for legacy parseErrorFilesTruncated (key now removed)", () => {
     expect(
       hasMetaArrayTruncation({
         analysisCoverage: {

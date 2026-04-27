@@ -140,7 +140,7 @@ function buildAsymmetricFixture(fileCount: number): string {
 }
 
 /**
- * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: builds a tempdir with N
+ * builds a tempdir with N
  * extremely dense HTML files — many more inputs + images per file
  * than {@link buildDenseFixture} — so the token-density cap clips
  * the page to ≤ 2 files at high `limit` values. Mirrors the bulk-
@@ -267,7 +267,7 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
     }
   });
 
-  it("Q7-RESPONSE-TOKEN-BUDGET-DETAIL: density-cap warningsDetails carries the top-contributor triple end-to-end", async () => {
+  it("density-cap warningsDetails carries the top-contributor triple end-to-end", async () => {
     // Asymmetric fixture: one file's image element carries 80 extra
     // data-* attributes so its snippet (and serialized finding) is
     // measurably wider than every other file's. Guarantees the
@@ -327,7 +327,7 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
     }
   });
 
-  it("Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: density-cap reroute points at explain_rule when the page clips ≤ 2 files and inventory > 100", async () => {
+  it("density-cap reroute points at explain_rule when the page clips ≤ 2 files and inventory > 100", async () => {
     // 150 ultra-dense HTML files → > 100 files-with-findings AND
     // (with `limit: 200` so the file-count cap doesn't fire first)
     // the density cap saturates the page on a small slice (~1-2 files).

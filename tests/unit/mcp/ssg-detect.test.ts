@@ -354,7 +354,7 @@ describe("ssgHint", () => {
     expect(hint.text).toContain('additionalPaths: ["_site"]');
     expect(hint.text).not.toContain('"_site/"');
     // Structured detail: every field the agent would otherwise have
-    // to parse out of `text` is exposed directly (V1-HINTS-STRUCTURED-CODE).
+    // to parse out of `text` is exposed directly.
     expect(hint.detail?.["framework"]).toBe("jekyll");
     expect(hint.detail?.["buildCommand"]).toBe("bundle exec jekyll build");
     expect(hint.detail?.["buildOutput"]).toBe("_site/");

@@ -365,7 +365,7 @@ describe("buildAnalysisCoverage — hints", () => {
     // names), the full names list ships on every response — no
     // verboseMeta round-trip. Above the threshold, names stay behind
     // verboseMeta so the default response stays bounded for monorepos.
-    describe("inline names (P2-P)", () => {
+    describe("inline names", () => {
       it("inlines the full names list when count ≤ 50 and verbose is false", () => {
         const tags = Array.from({ length: 12 }, (_, i) => `Comp${String(i).padStart(2, "0")}`);
         const files = [tsxFile("a.tsx", tags, { interactive: true })];
@@ -504,7 +504,7 @@ describe("buildAnalysisCoverage — hints", () => {
         expect(names).toEqual(["HeaderNav"]);
       });
 
-      // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK: through the
+      // through the
       // full pipeline, mixing minified-noise tag text with real
       // PascalCase components in a .tsx source confirms the layered
       // filters cooperate. The upstream `extractComponentIdentifier`
@@ -561,7 +561,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // scan path where extraction has already normalized.
     });
 
-    // Q6-OPAQUE-COMPONENTS-MINIFIED-JS-REGRESSION belt-and-braces:
+    // belt-and-braces:
     // regardless of how fake JSX tag positions originate (upstream
     // TSX-parser error-parse leakage on `.js`, parser recovery on
     // syntactically-broken `.tsx`, vendored compiled bundles that
@@ -932,7 +932,7 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
-  // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: the HTML parser sees
+  // the HTML parser sees
   // a top-of-file `---\n…\n---\n` YAML fence as literal text; this is
   // the substrate Jekyll / Hugo / Eleventy / Astro authors rely on and
   // the scanner must surface so the agent knows the document was
@@ -1215,7 +1215,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // Errored file, empty finding set -> lands in the invisible bucket.
       // The `{ path, parser, reason }` shape is the actionable fix pivot:
       // without the parser + reason the top-level `parse_errors_present`
-      // flag is a silent-failure shape (Q4-PARSE-ERROR-DETAIL).
+      // flag is a silent-failure shape.
       const files = [htmlFileWithErrors("modal.mdx")];
       const { analysisCoverage } = buildAnalysisCoverage(
         files,
@@ -1303,7 +1303,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // verbosity. The gating left the top-level `parse_errors_present`
       // flag unactionable when verboseMeta: false — the agent knew one
       // file didn't parse but couldn't see which one or why. Per
-      // Q4-PARSE-ERROR-DETAIL, both buckets now always ship the full
+      //, both buckets now always ship the full
       // `{ path, parser, reason }` triple so the fix pivot is present
       // on every response.
       const files = [htmlFileWithErrors("modal.mdx"), htmlFileWithErrors("broken.html")];
@@ -1735,7 +1735,7 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
-  // Q3-RULES-BY-EXTENSION-UNDERCOUNT: `rulesFiredByExtension` and
+  // `rulesFiredByExtension` and
   // `perRuleCoverage` both name "rules that ran on this extension." Two
   // surfaces naming the same thing must agree — the historical bug was
   // that the per-extension view used literal extension equality while
@@ -1750,12 +1750,12 @@ describe("buildAnalysisCoverage — hints", () => {
   // rules without any `fileExtensions` gate (e.g. `focus/outline-visible`,
   // `wrapper/drift`). Cross-surface drift.
   //
-  // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the field was renamed
+  // (ADR 0028): the field was renamed
   // from `rulesByExtension` to `rulesFiredByExtension` to disambiguate
   // it from `perRuleCoverage`. The deprecated alias `rulesByExtension`
   // still ships alongside for one minor release; a parity test below
   // pins the alias-mirrors-canonical invariant.
-  describe("rulesFiredByExtension alias coverage (Q3-RULES-BY-EXTENSION-UNDERCOUNT)", () => {
+  describe("rulesFiredByExtension alias coverage", () => {
     function scssFile(path: string): ParsedFile {
       // Mirrors the shape `scanFiles` produces for a `.scss` input: the
       // SCSS parser path in `src/input/parsers/css.ts` emits a
@@ -1906,7 +1906,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // End-to-end: run the real scanner against an in-tree `.scss`
       // file and assert that every rule reporting `filesEvaluated > 0`
       // on the scan is listed under `rulesFiredByExtension[".scss"]`.
-      // This is the Q3-RULES-BY-EXTENSION-UNDERCOUNT invariant — two
+      // This is the invariant — two
       // surfaces describing "rules run on this extension" must agree
       // or the doctrine violation recurs silently.
       const { MCP_TOOLS } = await import("../../../src/mcp/tools.ts");
@@ -1958,7 +1958,7 @@ describe("buildAnalysisCoverage — hints", () => {
         // Without this tripwire the test could pass vacuously if the
         // scanner produced no CSS-gated evaluations at all.
         expect(listed.size).toBeGreaterThan(2);
-        // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the deprecated
+        // (ADR 0028): the deprecated
         // alias `rulesByExtension` ships alongside the canonical name
         // for one minor release with the identical value; the
         // deprecation warning rides whenever the alias is emitted.
@@ -1973,11 +1973,11 @@ describe("buildAnalysisCoverage — hints", () => {
       }
     });
 
-    it("emits the deprecated `rulesByExtension` alias alongside `rulesFiredByExtension` (V1-RULES-BY-EXTENSION-LABELING)", () => {
+    it("emits the deprecated `rulesByExtension` alias alongside `rulesFiredByExtension`", () => {
       // Direct unit-level guard on the rename: the canonical field and
       // the deprecated alias both ship under verbose, with identical
       // contents. Mirrors the precedent from
-      // `deprecated_field_id_renamed_criterionId` (Q7-CRITERION-ID-
+      // `deprecated_field_id_renamed_criterionId` (-
       // FIELD-NAME-DRIFT) — the alias is presence-only signal so an
       // agent reading the warnings channel can drop its legacy reads
       // on the next call.
@@ -2038,7 +2038,7 @@ describe("buildAnalysisCoverage — hints", () => {
       };
     }
 
-    // V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: `parseErrorFiles` and
+    // `parseErrorFiles` and
     // `partialParseFiles` exited the {@link META_ARRAY_CAP} cap regime
     // in favor of the inline-vs-rollup gate at default verbosity. The
     // `*Truncated` siblings and the `metaArrayTruncated` signal that
@@ -2245,7 +2245,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(result.metaArrayTruncated).toBe(true);
     });
 
-    it("emits parseErrorsByParser map keyed by in-house parser name (Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT)", () => {
+    it("emits parseErrorsByParser map keyed by in-house parser name", () => {
       // Mix of HTML errored files (every one routed to total-failure
       // bucket because findingFilePaths is empty) so the per-parser
       // count map carries `{ html: N }` — agent reading the warning
@@ -2270,7 +2270,7 @@ describe("buildAnalysisCoverage — hints", () => {
   });
 });
 
-describe("buildAnalysisCoverage — hints response-shape invariant (V1-HINTS-STRUCTURED-CODE)", () => {
+describe("buildAnalysisCoverage — hints response-shape invariant", () => {
   it("every emitted hint carries a string `code` and a string `text`", () => {
     // Exercises every hint-emission path through buildAnalysisCoverage
     // in one scan: opaque components (>=8), thin CSS coverage with

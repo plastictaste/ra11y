@@ -42,7 +42,7 @@ function fileBucket(path: string, ruleId: string, count: number) {
 
 const FLOOR = 21; // mirrors ANIMATION_LIB_GUARD_FINDING_FLOOR
 
-describe("computeAnimationLibraryGuardCandidates — V1-VENDOR-ANIMATION-LIB-GUARD-HINT", () => {
+describe("computeAnimationLibraryGuardCandidates", () => {
   it("emits a candidate when one rule fires ≥ floor times on a banner-detected vendor library", () => {
     // Canonical case: 27 motion/pause-stop-hide findings on an
     // animate.css clone — one finding per `.animate__*` keyframe.

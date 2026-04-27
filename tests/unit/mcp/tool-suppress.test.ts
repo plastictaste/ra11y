@@ -173,7 +173,7 @@ describe("suppress: HTML emits block-comment pragma", () => {
 });
 
 describe("suppress: Markdown emits HTML-comment pragma", () => {
-  // V1-SUPPRESS-MARKDOWN-FILE-UNSUPPORTED: scanner flags findings on
+  // scanner flags findings on
   // .md / .markdown files (SSG projects routinely embed raw HTML —
   // tables, iframe video embeds, admonition divs). Without this, the
   // `suppressWith` shape echoed on every scan finding pointed at a

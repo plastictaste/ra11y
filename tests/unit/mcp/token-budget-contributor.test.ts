@@ -1,5 +1,5 @@
 /**
- * Unit tests for {@link analyzeTopContributor} (Q7-RESPONSE-TOKEN-BUDGET-DETAIL).
+ * Unit tests for {@link analyzeTopContributor}.
  *
  * Invariants this exercises that survive refactors:
  *

@@ -205,8 +205,8 @@ describe("classifyWrapperCandidates: mixed + deterministic shape", () => {
   });
 });
 
-describe("collectWrapperCandidates: definitionFile (Q2-WRAPPATH)", () => {
-  // Q2-WRAPPATH: every candidate carries a `definitionFile` pointer so
+describe("collectWrapperCandidates: definitionFile", () => {
+  // every candidate carries a `definitionFile` pointer so
   // agents can jump straight to the wrapper source without a Glob
   // round-trip. Resolution is one-hop basename match — the same probe
   // classifyWrapperCandidates uses. We surface the raw file path string
@@ -513,7 +513,7 @@ describe("buildSuggestedConfigSnippet", () => {
   // `nextStep`. Agents paste this directly into ra11y.config.ts — the
   // shape must be `defineConfig`-compatible (array form for name-only
   // input, object form when any row carries a native-element mapping
-  // from Q2-WRAPMAP), lexicographic sort for stability across runs,
+  // from), lexicographic sort for stability across runs,
   // and a single trailing comma that matches project Biome style.
 
   it("emits the array form when every wrapper is name-only, sorted lexicographically", () => {
@@ -527,7 +527,7 @@ describe("buildSuggestedConfigSnippet", () => {
 
   it("emits the object form when any wrapper carries a mapped native element, keys sorted", () => {
     // One mapped wrapper is enough to flip the whole output to the
-    // object form — Q2-WRAPMAP accepts the shape as soon as a single
+    // object form accepts the shape as soon as a single
     // entry is a map, so the snippet mirrors that.
     const snippet = buildSuggestedConfigSnippet([
       { component: "Link", element: "a" },

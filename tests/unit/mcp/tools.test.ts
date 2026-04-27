@@ -296,7 +296,7 @@ describe("MCP tool: explain_rule", () => {
    * `knownLimitations` fields on `RuleDocs` flow through `explain_rule`
    * present-when-meaningful — populated when the rule declares them,
    * omitted otherwise. Existing built-in rules don't declare these fields
-   * yet (Phase 3 is per-rule follow-up work); this regression pins the
+   * yet (per-rule follow-up work); this regression pins the
    * affordance via a fixture rule wired through a registry override so
    * the absence of the fields on built-ins doesn't mask a wiring break.
    */
@@ -450,7 +450,7 @@ describe("MCP tool: scan", () => {
       files: Array<{ path: string; findings: unknown[] }>;
       meta: { filesScanned: number };
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline is gone; sum the four `fixesByClass` lanes for the
     // error+warning total alongside `plan.notes`.
     const lanes = data.plan.fixesByClass;
@@ -496,7 +496,7 @@ describe("MCP tool: scan", () => {
     expect(terseCov.parseErrorFiles).toBeUndefined();
     expect(terseCov.opaqueCustomComponentNames).toBeUndefined();
     expect(terseCov.rulesFiredByExtension).toBeUndefined();
-    // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the deprecated alias
+    // (ADR 0028): the deprecated alias
     // `rulesByExtension` follows the same verbose-only gate as the
     // canonical name — neither field rides on a terse scan.
     expect(terseCov.rulesByExtension).toBeUndefined();
@@ -513,7 +513,7 @@ describe("MCP tool: scan", () => {
     expect(Array.isArray(byExt[".html"])).toBe(true);
     expect(byExt[".html"].length).toBeGreaterThan(0);
     // The deprecated alias `rulesByExtension` ships alongside, carrying
-    // the identical value (ADR 0028, V1-RULES-BY-EXTENSION-LABELING).
+    // the identical value (ADR 0028).
     // Emission triggers the deprecation warning so callers reading the
     // warnings channel can drop their `rulesByExtension` reads on the
     // next call.
@@ -562,7 +562,7 @@ describe("MCP tool: scan_project", () => {
         nextStep: string;
       };
       // The fixture at tests/fixtures/bad/alt-text-missing/ has violations.
-      // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // The flat `plan.violations`
       // counter is gone — sum the per-lane tally instead.
       const lanes = data.plan.fixesByClass;
       const errorWarning =
@@ -578,14 +578,14 @@ describe("MCP tool: scan_project", () => {
       //      "fixable" by `nextStep`.
       //   2. `explain_rule` hop on a `ruleId` — fires when no violation
       //      is in the fixable lanes (e.g. `media/alt-text-missing` re-
-      //      tagged to `verify-in-source` per V1-FIX-LANG-AUTOCOMPLETE-
+      // tagged to `verify-in-source` per-
       //      ALT-MECHANICAL-DOWNGRADE; the lane is excluded from
       //      `fixable` because suggest_fix can't action it inline).
-      //   3. Inline `primary.edit` prose under the Q2R2-FIX-DEDUPE
+      // 3. Inline `primary.edit` prose under the
       //      trim — fires when EVERY violation is `fixClass: "mechanical"`.
       // The branches below cover all three without locking in one lane;
       // the test asserts "the response points somewhere concrete."
-      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+      // top-level location.
       if (/suggest_fix/.test(data.nextStep)) {
         expect(data.nextStep).toMatch(/\.html:\d+|\.tsx:\d+|\.jsx:\d+/);
       } else if (/explain_rule/.test(data.nextStep)) {
@@ -606,12 +606,12 @@ describe("MCP tool: scan_project", () => {
       const tool = findTool("scan_project");
       const session = new McpSession();
       const result = await tool.handler({ cwd: dir }, session);
-      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+      // top-level location.
       const data = JSON.parse(result.content[0].text) as { nextStep: string };
       expect(data.nextStep).toContain("checklist");
     });
 
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+    // `nextStep` and
     // `nextStepStructured` ship at the top level of the scan-family
     // response — never nested inside `meta`. The doctrine is "one
     // pointer, one place": a load-bearing agent-direction field
@@ -621,7 +621,7 @@ describe("MCP tool: scan_project", () => {
     // (`scan_project`, `scan`, `scan_file`) so a future refactor that
     // re-introduces the meta-nested copy on any one tool trips this
     // guard instead of shipping silently.
-    it("V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: nextStep lives at the top level only, never under meta", async () => {
+    it("nextStep lives at the top level only, never under meta", async () => {
       const scanProjectTool = findTool("scan_project");
       const scanTool = findTool("scan");
       const scanFileTool = findTool("scan_file");
@@ -860,8 +860,8 @@ describe("MCP tool: scan_project", () => {
       expect(entries.some((e) => e.source === "config")).toBe(false);
     });
 
-    it("splits auto-detected wrappers into confirmed vs assumed via the one-hop AST probe (P1-F)", async () => {
-      // The core P1-F behavior: an auto-detected wrapper whose
+    it("splits auto-detected wrappers into confirmed vs assumed via the one-hop AST probe", async () => {
+      // The core behavior: an auto-detected wrapper whose
       // defining file renders a native <button> is `confirmed: true`
       // and silences findings; one whose defining file renders <div>
       // is `confirmed: false` (assumed) and stays opaque (rules fire
@@ -1071,7 +1071,7 @@ describe("MCP tool: scan_project", () => {
       expect(data.meta.additionalPathsScanned?.filesAdded).toBe(0);
     });
 
-    // Q4-ADDITIONALPATHS-REDUNDANT: `filesAdded: 0` + no `skipped`
+    // `filesAdded: 0` + no `skipped`
     // entries is ambiguous on its own — the caller can't tell whether
     // the paths were ignored (skipped reasons) or redundant (files
     // already in the default set). The `redundant_additional_paths`
@@ -1429,7 +1429,7 @@ describe("MCP tool: scan_file", () => {
     // `parseFile` dispatches to `parseScss` which emits the CSS AST
     // shape, and CSS-targeting rules (contrast/minimum) run against
     // that AST so authored Sass participates in conformance. Regression
-    // guard for Q4-SCSS-DISCOVERY-WIRE: the Jekyll field report
+    // guard for: the Jekyll field report
     // observed `file-unsupported` on `.scss` + `skippedByExtension`
     // with SCSS counts against a stale MCP subprocess; the wiring has
     // been in place since feat(input): route .scss through the scss
@@ -1448,7 +1448,7 @@ describe("MCP tool: scan_file", () => {
     const session = new McpSession();
     // verboseMeta: true — assertion inspects the per-row
     // perRuleCoverage[] (filesEligible per rule). Default verbosity
-    // surfaces only the compact summary (V1-TOOL-VERBOSE-META-INVERTED-
+    // surfaces only the compact summary (-
     // DEFAULT).
     const result = await tool.handler({ path: scssPath, verboseMeta: true }, session);
 
@@ -1480,7 +1480,7 @@ describe("MCP tool: scan_file", () => {
     // (PARSEABLE_EXTENSIONS), the dispatcher routes to `parseHtml`
     // which strips ERB directive spans from text nodes, and every
     // HTML-scoped rule runs against the resulting AST. Regression
-    // guard for V1-PARSER-ERB: the Jekyll field report observed
+    // guard for: the Jekyll field report observed
     // `file-unsupported` on a `.erb` file whose content would parse
     // cleanly as `.html`; the asymmetric allow-list was the bug, not
     // any parser capability gap.
@@ -1521,7 +1521,7 @@ describe("MCP tool: scan_file", () => {
   it("discovers .erb files and does not report them as skipped by extension", async () => {
     // Sibling to the scan_file test above at the scan-project entry:
     // walk a tree with `.erb` + `.html` and assert every `.erb` is
-    // accepted. Regression tripwire for V1-PARSER-ERB — if discovery
+    // accepted. Regression tripwire for — if discovery
     // drops `.erb` again this test is where it lands.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
@@ -1842,7 +1842,7 @@ describe("MCP tool: detect_native_wrappers", () => {
   });
 
   it("emits suggestedConfigSnippet as a structured field when candidates are found", async () => {
-    // Q2R2-CFG-SNIPPET: agents previously had to parse the English
+    // agents previously had to parse the English
     // `nextStep` prose to extract a usable config fragment. The
     // structured twin is a `defineConfig`-compatible string they can
     // paste directly into ra11y.config.ts. Array form here because
@@ -1885,7 +1885,7 @@ describe("MCP tool: detect_native_wrappers", () => {
       ),
     );
     // nextStep prose stays unchanged — agents using either surface
-    // keep working (Q2R2-CFG-SNIPPET is additive, not a replacement).
+    // keep working (is additive, not a replacement).
     expect(data.nextStep).toContain("nativeWrappers");
   });
 
@@ -1987,7 +1987,7 @@ describe("MCP tool: detect_native_wrappers", () => {
   });
 
   it("stamps projectKind 'ruby' when the discovery walker rejected .rb files", async () => {
-    // V1-DETECT-NATIVE-WRAPPERS-PROJECTKIND-HINT. A Rails-shaped repo
+    //. A Rails-shaped repo
     // with .rb files but no JSX/HTML drops to candidates: [] under
     // the previous shape — indistinguishable from "JSX project with
     // no PascalCase onClick." The named-language label closes that
@@ -2486,7 +2486,7 @@ describe("MCP tool: sessionConfigure", () => {
   });
 
   it("echoes merged session state on the active block", async () => {
-    // V1-SESSION-CONFIGURE-ECHO-STATE: a caller that lands rules,
+    // a caller that lands rules,
     // wrappers, exclude, and cwd in one configure call must see all of
     // them on the response so they can verify the merge applied. Before
     // this, the response only echoed standard/level/ruleCount/

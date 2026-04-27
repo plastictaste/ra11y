@@ -157,7 +157,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // Tailwind utility pattern). The deprecation code
     // `deprecated_field_id_renamed_criterionId` always rides on
     // `coverage` while the legacy `id` alias on the entry arrays still
-    // ships (Q7-CRITERION-ID-FIELD-NAME-DRIFT). Per CLAUDE.md §1
+    // ships. Per CLAUDE.md §1
     // "Ambiguous field shapes are dishonest," `warnings: []` is still
     // forbidden — the field must either be absent or non-empty.
     write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
@@ -184,7 +184,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(data.warnings).toContain("scanned_zero_files");
   });
 
-  it("omits `automatedCriteriaPassRate` on a zero-file scan (V1-ZERO-SCAN-PASS-RATE-SENTINEL)", async () => {
+  it("omits `automatedCriteriaPassRate` on a zero-file scan", async () => {
     // Doctrine (ai-first-consumer.md §"Ambiguous field shapes are
     // dishonest"): on a zero-file scan there is no meaningful
     // denominator for an automated pass rate. The legacy formula
@@ -205,7 +205,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(data.summary).not.toMatch(/\(\d+%\)/);
     // Structural signal the agent can still read — criteriaTotal
     // stays populated so the shape of what *would* have been evaluated
-    // is visible (V1-ZERO-SCAN-PASS-RATE-SENTINEL clamps only the
+    // is visible (clamps only the
     // dishonest scalar, not the per-criterion split).
     expect(typeof data.criteriaTotal).toBe("number");
   });
@@ -224,7 +224,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(typeof data.automatedCriteriaPassRate).toBe("number");
   });
 
-  it("emits a `scanned` envelope matching scan_project's shape on the same cwd (V1-COVERAGE-SCANNED-POINTER-MISSING)", async () => {
+  it("emits a `scanned` envelope matching scan_project's shape on the same cwd", async () => {
     // Cross-surface drift between two tools that both run a real scan
     // over the same cwd is dishonest (`ai-first-consumer.md` "One tool
     // call should answer 'what next?'"). An agent calling

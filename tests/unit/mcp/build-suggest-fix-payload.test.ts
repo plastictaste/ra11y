@@ -1,10 +1,10 @@
 /**
  * Tests for `buildSuggestFixPayload` — `verifyCommand` (prose) +
  * `verifyCommandStructured` ({ tool: "scan_file", args: { path },
- * verifyRuleId }) plumbing, plus the V1-SUGGEST-FIX-TAILWIND-HINT-
+ * verifyRuleId }) plumbing, plus the-
  * SCOPED prose-strip behavior. The verify pair is present-when-
  * meaningful: `kind: "edit"` and `kind: "guidance"` carry it; `kind:
- * "none"` OMITS it (V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE — a populated
+ * "none"` OMITS it (a populated
  * verify on a "no finding here" response is indistinguishable from
  * "you already fixed it and verified").
  *
@@ -183,7 +183,7 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'guidance'", () => {
 });
 
 describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
-  // V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE: `kind: "none"` OMITS the
+  // `kind: "none"` OMITS the
   // verify pair. A populated `verifyCommand` next to "no violation
   // found" reads as "you already fixed it and verified" —
   // indistinguishable from "the finding never existed at this
@@ -205,7 +205,7 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
   });
 });
 
-describe("buildSuggestFixPayload — kind: 'none' nearestFinding / didYouMean breadcrumb (Q7-SUGGEST-FIX-NONE-NEAREST-FINDING)", () => {
+describe("buildSuggestFixPayload — kind: 'none' nearestFinding / didYouMean breadcrumb", () => {
   // Doctrine (CLAUDE.md §1 "Ambiguous field shapes are dishonest"): a
   // `kind: "none"` response with no breadcrumb is a dead-end shape that
   // forces the agent to re-scan when paginated scans drifted the line,
@@ -668,7 +668,7 @@ describe("buildSuggestFixPayload — template-directive poisoning of newText", (
   });
 });
 
-describe("buildSuggestFixPayload — meta.mechanicalInPrinciple (Q6-SUGGEST-FIX-MECHANICAL-VS-GUIDANCE-DRIFT)", () => {
+describe("buildSuggestFixPayload — meta.mechanicalInPrinciple", () => {
   // Doctrine (CLAUDE.md §1 "Composite headline counts are dishonest" +
   // "Ambiguous field shapes are dishonest"): the scan's
   // `plan.fixesByClass.mechanical` counts rules with
@@ -807,7 +807,7 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple (Q6-SUGGEST-FIX-
   });
 });
 
-describe("buildSuggestFixPayload — Tailwind hint scoping (V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED)", () => {
+describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
   // Doctrine: context-blind advice is dishonest (ai-first-consumer.md).
   // The `focus/outline-visible` rule appends a Tailwind escape-hatch
   // sentence to its `suggestion` text on scoped selectors. On a vanilla
@@ -917,7 +917,7 @@ describe("buildSuggestFixPayload — Tailwind hint scoping (V1-SUGGEST-FIX-TAILW
   });
 });
 
-describe("buildSuggestFixPayload — Q7-SUGGEST-FIX-VENDOR-CONTEXT lanes", () => {
+describe("buildSuggestFixPayload lanes", () => {
   // Doctrine (`docs/kb/architecture/ai-first-consumer.md` —
   // "Heuristic-mislabeled meta sub-fields are dishonest" + "Don't
   // duplicate capability the agent already has"): when the target file

@@ -100,7 +100,7 @@ describe("assembleScanFamilyResponse", () => {
     const r = assembleScanFamilyResponse(baseInput());
     // `totalFindings` was removed per "Composite headline counts are
     // dishonest." `plan.violations` was removed for the same reason
-    // per Q7-PLAN-VIOLATIONS-COMPOSITE. The honest plan shape carries
+    // per. The honest plan shape carries
     // `notes` (severity-info, single kind) plus `fixesByClass` (per-
     // lane structured tally, present-when-meaningful).
     expect(r.plan["totalFindings"]).toBeUndefined();
@@ -272,7 +272,7 @@ describe("assembleScanFamilyResponse", () => {
     const r = assembleScanFamilyResponse(baseInput({ violations: [note, err] }));
     // `plan.violations` and `plan.totalFindings` were both removed
     // per the "Composite headline counts are dishonest" doctrine
-    // (Q7-PLAN-VIOLATIONS-COMPOSITE / ADR 0024). The honest shape
+    // (/ ADR 0024). The honest shape
     // carries `plan.notes` (severity-info, single kind) and
     // `plan.fixesByClass` (per-lane structured tally) — consumers
     // that want the flat error+warning total sum the four lanes.

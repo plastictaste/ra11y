@@ -2,7 +2,6 @@
  * End-to-end tests that `scan_file` surfaces a top-level `limitations`
  * field and `scan_project`'s per-file entries carry the same signal
  * when the underlying file parsed with errors
- * (Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD).
  *
  * Clean-parse fixtures assert the field is omitted entirely (CLAUDE.md
  * §1 "Ambiguous field shapes are dishonest" — never ship `[]`).

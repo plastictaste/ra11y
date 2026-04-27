@@ -89,7 +89,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(isError).toBeUndefined();
       expect(response.wrappers).toBeTruthy();
       expect(Array.isArray(response.wrappers.candidates)).toBe(true);
-      // Canonical key is `suggestedConfig` (Q3-PROPOSE-CONFIG-FIELD-
+      // Canonical key is `suggestedConfig` (-
       // DRIFT); `proposedConfig` is emitted alongside for one release
       // as a transition alias so agents that learned the old name keep
       // working. Both must carry the identical value.
@@ -112,7 +112,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       // Dry-run: `baseline` is omitted from the response (not `null`)
       // and `baseline_dry_run` lands under `warnings` so dry-run is
       // distinguishable from baseline-creation-failed by reading the
-      // shape alone (V1-BOOTSTRAP-BASELINE-NULL-SENTINEL,
+      // shape alone (
       // CLAUDE.md §1 "Ambiguous field shapes are dishonest").
       expect(response.baseline).toBeUndefined();
       expect(response.warnings).toBeDefined();
@@ -130,7 +130,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
   // conformance and that runtime-only checks are out of scope. The
   // bootstrap composer must forward that prose onto `scan.limitations`
   // so CI readers pasting the `ciSnippet` don't treat the scan as
-  // authoritative. V1-ENV-BOOTSTRAP-STRIPS-LIMITATIONS.
+  // authoritative..
   it("forwards plan.limitations prose from scan_project onto scan.limitations", async () => {
     await withScratch(async (dir) => {
       await writeFile(
@@ -298,7 +298,7 @@ describe("bootstrap: writeBaseline opt-in", () => {
 });
 
 describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
-  // V1-ENV-CISNIPPET-DRY-RUN-DISHONEST. `buildCiSnippet` used to emit
+  //. `buildCiSnippet` used to emit
   // `npx @ra11y/core --baseline check` verbatim regardless of whether
   // `.ra11y-baseline.json` existed on disk — a caller pasting the
   // dry-run response's snippet into CI before committing the baseline
@@ -385,7 +385,7 @@ describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
 });
 
 describe("bootstrap: ciSnippet clarifies node-setup is ra11y-only for foreign ecosystems", () => {
-  // Q4-BOOTSTRAP-CI-SNIPPET-ECOSYSTEM. The ra11y job body is identical
+  //. The ra11y job body is identical
   // across ecosystems — `@ra11y/core` is a Node-based CLI regardless of
   // the consumer's primary language, so `actions/setup-node@v4` stays
   // in the snippet for Ruby / Python / Go / Rust roots too. Stripping
@@ -523,7 +523,7 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
 });
 
 describe("bootstrap: suggestedConfig/proposedConfig null-case parity", () => {
-  // Q3-PROPOSE-CONFIG-FIELD-DRIFT. When the `propose_config` leg
+  //. When the `propose_config` leg
   // degrades (handler rejects → extractProposedConfig returns null),
   // neither the canonical `suggestedConfig` key nor the
   // `proposedConfig` transition alias may appear on the response —
@@ -559,7 +559,7 @@ describe("bootstrap: suggestedConfig/proposedConfig null-case parity", () => {
 });
 
 describe("bootstrap: proposedConfig deprecation warning", () => {
-  // V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN. `bootstrap` ships the
+  //. `bootstrap` ships the
   // canonical `suggestedConfig` and a transition-alias `proposedConfig`
   // with identical contents for one release. Without a structured
   // warning, agents have no signal that the alias is going away and
@@ -629,7 +629,7 @@ describe("bootstrap: empty project edge case", () => {
       expect(response.warnings).toBeDefined();
       expect(response.warnings).toContain("scanned_zero_files");
       // Dry-run code joins the scan-leg code in `warnings` —
-      // V1-BOOTSTRAP-BASELINE-NULL-SENTINEL applies regardless of
+      // applies regardless of
       // whether the scan parsed any files.
       expect(response.warnings).toContain("baseline_dry_run");
       expect(response.baseline).toBeUndefined();

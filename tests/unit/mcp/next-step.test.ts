@@ -53,7 +53,7 @@ const sampleFinding = {
 
 describe("buildNextStep", () => {
   it("returns suggest_fix with aligned prose + structured args when a fixable violation exists", () => {
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline is gone; `buildNextStep` derives the count from
     // `plan.fixesByClass` so all next-step fixtures populate the
     // per-lane tally. One mechanical violation here.
@@ -150,7 +150,7 @@ describe("buildNextStep", () => {
   });
 
   it("drops the suggest_fix nudge when every violation carries fixClass=mechanical", () => {
-    // Q2R2-FIX-DEDUPE: when every violation-severity finding already
+    // when every violation-severity finding already
     // carries an inline mechanical fix (primary + alternatives +
     // context), re-nudging the agent to call suggest_fix is a
     // redundant round-trip. Both prose and structured must be
@@ -285,7 +285,7 @@ describe("buildNextStep", () => {
     });
   });
 
-  // ── Prompt-link assertions (V1-PROMPT-LINK) ──────────────────────────────
+  // ── Prompt-link assertions ──────────────────────────────
   // Each canonical workflow endpoint should surface the right prompt
   // template by name so agents discover them without extra round-trips
   // to `prompts/list`. The assertions are literal-string checks —
@@ -392,7 +392,7 @@ describe("buildNextStep", () => {
     }
   });
 
-  // ── Q6-NEXTSTEP-AVOIDS-VENDOR-CSS ─────────────────────────────────
+  // ── ─────────────────────────────────
   // When the top-ranked finding sits in vendor code (bootstrap.css,
   // font-awesome.css, compiled Tailwind) AND a same-`ruleId` finding
   // exists in authored code, the builder reroutes its structured
@@ -580,7 +580,7 @@ describe("buildNextStep", () => {
   });
 });
 
-describe("Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY — per-rule narrowing reroute", () => {
+describe("per-rule narrowing reroute", () => {
   describe("pickTopRuleByCount", () => {
     it("returns the rule ID with the highest finding count across the page", () => {
       const files = [

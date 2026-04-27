@@ -12,7 +12,7 @@
  *   silently nothing.
  *
  * Specifically covers the fourth `no-parseable-files` reason
- * (V1-ADDITIONAL-PATHS-PRESENT-BUT-UNPARSEABLE): prior versions fell
+ *: prior versions fell
  * through without a skip entry when a directory held ≥1 file but none
  * were parseable. The Ruby-only directory case
  * (`additionalPaths: ["rake/"]` on a `.rb`-only tree) is the canonical
@@ -55,7 +55,7 @@ describe("classifyAdditionalPathSkips", () => {
     expect(out).toEqual([{ path: "generated", reason: "excluded-by-glob" }]);
   });
 
-  // V1-ADDITIONAL-PATHS-PRESENT-BUT-UNPARSEABLE: the canonical case.
+  // the canonical case.
   // Directory exists, holds files, but every file's extension falls
   // outside the parser set. Prior to this fix the classifier fell
   // through silently and `filesAdded: 0` was indistinguishable from a

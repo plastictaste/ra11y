@@ -198,7 +198,7 @@ describe("computeScanWarnings", () => {
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: {
-        // V1-HINTS-STRUCTURED-CODE: the warnings module dispatches on
+        // the warnings module dispatches on
         // `detail.tailwindDetected` rather than substring-matching text.
         hints: [
           {
@@ -290,7 +290,7 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
-  // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: frontmatter is a
+  // frontmatter is a
   // parser-level substrate the HTML parser sees as literal text — a
   // Jekyll / Hugo / Eleventy / Astro post header. The warning must
   // fire on its presence regardless of directive-overlap because the
@@ -367,7 +367,7 @@ describe("computeScanWarnings", () => {
     expect(absent).not.toContain("extensions_skipped_no_parser");
   });
 
-  it("does NOT fire `extensions_skipped_no_parser` when the skipped map is binary assets only (Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER)", () => {
+  it("does NOT fire `extensions_skipped_no_parser` when the skipped map is binary assets only", () => {
     // A scan whose only "skipped" extensions are images / fonts / media
     // is not a parser-coverage gap an agent needs to triage. Filter
     // them out so the warning channel stays focused on text-source
@@ -468,7 +468,7 @@ describe("computeScanWarnings", () => {
     expect(codes.filter((c) => c === "parse_errors_present").length).toBe(1);
   });
 
-  it("fires `partial_parse_files_present` when partialParseFileCount > 0 (V1-PARTIAL-PARSE-FILES-WARNING-CODE binary presence bit)", () => {
+  it("fires `partial_parse_files_present` when partialParseFileCount > 0 (binary presence bit)", () => {
     const codes = computeScanWarnings({
       filesScanned: 10,
       rootSource: "explicit",
@@ -495,7 +495,7 @@ describe("computeScanWarnings", () => {
     expect(codes).toContain("parse_errors_present");
   });
 
-  it("fires `parser_bailed_zero_findings` when parseErrorFileCount > 0 AND totalFindings === 0 (Q8-PARSE-ERRORS-PRESENT-SUBCODE)", () => {
+  it("fires `parser_bailed_zero_findings` when parseErrorFileCount > 0 AND totalFindings === 0", () => {
     const codes = computeScanWarnings({
       filesScanned: 538,
       rootSource: "explicit",
@@ -661,7 +661,7 @@ describe("computeScanWarnings", () => {
   // present scripts.
   it("fires `source_language_unsupported` with language=ruby on a Rails-shaped repo (.rb + .haml dominance)", () => {
     // `.erb` used to count toward this signal but is now parseable
-    // (V1-PARSER-ERB) — the HTML parser routes `.erb` via the
+    // — the HTML parser routes `.erb` via the
     // `stripTemplateDirectives` pass, so an ERB-heavy repo no longer
     // surfaces in `skippedByExtension`. `.rb` (pure Ruby) + `.haml`
     // (Ruby template) remain ecosystem-foreign.
@@ -679,7 +679,7 @@ describe("computeScanWarnings", () => {
   });
 
   it("does NOT fire `source_language_unsupported` with language=ruby on a Jekyll-shaped repo where only `.erb` + `.md` appear in skippedByExtension", () => {
-    // V1-PARSER-ERB regression guard: `.erb` is now parseable, so an
+    // regression guard: `.erb` is now parseable, so an
     // `.erb`-heavy skippedByExtension entry is itself an upstream
     // bug (the files should have been parsed). Here we simulate the
     // pre-parser case — 200 `.erb` files mock-classified as skipped
@@ -847,7 +847,7 @@ describe("warningsFromScanMeta", () => {
     expect(codesFalse).not.toContain("storybook_preset_active");
   });
 
-  // Q4-ADDITIONALPATHS-REDUNDANT: `additionalPaths` contributed
+  // `additionalPaths` contributed
   // parseable files, but every one of those files was already in the
   // default-discovered set — the flag did nothing, and the caller
   // needs to distinguish that from "did nothing because the paths
@@ -887,7 +887,7 @@ describe("warningsFromScanMeta", () => {
     expect(codesFalse).not.toContain("redundant_additional_paths");
   });
 
-  // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: `restrictToPaths` intersected
+  // `restrictToPaths` intersected
   // the discovered file set down to zero entries — distinct from
   // `scanned_zero_files` (discovery itself produced nothing) because
   // the response carries a populated `meta.restrictToPathsApplied`
@@ -927,7 +927,7 @@ describe("warningsFromScanMeta", () => {
     expect(codesFalse).not.toContain("restrict_to_paths_no_matches");
   });
 
-  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: the broader
+  // the broader
   // `scanned_build_artifacts_present` already labels artifact
   // presence; this finer code names the minified subset
   // specifically, so an agent can triage findings on minified
@@ -937,7 +937,7 @@ describe("warningsFromScanMeta", () => {
   // `buildArtifacts.entries[].classification` and the two
   // minified-shaped variants (`definite-min-infix` and
   // `likely-minified-by-line-stats` — the confidence-graded split
-  // introduced by Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL)
+  // introduced by)
   // lives at the call site so this module stays decoupled from
   // the build-artifact classifier internals.
   it("fires `scanned_minified_file` when the caller-supplied list is non-empty", () => {
@@ -975,7 +975,7 @@ describe("warningsFromScanMeta", () => {
     expect(codes).not.toContain("scanned_minified_file");
   });
 
-  // V1-MISSING-WARNING-DIST-ONLY-SCAN: doctrine analogue of
+  // doctrine analogue of
   // `scanned_zero_files`. When 100% of the parsed files are
   // classified as build artifacts (the canonical misrooted-into-`dist/`
   // shape), `scanned_build_artifacts_present` only signals "at least
@@ -1035,7 +1035,7 @@ describe("warningsFromScanMeta", () => {
     expect(codes).not.toContain("dist_only_scan_detected");
   });
 
-  // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: when filesScanned: 0 AND
+  // when filesScanned: 0 AND
   // the config-loader walk-up landed on a real project marker at a
   // strict ancestor, the bare `scanned_zero_files` is honest but
   // incomplete — the parent dir likely would have produced findings.
@@ -1250,7 +1250,7 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       analysisCoverage: {
         // Rails: 80 haml + 120 rb = 200 ruby; 5 md; total 205.
         // (`.erb` used to be in the ruby tally but is now parseable;
-        // see V1-PARSER-ERB — `.haml` stands in as the skipped Ruby
+        // see — `.haml` stands in as the skipped Ruby
         // template layer.)
         skippedByExtension: { ".haml": 80, ".rb": 120, ".md": 5 },
       },
@@ -1262,7 +1262,7 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.source_language_unsupported?.percentageOfSkipped).toBe(97.6);
   });
 
-  it("emits a `parse_errors_present` payload with `parseErrorsByParser` map (Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT)", () => {
+  it("emits a `parse_errors_present` payload with `parseErrorsByParser` map", () => {
     const codes = ["parse_errors_present"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 552,
@@ -1310,7 +1310,7 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.parse_errors_present?.parseErrorsByParser).toBeUndefined();
   });
 
-  it("filters binary-asset extensions out of the `extensions_skipped_no_parser` payload (Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER)", () => {
+  it("filters binary-asset extensions out of the `extensions_skipped_no_parser` payload", () => {
     const codes = ["extensions_skipped_no_parser"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 50,
@@ -1491,7 +1491,7 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
   });
 });
 
-// Q6-BUDGET-UNDER-VENDOR-NOISE — vendor-CSS dominance signal.
+// vendor-CSS dominance signal.
 // Canonical repro: a website-templates scan where bootstrap.css
 // + font-awesome.css emit the bulk of the findings and the
 // response's file budget is consumed by unactionable vendor
@@ -1733,7 +1733,7 @@ describe("computeScanWarnings — response_meta_truncated", () => {
   });
 });
 
-// V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION: the payload-vs-binary
+// the payload-vs-binary
 // contract on `ScanWarningDetails` says every fired warning code is
 // either payload-bearing (its slot on the interface is populated when
 // the code fires AND the predicate's data is non-degenerate) OR
@@ -1756,7 +1756,7 @@ describe("computeScanWarnings — response_meta_truncated", () => {
 // honestly binary (no-config / template-literal)." Together they
 // pin the cross-surface invariant so the regression cannot reopen
 // silently.
-describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary contract", () => {
+describe("warningsDetails cross-surface regression — payload-vs-binary contract", () => {
   it("payload-bearing codes always emit a `warningsDetails` entry on a fire — `parse_errors_present`", () => {
     const out = warningsField({
       filesScanned: 42,
@@ -2015,7 +2015,7 @@ describe("V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION — payload-vs-binary con
   });
 });
 
-// V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT
+//
 //
 // Doctrine: zero-output success is ambiguous failure. Token-only
 // `.scss` partials (`_variables.scss`, Font Awesome theme files,
@@ -2090,7 +2090,7 @@ describe("computeScanWarnings — scss_unresolved_variables", () => {
   });
 });
 
-// V1-SCANNED-MINIFIED-FILE-WARNING-CODE: parallel coverage for the
+// parallel coverage for the
 // `scanned_minified_file` code's `warningsDetails` payload + the
 // payload-vs-binary contract. Mirrors the `scss_unresolved_variables`
 // pattern because both codes carry the same shape (`{ files: string[] }`)
@@ -2152,13 +2152,13 @@ describe("computeScanWarnings — scanned_minified_file payload + warningsField 
   });
 });
 
-describe("computeScanWarnings: V1-RULES-BY-EXTENSION-LABELING (ADR 0028)", () => {
+describe("computeScanWarnings: rulesByExtension labeling (ADR 0028)", () => {
   // The rename ships the canonical `rulesFiredByExtension` with the
   // deprecated alias `rulesByExtension` riding alongside for one minor
   // release. The warning code `deprecated_field_rules_by_extension_
   // renamed_rules_fired_by_extension` is a presence-only signal —
   // mirror precedent: `deprecated_field_id_renamed_criterionId`
-  // (Q7-CRITERION-ID-FIELD-NAME-DRIFT). Predicate keys off alias
+  //. Predicate keys off alias
   // presence in `analysisCoverage.rulesByExtension`, so a callsite
   // that drops the alias drops the warning, too.
   it("fires when analysisCoverage carries the deprecated `rulesByExtension` alias", () => {
@@ -2211,7 +2211,7 @@ describe("computeScanWarnings: V1-RULES-BY-EXTENSION-LABELING (ADR 0028)", () =>
   });
 });
 
-describe("computeScanWarnings: V1-BULK-CATALOG-SCAN-PERF-12S", () => {
+describe("computeScanWarnings: bulk-catalog scan performance", () => {
   // The detector at `src/mcp/bulk-catalog.ts` resolves to either an
   // additive payload (slow + vendor-heavy OR bulk + vendor-heavy) or
   // `undefined`. The warnings module is pure over the resolved value
@@ -2306,7 +2306,7 @@ describe("computeScanWarnings: V1-BULK-CATALOG-SCAN-PERF-12S", () => {
   });
 });
 
-// V1-VENDOR-ANIMATION-LIB-GUARD-HINT: a banner-detected vendor library
+// a banner-detected vendor library
 // emitting a single rule's findings ≥ ANIMATION_LIB_GUARD_FINDING_FLOOR
 // times on one file earns the additive guard warning. The remediation
 // pivot ("wrap the import in @media (prefers-reduced-motion)") shifts
@@ -2431,7 +2431,7 @@ describe("computeScanWarnings — animation_library_without_reduced_motion_guard
     expect(payload?.additionalMatches?.[0]).not.toHaveProperty("suggestion");
   });
 
-  // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED payload-bearing surface:
+  // payload-bearing surface:
   // the ancestor path is the load-bearing pivot the agent re-scopes
   // to, so it must ride on the structured `warningsDetails` channel
   // alongside the bare code (membership-vs-payload invariant).

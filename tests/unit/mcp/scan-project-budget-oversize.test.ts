@@ -1,5 +1,5 @@
 /**
- * Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE wire-path test for
+ * wire-path test for
  * `assembleScanProjectResponse` — verifies the assembler engages the
  * minimum-honest envelope fallback when the post-density-cap response
  * still crosses the host-ceiling sentinel.

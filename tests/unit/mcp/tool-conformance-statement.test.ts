@@ -225,7 +225,7 @@ describe("conformance_statement: durable attestations clear blockers", () => {
   });
 });
 
-// ─── Signing flow (V1-CERT-STATEMENT-SIGN) ────────────────────────────────
+// ─── Signing flow ────────────────────────────────
 
 function runGit(cwd: string, ...args: string[]): void {
   const result = spawnSync("git", args, {
@@ -377,7 +377,7 @@ describe("conformance_statement: signing flow", () => {
   });
 });
 
-describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-ARRAY-UNCAPPED)", () => {
+describe("conformance_statement: scope.files cap", () => {
   it("returns the full file manifest inline with no truncation warning when the scope fits under the cap", async () => {
     await withScratch(async (cwd) => {
       // Three TSX files — well under the default 50 cap. Expect the
@@ -471,7 +471,7 @@ describe("conformance_statement: scope.files cap (V1-CONFORMANCE-SCOPE-FILES-ARR
   });
 
   it("default response on >50-file corpus omits the file array; verboseMeta: true re-includes it", async () => {
-    // V1-CONFORMANCE-SCOPE-FILES-ARRAY-UNCAPPED regression: a >50-file
+    // regression: a >50-file
     // corpus should NOT inline the path manifest by default; the agent
     // can flip `verboseMeta: true` when the full list is load-bearing.
     // The original failure shipped 4043 paths × ~90 chars = 360KB on the

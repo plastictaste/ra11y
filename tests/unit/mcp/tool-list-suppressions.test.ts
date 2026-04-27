@@ -1,5 +1,5 @@
 /**
- * Unit tests for the `list_suppressions` MCP tool (Q2-LISTSUPP).
+ * Unit tests for the `list_suppressions` MCP tool.
  *
  * Guards the pragma-enumeration shape promised by the doctool: empty
  * tree surfaces an empty array (not omitted), bare pragmas omit the
@@ -77,7 +77,7 @@ describe("list_suppressions: empty tree", () => {
       expect(body.meta.filesScanned).toBe(1);
       // `list_suppressions` runs zero rules — the meta block must NOT
       // carry `rulesEvaluated`. Cross-tool field semantics need to be
-      // honest (V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT): a tool
+      // honest: a tool
       // that never invokes the rule engine cannot report the count of
       // rules it evaluated. An agent reading `rulesEvaluated.loaded: N`
       // here would conclude N rules ran against the tree, which is the

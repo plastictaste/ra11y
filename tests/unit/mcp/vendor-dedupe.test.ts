@@ -172,7 +172,7 @@ describe("collapseVendorCssFindings — patternId vs message fallback", () => {
 });
 
 describe("collapseVendorCssFindings — extension scope", () => {
-  // V1-SCAN-PROJECT-LAYOUT-FILES-DROPPED: the dedupe is scoped to CSS-family
+  // the dedupe is scoped to CSS-family
   // extensions so authored files (Astro layouts, TSX components, HTML
   // partials, etc.) that happen to share a framework-idiomatic basename
   // across sibling directories do not collapse. Collapsing them would drop
@@ -316,7 +316,7 @@ describe("collapseVendorCssFindings — threshold constant", () => {
 });
 
 describe("collapseVendorCssFindings — JS vendor basename scope", () => {
-  // V1-CHECKLIST-VENDOR-FILE-FINGERPRINT-COLLAPSE: extends the cross-file
+  // extends the cross-file
   // dedupe to JS vendor drops (`jquery.*`, `bootstrap.js`, `wow.*`,
   // `headroom.*`, `fancybox*`, `flexslider*`). Unlike CSS, plain `.js` /
   // `.mjs` is also the default extension for authored code, so JS dedupe

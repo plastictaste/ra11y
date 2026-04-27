@@ -45,7 +45,7 @@ function lowRow(ruleId: string): PerRuleCoverage {
  * horizon was bounded on this substrate (canonical:
  * `keyboard/handler-missing` on a single HTML file when the click
  * handler may live in an external `.js` sibling). Reserved until the
- * downstream audit (Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT)
+ * downstream audit
  * wires the downgrade; this helper lets the derivative test pin the
  * transient-conflation behaviour against the widened union.
  */

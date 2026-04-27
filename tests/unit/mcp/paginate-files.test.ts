@@ -1,5 +1,5 @@
 /**
- * Unit tests for scan_project's P1-OVF pagination — the response-size
+ * Unit tests for scan_project's pagination — the response-size
  * guard that caps files-with-findings lists so large monorepo scans
  * don't overflow MCP token limits. The scan itself still runs over
  * everything; the cap bounds only the emitted `files` array.
@@ -8,7 +8,7 @@
  * MCP surface so the contract the agent sees (truncated + nextOffset
  * + totalFilesWithFindings) stays guarded against drift.
  *
- * V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: `truncated` and
+ * `truncated` and
  * `totalFilesWithFindings` ALWAYS ride on every scan_project response —
  * the negative answer ("not truncated, this IS the full inventory") is
  * load-bearing. Conditional-spread is wrong for these two fields:
@@ -94,7 +94,7 @@ function buildFixture(fileCount: number): string {
   return root;
 }
 
-describe("scan_project pagination (P1-OVF)", () => {
+describe("scan_project pagination (overflow)", () => {
   it("emits truncated:false + totalFilesWithFindings when every files-with-findings entry fits under the cap", async () => {
     const root = buildFixture(3);
     try {
@@ -108,7 +108,7 @@ describe("scan_project pagination (P1-OVF)", () => {
         nextOffset?: unknown;
         totalFilesWithFindings?: unknown;
       };
-      // V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: load-bearing negative —
+      // load-bearing negative —
       // `truncated: false` is the explicit "this IS the full inventory"
       // signal. Omitting it would force the agent to disambiguate
       // "not truncated" from "field never emitted on this scan
@@ -167,7 +167,7 @@ describe("scan_project pagination (P1-OVF)", () => {
         pageClipReason?: string;
       };
       // Page 2 of 2: the remaining 2 files (5 total - offset 3).
-      // V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: `truncated: false` rides
+      // `truncated: false` rides
       // on the last page so the caller knows no more pages remain;
       // `nextOffset` stays absent because there's nothing to resume.
       // `totalFilesWithFindings` carries the full inventory size.
@@ -252,7 +252,7 @@ describe("scan_project pagination (P1-OVF)", () => {
       expect(lastPage.effectiveLimit).toBe(2);
       expect(lastPage.pageClipReason).toBe("end_of_results");
       // Non-paginated single-page response (offset === 0, whole thing
-      // fit): V1-TRUNCATED-FIELD-PRESENCE-CONTRACT — `truncated: false`
+      // fit): — `truncated: false`
       // and `totalFilesWithFindings` always ride; the rest of the
       // pagination fields stay omitted because pagination wasn't
       // active (no clip to disambiguate).
@@ -296,10 +296,10 @@ describe("scan_project pagination (P1-OVF)", () => {
       // Each fixture file has one <img> without alt; the alt-text
       // rule fires under multiple criteria (WCAG 2.2, 2.1, etc.), so
       // the total finding count is >= file count. What matters for
-      // P1-OVF is that the plan reports the PRE-TRUNCATION tally —
+      // is that the plan reports the PRE-TRUNCATION tally —
       // limit:2 must not cut the per-lane counters down to the page-1
       // subset, otherwise the agent reads "found 2" when there's more
-      // work. Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat
+      // work. Per the flat
       // `plan.violations` headline is gone; sum the four
       // `fixesByClass` lanes for the error+warning total.
       const lanes = body.plan.fixesByClass;
@@ -337,7 +337,7 @@ describe("scan_project pagination (P1-OVF)", () => {
     }
   });
 
-  it("V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: emits truncated + totalFilesWithFindings on every shape (small / paginated-mid / paginated-last / capped)", async () => {
+  it("emits truncated + totalFilesWithFindings on every shape (small / paginated-mid / paginated-last / capped)", async () => {
     // The four scan_project shapes a caller might encounter — every
     // one must carry both fields so an agent reading `truncated` can
     // distinguish "this IS the full inventory" (false) from "more

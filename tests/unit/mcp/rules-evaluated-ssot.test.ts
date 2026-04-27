@@ -104,7 +104,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
       );
       const listedIds = new Set(listRules.rules.map((r) => r.id));
 
-      // V1-TOOL-VERBOSE-META-INVERTED-DEFAULT: at default verbosity the
+      // at default verbosity the
       // scan-family meta carries the compact `perRuleCoverageSummary`
       // (rule IDs + count) instead of the full per-row array. The
       // containment invariant still holds against the summary's
@@ -132,7 +132,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   //
   // `list_suppressions` is intentionally OUTSIDE this invariant: that
   // tool runs zero rules, so it omits `rulesEvaluated` entirely
-  // (V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT). Including it under a
+  //. Including it under a
   // counter named "evaluated" would be cross-tool dishonest. The
   // companion absence-check below pins the omission so a future
   // re-introduction trips the test.
@@ -258,7 +258,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   // Invariant #4: `sessionConfigure.active.ruleCount` agrees with
   // `scan_project.meta.rulesEvaluated.loaded` on the same session.
   //
-  // Before V1-SESSION-RULECOUNT-VS-SCAN-RULESLOADED, `sessionConfigure`
+  // Before, `sessionConfigure`
   // open-coded its counter as "registry rules whose `satisfies` cites
   // a criterion under the configured standard." That filter excluded
   // rules like `parsing/invalid-id-shape` (cites only `wcag21:4.1.1` —

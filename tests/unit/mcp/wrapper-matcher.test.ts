@@ -82,7 +82,7 @@ describe("nameMatchesAnyWrapper", () => {
   });
 });
 
-describe("matchesWrapperPattern — compound (dotted) names (Q2R2-COMPOUND)", () => {
+describe("matchesWrapperPattern — compound (dotted) names", () => {
   it("matches a literal compound wrapper name segment-for-segment", () => {
     expect(matchesWrapperPattern("Card.Header", "Card.Header")).toBe(true);
     expect(matchesWrapperPattern("Card.Body", "Card.Header")).toBe(false);

@@ -1,5 +1,5 @@
 /**
- * V1-SCAN-FILE-CWD-CONTAINMENT: every MCP tool that takes a
+ * every MCP tool that takes a
  * `(cwd, file|path)` pair must enforce the same escape boundary.
  * Previously the guard lived only in `apply_fix` and `suppress`;
  * `scan_file` and `suggest_fix` let `{ cwd: "/x/a", path: "../b/f" }`
@@ -43,7 +43,7 @@ async function withScratchPair<T>(fn: (inside: string, outside: string) => Promi
   }
 }
 
-describe("scan_file: V1-SCAN-FILE-CWD-CONTAINMENT", () => {
+describe("scan_file: cwd containment", () => {
   it("accepts a path that resolves inside cwd", async () => {
     await withScratchPair(async (inside) => {
       const file = join(inside, "page.html");
@@ -101,7 +101,7 @@ describe("scan_file: V1-SCAN-FILE-CWD-CONTAINMENT", () => {
   });
 });
 
-describe("suggest_fix: V1-SCAN-FILE-CWD-CONTAINMENT", () => {
+describe("suggest_fix: cwd containment", () => {
   it("rejects `path-escapes-cwd` when a relative path climbs above cwd via `..`", async () => {
     await withScratchPair(async (inside, outside) => {
       const target = join(outside, "escape.html");

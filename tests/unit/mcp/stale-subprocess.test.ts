@@ -61,7 +61,7 @@ describe("annotateStaleSubprocess", () => {
   });
 
   it("injects the warning code and prose hint into an object payload with no prior warnings", () => {
-    // Plan shape uses the post-Q7-PLAN-VIOLATIONS-COMPOSITE
+    // Plan shape uses the post-
     // structure (notes + fixesByClass) — `annotateStaleSubprocess`
     // is pure-pass-through over the plan, so this assertion guards
     // that the per-lane tally rides through verbatim.
@@ -264,7 +264,7 @@ describe("annotateStaleSubprocess", () => {
   });
 });
 
-describe("mtime-based detection (deterministic repro — Q3-MCP-RESTART-HINT-SUBPROCESS-RACE)", () => {
+describe("mtime-based detection (deterministic repro)", () => {
   // Field-report invariant: a subprocess running code at a known path, whose
   // on-disk file is rewritten mid-session, must surface the stale warning on
   // the next tool call. The 90-min session that motivated this backlog item

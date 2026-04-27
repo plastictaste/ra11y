@@ -167,7 +167,7 @@ describe("detectBulkCatalog", () => {
     expect(detection?.topVendorFile).toBe("templates/site-0/bootstrap.css");
   });
 
-  it("matches the canonical V1-BULK-CATALOG-SCAN-PERF-12S repro shape (4043 files / 12188ms / 172 vendor templates)", () => {
+  it("matches the canonical bulk-catalog repro shape (4043 files / 12188ms / 172 vendor templates)", () => {
     // Sanitized echo of the field-report numbers from the backlog
     // item: `durationMs: 12188`, 4043 files scanned, vendor bundles
     // across 172 templates. The detector should fire

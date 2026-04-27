@@ -108,7 +108,7 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
   });
 
   it("emits coverageConfidenceReason on per-rule rows when the only scanned file failed to parse", async () => {
-    // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS: a file that failed
+    // a file that failed
     // to parse used to surface as a `coverageConfidence: "high"` row
     // for HTML-targeted rules — the canonical silent-miss "rule never
     // saw the file" disguised as "rule ran clean." The adjustment
@@ -150,7 +150,7 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
       undefined,
       // verboseMeta: true — this assertion inspects per-row
       // coverageConfidenceReason values, which only ride inline under
-      // verbose mode (V1-TOOL-VERBOSE-META-INVERTED-DEFAULT). Default
+      // verbose mode. Default
       // verbosity surfaces only the compact perRuleCoverageSummary.
       true,
     );
@@ -184,7 +184,7 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
   });
 
   it("emits coverageConfidenceReason: 'partial-parse' when an errored file still produced findings", async () => {
-    // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS — partial-parse
+    // partial-parse
     // branch. A file with parse-errors that still emits findings (the
     // recovered AST was rich enough for at least one rule to fire)
     // routes into `partialParseFiles`. Coverage drops to `"low"` with
@@ -222,7 +222,7 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
       undefined,
       // verboseMeta: true — assertions read per-row coverageConfidenceReason
       // values which only ride inline under verbose mode
-      // (V1-TOOL-VERBOSE-META-INVERTED-DEFAULT).
+      //.
       true,
     );
     const perRuleCoverage = formatted.meta["perRuleCoverage"] as readonly PerRuleCoverage[];
@@ -484,7 +484,7 @@ describe("runScanAndFormat — meta block does not carry a countsBySurface compo
   });
 });
 
-// V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT
+//
 //
 // Token-only SCSS partials (`_variables.scss`, theme tokens, Font
 // Awesome SCSS files) parse to zero CSS rules — and a `contrast/minimum`
@@ -683,14 +683,14 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
   });
 });
 
-describe("splitViolationsByScanKind — V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
+describe("splitViolationsByScanKind", () => {
   // Doctrine: the per-kind tally is the load-bearing surface for
   // triage telemetry — an agent reading the response can tell at a
   // glance how many error/warning findings sit in vendor /
   // build-artifact files (often un-editable; the productive triage
   // is `propose_config` exclude or source-level disable). The split
   // is deterministic from the build-artifact classifier path set,
-  // not a heuristic. Note: per Q7-PLAN-VIOLATIONS-COMPOSITE the flat
+  // not a heuristic. Note: per the flat
   // `plan.violations` headline was deleted, but the per-kind sibling
   // remains valid because each lane (`source`, `buildArtifact`)
   // names exactly one kind of thing — it is itself an honest split,

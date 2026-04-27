@@ -1,11 +1,11 @@
 /**
- * Unit tests for the V1-SIZE-RESPONSE-BUDGET-DENSITY option (b) fix-
+ * Unit tests for the option (b) fix-
  * description hoist in `src/mcp/reference-guide.ts`. Covers the
  * invariants that survive the next refactor of the module:
  *   - Descriptions duplicated ≥2× in a response hoist into
  *     `referenceGuide.fixDescriptions[ruleId][hash]`.
  *   - Hoisted findings drop inline `fix.description` and gain a nested
- *     `fix.descriptionRef: { hash }`. Never emit both. Per V1-FIX-
+ * `fix.descriptionRef: { hash }`. Never emit both. Per-
  *     DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT, the pointer
  *     lives INSIDE `fix` (not as a sibling on the finding) so the
  *     agent reads prose at one path on every surface.
@@ -47,9 +47,9 @@ function finding(overrides: Partial<AgentFinding> & Pick<AgentFinding, "ruleId">
 /**
  * Walks a file's post-hoist findings and tallies, per ruleId, how many
  * findings ship an inline description vs. a nested `fix.descriptionRef`.
- * Extracted so the V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY invariant
+ * Extracted so the invariant
  * test stays readable; also asserts the pre-existing invariant that no
- * single finding carries both inline + ref. Per V1-FIX-DESCRIPTION-
+ * single finding carries both inline + ref. Per-
  * INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT the ref lives nested under
  * `fix` (never as a sibling on the finding).
  */
@@ -251,7 +251,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     for (const f of result.files[0]?.findings ?? []) {
       expect(f.fix?.oldText).toBe("<div>");
       expect(f.fix?.newText).toBe("<button>");
-      // V1-FIX-SAFETY-CONSTANT-FIELD: the constant `safety: "safe"`
+      // the constant `safety: "safe"`
       // was dropped — the key must not reach the wire.
       expect((f.fix as Record<string, unknown>)?.safety).toBeUndefined();
       expect(f.fix?.description).toBeUndefined();
@@ -317,7 +317,7 @@ describe("hoistAndBuildReferenceGuide", () => {
   });
 
   it("invariant: every post-hoist finding with a fix satisfies AgentFix-shape-is-honest", () => {
-    // Regression guard for Q3-FIX-PAYLOAD-EMPTY — the shape invariant
+    // Regression guard for — the shape invariant
     // spelled out in docs/kb/architecture/ai-first-consumer.md under
     // "Ambiguous field shapes are dishonest." After any hoist pass,
     // every finding with a `fix` must carry a non-empty key set
@@ -330,7 +330,7 @@ describe("hoistAndBuildReferenceGuide", () => {
     // can't distinguish "no guidance available" from "guidance was
     // eaten by the pipeline."
     //
-    // V1-FIX-SAFETY-CONSTANT-FIELD: before the fix, the canonical
+    // before the fix, the canonical
     // dishonest shape was `fix: { safety }` — a bare constant with no
     // informational payload. The field is now dropped entirely, so the
     // dishonest shape reduces to `fix: {}`.
@@ -408,7 +408,7 @@ describe("hoistAndBuildReferenceGuide", () => {
 });
 
 /**
- * V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY — every finding under the
+ * every finding under the
  * same ruleId in one response must use the same description-shape.
  * Either ALL inline, or ALL hoisted-with-ref. The agent reads the
  * response once per rule; mixed shapes force per-finding
@@ -419,7 +419,7 @@ describe("hoistAndBuildReferenceGuide", () => {
  * two findings carried DIFFERENT descriptions and the old threshold
  * was keyed per `(ruleId, hash)`.
  */
-describe("hoistAndBuildReferenceGuide — per-rule shape consistency (V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY)", () => {
+describe("hoistAndBuildReferenceGuide — per-rule shape consistency", () => {
   it("INVARIANT: when a rule has ≥2 findings with descriptions, ALL hoist — no mixed inline+ref within one ruleId", () => {
     // Two findings under the same rule with DIFFERENT descriptions
     // (two distinct hashes, each a singleton). Old behavior: neither
@@ -613,7 +613,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
     });
     const hash = hashFixDescription(desc);
     // Description still hoists to the response-level reference guide
-    // (unchanged from V1-REF-DEDUPE).
+    // (unchanged from).
     expect(result.referenceGuide?.fixDescriptions?.["forms/labels-required"]?.[hash]).toBe(desc);
     // File carries exactly one group-level ref — not six.
     const file = result.files[0];
@@ -836,7 +836,7 @@ describe("hoistAndBuildReferenceGuide — per-file (groupKey, hash) group-level 
 });
 
 /**
- * Q7-FIXDESCRIPTIONREF-PAGINATION-DICT — per-page lookup completeness.
+ * per-page lookup completeness.
  *
  * The hash-dedup hoist saves bytes only if every `fix.descriptionRef.hash`
  * a caller sees on a page can be resolved in THAT page's

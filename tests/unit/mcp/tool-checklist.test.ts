@@ -3,7 +3,7 @@
  *
  * Two invariants are guarded here:
  *
- * 1. **Q7-CHECKLIST-PASS-RATE-COMPOSITE**: the lone scalar
+ * 1. ****: the lone scalar
  *    `automatedCriteriaPassRate` is gone — the field bundled "rule fired
  *    clean" with "rule never had eligible inputs" with "rule found
  *    violations" into one composite ratio (dishonest per
@@ -12,7 +12,7 @@
  *    (`criteriaWithRulesAllClean` + `criteriaWithoutEligibleInputs`); the
  *    agent reads both and never sums them into a rate.
  *
- * 2. **V1-ZERO-SCAN-PASS-RATE-SENTINEL** (legacy partner): zero-file
+ * 2. **** (legacy partner): zero-file
  *    scans still must not silently surface a misleading "100% clean"
  *    signal. The split counters are honest in their own right — on a
  *    zero-file scan `criteriaWithRulesAllClean: 0` and
@@ -71,7 +71,7 @@ function asCoverageEntries(
   return [cov as CoverageGloss];
 }
 
-describe("checklist tool: automated-coverage shape (Q7-CHECKLIST-PASS-RATE-COMPOSITE)", () => {
+describe("checklist tool: automated-coverage shape", () => {
   let dir: string;
 
   beforeEach(() => {
@@ -129,7 +129,7 @@ describe("checklist tool: automated-coverage shape (Q7-CHECKLIST-PASS-RATE-COMPO
     }
   });
 
-  it("reports zero clean / non-zero no-eligible-inputs on a zero-file scan (V1-ZERO-SCAN-PASS-RATE-SENTINEL)", async () => {
+  it("reports zero clean / non-zero no-eligible-inputs on a zero-file scan", async () => {
     // Zero files means no rule had eligible input: every automatable
     // criterion routes to `criteriaWithoutEligibleInputs` (untestable
     // lane), and `criteriaWithRulesAllClean` reads 0. The companion
@@ -155,7 +155,7 @@ describe("checklist tool: automated-coverage shape (Q7-CHECKLIST-PASS-RATE-COMPO
   });
 });
 
-describe("checklist tool: input bound validation (V1-CHECKLIST-LIMIT-NEGATIVE-VALIDATION)", () => {
+describe("checklist tool: input bound validation", () => {
   // Doctrine (ai-first-consumer.md §"Ambiguous field shapes are
   // dishonest"): `limit: -1` was previously coerced to 1 by the silent
   // pagination clamp and returned a paginated-to-one-entry response.

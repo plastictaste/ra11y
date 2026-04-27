@@ -367,7 +367,7 @@ describe("propose_baseline: rationale-hoist dedup", () => {
   // entry in `rationales`. A scratch project with multiple bare `<img>`
   // findings produces N `unclassified` entries; the response-level
   // `rationales` map carries the shared prose exactly once. This is the
-  // core V1-PROPOSE-BASELINE-RATIONALE-DEDUP guard — the bloat repro'd
+  // core guard — the bloat repro'd
   // on a 242-finding / 76 KB scan where every entry inlined the same
   // 128-char string.
   it("collapses identical rationales to one entry in `rationales`", async () => {

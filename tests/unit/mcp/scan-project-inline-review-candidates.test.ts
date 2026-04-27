@@ -44,7 +44,7 @@ async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 
 interface ScanProjectResponse {
   readonly plan: {
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat top-level
+    // The flat top-level
     // `violations` integer was deleted; the honest shape carries
     // `notes` (severity-info) plus an optional `fixesByClass`
     // per-lane tally (present-when-meaningful, omitted on
@@ -102,7 +102,7 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
       );
       const session = new McpSession();
       const res = await callScanProject({ cwd: dir }, session);
-      // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // The flat `plan.violations`
       // headline is gone; the no-violations signal is the absence
       // of the per-lane `fixesByClass` field (omitted when
       // violations === 0 per the present-when-meaningful gate).
@@ -168,7 +168,7 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
           "    </nav>",
           // <h1> required so the missing-h1-on-full-page variant of
           // semantics/heading-hierarchy doesn't fire on this fixture
-          // (Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT). The test's
+          //. The test's
           // intent is "no media + no automated findings"; a missing
           // <h1> on a full-page document is a legitimate finding the
           // variant correctly emits.

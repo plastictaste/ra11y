@@ -51,7 +51,7 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
     });
     // Top-level shape: requestedLimit + effectiveLimit + pageClipReason
     // all ride alongside `truncated` / `totalFilesWithFindings`, not
-    // inside `meta`. Q5-PAGINATION-SOFT-CAP-REASON: the agent must see
+    // inside `meta`.: the agent must see
     // the 5→2 clip in one read.
     expect(merged["requestedLimit"]).toBe(5);
     expect(merged["effectiveLimit"]).toBe(2);
@@ -172,7 +172,7 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
     expect(details?.effectiveLimit).toBe(5);
   });
 
-  it("Q7-RESPONSE-TOKEN-BUDGET-DETAIL: tokenBudgetTruncatedDetailsField conditional-spreads the contributor triple — present when meaningful, absent on ambiguity", () => {
+  it("tokenBudgetTruncatedDetailsField conditional-spreads the contributor triple — present when meaningful, absent on ambiguity", () => {
     // Without a contributor argument the helper must omit the triple
     // entirely (no empty/zero sentinel keys) so the wire shape stays
     // honest per "ambiguous field shapes are dishonest."
@@ -217,7 +217,7 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
     expect(partialDetails?.dominantContributor).toBeUndefined();
   });
 
-  it("Q7-RESPONSE-TOKEN-BUDGET-DETAIL: mergeScanTokenBudget surfaces the contributor triple under warningsDetails when the tentative carries findings", () => {
+  it("mergeScanTokenBudget surfaces the contributor triple under warningsDetails when the tentative carries findings", () => {
     // Build a tentative whose `files[]` carries one clearly-largest
     // finding so the analyzer picks an unambiguous winner. The merge
     // helper inspects `tentative.files`, runs the analyzer, and threads

@@ -1,5 +1,5 @@
 /**
- * Unit tests for the `checklist` tool's pagination (Q2-CHECKLIST-LIMIT).
+ * Unit tests for the `checklist` tool's pagination.
  *
  * Two orthogonal axes are under test:
  *   - limit / offset paginate the flattened candidate stream across
@@ -333,7 +333,7 @@ describe("paginateChecklistItems — end-to-end via readChecklistPageParams", ()
 });
 
 /**
- * V1-CHECKLIST-PERCRITERION-CURSOR — the per-criterion elision
+ * the per-criterion elision
  * resume-token contract. Orthogonal to the flat-stream `limit`/`offset`
  * axis: when a criterion's candidate list is clipped by
  * `maxCandidatesPerCriterion`, the response emits an opaque `nextCursor`
@@ -343,7 +343,7 @@ describe("paginateChecklistItems — end-to-end via readChecklistPageParams", ()
  *   (b) per-criterion clip → cursor emitted; round-trip fetches the tail.
  *   (c) cursor input honored → the pager resumes at the named criterion.
  */
-describe("paginateChecklistItems — V1-CHECKLIST-PERCRITERION-CURSOR cursor resume", () => {
+describe("paginateChecklistItems — per-criterion cursor resume", () => {
   it("does not emit nextCursor when response fits (no per-criterion clip)", () => {
     // 5 items × 3 candidates each, cap 10 → nothing clipped. The
     // cursor rides on the per-criterion axis; it MUST stay absent
@@ -463,7 +463,7 @@ describe("paginateChecklistItems — V1-CHECKLIST-PERCRITERION-CURSOR cursor res
   });
 
   /**
-   * V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER — when the per-criterion
+   * when the per-criterion
    * cap clips at least one criterion, the response carries
    * `maxCandidatesPerCriterionHint: N` so the caller can raise the
    * input param to a useful target in one shot instead of paginating

@@ -1,7 +1,7 @@
 /**
  * Unit tests for the vendor-aware per-rule-coverage enrichment helper.
  *
- * Scope (Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION):
+ * Scope:
  *   - Engine-emitted `concentration: { file, count }` is the input;
  *     the MCP-layer helper stamps `kind: "vendor"` when the densest
  *     file is in the vendor path set AND the count clears the

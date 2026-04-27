@@ -159,12 +159,12 @@ describe("classifyBuildArtifact — minified-shaped classifications", () => {
   });
 });
 
-// Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE: the single-long-line
+// the single-long-line
 // probe on its own mis-labeled authored Astro/Starlight template-literal
 // props, Google-Maps iframe URLs, SCSS type signatures, and MDX prop
 // bundles. The classifier now gates the `likely-minified-by-line-stats`
 // verdict on a second-tier corroborator (long-line ratio ≥ 25% OR median
-// line length > 500). Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the
+// line length > 500).: the
 // classification carries a `likely-` prefix because the predicate is
 // content-shape heuristic — even with the corroborator the verdict is
 // not path-anchored. These tests lock the NEGATIVE direction: one long
@@ -262,7 +262,7 @@ describe("classifyBuildArtifact — single-long-line second-probe corroboration"
     expect(classifyBuildArtifact("src/empty.css", "")).toBe(null);
   });
 
-  // V1-BUILD-ARTIFACT-REGRESSION-AUDIT-MINIFIED: the ratio corroborator
+  // the ratio corroborator
   // requires ≥3 long lines, not just `longLineCount/totalLines >= 0.25`.
   // Without the count floor, a tiny authored file with one >500-char
   // line satisfies the ratio at exactly `1/4 = 0.25` and gets
@@ -608,7 +608,7 @@ describe("classifyBuildArtifact — first-match evaluation order", () => {
   });
 });
 
-// Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the `definite-` /
+// the `definite-` /
 // `likely-` confidence prefix is the doctrine-aligned shape — agents
 // budget per-file investigation by reading the prefix without
 // reconciling individual variant strings. The helper exposes the
@@ -630,8 +630,8 @@ describe("isDefiniteBuildArtifactClassification — confidence-prefix contract",
   });
 });
 
-// V1-BUILD-ARTIFACT-REASON-EXPLAIN +
-// Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: per-entry `signal`
+// +
+// per-entry `signal`
 // field carries the deterministic predicate evidence so an agent
 // verifying a `classification` has the falsifiable claim already in
 // hand. Tests below pin one signal shape per
@@ -834,7 +834,7 @@ describe("collectBuildArtifacts", () => {
   });
 });
 
-describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTIFACTS-GROUP-BY-BASENAME)", () => {
+describe("groupBuildArtifactsByBasename — grouped shape", () => {
   it("collapses a ≥3-path same-basename cluster under one group with a paste-ready suggestedGlob", () => {
     // The field-report case: a bootstrap repo emits the same
     // `bootstrap.css` under three themed subtrees. Under the flat
@@ -865,7 +865,7 @@ describe("groupBuildArtifactsByBasename — grouped shape (Q6-SCANNED-BUILD-ARTI
     // classification, signal }` record survives under `ungrouped` so
     // an agent can still read both the per-path classification and
     // the deterministic predicate evidence
-    // (V1-BUILD-ARTIFACT-REASON-EXPLAIN).
+    //.
     const entries = [
       mkEntry("/root/dist/a.min.css", "definite-min-infix"),
       mkEntry("/root/dist/other/a.min.css", "definite-min-infix"),
@@ -1067,7 +1067,7 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
   });
 });
 
-// V1-VENDOR-LIBRARY-BANNER-DETECTION: deterministic identification of
+// deterministic identification of
 // well-known vendor libraries from their first-line banner comment.
 // The doctrine bar is "labeled buckets are only honest when provable
 // from the code" — these tests pin the positive direction (each

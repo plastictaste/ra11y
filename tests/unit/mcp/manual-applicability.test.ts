@@ -1,6 +1,6 @@
 /**
  * Unit tests for `manual-applicability` — specifically the parse-coverage
- * caveat on `irrelevanceReason` (Q4-RELEVANCE-REASON-PARSE-COVERAGE-CAVEAT).
+ * caveat on `irrelevanceReason`.
  *
  * The `likelyIrrelevant` label is one of the few labeled buckets doctrine
  * allows because it is meant to be provable from code — "no <video>/<audio>

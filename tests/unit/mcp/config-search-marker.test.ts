@@ -95,7 +95,7 @@ describe("sawProjectMarkerInWalk", () => {
   });
 });
 
-// V1-MISSING-WARNING-CWD-APPEARS-MISROOTED probe:
+// probe:
 // `nearestConfigAncestorPath` answers "did you mean a parent dir?" by
 // resolving the nearest STRICT ancestor with a project marker. Markers
 // at `cwd` itself are ignored on purpose — the empty-files-on-a-real-

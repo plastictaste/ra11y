@@ -128,13 +128,13 @@ describe("extractComponentIdentifier", () => {
     });
   });
 
-  // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK: minified-bundle
+  // minified-bundle
   // tokens like `Math.abs`, `JSON.parse`, `Object.keys` were leaking
   // into `opaqueCustomComponentNames` and reading as React components.
   // The dotted form's root is a JS global / built-in, not a wrapper —
   // surfacing it in the inventory misled agents into adding `Math.abs`
   // (or `Math`) to their `nativeWrappers` config.
-  describe("rejects JS global / built-in roots (V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK)", () => {
+  describe("rejects JS global / built-in roots", () => {
     it("rejects member-access into a JS global (Math.abs → null)", () => {
       // The historical extractor returned `Math` for `Math.abs`. Now
       // the global-prototype filter rejects it outright so neither
@@ -182,9 +182,9 @@ describe("extractComponentIdentifier", () => {
   });
 });
 
-describe("filterEmittedComponentNames (V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK)", () => {
+describe("filterEmittedComponentNames", () => {
   it("matches the field-report acceptance: drops dotted, global, single-letter+digit; keeps PascalCase words", () => {
-    // Exact input/output pair from the V1-OPAQUE-COMPONENT-NAMES-
+    // Exact input/output pair from the-
     // MINIFIED-TOKEN-LEAK backlog item. The mixed list represents a
     // candidate array a minified-bundle scan could populate if the
     // upstream extractor regressed; the filter is the emission-time

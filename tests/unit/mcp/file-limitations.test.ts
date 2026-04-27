@@ -1,7 +1,7 @@
 /**
  * Unit tests for buildFileLimitation / buildFileLimitations — the
  * helper that derives per-file scan-degradation telemetry for
- * scan_file and scan_project per-file entries (Q4-SCAN-FILE-PARSE-
+ * scan_file and scan_project per-file entries (-
  * ERROR-LIMITATIONS-FIELD).
  *
  * Clean-parse paths return null / empty so the outer response can

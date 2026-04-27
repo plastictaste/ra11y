@@ -135,7 +135,7 @@ describe("apply_fix: anchor uniqueness", () => {
   });
 });
 
-describe("apply_fix: template-directive diagnosis (V1-APPLY-FIX-LIQUID-FP-DIAGNOSIS)", () => {
+describe("apply_fix: template-directive diagnosis", () => {
   it("returns `target-contains-template-directive` when oldText literally references a Liquid expression", async () => {
     await withScratch(async (dir) => {
       const file = join(dir, "page.html");

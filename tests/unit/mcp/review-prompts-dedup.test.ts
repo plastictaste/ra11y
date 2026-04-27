@@ -1,6 +1,6 @@
 /**
  * Unit tests for the top-level `prompts` map on `review_candidates`
- * responses. Guards the P1-DUP lossless transform: the ~450-char
+ * responses. Guards the lossless transform: the ~450-char
  * reviewPrompt text that used to repeat on every candidate now lives
  * once per criterionId at the top level, and each candidate no longer
  * carries `reviewPrompt`/`finderId`.
@@ -126,7 +126,7 @@ describe("review_candidates: top-level prompts map dedupe", () => {
     }
   });
 
-  // ── Prompt-link assertions (V1-PROMPT-LINK) ─────────────────────────────
+  // ── Prompt-link assertions ─────────────────────────────
   // review_candidates should nudge toward ra11y/triage when candidates
   // exist; the nextStep is omitted when candidates is empty so the
   // present-when-meaningful discipline (CLAUDE.md §1) holds.

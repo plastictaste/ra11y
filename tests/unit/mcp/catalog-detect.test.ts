@@ -171,7 +171,7 @@ describe("catalogHintProse", () => {
     expect(structured.text).toContain("coffee-shop");
     // Names the second-call shape so the agent has a paste-ready hint.
     expect(structured.text).toContain('scan_project({ cwd: "<subdir>" })');
-    // V1-HINTS-STRUCTURED-CODE: structured detail mirrors
+    // structured detail mirrors
     // CatalogHint so agents dispatch without reparsing `text`.
     expect(structured.detail?.["topLevelSiblings"]).toBe(174);
     expect(structured.detail?.["exampleSiblings"]).toEqual([
