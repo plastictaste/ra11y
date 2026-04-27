@@ -8,14 +8,13 @@
  *     fixed it and verified," which is indistinguishable from "the
  *     finding never existed at this location." The verify pair is
  *     present-when-meaningful — only the lanes that actually applied a
- *     fix carry it. See V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE +
+ * fix carry it. See +
  *     CLAUDE.md §1 "Ambiguous field shapes are dishonest." When the
  *     per-file finding list carries one or more same-rule findings
  *     within ±NEAREST_FINDING_WINDOW lines of the requested line, the
  *     response gets a `nearestFinding: { ruleId, line }` (single match)
  *     or `didYouMean[]` (multi match) breadcrumb so paginated scans /
  *     line-drift / rule renames don't produce a dead-end response. See
- *     Q7-SUGGEST-FIX-NONE-NEAREST-FINDING.
  *   - `kind: "edit"` — the rule emitted fixPaths with a mechanical
  *     `primary.edit`; the agent can apply it via Edit directly. The
  *     edit is widened to a unique anchor window via `widenToUniqueAnchor`
@@ -73,7 +72,7 @@ import { buildVendorOverrideOutcome } from "./tool-suggest-fix-vendor.ts";
  * this specific call couldn't produce a concrete `newText`. Closes the
  * cross-surface contradiction where `plan.fixesByClass` advertises a
  * mechanical/verify-in-source lane but `suggest_fix` returns only
- * prose (Q6-SUGGEST-FIX-MECHANICAL-VS-GUIDANCE-DRIFT).
+ * prose.
  */
 const MECHANICAL_IN_PRINCIPLE_LANES: ReadonlySet<FixClass> = new Set<FixClass>([
   "mechanical",
@@ -125,7 +124,7 @@ export interface BuildSuggestFixPayloadArgs {
    * {@link NEAREST_FINDING_WINDOW} of the requested line and attach a
    * `nearestFinding` (single match) or `didYouMean[]` (multi match)
    * breadcrumb. Closes the dead-end `kind: "none"` shape called out in
-   * Q7-SUGGEST-FIX-NONE-NEAREST-FINDING — paginated scans drift the
+   * paginated scans drift the
    * line, agents lose the original line, rule renames swap the rule ID
    * out from under the request; without breadcrumbs the agent has to
    * re-scan to recover. Optional so unit tests can omit it; the handler
@@ -157,8 +156,8 @@ export interface BuildSuggestFixPayloadArgs {
   /**
    * Whether the suggest_fix scan parsed any JSX/HTML evidence of
    * Tailwind utility usage. Computed by the handler via
-   * `hasTailwindSignal` over the parsed-file set
-   * (V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED). When `false`, rule-emitted
+   * `hasTailwindSignal` over the parsed-file set.
+   * When `false`, rule-emitted
    * suggestions that append a Tailwind escape-hatch sentence
    * (`focus/outline-visible` is the current sole emitter) read as
    * context-blind advice on a vanilla CSS repo — the prose builder
@@ -170,7 +169,7 @@ export interface BuildSuggestFixPayloadArgs {
    */
   readonly tailwindDetected?: boolean;
   /**
-   * Q7-SUGGEST-FIX-VENDOR-CONTEXT: when the target file is a build
+   * when the target file is a build
    * artifact (matches the {@link classifyBuildArtifactDetailed}
    * predicate set powering `meta.scannedBuildArtifacts`) OR carries a
    * recognized vendor-library banner ({@link detectVendorLibraries}),
@@ -181,7 +180,7 @@ export interface BuildSuggestFixPayloadArgs {
    * demoted to an alternative — editing vendor bytes in place is
    * defeated by the next dependency bump.
    *
-   * Pairs with Q6-NEXTSTEP-AVOIDS-VENDOR-CSS (closed): Q6 stops the
+   * Pairs with (closed): Q6 stops the
    * `nextStep` *target* from pointing at a vendor file when an
    * authored same-rule sibling exists; this field stops the suggested
    * *fix* from rewriting vendor bytes when no such sibling exists
@@ -193,7 +192,7 @@ export interface BuildSuggestFixPayloadArgs {
   readonly vendorContext?: VendorContext;
 }
 
-// `nearestFindingSpread` (Q7-SUGGEST-FIX-NONE-NEAREST-FINDING) lives in
+// `nearestFindingSpread` lives in
 // its own module so this handler stays under the MCP-handler line
 // budget. See `suggest-fix-nearest-finding.ts` for the full doc block.
 
@@ -242,7 +241,7 @@ function warningsSpreadField(warnings: readonly string[] | undefined): {
  * preceding sentence — and the rule emits everything from this prefix
  * to end-of-string as a single trailing block.
  *
- * V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: when the suggest_fix scan
+ * when the suggest_fix scan
  * detected no Tailwind signal, that block reads as context-blind advice
  * on a vanilla CSS repo. We strip it from the explanation before the
  * agent reads it. The rule-level emit is unchanged (other consumers
@@ -295,7 +294,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // shapes are dishonest."
   const disambiguationNoteField: { readonly disambiguationNote?: string } =
     disambiguationNote === undefined ? {} : { disambiguationNote };
-  // Q7-SUGGEST-FIX-VENDOR-CONTEXT: present-when-meaningful spread for
+  // present-when-meaningful spread for
   // the vendor-context payload. When the handler's classifier didn't
   // fire on this file, the field is absent — behavior identical to
   // pre-Q7 calls. When it did fire, the same `vendorContext` block
@@ -305,7 +304,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   const vendorContextField: { readonly vendorContext?: VendorContext } =
     vendorContext === undefined ? {} : { vendorContext };
   if (!match) {
-    // V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE: omit the verify pair on
+    // omit the verify pair on
     // `kind: "none"`. A populated `verifyCommand` next to "no
     // violation found at this line" reads as "you already fixed it
     // and verified," which is indistinguishable from "the finding
@@ -313,7 +312,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     // "Ambiguous field shapes are dishonest") — the verify pair only
     // belongs on the lanes that actually applied a fix.
     //
-    // Q7-SUGGEST-FIX-NONE-NEAREST-FINDING: walk the per-file findings
+    // walk the per-file findings
     // for same-rule matches within ±NEAREST_FINDING_WINDOW lines of the
     // requested line. Single match → `nearestFinding: { ruleId, line }`;
     // multi match → `didYouMean[]`. Without these breadcrumbs the
@@ -339,7 +338,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // whether the value is unavailable or genuinely empty. Present-only-
   // when-populated is the honest shape.
   const snippetField = match.snippet ? { snippet: match.snippet } : {};
-  // Q7-SUGGEST-FIX-VENDOR-CONTEXT: when the target file is classified
+  // when the target file is classified
   // as a build artifact / vendor-library bundle, restructure the
   // response so the primary fix lane recommends overriding the failing
   // selector in the consumer's own stylesheet, and the rule's original
@@ -383,7 +382,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
       ...(tailwindDetected === undefined ? {} : { tailwindDetected }),
     });
   }
-  // V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: strip the rule-emitted
+  // strip the rule-emitted
   // Tailwind escape-hatch sentence when no Tailwind signal was
   // detected in the suggest_fix scan. The strip is local to this
   // tool — other surfaces (CLI, JSON formatter) keep the rule's
@@ -397,7 +396,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // block so the shape matches the tool description's promise. No
   // `alternatives` here — the rule never supplied structured paths.
   //
-  // Q6-SUGGEST-FIX-MECHANICAL-VS-GUIDANCE-DRIFT: when the matched
+  // when the matched
   // violation's rule lives in a source-edit lane (`mechanical` or
   // `verify-in-source`) but this specific call couldn't produce a
   // concrete `newText`, annotate with `meta.mechanicalInPrinciple:

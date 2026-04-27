@@ -186,7 +186,7 @@ export const scanProjectTool: McpTool = {
     const additionalFiles =
       additionalPaths.length > 0 ? await parseExplicitPaths(additionalPaths, session, root) : [];
     const mergedFiles = mergeFilesByPath(baseFiles, additionalFiles);
-    // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: see {@link applyRestrictToPaths}.
+    // see {@link applyRestrictToPaths}.
     // Discovery still walked the full project so excludes / gitignore /
     // default ignores apply uniformly; the restriction only scopes
     // which discovered files reach the scanner. Empty-intersection
@@ -211,7 +211,7 @@ export const scanProjectTool: McpTool = {
         configSearchSawProjectMarker,
         restrictAppliedField,
         restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
-        // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: probe strict ancestors
+        // probe strict ancestors
         // for a `ra11y.config.*` / `package.json` marker so the
         // empty-files branch can fire `cwd_appears_misrooted` with the
         // ancestor path the agent re-scopes to. Read-only one-pass walk;
@@ -258,7 +258,7 @@ export const scanProjectTool: McpTool = {
       // absolute). The helper internally conditional-spreads onto
       // `runScan` when the array is non-empty.
       resolveProcessesForScan(projectConfig.processes, projectConfig.sourcePath, root),
-      // V1-DETECT-SILENT-EXT: surface per-extension skip counts from the
+      // surface per-extension skip counts from the
       // discovery pass into `meta.analysisCoverage.skippedByExtension`
       // + the response-level `extensions_skipped_no_parser` warning.
       discoveryDiagnostics,
@@ -274,13 +274,13 @@ export const scanProjectTool: McpTool = {
     // entirely when the detector finds no artifacts (never `[]`).
     //
     // Hoisted above `buildNextStep` so the classifier's output can
-    // also drive Q6-NEXTSTEP-AVOIDS-VENDOR-CSS: the raw `entries` list
+    // also drive: the raw `entries` list
     // carries the same absolute-path form that `formatted.files[].path`
     // uses, so the next-step builder can match vendor findings without
     // additional normalization.
     const buildArtifacts = buildArtifactsFields(files, root);
     const vendorPaths = vendorPathSet(buildArtifacts.entries);
-    // Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION: stamp
+    // stamp
     // `concentration.kind: "vendor"` on perRuleCoverage rows whose
     // densest file is a vendor build artifact AND whose count clears
     // the stricter vendor-only floor (see `VENDOR_CONCENTRATION_MIN_TOTAL`).
@@ -288,7 +288,7 @@ export const scanProjectTool: McpTool = {
     // `files[].findings` (surface-don't-suppress). Helper returns the
     // input meta by identity when no row was rewritten.
     const formattedMetaWithVendor = withVendorEnrichedPerRuleCoverage(formatted.meta, vendorPaths);
-    // V1-MINIFIED-FILE-SCAN-KIND-SPLIT: stamp the per-scan-kind
+    // stamp the per-scan-kind
     // violation tally on `plan.violationsByScanKind` so the agent can
     // tell at a glance how many error+warning findings sit in vendor /
     // build-artifact files (often un-editable; the productive triage
@@ -298,14 +298,14 @@ export const scanProjectTool: McpTool = {
     // CLAUDE.md §1 "Ambiguous field shapes are dishonest." Each
     // per-kind lane (`source`, `buildArtifact`) names exactly one
     // kind of thing, so the split itself is honest. Per
-    // Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // the flat `plan.violations`
     // headline was deleted — the per-kind sibling sums to the
     // structured `plan.fixesByClass` total instead.
     // The shared `formatted.plan` reference is reused below in
     // `assembleScanProjectResponse`; rebinding here propagates the
     // enriched plan through the rest of the assembly chain without
     // forcing a second pass through the helper.
-    // V1-CROSS-FILE-ROLLUP-PRIMITIVE: stamp `plan.topRules` so a bulk
+    // stamp `plan.topRules` so a bulk
     // scan (≈1800-file catalog) doesn't force the agent to page through
     // every file just to learn which rules dominated. Computed over the
     // FULL `formatted.files` list — not the paged subset — so the
@@ -329,7 +329,7 @@ export const scanProjectTool: McpTool = {
         actualMode === "full"
           ? ' For iterative work on a branch, pass `since: "HEAD~1"` or `changedOnly: true` to scan only diffs.'
           : "",
-      // Q6-NEXTSTEP-AVOIDS-VENDOR-CSS: when the top-ranked violation
+      // when the top-ranked violation
       // sits in vendor code (bootstrap.css, font-awesome.css, etc.)
       // AND a same-`ruleId` finding exists in authored code, the
       // builder reroutes the structured hint to the authored file so
@@ -338,7 +338,7 @@ export const scanProjectTool: McpTool = {
       // set is a no-op.
       vendorPaths,
     });
-    // P2-BASE: probe the canonical baseline path so agents see whether
+    // probe the canonical baseline path so agents see whether
     // a baseline is in play alongside the scan result — prevents
     // re-proposing fixes for grandfathered violations without the
     // separate `baseline check` round-trip. Omitted when no baseline
@@ -350,7 +350,7 @@ export const scanProjectTool: McpTool = {
     // omitted when the whole result fits.
     const pageParams = readPageParams(params);
     const page = paginateFiles(formatted.files, pageParams);
-    // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist duplicated
+    // option (b): hoist duplicated
     // `fix.description` prose into `referenceGuide.fixDescriptions`
     // over the PAGED `files` — so pointers and the top-level map
     // cover exactly what ships in this response. Running the hoist
@@ -358,7 +358,7 @@ export const scanProjectTool: McpTool = {
     // findings that never reach the caller, leaving a pointer with
     // no lookup target.
     const hoisted = hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide);
-    // Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: annotate each per-file
+    // annotate each per-file
     // entry with `limitations` when the underlying ParsedFile carried
     // parse errors. Scoped to files currently on this page so the
     // enrichment cost tracks the response size, not the whole scan —
@@ -370,7 +370,7 @@ export const scanProjectTool: McpTool = {
     // would otherwise be invisible when a file emitted findings.
     const enrichedHoistedFiles = attachPerFileLimitations(hoisted.files, files);
     const hoistedWithLimitations = { ...hoisted, files: enrichedHoistedFiles };
-    // Q4-SSG-BUILD-HINT: probe the scan root for an SSG config marker
+    // probe the scan root for an SSG config marker
     // (Jekyll / Hugo / Astro / Eleventy / Gatsby / MkDocs). When a
     // framework resolves, `detectedFramework` ships as a structured
     // `meta` field and the `ssgHint` prose is appended to
@@ -380,7 +380,7 @@ export const scanProjectTool: McpTool = {
     // downgraded by the detection (CLAUDE.md §1 "Surface, don't
     // suppress").
     const detectedFramework = detectSsgFramework(root);
-    // Q6-CATALOG-REPO-SIBLING-HINT: probe the scan root for the
+    // probe the scan root for the
     // "catalog of stand-alone sibling site dirs" shape (e.g. a 174-
     // template website-templates dump). When detected, the per-subdir
     // scan workflow recovers per-site signal that the flat scan
@@ -406,7 +406,7 @@ export const scanProjectTool: McpTool = {
       rootSource,
       ...buildRootsOverlapMeta({ explicitCwd, hostRoot, root, session }),
       configSource: projectConfig.sourcePath,
-      // Q6-CONFIG-CONTEXT-TRIPLE-READOUT: `configSearchedFrom` was
+      // `configSearchedFrom` was
       // always equal to `root`, which already ships in `scanned.root`
       // above; `configNote` was a 200-char boilerplate duplicating
       // the `no_config_found` warning's signal (warnings fire on
@@ -426,7 +426,7 @@ export const scanProjectTool: McpTool = {
         excludes: session.config.exclude,
       }),
       ...restrictAppliedField,
-      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+      // `nextStep` and
       // `nextStepStructured` ship at the top level of the response, not
       // inside `meta`. They reach the assembler below via explicit
       // fields so the one-pointer-one-place discipline is visible at the
@@ -456,7 +456,7 @@ export const scanProjectTool: McpTool = {
       assembleScanProjectResponse({
         params,
         session,
-        // V1-MINIFIED-FILE-SCAN-KIND-SPLIT: pass the scan-kind-enriched
+        // pass the scan-kind-enriched
         // `formatted` (its `plan.violationsByScanKind` sibling lands
         // on the wire) into the assembler. Identity-stable when no
         // build artifacts were classified — `withViolationsByScanKind`
@@ -482,7 +482,7 @@ export const scanProjectTool: McpTool = {
             additionalFilesCount: additionalFiles.length,
             filesAdded: mergedFiles.length - baseFiles.length,
           }),
-          // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: empty intersection AND a
+          // empty intersection AND a
           // non-empty pre-restrict set → the restriction is what cleared
           // the file list (not "no parseable files anywhere"). Helper
           // returns false when no restriction was supplied OR the
@@ -490,7 +490,7 @@ export const scanProjectTool: McpTool = {
           restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
           configSearchSawProjectMarker,
           scssUnresolvedVariableFiles,
-          // V1-BULK-CATALOG-SCAN-PERF-12S: run the detector at the
+          // run the detector at the
           // assembly seam so the threshold logic stays close to its
           // inputs (`meta.durationMs`, `meta.filesScanned`, the
           // build-artifact entries). Returns `undefined` on the
@@ -556,7 +556,7 @@ function inlineReviewCandidatesFieldFor(args: {
 }
 
 /**
- * Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: enriches per-file entries
+ * enriches per-file entries
  * with a `limitations` field when the underlying `ParsedFile`'s
  * in-house parser emitted errors. The finding-bearing path is always
  * `partial_parse` (file is in `files[]` because it produced findings);
@@ -592,7 +592,7 @@ function attachPerFileLimitations(
 }
 
 /**
- * Q6-BUDGET-UNDER-VENDOR-NOISE assembly seam. Cross-references
+ * assembly seam. Cross-references
  * the build-artifact labels with `formatted.files` to detect the
  * vendor-CSS dominance regime, then emits the spreadable
  * `baseWarnings` + `baseWarningsDetails` pair for the assembler.
@@ -638,7 +638,7 @@ function buildBaseWarningsForScanProject(args: {
     bulkCatalogDetection,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
-  // Q4-WARNING-DOWNGRADE-NOISE: gate the `template_files_parsed_as_literal`
+  // gate the `template_files_parsed_as_literal`
   // code on actual overlap between findings and directive lines —
   // see the code's doctrine comment in `src/mcp/warnings.ts`. Pull
   // `(filePath, line)` tuples out of every finding `formatted.files`
@@ -650,7 +650,7 @@ function buildBaseWarningsForScanProject(args: {
     ),
     sourcesByPath: new Map(parsedFiles.map((f) => [f.filePath, f.source])),
   });
-  // V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION: derive the
+  // derive the
   // `scanned_build_artifacts_present` payload here so the warning code
   // ships with quantitative signal (count + first-pivot path). Without
   // the payload, an agent reading the bare code can't tell whether the
@@ -667,7 +667,7 @@ function buildBaseWarningsForScanProject(args: {
             : { topPath: buildArtifacts.entries[0].path }),
         }
       : undefined;
-  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: narrow the build-artifact
+  // narrow the build-artifact
   // entries to the minified subset specifically. The classifier emits
   // two minified-shaped classifications (`definite-min-infix` for
   // `.min.` basenames — path-anchored — and
@@ -679,7 +679,7 @@ function buildBaseWarningsForScanProject(args: {
   // shaped. Pairs with the broader `scanned_build_artifacts_present`
   // code (any classification); this finer code narrows to the two
   // minified-shaped branches specifically.
-  // Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL: the previous shape
+  // the previous shape
   // filtered by `reason === "minified"` — equivalent to the union of
   // these two classifications under the new confidence-graded enum.
   const scannedMinifiedFiles = buildArtifacts.entries
@@ -689,7 +689,7 @@ function buildBaseWarningsForScanProject(args: {
         e.classification === "likely-minified-by-line-stats",
     )
     .map((e) => e.path);
-  // V1-VENDOR-ANIMATION-LIB-GUARD-HINT: cross-reference the
+  // cross-reference the
   // banner-detected vendor libraries with per-rule per-file finding
   // counts. Empty when no vendor library was identified OR no
   // (ruleId, file) pair on a vendor library cleared the floor.
@@ -697,7 +697,7 @@ function buildBaseWarningsForScanProject(args: {
     vendorLibraries: buildArtifacts.metaField.scannedBuildArtifacts?.vendorLibraries ?? [],
     files: formatted.files,
   });
-  // V1-MISSING-WARNING-DIST-ONLY-SCAN: cross-reference the build-
+  // cross-reference the build-
   // artifact entry count against `meta.filesScanned`. When 100% of the
   // parsed files are classified as build artifacts AND the scan
   // touched at least one file, the `dist_only_scan_detected` code
@@ -735,7 +735,7 @@ function buildBaseWarningsForScanProject(args: {
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
     ...(scssUnresolvedVariableFiles.length === 0 ? {} : { scssUnresolvedVariableFiles }),
     ...(scannedMinifiedFiles.length === 0 ? {} : { scannedMinifiedFiles }),
-    // V1-BULK-CATALOG-SCAN-PERF-12S: detector ran upstream at the
+    // detector ran upstream at the
     // call site (it needs `meta.durationMs` + `meta.filesScanned` +
     // the build-artifact entries) and resolved to either an
     // additive payload or `undefined`. Conditional-spread keeps the
@@ -744,7 +744,7 @@ function buildBaseWarningsForScanProject(args: {
     // detector did not fire.
     ...(bulkCatalogDetection === undefined ? {} : { bulkCatalogDetection }),
     ...(animationLibraryGuardCandidates.length === 0 ? {} : { animationLibraryGuardCandidates }),
-    // Q8-PARSE-ERRORS-PRESENT-SUBCODE: thread the total finding count
+    // thread the total finding count
     // so the warnings module can fire `parser_bailed_zero_findings`
     // on the canonical "parse errors present + zero findings overall"
     // shape. Computed by summing per-file findings off `formatted.files`
@@ -828,7 +828,7 @@ function computeVendorCssNoise(
 }
 
 /**
- * V1-VENDOR-ANIMATION-LIB-GUARD-HINT: cross-references the
+ * cross-references the
  * banner-detected vendor libraries with the per-rule per-file finding
  * counts. Returns the (ruleId, file, findingCount, library, suggestion)
  * tuples for every (ruleId, file) pair that satisfies BOTH halves of
@@ -894,7 +894,7 @@ export function computeAnimationLibraryGuardCandidates(args: {
 }
 
 /**
- * V1-VENDOR-ANIMATION-LIB-GUARD-HINT: builds the library-aware
+ * builds the library-aware
  * remediation prose surfaced on
  * `warningsDetails.animation_library_without_reduced_motion_guard.suggestion`.
  * Names the concrete edit (wrap-the-`@import` / wrap-the-`<link>` for
@@ -1222,7 +1222,7 @@ function buildEmptyFilesResult(args: {
   readonly configSource: string | null;
   readonly configSearchSawProjectMarker: boolean;
   /**
-   * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: when the empty-files branch is
+   * when the empty-files branch is
    * reached because the caller's `restrictToPaths` intersected the
    * non-empty discovered set down to zero, the meta payload + warning
    * code must still ride on the response — otherwise the empty result
@@ -1233,7 +1233,7 @@ function buildEmptyFilesResult(args: {
   readonly restrictAppliedField: { readonly restrictToPathsApplied?: RestrictApplied };
   readonly restrictToPathsEmpty: boolean;
   /**
-   * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: absolute path of the
+   * absolute path of the
    * nearest strict ancestor of `root` carrying a `ra11y.config.*` /
    * `package.json` marker, or `undefined` when no ancestor qualifies.
    * Drives the `cwd_appears_misrooted` warning; threaded as an explicit
@@ -1243,7 +1243,7 @@ function buildEmptyFilesResult(args: {
 }) {
   const { root, actualMode, fallbackReason, rootSource, configSource } = args;
   return textResult({
-    // Q7-PLAN-VIOLATIONS-COMPOSITE: drop the flat `violations: 0` headline
+    // drop the flat `violations: 0` headline
     // — see `buildScanPlan` in `scan-assembly.ts` for the full rationale.
     // Zero-files scan has no lanes to populate, so only `notes` and
     // `summary` ride; callers sum `plan.fixesByClass` for the flat count.
@@ -1254,7 +1254,7 @@ function buildEmptyFilesResult(args: {
       scanned: scannedProject(root),
       scanMode: actualMode,
       ...(fallbackReason === undefined ? {} : { fallbackReason }),
-      // Q4-SSG-BUILD-HINT: zero-parseable-files on an SSG root is
+      // zero-parseable-files on an SSG root is
       // canonically "all the markup lives in fragments the scanner
       // doesn't parse." Surface the framework + hint so the agent has
       // the build command and emit dir inline.
@@ -1273,7 +1273,7 @@ function buildEmptyFilesResult(args: {
       filesByExtension: undefined,
       configSearchSawProjectMarker: args.configSearchSawProjectMarker,
       ...(args.restrictToPathsEmpty ? { restrictToPathsEmpty: true } : {}),
-      // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: thread the strict-
+      // thread the strict-
       // ancestor probe result. The warnings helper fires the code only
       // when the field is a non-empty string; absence drops the code
       // and `scanned_zero_files` stays the honest signal.
@@ -1320,7 +1320,7 @@ function mergeEmptyResultHints(
  * Reads `analysisCoverage.hints` out of a hint-fragment object.
  * Returns an empty array when the fragment doesn't have the shape —
  * lets {@link mergeEmptyResultHints} concatenate without per-call
- * type guards. Post V1-HINTS-STRUCTURED-CODE the hints are
+ * type guards. Post the hints are
  * `{ code, text, detail? }` objects; the filter keeps only entries
  * that expose a string `code` so hostile shapes can't flow through.
  */
@@ -1337,7 +1337,7 @@ function readHintsArray(fragment: Record<string, unknown>): readonly Hint[] {
 }
 
 /**
- * Q4-ADDITIONALPATHS-REDUNDANT predicate. Returns true when the
+ * predicate. Returns true when the
  * caller supplied `additionalPaths`, those paths resolved to at
  * least one parseable file, AND every one of those parsed files was
  * already in the default-discovered base set — i.e. the merge pass
@@ -1377,7 +1377,7 @@ function mergeFilesByPath<T extends { readonly filePath: string }>(
 }
 
 /**
- * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: intersects a discovered file set
+ * intersects a discovered file set
  * with the caller's `restrictToPaths`. A file is kept when ANY
  * restriction path either equals it (file-level restriction) OR is a
  * directory that contains it (directory prefix match). Restriction
@@ -1411,7 +1411,7 @@ function intersectFilesWithRestrictPaths<T extends { readonly filePath: string }
 }
 
 /**
- * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT entry point. Reads
+ * entry point. Reads
  * `restrictToPaths` off the caller's params and either returns the
  * input set unchanged (no restriction supplied) or returns the
  * intersection plus the `restrictToPathsApplied` meta payload. Lives
@@ -1495,7 +1495,7 @@ function checkCwdExists(explicitCwd: string | undefined): ReturnType<typeof erro
  * artifacts), and a `present` boolean for
  * `warningsFieldFromScanMeta`.
  *
- * Q6-SCANNED-BUILD-ARTIFACTS-GROUP-BY-BASENAME: the meta field
+ * the meta field
  * carries the {@link BuildArtifactsGrouped} shape (grouped +
  * ungrouped) rather than the flat `ScannedBuildArtifact[]` it used
  * to. Per CLAUDE.md §1 "Verbose meta is signal, not clutter," the
@@ -1515,7 +1515,7 @@ function buildArtifactsFields(
   readonly metaField: { readonly scannedBuildArtifacts?: BuildArtifactsGrouped };
 } {
   const entries = collectBuildArtifacts(files);
-  // V1-VENDOR-LIBRARY-BANNER-DETECTION: vendor-library detection runs
+  // vendor-library detection runs
   // independently of build-artifact classification. The two predicates
   // are orthogonal — a file matching a banner is almost always also a
   // build artifact, but the banner answers "which library" while the
@@ -1550,8 +1550,8 @@ function buildArtifactsFields(
   };
 }
 
-/**
- * Q6-NEXTSTEP-AVOIDS-VENDOR-CSS. Build a hash-set of the absolute
+/**.
+ * Build a hash-set of the absolute
  * filePaths the classifier flagged as build artifacts, so
  * `buildNextStep`'s reroute predicate can lookup by path in O(1).
  * The set carries the same absolute-path form that
@@ -1570,7 +1570,7 @@ function vendorPathSet(entries: readonly ScannedBuildArtifact[]): ReadonlySet<st
 }
 
 /**
- * Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION wrapper. Reads
+ * wrapper. Reads
  * `perRuleCoverage` off the scanner-assembled meta block, runs the
  * vendor-aware enricher, and returns either the same meta object
  * (identity-stable, when no row was rewritten — the common case on
@@ -1640,7 +1640,7 @@ function routeHintMetaFields(
 }
 
 /**
- * Default files-with-findings cap per scan_project response (P1-OVF +
+ * Default files-with-findings cap per scan_project response (+
  * ADR 0021). Calibrated at 25 so the first call stays under the ~100 KB
  * MCP host token ceiling on typical medium repos (~2.9 KB/file amortized
  * on the reported Bootstrap profile → ~72 KB at 25 files). Callers who
@@ -1701,7 +1701,7 @@ function paginateFiles<T>(
 } {
   const page = files.slice(offset, offset + limit);
   const hasMore = offset + limit < files.length;
-  // V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: `truncated` and
+  // `truncated` and
   // `totalFilesWithFindings` ALWAYS ride on every scan_project response,
   // including the small-scan path where the whole result fit. The
   // negative answer ("not truncated, this is the full inventory") is

@@ -126,7 +126,7 @@ export type StructuredErrorCode =
   // different — the upstream finding is plausibly a Liquid/Jinja/ERB
   // false positive, not a stale `oldText`. Looping back through
   // `suggest_fix` will keep returning `kind: "guidance"`. See
-  // V1-APPLY-FIX-LIQUID-FP-DIAGNOSIS in `.claude/backlog.md`.
+  // in `.claude/backlog.md`.
   | "target-contains-template-directive"
   | "edit-multiple-matches"
   | "edit-introduces-parse-errors"
@@ -272,7 +272,7 @@ export async function parseFiles(
  * per-extension counts of files the walker cleared past dir-ignore +
  * user-excludes and then rejected purely on the parseable-extension
  * check. Scan-surface tools (scan, scan_project, scan_file, scan_diff)
- * use this to surface the silent-miss case (V1-DETECT-SILENT-EXT)
+ * use this to surface the silent-miss case
  * where a mixed-language repo contributes hundreds of `.astro` /
  * `.scss` / `.vue` files that the scanner never looked at.
  */
@@ -405,11 +405,11 @@ export interface ScanFormatted {
    * prose hoists once to the top level instead of repeating per-
    * finding. Hoisted findings carry the nested
    * `fix.descriptionRef: { hash }` (NOT a sibling on the finding —
-   * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT) and
+   *) and
    * omit `fix.description`; findings with unique-in-response
    * descriptions keep the inline text. Omitted entirely when no
    * duplicates cross the threshold (present-when-meaningful per
-   * CLAUDE.md §1). See V1-SIZE-RESPONSE-BUDGET-DENSITY and the
+   * CLAUDE.md §1). See and the
    * `src/mcp/reference-guide.ts` implementation.
    */
   readonly referenceGuide?: import("./reference-guide.ts").ReferenceGuide;
@@ -511,7 +511,7 @@ export async function runScanAndFormat(
    */
   readonly reviewCandidates: readonly import("../types/review.ts").ReviewCandidate[];
   /**
-   * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: deterministic-sorted list
+   * deterministic-sorted list
    * of `.scss` files in this scan whose top-level `$variable: …`
    * declarations produced zero literal-color usages downstream after
    * the SCSS preprocessor's substitution pass. Empty array when no
@@ -548,7 +548,7 @@ export async function runScanAndFormat(
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);
   const unusedWrappers = await resolveUnusedWrappers(wrappers, files, cwd);
   const severityFiltered = filterBySeverity(withoutWrapperNoise, minSeverity);
-  // Q6-CONTRAST-VENDOR-CSS-CROSS-FILE-DEDUPE: collapse identical findings
+  // collapse identical findings
   // that repeat across sibling files sharing a basename (canonical case:
   // `bootstrap.css` / `animate.css` copied into 100+ template
   // subdirectories of a website-template catalog) into one canonical
@@ -562,7 +562,7 @@ export async function runScanAndFormat(
   const deduped = collapseVendorCssFindings(severityFiltered);
   const filtered = applyCriterionSkip(deduped, skipCriteria);
   const grouped = groupViolationsByFile(filtered);
-  // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: thread per-file source
+  // thread per-file source
   // into `buildAgentFinding` so `fix.oldText` / `fix.newText` widen via
   // `widenToUniqueAnchor` — matching the shape `suggest_fix` emits on
   // `primary.edit`. Without this, a rule whose minimal mechanical edit
@@ -652,7 +652,7 @@ export async function runScanAndFormat(
   const untargetedCriteria = tally.untargeted;
   const suppressions = suppressionAudit(files);
   // Findings keep their `fix.description` inline here. The optional
-  // V1-SIZE-RESPONSE-BUDGET-DENSITY hoist (see
+  // hoist (see
   // `src/mcp/reference-guide.ts`'s `hoistFixDescriptions`) runs per-
   // tool at response-assembly time so it reflects the *final* findings
   // array — post-pagination for scan_project, post-hunk/baseline-filter
@@ -661,7 +661,7 @@ export async function runScanAndFormat(
   // to repair pointers when duplicates drop below the threshold, which
   // is more moving parts than it's worth.
   const referenceGuide = buildReferenceGuide(fileEntries);
-  // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS: route the per-rule
+  // route the per-rule
   // coverage rows through the parse-error adjustment once, then feed
   // the same adjusted view to both the meta block and the top-level
   // `ruleCoverage` derivative. Without this, a row downgraded to
@@ -681,7 +681,7 @@ export async function runScanAndFormat(
   // {@link buildAnalysisCoverage}: that bucket is doctrine for "did
   // anything emerge from this file?", and a file with grounded review
   // candidates from a source-text finder must NOT land in the
-  // `invisible-to-rules` bucket (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
+  // `invisible-to-rules` bucket.
   //
   // Cross-surface invariant: both sets are derived from the raw
   // scanner output (`result.violations`, `report.candidates`) — NOT
@@ -696,11 +696,11 @@ export async function runScanAndFormat(
   // of the consumer-facing filters.
   const violationFilePaths = new Set(result.violations.map((v) => v.location.filePath));
   const outputFilePaths = outputFilePathSet(result.violations, report.candidates ?? []);
-  // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: detect token-only `.scss`
+  // detect token-only `.scss`
   // partials so the per-rule coverage downgrade and the response-level
   // `scss_unresolved_variables` warning agree on the same file list.
   const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(files);
-  // V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE: same chain order
+  // same chain order
   // as `response-assembler` so every project-rooted surface
   // (`scan_project`, `scan_file`, `coverage`, `checklist`) feeds the
   // same adjusted view to its meta + derivative consumers. Document-
@@ -743,7 +743,7 @@ export async function runScanAndFormat(
   // axis. No-op fast path when no rule is degraded.
   const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
   const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(fileEntries, perRuleLimitations);
-  // Per-rule trust telemetry (Q2R2-RULE-COV). The underlying rows ride
+  // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
   // splits the 0-findings rules into "trust the clean tally" vs "scan
   // didn't see any eligible sources" so agents branch on a two-bucket
@@ -779,7 +779,7 @@ export async function runScanAndFormat(
     // surfaced output is `wcag22:2.2.1` setTimeout candidates from
     // `review/timing` would appear in `parseErrorFiles`, reading to the
     // agent as "invisible" and the live output silently ignored
-    // (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
+    //.
     findingFilePaths: outputFilePaths,
     ...(discoveryDiagnostics === undefined ? {} : { discoveryDiagnostics }),
   });
@@ -833,7 +833,7 @@ export { applyRuleSettings };
 
 /**
  * Rule lookup for MCP tools. Resolves the input through the rule-ID
- * alias table (V1-INFRA-RULE-ID-ALIAS-TABLE) before consulting the
+ * alias table before consulting the
  * registry so explicit callers (e.g. `explain_rule`, `suggest_fix`,
  * `suppress`) accept the old ID of a renamed rule for the duration of
  * its alias window. The return shape is unchanged; tools that need to

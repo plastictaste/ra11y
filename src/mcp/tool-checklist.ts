@@ -257,7 +257,7 @@ function priorityFor(level: string, hasCandidates: boolean): ChecklistPriority {
 }
 
 /**
- * V1-CHECKLIST-LIMIT-NEGATIVE-VALIDATION: validates the bounded
+ * validates the bounded
  * pagination params before the handler does any work. Negative
  * (and zero) values are clearly-invalid caller bugs that the
  * pre-existing silent clamp would mask — `limit: -1` was being
@@ -298,7 +298,7 @@ function validateChecklistBounds(
 }
 
 /**
- * V1-CHECKLIST-MAX-CANDIDATES-PER-CRITERION-CLAMP: detects whether
+ * detects whether
  * the caller-supplied `maxCandidatesPerCriterion` was clamped by the
  * [1, 100] bounds so the handler can narrate it via a structured
  * `warnings: ["max_candidates_per_criterion_clamped"]` + paired
@@ -348,7 +348,7 @@ function computeChecklistSummaryTally(
 }
 
 /**
- * V1-UNTARGETED-CRITERIA-DEFAULT-EMIT: builds the conditional-spread
+ * builds the conditional-spread
  * fragment for `untargetedCriteriaList` based on the tri-state
  * `showUntargeted` input. Default (unset) emits a bare criterion-ID
  * array (cheap enumeration for VPAT prep); `true` upgrades to full
@@ -432,7 +432,7 @@ export const checklistTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
-    // V1-CHECKLIST-LIMIT-NEGATIVE-VALIDATION: reject clearly-invalid
+    // reject clearly-invalid
     // pagination inputs (`limit < 1`, `maxCandidatesPerCriterion < 1`)
     // up front, before any I/O. The previous silent clamp would coerce
     // `limit: -1` to 1 and return a paginated-to-one-entry response —
@@ -469,7 +469,7 @@ export const checklistTool: McpTool = {
     }
     const level = resolveLevel(strParam(params, "level"), session);
     const projectConfig = await session.loadProjectConfig(cwd);
-    // Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY: switch to the
+    // switch to the
     // diagnostics-aware parse entrypoint so the same
     // `skippedByExtension` map `coverage` feeds into its warnings
     // channel is available here too. Without this, `checklist` and
@@ -493,7 +493,7 @@ export const checklistTool: McpTool = {
     // any rule overrides in the user's `ra11y.config.ts`.
     // (`list_suppressions` no longer emits `rulesEvaluated` — that tool
     // runs zero rules, so the field would lie; see
-    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT.)
+    //.)
     const activeRules = resolveActiveRules(session, projectConfig);
     const { result, report, perRuleCoverage } = runScan({
       standards: session.registry.standards,
@@ -505,7 +505,7 @@ export const checklistTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
-    // Q7-CHECKLIST-PASS-RATE-COMPOSITE: thread testableCriteria so the
+    // thread testableCriteria so the
     // `clean` / `untestable` counters surfaced on
     // `summary.automatedCoverage` use the honest split `coverage`
     // emits (clean = ran + zero findings; untestable = rule declared
@@ -555,7 +555,7 @@ export const checklistTool: McpTool = {
     const skipSet = skipCriterion && skipCriterion.length > 0 ? new Set(skipCriterion) : undefined;
     const keep = (i: { criterionId: string }) =>
       skipSet === undefined || !skipSet.has(i.criterionId);
-    // V1-CHECKLIST-CRITERION-GROUP-DEDUP: annotate candidates whose
+    // annotate candidates whose
     // (file, line, reason) surfaces under ≥2 items with `criteria:
     // [...]` so an agent walking a shared candidate reads one entry
     // per location and knows which criteria it covers. Items stay
@@ -565,7 +565,7 @@ export const checklistTool: McpTool = {
     const actionable = annotatedNeedsReview.filter((i) => i.candidates.length > 0 && keep(i));
     const untargeted = annotatedNeedsReview.filter((i) => i.candidates.length === 0 && keep(i));
     const filteredIrrelevant = likelyIrrelevant.filter(keep);
-    // Q2-CHECKLIST-LIMIT: pagination over the candidate stream. The
+    // pagination over the candidate stream. The
     // scan still evaluates every criterion — this caps response size
     // so a noisy finder (say, 200 ambiguous focus-order candidates in
     // a big React tree) can't dominate the agent's token budget. Two
@@ -588,7 +588,7 @@ export const checklistTool: McpTool = {
     // on every corpus. The confidence axis carries the honest per-
     // item signal (an item's `confidence` is the highest-ranked
     // candidate confidence, `"low"` for bare-criterion items). The
-    // byPriority composite is dropped per V1-CHECKLIST-PRIORITY-AXIS-
+    // byPriority composite is dropped per-
     // DEGENERATE; dishonest-counter doctrine (CLAUDE.md §1) applies.
     // The previous `manualReviewRequired = actionable + untargeted`
     // headline summed two categorically different work kinds (grounded
@@ -599,7 +599,7 @@ export const checklistTool: McpTool = {
     // callers read `actionable` and `untargetedCriteria` separately
     // and never sum them into one headline. The cross-tool invariant
     // test now re-derives the total from the split parts on the fly.
-    // ADR 0010 + Q7-CHECKLIST-PASS-RATE-COMPOSITE —
+    // ADR 0010 + —
     // `checklist.summary.automatedCoverage` is now a structured split:
     // `{ standardId, criteriaWithRulesAllClean,
     // criteriaWithoutEligibleInputs }`. The previous lone
@@ -720,7 +720,7 @@ export const checklistTool: McpTool = {
     // Config resolution isn't part of this handler, so `configSource:
     // undefined` suppresses `no_config_found`.
     //
-    // Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY: `analysisCoverage` +
+    // `analysisCoverage` +
     // `filesByExtension` flow through the same `buildAnalysisCoverage`
     // / `countFilesByExtension` helpers `coverage` uses, so
     // cross-surface consumers see the same warning codes + paired
@@ -751,7 +751,7 @@ export const checklistTool: McpTool = {
       // in `partialParseFiles` (output present, recall degraded); files
       // whose parser errored without emitting anything stay in
       // `parseErrorFiles` (invisible to rules and finders alike). The
-      // candidate union is load-bearing per V1-PARSE-ERROR-LIVERELOAD-
+      // candidate union is load-bearing per-
       // MIXED-SIGNAL — a source-text finder (e.g. `review/timing`
       // regex-scanning `ctx.source` even when the AST parse failed) can
       // surface grounded candidates from a file that produced zero
@@ -761,7 +761,7 @@ export const checklistTool: McpTool = {
       outputFilePathSet(result.violations, report.candidates ?? []),
     );
     const filesByExtension = countFilesByExtension(files);
-    // Q7-CHECKLIST-META-PARITY: emit the same `scanned` envelope
+    // emit the same `scanned` envelope
     // `scan_project`/`coverage` use so an agent cross-referencing the
     // scan-family surfaces sees the same `scanned.root` pointer on
     // identical inputs. `coverage` uses `scannedProject(cwd)`
@@ -770,7 +770,7 @@ export const checklistTool: McpTool = {
     // project root without splitting shapes on whether `paths` was
     // explicit.
     const scanned = scannedProject(cwd);
-    // Q7-CHECKLIST-META-PARITY: probe the walk-up range for a project
+    // probe the walk-up range for a project
     // marker so `no_config_found` fires here on the same predicate
     // `scan_project` uses. Without this, a tiny-repo-with-a-parent-
     // package.json scan that fires the code on `scan_project` silently
@@ -829,7 +829,7 @@ export const checklistTool: McpTool = {
  * cognitive-complexity cap; the two-channel merge is narrow enough that
  * a helper keeps the handler's shape flat without obscuring intent.
  *
- * V1-CHECKLIST-PERCRITERION-CURSOR: surfacing a structured warning code
+ * surfacing a structured warning code
  * alongside `nextCursor` makes the pairing honest per the "zero-output
  * success is ambiguous failure" doctrine — a perCriterionClipped response
  * with a cursor is success-with-more-to-fetch, not success-complete.
@@ -841,7 +841,7 @@ function buildChecklistWarnings(args: {
   readonly violations: ReturnType<typeof runScan>["result"]["violations"];
   readonly nextCursor: ChecklistCursor | undefined;
   /**
-   * Q7-CHECKLIST-META-PARITY: the resolved `configSource` from the
+   * the resolved `configSource` from the
    * loaded project config. Threaded through so `no_config_found` fires
    * here on the same predicate `scan_project` uses — without it the
    * code silently drops on checklist even when scan_project surfaces
@@ -851,7 +851,7 @@ function buildChecklistWarnings(args: {
    */
   readonly configSource: string | null;
   /**
-   * Q7-CHECKLIST-META-PARITY: true when the walk-up from the scan root
+   * true when the walk-up from the scan root
    * saw a `package.json` or `ra11y.config.*` marker. Pairs with
    * `configSource === null` to gate `no_config_found` honestly — tiny
    * demo directories without a parent project root never trip the code.
@@ -866,7 +866,7 @@ function buildChecklistWarnings(args: {
     configSearchSawProjectMarker: args.configSearchSawProjectMarker,
     analysisCoverage: args.analysisCoverageField.analysisCoverage,
     filesByExtension: args.filesByExtension,
-    // Q4-WARNING-DOWNGRADE-NOISE: gate `template_files_parsed_as_literal`
+    // gate `template_files_parsed_as_literal`
     // on actual overlap between emitted findings and detected
     // template-directive lines. Cross-reference `result.violations` with
     // the per-file source so the code fires only when the literal-parse
@@ -937,7 +937,7 @@ function buildChecklistWarnings(args: {
  * Tallies parseable files by extension. Mirrors the private helper in
  * {@link ./tool-coverage.ts `countFilesByExtension`} so `checklist` can
  * feed the same `filesByExtension` signal into the scan-confidence
- * warnings channel (Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY — without
+ * warnings channel (without
  * this, `tailwind_detected_css_undercounted` would fire on `coverage`
  * and `scan_project` but silently not on `checklist` for the same
  * input set).
@@ -954,7 +954,7 @@ function countFilesByExtension(files: readonly ParsedFile[]): Record<string, num
 
 /**
  * Assembles the `meta` field for `checklist`. Always emitted now
- * (Q7-CHECKLIST-META-PARITY) so an agent reading this response can
+ * so an agent reading this response can
  * cross-check scan-confidence telemetry against `scan_project` without
  * a second round trip. The parity subset (configSource, scanned.root,
  * rulesEvaluated, filesByExtension) is the backlog-mandated minimum:
@@ -1051,7 +1051,7 @@ function mapCandidates(
 }
 
 /**
- * V1-CHECKLIST-CRITERION-GROUP-DEDUP: when a candidate's
+ * when a candidate's
  * `(file, line, reason)` surfaces under multiple checklist items,
  * annotate every instance with `criteria: string[]` listing every
  * criterion the same location satisfies. This is the agent's signal
@@ -1071,7 +1071,7 @@ function mapCandidates(
  * Why not collapse across items: the cross-tool invariant
  * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].criterionId`,
  * also legacy `coverage.manualWithCandidates[].id` for the deprecation
- * window — Q7-CRITERION-ID-FIELD-NAME-DRIFT) is load-bearing — it's how
+ * window) is load-bearing — it's how
  * the two tools read as one surface per ADR 0010. Dropping secondary
  * items would silently re-classify a
  * shared-candidate criterion as untargeted on checklist while
@@ -1208,8 +1208,8 @@ function bucketChecklistItems(
 }
 
 /**
- * Default candidates-per-response cap for the `checklist` tool
- * (Q2-CHECKLIST-LIMIT). Chosen to mirror scan_project's default so
+ * Default candidates-per-response cap for the `checklist` tool.
+ * Chosen to mirror scan_project's default so
  * both tools paginate at the same ballpark.
  */
 const CHECKLIST_DEFAULT_LIMIT = 200;
@@ -1367,7 +1367,7 @@ export interface PaginatedChecklist {
      */
     readonly nextCursor?: ChecklistCursor;
     /**
-     * V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: a useful target the
+     * a useful target the
      * caller can pass back as `maxCandidatesPerCriterion` when they
      * want a deeper cut in one shot instead of paginating through
      * `nextCursor`. Computed as `min(largestUncappedCount, 100)` —
@@ -1417,7 +1417,7 @@ export function paginateChecklistItems(
   // helper returns the clipped item list, the inventory-wide total,
   // the cursor pointing at the first clipped criterion (for later
   // resume calls), and the max uncapped count across clipped items
-  // (V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER hint computation).
+  // (hint computation).
   const { clipped, totalCandidates, firstClippedCursor, largestUncappedCount } = clipChecklistItems(
     items,
     maxCandidatesPerCriterion,
@@ -1445,7 +1445,7 @@ export function paginateChecklistItems(
     });
   }
   const truncated = rangeEnd < postClipTotal;
-  // V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: hint = min(largest
+  // hint = min(largest
   // uncapped count, MAX_MAX_PER_CRITERION). Only meaningful when at
   // least one criterion clipped — otherwise the caller already saw
   // every candidate and there's nothing to bump the cap for.
@@ -1480,7 +1480,7 @@ export function paginateChecklistItems(
  *   - `firstClippedCursor` — the first clipped criterion's cursor for
  *     later resume calls; `undefined` when nothing was clipped.
  *   - `largestUncappedCount` — pre-clip count of the noisiest clipped
- *     criterion (V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER hint input).
+ * criterion (hint input).
  *     0 when nothing was clipped — read it only when `firstClippedCursor`
  *     is defined.
  *
@@ -1569,7 +1569,7 @@ function paginateChecklistResume(
   const nextCursor: ChecklistCursor | undefined = moreRemaining
     ? { afterCriterion: target.criterionId, afterCandidateIndex: resumeEnd - 1 }
     : undefined;
-  // V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: same hint shape on the
+  // same hint shape on the
   // resume branch — only emitted when more tail remains, since the
   // agent has already seen everything we have on the criterion when
   // the resume consumed it. `min(target.candidates.length, 100)` is
@@ -1671,7 +1671,7 @@ interface ChecklistNextStepInputs {
   readonly nextOffset: number | undefined;
   readonly nextCursor: ChecklistCursor | undefined;
   /**
-   * V1-CHECKLIST-MAX-CANDIDATES-DEFAULT-LOWER: when the per-criterion
+   * when the per-criterion
    * cap clipped, the hint value (smaller of largestUncappedCount and
    * the documented [1, 100] band's ceiling) is the agent-readable
    * target for "raise the cap to see everything in one shot." Threaded

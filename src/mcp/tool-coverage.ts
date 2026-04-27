@@ -100,7 +100,7 @@ export const coverageTool: McpTool = {
     // count agrees with scan_project / propose_config on the same cwd.
     // (`list_suppressions` no longer emits `rulesEvaluated` — the tool
     // runs zero rules, so the field would lie; see
-    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT.)
+    //.)
     const activeRules = resolveActiveRules(session, projectConfig);
     const { result, report, perRuleCoverage } = runScan({
       standards: session.registry.standards,
@@ -132,7 +132,7 @@ export const coverageTool: McpTool = {
       testableCriteria,
     });
     const showUntargeted = params["showUntargeted"] === true;
-    // V1-ZERO-SCAN-PASS-RATE-SENTINEL: on a zero-file scan, the pass-
+    // on a zero-file scan, the pass-
     // rate denominator (`evaluated` or `automatable` depending on the
     // `testableCriteria` path) collapses to "no meaningful denominator"
     // — the `buildCoverageReport` helper returns `0` on one path and
@@ -215,7 +215,7 @@ export const coverageTool: McpTool = {
         // that as "criteria automation can't cover" when it actually
         // listed automated criteria that are currently failing.
         failingAutomatedCriteria: withTitles(c.failingCriteria, session),
-        // V1-ZERO-SCAN-PASS-RATE-SENTINEL: drop the `(N%)` tail when
+        // drop the `(N%)` tail when
         // the scan evaluated zero files — the `%` is cosmetically
         // precise but materially meaningless. Pair with the
         // `automatedCriteriaPassRate` omission above so the summary
@@ -247,7 +247,7 @@ export const coverageTool: McpTool = {
     // `verboseMeta` flows from the input param so an agent triaging
     // bulk-template parse errors can opt into the full
     // `parseErrorFiles` / `partialParseFiles` lists when needed
-    // (V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED). Surfaced at the
+    //. Surfaced at the
     // top level (not gated by `metaMode`) because the signal is
     // load-bearing for a conformance-gating tool; the existing `meta`
     // block stays opt-in so legacy callers still see no meta on a
@@ -266,7 +266,7 @@ export const coverageTool: McpTool = {
       // in `partialParseFiles` (output present, recall degraded); files
       // whose parser errored without emitting anything stay in
       // `parseErrorFiles` (invisible to rules and finders alike). The
-      // candidate union is load-bearing per V1-PARSE-ERROR-LIVERELOAD-
+      // candidate union is load-bearing per-
       // MIXED-SIGNAL — a source-text finder (e.g. `review/timing`
       // regex-scanning `ctx.source` even when the AST parse failed) can
       // surface grounded candidates from a file that produced zero
@@ -274,7 +274,7 @@ export const coverageTool: McpTool = {
       // as `invisible-to-rules` while live candidates reach the caller.
       outputFilePathSet(result.violations, report.candidates ?? []),
     );
-    // V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT: same scan state must
+    // same scan state must
     // surface the same warning code set on every tool that runs the
     // scanner. Coverage previously omitted `no_config_found` (passed
     // `configSource: undefined`) and `scanned_build_artifacts_present`
@@ -316,7 +316,7 @@ export const coverageTool: McpTool = {
       ...(analysisCoverageField.metaArrayTruncated === true
         ? { metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"] }
         : {}),
-      // Q4-WARNING-DOWNGRADE-NOISE: gate
+      // gate
       // `template_files_parsed_as_literal` on actual overlap between
       // emitted findings and detected template-directive lines — the
       // code only fires when the literal-parse actually reached a
@@ -332,7 +332,7 @@ export const coverageTool: McpTool = {
         sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
       }),
     });
-    // Q7-CRITERION-ID-FIELD-NAME-DRIFT: every coverage entry ships the
+    // every coverage entry ships the
     // legacy `id` field alongside the canonical `criterionId` for one
     // minor as a deprecation alias (see `withTitles`). Fire the
     // structured warning unconditionally on this path so agents reading
@@ -341,7 +341,7 @@ export const coverageTool: McpTool = {
     // alongside the alias in the next minor release; the
     // `### Deprecated` CHANGELOG entry tracks the removal window.
     const warnings = mergeDeprecatedFieldIdWarning(baseWarnings);
-    // V1-COVERAGE-META-BLOCK-MISSING: every tool that runs the scanner
+    // every tool that runs the scanner
     // ships a `meta` block carrying load-bearing scan-confidence
     // telemetry — `filesScanned`, `configSource`, `rootSource`,
     // `rulesEvaluated`, `scanned`, plus the conditional
@@ -404,7 +404,7 @@ export const coverageTool: McpTool = {
       return textResult({
         ...entry,
         ...nextStep,
-        // V1-COVERAGE-SCANNED-POINTER-MISSING: `coverage` runs a real
+        // `coverage` runs a real
         // scan over the resolved cwd (see `runScan` above) — surface
         // the same `scanned` envelope `scan_project` emits so an agent
         // calling `coverage({ cwd })` to confirm "are we done?" can
@@ -426,8 +426,8 @@ export const coverageTool: McpTool = {
 };
 
 /**
- * Assembles the `meta` field for `coverage`. V1-COVERAGE-META-BLOCK-
- * MISSING + V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT: every tool that
+ * Assembles the `meta` field for `coverage`.-
+ * MISSING +: every tool that
  * runs the scanner ships the same load-bearing scan-confidence
  * telemetry (filesScanned, configSource, rootSource, rulesEvaluated,
  * scanned, configSearchedFrom) so an agent that calls `scan_project`
@@ -463,7 +463,7 @@ function buildCoverageMetaField(args: {
     filesScanned: args.filesScanned,
     scanned: args.scannedEnvelope,
     configSource: args.configSource,
-    // Q8-CONFIGSEARCHEDFROM-ECHO-RECURRENCE: the shared helper omits
+    // the shared helper omits
     // when the search base would echo `cwd` or `scanned.root` already
     // on the response. `coverage` walks up from `args.cwd`, so the
     // base equals `scanned.root` on every default-shape call and the
@@ -544,7 +544,7 @@ function buildCoverageNextStep({
  * ("Focus Not Obscured (Minimum)") so agents don't have to look them up.
  * Falls back to ID-only if a criterion isn't found in any loaded standard.
  *
- * Q7-CRITERION-ID-FIELD-NAME-DRIFT: the canonical field is
+ * the canonical field is
  * `criterionId` — matches `checklist.items[].criterionId` and the
  * namespaced-id convention used elsewhere across the MCP surface
  * (`wcag22:1.4.3`). The legacy `id` field still ships alongside
@@ -574,7 +574,7 @@ function withTitles(
 }
 
 /**
- * Q7-CRITERION-ID-FIELD-NAME-DRIFT: append the deprecation code for the
+ * append the deprecation code for the
  * legacy `id` alias to the warnings fragment returned by
  * {@link buildDerivativeScanWarnings}. The base helper conditionally
  * spreads `warnings` and `warningsDetails` — `warnings` may be absent
