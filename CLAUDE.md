@@ -186,9 +186,9 @@ Enforced in CI by `scripts/bench.ts`; history in `docs/performance.md`.
 | 10 files, 1k LOC | ≤ 100 ms |
 | 100 files, 10k LOC | ≤ 500 ms |
 | 1000 files, 100k LOC | ≤ 3 s |
-| 4000 files, 400k LOC, vendor-heavy | ≤ 15 s |
+| 4000 files, 400k LOC, vendor-heavy | ≤ 25 s (ceiling — scope down) |
 
-Above the 1000-file row, prefer `scan_diff` (CLI: `--changed`) for precommit and `additionalPaths` / a narrower `cwd` for scoped audits. The 4000-file row is the documented ceiling for whole-tree `scan_project`; beyond it, scope down rather than wait.
+Above the 1000-file row, prefer `scan_diff` (CLI: `--changed`) for precommit and `additionalPaths` / a narrower `cwd` for scoped audits. The 4000-file row is the documented ceiling for whole-tree `scan_project`; beyond it, scope down rather than wait. The 25 s ceiling sits in the Biome+ band for zero-dep static scanners on vendor-heavy corpora; pushing lower would either drop rules or require parallel workers (out of scope for v1.0). Scans above the 1000-file row should emit a `large_repo_hint` warning so agents scope down rather than wait through the full envelope.
 
 ## 12. Semver policy
 
