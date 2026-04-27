@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canonical Bootstrap popover and tooltip triggers</title>
+  </head>
+  <body>
+    <!--
+      Compliant popover trigger: data-bs-toggle="popover" carries
+      aria-haspopup="dialog" so AT announces that activation reveals an
+      additional dialog-shaped surface. aria-controls names the popover
+      region's id once it has been rendered into the DOM.
+    -->
+    <button
+      type="button"
+      class="btn"
+      data-bs-toggle="popover"
+      data-bs-content="Saves the draft to your account."
+      aria-haspopup="dialog"
+      aria-controls="save-popover"
+    >
+      Save
+    </button>
+
+    <!--
+      Compliant tooltip trigger (title channel): Bootstrap reads the
+      title attribute as the tooltip's text content and wires the
+      relationship at runtime. The title is sufficient to establish the
+      programmatic description.
+    -->
+    <button type="button" class="btn" data-bs-toggle="tooltip" title="Permanently delete this record">
+      Delete
+    </button>
+
+    <!--
+      Compliant tooltip trigger (aria-describedby channel): the
+      tooltip element id is referenced by aria-describedby; the tooltip
+      body carries role="tooltip".
+    -->
+    <button type="button" class="btn" data-bs-toggle="tooltip" aria-describedby="archive-tip">
+      Archive
+    </button>
+    <div id="archive-tip" role="tooltip">Move to the archive folder</div>
+  </body>
+</html>

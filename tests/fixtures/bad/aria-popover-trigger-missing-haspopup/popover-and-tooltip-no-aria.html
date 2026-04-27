@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bootstrap popover and tooltip triggers missing ARIA properties</title>
+  </head>
+  <body>
+    <!--
+      Failing case 1: data-bs-toggle="popover" trigger ships with no
+      aria-haspopup. AT announces "?, button" with no signal that
+      activation reveals a popover surface.
+    -->
+    <button type="button" class="btn" data-bs-toggle="popover" data-bs-content="Help text">
+      ?
+    </button>
+
+    <!--
+      Failing case 2: data-toggle="tooltip" anchor (Bootstrap 4 / generic
+      shape) ships with neither aria-describedby nor title. There is no
+      programmatic description channel for the tooltip text to reach AT.
+    -->
+    <a href="#" data-toggle="tooltip">Hover me</a>
+  </body>
+</html>
