@@ -163,9 +163,7 @@ function* walkHtmlElementDescendants(root: HtmlElement): Iterable<HtmlElement> {
  * unassociated `<label>` — the predicate `label-adjacent-unassociated`
  * fires on.
  */
-export function collectJsxAdjacentUnassociatedControls(
-  module: TsxModule,
-): ReadonlySet<JsxElement> {
+export function collectJsxAdjacentUnassociatedControls(module: TsxModule): ReadonlySet<JsxElement> {
   const out = new Set<JsxElement>();
   visitJsxRoots(module.jsxElements, out);
   return out;
