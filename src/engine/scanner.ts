@@ -46,6 +46,7 @@ import type {
 import { computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { runFindersForFile } from "./candidate-runner.ts";
+import { mergeCoFiringRules } from "./cofire-merge.ts";
 import { buildEvidenceLedger } from "./evidence-ledger.ts";
 import { synthesizeInheritedFindings } from "./inherited-findings.ts";
 import { buildPerRuleCoverage } from "./per-rule-coverage.ts";
@@ -195,6 +196,19 @@ export function runScan(inputs: ScanInputs): ScanProducts {
     nativeWrapperElements: inputs.nativeWrapperElements ?? {},
   }))
     allViolations.push(v);
+  // Co-firing rule merge: when two rules deterministically emit on the
+  // same (filePath, line, column) and one fix closes both (e.g.
+  // `<a href="#"><i/></a>` firing both `navigation/href-empty-fragment`
+  // + `navigation/link-descriptive-text`; `<input placeholder="…">`
+  // firing both `forms/labels-required` + `forms/placeholder-as-label`),
+  // fold the secondary's criteria onto the primary and drop the
+  // secondary from the violation list. Per-rule coverage is built from
+  // the pre-merge `allViolations` below so the secondary rule still
+  // shows the emissions it actually produced — only the agent-facing
+  // violation list is folded; scan-confidence telemetry stays honest.
+  // See `src/engine/cofire-merge.ts` for the pair table and rationale.
+  const preMergeViolations: readonly Violation[] = [...allViolations];
+  replaceContents(allViolations, mergeCoFiringRules(preMergeViolations));
   allViolations.sort(compareViolations);
 
   const rawCandidates = collectCandidatesFromFiles(inputs, enabled, standardsRegistry);
@@ -222,7 +236,11 @@ export function runScan(inputs: ScanInputs): ScanProducts {
     tracker,
     inputs.rules,
     filter,
-    allViolations,
+    // Pre-merge so the secondary rule's `findingsEmitted` still
+    // counts the emissions it actually produced — the co-firing
+    // merger drops the secondary from the agent-facing list but the
+    // rule did fire and its scan-confidence row should reflect that.
+    preMergeViolations,
     inputs.files.length,
   );
 
@@ -270,6 +288,19 @@ export function runScan(inputs: ScanInputs): ScanProducts {
   });
 
   return { result, report, perRuleCoverage, ledger };
+}
+
+/**
+ * Mutating in-place replace: clears `target` and pushes every entry in
+ * `next`. Used by the co-firing-rule-merge step in {@link runScan} to
+ * swap the live `allViolations` array contents for the merged result
+ * without growing `runScan`'s cognitive complexity. Pulling this into
+ * a helper keeps the scanner body readable; the inner loop counts as
+ * its own function complexity, not the caller's.
+ */
+function replaceContents<T>(target: T[], next: readonly T[]): void {
+  target.length = 0;
+  for (const v of next) target.push(v);
 }
 
 /**

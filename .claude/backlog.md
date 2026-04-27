@@ -419,7 +419,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. 
 
 #### Q8b — accepted (P2 — finder fix-suggestion polish)
 
-- [ ] **Q8b-SAME-ELEMENT-DOUBLE-COUNT-MERGE** Same anchor / same input emits two findings under different rule ids: `<a href="#"><i class="fa..."></i></a>` fires both `navigation/href-javascript-void` (error) AND `navigation/link-descriptive-text` (warning); `<input>` with placeholder fires both `forms/labels-required` AND `forms/placeholder-as-label`. One fix closes both. Inflates headline counts and forces redundant triage. Fix: when two rules fire on the same element with overlapping fixes, merge into a composite finding citing both criteria — or fold the secondary rule into the primary's reason text. No information loss.
 - [ ] **Q8b-FIX-SUGGESTION-SENTENCE-SPLITTER-ELLIPSIS-BREAK** `suggest_fix` `approach` field is truncated mid-word on findings whose `explanation` contains the literal `"— e.g."` — sentence splitter breaks on the period inside the abbreviation. Single-character bug, observed across rules whose fix prose uses common abbreviations. Fix: sentence splitter must not break on `"e.g."`, `"i.e."`, `"vs."`, `"etc."` mid-clause; or use a length-based fallback rather than period-counting.
 
 #### Q8 confirmations — cross-corpus signal (2nd-pass)
