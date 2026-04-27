@@ -87,6 +87,16 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     // findings come back on that call).
     expect(response.plan).toEqual(formatted.plan);
     expect(response.files).toEqual([]);
+    // `truncated: true` + `totalFilesWithFindings` are load-bearing on
+    // the slim path: the response dropped per-file findings to fit
+    // under the host ceiling, so the truncation flag must reflect that
+    // (an agent reading `files: []` with `truncated: null/absent`
+    // cannot distinguish "clean scan" from "envelope clipped"). Inventory
+    // size rides alongside so the agent knows how many files were
+    // dropped, not just that some were. Symmetric to the density-cap
+    // path's stamping of the same flag in `mergeBudgetedFields`.
+    expect(response.truncated).toBe(true);
+    expect(response.totalFilesWithFindings).toBe(formatted.files.length);
     expect(typeof response.nextStep).toBe("string");
     expect((response.nextStep as string).length).toBeGreaterThan(0);
     expect(response.nextStepStructured).toBeDefined();
@@ -293,6 +303,91 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(structured.args.cwd).toBeUndefined();
   });
 
+  it("preserves prior warning codes (density-cap chain) and stamps `truncated: true` on the slim envelope", () => {
+    // Combined regime — token-budget cap fires AND the post-density
+    // envelope still exceeds the host ceiling. The slim builder runs
+    // off the post-density `original`, which already carries
+    // `response_token_budget_truncated` in `warnings[]` and `truncated:
+    // true` from `mergeBudgetedFields`. The slim shape MUST preserve
+    // both signals — drop them and the agent loses visibility into
+    // which clip pass produced the empty `files[]`. Equivalent to the
+    // doctrine's "Oversize-success is ambiguous failure" applied to
+    // the warning chain: every code that fired earlier in the assembly
+    // remains in the wire `warnings`. Assertion on the flag covers the
+    // `response_token_budget_truncated`/`truncated: null` regression
+    // the slim builder used to introduce by stripping pagination
+    // fields when it rebuilt the envelope from scratch.
+    const session = new McpSession();
+    const formatted = buildMinimalFormatted();
+    // Synthetic bloat plus a baseWarnings surface on `original` —
+    // simulates the density-cap having fired before the slim guard
+    // kicks in by passing `response_token_budget_truncated` through
+    // `baseWarnings` so `assembleScanProjectResponse`'s spread merges
+    // it onto the tentative response.
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: {
+        files: formatted.files,
+        referenceGuide: undefined,
+      },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: true,
+          totalFilesWithFindings: 50,
+          requestedLimit: 50,
+          effectiveLimit: 1,
+          pageClipReason: "token_density",
+          nextOffset: 1,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 1,
+        durationMs: 5,
+        bloatedField: hugePayload,
+      },
+      baseWarnings: ["response_token_budget_truncated"],
+      baseWarningsDetails: {
+        response_token_budget_truncated: {
+          requestedLimit: 50,
+          effectiveLimit: 1,
+          reason: "token_density",
+        },
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    // The slim path engaged (oversize fallback) so files[] is empty.
+    expect(response.files).toEqual([]);
+    // `truncated: true` is required regardless of which clip pass
+    // fired first — Q10 invariant: whenever
+    // `response_token_budget_truncated` OR `response_dropped_files_oversize`
+    // is in `warnings[]`, the top-level flag must be `true`.
+    expect(response.truncated).toBe(true);
+
+    const warnings = response.warnings as readonly string[];
+    // Both codes ride together on the wire — the density cap fired
+    // first (carried in via `baseWarnings`), the oversize guard fired
+    // second. Order isn't asserted, only co-presence.
+    expect(warnings).toContain("response_token_budget_truncated");
+    expect(warnings).toContain("response_dropped_files_oversize");
+
+    // The structured `warningsDetails` payload preserves the prior
+    // density-cap settlement and stamps the new oversize byte-arithmetic
+    // alongside it — both keys present, neither overwriting the other.
+    const details = response.warningsDetails as Record<string, unknown>;
+    expect(details.response_token_budget_truncated).toBeDefined();
+    expect(details.response_dropped_files_oversize).toBeDefined();
+  });
+
   it("passes through unchanged when the response fits under the host ceiling", () => {
     // No synthetic bloat — the natural response is well under the
     // ceiling. The fallback must NOT engage; the warnings channel
@@ -332,5 +427,9 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(files.length).toBe(1);
     const warnings = (response.warnings as readonly string[] | undefined) ?? [];
     expect(warnings).not.toContain("response_dropped_files_oversize");
+    // Symmetric Q10 assertion: when neither clip pass fires, the
+    // top-level `truncated` flag rides as `false` — the paginator's
+    // negative answer survives untouched ("this IS the full inventory").
+    expect(response.truncated).toBe(false);
   });
 });

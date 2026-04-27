@@ -507,6 +507,22 @@ function buildSlimScanProjectEnvelope(args: {
   return {
     plan: formatted.plan,
     files: [],
+    // The slim envelope drops every per-file finding entry (`files: []`)
+    // — that IS a truncation, regardless of whether the density cap
+    // fired earlier. Without `truncated: true` the agent reads
+    // `files: []` alongside an absent or `null` flag and cannot
+    // distinguish "clean scan" from "envelope had to drop the per-file
+    // detail to fit." Symmetric to the density-cap path in
+    // `mergeBudgetedFields`, which stamps the same `truncated: true`
+    // when it trims the tail. `totalFilesWithFindings` rides alongside
+    // so the inventory size is visible — the agent's recovery path
+    // (re-call with narrower scope) needs to know how many files were
+    // dropped, not just that some were. See the
+    // "Truncated containers must rename or sentinel, not retain" and
+    // "Oversize-success is ambiguous failure" bullets in
+    // `docs/kb/architecture/ai-first-consumer.md`.
+    truncated: true as const,
+    totalFilesWithFindings: formatted.files.length,
     nextStep: SLIM_NEXT_STEP_PROSE,
     nextStepStructured: buildSlimNextStepStructured({
       formatted,
