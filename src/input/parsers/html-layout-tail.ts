@@ -1,6 +1,6 @@
 /**
  * Layout-tail diagnostic for the HTML parser's stray-closing-tag
- * recovery. Splits the generic stray-close wording into three cases:
+ * recovery. Splits the generic stray-close wording into four cases:
  *
  *   1. The Liquid-composed-layout shape — Jekyll's canonical
  *      `_layouts/*.html` wraps `{{ content }}` between
@@ -12,21 +12,36 @@
  *      rename so an agent reading `partialParseFiles[].reason`
  *      routes to the include-chain composition instead of
  *      treating the file as a parser failure.
- *   2. A genuine root-level stray — `depth === 0` with no
+ *   2. The Astro-composed-layout shape — an Astro page or partial
+ *      whose document envelope (`<html>` / `<body>` / `<head>`) is
+ *      opened by an imported component (`<Layout>` / `<BaseLayout>`)
+ *      while the page itself only emits the closing tags downstream.
+ *      The shape is structurally identical to the Liquid case but
+ *      the head signal differs (Astro frontmatter `---\n…\n---` vs
+ *      Liquid `{% include %}`); only the parser knows the source
+ *      came from `parseAstro`, so the flag is threaded in rather
+ *      than re-detected from the post-strip residue (the
+ *      frontmatter is blanked to whitespace by the time `parseHtml`
+ *      sees the source). Unlike the Liquid case, the matching-open
+ *      gate is per-tag (no `<html>` open in source while `</html>`
+ *      appears) rather than a count-of-all-closers, because Astro
+ *      partials commonly close `</body></html>` together — both
+ *      delegated by the parent `<Layout>` component.
+ *   3. A genuine root-level stray — `depth === 0` with no
  *      enclosing scope. The wording names the actual stray tag
  *      ("Stray </X> at top level") so the agent doesn't read a
  *      bare "Stray closing tag" and have to re-open the file to
  *      learn which tag is the culprit.
- *   3. A nested stray — `depth > 0`, an enclosing ancestor is
+ *   4. A nested stray — `depth > 0`, an enclosing ancestor is
  *      still open. Reformulated as "Mismatched </X> close at line
  *      N (inside <ancestor>)" so the reason names both the
  *      offending tag and the actual scope. The historic "at top
  *      level" wording was the misdiagnosis: a stray observed
  *      inside an open element body is NOT at the document root,
  *      and an agent reading "top level" wastes a read confirming
- *      the root closes cleanly. Reserve "top level" for case 2.
+ *      the root closes cleanly. Reserve "top level" for case 3.
  *
- * The recoverable error still fires in all three cases (so
+ * The recoverable error still fires in all four cases (so
  * `partialParseFiles` retains the honest "scan degraded"
  * telemetry); only the message string differs. Per the AI-first
  * consumer doctrine (surface, don't suppress), the move when a
@@ -74,15 +89,37 @@ const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"
  *        opens, mis-paired structure, hand-completed envelope on a
  *        file the partial expects to leave unclosed).
  *
- *   2. Nested stray (`depth > 0`, an enclosing ancestor is still
+ *   2. The Astro layout-tail rename fires when ALL FOUR gates hold:
+ *
+ *      - `depth === 0` — same root-tail constraint as Liquid.
+ *      - Closer name is one of `html` / `body` / `head`.
+ *      - `astroComposedLayout` is `true` — the parser was invoked
+ *        through `parseAstro`, so the file is known to be `.astro`
+ *        source whose frontmatter was stripped before `parseHtml`
+ *        ran. Without this flag we can't tell the file apart from
+ *        a hand-authored HTML partial that's just missing an open;
+ *        with it we know the document envelope is conventionally
+ *        delegated to a parent `<Layout>` component.
+ *      - The matching open tag for THIS closer does NOT appear in
+ *        source ({@link hasMatchingOpenTag} returns false for the
+ *        same lowercased name). Per-tag rather than count-of-all
+ *        because Astro partials canonically close `</body></html>`
+ *        together — both delegated by the parent — whereas Liquid
+ *        wrappers carry exactly one root-envelope closer at the
+ *        very tail. The per-tag gate keeps a paired
+ *        `<body>…</body>` from spuriously triggering the rename
+ *        when the trailing `</html>` is the one that's actually
+ *        stray.
+ *
+ *   3. Nested stray (`depth > 0`, an enclosing ancestor is still
  *      open) — name the offending tag and the immediate enclosing
  *      scope. `enclosingTag` MUST be the lowercased name at the
  *      top of the parser's `#openStack`; the parser guarantees a
  *      non-empty stack whenever `depth > 0` because each
  *      `#consumeChildren` push happens before `depth` increments.
  *
- *   3. Genuine root-level stray (`depth === 0` after the layout-
- *      tail check failed) — name the actual stray tag in the
+ *   4. Genuine root-level stray (`depth === 0` after the layout-
+ *      tail checks failed) — name the actual stray tag in the
  *      message so the agent doesn't read a bare "Stray closing
  *      tag" and have to re-open the file to learn which tag is
  *      the culprit.
@@ -99,16 +136,22 @@ const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"
  *   field on the wire is just the message string; the underlying
  *   `position` doesn't reach the agent).
  * @param enclosingTag  — lowercased name of the nearest still-open
- *   ancestor (`undefined` at `depth === 0`). Used only by branch 2.
+ *   ancestor (`undefined` at `depth === 0`). Used only by branch 3.
  * @param hasLiquidIncludeHead — pre-computed Liquid-head detector
  *   result; passed in rather than re-derived so the parser caches
  *   the detection across multiple stray-close events on one file.
  * @param source — the file source, used by branch 1 to count
- *   `</html>` / `</body>` / `</head>` tokens (case-insensitive).
- *   The elision rename requires exactly one such closer total —
- *   see branch 1 for the rationale. Scanned per call rather than
- *   cached because branch 1 only runs when the prior gates hold,
- *   and on most files no stray-close event reaches branch 1 at all.
+ *   `</html>` / `</body>` / `</head>` tokens (case-insensitive)
+ *   and by branch 2 to check whether the matching open tag for
+ *   the diagnosed closer is present elsewhere in source. Scanned
+ *   per call rather than cached because branches 1 and 2 only
+ *   run when the prior gates hold, and on most files no
+ *   stray-close event reaches them at all.
+ * @param astroComposedLayout — true when the parser was invoked
+ *   via `parseAstro`. Gates branch 2 — the Astro layout-tail
+ *   rename — so the elision wording fires only on `.astro` source
+ *   where the closer-only shape is the documented composition,
+ *   not arbitrary HTML partials whose origin is unknown.
  */
 export function strayClosingTagMessage(
   closerName: string,
@@ -117,6 +160,7 @@ export function strayClosingTagMessage(
   enclosingTag: string | undefined,
   hasLiquidIncludeHead: boolean,
   source: string,
+  astroComposedLayout: boolean,
 ): string {
   const lower = closerName.toLowerCase();
   if (
@@ -127,10 +171,38 @@ export function strayClosingTagMessage(
   ) {
     return `Elided layout-tail </${lower}> — file opens with a Liquid {% include %} directive whose sibling partial closes this root tag`;
   }
+  if (
+    depth === 0 &&
+    LAYOUT_TAIL_CLOSERS.has(lower) &&
+    astroComposedLayout &&
+    !hasMatchingOpenTag(source, lower)
+  ) {
+    return `Elided layout-tail </${lower}> — Astro page or partial whose document envelope is opened by a parent <Layout> component`;
+  }
   if (depth > 0 && enclosingTag !== undefined) {
     return `Mismatched </${closerName}> close at line ${line} (inside <${enclosingTag}>)`;
   }
   return `Stray </${closerName}> at top level`;
+}
+
+/**
+ * True when `source` contains an opening `<tag>` (case-insensitive)
+ * for the given lowercased name. Used by {@link strayClosingTagMessage}
+ * branch 2 to gate the Astro layout-tail rename — the rename fires
+ * only when the diagnosed closer has no matching open elsewhere in
+ * source, signalling the open lives in an imported `<Layout>`
+ * component rather than this file.
+ *
+ * The match accepts `<tag>`, `<tag attr="x">`, `<tag\n…`, etc. — any
+ * shape where the `<tag` token is followed by a character that ends
+ * the tag name (whitespace, `>`, or `/`). It does NOT match comment
+ * spans (`<!-- -->`) because the leading `!` cannot be the first
+ * character of a tag name. Exported so the predicate is unit-testable
+ * as a pure function.
+ */
+export function hasMatchingOpenTag(source: string, lowerName: string): boolean {
+  const re = new RegExp(`<${lowerName}(?:[\\s/>])`, "i");
+  return re.test(source);
 }
 
 /**

@@ -81,7 +81,18 @@ export function parseAstro(source: string): HtmlParseResult {
   const buf = source.split("");
   stripFrontmatter(source, buf, errors);
   const transformed = buf.join("");
-  const html = parseHtml(transformed);
+  // `astroComposedLayout: true` opts the underlying HTML parser into
+  // the Astro layout-tail rename — when a delegated `</body>` /
+  // `</html>` / `</head>` appears in source without its matching
+  // open, the diagnostic surfaces "Elided layout-tail … Astro page
+  // or partial whose document envelope is opened by a parent
+  // <Layout> component" instead of the misleading "Stray </body> at
+  // top level". The flag is asserted unconditionally because
+  // `parseAstro` is the only entry point producing `.astro`-derived
+  // residue, and the layout-tail rename's per-tag matching-open
+  // gate keeps it from spuriously firing on Astro files that
+  // legitimately open and close their own root envelope inline.
+  const html = parseHtml(transformed, { astroComposedLayout: true });
   return {
     root: html.root,
     errors: [...errors, ...html.errors],

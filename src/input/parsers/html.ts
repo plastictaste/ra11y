@@ -106,10 +106,15 @@ export interface HtmlParseResult {
   readonly errors: readonly ParseError[];
 }
 
-export function parseHtml(source: string): HtmlParseResult {
-  const parser = new HtmlParser(source);
-  return parser.parse();
-}
+/**
+ * Optional knobs for {@link parseHtml}. Every flag is opt-in by an
+ * upstream adapter that knows additional context the bare parser
+ * can't recover from the source string alone — see the per-field
+ * docstrings on `HtmlParser` for what each flag gates.
+ */
+export type HtmlParseOptions = { readonly astroComposedLayout?: boolean };
+export const parseHtml = (source: string, options: HtmlParseOptions = {}): HtmlParseResult =>
+  new HtmlParser(source, options).parse();
 
 class HtmlParser {
   #source: string;
@@ -141,6 +146,15 @@ class HtmlParser {
    */
   #liquidIncludeHead: boolean | undefined;
   /**
+   * Caller-asserted flag from {@link HtmlParseOptions}: the source
+   * originated from `parseAstro` after frontmatter strip. Gates the
+   * Astro layout-tail rename in {@link strayClosingTagMessage} for
+   * delegated `</html>` / `</body>` / `</head>` closers. Always
+   * `false` for direct `parseHtml` calls (no auto-detection — the
+   * blanked frontmatter leaves no surviving signal).
+   */
+  #astroComposedLayout = false;
+  /**
    * Stack of currently-open element names (lowercased), in
    * outer-to-inner order. Pushed on entry to `#consumeChildren`,
    * popped on exit. Used by the implicit-close logic to recognise
@@ -151,8 +165,9 @@ class HtmlParser {
    */
   #openStack: string[] = [];
 
-  constructor(source: string) {
+  constructor(source: string, { astroComposedLayout = false }: HtmlParseOptions = {}) {
     this.#source = source;
+    this.#astroComposedLayout = astroComposedLayout;
   }
 
   parse(): HtmlParseResult {
@@ -457,6 +472,7 @@ class HtmlParser {
       enclosingTag,
       this.#hasLiquidIncludeHead(),
       this.#source,
+      this.#astroComposedLayout,
     );
     this.#errors.push({ message, position: startPos, recoverable: true });
     return {
