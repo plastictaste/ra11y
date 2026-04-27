@@ -203,6 +203,63 @@ describe("rule color/meaning-by-color-only", () => {
       expect(violations).toHaveLength(0);
     });
 
+    it("ancestor role='alert' satisfies the second-channel requirement on a colored child", () => {
+      // Canonical Bootstrap shape: an alert region containing a colored
+      // button. The parent's role="alert" carries the announcement; the
+      // inner btn-danger is not the sole cue. Without the ancestor walk
+      // the rule would emit at error on `Take this action`, contradicting
+      // its own evidence.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><div role="alert" class="alert alert-danger"><button class="btn btn-danger">Take this action</button></div></body></html>`,
+        { filePath: "alert-with-nested-button.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("ancestor role='status' satisfies the second-channel requirement on a colored grandchild", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><div role="status"><p><span class="text-success">Search</span></p></div></body></html>`,
+        { filePath: "status-with-grandchild.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("ancestor aria-live='polite' satisfies the second-channel requirement on a colored child", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><div aria-live="polite"><span class="text-warning">Search</span></div></body></html>`,
+        { filePath: "ancestor-live-region.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("ancestor aria-live='off' does NOT satisfy (off means the region is not announced)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body><div aria-live="off"><span class="text-danger">Search</span></div></body></html>`,
+        { filePath: "ancestor-live-off.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("JSX: ancestor role='alert' satisfies the second-channel requirement on a colored child", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <div role="alert" className="alert alert-danger"><button className="btn btn-danger">Take this action</button></div>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("JSX: ancestor role='status' on a wrapping div satisfies the rule on a nested colored span", () => {
+      const violations = runRule(
+        rule,
+        `export const X = () => <div role="status"><p><span className="text-success">Search</span></p></div>;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
     it("JSX fa-* icon class on child <i> satisfies the rule", () => {
       const violations = runRule(
         rule,

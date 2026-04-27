@@ -40,9 +40,18 @@
  *   4. `aria-label` / `aria-labelledby` / `title` with non-empty value —
  *      the author is supplying an accessible name that can carry the
  *      status word even if the visible text doesn't.
- *   5. `role="alert"` or `role="status"` on the element — the ARIA live-
- *      region role already exposes the message as a status message
- *      (WCAG 4.1.3), so the color is no longer the only channel.
+ *   5. `role="alert"` or `role="status"` (or `aria-live` non-`off`) on
+ *      the element OR any ancestor element — the ARIA live-region role
+ *      already exposes the message as a status message (WCAG 4.1.3), so
+ *      the color is no longer the only channel. Walking ancestors is
+ *      essential because the canonical Bootstrap shape wraps the colored
+ *      element in a parent live-region: `<div role="alert" class="alert
+ *      alert-danger"><button class="btn btn-danger">Take this action
+ *      </button></div>` — the parent's `role="alert"` carries the
+ *      announcement, so the inner button's `btn-danger` is not the sole
+ *      cue. Without the ancestor walk the rule would emit at `error` on
+ *      every nested colored child of an alert region, contradicting its
+ *      own evidence (the announcement is provably present).
  *
  * Closure path: suppress emission on the "text already carries a
  * status word" branch rather than emit-with-enriched-reason. The text-
@@ -96,7 +105,14 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import type {
+  HtmlDocument,
+  HtmlElement,
+  HtmlNode,
+  JsxElement,
+  JsxNode,
+  TsxModule,
+} from "../../types/ast.ts";
 
 /**
  * Status-color class tokens that fire the rule. Matching is whole-token
@@ -251,27 +267,68 @@ type Emit = (v: {
 // ---------------------------------------------------------------------------
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
+  const parentOf = buildHtmlParentMap(doc);
   for (const el of walkHtmlElements(doc)) {
     const classAttr = getHtmlAttribute(el, "class");
     if (classAttr === null) continue;
     const token = firstStatusToken(classAttr);
     if (token === null) continue;
-    if (htmlHasSecondChannel(el)) continue;
+    if (htmlHasSecondChannel(el, parentOf)) continue;
     const text = htmlTextContent(el);
     if (text.length === 0) continue;
     emit(buildViolation("html", el.tagName.toLowerCase(), classAttr, token, text, el.loc.start));
   }
 }
 
-function htmlHasSecondChannel(el: HtmlElement): boolean {
+function htmlHasSecondChannel(
+  el: HtmlElement,
+  parentOf: ReadonlyMap<HtmlElement, HtmlElement>,
+): boolean {
   if (htmlHasAccessibleName(el)) return true;
   if (htmlHasStatusRole(el)) return true;
+  if (htmlAncestorHasStatusRole(el, parentOf)) return true;
   if (textContainsStatusWord(htmlTextContent(el))) return true;
   for (const descendant of walkHtmlElements(el)) {
     if (isHtmlIcon(descendant)) return true;
     if (isHtmlSrOnlyWithText(descendant)) return true;
   }
   return false;
+}
+
+/**
+ * True when any ancestor of `el` carries a status-conveying ARIA role
+ * (`role="alert"` / `role="status"`) or a non-`off` `aria-live` value.
+ * The canonical real-world shape this gates on is a Bootstrap alert
+ * region containing colored buttons:
+ *
+ *   `<div role="alert" class="alert alert-danger">
+ *      <button class="btn btn-danger">Take this action</button>
+ *    </div>`
+ *
+ * The parent's announcement carries the danger context; the inner
+ * button's `btn-danger` is not the sole cue.
+ */
+function htmlAncestorHasStatusRole(
+  el: HtmlElement,
+  parentOf: ReadonlyMap<HtmlElement, HtmlElement>,
+): boolean {
+  let ancestor = parentOf.get(el);
+  while (ancestor) {
+    if (htmlHasStatusRole(ancestor)) return true;
+    ancestor = parentOf.get(ancestor);
+  }
+  return false;
+}
+
+function buildHtmlParentMap(doc: HtmlDocument): Map<HtmlElement, HtmlElement> {
+  const parentOf = new Map<HtmlElement, HtmlElement>();
+  const visit = (node: HtmlNode, parent: HtmlElement | null): void => {
+    if (node.kind !== "HtmlElement") return;
+    if (parent) parentOf.set(node, parent);
+    for (const child of node.children) visit(child, node);
+  };
+  for (const top of doc.children) visit(top, null);
+  return parentOf;
 }
 
 function htmlHasAccessibleName(el: HtmlElement): boolean {
@@ -314,27 +371,60 @@ function isHtmlSrOnlyWithText(el: HtmlElement): boolean {
 // ---------------------------------------------------------------------------
 
 function checkJsx(module: TsxModule, emit: Emit): void {
+  const parentOf = buildJsxParentMap(module);
   for (const el of walkJsxElements(module)) {
     const classAttr = getJsxAttributeString(el, "className") ?? getJsxAttributeString(el, "class");
     if (classAttr === null) continue;
     const token = firstStatusToken(classAttr);
     if (token === null) continue;
-    if (jsxHasSecondChannel(el)) continue;
+    if (jsxHasSecondChannel(el, parentOf)) continue;
     const text = jsxTextContent(el);
     if (text.length === 0) continue;
     emit(buildViolation("jsx", el.tagName, classAttr, token, text, el.loc.start));
   }
 }
 
-function jsxHasSecondChannel(el: JsxElement): boolean {
+function jsxHasSecondChannel(
+  el: JsxElement,
+  parentOf: ReadonlyMap<JsxElement, JsxElement>,
+): boolean {
   if (jsxHasAccessibleName(el)) return true;
   if (jsxHasStatusRole(el)) return true;
+  if (jsxAncestorHasStatusRole(el, parentOf)) return true;
   if (textContainsStatusWord(jsxTextContent(el))) return true;
   for (const descendant of walkJsxDescendants(el)) {
     if (isJsxIcon(descendant)) return true;
     if (isJsxSrOnlyWithText(descendant)) return true;
   }
   return false;
+}
+
+/**
+ * True when any ancestor of `el` carries `role="alert"` / `role="status"`
+ * or a non-`off` `aria-live` value. JSX analogue of
+ * `htmlAncestorHasStatusRole` — same canonical Bootstrap-alert shape.
+ */
+function jsxAncestorHasStatusRole(
+  el: JsxElement,
+  parentOf: ReadonlyMap<JsxElement, JsxElement>,
+): boolean {
+  let ancestor = parentOf.get(el);
+  while (ancestor) {
+    if (jsxHasStatusRole(ancestor)) return true;
+    ancestor = parentOf.get(ancestor);
+  }
+  return false;
+}
+
+function buildJsxParentMap(module: TsxModule): Map<JsxElement, JsxElement> {
+  const parentOf = new Map<JsxElement, JsxElement>();
+  const visit = (node: JsxNode, parent: JsxElement | null): void => {
+    if (node.kind !== "JsxElement") return;
+    if (parent) parentOf.set(node, parent);
+    for (const child of node.children) visit(child, node);
+  };
+  for (const top of module.jsxElements) visit(top, null);
+  return parentOf;
 }
 
 function jsxHasAccessibleName(el: JsxElement): boolean {
