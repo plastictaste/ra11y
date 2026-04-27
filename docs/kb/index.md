@@ -138,6 +138,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [forms/label-adjacent-unassociated](./rules/forms__label-adjacent-unassociated.md)
 - [forms/label-for-id-mismatch](./rules/forms__label-for-id-mismatch.md)
 - [forms/labels-required](./rules/forms__labels-required.md)
+- [forms/multiple-label-for-same-id](./rules/forms__multiple-label-for-same-id.md)
 - [forms/no-submit-control](./rules/forms__no-submit-control.md)
 - [forms/non-empty-label](./rules/forms__non-empty-label.md)
 - [forms/placeholder-as-label](./rules/forms__placeholder-as-label.md)
