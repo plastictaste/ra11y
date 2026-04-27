@@ -510,39 +510,50 @@ interface InputLabelEvidence {
   readonly text: string;
 }
 
-function resolveHtmlInputLabel(
-  doc: HtmlDocument,
-  input: HtmlElement,
-): InputLabelEvidence | null {
-  const ariaLabel = getHtmlAttribute(input, "aria-label");
-  if (ariaLabel && ariaLabel.trim().length > 0) {
-    return { source: "aria-label", text: ariaLabel.trim() };
-  }
+function resolveHtmlInputLabel(doc: HtmlDocument, input: HtmlElement): InputLabelEvidence | null {
+  const fromAria = labelFromAriaLabel(input);
+  if (fromAria) return fromAria;
+  const fromForAttr = labelFromForAttr(doc, input);
+  if (fromForAttr) return fromForAttr;
+  const fromWrapping = labelFromWrapping(doc, input);
+  if (fromWrapping) return fromWrapping;
+  return labelFromPlaceholder(input);
+}
+
+function labelFromAriaLabel(input: HtmlElement): InputLabelEvidence | null {
+  const value = getHtmlAttribute(input, "aria-label");
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? { source: "aria-label", text: trimmed } : null;
+}
+
+function labelFromForAttr(doc: HtmlDocument, input: HtmlElement): InputLabelEvidence | null {
   const id = getHtmlAttribute(input, "id");
-  if (id && id.length > 0) {
-    for (const label of findHtmlElementsByTag(doc, "label")) {
-      const forAttr = getHtmlAttribute(label, "for");
-      if (forAttr === id) {
-        const text = htmlTextContent(label);
-        if (text.length > 0) return { source: "label-for", text };
-      }
-    }
-  }
-  // Wrapping <label>: walk doc, find any label that has this input as a
-  // descendant. Cheap on realistic forms — labels are leaf-y and few.
+  if (!id || id.length === 0) return null;
   for (const label of findHtmlElementsByTag(doc, "label")) {
-    if (containsHtmlElement(label, input)) {
-      // Don't double-count when the wrapping label *also* has a for=
-      // attr matching the input — that case is already captured above.
-      const text = htmlTextContent(label);
-      if (text.length > 0) return { source: "wrapping-label", text };
-    }
-  }
-  const placeholder = getHtmlAttribute(input, "placeholder");
-  if (placeholder && placeholder.trim().length > 0) {
-    return { source: "placeholder", text: placeholder.trim() };
+    if (getHtmlAttribute(label, "for") !== id) continue;
+    const text = htmlTextContent(label);
+    if (text.length > 0) return { source: "label-for", text };
   }
   return null;
+}
+
+// Wrapping <label>: walk doc, find any label that has this input as a
+// descendant. Cheap on realistic forms — labels are leaf-y and few.
+function labelFromWrapping(doc: HtmlDocument, input: HtmlElement): InputLabelEvidence | null {
+  for (const label of findHtmlElementsByTag(doc, "label")) {
+    if (!containsHtmlElement(label, input)) continue;
+    const text = htmlTextContent(label);
+    if (text.length > 0) return { source: "wrapping-label", text };
+  }
+  return null;
+}
+
+function labelFromPlaceholder(input: HtmlElement): InputLabelEvidence | null {
+  const value = getHtmlAttribute(input, "placeholder");
+  if (!value) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? { source: "placeholder", text: trimmed } : null;
 }
 
 function containsHtmlElement(root: HtmlElement, target: HtmlElement): boolean {
