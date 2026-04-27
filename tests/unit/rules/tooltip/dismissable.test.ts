@@ -659,11 +659,9 @@ describe("anchor-specific suggestion: title on <a> recommends removal", () => {
   });
 
   it("HTML: suggestion for non-<a> still recommends aria-label / custom tooltip", () => {
-    const violations = runRule(
-      rule,
-      `<button title="Save document">💾</button>`,
-      { filePath: "page.html" },
-    );
+    const violations = runRule(rule, `<button title="Save document">💾</button>`, {
+      filePath: "page.html",
+    });
     expect(violations).toHaveLength(1);
     expect(violations[0]?.suggestion).toContain("aria-label=");
     expect(violations[0]?.suggestion).not.toContain("Remove the title=");
@@ -672,20 +670,15 @@ describe("anchor-specific suggestion: title on <a> recommends removal", () => {
   it("HTML: markdown-link title pattern — suggests removal when title differs from text", () => {
     // Simulates [Docs](/docs "Open documentation") parsed to:
     //   <a href="/docs" title="Open documentation">Docs</a>
-    const violations = runRule(
-      rule,
-      `<a href="/docs" title="Open documentation">Docs</a>`,
-      { filePath: "page.html" },
-    );
+    const violations = runRule(rule, `<a href="/docs" title="Open documentation">Docs</a>`, {
+      filePath: "page.html",
+    });
     expect(violations).toHaveLength(1);
     expect(violations[0]?.suggestion).toContain("Remove the title=");
   });
 
   it("JSX: suggestion for <a> also leads with removal", () => {
-    const violations = runRule(
-      rule,
-      `const X = <a href="/help" title="Help center">Help me</a>;`,
-    );
+    const violations = runRule(rule, `const X = <a href="/help" title="Help center">Help me</a>;`);
     expect(violations).toHaveLength(1);
     expect(violations[0]?.suggestion).toContain("Remove the title=");
   });
