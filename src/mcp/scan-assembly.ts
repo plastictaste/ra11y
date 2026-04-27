@@ -740,9 +740,7 @@ export function applyFragmentInputAdjustment(
   for (const r of activeRules) ruleById.set(r.id, r);
   const fragmentSet = new Set(fragmentFilePaths);
   const fragmentFiles = files.filter((f) => fragmentSet.has(f.filePath));
-  return rows.map((row) =>
-    adjustRowForFragmentInput(row, ruleById.get(row.ruleId), fragmentFiles),
-  );
+  return rows.map((row) => adjustRowForFragmentInput(row, ruleById.get(row.ruleId), fragmentFiles));
 }
 
 /**
