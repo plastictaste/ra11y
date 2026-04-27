@@ -102,14 +102,6 @@ const RESPONSE_INSTANCE_CODES: ReadonlySet<string> = new Set([
   "response_dropped_files_oversize",
   "max_candidates_per_criterion_clamped",
   "results_truncated_use_nextcursor",
-  // `coverage` ships this code unconditionally to narrate its
-  // `id`/`criterionId` alias. `scan_project` and `checklist` don't
-  // emit a `coverage[]` shape so they have no reason to fire it.
-  // It's tool-specific by design (see the
-  // `mergeDeprecatedFieldIdWarning` helper in `tool-coverage.ts`),
-  // not a scan-time predicate; treat it as an instance code so the
-  // cross-surface set comparison stays honest.
-  "deprecated_field_id_renamed_criterionId",
 ]);
 
 function scanTimeCodeSet(env: { readonly warnings?: readonly string[] }): ReadonlySet<string> {

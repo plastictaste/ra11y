@@ -137,24 +137,19 @@ interface CoverageBody {
   readonly standardId: string;
   readonly criteriaManualReviewRequired: number;
   readonly untargetedCriteria: number;
-  // canonical name is `criterionId`
-  // (matches `checklist.items[].criterionId` and the namespaced-id
-  // convention — `wcag22:1.4.3` — used elsewhere). The legacy `id`
-  // field still ships alongside `criterionId` for one minor as a
-  // deprecated alias and a `deprecated_field_id_renamed_criterionId`
-  // warning code fires on every coverage response.
-  readonly manualWithCandidates: readonly { readonly criterionId: string; readonly id: string }[];
+  // Canonical field name is `criterionId` — matches
+  // `checklist.items[].criterionId` and the namespaced-id convention
+  // (`wcag22:1.4.3`) used elsewhere. The legacy `id` alias was dropped;
+  // entries carry `criterionId` only.
+  readonly manualWithCandidates: readonly { readonly criterionId: string }[];
   readonly likelyIrrelevantCriteria: readonly {
     readonly criterionId: string;
-    readonly id: string;
   }[];
   readonly failingAutomatedCriteria: readonly {
     readonly criterionId: string;
-    readonly id: string;
   }[];
   readonly warningAutomatedCriteria: readonly {
     readonly criterionId: string;
-    readonly id: string;
   }[];
   readonly warnings?: readonly string[];
   readonly nextStep?: string;
@@ -396,41 +391,52 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(coverageFailingIds).toEqual(firedInScanScoped);
   });
 
-  it("coverage emits canonical `criterionId` and the deprecated `id` alias agrees, with the deprecation warning code", async () => {
-    // The alias is the transitional shape — both fields must point at
-    // the same value so callers reading either name agree, and the
-    // structured warning code must fire so agents know to drop the
-    // legacy `id` reads on the next call. When the alias is removed in
-    // the next minor, this test flips: `id` goes away, the warning code
-    // goes away, and the canonical name stands alone.
+  it("never emits both `criterionId` and the legacy `id` field on the same entry across any of the four criterion-bearing arrays", async () => {
+    // Invariant: the entries in every criterion-bearing coverage array
+    // (`manualWithCandidates`, `likelyIrrelevantCriteria`,
+    // `failingAutomatedCriteria`, `warningAutomatedCriteria`, plus
+    // `untargetedCriteriaList` when shown) carry the canonical
+    // `criterionId` only. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+    // shapes are dishonest," shipping two identical-value fields under
+    // different names on every entry inflates payloads and forces the
+    // agent to disambiguate which name to read; the duplication earned
+    // its own warning code (`deprecated_field_id_renamed_criterionId`)
+    // that never went anywhere because the legacy `id` field was
+    // emitted on every response. Pin the durable shape — exactly one
+    // criterion-naming key per entry, and that key is `criterionId`.
     const dir = await makeFixture();
-    const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
-    const coverage = body<CoverageBody>(responses[1]);
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "coverage", { cwd: dir, showUntargeted: true }),
+    ]);
+    const coverage = body<
+      CoverageBody & {
+        readonly untargetedCriteriaList?: readonly { readonly criterionId: string }[];
+      }
+    >(responses[1]);
 
-    // Every entry in every criterion-bearing array must carry both
-    // `criterionId` (canonical) and `id` (deprecated alias) with the
-    // same value — agents joining `coverage` ⇄ `checklist` by the
-    // canonical name must get the same set as agents still reading
-    // `id` during the deprecation window.
-    for (const entry of coverage.manualWithCandidates) {
-      expect(entry.criterionId).toBe(entry.id);
-    }
-    for (const entry of coverage.likelyIrrelevantCriteria) {
-      expect(entry.criterionId).toBe(entry.id);
-    }
-    for (const entry of coverage.failingAutomatedCriteria) {
-      expect(entry.criterionId).toBe(entry.id);
-    }
-    for (const entry of coverage.warningAutomatedCriteria) {
-      expect(entry.criterionId).toBe(entry.id);
+    const arrays = [
+      coverage.manualWithCandidates,
+      coverage.likelyIrrelevantCriteria,
+      coverage.failingAutomatedCriteria,
+      coverage.warningAutomatedCriteria,
+      coverage.untargetedCriteriaList ?? [],
+    ];
+    for (const arr of arrays) {
+      for (const entry of arr) {
+        const obj = entry as Record<string, unknown>;
+        expect(typeof obj["criterionId"]).toBe("string");
+        // `id` must not coexist with `criterionId` — the dual-field
+        // shape is the dishonest one this fix removes.
+        expect(obj).not.toHaveProperty("id");
+      }
     }
 
-    // The deprecation code rides under the response-level `warnings`
-    // channel — same shape as `proposed_config_deprecated_use_suggested_config`
-    //. Coverage entries
-    // always emit the criteria arrays, so the alias is always present
-    // and the warning always fires on this surface.
-    expect(coverage.warnings).toBeDefined();
-    expect(coverage.warnings).toContain("deprecated_field_id_renamed_criterionId");
+    // The deprecation warning code rode under the response-level
+    // `warnings` channel for as long as the duplicate alias shipped.
+    // Once the alias is gone the code has nothing left to narrate —
+    // pin its absence so a future re-introduction lights up here.
+    expect(coverage.warnings ?? []).not.toContain("deprecated_field_id_renamed_criterionId");
   });
 });

@@ -2137,11 +2137,9 @@ describe("buildAnalysisCoverage — hints", () => {
     it("emits the deprecated `rulesByExtension` alias alongside `rulesFiredByExtension`", () => {
       // Direct unit-level guard on the rename: the canonical field and
       // the deprecated alias both ship under verbose, with identical
-      // contents. Mirrors the precedent from
-      // `deprecated_field_id_renamed_criterionId` (-
-      // FIELD-NAME-DRIFT) — the alias is presence-only signal so an
-      // agent reading the warnings channel can drop its legacy reads
-      // on the next call.
+      // contents. The alias is presence-only signal so an agent reading
+      // the warnings channel can drop its legacy reads on the next
+      // call.
       const cssTargeted = syntheticRule("contrast/fake", [".css"]);
       const files = [scssFile("styles/button.scss")];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], [cssTargeted], true);

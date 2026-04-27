@@ -2171,11 +2171,10 @@ describe("computeScanWarnings: rulesByExtension labeling (ADR 0028)", () => {
   // The rename ships the canonical `rulesFiredByExtension` with the
   // deprecated alias `rulesByExtension` riding alongside for one minor
   // release. The warning code `deprecated_field_rules_by_extension_
-  // renamed_rules_fired_by_extension` is a presence-only signal —
-  // mirror precedent: `deprecated_field_id_renamed_criterionId`
-  //. Predicate keys off alias
-  // presence in `analysisCoverage.rulesByExtension`, so a callsite
-  // that drops the alias drops the warning, too.
+  // renamed_rules_fired_by_extension` is a presence-only signal.
+  // Predicate keys off alias presence in
+  // `analysisCoverage.rulesByExtension`, so a callsite that drops the
+  // alias drops the warning, too.
   it("fires when analysisCoverage carries the deprecated `rulesByExtension` alias", () => {
     const codes = computeScanWarnings({
       filesScanned: 1,

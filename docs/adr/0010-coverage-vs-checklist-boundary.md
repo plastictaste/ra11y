@@ -101,14 +101,15 @@ pairs following the P1-K contract.
   `scan_project`. Each criterion-bearing entry on these arrays
   (`failingAutomatedCriteria`, `warningAutomatedCriteria`,
   `manualWithCandidates`, `likelyIrrelevantCriteria`,
-  `untestableCriteria`, `untargetedCriteriaList`) carries the
-  canonical `criterionId` field —
-  matching `checklist.items[].criterionId` so agents joining the two
-  surfaces can key on the same name. The legacy `id` field still ships
-  alongside `criterionId` for one minor as a deprecated alias and a
-  response-level `warnings: ["deprecated_field_id_renamed_criterionId"]`
-  fires whenever the alias is emitted (Q7-CRITERION-ID-FIELD-NAME-DRIFT,
-  removed in the next minor).
+  `untestableCriteria`, `untargetedCriteriaList`) carries the canonical
+  `criterionId` field — matching `checklist.items[].criterionId` so
+  agents joining the two surfaces key on the same name. An earlier
+  duplicate `id` alias was dropped before any release tagged the
+  alias-narrating `deprecated_field_id_renamed_criterionId` warning
+  code; per the AI-first consumer model "Ambiguous field shapes are
+  dishonest" rule, two identical-value fields on every entry was the
+  shape the rename was supposed to fix, not a transitional one to
+  preserve (closes Q9-DUPLICATE-ID-AND-CRITERIONID-AFTER-RENAME).
 - **`checklist`** — new `nextStep`. When `actionable.length === 0`,
   points at `coverage`:
   `"No actionable manual items. Call 'coverage' for the compliance

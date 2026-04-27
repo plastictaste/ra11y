@@ -291,22 +291,6 @@ export type ScanWarningCode =
   // minified file in the scan so the agent branches on identity, not
   // count alone.
   | "scanned_minified_file"
-  // `coverage` entries (failingAutomatedCriteria,
-  // manualWithCandidates, likelyIrrelevantCriteria, untestableCriteria,
-  // untargetedCriteriaList) historically named the criterion field `id` —
-  // the same concept `checklist.items[].criterionId` already used. Agents
-  // joining the two surfaces by criterion silently mis-matched. The
-  // canonical name is `criterionId` (matches the namespaced-id convention
-  // — e.g. `wcag22:1.4.3` — used elsewhere across the MCP surface). The
-  // legacy `id` field still ships alongside `criterionId` for one minor
-  // release as a deprecated alias; this code fires whenever the alias is
-  // emitted so agents reading the warnings channel can drop their `id`
-  // reads on the next call without paying the double-payload cost. The
-  // alias is removed in the next minor release; the `### Deprecated`
-  // CHANGELOG entry tracks the removal window. Surface-don't-suppress:
-  // both fields ship unchanged today; the warning is the additive signal
-  // that lets callers self-migrate without a hidden break.
-  | "deprecated_field_id_renamed_criterionId"
   // a `scan_project` invocation crossed
   // both the slow-duration / bulk-files threshold AND the vendor-heavy
   // build-artifact floor — the canonical "vendor-template catalog
@@ -347,11 +331,9 @@ export type ScanWarningCode =
   // callers reading the warnings channel can drop their `rulesByExtension`
   // reads on the next call without paying the double-payload cost. The
   // alias is removed in the next minor release; the `### Deprecated`
-  // CHANGELOG entry tracks the removal window. Mirror precedent:
-  // `deprecated_field_id_renamed_criterionId` (-
-  // DRIFT). Surface-don't-suppress: both fields ship unchanged today;
-  // the warning is the additive signal that lets callers self-migrate
-  // without a hidden break.
+  // CHANGELOG entry tracks the removal window. Surface-don't-suppress:
+  // both fields ship unchanged today; the warning is the additive
+  // signal that lets callers self-migrate without a hidden break.
   | "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension"
   // a banner-detected vendor
   // library (typical case: a 3000+ line `animate.css` clone whose
@@ -1098,7 +1080,6 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
  *     `baseline_dry_run`,
  *     `proposed_config_deprecated_use_suggested_config`,
- *     `deprecated_field_id_renamed_criterionId`,
  *     `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`,
  *     `partial_parse_files_present`,
  *     `parser_bailed_zero_findings`,
@@ -1590,8 +1571,6 @@ export interface ScanWarningDetails {
   };
   readonly baseline_dry_run?: BinaryPresenceMarker;
   readonly proposed_config_deprecated_use_suggested_config?: BinaryPresenceMarker;
-  // biome-ignore lint/style/useNamingConvention: field name mirrors the wire-shape `ScanWarningCode` literal verbatim so the map's keys exactly match the string codes in `warnings[]`.
-  readonly deprecated_field_id_renamed_criterionId?: BinaryPresenceMarker;
   readonly deprecated_field_rules_by_extension_renamed_rules_fired_by_extension?: BinaryPresenceMarker;
   readonly partial_parse_files_present?: BinaryPresenceMarker;
   readonly parser_bailed_zero_findings?: BinaryPresenceMarker;
@@ -1866,9 +1845,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // alongside the canonical `rulesFiredByExtension`. Surface the
     // deprecation code so callers reading the warnings channel can
     // drop their `rulesByExtension` reads on the next call without
-    // the double-payload cost. Presence-only signal — mirrors the
-    // `deprecated_field_id_renamed_criterionId` pattern from
-    //.
+    // the double-payload cost. Presence-only signal.
     out.push("deprecated_field_rules_by_extension_renamed_rules_fired_by_extension");
   }
   // Content-distribution codes — see `contentDistributionCodes`. Two

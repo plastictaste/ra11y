@@ -553,8 +553,7 @@ function populateCoverageTail(
       // carry the identical value; the warnings channel emits
       // `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
       // whenever the alias rides so agents can self-migrate without a
-      // hidden break. Mirror precedent: `id` → `criterionId` rename in
-      // `tool-coverage.ts`.
+      // hidden break.
       coverage.rulesFiredByExtension = byExt;
       coverage.rulesByExtension = byExt;
     }

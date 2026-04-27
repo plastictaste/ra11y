@@ -51,10 +51,14 @@ on the top-level `warnings` channel so callers can self-migrate without
 a hidden break. The alias is removed in the next minor release; the
 `### Deprecated` CHANGELOG entry tracks the removal window.
 
-This mirrors the precedent set in 2026-04-23 by Q7-CRITERION-ID-FIELD-NAME-
-DRIFT, which renamed `coverage` entries' `id` to `criterionId` under the
-identical alias-plus-warning pattern (see
-`deprecated_field_id_renamed_criterionId`).
+This pattern was first considered in 2026-04-23 for Q7-CRITERION-ID-FIELD-NAME-
+DRIFT (`coverage` entries' `id` → `criterionId` rename). The Q7 dual-emission
+shape was later dropped before any release tagged the alias because the two
+identical-value fields on every entry triggered the AI-first consumer model
+"Ambiguous field shapes are dishonest" rule (Q9-DUPLICATE-ID-AND-CRITERIONID-
+AFTER-RENAME). The same risk exists here — if `rulesByExtension` and
+`rulesFiredByExtension` both ride identical payloads on every coverage
+response, the same rule fires.
 
 ## Alternatives considered
 

@@ -1126,9 +1126,8 @@ function mapCandidates(
  * criteria share the location.
  *
  * Why not collapse across items: the cross-tool invariant
- * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].criterionId`,
- * also legacy `coverage.manualWithCandidates[].id` for the deprecation
- * window) is load-bearing — it's how
+ * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].criterionId`)
+ * is load-bearing — it's how
  * the two tools read as one surface per ADR 0010. Dropping secondary
  * items would silently re-classify a
  * shared-candidate criterion as untargeted on checklist while

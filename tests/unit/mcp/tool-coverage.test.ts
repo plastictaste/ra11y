@@ -54,9 +54,6 @@ interface CoverageEnvelope {
       readonly topCount: number;
       readonly totalSkipped: number;
     };
-    // warnings-details schema discipline: presence-only codes ship
-    // the empty-object marker so every fired code has a key.
-    readonly deprecated_field_id_renamed_criterionId?: Record<string, never>;
     readonly scanned_zero_files?: Record<string, never>;
   };
   readonly automatedCriteriaPassRate?: number;
@@ -120,46 +117,19 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(summary?.extensions).toEqual([".py", ".svelte", ".vue"]);
   });
 
-  it("ships the empty-object marker for the criterionId-deprecation code on `warningsDetails` (warnings-details schema discipline)", async () => {
-    // Scan-side scenario: every file parseable, no template directives,
-    // no Tailwind / storybook / build-artifact signal. None of the
-    // scan-confidence warning codes fire — but
-    // `deprecated_field_id_renamed_criterionId` always rides on
-    // `coverage` while the legacy `id` alias on entry arrays still
-    // ships (criterion-id field-name drift compatibility shim). Per
-    // the warnings-details schema-discipline contract every fired
-    // code MUST have a corresponding key in `warningsDetails` — for
-    // this presence-only deprecation code, the empty-object marker
-    // is the deterministic "no further detail by design" signal that
-    // lets an agent reading the response distinguish "no payload
-    // defined" from "this surface didn't compute it."
-    write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
-    write(join(dir, "styles.css"), "main { color: black; }\n");
-
-    const tool = findTool("coverage");
-    const session = new McpSession();
-    const result = await tool.handler({ cwd: dir }, session);
-
-    expect(result.isError).toBeUndefined();
-    const data = parseEnvelope(result.content[0].text);
-    expect(data.warnings).toEqual(["deprecated_field_id_renamed_criterionId"]);
-    expect(data.warningsDetails).toBeDefined();
-    expect(data.warningsDetails?.deprecated_field_id_renamed_criterionId).toEqual({});
-    expect(Object.keys(data.warningsDetails ?? {}).sort()).toEqual([
-      "deprecated_field_id_renamed_criterionId",
-    ]);
-  });
-
-  it("emits the criterionId-deprecation code on a clean all-parseable scan (warnings carries only the deprecation code, never `[]`)", async () => {
+  it("on a clean all-parseable scan with no scan-confidence triggers, omits `warnings` entirely (no empty `[]`)", async () => {
     // Every file clears the parseable-extension check; none of the
-    // scan-confidence warning conditions fire either (non-zero
-    // filesScanned, no template directives in a TSX-only tree, no
-    // Tailwind utility pattern). The deprecation code
-    // `deprecated_field_id_renamed_criterionId` always rides on
-    // `coverage` while the legacy `id` alias on the entry arrays still
-    // ships. Per CLAUDE.md §1
-    // "Ambiguous field shapes are dishonest," `warnings: []` is still
-    // forbidden — the field must either be absent or non-empty.
+    // scan-confidence warning conditions fire (non-zero filesScanned,
+    // no template directives in a TSX-only tree, no Tailwind utility
+    // pattern). Per `docs/kb/architecture/ai-first-consumer.md`
+    // "Ambiguous field shapes are dishonest" the response must omit
+    // `warnings` entirely on this path — `warnings: []` would force
+    // the agent to disambiguate "no codes defined" from "this surface
+    // didn't compute them." Pinning the absence here also guards the
+    // dropped `deprecated_field_id_renamed_criterionId` code from
+    // re-introduction: that code used to ride unconditionally on
+    // every coverage response and forced this branch to ship a
+    // single-element array.
     write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
     write(join(dir, "styles.css"), "main { color: black; }\n");
 
@@ -169,7 +139,8 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
 
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
-    expect(data.warnings).toEqual(["deprecated_field_id_renamed_criterionId"]);
+    expect(data.warnings).toBeUndefined();
+    expect(data.warningsDetails).toBeUndefined();
   });
 
   it("fires `scanned_zero_files` when the scan root contains no parseable files at all", async () => {

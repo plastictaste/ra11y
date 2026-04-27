@@ -32,7 +32,6 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { fillMissingWarningDetails } from "./warnings.ts";
 
 export const coverageTool: McpTool = {
   def: {
@@ -342,15 +341,7 @@ export const coverageTool: McpTool = {
         ? { metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"] }
         : {}),
     });
-    // every coverage entry ships the
-    // legacy `id` field alongside the canonical `criterionId` for one
-    // minor as a deprecation alias (see `withTitles`). Fire the
-    // structured warning unconditionally on this path so agents reading
-    // the warnings channel know the alias is going away — the entry
-    // arrays are always emitted, so the alias is always present. Removed
-    // alongside the alias in the next minor release; the
-    // `### Deprecated` CHANGELOG entry tracks the removal window.
-    const warnings = mergeDeprecatedFieldIdWarning(baseWarnings);
+    const warnings = baseWarnings;
     // every tool that runs the scanner
     // ships a `meta` block carrying load-bearing scan-confidence
     // telemetry — `filesScanned`, `configSource`, `rootSource`,
@@ -560,64 +551,33 @@ function buildCoverageNextStep({
  * ("Focus Not Obscured (Minimum)") so agents don't have to look them up.
  * Falls back to ID-only if a criterion isn't found in any loaded standard.
  *
- * the canonical field is
- * `criterionId` — matches `checklist.items[].criterionId` and the
- * namespaced-id convention used elsewhere across the MCP surface
- * (`wcag22:1.4.3`). The legacy `id` field still ships alongside
- * `criterionId` for one minor release as a deprecated alias so callers
- * that learned the old name keep working; the alias is removed in the
- * next minor release. The `deprecated_field_id_renamed_criterionId`
- * warning code (see `src/mcp/warnings.ts`) fires whenever any coverage
- * response emits the alias so agents can drop their `id` reads on the
- * next call.
+ * `criterionId` is the canonical field — matches
+ * `checklist.items[].criterionId` and the namespaced-id convention used
+ * elsewhere across the MCP surface (`wcag22:1.4.3`). The legacy `id`
+ * alias was previously emitted alongside `criterionId` (under the
+ * `deprecated_field_id_renamed_criterionId` warning code) but was
+ * dropped before the alias-acknowledgement window had any
+ * shipped consumers — the dual-field shape was itself the canonical
+ * "Ambiguous field shapes are dishonest" failure mode (see
+ * `docs/kb/architecture/ai-first-consumer.md`): two identical values
+ * under different names on every coverage response inflated payloads
+ * and forced the agent to disambiguate which name to read.
  */
 function withTitles(
   criterionIds: readonly string[],
   session: import("./session.ts").McpSession,
 ): readonly {
   readonly criterionId: string;
-  readonly id: string;
   readonly title: string;
   readonly level: string;
 }[] {
   return criterionIds.map((id) => {
     for (const std of session.registry.standards) {
       const c = std.criteria.find((cr) => cr.id === id);
-      if (c) return { criterionId: id, id, title: c.title, level: c.level };
+      if (c) return { criterionId: id, title: c.title, level: c.level };
     }
-    return { criterionId: id, id, title: "", level: "" };
+    return { criterionId: id, title: "", level: "" };
   });
-}
-
-/**
- * append the deprecation code for the
- * legacy `id` alias to the warnings fragment returned by
- * {@link buildScanTimeWarnings}. The base helper conditionally
- * spreads `warnings` and `warningsDetails` — `warnings` may be absent
- * when no scan-level code fired. We fold our code in either way:
- *   - if `warnings` is already present, append.
- *   - if absent, create a fresh single-element array.
- *
- * Warnings-details schema discipline: the deprecation code is a
- * binary-presence shape, so we stamp the empty-object marker on
- * `warningsDetails` (via {@link fillMissingWarningDetails}) so every
- * fired code has a key. When `base.warningsDetails` is absent the
- * helper builds a fresh map from the code list; when present, the
- * helper stamps the missing marker only.
- */
-function mergeDeprecatedFieldIdWarning(base: {
-  readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
-  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
-}): {
-  readonly warnings: readonly import("./warnings.ts").ScanWarningCode[];
-  readonly warningsDetails: import("./warnings.ts").ScanWarningDetails;
-} {
-  const code: import("./warnings.ts").ScanWarningCode = "deprecated_field_id_renamed_criterionId";
-  const next = base.warnings === undefined ? [code] : [...base.warnings, code];
-  return {
-    warnings: next,
-    warningsDetails: fillMissingWarningDetails(next, base.warningsDetails),
-  };
 }
 
 /**
