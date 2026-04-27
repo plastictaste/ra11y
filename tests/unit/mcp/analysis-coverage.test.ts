@@ -2090,7 +2090,10 @@ describe("buildAnalysisCoverage — hints", () => {
       const { writeFileSync, mkdirSync, rmSync } = await import("node:fs");
       const { tmpdir } = await import("node:os");
       const { join } = await import("node:path");
-      const dir = join(tmpdir(), `ra11y-rulesEligibleByExtension-scss-${process.pid}-${Date.now()}`);
+      const dir = join(
+        tmpdir(),
+        `ra11y-rulesEligibleByExtension-scss-${process.pid}-${Date.now()}`,
+      );
       mkdirSync(dir, { recursive: true });
       writeFileSync(
         join(dir, "styles.scss"),
@@ -2124,7 +2127,9 @@ describe("buildAnalysisCoverage — hints", () => {
             .filter((row) => row.filesEvaluated > 0)
             .map((row) => row.ruleId),
         );
-        const listed = new Set(data.meta.analysisCoverage?.rulesEligibleByExtension?.[".scss"] ?? []);
+        const listed = new Set(
+          data.meta.analysisCoverage?.rulesEligibleByExtension?.[".scss"] ?? [],
+        );
         // Every rule that actually evaluated the .scss file must appear
         // under rulesEligibleByExtension[".scss"]. Extra entries in
         // `listed` are EXPECTED (unconstrained rules, rules eligible
