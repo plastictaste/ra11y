@@ -404,6 +404,214 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(details.response_dropped_files_oversize).toBeDefined();
   });
 
+  it("trims verbose plan and warningsDetails arrays so the slim envelope serializes under 50 KB on a synthetic bulk corpus", () => {
+    // Synthetic bulk-corpus repro: even with `files[]` dropped and the
+    // top-level meta keys slimmed via SLIM_META_KEYS, the surviving
+    // envelope can still serialize over the minimum-envelope target on
+    // bulk-vendor corpora because verbose arrays accrete past the
+    // budget — `plan.topRules` (10 long ruleId entries), warning-details
+    // payloads carrying scanner-derived path lists
+    // (`bulk_catalog_detected.suggestedExcludes`,
+    // `scanned_minified_file.files`, `scss_unresolved_variables.files`).
+    // The slim path now head-slices each of these to a small
+    // deterministic prefix and stamps the pre-trim length on
+    // `warningsDetails.response_dropped_files_oversize.slimTruncations`
+    // so the agent reads the truncation gap.
+    //
+    // Assertion: the post-slim envelope JSON.stringify length is
+    // ≤ 50000 chars — well under the MCP host's ~25k-token (~96000
+    // char) wall, and under the minimum-envelope target the doctrine
+    // names. Without the trim, the same fixture serializes past the
+    // target on the verbose-array tail.
+    const session = new McpSession();
+    // Build a `formatted.plan` with a populated topRules tail
+    // (10 entries, ~250 chars each by docstring). Use deterministic
+    // long-ish ruleIds so the wire shape stays reproducible.
+    const longRuleIds = Array.from(
+      { length: 10 },
+      (_, i) => `aria/longish-rule-name-with-suffix-token-number-${i.toString().padStart(2, "0")}`,
+    );
+    const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
+      plan: {
+        notes: 0,
+        fixesByClass: { mechanical: 250, guidance: 100, runtimeOnly: 0, verifyInSource: 50 },
+        reviewNeeded: 17,
+        manualOnly: 5,
+        estimatedEffort: "large",
+        summary: longRuleIds.map((id, i) => `${id} (${(10 - i) * 30})`).join(", "),
+        topRules: longRuleIds.map((id, i) => ({
+          ruleId: id,
+          count: (10 - i) * 30,
+          topFile: `vendor/bootstrap/components/${id.replace(/\//g, "-")}-densest-fixture-file.css`,
+        })),
+      },
+      // Single tiny file in the inventory — the slim path drops files
+      // anyway, so its size doesn't affect the post-slim envelope.
+      files: [{ path: "src/example.tsx", findings: [] }],
+      meta: {},
+    };
+    // Synthetic bulk warning-details: each long-ish list-bearing payload
+    // mirrors what a bulk-vendor corpus would emit — 50+ entries per
+    // array, ~70 chars/entry, multiple list payloads riding together.
+    const minifiedFiles = Array.from(
+      { length: 60 },
+      (_, i) => `vendor/bundles/dist/widget-${i.toString().padStart(3, "0")}.min.js`,
+    );
+    const scssFiles = Array.from(
+      { length: 40 },
+      (_, i) => `themes/legacy/scss/_partials/_variables-${i.toString().padStart(3, "0")}.scss`,
+    );
+    const suggestedExcludes = Array.from(
+      { length: 12 },
+      (_, i) => `**/vendor-pattern-${i.toString().padStart(2, "0")}-glob/**`,
+    );
+    // Synthetic bloat: push the response into the slim path. The
+    // bloat field gets dropped on the slim path (it lives outside
+    // SLIM_META_KEYS), so the post-slim envelope only carries the
+    // verbose arrays the trim is supposed to cap.
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: {
+        files: formatted.files,
+        referenceGuide: undefined,
+      },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: 1,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 1,
+        durationMs: 5,
+        bloatedField: hugePayload,
+      },
+      baseWarnings: [
+        "bulk_catalog_detected",
+        "scanned_minified_file",
+        "scss_unresolved_variables",
+      ],
+      baseWarningsDetails: {
+        bulk_catalog_detected: {
+          trigger: "bulk_and_vendor_heavy",
+          durationMs: 12000,
+          filesScanned: 4000,
+          buildArtifactsCount: 996,
+          suggestedExcludes,
+          topVendorFile: "vendor/bundles/dist/widget-000.min.js",
+        },
+        scanned_minified_file: { files: minifiedFiles },
+        scss_unresolved_variables: { files: scssFiles },
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    // The slim envelope engaged.
+    expect(response.files).toEqual([]);
+    expect(response.filesArrayDropped).toBe(true);
+
+    // Post-slim envelope size is the load-bearing assertion. Without
+    // the verbose-array trim, the envelope on this fixture serializes
+    // around 80–90 KB; with the trim it lands under 50 KB.
+    const serialized = JSON.stringify(response);
+    expect(serialized.length).toBeLessThanOrEqual(50_000);
+
+    // The trim left a deterministic head-slice on each verbose array.
+    const slimPlan = response.plan as Record<string, unknown>;
+    const slimTopRules = slimPlan.topRules as readonly unknown[];
+    expect(slimTopRules.length).toBe(3);
+    const details = response.warningsDetails as Record<string, Record<string, unknown>>;
+    expect((details.bulk_catalog_detected.suggestedExcludes as readonly unknown[]).length).toBe(5);
+    expect((details.scanned_minified_file.files as readonly unknown[]).length).toBe(3);
+    expect((details.scss_unresolved_variables.files as readonly unknown[]).length).toBe(3);
+
+    // The truncation summary names every trimmed array with shown/total
+    // pairs. Without these, an agent reading the slim envelope cannot
+    // tell "this array was trimmed" from "this array was always small"
+    // — the canonical "Truncated containers must rename or sentinel,
+    // not retain" silent-distinction failure mode.
+    const dropPayload = details.response_dropped_files_oversize as {
+      slimTruncations?: readonly { fieldPath: string; shown: number; total: number }[];
+    };
+    expect(dropPayload.slimTruncations).toBeDefined();
+    const truncations = dropPayload.slimTruncations ?? [];
+    const byPath = new Map(truncations.map((t) => [t.fieldPath, t]));
+    expect(byPath.get("plan.topRules")).toEqual({
+      fieldPath: "plan.topRules",
+      shown: 3,
+      total: 10,
+    });
+    expect(byPath.get("warningsDetails.bulk_catalog_detected.suggestedExcludes")).toEqual({
+      fieldPath: "warningsDetails.bulk_catalog_detected.suggestedExcludes",
+      shown: 5,
+      total: 12,
+    });
+    expect(byPath.get("warningsDetails.scanned_minified_file.files")).toEqual({
+      fieldPath: "warningsDetails.scanned_minified_file.files",
+      shown: 3,
+      total: 60,
+    });
+    expect(byPath.get("warningsDetails.scss_unresolved_variables.files")).toEqual({
+      fieldPath: "warningsDetails.scss_unresolved_variables.files",
+      shown: 3,
+      total: 40,
+    });
+  });
+
+  it("omits slimTruncations when no verbose array crossed its cap", () => {
+    // When the slim path fires but every plan/warningsDetails array is
+    // already under-cap, the truncation summary is absent —
+    // present-when-meaningful per CLAUDE.md §1 "Ambiguous field shapes
+    // are dishonest." The agent reading the slim envelope sees no
+    // `slimTruncations` field and concludes "no verbose array was
+    // trimmed" rather than "the empty array means anything specific."
+    const session = new McpSession();
+    const formatted = buildMinimalFormatted();
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: {
+        files: formatted.files,
+        referenceGuide: undefined,
+      },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: 1,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 1,
+        durationMs: 5,
+        bloatedField: hugePayload,
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    const details = response.warningsDetails as Record<string, Record<string, unknown>>;
+    const dropPayload = details.response_dropped_files_oversize as {
+      slimTruncations?: readonly unknown[];
+    };
+    expect(dropPayload.slimTruncations).toBeUndefined();
+  });
+
   it("passes through unchanged when the response fits under the host ceiling", () => {
     // No synthetic bloat — the natural response is well under the
     // ceiling. The fallback must NOT engage; the warnings channel

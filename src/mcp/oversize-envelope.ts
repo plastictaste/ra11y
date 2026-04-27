@@ -203,11 +203,27 @@ export function oversizeEnvelopeWarningsField(args: {
    * were dropped.
    */
   readonly metaFieldsDropped?: readonly string[];
+  /**
+   * Per-field truncation summaries for verbose arrays the slim builder
+   * head-sliced (e.g. `plan.topRules` from 10 entries to 3). Threaded
+   * through here rather than computed in this helper because the slim
+   * shape is owned by the caller — only the caller knows which arrays
+   * it trimmed and to what depth. Surfaces on the wire as
+   * `warningsDetails.response_dropped_files_oversize.slimTruncations`
+   * so an agent reading the slim envelope can tell "this field was
+   * trimmed" from "this field was always small." Present-when-
+   * meaningful: omit when no array was trimmed.
+   */
+  readonly slimTruncations?: readonly {
+    readonly fieldPath: string;
+    readonly shown: number;
+    readonly total: number;
+  }[];
 }): {
   readonly warnings: readonly ScanWarningCode[];
   readonly warningsDetails: ScanWarningDetails;
 } {
-  const { reason, baseWarnings, baseWarningsDetails, metaFieldsDropped } = args;
+  const { reason, baseWarnings, baseWarningsDetails, metaFieldsDropped, slimTruncations } = args;
   const warnings: ScanWarningCode[] = baseWarnings === undefined ? [] : [...baseWarnings];
   if (!warnings.includes("response_dropped_files_oversize")) {
     warnings.push("response_dropped_files_oversize");
@@ -226,6 +242,7 @@ export function oversizeEnvelopeWarningsField(args: {
       ...(metaFieldsDropped !== undefined && metaFieldsDropped.length > 0
         ? { metaFieldsDropped }
         : {}),
+      ...(slimTruncations !== undefined && slimTruncations.length > 0 ? { slimTruncations } : {}),
     },
   });
   return { warnings, warningsDetails };

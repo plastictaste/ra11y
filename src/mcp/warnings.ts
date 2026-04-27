@@ -1415,6 +1415,35 @@ export interface ScanWarningDetails {
     readonly hardCeilingBytes: number;
     readonly droppedFileCount: number;
     readonly metaFieldsDropped?: readonly string[];
+    /**
+     * Per-field truncation summaries for verbose collections the slim
+     * builder head-sliced after dropping `files[]`. Even with `files[]`
+     * gone, the surviving envelope can still serialize over the
+     * minimum-envelope target on bulk-vendor corpora because verbose
+     * arrays — `plan.topRules` (10 entries × ~250 chars),
+     * `warningsDetails.bulk_catalog_detected.suggestedExcludes`,
+     * `warningsDetails.scanned_minified_file.files`,
+     * `warningsDetails.scss_unresolved_variables.files` — accrete past
+     * the budget regardless of the file-count axis. Each entry names a
+     * dotted field path the slim builder head-sliced plus a `{ shown,
+     * total }` pair so an agent reading the slim envelope can tell
+     * "this field was trimmed" from "this field was always small."
+     * Present-when-meaningful: omitted via conditional spread when the
+     * slim builder didn't trim any verbose array (e.g. small bulk
+     * corpus where `meta` alone tipped the ceiling).
+     *
+     * Symmetric to `metaFieldsDropped` (which names whole top-level
+     * meta keys the slim builder discarded): both fields close the
+     * "Truncated containers must rename or sentinel, not retain"
+     * doctrine bullet for the slim path. The first surfaces drops at
+     * the meta-level granularity; this surfaces drops at sub-field
+     * granularity (the array survives but its tail is gone).
+     */
+    readonly slimTruncations?: readonly {
+      readonly fieldPath: string;
+      readonly shown: number;
+      readonly total: number;
+    }[];
   };
   /**
    * payload for `bulk_catalog_detected`.

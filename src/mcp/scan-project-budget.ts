@@ -498,14 +498,41 @@ function buildSlimScanProjectEnvelope(args: {
   // so we preserve the full clip chain on the wire.
   const baseWarnings = readWarnings(original);
   const baseWarningsDetails = readWarningsDetails(original);
+  // Trim verbose arrays that survive the meta-key drop. Even with
+  // `meta` slimmed and `files: []`, the surviving envelope can still
+  // serialize past {@link MINIMUM_ENVELOPE_TARGET_CHARS} on bulk-vendor
+  // corpora because:
+  //   - `plan.topRules` carries up to {@link TOP_RULES_DEFAULT_LIMIT}
+  //     entries (~250 chars/entry → 2.5KB).
+  //   - `warningsDetails.bulk_catalog_detected.suggestedExcludes`
+  //     carries scanner-derived globs, one per top vendor basename.
+  //   - `warningsDetails.scanned_minified_file.files` and
+  //     `warningsDetails.scss_unresolved_variables.files` carry full
+  //     identity arrays (one path per qualifying file).
+  // Each gets head-sliced to a small deterministic prefix; the
+  // pre-trim length lands in
+  // `warningsDetails.response_dropped_files_oversize.slimTruncations`
+  // so the agent reading the slim envelope sees how aggressive the
+  // trim was. Symmetric to the meta-keys-dropped channel: both close
+  // the "Truncated containers must rename or sentinel, not retain"
+  // doctrine bullet for the slim path.
+  const slimmedPlan = slimPlanForSlimEnvelope(formatted.plan);
+  const slimmedDetails = slimWarningsDetailsForSlimEnvelope(baseWarningsDetails);
+  const slimTruncations: SlimTruncationEntry[] = [
+    ...slimmedPlan.truncations,
+    ...slimmedDetails.truncations,
+  ];
   const merged = oversizeEnvelopeWarningsField({
     reason,
     ...(baseWarnings === undefined ? {} : { baseWarnings }),
-    ...(baseWarningsDetails === undefined ? {} : { baseWarningsDetails }),
+    ...(slimmedDetails.details === undefined
+      ? {}
+      : { baseWarningsDetails: slimmedDetails.details }),
     ...(metaFieldsDropped.length > 0 ? { metaFieldsDropped } : {}),
+    ...(slimTruncations.length > 0 ? { slimTruncations } : {}),
   });
   return {
-    plan: formatted.plan,
+    plan: slimmedPlan.plan,
     files: [],
     // The slim envelope drops every per-file finding entry (`files: []`)
     // — that IS a truncation, regardless of whether the density cap
@@ -623,6 +650,166 @@ const SLIM_META_KEYS: readonly string[] = [
   "rootSource",
   "scanMode",
 ];
+
+/**
+ * Head-slice cap for `plan.topRules` on the slim envelope. The full
+ * rollup carries up to {@link import("./scan-assembly.ts").TOP_RULES_DEFAULT_LIMIT}
+ * (10) entries at ~250 chars each, accounting for ~2.5KB on the wire
+ * for one structured field. The slim path keeps the top-3 so the
+ * agent still sees the dominant rules ("call explain_rule on the
+ * top one") without paying the long-tail cost; the truncated count
+ * lands in `warningsDetails.response_dropped_files_oversize.slimTruncations`
+ * so the agent can see the original size at a glance.
+ */
+const SLIM_TOP_RULES_CAP = 3;
+
+/**
+ * Head-slice cap for `warningsDetails.bulk_catalog_detected.suggestedExcludes`
+ * on the slim envelope. The full list mirrors the top vendor basenames
+ * the scan saw — typically 5–20 globs on a bulk-template corpus. Keeping
+ * the top 5 preserves the agent's "paste-into-propose-config" path while
+ * trimming the long tail; the original count lands in `slimTruncations`.
+ */
+const SLIM_SUGGESTED_EXCLUDES_CAP = 5;
+
+/**
+ * Head-slice cap for verbose-string-list payloads on warning details
+ * (e.g. `scanned_minified_file.files`, `scss_unresolved_variables.files`)
+ * on the slim envelope. These arrays grow linearly with input — one
+ * entry per qualifying file — and cross the slim budget on the same
+ * bulk-vendor corpora that triggered the slim path in the first place.
+ * The top 3 paths give the agent a deterministic head-slice as a
+ * pivot ("scope the next call around these files") while the
+ * `slimTruncations` payload names the original size.
+ */
+const SLIM_FILE_LIST_CAP = 3;
+
+interface SlimTruncationEntry {
+  readonly fieldPath: string;
+  readonly shown: number;
+  readonly total: number;
+}
+
+/**
+ * Head-slices verbose arrays on the `plan` block that survive the slim
+ * envelope's drop of `files[]` and the meta-key trim. Today only
+ * `plan.topRules` qualifies — the only `plan` field that grows linearly
+ * with rule fan-out. Returns a `{ plan, truncations }` pair so the
+ * caller threads the truncation summary into the warnings-channel
+ * payload.
+ *
+ * Pure: never mutates the input. When no array crosses its cap, the
+ * input plan reference rides through unchanged and `truncations` is
+ * empty — the conditional spread at the call site keeps the wire
+ * shape stable for small-corpus slim paths that didn't need to trim.
+ */
+function slimPlanForSlimEnvelope(plan: Record<string, unknown>): {
+  readonly plan: Record<string, unknown>;
+  readonly truncations: readonly SlimTruncationEntry[];
+} {
+  const topRules = plan["topRules"];
+  if (!Array.isArray(topRules) || topRules.length <= SLIM_TOP_RULES_CAP) {
+    return { plan, truncations: [] };
+  }
+  const truncated = topRules.slice(0, SLIM_TOP_RULES_CAP);
+  return {
+    plan: { ...plan, topRules: truncated },
+    truncations: [{ fieldPath: "plan.topRules", shown: truncated.length, total: topRules.length }],
+  };
+}
+
+/**
+ * Head-slices verbose string arrays on `warningsDetails` payloads. The
+ * three known offenders today —
+ * `bulk_catalog_detected.suggestedExcludes`,
+ * `scanned_minified_file.files`,
+ * `scss_unresolved_variables.files` — all carry one entry per
+ * qualifying file/glob and grow linearly with input on bulk-vendor
+ * corpora. Each gets head-sliced to a small deterministic prefix; the
+ * original length lands in the returned `truncations` so the agent
+ * sees the gap.
+ *
+ * Pure: returns a new details object only when at least one array was
+ * trimmed; otherwise the input reference rides through and
+ * `truncations` is empty. The caller conditional-spreads the
+ * `slimTruncations` field to keep the wire shape stable when nothing
+ * was trimmed.
+ */
+function slimWarningsDetailsForSlimEnvelope(details: ScanWarningDetails | undefined): {
+  readonly details: ScanWarningDetails | undefined;
+  readonly truncations: readonly SlimTruncationEntry[];
+} {
+  if (details === undefined) return { details: undefined, truncations: [] };
+  const truncations: SlimTruncationEntry[] = [];
+  const next: Record<string, unknown> = { ...details };
+  for (const slot of SLIM_DETAIL_SLOTS) {
+    const trimmed = trimStringArrayOnDetailSlot(next, slot);
+    if (trimmed !== undefined) {
+      truncations.push(trimmed);
+    }
+  }
+  if (truncations.length === 0) {
+    return { details, truncations: [] };
+  }
+  return { details: next as ScanWarningDetails, truncations };
+}
+
+interface DetailArraySlot {
+  readonly code: string;
+  readonly arrayKey: string;
+  readonly cap: number;
+  readonly fieldPath: string;
+}
+
+/**
+ * Map of `(warning code, array key)` pairs the slim envelope head-
+ * slices. Keep additions to this list in lockstep with new
+ * verbose-array payload slots on `ScanWarningDetails` — each entry
+ * names the dotted `fieldPath` that lands in `slimTruncations` so the
+ * agent reading the warning channel can find the trimmed array
+ * unambiguously.
+ */
+const SLIM_DETAIL_SLOTS: readonly DetailArraySlot[] = [
+  {
+    code: "bulk_catalog_detected",
+    arrayKey: "suggestedExcludes",
+    cap: SLIM_SUGGESTED_EXCLUDES_CAP,
+    fieldPath: "warningsDetails.bulk_catalog_detected.suggestedExcludes",
+  },
+  {
+    code: "scanned_minified_file",
+    arrayKey: "files",
+    cap: SLIM_FILE_LIST_CAP,
+    fieldPath: "warningsDetails.scanned_minified_file.files",
+  },
+  {
+    code: "scss_unresolved_variables",
+    arrayKey: "files",
+    cap: SLIM_FILE_LIST_CAP,
+    fieldPath: "warningsDetails.scss_unresolved_variables.files",
+  },
+];
+
+/**
+ * Trims a string-array payload on a `warningsDetails[<code>][<arrayKey>]`
+ * slot in-place on the caller's `next` object. Returns the truncation
+ * summary when the cap fired, `undefined` when the array was absent or
+ * already under-cap. Defensive narrowing on every step — the input
+ * payload shapes are union-typed and may legitimately omit either the
+ * outer code or the inner array.
+ */
+function trimStringArrayOnDetailSlot(
+  next: Record<string, unknown>,
+  slot: DetailArraySlot,
+): SlimTruncationEntry | undefined {
+  const payload = next[slot.code];
+  if (payload === undefined || payload === null || typeof payload !== "object") return undefined;
+  const arr = (payload as Record<string, unknown>)[slot.arrayKey];
+  if (!Array.isArray(arr) || arr.length <= slot.cap) return undefined;
+  const trimmed = arr.slice(0, slot.cap);
+  next[slot.code] = { ...(payload as Record<string, unknown>), [slot.arrayKey]: trimmed };
+  return { fieldPath: slot.fieldPath, shown: trimmed.length, total: arr.length };
+}
 
 /**
  * Prose for the slim envelope's nextStep. Names the recovery the
