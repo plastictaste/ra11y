@@ -248,11 +248,7 @@ function diagnoseHtmlMember(
   if (roleOf(getHtmlAttribute(member, "role")) !== "tab") gaps.push("missing-role-tab");
   if (!hasHtmlAttribute(member, "aria-selected")) gaps.push("missing-aria-selected");
   const effectiveParent = walkPastPresentationHtml(member, parentMap);
-  if (
-    effectiveParent &&
-    effectiveParent !== "document" &&
-    !hasTablistRole(effectiveParent)
-  ) {
+  if (effectiveParent && effectiveParent !== "document" && !hasTablistRole(effectiveParent)) {
     gaps.push("parent-missing-role-tablist");
   }
   if (htmlPanelTargetMissingRole(member, idIndex)) gaps.push("panel-missing-role-tabpanel");
