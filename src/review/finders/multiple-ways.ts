@@ -33,6 +33,11 @@ import {
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { ProjectFile, ReviewCandidate } from "../../types/review.ts";
+import {
+  type CorpusEvidence,
+  computeCorpusEvidence,
+  formatCorpusEvidence,
+} from "./multiple-ways-corpus-evidence.ts";
 
 const CRITERION_IDS = [
   "wcag22:2.4.5",
@@ -55,8 +60,6 @@ const NAV_LINK_MIN = 3;
 // the path is additive context, not a suppression gate.
 const FRAGMENT_PATH_RE = /(?:^|[\\/])_(?:includes|partials|components)[\\/]/i;
 
-type JsLikeLanguage = "tsx" | "jsx" | "ts" | "js";
-
 interface CandidateMatch {
   readonly filePath: string;
   readonly line: number;
@@ -64,33 +67,6 @@ interface CandidateMatch {
   readonly signals: SignalSummary;
   readonly annotation: string | null;
   readonly emptyShellSinglePage: boolean;
-}
-
-/**
- * Cross-file evidence about the corpus surrounding any per-file
- * candidate. Computed once per project pass and threaded into every
- * candidate's reason so the agent can dismiss standalone-page,
- * one-off-demo, or single-directory-of-unrelated-files cases without
- * reopening the cited file.
- *
- * - `singleFileScan`: only one file was scanned. SC 2.4.5 scopes to
- *   "sets of Web pages" — by definition this question can't be
- *   evaluated from a single file, so the reason carries that fact.
- * - `distinctDirectoryCount`: number of distinct `dirname()` values
- *   across scanned files. A single-directory scan is suggestive (one
- *   dir of templates is more likely a project than one dir of demos
- *   — but neither is dispositive); multi-directory plus zero cross-
- *   anchors is the strongest "scattered demo files" signal.
- * - `hasCrossFileAnchor`: any anchor in any scanned HTML/JSX file
- *   targets what looks like a sibling .html page (the single-file
- *   `hasSiblingHtmlPageLink` predicate hoisted to corpus scope).
- *   When true, the corpus contains *some* cross-page navigation
- *   evidence and the "no cross-anchors" enrichment is suppressed.
- */
-interface CorpusEvidence {
-  readonly singleFileScan: boolean;
-  readonly distinctDirectoryCount: number;
-  readonly hasCrossFileAnchor: boolean;
 }
 
 export const finder = defineCandidateFinder({
@@ -133,14 +109,15 @@ function collectMatchesFromFile(file: ProjectFile, out: CandidateMatch[]): void 
     if (match !== null) out.push(match);
     return;
   }
-  if (isJsLikeLanguage(ast.language)) {
+  if (
+    ast.language === "tsx" ||
+    ast.language === "jsx" ||
+    ast.language === "ts" ||
+    ast.language === "js"
+  ) {
     const match = matchJsxFile(file.filePath, ast.root);
     if (match !== null) out.push(match);
   }
-}
-
-function isJsLikeLanguage(language: string): language is JsLikeLanguage {
-  return language === "tsx" || language === "jsx" || language === "ts" || language === "js";
 }
 
 function matchHtmlFile(filePath: string, root: HtmlDocument): CandidateMatch | null {
@@ -587,9 +564,6 @@ const FRAGMENT_PATH_HINT =
 const EMPTY_SHELL_SINGLE_PAGE_HINT =
   "Document has 0 outbound links, 0 internal-fragment anchors, and 0 breadcrumb/nav landmarks; likely single-page context. Review before flagging.";
 
-const SINGLE_FILE_SCAN_HINT =
-  "single-file scan: cross-page navigation cannot be evaluated from this input alone";
-
 const HTML_PAGE_HREF_RE = /\.html?(?:$|[?#])/i;
 const NON_NAVIGABLE_SCHEME_RE = /^(?:mailto:|tel:|sms:|javascript:|data:|blob:|about:)/i;
 
@@ -728,98 +702,4 @@ function hasJsxNavLandmarkWithAnchors(root: TsxModule): boolean {
     if (countDescendantJsxAnchors(el) > 0) return true;
   }
   return false;
-}
-
-/**
- * Computes corpus-level evidence consumed by every candidate's
- * reason text:
- *
- * - Single-file scan: SC 2.4.5 scopes to "sets of Web pages," so a
- *   single-file input cannot answer the question — the agent gets
- *   that fact directly so they don't reopen the cited file expecting
- *   to find sibling navigation.
- * - Distinct directory count: how many distinct `dirname()` values
- *   appear across scanned files. A single-directory scan plus zero
- *   cross-anchors is the strongest "scattered demos in one folder"
- *   signal; multi-directory plus zero cross-anchors is the strongest
- *   "site files in different trees with no inter-page links" signal.
- * - Has cross-file anchor: any anchor in any scanned HTML/JSX file
- *   targets a sibling .html page. When true, *some* cross-page
- *   navigation evidence exists in the corpus and the "no cross-
- *   anchors" enrichment is suppressed (the agent already has positive
- *   evidence the corpus is multi-page).
- *
- * All three are deterministic — derived directly from the parsed AST
- * set the scanner already collected. No heuristics on weaker
- * evidence; per AI-first doctrine the agent decides what to do with
- * the corpus signal.
- */
-function computeCorpusEvidence(files: readonly ProjectFile[]): CorpusEvidence {
-  const directories = new Set<string>();
-  let hasCrossFileAnchor = false;
-  for (const file of files) {
-    directories.add(dirnameOf(file.filePath));
-    if (!hasCrossFileAnchor && fileHasSiblingPageAnchor(file)) hasCrossFileAnchor = true;
-  }
-  return {
-    singleFileScan: files.length <= 1,
-    distinctDirectoryCount: directories.size,
-    hasCrossFileAnchor,
-  };
-}
-
-/**
- * Returns the directory portion of a file path — everything up to the
- * last `/` or `\`. Files at the root return an empty string. The
- * function is path-separator-agnostic so it works on both POSIX and
- * Windows-shaped paths the scanner may surface (project-rooted paths,
- * absolute paths, and `node:path`-resolved paths all flow through
- * `ctx.files[].filePath` unchanged).
- */
-function dirnameOf(filePath: string): string {
-  const lastSep = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  if (lastSep < 0) return "";
-  return filePath.slice(0, lastSep);
-}
-
-function fileHasSiblingPageAnchor(file: ProjectFile): boolean {
-  const ast = file.ast;
-  if (ast.language === "html") {
-    return hasSiblingHtmlPageLink(ast.root);
-  }
-  if (isJsLikeLanguage(ast.language)) {
-    return hasSiblingJsxPageLink(ast.root);
-  }
-  return false;
-}
-
-/**
- * JSX equivalent of `hasSiblingHtmlPageLink`. Walks every JSX element
- * looking for an `href` or `to` whose value resolves to a sibling
- * HTML page. JSX layouts often route via React Router `<Link to="/x">`
- * or `<NavLink to="/x.html">`; the same narrow .html/.htm predicate
- * applies because the question is whether *any* anchor in the corpus
- * points at a real HTML target.
- */
-function hasSiblingJsxPageLink(root: TsxModule): boolean {
-  for (const el of walkJsxElements(root)) {
-    if (el.tagName !== "a" && el.tagName !== "Link" && el.tagName !== "NavLink") continue;
-    const href = getJsxAttributeString(el, "href") ?? getJsxAttributeString(el, "to");
-    if (isSiblingHtmlPageHref(href)) return true;
-  }
-  return false;
-}
-
-function formatCorpusEvidence(evidence: CorpusEvidence): string | null {
-  if (evidence.singleFileScan) return SINGLE_FILE_SCAN_HINT;
-  if (evidence.hasCrossFileAnchor) return null;
-  // Multi-file scan with no cross-anchor evidence anywhere — the
-  // strongest corpus-level "this scan likely isn't a multi-page set"
-  // signal. The agent reading the reason gets the directory count so
-  // they can decide whether to dismiss (single dir of unrelated
-  // demos), investigate (multi-dir without inter-page links), or
-  // suppress at source (genuinely standalone file).
-  const dirCount = evidence.distinctDirectoryCount;
-  const dirNoun = dirCount === 1 ? "directory root" : "directory roots";
-  return `scan covered ${dirCount} distinct ${dirNoun} with no cross-anchors detected`;
 }

@@ -807,8 +807,7 @@ describe("review/multiple-ways", () => {
       // sibling .html — the strongest "scattered demo files" signal.
       // The reason must surface the directory count so the agent can
       // dismiss in one read.
-      const shell =
-        '<html><body><main>x</main><a href="#top">Top</a></body></html>';
+      const shell = '<html><body><main>x</main><a href="#top">Top</a></body></html>';
       const out = runMultipleWays([
         htmlFile("/p/app/index.html", shell),
         htmlFile("/p/site/landing.html", shell),
@@ -862,8 +861,7 @@ describe("review/multiple-ways", () => {
       // Two files in the same directory, no inter-page links — still
       // multi-file (so the single-file hint doesn't apply) but only
       // one distinct directory. The noun must agree with the count.
-      const shell =
-        '<html><body><main>x</main><a href="#top">Top</a></body></html>';
+      const shell = '<html><body><main>x</main><a href="#top">Top</a></body></html>';
       const out = runMultipleWays([
         htmlFile("/p/site/a.html", shell),
         htmlFile("/p/site/b.html", shell),
@@ -874,7 +872,7 @@ describe("review/multiple-ways", () => {
       expect(reason).not.toContain("directory roots");
     });
 
-    it("treats a JSX <Link to=\"about.html\"> as cross-anchor evidence", () => {
+    it('treats a JSX <Link to="about.html"> as cross-anchor evidence', () => {
       // React Router-style <Link to="..."> resolving to a sibling
       // .html target is the JSX equivalent of an inter-page anchor;
       // its presence in any scanned file suppresses the no-cross-
