@@ -1911,12 +1911,18 @@ describe("buildAnalysisCoverage — hints", () => {
   // rules without any `fileExtensions` gate (e.g. `focus/outline-visible`,
   // `wrapper/drift`). Cross-surface drift.
   //
-  // (ADR 0028): the field was renamed
-  // from `rulesByExtension` to `rulesFiredByExtension` to disambiguate
-  // it from `perRuleCoverage`. The deprecated alias `rulesByExtension`
-  // still ships alongside for one minor release; a parity test below
-  // pins the alias-mirrors-canonical invariant.
-  describe("rulesFiredByExtension alias coverage", () => {
+  // ADR 0028: the field was renamed from `rulesByExtension` to
+  // `rulesFiredByExtension` to disambiguate it from `perRuleCoverage`.
+  // An earlier `[Unreleased]` iteration shipped a duplicate
+  // `rulesByExtension` alias alongside the canonical name plus a
+  // narrating warning code, but both fields carried the identical
+  // value on every coverage response — the canonical "Ambiguous field
+  // shapes are dishonest" failure mode in
+  // `docs/kb/architecture/ai-first-consumer.md`. The alias and warning
+  // code were dropped before any tagged release; tests below pin the
+  // canonical-field-rides-alone invariant so the dual-emission shape
+  // can't silently re-land.
+  describe("rulesFiredByExtension canonical-only emission", () => {
     function scssFile(path: string): ParsedFile {
       // Mirrors the shape `scanFiles` produces for a `.scss` input: the
       // SCSS parser path in `src/input/parsers/css.ts` emits a
@@ -2094,6 +2100,9 @@ describe("buildAnalysisCoverage — hints", () => {
             }[];
             analysisCoverage?: {
               rulesFiredByExtension?: Record<string, readonly string[]>;
+              // The dropped duplicate `rulesByExtension` alias is
+              // typed-in here so the assertion below pins its absence
+              // even if the response shape silently regrows it (ADR 0028).
               rulesByExtension?: Record<string, readonly string[]>;
             };
           };
@@ -2119,14 +2128,13 @@ describe("buildAnalysisCoverage — hints", () => {
         // Without this tripwire the test could pass vacuously if the
         // scanner produced no CSS-gated evaluations at all.
         expect(listed.size).toBeGreaterThan(2);
-        // (ADR 0028): the deprecated
-        // alias `rulesByExtension` ships alongside the canonical name
-        // for one minor release with the identical value; the
-        // deprecation warning rides whenever the alias is emitted.
-        expect(data.meta.analysisCoverage?.rulesByExtension).toEqual(
-          data.meta.analysisCoverage?.rulesFiredByExtension,
-        );
-        expect(data.warnings).toContain(
+        // ADR 0028: the canonical field rides alone. The earlier
+        // `[Unreleased]` duplicate `rulesByExtension` alias was dropped
+        // before any tagged release per the AI-first consumer doctrine
+        // ("Ambiguous field shapes are dishonest"); the alias must stay
+        // absent and the deprecation warning code must never fire.
+        expect(data.meta.analysisCoverage?.rulesByExtension).toBeUndefined();
+        expect(data.warnings ?? []).not.toContain(
           "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension",
         );
       } finally {
@@ -2134,27 +2142,27 @@ describe("buildAnalysisCoverage — hints", () => {
       }
     });
 
-    it("emits the deprecated `rulesByExtension` alias alongside `rulesFiredByExtension`", () => {
-      // Direct unit-level guard on the rename: the canonical field and
-      // the deprecated alias both ship under verbose, with identical
-      // contents. The alias is presence-only signal so an agent reading
-      // the warnings channel can drop its legacy reads on the next
-      // call.
+    it("emits only the canonical `rulesFiredByExtension` (no `rulesByExtension` alias)", () => {
+      // Direct unit-level guard: the canonical field ships under
+      // verbose and the dropped duplicate `rulesByExtension` alias
+      // must never re-appear. The dual-emission shape (alias riding
+      // identical-valued alongside the canonical name plus a
+      // narrating warning code) was the canonical "Ambiguous field
+      // shapes are dishonest" failure mode in
+      // `docs/kb/architecture/ai-first-consumer.md` — dropped before
+      // any tagged release per ADR 0028.
       const cssTargeted = syntheticRule("contrast/fake", [".css"]);
       const files = [scssFile("styles/button.scss")];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], [cssTargeted], true);
       expect(analysisCoverage?.["rulesFiredByExtension"]).toBeDefined();
-      expect(analysisCoverage?.["rulesByExtension"]).toEqual(
-        analysisCoverage?.["rulesFiredByExtension"],
-      );
+      expect(analysisCoverage?.["rulesByExtension"]).toBeUndefined();
     });
 
-    it("does not emit either field on a non-verbose scan (rename does not change the verbose gate)", () => {
-      // The rename moves names, not gating. Both the canonical
-      // `rulesFiredByExtension` and the deprecated alias
-      // `rulesByExtension` remain verboseMeta-only — a terse scan
-      // sheds the per-extension view entirely and the deprecation
-      // warning does not fire (predicate keys off alias presence).
+    it("does not emit the field on a non-verbose scan (verbose-only gate unchanged)", () => {
+      // The canonical `rulesFiredByExtension` remains verboseMeta-only
+      // — a terse scan sheds the per-extension view entirely. The
+      // dropped `rulesByExtension` alias also stays absent at every
+      // verbosity (no dual-emission shape ever lands).
       const cssTargeted = syntheticRule("contrast/fake", [".css"]);
       const files = [scssFile("styles/button.scss")];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], [cssTargeted], false);

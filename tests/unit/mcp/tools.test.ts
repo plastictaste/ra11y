@@ -496,9 +496,12 @@ describe("MCP tool: scan", () => {
     expect(terseCov.parseErrorFiles).toBeUndefined();
     expect(terseCov.opaqueCustomComponentNames).toBeUndefined();
     expect(terseCov.rulesFiredByExtension).toBeUndefined();
-    // (ADR 0028): the deprecated alias
-    // `rulesByExtension` follows the same verbose-only gate as the
-    // canonical name — neither field rides on a terse scan.
+    // ADR 0028: the canonical field rides only under verboseMeta.
+    // The earlier `[Unreleased]` duplicate `rulesByExtension` alias
+    // was dropped before any tagged release per the "Ambiguous field
+    // shapes are dishonest" doctrine in
+    // `docs/kb/architecture/ai-first-consumer.md`, so the alias must
+    // stay absent at every verbosity.
     expect(terseCov.rulesByExtension).toBeUndefined();
 
     const verbose = await tool.handler({ paths: [BAD_ALT], verboseMeta: true }, session);
@@ -512,13 +515,14 @@ describe("MCP tool: scan", () => {
     const byExt = cov.rulesFiredByExtension as Record<string, string[]>;
     expect(Array.isArray(byExt[".html"])).toBe(true);
     expect(byExt[".html"].length).toBeGreaterThan(0);
-    // The deprecated alias `rulesByExtension` ships alongside, carrying
-    // the identical value (ADR 0028).
-    // Emission triggers the deprecation warning so callers reading the
-    // warnings channel can drop their `rulesByExtension` reads on the
-    // next call.
-    expect(cov.rulesByExtension).toEqual(byExt);
-    expect(verboseData.warnings).toContain(
+    // The canonical field rides alone — the dual-emission shape
+    // (alias + canonical with identical values + a narrating warning
+    // code) was dropped before any tagged release per ADR 0028 and
+    // the AI-first consumer doctrine. The alias must stay absent at
+    // every verbosity, and the deprecation warning code must never
+    // fire.
+    expect(cov.rulesByExtension).toBeUndefined();
+    expect(verboseData.warnings ?? []).not.toContain(
       "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension",
     );
   });

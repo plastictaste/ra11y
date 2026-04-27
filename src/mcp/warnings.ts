@@ -318,23 +318,6 @@ export type ScanWarningCode =
   // budget regime that the other two presence/dominance signals don't
   // capture.
   | "bulk_catalog_detected"
-  // (ADR 0028):
-  // `meta.analysisCoverage.rulesByExtension` was renamed to
-  // `rulesFiredByExtension` to disambiguate it from
-  // `perRuleCoverage` — both surfaces previously carried look-alike
-  // "what ran?" semantics under different field shapes (the per-extension
-  // eligibility view vs. the per-rule post-runner tally), and agents
-  // joining them silently disagreed on the answer. The legacy
-  // `rulesByExtension` field still ships alongside `rulesFiredByExtension`
-  // for one minor release as a deprecated alias; both fields carry the
-  // identical value. This code fires whenever the alias is emitted so
-  // callers reading the warnings channel can drop their `rulesByExtension`
-  // reads on the next call without paying the double-payload cost. The
-  // alias is removed in the next minor release; the `### Deprecated`
-  // CHANGELOG entry tracks the removal window. Surface-don't-suppress:
-  // both fields ship unchanged today; the warning is the additive
-  // signal that lets callers self-migrate without a hidden break.
-  | "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension"
   // a banner-detected vendor
   // library (typical case: a 3000+ line `animate.css` clone whose
   // first non-blank line matches the curated `animate.css` banner)
@@ -1080,7 +1063,6 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
  *     `baseline_dry_run`,
  *     `proposed_config_deprecated_use_suggested_config`,
- *     `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`,
  *     `partial_parse_files_present`,
  *     `parser_bailed_zero_findings`,
  *     `scss_unresolved_variables` (the file list it carries is
@@ -1571,7 +1553,6 @@ export interface ScanWarningDetails {
   };
   readonly baseline_dry_run?: BinaryPresenceMarker;
   readonly proposed_config_deprecated_use_suggested_config?: BinaryPresenceMarker;
-  readonly deprecated_field_rules_by_extension_renamed_rules_fired_by_extension?: BinaryPresenceMarker;
   readonly partial_parse_files_present?: BinaryPresenceMarker;
   readonly parser_bailed_zero_findings?: BinaryPresenceMarker;
   readonly dist_only_scan_detected?: BinaryPresenceMarker;
@@ -1839,15 +1820,6 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // (the doctrine analogue of `scanned_zero_files`); the emitted order
   // is unchanged.
   out.push(...scanShapeCodes(inputs));
-  if (hasDeprecatedRulesByExtensionAlias(inputs.analysisCoverage)) {
-    // (ADR 0028): the legacy
-    // `rulesByExtension` alias rode on `meta.analysisCoverage`
-    // alongside the canonical `rulesFiredByExtension`. Surface the
-    // deprecation code so callers reading the warnings channel can
-    // drop their `rulesByExtension` reads on the next call without
-    // the double-payload cost. Presence-only signal.
-    out.push("deprecated_field_rules_by_extension_renamed_rules_fired_by_extension");
-  }
   // Content-distribution codes — see `contentDistributionCodes`. Two
   // branches extracted into the helper so the main function's
   // cognitive complexity stays under the lint cap; the emitted order
@@ -2026,27 +1998,6 @@ function parserBailedZeroFindings(inputs: WarningInputs): boolean {
   if (coverage === undefined) return false;
   const full = coverage["parseErrorFileCount"];
   return typeof full === "number" && full > 0;
-}
-
-/**
- * Predicate for `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`.
- * Returns `true` whenever the coverage block carries the deprecated
- * alias `rulesByExtension`. The builder in `analysis-coverage.ts`
- * populates the alias alongside `rulesFiredByExtension` for one minor
- * release (ADR 0028) — agents reading the warnings channel can drop
- * their `rulesByExtension` reads on the next call once they see this
- * code fire. Mirror precedent: the `id` → `criterionId` rename in
- * `tool-coverage.ts` emits the
- * deprecation as a presence-only signal at the response-assembly site;
- * here the alias rides on `meta.analysisCoverage` so the predicate
- * mirrors that one-step lookup.
- */
-function hasDeprecatedRulesByExtensionAlias(
-  coverage: Record<string, unknown> | undefined,
-): boolean {
-  if (coverage === undefined) return false;
-  const alias = coverage["rulesByExtension"];
-  return alias !== undefined && typeof alias === "object" && alias !== null;
 }
 
 function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {

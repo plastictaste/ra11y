@@ -77,11 +77,13 @@
  * behind `verboseMeta` because they are bounded-but-large inventories
  * whose per-entry value is lower than the top-level count. Fields are
  * omitted when they'd be empty, so clean projects stay terse. The
- * deprecated alias `rulesByExtension` ships alongside
- * `rulesFiredByExtension` for one minor release (ADR 0028) — both
- * fields carry the identical value, and the warnings channel emits
- * `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
- * whenever the alias rides.
+ * canonical name is `rulesFiredByExtension`; an earlier `[Unreleased]`
+ * iteration shipped a duplicate `rulesByExtension` alias alongside it
+ * (per ADR 0028) plus a narrating warning code, but both fields
+ * carried identical values on every coverage response — the canonical
+ * "Ambiguous field shapes are dishonest" failure mode in
+ * `docs/kb/architecture/ai-first-consumer.md`. The alias was dropped
+ * before any tagged release; consumers read `rulesFiredByExtension`.
  */
 
 import { isHtmlFragment, walkJsxElements } from "../engine/ast-helpers.ts";
@@ -246,13 +248,6 @@ interface CoverageBlock {
    * answer).
    */
   rulesFiredByExtension?: Readonly<Record<string, readonly string[]>>;
-  /**
-   * Deprecated alias for `rulesFiredByExtension`. Ships unchanged for
-   * one minor release while the rename lands; emission triggers the
-   * `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
-   * warning code so agents can self-migrate. ADR 0028.
-   */
-  rulesByExtension?: Readonly<Record<string, readonly string[]>>;
   parseModeByExtension?: Readonly<Record<string, string>>;
   /**
    * Structured hints, keyed by `code` so agents dispatch without
@@ -532,10 +527,10 @@ export function buildAnalysisCoverage(
 
 /**
  * Populates the non-cap tail of the coverage block — `rulesFiredByExtension`
- * + the deprecated `rulesByExtension` alias (verbose-only), `hints`, and
- * `skippedByExtension`. Extracted from {@link buildAnalysisCoverage} so
- * the orchestrator stays under the cognitive-complexity cap as cap-related
- * branches accrete in the early section.
+ * (verbose-only), `hints`, and `skippedByExtension`. Extracted from
+ * {@link buildAnalysisCoverage} so the orchestrator stays under the
+ * cognitive-complexity cap as cap-related branches accrete in the early
+ * section.
  */
 function populateCoverageTail(
   coverage: CoverageBlock,
@@ -548,14 +543,15 @@ function populateCoverageTail(
   if (verbose) {
     const byExt = rulesFiredByExtension(files, activeRules);
     if (Object.keys(byExt).length > 0) {
-      // (ADR 0028): canonical name +
-      // deprecated alias both ship for one minor release. Both fields
-      // carry the identical value; the warnings channel emits
-      // `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
-      // whenever the alias rides so agents can self-migrate without a
-      // hidden break.
+      // ADR 0028: canonical name only. An earlier `[Unreleased]` iteration
+      // shipped a duplicate `rulesByExtension` alias alongside this field
+      // plus a `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
+      // narrating warning code, but both fields carried the identical
+      // value on every coverage response — the canonical "Ambiguous field
+      // shapes are dishonest" failure mode in
+      // `docs/kb/architecture/ai-first-consumer.md`. The alias and its
+      // warning code were dropped before any tagged release.
       coverage.rulesFiredByExtension = byExt;
-      coverage.rulesByExtension = byExt;
     }
   }
   // Per-extension parse-mode disclosure so the agent can reconcile

@@ -43,22 +43,41 @@ join `perRuleCoverage` by `ruleId` for the per-rule tally and read
 `rulesFiredByExtension[ext]` for the per-extension eligibility view; the two
 field names no longer compete for the same role.
 
-For one minor release, the deprecated name `rulesByExtension` ships
-alongside `rulesFiredByExtension` carrying the identical value. Whenever
-the alias rides, the response emits the structured warning
+The canonical-field rename stands. The originally-planned dual-emission
+transition window — shipping `rulesByExtension` alongside
+`rulesFiredByExtension` for one minor release with a structured
 `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
-on the top-level `warnings` channel so callers can self-migrate without
-a hidden break. The alias is removed in the next minor release; the
-`### Deprecated` CHANGELOG entry tracks the removal window.
+warning — was dropped before any tagged release; see the postscript
+below.
 
-This pattern was first considered in 2026-04-23 for Q7-CRITERION-ID-FIELD-NAME-
-DRIFT (`coverage` entries' `id` → `criterionId` rename). The Q7 dual-emission
-shape was later dropped before any release tagged the alias because the two
-identical-value fields on every entry triggered the AI-first consumer model
-"Ambiguous field shapes are dishonest" rule (Q9-DUPLICATE-ID-AND-CRITERIONID-
-AFTER-RENAME). The same risk exists here — if `rulesByExtension` and
-`rulesFiredByExtension` both ride identical payloads on every coverage
-response, the same rule fires.
+## Postscript — dual-emission shape dropped before release
+
+The originally-planned transition shipped `rulesByExtension` alongside
+`rulesFiredByExtension` carrying the identical value, with the warning
+code firing whenever the alias rode. Field-test sweeps observed the
+shape recurring across multiple corpora as the canonical "Ambiguous
+field shapes are dishonest" failure mode in
+`docs/kb/architecture/ai-first-consumer.md` — two byte-identical
+fields on every coverage response forced the agent to disambiguate
+which name to read while inflating bulk-corpus payloads (~6–10 KB on
+verbose `meta` responses). This is the same shape Q9-DUPLICATE-ID-
+AND-CRITERIONID-AFTER-RENAME closed for the parallel `id` →
+`criterionId` rename on `coverage` entries.
+
+Per the doctrine, the durable closure is to drop the duplicate
+field, the narrating warning code, and its `warningsDetails` marker
+before any release tagged the alias — no shipped consumer ever read
+`rulesByExtension`, so dropping it is non-breaking. The canonical
+field `rulesFiredByExtension` rides alone. The `### Deprecated`
+CHANGELOG entry that announced the alias is amended to record the
+drop. Closes Q9-RULESBYEXTENSION-DUP-PAYLOAD.
+
+The pattern was first considered in 2026-04-23 for Q7-CRITERION-ID-FIELD-NAME-
+DRIFT (`coverage` entries' `id` → `criterionId` rename) and closed
+the same way under Q9-DUPLICATE-ID-AND-CRITERIONID-AFTER-RENAME on
+2026-04-27. Renames behind a transition alias are still a valid
+shape — what fails the doctrine is the dual-emission window where
+both names carry identical values on every entry of every response.
 
 ## Alternatives considered
 
@@ -76,16 +95,16 @@ response, the same rule fires.
 
 ## Consequences
 
-- New field `rulesFiredByExtension` carries the canonical per-extension
-  eligibility view.
-- Deprecated field `rulesByExtension` ships unchanged for one minor
-  release; agents reading the legacy name keep working.
-- New warning code
-  `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
-  fires whenever the alias rides — agents can branch on the warnings
-  channel and rewrite their reads in one round trip.
+- The canonical field `rulesFiredByExtension` carries the per-extension
+  eligibility view; it rides alone under `verboseMeta`.
+- The previously-planned `rulesByExtension` alias is not emitted at any
+  verbosity. The `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
+  warning code and its `warningsDetails` marker are removed (no shipped
+  consumer ever read either).
 - Tool descriptions in `scan`, `scan_file`, `scan_project`, `scan_diff`,
-  and `audit` mention the new name; the legacy name disappears from
-  tool-list payloads on the next minor.
-- The CHANGELOG `### Deprecated` section gets an entry pointing at this
-  ADR and the removal window.
+  and `audit` mention only the canonical name.
+- The CHANGELOG `### Deprecated` entry that announced the alias is
+  amended to record the drop before any tagged release.
+- A unit test pins the canonical-field-rides-alone invariant so the
+  dual-emission shape can't silently re-land
+  (`tests/unit/mcp/analysis-coverage.test.ts`).
