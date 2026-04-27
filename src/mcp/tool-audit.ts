@@ -223,7 +223,13 @@ function suggestAuditNextStep(scan: unknown, checklist: unknown): string {
   const scanMeta = readObject(scan, "meta");
   const scanNextStep = readString(scanMeta, "nextStep");
   const checklistSummary = readObject(checklist, "summary");
-  const actionable = readNumber(checklistSummary, "actionable");
+  // `checklist.summary.actionable` is the structured headline shape
+  // `{ criteria, candidatesUncapped, candidatesReturned }` per
+  // ai-first-consumer.md §"Composite headline counts are dishonest";
+  // the audit prose echoes the criteria count (cross-tool canonical
+  // count, matches `scan_project.plan.actionableManualItems`).
+  const actionableShape = readObject(checklistSummary, "actionable");
+  const actionable = readNumber(actionableShape, "criteria");
   if (scanNextStep && scanNextStep.length > 0) {
     if (actionable !== null && actionable > 0) {
       return `${scanNextStep} The checklist leg surfaced ${actionable} actionable manual-review item${actionable === 1 ? "" : "s"} — review those after the scan fixes land.`;

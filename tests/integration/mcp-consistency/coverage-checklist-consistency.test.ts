@@ -158,7 +158,11 @@ interface CoverageBody {
 
 interface ChecklistBody {
   readonly summary: {
-    readonly actionable: number;
+    readonly actionable: {
+      readonly criteria: number;
+      readonly candidatesUncapped: number;
+      readonly candidatesReturned: number;
+    };
     readonly untargetedCriteria: number;
     readonly likelyIrrelevant: number;
   };
@@ -229,9 +233,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const dir = await mkdtemp(join(tmpdir(), "ra11y-checklist-to-coverage-"));
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklist = body<ChecklistBody>(responses[1]);
-    if (checklist.summary.actionable !== 0) {
+    if (checklist.summary.actionable.criteria !== 0) {
       throw new Error(
-        `fixture regression — expected 0 actionable items on empty dir, got ${checklist.summary.actionable}`,
+        `fixture regression — expected 0 actionable items on empty dir, got ${checklist.summary.actionable.criteria}`,
       );
     }
 
@@ -255,9 +259,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const dir = await mkdtemp(join(tmpdir(), "ra11y-checklist-prompt-link-"));
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklist = body<ChecklistBody>(responses[1]);
-    if (checklist.summary.actionable !== 0) {
+    if (checklist.summary.actionable.criteria !== 0) {
       throw new Error(
-        `fixture regression — expected 0 actionable items on empty dir, got ${checklist.summary.actionable}`,
+        `fixture regression — expected 0 actionable items on empty dir, got ${checklist.summary.actionable.criteria}`,
       );
     }
 
@@ -277,7 +281,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const dir = await makeFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklist = body<ChecklistBody>(responses[1]);
-    if (checklist.summary.actionable === 0) {
+    if (checklist.summary.actionable.criteria === 0) {
       throw new Error(
         "fixture regression — expected actionable > 0 on media+img fixture for the no-truncation branch test",
       );
@@ -287,6 +291,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(checklist.nextStepStructured).toBeDefined();
     const hint = checklist.nextStepStructured;
     if (hint === undefined) throw new Error("checklist missing structured next step");
+    // The fixture is small enough that totalCandidates is well under
+    // limit*0.8, so the iterate-items branch fires and routes back to
+    // `scan_project { cwd }` (the closed-form re-run lane).
     expect(hint.tool).toBe("scan_project");
     expect(hint.args["cwd"]).toBe(dir);
 

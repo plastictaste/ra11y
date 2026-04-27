@@ -68,7 +68,7 @@ export interface ManualCriteriaTally {
    * Number of applicable manual criteria a finder grounded in a
    * concrete file:line via at least one review candidate. Matches
    * `scan_project.plan.actionableManualItems`,
-   * `checklist.summary.actionable`, and
+   * `checklist.summary.actionable.criteria`, and
    * `coverage[].manualWithCandidates.length`.
    */
   readonly actionable: number;

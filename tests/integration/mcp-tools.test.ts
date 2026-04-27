@@ -1347,7 +1347,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       items: Array<{ criterionId: string }>;
       likelyIrrelevant: Array<{ criterionId: string }>;
       summary: {
-        actionable: number;
+        actionable: {
+          criteria: number;
+          candidatesUncapped: number;
+          candidatesReturned: number;
+        };
         likelyIrrelevant: number;
         skippedByCaller?: readonly string[];
       };
@@ -1355,7 +1359,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.items.some((i) => i.criterionId === firstCrit)).toBe(false);
     expect(body.likelyIrrelevant.some((i) => i.criterionId === firstIrrelevant)).toBe(false);
     expect(body.summary.skippedByCaller).toEqual([firstCrit, firstIrrelevant].sort());
-    expect(body.summary.actionable).toBeLessThan(baselineBody.items.length + 1);
+    expect(body.summary.actionable.criteria).toBeLessThan(baselineBody.items.length + 1);
   });
 
   it("checklist omits skippedByCaller when skipCriterion is absent", async () => {
@@ -1450,7 +1454,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       untargetedCriteriaList?: unknown;
       likelyIrrelevant: Array<{ criterionId: string }>;
       summary: {
-        actionable: number;
+        actionable: {
+          criteria: number;
+          candidatesUncapped: number;
+          candidatesReturned: number;
+        };
         untargetedCriteria: number;
         likelyIrrelevant: number;
       } & Record<string, unknown>;
@@ -1464,7 +1472,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(untargetedIds.every((id) => typeof id === "string")).toBe(true);
     expect(untargetedIds.length).toBe(body.summary.untargetedCriteria);
     expect(body.items.every((i) => i.candidates.length > 0)).toBe(true);
-    expect(body.summary.actionable).toBe(body.items.length);
+    expect(body.summary.actionable.criteria).toBe(body.items.length);
     expect(body.summary.likelyIrrelevant).toBe(body.likelyIrrelevant.length);
     // The previous composite `manualReviewRequired = actionable +
     // untargetedCriteria` counter was the canonical dishonest-headline

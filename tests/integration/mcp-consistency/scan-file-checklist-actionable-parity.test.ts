@@ -1,6 +1,6 @@
 /**
  * Cross-surface count invariant: `scan_file.plan.actionableManualItems`
- * must agree with `checklist.summary.actionable` on the same fixture.
+ * must agree with `checklist.summary.actionable.criteria` on the same fixture.
  *
  * Canonical drift case the test pins: `<input type="password">`
  * triggers `review/password-inputs` (wcag22:3.3.8) at its byte position.
@@ -104,7 +104,11 @@ interface ScanFileBody {
 }
 interface ChecklistBody {
   readonly summary: {
-    readonly actionable: number;
+    readonly actionable: {
+      readonly criteria: number;
+      readonly candidatesUncapped: number;
+      readonly candidatesReturned: number;
+    };
     readonly untargetedCriteria: number;
   };
 }
@@ -143,7 +147,7 @@ async function makePasswordFormFixture(): Promise<{ dir: string; page: string }>
 }
 
 describe("MCP invariant: scan_file actionable count agrees with checklist on the password-input fixture", () => {
-  it("scan_file.plan.actionableManualItems === checklist.summary.actionable on a fixture triggering 1.3.6 + 3.3.8 at the same line", async () => {
+  it("scan_file.plan.actionableManualItems === checklist.summary.actionable.criteria on a fixture triggering 1.3.6 + 3.3.8 at the same line", async () => {
     const { dir, page } = await makePasswordFormFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -152,7 +156,7 @@ describe("MCP invariant: scan_file actionable count agrees with checklist on the
     ]);
     const scanFileBody = body<ScanFileBody>(responses[1]);
     const checklistBody = body<ChecklistBody>(responses[2]);
-    expect(scanFileBody.plan.actionableManualItems).toBe(checklistBody.summary.actionable);
+    expect(scanFileBody.plan.actionableManualItems).toBe(checklistBody.summary.actionable.criteria);
     // Sanity: the fixture is shaped so both finders fire — the
     // password-input is the only authored input on a non-search type.
     // A 0/0 result here would mean the finders missed the fixture and

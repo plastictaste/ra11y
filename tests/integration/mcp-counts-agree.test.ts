@@ -88,7 +88,11 @@ interface CoverageBody {
 }
 interface ChecklistBody {
   readonly summary: {
-    readonly actionable: number;
+    readonly actionable: {
+      readonly criteria: number;
+      readonly candidatesUncapped: number;
+      readonly candidatesReturned: number;
+    };
     readonly untargetedCriteria: number;
   };
 }
@@ -121,9 +125,10 @@ async function gatherCounts(cwd: string): Promise<{
     // just computed from the honest parts on both sides.
     scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
     coverage: coverageBody.criteriaManualReviewRequired,
-    checklist: checklistBody.summary.actionable + checklistBody.summary.untargetedCriteria,
+    checklist:
+      checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
     scanActionable: scanBody.plan.actionableManualItems,
-    checklistActionable: checklistBody.summary.actionable,
+    checklistActionable: checklistBody.summary.actionable.criteria,
     scanUntargeted: scanBody.plan.untargetedCriteria,
     coverageUntargeted: coverageBody.untargetedCriteria,
     checklistUntargeted: checklistBody.summary.untargetedCriteria,
@@ -172,7 +177,7 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     expect(counts.coverage).toBe(counts.checklist);
   });
 
-  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable", async () => {
+  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria", async () => {
     // Without this, an agent reading a (formerly inflated) composite
     // manual-review headline (e.g., 21) would have to call checklist
     // just to learn that only a handful (e.g., 4) are grounded in
@@ -317,7 +322,7 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
     const checklistBody = body<ChecklistBody>(responses[3]);
     const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates?.length ?? 0;
     expect(scanBody.plan.actionableManualItems).toBe(manualWithCandidatesLen);
-    expect(checklistBody.summary.actionable).toBe(manualWithCandidatesLen);
+    expect(checklistBody.summary.actionable.criteria).toBe(manualWithCandidatesLen);
   });
 });
 

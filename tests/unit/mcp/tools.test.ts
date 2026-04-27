@@ -2684,8 +2684,18 @@ describe("MCP tool: audit", () => {
     expect(data.scan).toBeTruthy();
     expect(data.coverage).toBeTruthy();
     expect(data.checklist).toBeTruthy();
-    const checklist = data.checklist as { summary: { actionable: number } };
-    expect(typeof checklist.summary.actionable).toBe("number");
+    const checklist = data.checklist as {
+      summary: {
+        actionable: {
+          criteria: number;
+          candidatesUncapped: number;
+          candidatesReturned: number;
+        };
+      };
+    };
+    expect(typeof checklist.summary.actionable.criteria).toBe("number");
+    expect(typeof checklist.summary.actionable.candidatesUncapped).toBe("number");
+    expect(typeof checklist.summary.actionable.candidatesReturned).toBe("number");
   });
 
   it("forwards scan-only parameters to the scan leg", async () => {

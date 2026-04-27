@@ -381,7 +381,7 @@ function detectPerCriterionClamp(
 }
 
 /**
- * Cross-surface count invariant: `summary.actionable` and
+ * Cross-surface count invariant: `summary.actionable.criteria` and
  * `summary.untargetedCriteria` are derived from the shared
  * `tallyManualCriteriaFromCoverage` helper — the same algorithm
  * `scan_project` and `coverage` use over identical inputs. Extracted
@@ -427,7 +427,7 @@ export const checklistTool: McpTool = {
   def: {
     name: "checklist",
     description:
-      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
+      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary reports `actionable: { criteria, candidatesUncapped, candidatesReturned }` — three honest counts so a clipped/paginated response cannot read as \"N things to verify\" while N criteria carry far more elided candidates. `criteria` is the cross-tool canonical count (matches `scan_project.plan.actionableManualItems` and `coverage[].manualWithCandidates.length`); `candidatesUncapped` is the pre-clip inventory across actionable items; `candidatesReturned` counts what shipped on this page after `limit` / `maxCandidatesPerCriterion`. The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
     inputSchema: {
       type: "object",
       properties: {
@@ -730,8 +730,26 @@ export const checklistTool: McpTool = {
       reportCandidates,
       skipSet,
     );
+    // Q-doctrine (composite headline counts are dishonest, ai-first-consumer.md):
+    // the prior `summary.actionable: number` headline counted *criteria* with
+    // grounded candidates. When `perCriterionClipped` (or even just a deep page)
+    // elides candidates per criterion, an agent reading "actionable: 2" reads
+    // it as "2 things to verify" — but each criterion may carry 10+ candidates
+    // beyond the cap. The structured shape splits the headline into the three
+    // honest counts (criteria / candidatesUncapped / candidatesReturned) so the
+    // agent can budget against the right axis. Always-split is preferred over
+    // asymmetric clipped-vs-unclipped per the dispatch — keeps callers from
+    // branching on shape. Cross-surface invariant:
+    // `scan_file.plan.actionableManualItems` === `summary.actionable.criteria`.
+    let candidatesReturned = 0;
+    for (const item of page.items) candidatesReturned += item.candidates.length;
+    const summaryActionable = {
+      criteria: summaryTally.actionable,
+      candidatesUncapped: page.totalCandidates,
+      candidatesReturned,
+    };
     const summary = {
-      actionable: summaryTally.actionable,
+      actionable: summaryActionable,
       untargetedCriteria: summaryTally.untargeted,
       // One-line gloss: untargeted count is cryptic on its own — the
       // agent's read-order goes summary → items, so the definition
@@ -763,6 +781,8 @@ export const checklistTool: McpTool = {
       nextOffset: page.paginationFields.nextOffset,
       nextCursor: page.paginationFields.nextCursor,
       maxCandidatesPerCriterionHint: page.paginationFields.maxCandidatesPerCriterionHint,
+      totalCandidates: page.totalCandidates,
+      limit: pageParams.limit,
       cwd,
       standard: strParam(params, "standard"),
       level: strParam(params, "level"),
@@ -1738,10 +1758,32 @@ interface ChecklistNextStepInputs {
    * number rather than asking the agent to guess.
    */
   readonly maxCandidatesPerCriterionHint: number | undefined;
+  /**
+   * Pre-clip inventory total across actionable items (matches
+   * `summary.actionable.candidatesUncapped`). Used together with
+   * `limit` to detect the "near limit" branch where the structured
+   * nextStep should advertise paginate args instead of the generic
+   * iterate-items[] prose.
+   */
+  readonly totalCandidates: number;
+  /** Effective `limit` after clamping; paired with `totalCandidates`. */
+  readonly limit: number;
   readonly cwd: string;
   readonly standard: string | undefined;
   readonly level: string | undefined;
 }
+
+/**
+ * Threshold at which `nextStep` swaps the iterate-items[] prose for a
+ * paginate-recommendation. The doctrine ("one tool call should answer
+ * 'what next?'", `docs/kb/architecture/ai-first-consumer.md`) wants the
+ * structured hint to be agent-actionable, not generic prose. When the
+ * actionable inventory is already pushing the limit, the agent's next
+ * call almost always wants explicit paginate args; firing this branch
+ * pre-truncation gives the agent the same shape the truncated branch
+ * already offers, so call-graph code paths converge.
+ */
+const CHECKLIST_NEAR_LIMIT_RATIO = 0.8;
 
 /**
  * Builds the `checklist` tool's cross-pointing next-step pair per
@@ -1770,8 +1812,16 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
   readonly nextStep?: string;
   readonly nextStepStructured?: { readonly tool: string; readonly args: Record<string, unknown> };
 } {
-  const { actionableLen, truncated, nextOffset, nextCursor, maxCandidatesPerCriterionHint, cwd } =
-    inputs;
+  const {
+    actionableLen,
+    truncated,
+    nextOffset,
+    nextCursor,
+    maxCandidatesPerCriterionHint,
+    totalCandidates,
+    limit,
+    cwd,
+  } = inputs;
   if (actionableLen === 0) {
     return {
       nextStep:
@@ -1784,7 +1834,7 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
       nextStep: `Page truncated. Call \`checklist\` again with \`offset: ${nextOffset}\` to continue; call \`coverage\` for the per-standard compliance dashboard.`,
       nextStepStructured: {
         tool: "checklist",
-        args: buildChecklistArgs(inputs, { offset: nextOffset }),
+        args: buildChecklistArgs(inputs, { offset: nextOffset, limit }),
       },
     };
   }
@@ -1801,13 +1851,34 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
       },
     };
   }
-  // Actionable items present, no truncation. Iterate items[] reading
-  // the cited files, then either (a) call `attest` with a `verdict` +
-  // `reason` + `evidenceSource` to record the verdict on the evidence
-  // ledger, or (b) fix and re-run `scan_project`. Structured points
-  // at `scan_project { cwd }` because it's closed-form directly
-  // callable; `attest`'s required `reason` + `evidenceSource` cannot
-  // be pre-seeded without fabricating provenance.
+  // Near-limit branch: the page fit (no truncation, no per-criterion
+  // cursor) but `totalCandidates` is already at >80% of `limit`, so
+  // the next call is likely to truncate or already needs deliberate
+  // chunking. Per ai-first-consumer.md "One tool call should answer
+  // 'what next?'" the structured hint becomes a paginate-recommendation
+  // (the same shape the truncated branch ships) instead of pointing at
+  // `scan_project` with generic iterate-items[] prose. Args advertise
+  // `offset: 0, limit: <current>` so the agent has a directly callable
+  // re-page; the prose names the threshold so the agent knows the
+  // recommendation is structural (heavy response approaching cap),
+  // not arbitrary.
+  if (totalCandidates > limit * CHECKLIST_NEAR_LIMIT_RATIO) {
+    return {
+      nextStep: `Total candidates (${totalCandidates}) is at >${Math.round(CHECKLIST_NEAR_LIMIT_RATIO * 100)}% of \`limit\` (${limit}); the response is near capacity. Call \`checklist\` again with \`offset: <n>, limit: <n>\` to walk the queue deliberately, or raise \`limit\` to fit the full inventory in one page. After verifying each item, call \`attest\` with the item's \`criterionId\`, a \`verdict\` (\`pass\` / \`fail\` / \`n/a\`), a \`reason\`, and an \`evidenceSource\` to record the verdict durably.`,
+      nextStepStructured: {
+        tool: "checklist",
+        args: buildChecklistArgs(inputs, { offset: 0, limit }),
+      },
+    };
+  }
+  // Actionable items present, no truncation, response well under the
+  // limit. Iterate items[] reading the cited files, then either (a)
+  // call `attest` with a `verdict` + `reason` + `evidenceSource` to
+  // record the verdict on the evidence ledger, or (b) fix and re-run
+  // `scan_project`. Structured points at `scan_project { cwd }`
+  // because it's closed-form directly callable; `attest`'s required
+  // `reason` + `evidenceSource` cannot be pre-seeded without
+  // fabricating provenance.
   return {
     nextStep:
       "Iterate `items[]`, reading each cited file and line. After verifying an item, call `attest` with the item's `criterionId`, a `verdict` (`pass` / `fail` / `n/a`), a `reason`, and an `evidenceSource` to record the verdict durably; call `scan_project` to re-run after fixing violations.",
