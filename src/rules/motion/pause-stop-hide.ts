@@ -304,8 +304,30 @@ function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
       : `data-bs-pause="${truncateForEcho(pause)}"`;
   const controlsNote = describeDescendantControls(element);
   const tag = element.tagName.toLowerCase();
+  // Severity tracks the strength of the predicate.
+  //
+  // - No descendant prev/next controls detected: the only mechanism the
+  //   markup advertises (if any) is `data-bs-pause`, whose absence is
+  //   provable from the attribute set. Pause-on-hover is incidental, not
+  //   user-operable under 2.2.2, so the predicate "no user-operable
+  //   pause/stop/hide mechanism is in evidence" is fully observable —
+  //   severity stays at `warning`.
+  // - Descendant `.carousel-control-prev|next` controls detected: the
+  //   markup carries a *signal* that user-operable controls may exist,
+  //   but the scanner cannot prove from static markup that those
+  //   controls are keyboard-focusable, that AT users perceive their
+  //   pause semantics, or that the labelled action is actually pause vs.
+  //   prev/next slide navigation. The reason text concedes this with
+  //   "verify keyboard focus + announcement carry pause semantics before
+  //   dismissing." Per AI-first doctrine ("Reason text and severity must
+  //   agree"), a reason that hedges with "verify…before dismissing"
+  //   while severity stays at `warning` is the conceded-uncertainty
+  //   shape — downgrade to `info` so the attention-budget signal matches
+  //   the predicate strength. The finding stays surfaced (surface-don't-
+  //   suppress); only the severity slot changes.
+  const severity = controlsNote.length === 0 ? "warning" : "info";
   emit({
-    severity: "warning",
+    severity,
     location: {
       filePath: "",
       line: element.loc.start.line,
@@ -327,6 +349,14 @@ function emitCarouselFinding(element: HtmlElement, emit: Emit): void {
  * keyboard-focusable or that AT users can perceive their pause
  * semantics. Per AI-first doctrine: surface honest "please verify"
  * context rather than suppress the finding.
+ *
+ * The returned non-empty string also gates the carousel finding's
+ * severity in `emitCarouselFinding`: a non-empty controls note means the
+ * predicate is conceded ("verify keyboard focus + announcement carry
+ * pause semantics before dismissing"), so severity drops from `warning`
+ * to `info` to keep the attention-budget slot honest with the reason
+ * text. The descendant-controls note is the structural marker for that
+ * branch — the call site reads its emptiness, not the text.
  *
  * Returns the empty string when no matching descendants are found, so
  * the call site can interpolate unconditionally.

@@ -563,7 +563,12 @@ describe("rule motion/pause-stop-hide", () => {
       const v = runRule(rule, src, { filePath: "c.html" });
       // Surface-don't-suppress: rule still fires.
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
+      // Severity downgrades to `info` on the descendant-controls branch:
+      // the reason text concedes "verify keyboard focus + announcement
+      // carry pause semantics before dismissing" — that conceded
+      // uncertainty must agree with the attention-budget slot per
+      // AI-first doctrine ("Reason text and severity must agree").
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.message).toContain(".carousel-control-prev|next");
       expect(v[0]?.message).toContain("lines 6,7");
       expect(v[0]?.message).toContain(
@@ -668,7 +673,12 @@ describe("rule motion/pause-stop-hide", () => {
       ].join("\n");
       const v = runRule(rule, src, { filePath: "c.html" });
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
+      // Descendant `.carousel-control-prev` triggers the conceded-
+      // uncertainty branch ("verify keyboard focus + announcement carry
+      // pause semantics before dismissing"); severity downgrades to
+      // `info` so the attention-budget slot agrees with the reason text
+      // per AI-first doctrine. The finding stays surfaced.
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.message).toContain(`data-interval="5000"`);
       // The descendant-controls note still annotates so the agent has
       // the verification anchor without losing the finding.
