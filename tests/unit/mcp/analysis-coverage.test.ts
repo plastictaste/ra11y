@@ -930,6 +930,82 @@ describe("buildAnalysisCoverage — hints", () => {
         expect(literal).toMatch(/^[<{$]/);
       }
     });
+
+    // Bare `{{ ... }}` interpolation with no disambiguating evidence
+    // (no `{% %}` Liquid control block, no `{{# }}` block helper, no
+    // `{{> }}` partial) — the only honest shape is the literal `{{x}}`
+    // token + count. A previous pass stamped `handlebars-or-mustache`
+    // here, which fired wrong on every Liquid/Vue/Angular corpus.
+    it("does not attribute a dialect when bare `{{ x }}` is the only evidence", () => {
+      const ambiguous = htmlFile(
+        "post.html",
+        "<article><h1>{{ post.title }}</h1><p>{{ post.body }}</p></article>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([ambiguous], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const map = new Map((tokens ?? []).map((entry) => [entry.token, entry.count]));
+      expect(map.get("{{x}}")).toBe(2);
+      // The historical dialect-stamp surface name no longer ships:
+      // no field on `analysisCoverage` is called `templateDirectivesFound`,
+      // and no token literal looks like a dialect family identifier.
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      const literals = (tokens ?? []).map((entry) => entry.token);
+      for (const literal of literals) {
+        expect(literal).not.toMatch(/handlebars|mustache|liquid|jinja|erb|ejs|vue|angular/i);
+      }
+    });
+
+    // Liquid evidence: `{% include %}` co-occurring with `{{ x }}`.
+    // The honest shape surfaces both tokens separately (`{%x%}` and
+    // `{{x}}`); the agent reads them and concludes Liquid from the
+    // co-occurrence, which is more honest than the scanner stamping
+    // a dialect (Liquid, Jinja, Nunjucks, and Twig all share this
+    // surface).
+    it("surfaces `{%x%}` and `{{x}}` separately when Liquid-style control blocks co-occur", () => {
+      const liquidPage = htmlFile(
+        "post.liquid.html",
+        "{% include 'header.html' %}\n<h1>{{ page.title }}</h1>\n{% include 'footer.html' %}",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([liquidPage], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const map = new Map((tokens ?? []).map((entry) => [entry.token, entry.count]));
+      expect(map.get("{%x%}")).toBe(2);
+      expect(map.get("{{x}}")).toBe(1);
+    });
+
+    // Handlebars evidence: a block helper `{{#if ... }} ... {{/if}}`
+    // co-occurring with bare `{{ x }}`. Both Handlebars and Mustache
+    // use this exact surface, so the scanner does NOT introduce a
+    // dialect label — block helpers contribute to the same `{{x}}`
+    // token count, and the agent disambiguates from the file. The
+    // raw token literal is sufficient evidence; family attribution
+    // would be a heuristic guess on weaker evidence than the agent
+    // already has.
+    it("does not stamp a dialect when handlebars block helpers co-occur with bare interpolation", () => {
+      const hbs = htmlFile(
+        "card.hbs.html",
+        "<div class='card'>{{#if user}}<p>{{ user.name }}</p>{{/if}}</div>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([hbs], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const map = new Map((tokens ?? []).map((entry) => [entry.token, entry.count]));
+      // `{{#if user}}`, `{{ user.name }}`, and `{{/if}}` all match the
+      // bare-double-brace shape and accumulate under the same token —
+      // the agent reads `{{#`/`{{/` from the source to identify
+      // Handlebars/Mustache.
+      expect(map.get("{{x}}")).toBeGreaterThanOrEqual(2);
+      expect(analysisCoverage?.["templateDirectivesFound"]).toBeUndefined();
+      const literals = (tokens ?? []).map((entry) => entry.token);
+      for (const literal of literals) {
+        expect(literal).not.toMatch(/handlebars|mustache/i);
+      }
+    });
   });
 
   // the HTML parser sees
