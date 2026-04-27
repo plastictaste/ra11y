@@ -266,8 +266,44 @@ interface CoverageBlock {
   hints?: readonly Hint[];
   skippedByExtension?: Readonly<Record<string, number>>;
   fragmentFileCount?: number;
-  fragmentFiles?: readonly string[];
+  fragmentFiles?: readonly FragmentFileEntry[];
   fragmentFilesTruncated?: MetaArrayTruncationSummary;
+}
+
+/**
+ * Categorical shape of a fragment file. The flat
+ * `analysisCoverage.fragmentFiles[]` list previously surfaced only the
+ * path, but observed members fall into three categorically-different
+ * shapes that warrant different downstream rule-skipping decisions:
+ *
+ *   - `html_partial` — Jekyll `_includes/`, Hugo `partials/`, Astro /
+ *     Handlebars layouts: HTML markup intended to be composed into a
+ *     parent layout at render time. Document-shaped rules
+ *     (`landmark-main`, `heading-hierarchy`, `page-titled`,
+ *     `lang-attribute`) are out of scope because the parent layout
+ *     supplies the envelope.
+ *   - `markdown_residue` — `.md` / `.markdown` files routed through
+ *     the HTML parser per ADR 0025. The parsed AST is the literal-
+ *     text residue after the markdown body, so a missing `<html>`
+ *     root reflects the source format rather than a partial. Rules
+ *     deciding whether to skip should consult the kind, not the path.
+ *   - `svg_standalone` — `.svg` files routed through `parseHtml` per
+ *     `src/input/parsers/svg.ts`. A standalone icon / brand-mark SVG
+ *     has no `<html>` or `<body>` because it isn't a document.
+ *     Page-level rules should skip these unconditionally.
+ *
+ * Per the AI-first consumer model "Heuristic-mislabeled meta sub-
+ * fields are dishonest" rule: the kind is provable from the file
+ * extension (no path-pattern guessing), so the discriminator clears
+ * the "100% correct from the evidence" bar.
+ *
+ * Document-shaped rules will read the discriminator before deciding
+ * eligibility — that wiring is a follow-up; this type ships the field
+ * so downstream consumers can branch on it now.
+ */
+export interface FragmentFileEntry {
+  readonly path: string;
+  readonly kind: "html_partial" | "markdown_residue" | "svg_standalone";
 }
 
 /**
@@ -631,11 +667,40 @@ function assembleFragmentFilesBlock(
 ): boolean {
   coverage.fragmentFileCount = fragmentFiles.length;
   const sorted = [...fragmentFiles].sort((a, b) => a.localeCompare(b));
-  const capped = capMetaArray(sorted);
+  const entries: FragmentFileEntry[] = sorted.map((path) => ({
+    path,
+    kind: classifyFragmentKind(path),
+  }));
+  const capped = capMetaArray(entries);
   coverage.fragmentFiles = capped.values;
   if (capped.truncated === undefined) return false;
   coverage.fragmentFilesTruncated = capped.truncated;
   return true;
+}
+
+/**
+ * Categorizes a fragment file by extension. The detection is
+ * extension-only on purpose — per AI-first consumer doctrine
+ * "Heuristic-mislabeled meta sub-fields are dishonest," the
+ * discriminator must be provable from the evidence the scanner has
+ * (the file path), not a guess on path patterns or contents.
+ *
+ *   - `.svg` / `.svgz` → `"svg_standalone"`. Routed through
+ *     `parseHtml` by `src/input/parsers/svg.ts` and naturally lacks
+ *     `<html>` / `<body>`.
+ *   - `.md` / `.markdown` → `"markdown_residue"`. Routed through
+ *     the HTML parser per ADR 0025; the resulting AST is the literal-
+ *     text residue, which never carries a `<html>` envelope.
+ *   - everything else (`.html`, `.htm`, `.xhtml`, `.astro`, etc.) →
+ *     `"html_partial"`. The catch-all bucket: the file parses as HTML
+ *     but lacks the document envelope, indicating a partial / include
+ *     intended for composition into a parent layout.
+ */
+function classifyFragmentKind(filePath: string): FragmentFileEntry["kind"] {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".svg") || lower.endsWith(".svgz")) return "svg_standalone";
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown_residue";
+  return "html_partial";
 }
 
 /**

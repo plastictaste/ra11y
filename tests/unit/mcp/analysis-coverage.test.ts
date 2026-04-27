@@ -1527,7 +1527,85 @@ describe("buildAnalysisCoverage — hints", () => {
       );
       const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
-      expect(analysisCoverage?.["fragmentFiles"]).toEqual(["_includes/header.html"]);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        { path: "_includes/header.html", kind: "html_partial" },
+      ]);
+    });
+
+    // Discriminator: `analysisCoverage.fragmentFiles[]` previously
+    // surfaced a flat path list, but the bucket conflated three
+    // categorically-different shapes — HTML partials, markdown
+    // residue (`.md`/`.markdown` HTML-routed per ADR 0025), and
+    // standalone SVG icons (`.svg` HTML-routed per
+    // `src/input/parsers/svg.ts`). Each warrants different downstream
+    // rule-skipping; per AI-first consumer doctrine
+    // "Heuristic-mislabeled meta sub-fields are dishonest" the
+    // discriminator is extension-only (provable from the evidence the
+    // scanner has).
+    it("tags Jekyll _includes/ HTML partials as kind: html_partial", () => {
+      const fragment = parsedHtml("_includes/footer.html", "<footer>©</footer>");
+      const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        { path: "_includes/footer.html", kind: "html_partial" },
+      ]);
+    });
+
+    it("tags markdown sources HTML-routed per ADR 0025 as kind: markdown_residue", () => {
+      // README.md / docs/*.md routed through parseHtml — the parsed
+      // root carries no <html> because the source is markdown prose,
+      // not a partial layout. The discriminator distinguishes this
+      // from a real partial so document-shaped rules can route
+      // differently if they choose.
+      const readme = parsedHtml("README.md", "# Hello\n\nWorld\n");
+      const docPage = parsedHtml("docs/getting-started.markdown", "## Setup\n\nRun bun install\n");
+      const { analysisCoverage } = buildAnalysisCoverage([readme, docPage], [], NO_RULES, false);
+      // Wire-side ordering is alphabetical-by-path (deterministic
+      // across runs); both entries share kind: "markdown_residue".
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        { path: "docs/getting-started.markdown", kind: "markdown_residue" },
+        { path: "README.md", kind: "markdown_residue" },
+      ]);
+    });
+
+    it("tags standalone .svg icon files as kind: svg_standalone", () => {
+      // Brand-mark / icon SVGs routed through parseHtml per
+      // src/input/parsers/svg.ts — no <html>/<body>, but the file is
+      // an icon asset, not a partial. Page-level rules should skip
+      // unconditionally.
+      const icon = parsedHtml(
+        "icons/logo.svg",
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><title>Logo</title><path d="M0 0h24v24H0z"/></svg>',
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([icon], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        { path: "icons/logo.svg", kind: "svg_standalone" },
+      ]);
+    });
+
+    it("classifies a mixed bucket with all three kinds in one scan", () => {
+      // The canonical shape an agent triages on a static-site corpus:
+      // partials, markdown docs, and brand-mark SVGs all reach the
+      // bucket together. Wire output is sorted alphabetically
+      // (deterministic across runs) — the kind discriminator rides
+      // alongside.
+      const partial = parsedHtml("_includes/nav.html", "<nav><a href='/'>Home</a></nav>");
+      const readme = parsedHtml("README.md", "# Project\n");
+      const icon = parsedHtml(
+        "assets/brand.svg",
+        '<svg xmlns="http://www.w3.org/2000/svg"><title>Brand</title></svg>',
+      );
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [partial, readme, icon],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["fragmentFileCount"]).toBe(3);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        { path: "_includes/nav.html", kind: "html_partial" },
+        { path: "assets/brand.svg", kind: "svg_standalone" },
+        { path: "README.md", kind: "markdown_residue" },
+      ]);
     });
 
     it("omits fragmentFiles entirely when every HTML file has <html> or <body>", () => {
@@ -1550,9 +1628,9 @@ describe("buildAnalysisCoverage — hints", () => {
       ];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        "_includes/a-first.html",
-        "_includes/m-middle.html",
-        "_includes/z-last.html",
+        { path: "_includes/a-first.html", kind: "html_partial" },
+        { path: "_includes/m-middle.html", kind: "html_partial" },
+        { path: "_includes/z-last.html", kind: "html_partial" },
       ]);
     });
 
@@ -1566,7 +1644,9 @@ describe("buildAnalysisCoverage — hints", () => {
       const fragment = parsedHtml("_includes/nav.html", '<nav><a href="/">Home</a></nav>');
       const { analysisCoverage } = buildAnalysisCoverage([bodyOnly, fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
-      expect(analysisCoverage?.["fragmentFiles"]).toEqual(["_includes/nav.html"]);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        { path: "_includes/nav.html", kind: "html_partial" },
+      ]);
     });
 
     it("is independent of verboseMeta — telemetry ships at every verbosity", () => {
@@ -1578,8 +1658,12 @@ describe("buildAnalysisCoverage — hints", () => {
       const fragment = parsedHtml("_includes/footer.html", "<footer>©</footer>");
       const terse = buildAnalysisCoverage([fragment], [], NO_RULES, false).analysisCoverage;
       const verbose = buildAnalysisCoverage([fragment], [], NO_RULES, true).analysisCoverage;
-      expect(terse?.["fragmentFiles"]).toEqual(["_includes/footer.html"]);
-      expect(verbose?.["fragmentFiles"]).toEqual(["_includes/footer.html"]);
+      expect(terse?.["fragmentFiles"]).toEqual([
+        { path: "_includes/footer.html", kind: "html_partial" },
+      ]);
+      expect(verbose?.["fragmentFiles"]).toEqual([
+        { path: "_includes/footer.html", kind: "html_partial" },
+      ]);
     });
   });
 
@@ -2317,7 +2401,12 @@ describe("buildAnalysisCoverage — hints", () => {
       const result = buildAnalysisCoverage(many, [], [], false);
       const coverage = result.analysisCoverage;
       expect(coverage?.["fragmentFileCount"]).toBe(75);
-      expect((coverage?.["fragmentFiles"] as readonly string[]).length).toBe(50);
+      const fragments = coverage?.["fragmentFiles"] as readonly {
+        readonly path: string;
+        readonly kind: string;
+      }[];
+      expect(fragments.length).toBe(50);
+      expect(fragments[0]?.kind).toBe("html_partial");
       expect(coverage?.["fragmentFilesTruncated"]).toEqual({ shown: 50, total: 75 });
       expect(result.metaArrayTruncated).toBe(true);
     });
