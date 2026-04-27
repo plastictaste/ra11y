@@ -117,6 +117,20 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(dropPayload.hardCeilingBytes).toBeGreaterThan(0);
     expect(dropPayload.droppedFileCount).toBeGreaterThanOrEqual(0);
 
+    // Per "Truncated containers must rename or sentinel, not retain"
+    // (doctrine): when the slim builder strips top-level `meta`
+    // sub-fields to fit under budget, the wire must signal which keys
+    // got dropped — name retention without sentinel is the worst-case
+    // shape because the surviving `meta` looks like a populated
+    // container. The `metaFieldsDropped` payload names every top-level
+    // key the full meta carried that the slim builder discarded so an
+    // agent reading the surviving slim block can distinguish
+    // "no scan-confidence concerns" from "block was clipped."
+    const droppedFields = (dropPayload as { metaFieldsDropped?: readonly string[] })
+      .metaFieldsDropped;
+    expect(droppedFields).toBeDefined();
+    expect(droppedFields).toContain("bloatedField");
+
     // The slim meta dropped the bloat field (only known scan-confidence
     // keys survive). `bloatedField` was synthetic; verify it didn't
     // ride along.

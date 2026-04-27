@@ -1385,6 +1385,20 @@ export interface ScanWarningDetails {
    *   carrying when the fallback fired. After the fallback, `files[]`
    *   ships as `[]` (drop-all) so the agent's view is honest: every
    *   file's findings are gone, not just the trailing tail.
+   * - `metaFieldsDropped` — top-level `meta` sub-fields the slim
+   *   builder discarded to keep the minimum-honest envelope under
+   *   budget. Closes the "Truncated containers must rename or
+   *   sentinel, not retain" doctrine bullet for the slim path: `meta`
+   *   keeps its field name on the wire but ships only the slim
+   *   scan-confidence keys (tool/version/standards/level/filesScanned/
+   *   durationMs/configSource/scanned/rootSource/scanMode), and an
+   *   agent reading the surviving scalars cannot otherwise
+   *   distinguish "this codebase has no scan-confidence concerns to
+   *   surface" from "the meta block was clipped to fit the envelope."
+   *   Names are top-level keys (e.g. `analysisCoverage`,
+   *   `scannedBuildArtifacts`, `perRuleCoverage`, `filesByExtension`)
+   *   in their pre-slim order. Present-when-meaningful: omitted via
+   *   conditional spread when the slim builder dropped no meta keys.
    *
    * Present-when-meaningful: emitted only alongside the matching
    * `response_dropped_files_oversize` warning code; omitted entirely
@@ -1400,6 +1414,7 @@ export interface ScanWarningDetails {
     readonly preDropBytes: number;
     readonly hardCeilingBytes: number;
     readonly droppedFileCount: number;
+    readonly metaFieldsDropped?: readonly string[];
   };
   /**
    * payload for `bulk_catalog_detected`.

@@ -483,6 +483,16 @@ function buildSlimScanProjectEnvelope(args: {
   // fallback. Agents calling back with a narrower scope will get the
   // full meta on the next response.
   const slimMeta = buildSlimMeta(fullMeta);
+  // Names of top-level meta sub-fields the slim builder discarded.
+  // Threaded into the warnings payload as
+  // `warningsDetails.response_dropped_files_oversize.metaFieldsDropped`
+  // so an agent reading the surviving slim `meta` block can
+  // distinguish "this codebase has no scan-confidence concerns" from
+  // "the meta block was clipped to fit the envelope" — the
+  // "Truncated containers must rename or sentinel, not retain"
+  // doctrine bullet. Order is the pre-slim key order from the full
+  // meta block so the wire shape stays deterministic.
+  const metaFieldsDropped = Object.keys(fullMeta).filter((k) => !(k in slimMeta));
   // Original `warnings` / `warningsDetails` may exist (e.g. when the
   // density cap fired its own code first). Read them off `original`
   // so we preserve the full clip chain on the wire.
@@ -492,6 +502,7 @@ function buildSlimScanProjectEnvelope(args: {
     reason,
     ...(baseWarnings === undefined ? {} : { baseWarnings }),
     ...(baseWarningsDetails === undefined ? {} : { baseWarningsDetails }),
+    ...(metaFieldsDropped.length > 0 ? { metaFieldsDropped } : {}),
   });
   return {
     plan: formatted.plan,

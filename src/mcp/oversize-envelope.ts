@@ -189,11 +189,25 @@ export function oversizeEnvelopeWarningsField(args: {
   readonly reason: OversizeEnvelopeReason;
   readonly baseWarnings?: readonly ScanWarningCode[];
   readonly baseWarningsDetails?: ScanWarningDetails;
+  /**
+   * Top-level `meta` sub-fields the slim builder discarded. Threaded
+   * through here (rather than computed in this helper) because the
+   * slim shape is owned by the caller — only the caller knows which
+   * keys it kept and which it dropped. Surfaces on the wire as
+   * `warningsDetails.response_dropped_files_oversize.metaFieldsDropped`
+   * so an agent reading the surviving slim `meta` block can
+   * distinguish "this codebase has no scan-confidence concerns" from
+   * "the meta block was clipped to fit the envelope" per the
+   * "Truncated containers must rename or sentinel, not retain"
+   * doctrine bullet. Present-when-meaningful: omit when no meta keys
+   * were dropped.
+   */
+  readonly metaFieldsDropped?: readonly string[];
 }): {
   readonly warnings: readonly ScanWarningCode[];
   readonly warningsDetails: ScanWarningDetails;
 } {
-  const { reason, baseWarnings, baseWarningsDetails } = args;
+  const { reason, baseWarnings, baseWarningsDetails, metaFieldsDropped } = args;
   const warnings: ScanWarningCode[] = baseWarnings === undefined ? [] : [...baseWarnings];
   if (!warnings.includes("response_dropped_files_oversize")) {
     warnings.push("response_dropped_files_oversize");
@@ -209,6 +223,9 @@ export function oversizeEnvelopeWarningsField(args: {
       preDropBytes: reason.preDropBytes,
       hardCeilingBytes: reason.hardCeilingBytes,
       droppedFileCount: reason.droppedFileCount,
+      ...(metaFieldsDropped !== undefined && metaFieldsDropped.length > 0
+        ? { metaFieldsDropped }
+        : {}),
     },
   });
   return { warnings, warningsDetails };
