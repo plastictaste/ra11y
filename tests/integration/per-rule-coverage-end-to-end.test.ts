@@ -671,10 +671,7 @@ function assembleParityFixture() {
   // and produces a partial AST that still fires rules, so the file
   // lands in `partialParseFiles`.
   const brokenHtml = `<!doctype html><html lang="en"><head><title>t</title></head><body><div onclick="doit()">unterminated`;
-  const files = [
-    htmlFile("site/clean.html", cleanHtml),
-    htmlFile("site/broken.html", brokenHtml),
-  ];
+  const files = [htmlFile("site/clean.html", cleanHtml), htmlFile("site/broken.html", brokenHtml)];
   const { result, perRuleCoverage } = runScan({
     standards: [wcag22],
     rules: BUILTIN_RULES,

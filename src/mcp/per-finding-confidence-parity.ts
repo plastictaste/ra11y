@@ -156,7 +156,7 @@ export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
       const code = perRuleLimitations.get(finding.ruleId);
       if (code === undefined) return finding;
       const existing = finding.couldBeWrongBecause;
-      if (existing !== undefined && existing.includes(code)) return finding;
+      if (existing?.includes(code)) return finding;
       bucketMutated = true;
       const next: AgentFinding = {
         ...finding,
