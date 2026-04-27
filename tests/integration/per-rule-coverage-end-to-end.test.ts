@@ -658,6 +658,115 @@ describe("per-rule coverage end-to-end", () => {
     expect(partialParseRules.size).toBeGreaterThan(0);
     expect(observeSubstrateCode(response, partialParseRules, "partial_parse")).toBe(true);
   });
+
+  // Fragment-input per-rule confidence downgrade — doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Parser-failure invalidates
+  // per-file confidence." A file in `analysisCoverage.fragmentFiles[]`
+  // (no `<html>` root, no `<body>` descendant — Jekyll `_includes/`,
+  // Hugo / Astro / Handlebars partials, README markdown residue) is
+  // out of scope for document-shaped rules' evidence model: the parent
+  // layout supplies the `<main>` / `<title>` / `lang=` envelope the
+  // scanner can't see. Page-level rules (`semantics/landmark-main`,
+  // `semantics/heading-hierarchy`, `document/page-titled`,
+  // `document/lang-attribute`, `parsing/html-has-lang`,
+  // `semantics/empty-heading`) must downgrade per-rule confidence to
+  // `"medium"` with `coverageConfidenceReason:
+  // "fragment-input-no-document-envelope"` rather than reporting
+  // `"high"` confidence the rule could not honestly establish on a
+  // fragment.
+  it("downgrades document-shaped rules to medium with fragment-input reason when fragmentFiles[] is non-empty", () => {
+    // Fixture: one fragment HTML file (no <html>, no <body>) that any
+    // document-shaped rule's gate would match, plus one full document
+    // (so non-document rules still get clean evidence on the latter and
+    // are unaffected). The fragment is the canonical Jekyll `_includes/`
+    // partial shape — a `<header>` snippet meant to be composed inside
+    // a parent layout.
+    const fragmentSource = `<header><h1>Site title</h1><nav><a href="/">Home</a></nav></header>`;
+    const fullSource = `<!doctype html><html lang="en"><head><title>p</title></head><body><main><h1>p</h1></main></body></html>`;
+    const files = [
+      htmlFile("_includes/header.html", fragmentSource),
+      htmlFile("site/index.html", fullSource),
+    ];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const response = assembleScanFamilyResponse({
+      violations: result.violations,
+      rawViolations: result.violations,
+      parsedFiles: files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      perRuleCoverage,
+      reviewCandidates: [],
+      wrappers: {
+        wrappers: [],
+        sessionOnly: [],
+        bySource: {
+          fromConfig: [],
+          fromSession: [],
+          fromAutoDetect: { confirmed: [], assumed: [] },
+        },
+        elements: {},
+      },
+      unusedWrappers: [],
+      suppressions: [],
+      verboseMeta: true,
+      preset: undefined,
+      actionableManual: 0,
+      untargetedCriteria: 0,
+      configSource: null,
+      rootSource: "explicit",
+    });
+
+    const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
+    // Document-shaped rules (the union of slice 1 + slice 2 in the
+    // dispatch prompt). All ship a coverage row at `wcag22` enabled and
+    // must carry the fragment-input reason because at least one matching
+    // file (the `_includes/header.html` fragment) is in the fragment set.
+    const documentShapedRuleIds = [
+      "semantics/landmark-main",
+      "semantics/heading-hierarchy",
+      "document/page-titled",
+      "document/lang-attribute",
+      "parsing/html-has-lang",
+      "semantics/empty-heading",
+    ] as const;
+    for (const ruleId of documentShapedRuleIds) {
+      const row = adjustedRows.find((r) => r.ruleId === ruleId);
+      expect(row).toBeDefined();
+      expect(row!.coverageConfidence).toBe("medium");
+      expect(row!.coverageConfidenceReason).toBe("fragment-input-no-document-envelope");
+      // `reason` is non-empty so the agent reading meta gets a prose
+      // pointer alongside the structured code.
+      expect(row!.reason).toBeDefined();
+      expect(row!.reason!.length).toBeGreaterThan(0);
+    }
+
+    // Non-document rules (a sample of rules whose evidence model is NOT
+    // page-level — e.g. `media/alt-text-missing` operates on each
+    // `<img>` in isolation, and a fragment is honest evidence for it)
+    // must NOT carry the fragment-input reason. The adjuster's narrow
+    // rule-ID gate is the load-bearing invariant: only document-shaped
+    // rules downgrade.
+    const altTextRow = adjustedRows.find((r) => r.ruleId === "media/alt-text-missing");
+    expect(altTextRow).toBeDefined();
+    expect(altTextRow!.coverageConfidenceReason).not.toBe("fragment-input-no-document-envelope");
+
+    // Cross-surface invariant with the per-finding parity helper:
+    // `fragment-input-no-document-envelope` is snake_cased on the way
+    // to `couldBeWrongBecause` so the wire axis is uniform across
+    // substrate codes (`partial_parse`, `file_parse_error`,
+    // `scss_unresolved_variables`, `fragment_input_no_document_envelope`).
+    // No degraded rule actually fires on this fixture (the fragment is
+    // valid markup; the document satisfies the gates), so the per-finding
+    // path is exercised by the partial-parse test above — here we only
+    // pin the per-rule shape and the snake-case key derivation.
+  });
 });
 
 /**

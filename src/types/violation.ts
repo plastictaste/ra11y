@@ -514,13 +514,31 @@ export interface PerRuleCoverage {
    *     `reason` telling the agent to scan the compiled CSS output for
    *     full coverage. Pairs with the response-level
    *     `scss_unresolved_variables` warning code carrying the file list.
+   *   - `"fragment-input-no-document-envelope"` — at least one file
+   *     matching the rule's extension gate parsed as an HTML fragment
+   *     (no `<html>` root, no `<body>` descendant — Jekyll `_includes/`,
+   *     Hugo / Astro / Handlebars partials, raw component templates, or
+   *     README markdown residue). The file parsed cleanly; the rule ran
+   *     against it; the rule's evidence model assumes the file IS the
+   *     page (`semantics/landmark-main`, `semantics/heading-hierarchy`,
+   *     `document/page-titled`, `document/lang-attribute`,
+   *     `parsing/html-has-lang`, `semantics/empty-heading`). On a
+   *     fragment, the document envelope a parent layout will provide is
+   *     not visible to the scanner, so a clean tally on a fragment is
+   *     bounded — the parent's `<main>` / `<title>` / `lang=` may
+   *     satisfy the criterion. Confidence drops to `"medium"` (not
+   *     `"low"` — the rule did run; the substrate is honestly out of
+   *     scope for the rule's evidence model), with a `reason` pointing
+   *     the agent at the cited file so the parent template is the next
+   *     read. Pairs with the `analysisCoverage.fragmentFiles` list so
+   *     the agent can cross-reference which files are fragments.
    *
    * Stamped by the MCP assembly layer (`src/mcp/scan-assembly.ts`), not
    * by the engine — rules and the per-rule-coverage builder stay pure
    * over the scanner's evaluation tracker. Present-when-meaningful per
    * CLAUDE.md §1 "Ambiguous field shapes are dishonest": absent when no
-   * parse-error / partial-parse / unresolved-variable files contributed
-   * to this rule's gate.
+   * parse-error / partial-parse / unresolved-variable / fragment-input
+   * files contributed to this rule's gate.
    *
    * Doctrine: zero-output success is ambiguous failure. Without this
    * field, a rule whose only eligible files all failed to parse would
@@ -531,7 +549,8 @@ export interface PerRuleCoverage {
   readonly coverageConfidenceReason?:
     | "file-parse-error"
     | "partial-parse"
-    | "scss-unresolved-variables";
+    | "scss-unresolved-variables"
+    | "fragment-input-no-document-envelope";
   /**
    * Reason this rule was loaded but did not run on this scan. Sibling of
    * {@link coverageConfidence} for the orthogonal "rule never executed"

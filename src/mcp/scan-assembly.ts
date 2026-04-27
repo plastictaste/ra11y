@@ -7,6 +7,7 @@
  * `limitations` prose) live next to the shape they describe.
  */
 
+import { isHtmlFragment } from "../engine/ast-helpers.ts";
 import {
   partitionPerRuleCoverage,
   type RulesNotEvaluatedDueToInputType,
@@ -15,6 +16,7 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { DiscoveryDiagnostics } from "../input/discover.ts";
 import { scssVariableDeclarationsLikelyUnresolved } from "../input/parsers/scss-internals.ts";
 import type { FixesByClass } from "../output/agent-response/index.ts";
+import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
@@ -567,6 +569,30 @@ export function detectScssUnresolvedVariableFiles(files: readonly ParsedFile[]):
 }
 
 /**
+ * V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE: returns the subset
+ * of scanned HTML-family files whose parsed root is a fragment — no
+ * `<html>` ancestor, no `<body>` descendant. Mirrors the predicate
+ * {@link buildAnalysisCoverage} uses to populate
+ * `meta.analysisCoverage.fragmentFiles[]` so the file list driving the
+ * `coverageConfidenceReason: "fragment-input-no-document-envelope"`
+ * per-rule downgrade and the file list the agent sees on the meta
+ * surface stay identical — same evidence, same closure path.
+ *
+ * Returns paths in sorted order so wire output is deterministic across
+ * runs. Empty array when no fragment files are present — callers
+ * conditional-spread on `length > 0`.
+ */
+export function detectFragmentFiles(files: readonly ParsedFile[]): readonly string[] {
+  const out: string[] = [];
+  for (const file of files) {
+    if (file.ast.language !== "html") continue;
+    if (isHtmlFragment(file.ast.root as HtmlDocument)) out.push(file.filePath);
+  }
+  out.sort();
+  return out;
+}
+
+/**
  * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT row adjuster — companion of
  * {@link applyParseErrorAdjustment} on a different axis. Downgrades a
  * rule's `coverageConfidence` to `"medium"` with
@@ -639,6 +665,118 @@ function adjustRowForScssUnresolvedVariables(
     reason:
       row.reason ??
       "scss variables unresolved — scan the compiled CSS output for full contrast coverage",
+  };
+}
+
+/**
+ * Document-shaped rules whose evidence model assumes the parsed file IS
+ * the page — `<html>` root, `<head>`, `<body>`, page-level `<main>` /
+ * `<title>` / `lang=` are all in scope. On an HTML fragment (Jekyll
+ * `_includes/`, Hugo / Astro / Handlebars partials, raw component
+ * templates, README markdown residue) the document envelope is
+ * provided by a parent layout the scanner doesn't see, so a clean
+ * tally on a fragment is bounded — the parent's `<main>` / `<title>` /
+ * `lang=` may satisfy the criterion.
+ *
+ * The set is sourced from the doctrine bullet "Parser-failure
+ * invalidates per-file confidence" in
+ * `docs/kb/architecture/ai-first-consumer.md`, which names the same
+ * fragment-input case as a peer of the parse-error / partial-parse
+ * downgrades. The list is small and stable — these are the canonical
+ * page-level rules whose premise is "the file is a complete document"
+ * — so a static set in the assembly layer (rather than a flag on the
+ * rule type) keeps the engine pure and the doctrine readable in one
+ * place. New page-level rules adding here is a one-line edit; the test
+ * suite asserts the set covers the document-shaped rules it lists.
+ */
+const FRAGMENT_DOWNGRADE_RULE_IDS: ReadonlySet<string> = new Set([
+  "semantics/landmark-main",
+  "semantics/heading-hierarchy",
+  "semantics/empty-heading",
+  "document/page-titled",
+  "document/lang-attribute",
+  "parsing/html-has-lang",
+]);
+
+/**
+ * V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE companion of
+ * {@link applyParseErrorAdjustment} on the fragment-classification
+ * axis. Downgrades a document-shaped rule's `coverageConfidence` to
+ * `"medium"` with
+ * `coverageConfidenceReason: "fragment-input-no-document-envelope"`
+ * when at least one of its eligible files is in
+ * `analysisCoverage.fragmentFiles[]` (no `<html>` root, no `<body>`).
+ *
+ * Why `"medium"` and not `"low"`: the rule did run, eligibility was
+ * met, the file parsed cleanly. The honest signal is "evidence horizon
+ * was bounded by the substrate's lack of a document envelope" — a
+ * peer to the `cross_file_*_resolution_limited` ADR-0026 downgrade
+ * shape, not the parse-error invisibility shape. A `"low"` downgrade
+ * would conflate this case with the parse-error case (file invisible /
+ * partially-parsed), which is a stronger statement than the substrate
+ * warrants here.
+ *
+ * Precedence: when {@link applyParseErrorAdjustment} or
+ * {@link applyScssUnresolvedVariablesAdjustment} already stamped a
+ * non-fragment `coverageConfidenceReason`, this adjuster passes the
+ * row through unchanged — those reasons name a stronger substrate-
+ * level signal (file invisible / SCSS substitution bounded) than
+ * fragment classification, and the two reasons never share a row.
+ *
+ * No-op fast path: when {@link fragmentFilePaths} is empty, returns the
+ * input array unchanged. Exported so the wiring layer
+ * (response-assembler, tools-helpers) can run all three adjusters in
+ * series and feed the per-rule meta + the top-level `ruleCoverage`
+ * derivative the same adjusted view.
+ */
+export function applyFragmentInputAdjustment(
+  rows: readonly PerRuleCoverage[],
+  files: readonly ParsedFile[],
+  activeRules: readonly Rule[],
+  fragmentFilePaths: ReadonlySet<string>,
+): readonly PerRuleCoverage[] {
+  if (fragmentFilePaths.size === 0) return rows;
+  const ruleById = new Map<string, Rule>();
+  for (const r of activeRules) ruleById.set(r.id, r);
+  const fragmentSet = new Set(fragmentFilePaths);
+  const fragmentFiles = files.filter((f) => fragmentSet.has(f.filePath));
+  return rows.map((row) =>
+    adjustRowForFragmentInput(row, ruleById.get(row.ruleId), fragmentFiles),
+  );
+}
+
+/**
+ * Per-row adjustment helper for {@link applyFragmentInputAdjustment}.
+ * Returns the input row unchanged when the rule isn't in
+ * {@link FRAGMENT_DOWNGRADE_RULE_IDS} (only document-shaped rules
+ * downgrade — every other rule's evidence model is honest on a
+ * fragment), when no fragment files match the rule's gate, when the
+ * row is already at `"low"` (parse-error precedence), or when the
+ * row's existing `coverageConfidenceReason` is set to a non-fragment
+ * reason (substrate-level signals win over fragment classification).
+ */
+function adjustRowForFragmentInput(
+  row: PerRuleCoverage,
+  rule: Rule | undefined,
+  fragmentFiles: readonly ParsedFile[],
+): PerRuleCoverage {
+  if (!FRAGMENT_DOWNGRADE_RULE_IDS.has(row.ruleId)) return row;
+  if (row.coverageConfidence === "low") return row;
+  if (
+    row.coverageConfidenceReason !== undefined &&
+    row.coverageConfidenceReason !== "fragment-input-no-document-envelope"
+  ) {
+    return row;
+  }
+  const matches = countMatchingFiles(rule, fragmentFiles);
+  if (matches === 0) return row;
+  return {
+    ...row,
+    coverageConfidence: "medium",
+    coverageConfidenceReason: "fragment-input-no-document-envelope",
+    reason:
+      row.reason ??
+      "at least one matching file parsed as an HTML fragment (no <html>/<body> root); a parent layout supplies the document envelope this rule's evidence model assumes",
   };
 }
 

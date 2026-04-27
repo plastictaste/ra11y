@@ -82,10 +82,12 @@ import {
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
 import {
+  applyFragmentInputAdjustment,
   applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
+  detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
 } from "./scan-assembly.ts";
@@ -436,17 +438,37 @@ export function assembleScanFamilyResponse(
   // `coverageConfidence: "high"`. Parse-error precedence is honored:
   // a row already at `"low"` keeps its existing reason.
   const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(parsedFiles);
+  // V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE: a third
+  // adjustment chained on the fragment-classification axis. When the
+  // parsed file lacks `<html>`/`<body>` (Jekyll `_includes/`, Hugo /
+  // Astro / Handlebars partials, README markdown residue), document-
+  // shaped rules (`semantics/landmark-main`, `semantics/heading-
+  // hierarchy`, `document/page-titled`, `document/lang-attribute`,
+  // `parsing/html-has-lang`, `semantics/empty-heading`) drop to
+  // `coverageConfidence: "medium"` with
+  // `coverageConfidenceReason: "fragment-input-no-document-envelope"`
+  // so a clean tally on a fragment doesn't read as `"high"` confidence
+  // the rule could not honestly establish — the parent layout's
+  // envelope is unobservable here. Parse-error / SCSS precedence is
+  // honored: a row already at `"low"` keeps its existing reason.
+  const fragmentFiles = detectFragmentFiles(parsedFiles);
   const parseErrorAdjusted = applyParseErrorAdjustment(
     perRuleCoverage,
     parsedFiles,
     activeRules,
     violationFilePaths,
   );
-  const adjustedPerRuleCoverage = applyScssUnresolvedVariablesAdjustment(
+  const scssAdjusted = applyScssUnresolvedVariablesAdjustment(
     parseErrorAdjusted,
     parsedFiles,
     activeRules,
     new Set(scssUnresolvedFiles),
+  );
+  const adjustedPerRuleCoverage = applyFragmentInputAdjustment(
+    scssAdjusted,
+    parsedFiles,
+    activeRules,
+    new Set(fragmentFiles),
   );
   // Per-finding confidence parity (Q9-PER-FINDING-PARITY in the
   // backlog; doctrine source: docs/kb/architecture/ai-first-consumer.md

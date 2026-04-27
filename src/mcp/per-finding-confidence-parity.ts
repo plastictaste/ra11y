@@ -24,9 +24,9 @@
  *
  * The reason code propagated comes from one of two per-rule fields:
  *   - `coverageConfidenceReason` (parser/substrate-level enum:
- *     `file-parse-error`, `partial-parse`, `scss-unresolved-variables`)
- *     wins when present — it names a substrate-level cause stronger than
- *     the rule-family code.
+ *     `file-parse-error`, `partial-parse`, `scss-unresolved-variables`,
+ *     `fragment-input-no-document-envelope`) wins when present — it
+ *     names a substrate-level cause stronger than the rule-family code.
  *   - `reason` (rule-family snake_case code:
  *     `cross_file_listener_resolution_limited_on_this_input`,
  *     `cross_file_idref_resolution_limited_on_this_input`, …) is used

@@ -34,10 +34,12 @@ import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
 import {
+  applyFragmentInputAdjustment,
   applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
+  detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
 } from "./scan-assembly.ts";
@@ -698,17 +700,35 @@ export async function runScanAndFormat(
   // partials so the per-rule coverage downgrade and the response-level
   // `scss_unresolved_variables` warning agree on the same file list.
   const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(files);
+  // V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE: same chain order
+  // as `response-assembler` so every project-rooted surface
+  // (`scan_project`, `scan_file`, `coverage`, `checklist`) feeds the
+  // same adjusted view to its meta + derivative consumers. Document-
+  // shaped rules (`semantics/landmark-main`, `document/page-titled`,
+  // `parsing/html-has-lang`, `semantics/empty-heading`,
+  // `document/lang-attribute`, `semantics/heading-hierarchy`) downgrade
+  // to `coverageConfidence: "medium"` with
+  // `coverageConfidenceReason: "fragment-input-no-document-envelope"`
+  // when at least one matching file parsed as a fragment (no
+  // `<html>`/`<body>`).
+  const fragmentFiles = detectFragmentFiles(files);
   const parseErrorAdjusted = applyParseErrorAdjustment(
     perRuleCoverage,
     files,
     activeRules,
     violationFilePaths,
   );
-  const adjustedPerRuleCoverage = applyScssUnresolvedVariablesAdjustment(
+  const scssAdjusted = applyScssUnresolvedVariablesAdjustment(
     parseErrorAdjusted,
     files,
     activeRules,
     new Set(scssUnresolvedFiles),
+  );
+  const adjustedPerRuleCoverage = applyFragmentInputAdjustment(
+    scssAdjusted,
+    files,
+    activeRules,
+    new Set(fragmentFiles),
   );
   // Per-finding confidence parity with per-rule coverage limitations.
   // When a rule's adjusted `coverageConfidence !== "high"`, propagate
