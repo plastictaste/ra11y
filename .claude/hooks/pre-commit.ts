@@ -1,21 +1,23 @@
 #!/usr/bin/env bun
-// PreToolUse hook for `git commit *`. Runs a scoped verification pass
-// before the commit is allowed through:
-//   - biome check on staged source files only
-//   - tsc --noEmit on the whole project when any .ts/.tsx is staged
-//   - check-zero-deps when package.json or bun.lock is staged
-//   - check-commit (conventional message format) always
+// PreToolUse hook for `git commit *`. The actual check sequence is owned
+// by `scripts/verify.ts --precommit` (single source of truth — same script
+// CI, the `/verify` skill, and `bun run verify:precommit` all call). This
+// hook is the event handler that:
 //
-// Deliberately NOT run here:
-//   - `bun test --bail`: the post-edit hook runs targeted tests on every
-//     Edit/Write, and CI runs the full suite on push. Re-running the whole
-//     suite on every commit duplicates both.
-//   - biome check on the whole repo: pre-commit should protect the
-//     changes being committed, not block on unrelated drift.
+//   1. Confirms the Bash command is actually `git commit *` (defensive —
+//      the settings.json `if` filter should already scope this).
+//   2. Greps staged source/test files for backlog IDs (hook-only — needs
+//      the staged set, which doesn't exist outside a commit).
+//   3. Delegates to `bun scripts/verify.ts --precommit` for the full
+//      precommit check set: typecheck, typecheck-tests, lint, the full
+//      test suite, zero-deps, network-isolation, cycles, etc. Each check
+//      self-skips via its `affectedBy(changed)` predicate when nothing
+//      in the diff matches, so narrow commits stay fast.
+//   4. Runs `scripts/check-commit.ts` with RA11Y_COMMIT_MESSAGE in env
+//      (hook-only — the commit message lives in the Bash command, not
+//      on disk, so this can't move into verify.ts).
 //
-// If the command turns out not to be a git commit (the `if` filter in
-// settings.json should scope this hook, but be defensive), we exit 0.
-// Never --no-verify.
+// Never --no-verify. If a check fails, fix the underlying issue.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -24,12 +26,6 @@ import { audit } from "./lib/audit.ts";
 import { readHookInput } from "./lib/input.ts";
 import { block, ok } from "./lib/output.ts";
 import type { PreToolUseInput } from "./lib/types.ts";
-
-interface Check {
-  label: string;
-  command: string;
-  required: () => boolean;
-}
 
 const input = await readHookInput<PreToolUseInput>();
 const projectDir = process.env.CLAUDE_PROJECT_DIR ?? input.cwd;
@@ -44,59 +40,13 @@ if (!/\bgit\s+commit\b/.test(rawCommand)) {
   process.exit(0);
 }
 
-const hasPackageJson = existsSync(join(projectDir, "package.json"));
-const hasNodeModules = existsSync(join(projectDir, "node_modules"));
-const hasSrc = existsSync(join(projectDir, "src"));
-
 const stagedFiles = getStagedFiles(projectDir);
-// Only the paths biome.json includes — src/, tests/, scripts/, and
-// .claude/hooks/. Anything else (e.g. integrations/, which is a
-// sibling project with its own toolchain) is intentionally outside
-// biome's scope and would make `biome check` fail with "no files
-// processed" if passed explicitly. The extension list here mirrors
-// biome.json's `files.includes`, which is TypeScript-only; passing
-// .json or .js through to biome triggers the same "no files
-// processed" failure, so we filter to the extensions biome actually
-// handles.
-const BIOME_SCOPED = /^(src|tests|scripts|\.claude\/hooks)\//;
-const stagedTsFiles = stagedFiles.filter((f) => /\.(ts|tsx|cts|mts)$/.test(f));
-const stagedLintTargets = stagedFiles.filter(
-  (f) => /\.(ts|tsx|cts|mts)$/.test(f) && BIOME_SCOPED.test(f),
-);
-const stagedTsFilesInProject = stagedTsFiles.filter((f) => BIOME_SCOPED.test(f));
-const stagedPackageManifest = stagedFiles.some(
-  (f) => f === "package.json" || f === "bun.lock" || f === "bun.lockb",
-);
-
 const commitMessage = extractCommitMessage(rawCommand);
-
-const checks: Check[] = [
-  {
-    label: `biome check (${stagedLintTargets.length} staged file${stagedLintTargets.length === 1 ? "" : "s"})`,
-    command: `bunx --bun biome check ${stagedLintTargets.map(shellEscape).join(" ")}`,
-    required: () => hasPackageJson && hasNodeModules && stagedLintTargets.length > 0,
-  },
-  {
-    label: "tsc --noEmit",
-    command: "bunx tsc --noEmit",
-    required: () => hasPackageJson && hasNodeModules && hasSrc && stagedTsFilesInProject.length > 0,
-  },
-  {
-    label: "scripts/check-zero-deps.ts",
-    command: "bun scripts/check-zero-deps.ts",
-    required: () =>
-      stagedPackageManifest && existsSync(join(projectDir, "scripts", "check-zero-deps.ts")),
-  },
-  {
-    label: "scripts/check-commit.ts",
-    command: "bun scripts/check-commit.ts",
-    required: () => existsSync(join(projectDir, "scripts", "check-commit.ts")),
-  },
-];
 
 // Backlog-ID grep across staged source/test files. PM trace (V1-…, Q7-…,
 // R/…, P3-…) belongs in commit messages and .claude/backlog.md, not
 // committed code where it rots once items get renumbered or closed.
+// Hook-only because it operates on the staged set, not the worktree.
 const BACKLOG_ID_REGEX =
   /\b(?:V\d+-[A-Z][A-Z0-9_-]+|Q\d+-[A-Z][A-Z0-9_-]+|P\d+-[A-Z][A-Z0-9_-]+|R\/[a-z][a-z0-9-]+)\b/;
 const BACKLOG_GREP_SCOPED = /^(src|tests|scripts)\//;
@@ -135,11 +85,31 @@ if (backlogIdHits.length > 0) {
 }
 
 const failures: string[] = [];
-for (const check of checks) {
-  if (!check.required()) continue;
+
+// Single source of truth for the precommit check sequence. The script
+// itself owns scope-filtering via `affectedBy(changed)` predicates, so a
+// rule-only commit skips most checks; a docs-only commit skips typecheck,
+// test, zero-deps, etc. Spawned via `bun scripts/verify.ts` directly
+// rather than `bun run verify:precommit` to avoid the package.json
+// script-resolution overhead.
+const verify = spawnSync("bun scripts/verify.ts --precommit", {
+  cwd: projectDir,
+  shell: true,
+  encoding: "utf8",
+  env: process.env,
+});
+if (verify.status !== 0) {
+  const output = `${verify.stdout ?? ""}${verify.stderr ?? ""}`.trim();
+  failures.push(`✗ bun scripts/verify.ts --precommit\n${output}`);
+}
+
+// Conventional-commit message format check. Hook-only because the
+// message lives in the Bash command (-m / heredoc), not on disk —
+// scripts/verify.ts has no way to reach it.
+if (existsSync(join(projectDir, "scripts", "check-commit.ts"))) {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (commitMessage) env.RA11Y_COMMIT_MESSAGE = commitMessage;
-  const result = spawnSync(check.command, {
+  const result = spawnSync("bun scripts/check-commit.ts", {
     cwd: projectDir,
     shell: true,
     encoding: "utf8",
@@ -147,7 +117,7 @@ for (const check of checks) {
   });
   if (result.status !== 0) {
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    failures.push(`✗ ${check.label}\n${output}`);
+    failures.push(`✗ scripts/check-commit.ts\n${output}`);
   }
 }
 
@@ -175,11 +145,6 @@ function getStagedFiles(cwd: string): string[] {
     .split("\n")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-}
-
-function shellEscape(path: string): string {
-  if (/^[A-Za-z0-9._/-]+$/.test(path)) return path;
-  return `'${path.replace(/'/g, "'\\''")}'`;
 }
 
 /**
