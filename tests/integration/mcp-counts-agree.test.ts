@@ -125,8 +125,7 @@ async function gatherCounts(cwd: string): Promise<{
     // just computed from the honest parts on both sides.
     scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
     coverage: coverageBody.criteriaManualReviewRequired,
-    checklist:
-      checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
+    checklist: checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
     scanActionable: scanBody.plan.actionableManualItems,
     checklistActionable: checklistBody.summary.actionable.criteria,
     scanUntargeted: scanBody.plan.untargetedCriteria,

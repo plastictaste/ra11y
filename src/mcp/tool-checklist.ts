@@ -381,6 +381,33 @@ function detectPerCriterionClamp(
 }
 
 /**
+ * Builds the structured `summary.actionable` shape from the cross-tool
+ * canonical criteria tally and the paginated checklist page. Three
+ * counts: `criteria` (cross-tool canonical, matches
+ * `scan_project.plan.actionableManualItems`), `candidatesUncapped`
+ * (pre-clip inventory; matches the response-level `totalCandidates`),
+ * and `candidatesReturned` (post-clip page count). Extracted to a
+ * helper so the main handler stays under the lint's cognitive-
+ * complexity ceiling — the per-item summing loop counts as branching.
+ */
+function buildChecklistSummaryActionable(
+  criteriaCount: number,
+  page: PaginatedChecklist,
+): {
+  readonly criteria: number;
+  readonly candidatesUncapped: number;
+  readonly candidatesReturned: number;
+} {
+  let candidatesReturned = 0;
+  for (const item of page.items) candidatesReturned += item.candidates.length;
+  return {
+    criteria: criteriaCount,
+    candidatesUncapped: page.totalCandidates,
+    candidatesReturned,
+  };
+}
+
+/**
  * Cross-surface count invariant: `summary.actionable.criteria` and
  * `summary.untargetedCriteria` are derived from the shared
  * `tallyManualCriteriaFromCoverage` helper — the same algorithm
@@ -741,13 +768,7 @@ export const checklistTool: McpTool = {
     // asymmetric clipped-vs-unclipped per the dispatch — keeps callers from
     // branching on shape. Cross-surface invariant:
     // `scan_file.plan.actionableManualItems` === `summary.actionable.criteria`.
-    let candidatesReturned = 0;
-    for (const item of page.items) candidatesReturned += item.candidates.length;
-    const summaryActionable = {
-      criteria: summaryTally.actionable,
-      candidatesUncapped: page.totalCandidates,
-      candidatesReturned,
-    };
+    const summaryActionable = buildChecklistSummaryActionable(summaryTally.actionable, page);
     const summary = {
       actionable: summaryActionable,
       untargetedCriteria: summaryTally.untargeted,
