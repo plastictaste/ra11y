@@ -303,7 +303,7 @@ async function handleToolsCall(
     );
   }
   // Build-provenance is the positive-signal companion to the
-  // stale-subprocess negative signal (ADR 0025 / Q3-META-BUILD-PROVENANCE).
+  // stale-subprocess negative signal (ADR 0025 /).
   // Runs unconditionally on every tool response so an agent can cross-
   // check the exact build currently answering — even error envelopes
   // carry the triple so "tool not found" failures still show which
@@ -321,7 +321,7 @@ async function handleToolsCall(
  * deserializing the whole response shape. Returns an empty object
  * on any parse failure — logging is telemetry, not correctness.
  */
-// Q7-PLAN-VIOLATIONS-COMPOSITE: log telemetry derives the flat
+// log telemetry derives the flat
 // `violations` scalar from `plan.fixesByClass` (the wire surface
 // dropped the composite headline). Telemetry keeps a flat number
 // because it's a log line, not an agent-facing surface.

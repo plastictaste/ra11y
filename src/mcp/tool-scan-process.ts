@@ -37,7 +37,7 @@
  *
  * ---
  *
- * ## Assembler-seam decision (V1-RESPONSE-SCAN-PROCESS, 2026-04-21)
+ * ## Assembler-seam decision (2026-04-21)
  *
  * `scan_process` intentionally stays OUTSIDE `assembleScanFamilyResponse`
  * (ADR 0024). `scan`, `scan_file`, `scan_project`, and `scan_diff` all
@@ -81,10 +81,10 @@
  *      per-page facts the agent can traverse without the tool pre-
  *      choosing an aggregation.
  *
- * The assembler-seam discipline (V1-RESPONSE-LINT, future) will need to
+ * The assembler-seam discipline (future) will need to
  * allowlist `src/mcp/tool-scan-process.ts` when the lint script lands.
  * The allowlist does not yet exist — `scripts/check-response-assembly.ts`
- * is the next backlog item (V1-RESPONSE-LINT) to create it. This
+ * is the next backlog item to create it. This
  * docblock is the durable source of the exception rationale; the
  * allowlist entry will cite it by path.
  *

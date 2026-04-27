@@ -19,7 +19,7 @@
  * `coverageConfidence` became a three-valued discriminator with ADR
  * 0026 (`"high" | "medium" | "low"`). The derivative currently collapses
  * `"medium"` and `"low"` into one bucket — the downstream audit
- * (Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT) decides whether
+ * decides whether
  * to split out a sibling `mediumConfidenceClean` list. Per-row values
  * on `perRuleCoverage` stay distinct regardless; the collapse is
  * derivative-level only.
@@ -70,7 +70,7 @@ export function buildRuleCoverageDerivative(
     // evidence was bounded on this substrate (e.g.
     // `keyboard/handler-missing` on a single HTML file when the
     // handler may live in an external `.js` sibling). Until the
-    // downstream audit (Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-
+    // downstream audit (-
     // BLINDSPOT) decides whether to split out a
     // `mediumConfidenceClean` sibling, "medium" collapses into
     // `lowConfidenceClean` here — "do not trust the clean tally

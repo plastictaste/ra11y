@@ -135,7 +135,7 @@ export function sawProjectMarkerInWalk(cwd: string): boolean {
 }
 
 /**
- * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: resolves the nearest STRICT
+ * resolves the nearest STRICT
  * ancestor of `cwd` that carries one of {@link PROJECT_MARKER_FILENAMES}
  * (a `ra11y.config.*` or `package.json`). Returns the absolute path of
  * that ancestor directory, or `undefined` when no strict ancestor up to

@@ -1,5 +1,5 @@
 /**
- * Scan-family response assembler (V1-RESPONSE-ASSEMBLER / ADR 0024).
+ * Scan-family response assembler (/ ADR 0024).
  *
  * One seam that every scan-family tool handler (`scan`, `scan_file`,
  * `scan_project`, `scan_diff`) will flow through once the doctrine-
@@ -197,7 +197,7 @@ export interface ScanFamilyResponse {
  * candidates would unfoundedly downgrade rule rows so they stay out of
  * this set. The doctrine-distinct "did anything emerge from this file?"
  * set used by `analysisCoverage`'s `parseErrorFiles` vs `partialParseFiles`
- * split lives in {@link outputFilePathSet} (V1-PARSE-ERROR-LIVERELOAD-
+ * split lives in {@link outputFilePathSet} (-
  * MIXED-SIGNAL). Extracted so {@link assembleScanFamilyResponse} stays
  * under the cognitive-complexity cap.
  */
@@ -216,13 +216,13 @@ function violationFilePathSet(violations: readonly Violation[]): Set<string> {
  * resolvedEntries, … }`, not the scan-family `{ plan, files, meta }`
  * envelope — can still share the per-file grouping seam. The full
  * {@link assembleScanFamilyResponse} entrypoint is wrong for those
- * handlers (ADR 0024 / V1-RESPONSE-FIX-FAMILY: forcing them through
+ * handlers (ADR 0024 /: forcing them through
  * the assembler would sum categorically different meta shapes), but
  * the `files` sub-tree is identical in kind: a sorted list of
  * `{ path, findings }` buckets where each finding is
  * `buildAgentFinding(v, { suppressPlacement: "omit" })`.
  *
- * V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: when `sourcesByPath` is
+ * when `sourcesByPath` is
  * supplied, the per-file source is threaded into each
  * `buildAgentFinding` call so mechanical-edit fixes (`fix.oldText` /
  * `fix.newText`) ride the same `widenToUniqueAnchor` ladder that
@@ -266,7 +266,7 @@ export function groupByFile(
  * added `configSearchSawProjectMarker` on top of the earlier
  * `storybookPresetActive` / `sessionWrappersMismatchCwd` conditionals).
  *
- * Pure over its inputs. The Q4-WARNING-DOWNGRADE-NOISE overlap check
+ * Pure over its inputs. The overlap check
  * reads `findings` out of `violations` + source out of `parsedFiles`
  * because both are already on the orchestrator's stack.
  */
@@ -382,7 +382,7 @@ export function assembleScanFamilyResponse(
   // `widenToUniqueAnchor` ladder that `suggest_fix.primary.edit` uses
   // — `fix.oldText` on a scan-family response and `primary.edit.oldText`
   // on a `suggest_fix` response now ship identical multi-line unique
-  // anchors (V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT).
+  // anchors.
   const sourcesByPath = new Map<string, string>(parsedFiles.map((f) => [f.filePath, f.source]));
   let fileEntries: readonly AssembledFile[] = groupByFile(violations, sourcesByPath);
 
@@ -421,16 +421,16 @@ export function assembleScanFamilyResponse(
   // bucket is doctrine for "did anything emerge from this file?", and
   // a file with grounded review candidates from a source-text finder
   // must NOT land in the `invisible-to-rules` bucket
-  // (V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL).
+  //.
   const violationFilePaths = violationFilePathSet(parseErrorViolations);
   const outputFilePaths = outputFilePathSet(parseErrorViolations, reviewCandidates);
-  // V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS: route the rows
+  // route the rows
   // through the parse-error adjustment once so the meta block and the
   // top-level `ruleCoverage` derivative agree on which rules
   // confidently cleaned (parse-error files no longer count toward
   // `filesEvaluated`; partial-parse matches drop confidence to
   // `"low"`). No-op fast path when the scan has no parse errors.
-  // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: chain a second adjustment
+  // chain a second adjustment
   // for `.scss` files where `$variable: …;` declarations produced no
   // literal-color usages — drops `coverageConfidence` to `"medium"`
   // with `coverageConfidenceReason: "scss-unresolved-variables"` so
@@ -438,7 +438,7 @@ export function assembleScanFamilyResponse(
   // `coverageConfidence: "high"`. Parse-error precedence is honored:
   // a row already at `"low"` keeps its existing reason.
   const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(parsedFiles);
-  // V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE: a third
+  // a third
   // adjustment chained on the fragment-classification axis. When the
   // parsed file lacks `<html>`/`<body>` (Jekyll `_includes/`, Hugo /
   // Astro / Handlebars partials, README markdown residue), document-
@@ -470,7 +470,7 @@ export function assembleScanFamilyResponse(
     activeRules,
     new Set(fragmentFiles),
   );
-  // Per-finding confidence parity (Q9-PER-FINDING-PARITY in the
+  // Per-finding confidence parity (in the
   // backlog; doctrine source: docs/kb/architecture/ai-first-consumer.md
   // "Per-finding confidence must reflect per-rule coverage limitations").
   // When the adjusted per-rule rows downgrade a rule's

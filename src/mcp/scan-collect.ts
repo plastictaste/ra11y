@@ -1,5 +1,5 @@
 /**
- * Scan-family collector (V1-RESPONSE-SCAN-CORE).
+ * Scan-family collector.
  *
  * Runs the scanner plus the post-processing every scan-family tool
  * shares (severity filter, caller-driven criterion skip, wrapper-noise
@@ -49,7 +49,7 @@ import {
  * (violations array, active rules, wrapper sources, parsed files),
  * not the pre-assembled `plan`/`meta`/`files` sub-tree. The assembler
  * is the single seam that turns these facts into the response shape —
- * that is the V1-RESPONSE-SCAN-CORE invariant.
+ * that is the invariant.
  */
 export interface ScanCollected {
   readonly violations: readonly Violation[];

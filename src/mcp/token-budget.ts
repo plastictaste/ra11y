@@ -6,7 +6,7 @@
  * guard that fires only when per-file density pushes the response
  * past the ~25k-token MCP host ceiling even after the file-count cap
  * has been applied. The motivating fixture was `/tmp/bootstrap`: 18
- * files / 131 findings / ~107 KB after the Q2-PROSE `fix.description`
+ * files / 131 findings / ~107 KB after the `fix.description`
  * hoist, still over the ceiling because `18 < 25` meant the file-
  * count cap never engaged.
  *

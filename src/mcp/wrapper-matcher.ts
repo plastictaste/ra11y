@@ -2,7 +2,7 @@
  * Wrapper-name matcher supporting literal names and simple `*` globs.
  *
  * The `nativeWrappers` config is a list of PascalCase component names
- * (legacy) or a name→element map (Q2-WRAPMAP). Either shape's keys
+ * (legacy) or a name→element map. Either shape's keys
  * accept `*` as a wildcard — `*Button` matches `IconButton` / `BigButton`,
  * `Icon*` matches `IconButton` / `IconImage`, `*Card*` matches anything
  * containing `Card`. Exact names (`Button`) keep their literal semantics.

@@ -333,7 +333,7 @@ interface ReadParamsOk {
 /**
  * Reads + validates the three required string params (`file`,
  * `ruleId`, `reason`). Empty / whitespace-only `reason` rejects with
- * `reason-required` per Q2-REASON; missing `file` / `ruleId` reject
+ * `reason-required` per; missing `file` / `ruleId` reject
  * with `missing-required-param`. Split from `preflight` so that
  * helper stays under the cognitive-complexity budget.
  */

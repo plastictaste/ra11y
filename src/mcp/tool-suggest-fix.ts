@@ -25,7 +25,7 @@ import {
 import { warningsField } from "./warnings.ts";
 
 /**
- * V1-SCAN-FILE-CWD-CONTAINMENT preflight. Returns an error envelope
+ * preflight. Returns an error envelope
  * when the (explicit) cwd and file escape each other, or null when
  * the call is safe to proceed. Extracted to its own helper so the
  * main handler stays under the cognitive-complexity cap.
@@ -48,7 +48,7 @@ async function checkCwdContainment(
  * `missing-required-param` envelope when any of the three required
  * params is absent, or null when all three are present. Extracted to
  * its own helper so the main handler stays under the cognitive-
- * complexity cap (Q7-SUGGEST-FIX-VENDOR-CONTEXT pushed the inline form
+ * complexity cap (pushed the inline form
  * past the 15-point Biome budget).
  */
 function checkRequiredParams(
@@ -128,7 +128,7 @@ export const suggestFixTool: McpTool = {
       });
     }
 
-    // V1-SCAN-FILE-CWD-CONTAINMENT: reject paths that escape the
+    // reject paths that escape the
     // declared `cwd` sandbox before any parse or fs access. See the
     // matching comment in tool-scan-file.ts for the read-only vs
     // write-tool enforcement difference.
@@ -167,7 +167,7 @@ export const suggestFixTool: McpTool = {
         analysisCoverage: undefined,
         filesByExtension: undefined,
       }).warnings ?? [];
-    // V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: probe the parsed-file set
+    // probe the parsed-file set
     // for Tailwind utility usage. Reuses the same `hasTailwindSignal`
     // detector that the `tailwind_detected_css_undercounted` warning
     // dispatches on, so suggest_fix's "is this a Tailwind project?"
@@ -178,7 +178,7 @@ export const suggestFixTool: McpTool = {
     // escape-hatch sentence so vanilla CSS repos don't read
     // context-blind advice.
     const tailwindDetected = hasTailwindSignal([parsed]);
-    // Q7-SUGGEST-FIX-VENDOR-CONTEXT: detect whether the target file is
+    // detect whether the target file is
     // a build artifact (matches the same predicates that power
     // `meta.scannedBuildArtifacts`) or a vendor-library bundle (matches
     // the curated banner table powering
@@ -189,7 +189,7 @@ export const suggestFixTool: McpTool = {
     // payload builder restructures the response so the primary fix
     // lane recommends overriding the failing selector in the
     // consumer's own stylesheet, with the rule's original edit/guidance
-    // demoted to an alternative. Pairs with Q6-NEXTSTEP-AVOIDS-VENDOR-
+    // demoted to an alternative. Pairs with-
     // CSS (closed): Q6 reroutes the `nextStep` target away from
     // vendor; this reroutes the `suggest_fix` primary lane away from
     // vendor edits.
@@ -202,7 +202,7 @@ export const suggestFixTool: McpTool = {
       source: parsed.source,
       filePath,
       tailwindDetected,
-      // Q7-SUGGEST-FIX-NONE-NEAREST-FINDING: forward every per-file
+      // forward every per-file
       // finding so the builder can attach `nearestFinding` /
       // `didYouMean` breadcrumbs on the `kind: "none"` branch. The
       // suggest_fix scan is single-file, so `result.violations` IS the

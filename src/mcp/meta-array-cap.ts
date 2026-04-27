@@ -4,7 +4,7 @@
  * `meta.analysisCoverage.fragmentFiles` (the path-identity arrays
  * that don't aggregate cleanly into a reason rollup). The
  * `parseErrorFiles` / `partialParseFiles` arrays were moved out of
- * the cap regime in V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED — at
+ * the cap regime in — at
  * default verbosity their bulk-template wire-size cost is now
  * absorbed by the inline-vs-rollup gate in
  * {@link assembleParseErrorBlocks}, and under `verboseMeta: true`
@@ -127,7 +127,7 @@ const META_ARRAY_TRUNCATION_ENTRIES: ReadonlyArray<{
   readonly fieldPath: string;
 }> = [
   // `meta.analysisCoverage.*`. `parseErrorFilesTruncated` and
-  // `partialParseFilesTruncated` were removed in V1-COVERAGE-PARSE-
+  // `partialParseFilesTruncated` were removed in-
   // ERROR-FILES-UNCAPPED — those two arrays now switch to the
   // `parseErrorTopReasons` / `partialParseTopReasons` rollup at the
   // inline-threshold rather than head-slicing under {@link META_ARRAY_CAP},

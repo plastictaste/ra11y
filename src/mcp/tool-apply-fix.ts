@@ -129,7 +129,7 @@ export const applyFixTool: McpTool = {
     // JSX-disabled path — without it, every `apply_fix` against a
     // plain-JS file with a `<Identifier` comparison operator would
     // fake an `Unclosed JSX element <…>` post-edit and reject the edit
-    // (Q8-PARSER-ROUTING-JS-AS-TSX).
+    //.
     const { newSource, newAst } = spliceWithNativeLineEndings(original.source, edit, ext, resolved);
     const originalErrorCount = original.ast.errors.length;
     const newErrorCount = newAst.errors.length;
@@ -170,7 +170,7 @@ export const applyFixTool: McpTool = {
 
     const delta = computeDelta(before, after);
 
-    // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: thread per-slice source
+    // thread per-slice source
     // into `buildAgentFinding` so `fix.oldText` widens identically to
     // `suggest_fix.primary.edit`. `resolvedViolations` are findings from
     // the pre-edit source (now resolved by the applied edit);

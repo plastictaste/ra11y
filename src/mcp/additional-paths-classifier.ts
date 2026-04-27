@@ -11,7 +11,7 @@
  * observed extensions so the agent can distinguish "Ruby-only tree"
  * from "directory absent" from "path silently skipped."
  *
- * V1-ADDITIONAL-PATHS-PRESENT-BUT-UNPARSEABLE: prior versions fell
+ * prior versions fell
  * through without a skip entry when the directory held only
  * non-parseable files, leaning on the response-level
  * `extensions_skipped_no_parser` warning. That was dishonest — the
@@ -119,7 +119,7 @@ function classifyOneAdditionalPath(
  * at least one file was seen but none carried a parseable extension.
  */
 function classifyDirectoryForParseable(entry: string, abs: string): AdditionalPathSkip | null {
-  // V1-ADDITIONAL-PATHS-PRESENT-BUT-UNPARSEABLE: directory exists
+  // directory exists
   // and isn't excluded — walk it (bounded) to count extensions. If
   // we observed ≥1 file and none were parseable, the path
   // contributed nothing to the scan and the caller deserves to know

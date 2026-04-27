@@ -1,12 +1,12 @@
 /**
  * Builds a `ra11y.config.ts` fragment from a list of confirmed wrapper
  * names. Emitted as a structured `suggestedConfigSnippet` field on the
- * `detect_native_wrappers` response (Q2R2-CFG-SNIPPET) so agents can
+ * `detect_native_wrappers` response so agents can
  * paste it directly instead of parsing the English `nextStep` prose.
  *
  * Two output shapes, chosen by whether any wrapper carries a mapped
  * native element (the object-form `Config.nativeWrappers` from
- * Q2-WRAPMAP):
+ *):
  *
  *   - **array form** — when every input is name-only. Emits
  *     `defineConfig({ nativeWrappers: ["Button", "Link"] })`. Opaque

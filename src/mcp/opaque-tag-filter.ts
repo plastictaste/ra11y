@@ -167,7 +167,7 @@ export function extractComponentIdentifier(tagName: string): string | null {
   // have been rejected above; this catches the remaining edge of a
   // root that isn't a plain identifier).
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(root)) return null;
-  // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK belt-and-braces
+  // belt-and-braces
   // filters. Each predicate excludes a deterministic minified-noise
   // class that would otherwise pass the length and identifier-shape
   // checks above. See JSDoc for the per-predicate rationale and the
@@ -183,7 +183,7 @@ export function extractComponentIdentifier(tagName: string): string | null {
  * {@link buildAnalysisCoverage}, defending against any code path that
  * populates the opaque-component candidate list without first
  * normalizing through {@link extractComponentIdentifier}. The field
- * report driving V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK
+ * report driving
  * surfaced raw dotted forms (`Math.abs`, `H.length`, `AG.y`) and
  * single-letter+digits noise (`A1`, `B2`) in
  * `opaqueCustomComponentNames` — these readings would mislead an

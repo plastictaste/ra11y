@@ -45,7 +45,7 @@ export function mergeScanTokenBudget<TFile>(args: {
   readonly requestedLimit: number;
   readonly effectiveLimit: number;
 }): Record<string, unknown> {
-  // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: analyze the pre-trim files list
+  // analyze the pre-trim files list
   // from the tentative response so the top-contributor triple reflects
   // the full population the density cap saw entering the guard, not
   // just the tail-trimmed survivors. Pulling from `tentative.files` is

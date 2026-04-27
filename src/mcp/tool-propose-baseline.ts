@@ -24,7 +24,7 @@
  *     from "one inline rationale per entry" to "one entry in `rationales`
  *     per distinct rationale." Matches the hoist pattern used by
  *     `referenceGuide.fixDescriptions[ruleId][hash]` so agents
- *     recognize the short-hex-token format (V1-PROPOSE-BASELINE-
+ * recognize the short-hex-token format (-
  *     RATIONALE-DEDUP).
  *   - `counts: { wrapperUndetected, thirdPartyHtml, legacyRoute,
  *     designSystemInternal, unclassified }` — FIVE distinct headline
@@ -196,7 +196,7 @@ export const proposeBaselineTool: McpTool = {
 
     // Dedupe by `findingId` — first-seen wins, order preserved. A stable
     // `findingId` is a 12-hex SHA-256 truncation of the finding group
-    // key (see Q2-GROUPKEY); multiple `Violation` objects collapsing to
+    // key (see); multiple `Violation` objects collapsing to
     // the same id represent the same finding, not separate ones. Emitting
     // duplicates inflates `counts.unclassified` and would persist dup
     // entries to `.ra11y-baseline.json` if `baseline mode:"create"` ran

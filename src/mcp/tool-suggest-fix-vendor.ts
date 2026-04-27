@@ -32,7 +32,7 @@ import {
  * See {@link tool-suggest-fix-internals.TAILWIND_HINT_PREFIX}. Local
  * copy keeps this module independent of the parent so the in-vendor
  * alternative's demoted explanation can apply the same
- * V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED strip without a circular import.
+ * strip without a circular import.
  */
 const TAILWIND_HINT_PREFIX = " If this element uses Tailwind's";
 
@@ -112,7 +112,7 @@ export function buildVendorOverrideOutcome(
   // Demote the rule's original suggestion as the alternative
   // explanation. Strip the Tailwind escape-hatch sentence on the same
   // tailwindDetected predicate the sibling lanes use — the alternative
-  // text is still subject to V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED
+  // text is still subject to
   // because it's the same `match.suggestion` text the non-vendor lane
   // would have surfaced.
   const originalExplanation = match.suggestion

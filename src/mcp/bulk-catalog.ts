@@ -1,7 +1,7 @@
 /**
  * Bulk-catalog perf-class detector for `scan_project`.
  *
- * Closes the silent miss described in V1-BULK-CATALOG-SCAN-PERF-12S: a
+ * Closes the silent miss described in: a
  * `scan_project` invocation against a vendor-heavy template catalog
  * (canonical repro: 4043 files / 172 templates / 16 MB) ran for 12s vs.
  * the documented 3s budget for a 1000-file project (CLAUDE.md §11
@@ -79,7 +79,7 @@ export const BULK_FILES_SCANNED_FLOOR = 1500;
 
 /**
  * Build-artifact-count sentinel paired with both trigger paths. Picked
- * at 50 — the canonical V1-BULK-CATALOG-SCAN-PERF-12S repro had 172
+ * at 50 — the canonical repro had 172
  * templates with vendor bundles per template, well above this floor;
  * a typical app with one or two stray `dist/foo.min.css` files is well
  * below. The floor is the load-bearing "the slowdown is plausibly

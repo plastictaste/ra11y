@@ -11,10 +11,10 @@
  * The same logic now covers `fix.description` prose — rules like
  * `semantics/label-in-name` (1970 chars), `forms/autocomplete-missing`
  * (~150 chars x 31 findings) emit the same paragraph verbatim on every
- * finding. V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist those into
+ * finding. option (b): hoist those into
  * `referenceGuide.fixDescriptions[ruleId][hash]` and replace the inline
  * `fix.description` with a nested `fix.descriptionRef: { hash }` (NOT a
- * sibling on the finding — V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-
+ * sibling on the finding
  * SHAPE-DRIFT). Keyed by a stable 12-hex-char SHA-256 so a rule that
  * legitimately emits two distinct descriptions (label-in-name does:
  * 466-char and 1970-char verdicts) keeps both in the map — picking
@@ -46,7 +46,7 @@ const PLACEMENT_DEFAULT = "Place on the line immediately above the flagged state
  * for hoisting.
  *
  * Originally keyed per `(ruleId, hash)` — a specific hash had to repeat
- * twice to hoist. That produced V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY:
+ * twice to hoist. That produced:
  * within one ruleId, two findings with description-A (same hash) would
  * hoist + strip inline; a sibling finding with description-B (singleton
  * hash) would stay inline. The agent saw two shapes for the same rule in
@@ -104,7 +104,7 @@ export interface ReferenceGuide {
    * description. When present, EVERY finding under a hoisted rule carries
    * a nested `fix.descriptionRef: { hash }` and omits `fix.description`
    * — the shape is deterministic per-rule so the agent learns the join
-   * convention once per rule instead of once per finding (V1-FIX-
+   * convention once per rule instead of once per finding (-
    * DESCRIPTION-PRESENCE-INCONSISTENCY). Findings under rules whose
    * total description count is 1 keep the inline `fix.description`.
    */
@@ -188,7 +188,7 @@ export function referenceGuideField(formatted: { readonly referenceGuide?: Refer
 /**
  * Describes a rewrite of a single {@link AgentFinding} to drop its
  * inline `fix.description` in favor of a nested `fix.descriptionRef`
- * pointer (V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT
+ * pointer (
  * — pointer lives INSIDE `fix`, never as a sibling on the finding).
  * Rewrites are applied in {@link applyFixDescriptionHoist} — the split
  * lets the hoister stay a pure function over file entries while the
@@ -221,7 +221,7 @@ function compositeKey(ruleId: string, hash: string): string {
  *     keys, so the rewrite pass can branch in O(1) per finding.
  *
  * Per-rule aggregation (not per-`(ruleId, hash)`) is the fix for
- * V1-FIX-DESCRIPTION-PRESENCE-INCONSISTENCY: under the old counting, a
+ * under the old counting, a
  * rule with two findings carrying DIFFERENT descriptions had two
  * singleton-hash buckets and nothing hoisted, so both stayed inline;
  * but a rule with two findings carrying the SAME description hoisted.
@@ -463,7 +463,7 @@ function tallyGroupRefCohorts<T extends AgentFinding>(
  * guidance-only post-hoist case where the only payload was the
  * pointer), drop the entire `fix` wrapper so the response shape stays
  * honest — an empty `fix: {}` is the canonical dishonest shape per
- * the V1-FIX-SAFETY-CONSTANT-FIELD precedent. Mechanical-edit
+ * the precedent. Mechanical-edit
  * findings keep `fix` (their `oldText` / `newText` payload remains
  * meaningful even after the ref lifts).
  */
@@ -540,7 +540,7 @@ function rewriteFinding<T extends AgentFinding>(finding: T, hoistedKeys: Readonl
   if (description === undefined || description.length === 0) return finding;
   const hash = hashFixDescription(description);
   if (!hoistedKeys.has(compositeKey(finding.ruleId, hash))) return finding;
-  // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+  // the
   // pointer lives INSIDE `fix` (nested `fix.descriptionRef`) — not as
   // a sibling on the finding. The single-path read for prose
   // (`fix.description ?? lookup(fix.descriptionRef.hash)`) keeps

@@ -7,7 +7,7 @@
  * Response shape is scan-family: `{ plan, files, meta, warnings?,
  * warningsDetails?, referenceGuide?, ruleCoverage?, truncated?,
  * totalFilesWithFindings? }`. Assembly routes through
- * {@link assembleScanFamilyResponse} per V1-RESPONSE-SCAN-CORE — the
+ * {@link assembleScanFamilyResponse} per — the
  * handler owns only the tool-specific outer fields (`scanned`,
  * `configSource`, `nextStep`) and
  * the scan-specific token-density merge (no `nextOffset`, because
@@ -124,7 +124,7 @@ export const scanTool: McpTool = {
     const files = await parseFiles(paths, session, cwd);
     if (files.length === 0) {
       return textResult({
-        // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `violations: 0` headline
+        // the flat `violations: 0` headline
         // was dropped from the plan shape; on a zero-files scan the
         // honest tally has no lanes to populate, so only `notes` and
         // `summary` ride. Callers that want the flat count sum
@@ -192,7 +192,7 @@ export const scanTool: McpTool = {
       ...assembled.meta,
       scanned: scannedDir(paths),
       configSource: projectConfig.sourcePath,
-      // Q6-CONFIG-CONTEXT-TRIPLE-READOUT collapsed the emitted
+      // collapsed the emitted
       // config-resolution context to `configSource` alone here:
       // `configSearchedFrom` was always the caller-supplied `cwd`
       // (pure echo), and `configNote` was a 200-char boilerplate that
@@ -201,7 +201,7 @@ export const scanTool: McpTool = {
       // of information violated the "present-when-meaningful" rule
       // in `.claude/rules/mcp-response-shapes.md`; the warning channel
       // is the canonical "no config was loaded" signal.
-      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+      // `nextStep` and
       // `nextStepStructured` moved to the top level of the response
       // (see `tentative` below). One pointer, one place — the
       // load-bearing agent-direction field stays discoverable next
@@ -231,7 +231,7 @@ export const scanTool: McpTool = {
       ...ruleCatalogField(params, session.registry.rules, assembled.files),
       ...(baseWarnings.length > 0 ? { warnings: baseWarnings } : {}),
       ...(baseWarningsDetails === undefined ? {} : { warningsDetails: baseWarningsDetails }),
-      // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level agent direction.
+      // top-level agent direction.
       // Paired with `nextStepStructured` (conditional-spread so the
       // fallback multi-option prose doesn't ship a sentinel machine
       // hint). One pointer, one place — pre-change `nextStep` sat in

@@ -58,8 +58,8 @@ import {
  * Default cap on `scope.files[]` entries when `verboseMeta` is false.
  * Chosen tight enough that a >50-file corpus elides the full path
  * manifest by default — on the templates corpus that one array alone
- * was 360KB / 16.8× the typical MCP token ceiling
- * (V1-CONFORMANCE-SCOPE-FILES-ARRAY-UNCAPPED). The number is small
+ * was 360KB / 16.8× the typical MCP token ceiling.
+ * The number is small
  * enough that any non-trivial repo trips the elide path, large enough
  * that single-file or tiny-fixture statements still ship the manifest
  * inline (load-bearing for "what did the claim cover?" debugging).
@@ -321,7 +321,7 @@ function mergeToolWarnings(args: {
   // the present-when-meaningful rule.
   const details: Record<string, unknown> = { ...(derivativeWarnings.warningsDetails ?? {}) };
   if (args.scopeFilesView.truncated) {
-    // V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: split the truncation
+    // split the truncation
     // payload by kind — `totalCount` names the evaluated count (load-
     // bearing claim surface), `skippedFilesCount` names the build-
     // artifact count when non-zero. Composite headline counts are
@@ -425,7 +425,7 @@ function assembleBuilderInputs(ctx: {
  * `scope_files_truncated_count_exceeded` warning at the handler layer;
  * `cap` mirrors what was used so the warning payload can name it.
  *
- * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: `skippedFiles` /
+ * `skippedFiles` /
  * `skippedFilesCount` carry the build-artifact-flagged paths the
  * classifier excluded from the claim. Each entry's `reason` is the
  * classifier verdict (`definite-min-infix`, `likely-bundler-output-dir`,
@@ -452,7 +452,7 @@ interface ScopeFilesView {
  * reflect the real counts so an agent can tell success-with-truncation
  * from success-complete.
  *
- * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: partitions the parsed file
+ * partitions the parsed file
  * set against {@link collectBuildArtifacts} BEFORE applying the cap so
  * the evaluated count is the post-skip count (composite headline
  * counters split by kind, per the AI-first consumer model). The

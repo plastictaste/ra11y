@@ -2,7 +2,7 @@
  * Canonical builder for the `meta.rulesEvaluated` shape surfaced by
  * every scan-family / scan-derivative MCP tool.
  *
- * Before Q4-RULES-EVALUATED-COMPOSITE this field was a single number
+ * Before this field was a single number
  * that read as "rules that ran" but actually counted every loaded /
  * post-standard-filter rule regardless of whether it had any eligible
  * inputs in the scan. On a pure-HTML/SSG project, dozens of React-
@@ -28,7 +28,6 @@
  *     `rulesEvaluated` field rather than emit `{ loaded: N }` alone —
  *     a counter named "evaluated" must describe work the tool did, not
  *     the size of the rule registry; see
- *     V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT.
  *   - `fired` (optional): rules that emitted at least one finding —
  *     `perRuleCoverage.filter(r => r.findingsEmitted > 0).length`.
  *     Same conditional-spread rule as `withEligibleInputs`.
@@ -68,7 +67,7 @@ export interface RulesEvaluated {
  * `apply_fix` when threading is out of scope) omit it and get back a
  * single-field `{ loaded }` object. Tools that don't run any rules
  * (e.g. `list_suppressions`) skip this helper entirely and omit
- * `rulesEvaluated` from their meta — see V1-LIST-SUPPRESSIONS-RULES-
+ * `rulesEvaluated` from their meta — see-
  * EVALUATED-DRIFT.
  *
  * `withEligibleInputs` counts per-rule coverage rows where
@@ -84,7 +83,7 @@ export interface RulesEvaluated {
  * flag anything") paired with `coverageConfidence` in the underlying
  * `perRuleCoverage` rows.
  *
- * Level-gated rows (Q7-AAA-RULE-LOADER-SILENT-NORUN — rules pre-
+ * Level-gated rows (rules pre-
  * filtered by the active conformance level) carry `filesEligible: 0`
  * and `findingsEmitted: 0` by construction, so they don't increment
  * either sub-counter. The agent reads "loaded > withEligibleInputs"
@@ -188,7 +187,7 @@ export function applyRuleSettings(
 
 /**
  * Rewrites a rule-settings map's keys through the rule-ID alias table
- * (V1-INFRA-RULE-ID-ALIAS-TABLE), returning the canonical-keyed map
+ *, returning the canonical-keyed map
  * plus a list of every alias that fired. Used at the apply-settings
  * seam so `ra11y.config.ts` `rules: { "<old>": "off" }` and session
  * `configure({ rules: { ... } })` honor both the old and new ID while

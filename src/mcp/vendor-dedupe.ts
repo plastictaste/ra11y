@@ -1,6 +1,6 @@
 /**
- * Cross-file vendor dedupe for Q6-CONTRAST-VENDOR-CSS-CROSS-FILE-DEDUPE
- * (CSS) and V1-CHECKLIST-VENDOR-FILE-FINGERPRINT-COLLAPSE (JS).
+ * Cross-file vendor dedupe for
+ * (CSS) and (JS).
  *
  * Collapses identical findings that repeat across sibling files sharing a
  * basename (e.g. 100+ copies of `bootstrap.css` / `animate.css` inside a
@@ -20,7 +20,7 @@
  * `styles.css`) remain separate because they have different *contents*
  * (different messages / patternIds).
  *
- * The JS-vendor sibling case (V1-CHECKLIST-VENDOR-FILE-FINGERPRINT-COLLAPSE):
+ * The JS-vendor sibling case:
  * three copies of `jquery.flexslider.js` in three template directories
  * each emit identical 2.5.1 candidates with byte-identical reason text.
  * Same pattern; same fix. Unlike CSS, plain `.js` / `.mjs` is also the
@@ -80,7 +80,7 @@ export const VENDOR_DEDUPE_MIN_DISTINCT_PATHS = 2;
  * the non-canonical source file disappear from the response entirely —
  * the exact silent-drop failure mode CLAUDE.md §1 "Zero-output success
  * is ambiguous failure" warns against, surfaced at the per-file level.
- * (V1-SCAN-PROJECT-LAYOUT-FILES-DROPPED: scan_file on
+ * (scan_file on
  * `site/src/layouts/BaseLayout.astro` returned 4 findings; scan_project
  * returned 0 for that path because the dedupe collapsed into a same-
  * basename Astro file elsewhere in the repo.)
@@ -197,7 +197,7 @@ export function collapseVendorCssFindings(violations: readonly Violation[]): rea
  *      basename gate is load-bearing: most JS in a repo is authored, not
  *      vendor, so collapsing same-basename `index.js` across sibling
  *      packages would silently drop authored code (the same failure mode
- *      V1-SCAN-PROJECT-LAYOUT-FILES-DROPPED hit on Astro layouts).
+ * hit on Astro layouts).
  *
  * Non-eligible violations are excluded from bucketing outright so
  * authored files sharing a basename (`BaseLayout.astro`, `Header.tsx`,

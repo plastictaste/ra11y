@@ -190,7 +190,7 @@ const listRulesTool: McpTool = {
             "Pass `standard` with one of the loaded IDs, or omit to list rules from every loaded standard.",
         });
       }
-      // V1-LIST-RULES-SATISFIES-INCONSISTENT-ACROSS-FAMILY: filter on
+      // filter on
       // the equivalentTo-resolved set, not the rule's hand-curated
       // `satisfies` array. Same-family rules currently declare
       // different shapes (`semantics/table-caption-missing` lists all
@@ -208,7 +208,7 @@ const listRulesTool: McpTool = {
       );
     }
 
-    // V1-INFRA-RULE-ID-ALIAS-TABLE: surface active rule-ID aliases as
+    // surface active rule-ID aliases as
     // additional entries with `deprecated: true` + `replacedBy` so
     // agents enumerating the catalog see both the old and new IDs
     // without a separate `explain_rule` call. Each alias points at its
@@ -344,7 +344,7 @@ const sessionConfigureTool: McpTool = {
     const config = session.configure(parsed.opts);
     // Resolve `ruleCount` through the same SSOT every scan-family tool
     // uses for `meta.rulesEvaluated.loaded` so the two cross-surface
-    // counters can't drift. Before V1-SESSION-RULECOUNT-VS-SCAN-
+    // counters can't drift. Before-
     // RULESLOADED, this filtered the registry by "rule satisfies a
     // criterion under the configured standard," which excluded rules
     // like `parsing/invalid-id-shape` (cites `wcag21:4.1.1` only —
@@ -358,7 +358,7 @@ const sessionConfigureTool: McpTool = {
     // `rules-evaluated.ts`.
     const ruleCount = resolveActiveRules(session).length;
 
-    // V1-SESSION-CONFIGURE-ECHO-STATE: echo the merged session state so
+    // echo the merged session state so
     // a caller can verify what landed. Before this, the response only
     // reported standard/level/ruleCount/allowWrite — a wrong rule ID in
     // the input was a silent no-op (the typo never appeared in any

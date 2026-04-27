@@ -1,5 +1,5 @@
 /**
- * The `list_suppressions` MCP tool (Q2-LISTSUPP).
+ * The `list_suppressions` MCP tool.
  *
  * Enumerates every active `ra11y-disable` / `ra11y-disable-next-line`
  * pragma in the scanned tree. Lightweight: parses sources for pragmas
@@ -33,7 +33,7 @@
  *     whether the enumeration had teeth without a separate
  *     `scan_project` round-trip. NOTE: `rulesEvaluated` is intentionally
  *     omitted — this tool runs no rules, so a `loaded` counter under
- *     that name would lie about what happened (V1-LIST-SUPPRESSIONS-
+ * that name would lie about what happened (-
  *     RULES-EVALUATED-DRIFT). Cross-tool field semantics must be honest:
  *     the field name describes work the tool did, and pragma enumeration
  *     is rule-free by design.
@@ -42,7 +42,7 @@
  *     surface under `suppression/no-reason`; otherwise confirm nothing
  *     is pending.
  *
- * Pairs with Q2-REASON — the `suppression/no-reason` review-candidate
+ * Pairs with — the `suppression/no-reason` review-candidate
  * finder flags bare pragmas one-by-one; this tool enumerates the full
  * pragma population at a glance. Two views, same source of truth
  * (`parseInlineDisablesDetailed`).
@@ -109,12 +109,12 @@ export const listSuppressionsTool: McpTool = {
     // No `rulesEvaluated` field on this tool's meta: pragma enumeration
     // runs zero rules, and a `loaded`-only counter under that name reads
     // to the agent as "rules ran" — exactly the cross-tool dishonesty
-    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT called out. The agent
+    // called out. The agent
     // can call `list_rules` (or any scan-family tool) for the loaded-rule
     // count when it actually needs one; this tool's job is to enumerate
     // pragmas, not to mirror unrelated scan telemetry.
 
-    // Unified tagged list (Q2R2-WRAPPER-SOURCES). `list_suppressions`
+    // Unified tagged list. `list_suppressions`
     // doesn't run the auto-detect pass, so fromAutoDetect stays empty
     // — every entry carries `source: "config"` or `"session"` (the
     // `confirmed` flag is omitted for these channels per the

@@ -217,7 +217,7 @@ async function handleBaselineMode(
   );
   const resolved = resolvedFromBaseline(baseline.violations, scannedHashes);
 
-  // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist duplicated
+  // option (b): hoist duplicated
   // `fix.description` prose over the POST-FILTER new findings —
   // pointers in the response resolve against the top-level map, and
   // the map reflects exactly what ships. Doing the hoist on the
@@ -352,7 +352,7 @@ async function handleHunksMode(
   logger.debug(`scan_diff (hunks): ${files.length} files in ${ms(t0)}ms`);
 
   const { newFiles, newCount } = filterToHunkFindings(formatted.files, hunksByFile);
-  // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): hoist over the POST-
+  // option (b): hoist over the POST-
   // hunk-filter findings (symmetric with baseline mode above).
   const hoistedGuide = hoistAndBuildReferenceGuide(newFiles, buildReferenceGuide(newFiles));
 

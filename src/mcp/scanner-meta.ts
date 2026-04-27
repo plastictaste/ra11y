@@ -12,11 +12,11 @@
  * invariant" for the doctrine.
  *
  * Closes:
- *   - V1-COVERAGE-META-BLOCK-MISSING — coverage now ships a meta block.
- *   - V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT — every tool routes its
+ * - — coverage now ships a meta block.
+ * - — every tool routes its
  *     warnings through the same input shape, so the same scanner state
  *     produces the same warning code set on every surface.
- *   - Q8-CONFIGSEARCHEDFROM-ECHO-RECURRENCE — the
+ * - — the
  *     {@link configSearchedFromField} helper widens the omit predicate
  *     so the field never echoes an input the agent already has
  *     (caller-supplied `cwd`, the resolved `scanned.root`, or

@@ -6,7 +6,7 @@
  * absolute paths outside cwd, relative paths climbing out via `..`,
  * or symlinks whose real target escapes the cwd's real root.
  *
- * V1-SCAN-FILE-CWD-CONTAINMENT: `scan_file`, `suggest_fix`,
+ * `scan_file`, `suggest_fix`,
  * `apply_fix`, and `suppress` all take a `(cwd, path)` pair and must
  * enforce the same escape boundary. Previously the guard lived
  * duplicated in `tool-apply-fix-internals.ts` and `tool-suppress.ts`

@@ -54,7 +54,7 @@ export function applyScanDiffTokenBudget<TFile>(
   // and `effectiveLimit` is what survived the trim. Agents branching
   // on `response_token_budget_truncated` can tell aggressive trims
   // from marginal ones without a re-page.
-  // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: analyze the pre-trim file list so
+  // analyze the pre-trim file list so
   // the top-contributor triple reflects which finding actually pushed
   // the response over budget (the dropped tail or the kept head — the
   // analyzer doesn't care which side of the cap a finding ended up on,

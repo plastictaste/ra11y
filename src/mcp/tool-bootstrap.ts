@@ -16,7 +16,7 @@
  *   - `baseline` is omitted entirely in dry-run (writeBaseline: false)
  *     and a `baseline_dry_run` warning code is emitted alongside, so
  *     dry-run is distinguishable from baseline-creation-failed by the
- *     response shape alone (V1-BOOTSTRAP-BASELINE-NULL-SENTINEL).
+ * response shape alone.
  *     When `writeBaseline: true` succeeds, `baseline` is the
  *     `BaselineSummary` record; when the leg fails the field is
  *     omitted and `bootstrap_baseline_failed` fires.
@@ -142,12 +142,12 @@ export const bootstrapTool: McpTool = {
     // but surfaces under `bootstrap_baseline_failed`). The former
     // `baseline: null` sentinel collapsed those states into one
     // ambiguous value (CLAUDE.md §1 "Ambiguous field shapes are
-    // dishonest"; V1-BOOTSTRAP-BASELINE-NULL-SENTINEL).
+    // dishonest").
     const baseline = writeBaseline ? await runBaseline(root, session, failedLegs) : null;
 
     const scanSubset = extractScanSubset(scan);
     const scanWarnings = readStringArray(scan, "warnings");
-    // V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN: fire the deprecation
+    // fire the deprecation
     // code whenever the alias is emitted (gated on suggestedConfig
     // being non-null — same predicate as `configPair` below). Surfaces
     // alongside the alias so agents reading the warnings channel know
@@ -201,7 +201,7 @@ export const bootstrapTool: McpTool = {
     // is emitted alongside for one release as a transition alias so
     // agents that learned the old name keep working. Removed in the
     // next minor release. The alias-deprecation warning code below
-    // (V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN) tells the agent to
+    // tells the agent to
     // drop reads of `proposedConfig` on the next call so the
     // double-payload cost goes away ahead of the removal.
     const configPair =
@@ -295,7 +295,7 @@ interface ScanSubset {
    * Count of violations (severity `error` / `warning`) — the
    * "things-needing-a-fix" total the bootstrap report budgets against.
    * Derived from `plan.fixesByClass` (sum of the four lanes) per
-   * Q7-PLAN-VIOLATIONS-COMPOSITE — the wire-level `plan.violations`
+   * the wire-level `plan.violations`
    * headline was deleted because it summed across categorically
    * different remediation lanes under one number. The bootstrap
    * subset still carries a flat `violationsCount` because it's an
@@ -353,7 +353,7 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const meta = record["meta"];
   const plan = record["plan"];
   const filesScanned = readNumberFromRecord(meta, "filesScanned") ?? 0;
-  // Q7-PLAN-VIOLATIONS-COMPOSITE: the wire-level `plan.violations`
+  // the wire-level `plan.violations`
   // headline was deleted because it summed across the four
   // `fixesByClass` lanes under one composite number. The bootstrap
   // subset still carries a flat `violationsCount` (it's an internal
@@ -710,7 +710,7 @@ function buildNextStepStructured(args: {
   // to `detect_native_wrappers` in cases where the user has
   // already declared the wrappers and detect just re-reported
   // them. That's an honest over-surface (one extra tool call), not
-  // the silent-miss direction. TODO(Q3-BOOTSTRAP-WRAPPER-STATE):
+  // the silent-miss direction. TODO:
   // thread `meta.activeNativeWrappers` from the scan leg so this
   // branch can discriminate "detected but unconfirmed" from
   // "detected and already in config."

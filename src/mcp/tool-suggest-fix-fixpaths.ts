@@ -54,7 +54,7 @@ export interface BuildFixPathsOutcomeInputs {
    * violation's `fixClass`. Forwarded verbatim onto the guidance lane
    * so agents reading a `kind: "guidance"` response learn that the rule
    * family supports a mechanical path in principle — even though the
-   * specific context made the replacement ambiguous. See Q6-SUGGEST-
+   * specific context made the replacement ambiguous. See-
    * FIX-MECHANICAL-VS-GUIDANCE-DRIFT. Not emitted on the `kind: "edit"`
    * lane (the edit is concrete; the in-principle hint would be noise).
    */
@@ -62,7 +62,7 @@ export interface BuildFixPathsOutcomeInputs {
     readonly meta?: { readonly mechanicalInPrinciple: true };
   };
   /**
-   * V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: forwarded verbatim from the
+   * forwarded verbatim from the
    * caller (`buildSuggestFixPayload`). `false` / `undefined` triggers
    * the strip of the rule-emitted Tailwind escape-hatch sentence from
    * `explanation` (`focus/outline-visible` is the current sole emitter
@@ -77,7 +77,7 @@ export interface BuildFixPathsOutcomeInputs {
  * See {@link tool-suggest-fix-internals.TAILWIND_HINT_PREFIX}. Local
  * copy keeps the strip helper independent of the parent module so the
  * `kind: "edit"` and `kind: "guidance"` lanes both apply the same
- * V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED rule without a circular import.
+ * rule without a circular import.
  */
 const TAILWIND_HINT_PREFIX = " If this element uses Tailwind's";
 
@@ -150,7 +150,7 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
   if (anyPoisonDropped) caveatParts.push(POISONED_NEWTEXT_CAVEAT);
   if (widened?.caveat) caveatParts.push(widened.caveat);
   const caveatField = caveatParts.length > 0 ? { caveat: caveatParts.join(" ") } : {};
-  // V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED: strip the rule-emitted
+  // strip the rule-emitted
   // Tailwind escape-hatch sentence from the explanation when no
   // Tailwind signal was detected in the suggest_fix scan. Applies to
   // both the mechanical-edit lane and the guidance lane below since

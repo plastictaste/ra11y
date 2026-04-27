@@ -253,7 +253,7 @@ async function handleCheck(
   }
 
   const diff = diffAgainstBaseline(result, baseline);
-  // Share the scan-family per-file grouping seam (V1-RESPONSE-FIX-FAMILY):
+  // Share the scan-family per-file grouping seam:
   // `baseline.check` emits a bespoke outer envelope so it cannot flow
   // through `assembleScanFamilyResponse`, but the `files` sub-tree is
   // identical in kind — sorted `{ path, findings }` buckets where each

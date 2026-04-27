@@ -8,7 +8,7 @@
  * warningsDetails?, meta }`. Agents iterating the fix-verify loop key
  * off the flat `findings` array rather than the grouped `files[]` that
  * the rest of the scan family emits. Assembly routes through
- * {@link assembleScanFamilyResponse} per V1-RESPONSE-SCAN-CORE — the
+ * {@link assembleScanFamilyResponse} per — the
  * handler owns only the tool-specific shape adaptation (flatten
  * `files[0].findings`) and the outer fields (`scanned`,
  * `configSource`, `configSearchedFrom`, `nextStep`).
@@ -113,7 +113,7 @@ export const scanFileTool: McpTool = {
     // fix, pick a different file on extension mismatch, re-check the
     // path on not-found) stays deterministic.
     const scanFileCwd = strParam(params, "cwd");
-    // V1-SCAN-FILE-CWD-CONTAINMENT: reject paths that escape the
+    // reject paths that escape the
     // declared `cwd` sandbox before any fs access. Mirrors the guard
     // apply_fix and suppress already enforce on their (cwd, file)
     // inputs — every read-or-write tool accepting a explicit
@@ -216,7 +216,7 @@ export const scanFileTool: McpTool = {
  * Structured error for a path that resolves outside its declared
  * `cwd`. Shared code (`path-escapes-cwd`) with `apply_fix` and
  * `suppress` so agents branch once on the escape-boundary failure
- * mode regardless of which tool detected it. V1-SCAN-FILE-CWD-
+ * mode regardless of which tool detected it.-
  * CONTAINMENT — the asymmetry (suppress rejecting, scan_file
  * accepting) was the mental-model break the fix closes.
  */
@@ -308,7 +308,7 @@ function buildScanFileResponse(args: {
   // of the scan family emits. Agents iterating the fix-verify loop
   // key off the flat `findings` array.
   const flatFindings = assembled.files[0]?.findings ?? [];
-  // Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: surface a top-level
+  // surface a top-level
   // `limitations` signal whenever the parser emitted errors on this
   // file. Without it, `fired: 0` + `warnings: [parse_errors_present]`
   // reads as "scan ran clean" at a glance — the degradation is only
@@ -359,7 +359,7 @@ function buildScanFileResponse(args: {
     filesScanned: 1,
     scanned: scannedEnvelope,
     configSource: projectConfig.sourcePath,
-    // Q6-CONFIG-CONTEXT-TRIPLE-READOUT + Q8-CONFIGSEARCHEDFROM-ECHO-
+    //-
     // RECURRENCE: emit `configSearchedFrom` only when its value names
     // a directory the agent can't otherwise read off the response. The
     // shared {@link configSearchedFromField} helper widens the omit
@@ -378,7 +378,7 @@ function buildScanFileResponse(args: {
       callerCwd: scanFileCwd,
       scanned: scannedEnvelope,
     }),
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: `nextStep` and
+    // `nextStep` and
     // `nextStepStructured` moved to the top level of the response.
     // One pointer, one place — the load-bearing agent-direction field
     // stays discoverable next to `plan` and `findings` rather than
@@ -403,7 +403,7 @@ function buildScanFileResponse(args: {
     ...(assembled.warningsDetails === undefined
       ? {}
       : { warningsDetails: assembled.warningsDetails }),
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level agent direction.
+    // top-level agent direction.
     // P1-K: structured twin — conditional-spread per CLAUDE.md §1
     // "Ambiguous field shapes are dishonest" so the fallback multi-
     // option prose doesn't ship a sentinel machine hint.

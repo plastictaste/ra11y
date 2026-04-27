@@ -3,7 +3,7 @@
  * the thin-CSS coverage hint plus the Tailwind-signal detector it
  * strengthens with. Extracted from `analysis-coverage.ts` so that
  * file stays under the 500-effective-line budget; the hint shape
- * (structured `{ code, text, detail }` per V1-HINTS-STRUCTURED-CODE)
+ * (structured `{ code, text, detail }` per)
  * and the Tailwind class-shape heuristic live together since the
  * hint-detail field `tailwindDetected` is the only consumer of the
  * detector.
@@ -61,8 +61,8 @@ export function buildCssThinHint(files: readonly ParsedFile[], css: number, mark
  *
  * Exported so `suggest_fix` can reuse the same detector when deciding
  * whether to surface Tailwind-specific guidance hints in its
- * `kind: "guidance"` explanation prose
- * (V1-SUGGEST-FIX-TAILWIND-HINT-SCOPED). When the suggest_fix scan only
+ * `kind: "guidance"` explanation prose.
+ * When the suggest_fix scan only
  * parses a single CSS file, this returns `false` — there is no JSX in
  * scope to evidence Tailwind usage — and the consumer strips the
  * Tailwind escape-hatch sentence from the rule-emitted suggestion.

@@ -18,7 +18,7 @@
  *                       violations below the error point may have been
  *                       missed.
  *
- * Pairs with Q4-PARSE-ERROR-DETAIL (closed): the `detail` field echoes
+ * Pairs with (closed): the `detail` field echoes
  * the first parse-error message, so the agent sees the root cause
  * ("Unexpected token `<`" vs. "Unterminated string literal") without
  * having to pick up the separate `analysisCoverage.parseErrorFiles`

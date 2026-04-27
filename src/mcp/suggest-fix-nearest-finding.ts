@@ -1,5 +1,5 @@
 /**
- * Q7-SUGGEST-FIX-NONE-NEAREST-FINDING breadcrumb helper for the
+ * breadcrumb helper for the
  * `kind: "none"` branch of `buildSuggestFixPayload`. Pure function over
  * its inputs; lives in its own module so `tool-suggest-fix-internals.ts`
  * stays under the MCP-handler line budget (`scripts/check-limits.ts`).
@@ -39,7 +39,7 @@ const DID_YOU_MEAN_CAP = 3;
  *     across ties)
  *   - zero (or no findings list provided) → `{}` (no breadcrumb)
  *
- * Closes Q7-SUGGEST-FIX-NONE-NEAREST-FINDING. The two field shapes are
+ * Closes. The two field shapes are
  * mutually exclusive — `nearestFinding` is the singular case the agent
  * can act on directly; `didYouMean` is the plural case where the agent
  * has to choose. Conditional-spread per CLAUDE.md §1 "Ambiguous field

@@ -59,7 +59,7 @@ type PageClipReason = "token_density" | "end_of_results" | "per_criterion_cap";
 
 interface PaginationFields {
   /**
-   * V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: load-bearing negative —
+   * load-bearing negative —
    * `truncated: false` means "this IS the full inventory." Always
    * present on scan_project responses; never conditional-spread.
    * The density-cap path in {@link mergeBudgetedFields} overrides
@@ -68,7 +68,7 @@ interface PaginationFields {
   readonly truncated: boolean;
   readonly nextOffset?: number;
   /**
-   * V1-TRUNCATED-FIELD-PRESENCE-CONTRACT: always emitted alongside
+   * always emitted alongside
    * `truncated`. When `truncated: false`, this equals the response's
    * `files.length`; when `truncated: true`, it carries the full
    * pre-truncation inventory size so the caller still sees the
@@ -99,7 +99,7 @@ interface AssembleArgs {
   readonly pageOffset: number;
   readonly fullMeta: Record<string, unknown>;
   /**
-   * V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: the English next-call hint and
+   * the English next-call hint and
    * its machine-parseable twin ship at the TOP level of the response,
    * not inside `meta`. `nextStep` is load-bearing agent direction —
    * hoisting to the top level keeps it discoverable next to `plan` and
@@ -182,7 +182,7 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     ...(hasInlineReview ? { reviewCandidates } : {}),
     ...(hasBaseCodes ? { warnings: baseWarnings } : {}),
     ...(hasBaseDetails ? { warningsDetails: baseWarningsDetails } : {}),
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: one pointer, one place —
+    // one pointer, one place —
     // `nextStep` + `nextStepStructured` ship at the top level only.
     // Pre-change they rode in `meta` next to scan-confidence telemetry,
     // which crowded the load-bearing agent-direction signal into a
@@ -231,7 +231,7 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
           topLevelRequestedLimit: page.paginationFields.requestedLimit ?? hoisted.files.length,
           topLevelEffectiveLimit: budgeted.files.length,
         });
-  // Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: last-resort hard-ceiling
+  // last-resort hard-ceiling
   // guard. After the density cap settled, the response can still be
   // over the MCP host's ~25k-token wall — single-file pathology (the
   // density helper's progress guarantee keeps one entry even when its
@@ -292,7 +292,7 @@ function mergeBudgetedFields(args: {
     topLevelEffectiveLimit,
   } = args;
   const warnings: ScanWarningCode[] = warningsWithDensityCode(baseWarnings);
-  // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: analyze the PRE-TRIM files list
+  // analyze the PRE-TRIM files list
   // (the full hoisted set the density cap saw entering the guard) so
   // the contributor triple reflects which finding was actually the
   // budget-blower, not whichever finding happened to survive the
@@ -322,7 +322,7 @@ function mergeBudgetedFields(args: {
     ...(baseWarningsDetails ?? {}),
     ...densityDetails,
   });
-  // Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: when the density cap clipped
+  // when the density cap clipped
   // the page to ≤ 2 files AND the project carries > 100 files-with-
   // findings, the standard `nextStep` (suggest_fix on the first
   // finding) leads the agent into a per-file pagination loop that may
@@ -374,7 +374,7 @@ function mergeBudgetedFields(args: {
 }
 
 /**
- * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: builds the spreadable
+ * builds the spreadable
  * `nextStep` / `nextStepStructured` override fragment for the
  * degenerate-pagination regime. Returns an empty record when the gate
  * fails (page wasn't clipped to ≤ 2 files OR inventory ≤ 100 OR the
@@ -390,7 +390,7 @@ function mergeBudgetedFields(args: {
  * the structured hint must name an existing tool with parameters the
  * tool actually accepts; routing to a non-existent param would
  * silently fail when the agent copies `nextStepStructured.args` into
- * the next call. The pairing item V1-TOOL-FINDINGS-BY-RULE tracks
+ * the next call. The pairing item tracks
  * the future `findings_by_rule` primitive that would route here
  * directly; until that lands, `explain_rule` is the honest first step
  * — the agent reads what the dominant rule does, decides whether the
@@ -430,7 +430,7 @@ function warningsWithDensityCode(base: readonly ScanWarningCode[] | undefined): 
 }
 
 /**
- * Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: builds the minimum-honest
+ * builds the minimum-honest
  * envelope when the post-density-cap response is still over the host
  * ceiling. The shape is the smallest set of load-bearing fields the
  * agent needs to route once: `plan` (so the agent sees the per-lane
@@ -461,7 +461,7 @@ function warningsWithDensityCode(base: readonly ScanWarningCode[] | undefined): 
  * "narrow scope" and the structured form points at `scan_project`
  * with a hint to pass `additionalPaths` or a tighter `cwd`. We do
  * NOT recommend `summaryOnly: true` — that mode does not exist yet
- * (tracked under V1-TOOL-SCAN-PROJECT-SUMMARY-MODE). When the
+ * (tracked under). When the
  * summary mode lands, this nextStep is the natural caller to thread
  * it through.
  */
@@ -582,7 +582,7 @@ const SLIM_META_KEYS: readonly string[] = [
  * — `cwd`, `additionalPaths`, `restrictToPaths` — so the agent can
  * pick the one that matches its triage intent without re-reading
  * tool docs. The `summaryOnly` mode is referenced as the future
- * lighter-weight path (V1-TOOL-SCAN-PROJECT-SUMMARY-MODE) so the
+ * lighter-weight path so the
  * agent knows the doc surface is evolving.
  */
 const SLIM_NEXT_STEP_PROSE =

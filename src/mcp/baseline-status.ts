@@ -1,5 +1,5 @@
 /**
- * Baseline-presence probe for `scan_project` (Track Q / P2-BASE).
+ * Baseline-presence probe for `scan_project`.
  *
  * An agent running a scan wants to know whether a `.ra11y-baseline.json`
  * is in play BEFORE it proposes fixes — otherwise it may re-propose

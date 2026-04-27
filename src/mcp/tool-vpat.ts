@@ -155,7 +155,7 @@ export const vpatTool: McpTool = {
       ...(attestations.length > 0 && { attestations }),
     });
 
-    // Q4-RELEVANCE-REASON-PARSE-COVERAGE-CAVEAT: thread discovery
+    // thread discovery
     // diagnostics so `detectApplicability` can append the parse-coverage
     // caveat when authored-content extensions (.md, .markdown, .rst,
     // .adoc, …) were skipped. VPAT entries surface

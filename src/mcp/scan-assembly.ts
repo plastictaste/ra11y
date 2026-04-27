@@ -96,7 +96,7 @@ export function buildScanPlan(args: {
   // needing a second overlapping composite on the wire.
   //
   // `violations` (the flat error+warning count) was removed for the
-  // same reason (Q7-PLAN-VIOLATIONS-COMPOSITE): it summed all four
+  // same reason: it summed all four
   // `fixesByClass` lanes (mechanical + verify-in-source + guidance
   // + runtimeOnly) under a single headline, and agents budgeted
   // against the composite as if every entry were an actionable
@@ -163,7 +163,7 @@ export function buildScanPlan(args: {
  * a source-text-driven finder (e.g. `review/timing` regex-scanning
  * `ctx.source` even when the AST parse failed) MUST land in
  * `partialParseFiles`. Building the set from violations alone — the
- * historical bug under V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL — left
+ * historical bug under — left
  * such files in `parseErrorFiles`, which agents read as
  * "invisible-to-rules"; downstream triage of the live grounded
  * candidates was silently misled.
@@ -230,7 +230,7 @@ export function buildScanMeta(args: {
    * partial-parse (`partialParseFiles` — rules / finders produced output
    * on the recovered slice) buckets. Use {@link outputFilePathSet} to
    * compute it from the scan's violations + review-candidate arrays —
-   * the union semantic is load-bearing per V1-PARSE-ERROR-LIVERELOAD-
+   * the union semantic is load-bearing per-
    * MIXED-SIGNAL (a file with grounded review candidates but zero
    * violations must NOT land in the "invisible-to-rules" bucket).
    * Omitted = caller hasn't wired output yet, in which case every
@@ -283,7 +283,7 @@ export function buildScanMeta(args: {
     // determinism.
     filesByExtension: countByExtension(files),
     // Honest-shape rules-evaluated telemetry. Before
-    // Q4-RULES-EVALUATED-COMPOSITE this was a single number that read
+    // this was a single number that read
     // as "rules that ran" but actually counted every loaded /
     // post-standard-filter rule regardless of whether it had any
     // eligible inputs in the scan. Per CLAUDE.md §1 "Composite headline
@@ -327,7 +327,7 @@ export function buildScanMeta(args: {
     // top-level `ruleCoverage` derivative agree on
     // `coverageConfidence` for every row (no cross-surface drift).
     //
-    // Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE: extension-gated rows
+    // extension-gated rows
     // with `filesEvaluated === 0 && filesEligible === 0` are rolled up
     // into the sibling `rulesNotEvaluatedDueToInputType` counter rather
     // than each shipping ~200 chars of identical "no files matching .css
@@ -335,7 +335,7 @@ export function buildScanMeta(args: {
     // project ~30 of ~70 entries fit this shape; the collapsed counter
     // names the same actionable signal (which extensions the scan never
     // saw) so the agent reads `byExtension` once and decides whether to
-    // widen scope. Level-gated rows (Q7-AAA-RULE-LOADER-SILENT-NORUN)
+    // widen scope. Level-gated rows
     // and project-scoped rows are NOT collapsed — they name orthogonal
     // gaps the agent acts on differently.
     //
@@ -347,7 +347,7 @@ export function buildScanMeta(args: {
     // counter rides even at zero so the agent has a deterministic
     // field to read.
     //
-    // V1-TOOL-VERBOSE-META-INVERTED-DEFAULT: the full
+    // the full
     // `perRuleCoverage[]` array is the largest per-rule meta block
     // (~250 chars/row × N rules — measured at >40KB on whole-tree
     // scans). It is now gated behind `verboseMeta: true`. At default
@@ -371,7 +371,7 @@ export function buildScanMeta(args: {
  * stays inside the lint cap and the partition + emit rules live in
  * one place.
  *
- * V1-TOOL-VERBOSE-META-INVERTED-DEFAULT: the full per-rule rows
+ * the full per-rule rows
  * `perRuleCoverage[]` are the largest single meta block — they ride
  * inline only under `verboseMeta: true`. At default verbosity the
  * fragment carries the compact `perRuleCoverageSummary: { ruleCount,
@@ -427,7 +427,6 @@ function perRuleCoverageMetaFragment(
 /**
  * Adjusts {@link PerRuleCoverage} rows so files that failed to parse
  * are honest about whether the rule actually evaluated their content
- * (V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS).
  *
  * The engine's evaluation tracker bumps `eligible` and `evaluated` per
  * (rule, file) pair purely on extension match — a file in
@@ -511,7 +510,7 @@ function adjustRowForParseErrors(
   // stamping `coverageConfidenceReason: "partial-parse"` on a
   // gated row would lie about why its `filesEvaluated` is zero —
   // the cause is level gating, not parse error. Pass through
-  // unchanged (Q7-AAA-RULE-LOADER-SILENT-NORUN).
+  // unchanged.
   if (row.skipReason === "gated_by_level") return row;
   const parseErrorMatches = countMatchingFiles(rule, parseErrorFiles);
   const partialParseMatches = countMatchingFiles(rule, partialParseFiles);
@@ -534,7 +533,7 @@ function adjustRowForParseErrors(
 }
 
 /**
- * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: returns the subset of
+ * returns the subset of
  * scanned `.scss` files that declare top-level `$variable: …`
  * statements but produced zero literal-color usages downstream after
  * the SCSS preprocessor's substitution pass — the canonical
@@ -569,7 +568,7 @@ export function detectScssUnresolvedVariableFiles(files: readonly ParsedFile[]):
 }
 
 /**
- * V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE: returns the subset
+ * returns the subset
  * of scanned HTML-family files whose parsed root is a fragment — no
  * `<html>` ancestor, no `<body>` descendant. Mirrors the predicate
  * {@link buildAnalysisCoverage} uses to populate
@@ -593,7 +592,7 @@ export function detectFragmentFiles(files: readonly ParsedFile[]): readonly stri
 }
 
 /**
- * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT row adjuster — companion of
+ * row adjuster — companion of
  * {@link applyParseErrorAdjustment} on a different axis. Downgrades a
  * rule's `coverageConfidence` to `"medium"` with
  * `coverageConfidenceReason: "scss-unresolved-variables"` when at
@@ -699,7 +698,7 @@ const FRAGMENT_DOWNGRADE_RULE_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * V1-FRAGMENT-PERRULE-COVERAGE-CONFIDENCE-DOWNGRADE companion of
+ * companion of
  * {@link applyParseErrorAdjustment} on the fragment-classification
  * axis. Downgrades a document-shaped rule's `coverageConfidence` to
  * `"medium"` with
@@ -868,7 +867,7 @@ export function sumFindingsEmitted(rows: readonly PerRuleCoverage[]): number {
  * `files[]` regardless of which lane it lands in — this counter is
  * additive triage signal only. The `kind: "buildArtifact"`
  * classification reuses the existing {@link ScannedBuildArtifact}
- * path set (V1-BUILD-ARTIFACT-REASON-EXPLAIN sha a5b07d28); a
+ * path set (sha a5b07d28); a
  * violation's file qualifies as `buildArtifact` iff its path is in
  * `vendorPaths`. Everything else — including findings on files the
  * scanner couldn't classify either way — counts as `source` so the

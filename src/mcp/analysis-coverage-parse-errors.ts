@@ -1,5 +1,5 @@
 /**
- * V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: parse-error bucket assembler
+ * parse-error bucket assembler
  * extracted from `analysis-coverage.ts` so the parent module stays
  * under the {@link MAX_FILE_LINES} budget. Keeps the inline-vs-rollup
  * wire-shape gate (default verbose=false: rollup at count > threshold;
@@ -62,7 +62,7 @@ export interface ParseErrorCoverageView {
   parseErrorFiles?: readonly ParseErrorEntry[];
   parseErrorTopReasons?: readonly { readonly reason: string; readonly count: number }[];
   /**
-   * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: per-parser count map for the
+   * per-parser count map for the
    * `parseErrorFiles` bucket — keyed by the in-house parser name
    * (`tsx`, `html`, `css`, `jsx`, `ts`, `js`) and valued by the count
    * of errored files that parser owns. Lets the warnings layer surface
@@ -78,7 +78,7 @@ export interface ParseErrorCoverageView {
   partialParseFileCount?: number;
   partialParseFiles?: readonly ParseErrorEntry[];
   partialParseTopReasons?: readonly { readonly reason: string; readonly count: number }[];
-  /** Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT mirror for `partialParseFiles`. */
+  /** mirror for `partialParseFiles`. */
   partialParseByParser?: Readonly<Record<string, number>>;
 }
 
@@ -177,7 +177,7 @@ export function assembleParseErrorBlocks(
 }
 
 /**
- * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: aggregates a parse-error bucket
+ * aggregates a parse-error bucket
  * into a `{ [parser]: count }` map keyed by the in-house parser name
  * each entry's `parser` tag carries. Pure over its input; sorted by
  * parser key for deterministic wire output across runs.
@@ -197,7 +197,7 @@ function countByParser(entries: readonly ParseErrorEntry[]): Readonly<Record<str
  * and writes the result onto the shared coverage block. DRYing the
  * branch keeps the two lanes from drifting — `parseErrorFiles`
  * bypassing verbose while `partialParseFiles` honored it would
- * re-introduce the V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED asymmetry
+ * re-introduce the asymmetry
  * one level down.
  */
 function assignParseErrorList(

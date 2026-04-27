@@ -168,7 +168,7 @@ import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.
  * means "investigate to confirm before routing." See the file-level
  * comment block for the per-variant predicate, the failure modes
  * each one had under the previous deterministic-sounding `reason`
- * shape (Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL), and the
+ * shape, and the
  * paired {@link BuildArtifactSignal} that carries the underlying
  * evidence.
  */
@@ -203,8 +203,8 @@ export function isDefiniteBuildArtifactClassification(
  * the agent reading the response can verify the verdict without re-
  * running our classifier or guessing what we matched on. Per
  * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
- * meta sub-fields are dishonest" (V1-BUILD-ARTIFACT-REASON-EXPLAIN +
- * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL), this is the structured
+ * meta sub-fields are dishonest" (+
+ *), this is the structured
  * evidence record that makes the {@link BuildArtifactClassification}
  * label auditable: when the classification carries a `likely-` prefix,
  * the signal explains *why* the heuristic fired so the agent can
@@ -263,9 +263,9 @@ export type BuildArtifactSignal =
  * basenames that didn't form a group of ≥
  * {@link BASENAME_GROUP_THRESHOLD}. The agent reads `classification`
  * (with its `definite-*` / `likely-*` confidence prefix —
- * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL) to budget per-file
+ *) to budget per-file
  * investigation and reads `signal` to verify *which* predicate
- * fired (V1-BUILD-ARTIFACT-REASON-EXPLAIN). The paired `path` is
+ * fired. The paired `path` is
  * the same path the rest of the response uses (root-relative POSIX
  * after the grouper's relativization), so a caller can join against
  * the `files[]` bucket directly.
@@ -427,8 +427,8 @@ export function classifyBuildArtifact(
  * `signal.value` can re-derive the verdict without re-running our
  * classifier.
  *
- * Per V1-BUILD-ARTIFACT-REASON-EXPLAIN +
- * Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL the verdict is now
+ * Per +
+ * the verdict is now
  * confidence-graded: predicates that survive the "provable from the
  * code" doctrine bar emit `definite-*` classifications; heuristic
  * predicates emit `likely-*` so the agent budgets per-file
@@ -766,7 +766,6 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
  * `corroborator` discriminator (`median` or `ratio`) naming which
  * conjunct carried the verdict — the agent can re-verify either
  * branch by reading those three fields, no scanner re-run required
- * (V1-BUILD-ARTIFACT-REASON-EXPLAIN).
  *
  * The count floor on (a) is load-bearing: without it a 4-line
  * authored file with a single >500-char line satisfies the ratio at
@@ -972,7 +971,7 @@ export interface BuildArtifactsGrouped {
    */
   readonly ungroupedTruncated?: MetaArrayTruncationSummary;
   /**
-   * V1-VENDOR-LIBRARY-BANNER-DETECTION: per-file vendor-library
+   * per-file vendor-library
    * identifications drawn from first-line banner-comment matching
    * against a curated list of well-known libraries (Bootstrap, jQuery,
    * Font Awesome, Animate.css, Modernizr, normalize.css, reset.css,
@@ -1219,7 +1218,7 @@ function dedupeClassificationsSorted(
 }
 
 /**
- * V1-VENDOR-LIBRARY-BANNER-DETECTION: per-file vendor-library identification
+ * per-file vendor-library identification
  * derived from first-line banner-comment matching against a curated list of
  * well-known libraries. Surfaces as the additive
  * `meta.scannedBuildArtifacts.vendorLibraries: DetectedVendorLibrary[]` field

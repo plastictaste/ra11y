@@ -29,7 +29,7 @@
  * was edited mid-session also surfaces the warning — the previous
  * single-target implementation relied on `import.meta.url` alone and
  * silently missed the entry-script-change case (root cause of the
- * Q3-MCP-RESTART-HINT-SUBPROCESS-RACE report: 23 tool calls across 90
+ * report: 23 tool calls across 90
  * minutes, `dist/cli.js` mtime advanced, warning never fired because
  * the process was running from a different entry path).
  *

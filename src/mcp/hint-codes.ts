@@ -5,7 +5,7 @@
  * human reading the agent's response). Parallels
  * `detect_native_wrappers.emptyReason` — same structured-discriminator
  * pattern that lets agents dispatch without substring matching English
- * prose (V1-HINTS-STRUCTURED-CODE, AI-first consumer model).
+ * prose (AI-first consumer model).
  *
  * The closed set is enforced at compile time via {@link HintCode}. New
  * codes are added here first, then wired into the emitter (one of

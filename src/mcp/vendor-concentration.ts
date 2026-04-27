@@ -5,7 +5,7 @@
  * `src/engine/per-rule-coverage.ts` picks the densest file for each
  * rule and stamps the base {@link PerRuleCoverage.concentration} hint
  * when a rule's findings cluster there (> 10 total findings AND the
- * densest file holds > 50% of them — V1-NOISE-RULE-PER-FILE-ROLLUP).
+ * densest file holds > 50% of them).
  * The engine can't know whether the densest file is authored code or a
  * vendored build artifact — build-artifact classification lives in
  * `src/mcp/build-artifacts.ts`, and the engine invariant forbids
@@ -18,7 +18,6 @@
  * floor ({@link VENDOR_CONCENTRATION_MIN_TOTAL}). Below the floor, the
  * base concentration still surfaces unchanged — vendor awareness is
  * additive, not a new gate, per CLAUDE.md §1 "Surface, don't suppress"
- * (Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION).
  *
  * Canonical acute case: `motion/pause-stop-hide` fired 8940× against
  * `vendor/bootstrap/bootstrap.css` on a real scan. The base
@@ -33,7 +32,7 @@ import type { PerRuleCoverage } from "../types/violation.ts";
 /**
  * Minimum finding count on a single vendor file before the
  * `kind: "vendor"` annotation stamps. Deliberately stricter than the
- * base concentration floor (> 10 for V1-NOISE-RULE-PER-FILE-ROLLUP)
+ * base concentration floor (> 10 for)
  * because vendor density only becomes agent-actionable triage signal
  * at scale — a rule firing 15× across vendor `bootstrap.css` could
  * still reflect real authored-css-style patterns that the vendor
@@ -41,7 +40,7 @@ import type { PerRuleCoverage } from "../types/violation.ts";
  * unambiguously as "vendor noise dominates this rule's fire." The
  * agent uses the stricter annotation to decide whether to route its
  * first action at authored code elsewhere (see
- * Q6-NEXTSTEP-AVOIDS-VENDOR-CSS for the paired next-step re-routing).
+ * for the paired next-step re-routing).
  *
  * Inclusive `>=` semantics — the annotation stamps at exactly 100 so a
  * vendor file with precisely the floor count still reads as "vendor

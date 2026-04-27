@@ -63,7 +63,6 @@ export interface SingleFileScan {
    * Per-rule coverage for the scan. Surfaced so `apply_fix` can
    * assemble an honest `rulesEvaluated: { loaded, withEligibleInputs,
    * fired }` meta field on the response from the post-edit scan state
-   * (Q4-RULES-EVALUATED-COMPOSITE).
    */
   readonly perRuleCoverage: readonly import("../types/violation.ts").PerRuleCoverage[];
 }
@@ -248,7 +247,7 @@ function fingerprintCandidate(c: ReviewCandidate): string {
 }
 
 export function formatSlice(scan: SingleFileScan, source?: string): Record<string, unknown> {
-  // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: forward the slice's source
+  // forward the slice's source
   // so per-finding `fix.oldText` widens via `widenToUniqueAnchor` —
   // matching the cross-tool shape `suggest_fix` ships on
   // `primary.edit`. Optional so legacy callers without source in scope
@@ -336,7 +335,7 @@ export interface TemplateDirectiveDiagnosis {
 }
 
 /**
- * Diagnostic for V1-APPLY-FIX-LIQUID-FP-DIAGNOSIS — when `oldText`
+ * Diagnostic for — when `oldText`
  * doesn't match the source, decide whether the would-be edit target
  * sits in template-directive territory so the handler can route the
  * agent to "verify and suppress" instead of looping back through
@@ -556,7 +555,7 @@ export function parseFor(ext: Ext, source: string, filePath?: string): Ast {
   // JSX-import signal — without this, every `apply_fix` re-parse on a
   // plain-JS file with a `<Identifier` comparison operator would emit
   // a fake `Unclosed JSX element <…>` and trip the "edit introduces
-  // parse errors" envelope (Q8-PARSER-ROUTING-JS-AS-TSX). Optional so
+  // parse errors" envelope. Optional so
   // existing test callers (`parseFor(ext, source)`) still type-check.
   const r = parseTsx(source, filePath === undefined ? {} : { filePath });
   return { language: "tsx", root: r.root, errors: r.errors };
@@ -590,7 +589,6 @@ export function resolveLevelParam(
  *
  * Used by `apply_fix` to keep on-disk byte-content honest when an
  * agent's `newText` arrives LF-normalized but the file is CRLF
- * (V1-SOURCECONTEXT-LINE-ENDING-NORMALIZE).
  */
 export function spliceWithNativeLineEndings(
   source: string,
@@ -605,7 +603,7 @@ export function spliceWithNativeLineEndings(
   // the same fix as the upstream `parseForExtension` call in
   // `session.ts`. Without it, an `apply_fix` against a plain-JS file
   // would fake an `Unclosed JSX element <…>` post-edit and reject a
-  // genuinely-clean edit (Q8-PARSER-ROUTING-JS-AS-TSX).
+  // genuinely-clean edit.
   const newAst = parseFor(ext, newSource, filePath);
   return { newSource, newAst };
 }

@@ -26,7 +26,7 @@
  * rather than re-implementing predicates so the wire-side definition
  * of "vendor" stays in lockstep with `meta.scannedBuildArtifacts`.
  *
- * Q7-SUGGEST-FIX-VENDOR-CONTEXT — pairs with Q6-NEXTSTEP-AVOIDS-VENDOR-
+ * pairs with-
  * CSS (closed): Q6 stops the next-step *target* from pointing at a
  * vendor file when an authored same-rule sibling exists; this module
  * stops the suggested *fix* from rewriting vendor bytes when no such
