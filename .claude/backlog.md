@@ -2,7 +2,9 @@
 
 The `/continue` skill reads this file and dispatches work to specialist subagents. Each item should be small enough that one specialist can finish it in under 20 minutes. When an item would produce more work, split it in place before dispatching.
 
-Legend: `[ ]` open · `[x]` done · `[~]` in progress · `[!]` blocked (reason in comment)
+Legend: `[ ]` open · `[~]` in progress · `[!]` blocked (reason in comment).
+
+Closing an item = deleting its `- [ ] **<ID>**` line in the same commit that lands the work, with a `Closes: <ID>` (or `Drops: <ID>`) trailer in the commit message. The commit body carries the rationale; look it up later via `git log --grep "Closes: <ID>"` or `bun scripts/show-closed.ts <ID>`. See CLAUDE.md §9.7. The `[x]` state no longer exists — `scripts/check-commit.ts` rejects both untrailered deletions and `[x]` additions.
 
 ## Ship state
 

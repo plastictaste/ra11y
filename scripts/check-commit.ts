@@ -18,9 +18,15 @@
  *   - subject starts with lowercase letter
  *   - no trailing period on subject
  *   - reviewable size: staged diff (excluding generated kb, fixtures,
- *     lockfiles) ≤ 400 net lines; `chore(kb):` prefix is exempt. Set
- *     RA11Y_COMMIT_ALLOW_OVERSIZE=1 to acknowledge a legitimately
- *     large commit (large refactors, new standards).
+ *     lockfiles) ≤ 400 net lines; `chore(kb):` and `chore(backlog):`
+ *     prefixes are exempt. Set RA11Y_COMMIT_ALLOW_OVERSIZE=1 to
+ *     acknowledge a legitimately large commit (large refactors, new
+ *     standards).
+ *   - backlog closure: when the staged diff removes a `- [ ] **<ID>**`
+ *     line from `.claude/backlog.md`, the commit message must carry a
+ *     matching `Closes: <ID>` (shipped) or `Drops: <ID>` (rejected /
+ *     superseded) trailer. Adding a `- [x]` line is rejected outright;
+ *     the `[x]` state no longer exists. See CLAUDE.md §9.
  *
  * Exits 0 on success, 1 on violation.
  */
@@ -108,12 +114,20 @@ if (sizeViolation) {
   process.exit(1);
 }
 
+const closureViolation = checkBacklogClosure(message);
+if (closureViolation) {
+  console.error(closureViolation);
+  process.exit(1);
+}
+
 console.log("✓ commit message: passes conventional format");
 process.exit(0);
 
 function checkReviewableSize(type: string, scope: string): string | null {
   // chore(kb) is the canonical "regenerated" commit — exempt by design.
-  if (type === "chore" && scope === "kb") return null;
+  // chore(backlog) is exempt for the same reason: bulk closures and
+  // re-organizations inherently move many lines.
+  if (type === "chore" && (scope === "kb" || scope === "backlog")) return null;
   // Explicit opt-out for legitimately large commits.
   if (process.env.RA11Y_COMMIT_ALLOW_OVERSIZE === "1") return null;
   const netLines = countStagedDiffLines();
@@ -145,6 +159,86 @@ function countStagedDiffLines(): number | null {
     total += added + removed;
   }
   return total;
+}
+
+const BACKLOG_ID_RE = /^[A-Z][A-Z0-9]*-[A-Z0-9-]+$/;
+
+interface BacklogDiff {
+  deleted: Set<string>;
+  reAdded: Set<string>;
+  xAdded: Set<string>;
+}
+
+function parseBacklogDiff(diff: string): BacklogDiff {
+  const deleted = new Set<string>();
+  const reAdded = new Set<string>();
+  const xAdded = new Set<string>();
+  const patterns: ReadonlyArray<readonly [RegExp, Set<string>]> = [
+    [/^-- \[ \] \*\*([^*]+)\*\*/, deleted],
+    [/^\+- \[ \] \*\*([^*]+)\*\*/, reAdded],
+    [/^\+- \[x\] \*\*([^*]+)\*\*/, xAdded],
+  ];
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("---") || line.startsWith("+++")) continue;
+    for (const [re, target] of patterns) {
+      const m = re.exec(line);
+      if (m?.[1] && BACKLOG_ID_RE.test(m[1])) {
+        target.add(m[1]);
+        break;
+      }
+    }
+  }
+  return { deleted, reAdded, xAdded };
+}
+
+function parseClosesTrailers(message: string): Set<string> {
+  const trailers = new Set<string>();
+  for (const line of message.split("\n")) {
+    const tm = /^(?:Closes|Drops):\s*(.+?)\s*$/.exec(line.trim());
+    if (!tm?.[1]) continue;
+    for (const id of tm[1].split(",")) {
+      const trimmed = id.trim();
+      if (BACKLOG_ID_RE.test(trimmed)) trailers.add(trimmed);
+    }
+  }
+  return trailers;
+}
+
+function reportXAdditions(xAdded: ReadonlySet<string>): string {
+  const ids = [...xAdded];
+  return [
+    `✗ commit adds [x] backlog item(s) — that state no longer exists:`,
+    ...ids.map((id) => `  - ${id}`),
+    ``,
+    `  to close an item, delete its line and add 'Closes: ${ids[0]}'`,
+    `  to the commit message. see CLAUDE.md §9 for the closure convention.`,
+  ].join("\n");
+}
+
+function reportMissingTrailers(missing: readonly string[]): string {
+  return [
+    `✗ commit deletes ${missing.length} open backlog item(s) without a matching trailer:`,
+    ...missing.map((id) => `  - ${id}`),
+    ``,
+    `  add to the commit message: 'Closes: <ID>' (shipped) or 'Drops: <ID>' (rejected/superseded).`,
+    `  multiple IDs may share one trailer line, comma-separated, or split across lines.`,
+    `  see CLAUDE.md §9 for the closure convention.`,
+  ].join("\n");
+}
+
+function checkBacklogClosure(message: string): string | null {
+  const result = spawnSync("git", ["diff", "--cached", "--unified=0", ".claude/backlog.md"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (result.status !== 0 || !result.stdout) return null;
+  const { deleted, reAdded, xAdded } = parseBacklogDiff(result.stdout);
+  if (xAdded.size > 0) return reportXAdditions(xAdded);
+  const netDeleted = [...deleted].filter((id) => !reAdded.has(id));
+  if (netDeleted.length === 0) return null;
+  const trailers = parseClosesTrailers(message);
+  const missing = netDeleted.filter((id) => !trailers.has(id));
+  return missing.length === 0 ? null : reportMissingTrailers(missing);
 }
 
 function readCommitMessage(): string {

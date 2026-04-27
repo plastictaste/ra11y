@@ -162,6 +162,7 @@ Every commit — whether you author it or a subagent does — follows these rule
    - `chore(kb): regenerate rule index`
    - `docs(kb): add wcag 1.4.3 knowledge base entry`
    - `refactor(engine): extract standard-filter from rule-runner`
+7. **Backlog closure is a git trailer, not a file mutation.** Closing a `.claude/backlog.md` item = deleting its `- [ ] **<ID>**` line in the same commit that lands the work, with a `Closes: <ID>` (shipped) or `Drops: <ID>` (rejected / superseded) trailer in the message body. The closing commit's body carries the rationale that used to live inline. Lookup later via `git log --grep "Closes: <ID>"` (or `bun scripts/show-closed.ts <ID>`). The `[x]` state no longer exists; `scripts/check-commit.ts` rejects both untrailered deletions and `[x]` additions. Backlog therefore only ever contains live work — no periodic archive needed.
 
 A typical rule ships in **2 commits** (feat(rules) covering rule + tests + fixtures + registry, plus chore(kb) for the regenerated KB). The scaffolder (`bun scripts/scaffold-rule.ts`) eliminates the value of splitting skeleton/logic/tests/fixtures — they're produced together, verify at once, commit at once. Fall back to staged 4-5 commits only when a rule legitimately exceeds the 400-LOC cap.
 
