@@ -161,7 +161,7 @@ function appendTokenResolution(
       // Pragma-derived attestations encode an author's manual judgment
       // at a specific source line — that's a `manual_review` by the
       // evidence-source taxonomy, regardless of whether the reason text
-      // cites a runtime tool. Authors citing Lighthouse/Pa11y output
+      // cites a runtime tool. Authors citing runtime-scanner output
       // alongside a pragma should call `attest` through the MCP tool /
       // `ra11y attest` CLI with `evidenceSource: "runtime_tool"` so
       // the provenance survives on the ledger.

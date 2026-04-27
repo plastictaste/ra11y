@@ -165,7 +165,7 @@ describe("attestation-store: appendAttestation", () => {
     const record: AttestationRecord = {
       ...BASE,
       evidenceSource: "runtime_tool",
-      toolName: "pa11y 8.0.0",
+      toolName: "runtime-harness 1.0.0",
       runUrl: "https://ci.example.test/runs/123",
       observedAt: "2026-04-17T09:30:00.000Z",
       verdict: "pass",

@@ -448,10 +448,10 @@ describe("renderConformanceMarkdown", () => {
       {
         criterionId: "wcag22:1.4.3",
         by: "ci-bot",
-        reason: "pa11y 8.0.0 clean on /checkout page",
+        reason: "runtime-harness 1.0.0 clean on /checkout page",
         attestedAt: FIXED_TIMESTAMP,
         evidenceSource: "runtime_tool",
-        toolName: "pa11y 8.0.0",
+        toolName: "runtime-harness 1.0.0",
         verdict: "pass",
       },
       {

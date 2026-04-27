@@ -600,8 +600,8 @@ function buildAutomatedPassRemarks(
 
 /**
  * Appends a short evidence citation to a remark: `Evidence:
- * runtime_tool (lighthouse 11.4.0)`. Named fields surface verbatim so
- * the auditor can cross-reference the attestation against their CI /
+ * runtime_tool (<toolName>)`. Named fields surface verbatim so the
+ * auditor can cross-reference the attestation against their CI /
  * review log. Omits the parenthetical when no `toolName` is present.
  */
 function buildAttestationCitation(attestation: AttestationRecord): string {

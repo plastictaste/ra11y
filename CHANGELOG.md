@@ -255,7 +255,7 @@ Finders produce grounded manual-review candidates (file + line + reason); they d
 #### Real-world fixture corpus
 
 - `tests/integration/real-world-fixtures.test.ts` — harness that discovers every subdirectory under `tests/fixtures/real-world/`, loads its `assertions.ts`, and verifies scanner output against declared invariants. Fixtures survive internal API refactors.
-- Sanitized fixtures added since v0.1.0: `tsx-generics`, `spa-shell-vite`, `tailwind-coverage`, `logotype-annotation`, `timing-role-hints`, `template-directives`, `opaque-components-top`, `suppression-reason-slot`, `autodetect-attribution`, `storybook-args-binding`, `dialog-modal`, `data-tables`, `nav-landmarks`, `forms-validation`, `attest-lighthouse-bridge`.
+- Sanitized fixtures added since v0.1.0: `tsx-generics`, `spa-shell-vite`, `tailwind-coverage`, `logotype-annotation`, `timing-role-hints`, `template-directives`, `opaque-components-top`, `suppression-reason-slot`, `autodetect-attribution`, `storybook-args-binding`, `dialog-modal`, `data-tables`, `nav-landmarks`, `forms-validation`.
 
 ADR: [`docs/adr/0006-real-world-fixture-harness.md`](./docs/adr/0006-real-world-fixture-harness.md).
 

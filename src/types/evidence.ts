@@ -109,7 +109,8 @@ export type EvidenceSource =
       readonly evidenceSource: AttestationEvidenceSource;
       /**
        * Optional tool identifier when `evidenceSource === "runtime_tool"`
-       * — e.g. `"lighthouse 11"`, `"pa11y 8.0.0"`, `"wave"`. Surfaces
+       * — a free-form label naming whatever runtime harness produced
+       * the verdict (e.g. `"<vendor> <version>"`). Surfaces
        * verbatim in downstream reports so VPAT / conformance-markdown
        * readers see which harness produced the verdict. Omitted when
        * not supplied (present-when-meaningful).
@@ -218,9 +219,10 @@ export interface AttestationRecord {
    * from *what the reason text claims*. Required on every record a
    * producer emits. Four values:
    *
-   *   - `"runtime_tool"` — output from a runtime scanner (Lighthouse,
-   *     Pa11y, WAVE, …) read and interpreted by the agent
-   *     in CI. Pairs with optional `toolName` / `runUrl` / `observedAt`.
+   *   - `"runtime_tool"` — output from a runtime accessibility scanner
+   *     read and interpreted by the agent in CI. Pairs with optional
+   *     `toolName` / `runUrl` / `observedAt` so auditors can trace the
+   *     run.
    *   - `"manual_review"` — a human or agent's inspection pass over the
    *     source or rendered product, including inline `ra11y-disable`
    *     pragmas with a reason (pragmas are an author's manual judgment).
@@ -240,9 +242,10 @@ export interface AttestationRecord {
    */
   readonly evidenceSource: AttestationEvidenceSource;
   /**
-   * Tool identifier when `evidenceSource === "runtime_tool"`. Typical
-   * values: `"lighthouse 11.4.0"`, `"pa11y 8.0.0"`, `"wave"`. Surfaces
-   * verbatim in downstream reports so auditors see
+   * Tool identifier when `evidenceSource === "runtime_tool"`. A
+   * free-form label (typically `"<vendor> <version>"`) naming whatever
+   * runtime harness produced the verdict. Surfaces verbatim in
+   * downstream reports so auditors see
    * which harness produced the result. Omitted when not supplied or
    * when `evidenceSource !== "runtime_tool"`.
    */
