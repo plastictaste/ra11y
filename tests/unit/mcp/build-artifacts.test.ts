@@ -622,11 +622,16 @@ describe("isDefiniteBuildArtifactClassification — confidence-prefix contract",
     expect(isDefiniteBuildArtifactClassification("definite-sourcemap-paired")).toBe(true);
   });
 
+  it("returns true for `definite-vendor-distribution` (sibling-min OR sourcemap-pointer-min)", () => {
+    expect(isDefiniteBuildArtifactClassification("definite-vendor-distribution")).toBe(true);
+  });
+
   it("returns false for every `likely-*` heuristic classification", () => {
     expect(isDefiniteBuildArtifactClassification("likely-minified-by-line-stats")).toBe(false);
     expect(isDefiniteBuildArtifactClassification("likely-hashed-bundle")).toBe(false);
     expect(isDefiniteBuildArtifactClassification("likely-bundler-output-dir")).toBe(false);
     expect(isDefiniteBuildArtifactClassification("likely-compiled-tailwind")).toBe(false);
+    expect(isDefiniteBuildArtifactClassification("likely-vendor-distribution")).toBe(false);
   });
 });
 
@@ -789,6 +794,180 @@ describe("collectBuildArtifacts — sibling `.map` sourcemap signal", () => {
         signal: { kind: "min-infix", value: "jquery.min.js" },
       },
     ]);
+  });
+});
+
+describe("classifyBuildArtifact — vendor-distribution classifications", () => {
+  // Field-report shapes covered: a 138KB readable jQuery whose first
+  // lines carry a banner + `//@ sourceMappingURL=jquery.min.map`; a
+  // `wow.js` shipped alongside its `wow.min.js` sibling; a
+  // `prettify.js` with a recognizable banner; a UMD `livereload.js`
+  // with no `.min` infix. Each is a release artifact distributed
+  // alongside its minified sibling but is itself the readable source.
+  // Mislabeling them as `likely-minified-by-line-stats` routed the
+  // agent to skip findings on the source while the actually-minified
+  // sibling got the same label — same triage-skip on the wrong file.
+  // The `definite-vendor-distribution` and `likely-vendor-distribution`
+  // classifications separate "this is a release artifact" from "this
+  // file IS the minified bytes" so the agent budgets correctly.
+
+  it("labels a readable jQuery-shape source carrying `//@ sourceMappingURL=jquery.min.map` as `definite-vendor-distribution`", () => {
+    // Banner + sourcemap pointer to `.min.map` is the canonical
+    // readable-vendor-distribution shape. The pointer at a `.min` map
+    // is text-deterministic (only build pipelines emit them), so the
+    // verdict earns `definite-`. The body is short here so the
+    // long-line probe alone would not fire — what's being pinned is
+    // that the new sourcemap-pointer probe runs BEFORE the long-line
+    // probe and produces the honest verdict (this IS a vendor
+    // release artifact, not minified bytes).
+    const source = `/*! jQuery v1.10.2 | (c) 2005, 2013 jQuery Foundation, Inc. */\n//@ sourceMappingURL=jquery.min.map\n!function(window){\nvar jQuery = function(){};\n})(window);\n`;
+    expect(classifyBuildArtifactDetailed("vendor/jquery.js", source)).toEqual({
+      classification: "definite-vendor-distribution",
+      signal: { kind: "sourcemap-pointer-min", value: "//@ sourceMappingURL=jquery.min.map" },
+    });
+  });
+
+  it("labels a source carrying the modern `//# sourceMappingURL=…min….map` opener as `definite-vendor-distribution`", () => {
+    // Both the legacy `//@` and the modern `//#` pointer openers earn
+    // the vendor-distribution verdict — the predicate is on the
+    // pointer target shape, not the comment opener.
+    const source = `/* some banner */\n//# sourceMappingURL=app.min.js.map\nvar x = 1;\n`;
+    const result = classifyBuildArtifactDetailed("dist-out/app.js", source);
+    expect(result?.classification).toBe("definite-vendor-distribution");
+    expect(result?.signal).toEqual({
+      kind: "sourcemap-pointer-min",
+      value: "//# sourceMappingURL=app.min.js.map",
+    });
+  });
+
+  it("labels `prettify.js` (recognizable banner, no `.min` infix) as `likely-vendor-distribution`", () => {
+    // The curated `VENDOR_LIBRARY_BANNERS` table powers both the
+    // standalone `vendorLibraries` meta surface AND the new
+    // `likely-vendor-distribution` classification. A banner-with-
+    // version match is heuristic (an authored file COULD include a
+    // banner) so the verdict is `likely-`. Use jQuery as the canonical
+    // banner-bearing shape because the table includes it; prettify
+    // would need a curated entry first, but the classification path
+    // is the same — pin it on jQuery here.
+    const source = `/*! jQuery v3.6.0 | (c) OpenJS Foundation and other contributors */\nvar $ = function(){};\n`;
+    const result = classifyBuildArtifactDetailed("js/jquery.js", source);
+    expect(result?.classification).toBe("likely-vendor-distribution");
+    expect(result?.signal).toEqual({
+      kind: "vendor-banner-version",
+      value: "jquery v3.6.0",
+    });
+  });
+
+  it("labels a UMD-bundled source with no `.min` infix and no banner as null when no other predicate fires", () => {
+    // A UMD wrapper alone does not earn a vendor-distribution label —
+    // the predicate is "banner-with-version OR sourcemap-pointer-at-
+    // min OR sibling-min-file," and a UMD wrapper without any of
+    // these signals stays unlabeled by the per-file classifier. The
+    // sibling-min branch is exercised in collectBuildArtifacts tests
+    // below.
+    const source = `(function (root, factory) {\n  if (typeof define === 'function' && define.amd) {\n    define([], factory);\n  } else {\n    root.LiveReload = factory();\n  }\n}(this, function () {\n  return {};\n}));\n`;
+    expect(classifyBuildArtifact("js/livereload.js", source)).toBe(null);
+  });
+
+  it("does NOT mislabel a readable vendor source whose body crosses the line-stats threshold as `likely-minified-by-line-stats`", () => {
+    // Field-report shape: a banner-bearing readable source whose body
+    // happens to contain enough long lines to trigger the line-stats
+    // corroborator. The new vendor-distribution branch runs FIRST so
+    // the honest verdict ("this is a release artifact, not minified
+    // bytes") wins — labeling it `likely-minified-by-line-stats`
+    // would route the agent to skip findings on the file the user
+    // can actually inspect.
+    const longLine = "x".repeat(600);
+    const source = `/*! jQuery v1.10.2 | (c) 2013 jQuery Foundation */\nvar code = "${longLine}";\nvar more = "${longLine}";\nvar third = "${longLine}";\n`;
+    const result = classifyBuildArtifactDetailed("vendor/jquery.js", source);
+    // Banner is the first non-blank line, so likely-vendor-distribution
+    // wins; the long-line probe never runs.
+    expect(result?.classification).toBe("likely-vendor-distribution");
+  });
+
+  it("does NOT label a hand-authored file with a non-min sourcemap pointer as vendor-distribution", () => {
+    // A `//# sourceMappingURL=app.js.map` (no `.min` segment) is the
+    // bundler-without-minification shape. The sibling-map probe in
+    // collectBuildArtifacts handles that case when the `.map` file
+    // is in the scan set; the per-file classifier does not over-fire
+    // on a generic sourcemap pointer.
+    const source = `var x = 1;\n//# sourceMappingURL=app.js.map\n`;
+    expect(classifyBuildArtifact("dist-out/app.js", source)).toBe(null);
+  });
+});
+
+describe("collectBuildArtifacts — sibling `.min.<ext>` vendor-distribution signal", () => {
+  it("labels `wow.js` with `definite-vendor-distribution` when `wow.min.js` is also in the scanned set", () => {
+    // Field-report shape: a vendor library shipped as both readable
+    // source and minified twin under the same directory. The readable
+    // source is a vendor distribution (generated alongside the
+    // minified sibling), but it is NOT itself minified — the bytes
+    // the user sees are readable. The minified twin separately picks
+    // up `definite-min-infix`. Without this branch, the readable
+    // source falls through to the long-line probe and may get
+    // `likely-minified-by-line-stats`, routing the agent to skip
+    // findings on the file the user can read.
+    const files = [
+      { filePath: "js/wow.js", source: "function WOW() {}\nWOW.prototype.init = function() {};\n" },
+      { filePath: "js/wow.min.js", source: "!function(){function W(){}}();" },
+    ];
+    // Output preserves input order: wow.js (sibling-min path)
+    // appears first, wow.min.js (per-file `.min.` infix) second.
+    expect(collectBuildArtifacts(files)).toEqual([
+      {
+        path: "js/wow.js",
+        classification: "definite-vendor-distribution",
+        signal: { kind: "sibling-min-file", value: "js/wow.min.js" },
+      },
+      {
+        path: "js/wow.min.js",
+        classification: "definite-min-infix",
+        signal: { kind: "min-infix", value: "wow.min.js" },
+      },
+    ]);
+  });
+
+  it("does NOT cross-pair a `.min.<ext>` sibling living in a different directory", () => {
+    // Pairing is by full directory + basename stem so a same-named
+    // `.min.js` in an unrelated tree does not over-fire — same
+    // discipline as the sibling-map probe.
+    const files = [
+      { filePath: "src/wow.js", source: "function WOW() {}" },
+      { filePath: "vendor/wow.min.js", source: "!function(){}();" },
+    ];
+    expect(
+      collectBuildArtifacts(files)
+        .map((e) => e.path)
+        .sort(),
+    ).toEqual(["vendor/wow.min.js"]);
+  });
+
+  it("does NOT label a `.min.<ext>` file as vendor-distribution by sibling-min — `definite-min-infix` already labels it", () => {
+    // The sibling-min branch only fires on the readable source, never
+    // on the minified twin. The minified twin's verdict comes from
+    // rule 1 (`.min.` infix) at the per-file layer, upstream of the
+    // sibling-set check.
+    const files = [{ filePath: "vendor/wow.min.js", source: "!function(){}();" }];
+    expect(collectBuildArtifacts(files)).toEqual([
+      {
+        path: "vendor/wow.min.js",
+        classification: "definite-min-infix",
+        signal: { kind: "min-infix", value: "wow.min.js" },
+      },
+    ]);
+  });
+
+  it("prefers a per-file classification over the sibling-min branch when both would fire", () => {
+    // A readable source under `dist/` with a sibling `.min.<ext>` —
+    // the per-file `likely-bundler-output-dir` predicate fires first
+    // and the entry is not duplicated.
+    const files = [
+      { filePath: "dist/wow.js", source: "function WOW() {}" },
+      { filePath: "dist/wow.min.js", source: "!function(){}();" },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    const wow = labeled.find((e) => e.path === "dist/wow.js");
+    expect(wow?.classification).toBe("likely-bundler-output-dir");
   });
 });
 

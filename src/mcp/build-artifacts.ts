@@ -94,7 +94,31 @@
  *      the "provable from the code" bar. The `.map` file itself is
  *      *not* labelled here — agents don't author sourcemaps in-
  *      place and a manual-review prompt about one is noise.
- *   6. `likely-minified-by-line-stats`. The source text crosses the
+ *   6. `definite-vendor-distribution`. Either (a) a sourcemap-pointer
+ *      comment in the source names a `.min.<ext>.map` target, or (b)
+ *      a sibling `.min.<ext>` file is in the scanned set with the
+ *      matching directory + basename stem. Both predicates are
+ *      deterministic — only build pipelines emit sourcemap pointers,
+ *      and sibling-set membership is a scan-set fact. Names "this is
+ *      a release artifact distributed alongside its minified twin"
+ *      separately from "this file is itself minified bytes," because
+ *      the readable jQuery source paired with `jquery.min.js` is
+ *      generated-by-build but is NOT minified — labeling it
+ *      `likely-minified-by-line-stats` because its body crosses the
+ *      line-stats threshold mislabels the file the agent should be
+ *      reading. The sibling-set predicate runs in
+ *      {@link collectBuildArtifacts}; the sourcemap-pointer predicate
+ *      runs per-file in {@link classifyBuildArtifactDetailed}.
+ *   7. `likely-vendor-distribution`. The source's first non-blank line
+ *      matches a curated `VENDOR_LIBRARY_BANNERS` opener (Bootstrap,
+ *      jQuery, Font Awesome, Modernizr, normalize.css, animate.css,
+ *      Eric Meyer reset.css, fancyBox, jQuery UI). Banner-comment
+ *      shapes are heuristic — a hand-authored file COULD include a
+ *      vendor-style banner — but the curated table is restricted to
+ *      banners that include a library-specific token unique enough
+ *      that authored files do not coincidentally produce them. The
+ *      `likely-` prefix names the residual uncertainty.
+ *   8. `likely-minified-by-line-stats`. The source text crosses the
  *      single-long-line probe (> {@link MINIFIED_LINE_THRESHOLD}
  *      chars on one line) AND a second-tier corroborator also
  *      fires: either the median line length itself exceeds the
@@ -152,6 +176,12 @@
  * without re-running our classifier.
  */
 
+import {
+  detectSourcemapPointerToMin,
+  findSiblingMinFile,
+  findSiblingSourcemap,
+  formatVendorBannerSignal,
+} from "./build-artifacts-vendor-distribution.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 
 /**
@@ -175,10 +205,12 @@ import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.
 export type BuildArtifactClassification =
   | "definite-min-infix"
   | "definite-sourcemap-paired"
+  | "definite-vendor-distribution"
   | "likely-minified-by-line-stats"
   | "likely-hashed-bundle"
   | "likely-bundler-output-dir"
-  | "likely-compiled-tailwind";
+  | "likely-compiled-tailwind"
+  | "likely-vendor-distribution";
 
 /**
  * Returns true when `classification` is a `definite-*` variant —
@@ -242,6 +274,21 @@ export function isDefiniteBuildArtifactClassification(
  *   - `sibling-map-file` — a paired `.map` file is in the scanned
  *     set; `value` is the sibling map's path so the agent can grep
  *     for both halves of the pair.
+ *   - `sibling-min-file` — a sibling `.min.<ext>` file is in the
+ *     scanned set with the matching directory + basename stem;
+ *     `value` is the sibling minified path. Carries the
+ *     `definite-vendor-distribution` classification — the file at
+ *     hand IS the readable source paired with the minified twin.
+ *   - `sourcemap-pointer-min` — the source contains a
+ *     `//# sourceMappingURL=…min….map` (or `//@`) pointer naming a
+ *     minified-sibling sourcemap; `value` is the matched comment
+ *     so the agent can grep for it. Carries
+ *     `definite-vendor-distribution`.
+ *   - `vendor-banner-version` — the source's first non-blank line
+ *     matched a curated vendor-library banner; `value` is
+ *     `<library>` or `<library> v<version>` so the agent can confirm
+ *     the verdict by reading the banner. Carries
+ *     `likely-vendor-distribution`.
  */
 export type BuildArtifactSignal =
   | { readonly kind: "min-infix"; readonly value: string }
@@ -254,7 +301,10 @@ export type BuildArtifactSignal =
       readonly threshold: number;
       readonly corroborator: "median" | "ratio";
     }
-  | { readonly kind: "sibling-map-file"; readonly value: string };
+  | { readonly kind: "sibling-map-file"; readonly value: string }
+  | { readonly kind: "sibling-min-file"; readonly value: string }
+  | { readonly kind: "sourcemap-pointer-min"; readonly value: string }
+  | { readonly kind: "vendor-banner-version"; readonly value: string };
 
 /**
  * One classified artifact entry. On `scan_project`, these records
@@ -479,6 +529,50 @@ export function classifyBuildArtifactDetailed(
   // pairing in {@link collectBuildArtifacts} still classify SVGs whose
   // path or scan-set evidence proves the verdict.
   if (isSvgPath(filePath)) return null;
+  // Vendor-distribution detection runs BEFORE the long-line probe so a
+  // readable jQuery / prettify / livereload source whose body happens
+  // to cross the line-stats threshold gets the honest verdict
+  // (`vendor distribution` — the file IS vendor source, not minified
+  // bytes) rather than the misleading `likely-minified-by-line-stats`
+  // verdict. The minified sibling, when present in the scan set,
+  // separately picks up `definite-min-infix` from rule 1.
+  //
+  // Two predicates earn `definite-vendor-distribution` because their
+  // evidence survives the doctrine bar without inspecting the file:
+  //   (a) a sourcemap-comment pointing at a `.min.<ext>.map` —
+  //       authored hand-written sources do not carry sourcemap
+  //       pointers; only build pipelines emit them. The pointer at a
+  //       `.min` map specifically asserts "this file is paired to a
+  //       minified version," which is the textbook vendor-distribution
+  //       shape.
+  //   The sibling-set predicate (sibling `.min.<ext>` in the scanned
+  //   set) is checked separately in {@link collectBuildArtifacts}
+  //   because it requires the cross-file scan set, mirroring the
+  //   existing sibling-map handling for `definite-sourcemap-paired`.
+  //
+  // The banner-with-version predicate earns `likely-vendor-distribution`
+  // (heuristic — a hand-authored file COULD include a vendor-style
+  // banner comment, though in practice only build pipelines do, and
+  // the `VENDOR_LIBRARY_BANNERS` table is curated specifically for
+  // distributed-bundle openers). Defers to {@link
+  // detectVendorLibraryForFile} so the banner table is the single
+  // source of truth.
+  const sourcemapPointerSignal = detectSourcemapPointerToMin(source);
+  if (sourcemapPointerSignal !== null) {
+    return { classification: "definite-vendor-distribution", signal: sourcemapPointerSignal };
+  }
+  // Defer to `detectVendorLibraryForFile` so the curated
+  // `VENDOR_LIBRARY_BANNERS` table is the single source of truth for
+  // both `meta.scannedBuildArtifacts.vendorLibraries` and the
+  // classifier verdict. `value` joins library + version so the agent
+  // can grep for the literal banner shape.
+  const banner = detectVendorLibraryForFile(filePath, source);
+  if (banner !== null) {
+    return {
+      classification: "likely-vendor-distribution",
+      signal: formatVendorBannerSignal(banner),
+    };
+  }
   const longLineSignal = detectLongMinifiedLine(source);
   if (longLineSignal !== null) {
     return { classification: "likely-minified-by-line-stats", signal: longLineSignal };
@@ -852,45 +946,41 @@ export function collectBuildArtifacts(
   }
   const out: ScannedBuildArtifact[] = [];
   for (const file of files) {
-    const detail = classifyBuildArtifactDetailed(file.filePath, file.source);
-    if (detail !== null) {
-      out.push({
-        path: file.filePath,
-        classification: detail.classification,
-        signal: detail.signal,
-      });
-      continue;
-    }
-    const siblingMap = findSiblingSourcemap(file.filePath, pathsInSet);
-    if (siblingMap !== null) {
-      out.push({
-        path: file.filePath,
-        classification: "definite-sourcemap-paired",
-        // `value` is the sibling map path so the agent can grep for
-        // both halves of the pair without re-deriving the convention.
-        signal: { kind: "sibling-map-file", value: siblingMap },
-      });
-    }
+    const detail =
+      classifyBuildArtifactDetailed(file.filePath, file.source) ??
+      detectSiblingArtifact(file.filePath, pathsInSet);
+    if (detail !== null) out.push({ path: file.filePath, ...detail });
   }
   return out;
 }
 
 /**
- * Returns the matched sibling `.map` path (the deterministic evidence
- * for the `definite-sourcemap-paired` classification) or `null` when the source has
- * no paired map in the scanned set. Replaces the boolean
- * `hasSiblingSourcemap` so the returned path can be stamped into the
- * structured signal — the agent reading
- * `signal: { kind: "sibling-map-file", value: "dist/app.js.map" }`
- * can grep for the literal map path without re-deriving the
- * convention. A sourcemap itself is never classified, so the probe
- * short-circuits on `.map` input.
+ * Two sibling-set predicates compete; both deterministic. Map-pair
+ * wins on ties because it's narrower (one map per source) and signals
+ * the bundler-pipeline triage explicitly. Min-pair labels the
+ * readable source paired with a minified twin as a release artifact
+ * (not as minified bytes — the twin separately picks up
+ * `definite-min-infix` upstream of this branch).
  */
-function findSiblingSourcemap(filePath: string, pathsInSet: ReadonlySet<string>): string | null {
-  const normalized = filePath.replace(/\\/g, "/");
-  if (normalized.endsWith(".map")) return null;
-  const candidate = `${normalized}.map`;
-  return pathsInSet.has(candidate) ? candidate : null;
+function detectSiblingArtifact(
+  filePath: string,
+  pathsInSet: ReadonlySet<string>,
+): BuildArtifactClassificationResult | null {
+  const siblingMap = findSiblingSourcemap(filePath, pathsInSet);
+  if (siblingMap !== null) {
+    return {
+      classification: "definite-sourcemap-paired",
+      signal: { kind: "sibling-map-file", value: siblingMap },
+    };
+  }
+  const siblingMin = findSiblingMinFile(filePath, pathsInSet);
+  if (siblingMin !== null) {
+    return {
+      classification: "definite-vendor-distribution",
+      signal: { kind: "sibling-min-file", value: siblingMin },
+    };
+  }
+  return null;
 }
 
 /**
