@@ -209,16 +209,21 @@ describe("rule tooltip/dismissable", () => {
 
   // Elements with a JS-tooltip-library trigger attribute on the same
   // node as the title still fire the rule (surface-don't-suppress),
-  // but the emitted message gains a short enrichment clause and the
+  // but the emitted message gains a short enrichment clause, the
   // violation carries the `tooltip_js_enhancer_present`
-  // couldBeWrongBecause code so the agent can read the file and
-  // dismiss quickly when the runtime widget is in fact compliant.
-  // See ADR 0009 and the bootstrap-data-bs-toggle-tooltip real-world
-  // fixture.
+  // couldBeWrongBecause code, AND severity downgrades from `warning`
+  // to `info` — per docs/kb/architecture/ai-first-consumer.md "Reason
+  // text and severity must agree across all three channels," a reason
+  // that concedes "the native title may be an input to a runtime
+  // ARIA-aware widget" cannot ship at `warning`. Native-only tooltip
+  // cases (no enhancer attribute) keep severity `warning`. The agent
+  // reads the cited file and dismisses quickly when the runtime
+  // widget is in fact compliant. See ADR 0009 and the
+  // bootstrap-data-bs-toggle-tooltip real-world fixture.
   describe("JS-tooltip-enhancer enrichment", () => {
     const ENRICHMENT_TOKEN = "JS tooltip library";
 
-    it("HTML: data-bs-toggle='tooltip' sibling enriches message + couldBeWrongBecause", () => {
+    it("HTML: data-bs-toggle='tooltip' sibling enriches message + couldBeWrongBecause + downgrades severity", () => {
       const violations = runRule(
         rule,
         `<button data-bs-toggle="tooltip" title="Tooltip on top">x</button>`,
@@ -228,11 +233,13 @@ describe("rule tooltip/dismissable", () => {
       expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.message).toContain(`data-bs-toggle="tooltip"`);
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
-      // Severity must not be downgraded — this is enrichment, not suppression.
-      expect(violations[0]?.severity).toBe("warning");
+      // Severity downgrade: reason text concedes uncertainty (the
+      // runtime widget may make the finding vacuous), so `warning`
+      // would contradict the reason. Stays live as `info`.
+      expect(violations[0]?.severity).toBe("info");
     });
 
-    it("HTML: data-bs-toggle='popover' sibling enriches", () => {
+    it("HTML: data-bs-toggle='popover' sibling enriches + downgrades", () => {
       const violations = runRule(
         rule,
         `<button data-bs-toggle="popover" title="Popover title">x</button>`,
@@ -241,9 +248,10 @@ describe("rule tooltip/dismissable", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+      expect(violations[0]?.severity).toBe("info");
     });
 
-    it("HTML: BS4 legacy data-toggle='tooltip' sibling enriches", () => {
+    it("HTML: BS4 legacy data-toggle='tooltip' sibling enriches + downgrades", () => {
       const violations = runRule(
         rule,
         `<button data-toggle="tooltip" title="Legacy tooltip">x</button>`,
@@ -252,9 +260,10 @@ describe("rule tooltip/dismissable", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+      expect(violations[0]?.severity).toBe("info");
     });
 
-    it("HTML: BS4 legacy data-toggle='popover' sibling enriches", () => {
+    it("HTML: BS4 legacy data-toggle='popover' sibling enriches + downgrades", () => {
       const violations = runRule(
         rule,
         `<a href="/x" data-toggle="popover" title="Legacy popover">x</a>`,
@@ -263,9 +272,10 @@ describe("rule tooltip/dismissable", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+      expect(violations[0]?.severity).toBe("info");
     });
 
-    it("HTML: data-tippy-content sibling (any non-empty value) enriches", () => {
+    it("HTML: data-tippy-content sibling (any non-empty value) enriches + downgrades", () => {
       const violations = runRule(
         rule,
         `<a href="/x" data-tippy-content="Help center details" title="Help">x</a>`,
@@ -275,25 +285,29 @@ describe("rule tooltip/dismissable", () => {
       expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.message).toContain("data-tippy-content");
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+      expect(violations[0]?.severity).toBe("info");
     });
 
-    it("HTML: plain title with no enhancer attribute keeps the original message", () => {
+    it("HTML: plain title with no enhancer attribute keeps original message + warning severity", () => {
       // Negative control — the sibling-attribute absence must NOT add
-      // the enrichment or the couldBeWrongBecause code. This is the
-      // guard that prevents the enrichment from leaking onto every
-      // finding.
+      // the enrichment or the couldBeWrongBecause code, AND severity
+      // stays at `warning` because the predicate (native browser
+      // tooltip is not dismissable) is fully satisfied by the
+      // attribute-level evidence with no concession in the reason.
       const violations = runRule(rule, `<button title="Save document">x</button>`, {
         filePath: "page.html",
       });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).not.toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+      expect(violations[0]?.severity).toBe("warning");
     });
 
-    it("HTML: data-bs-toggle='modal' does NOT enrich (value-sensitive)", () => {
+    it("HTML: data-bs-toggle='modal' does NOT enrich and keeps warning (value-sensitive)", () => {
       // The trigger is tooltip/popover specifically — other
       // data-bs-toggle values (collapse, modal, dropdown, …) do not
-      // replace the native title at all. Must not enrich.
+      // replace the native title at all. Must not enrich and severity
+      // stays `warning`.
       const violations = runRule(
         rule,
         `<button data-bs-toggle="modal" title="Open modal">x</button>`,
@@ -302,20 +316,23 @@ describe("rule tooltip/dismissable", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).not.toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+      expect(violations[0]?.severity).toBe("warning");
     });
 
-    it("HTML: empty data-tippy-content does NOT enrich", () => {
+    it("HTML: empty data-tippy-content does NOT enrich and keeps warning", () => {
       // Tippy needs a non-empty content string; an empty attribute is
-      // structurally inert, so we don't surface the enrichment signal.
+      // structurally inert, so we don't surface the enrichment signal
+      // and severity stays `warning`.
       const violations = runRule(rule, `<button data-tippy-content="" title="Save">x</button>`, {
         filePath: "page.html",
       });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).not.toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+      expect(violations[0]?.severity).toBe("warning");
     });
 
-    it("JSX: data-bs-toggle='tooltip' sibling enriches", () => {
+    it("JSX: data-bs-toggle='tooltip' sibling enriches + downgrades", () => {
       const violations = runRule(
         rule,
         `const x = <button data-bs-toggle="tooltip" title="Tooltip">x</button>;`,
@@ -323,9 +340,10 @@ describe("rule tooltip/dismissable", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+      expect(violations[0]?.severity).toBe("info");
     });
 
-    it("JSX: data-tippy-content sibling enriches", () => {
+    it("JSX: data-tippy-content sibling enriches + downgrades", () => {
       const violations = runRule(
         rule,
         `const x = <a href="/x" data-tippy-content="Details" title="Help">x</a>;`,
@@ -333,6 +351,7 @@ describe("rule tooltip/dismissable", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toContain(ENRICHMENT_TOKEN);
       expect(violations[0]?.couldBeWrongBecause).toContain(TOOLTIP_JS_ENHANCER_PRESENT);
+      expect(violations[0]?.severity).toBe("info");
     });
   });
 

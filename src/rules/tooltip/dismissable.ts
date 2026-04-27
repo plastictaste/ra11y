@@ -45,16 +45,25 @@
  * tooltip library uses as a widget trigger — Bootstrap 5
  * (`data-bs-toggle="tooltip"|"popover"`), Bootstrap 4 legacy
  * (`data-toggle="tooltip"|"popover"`), or Tippy.js (`data-tippy-content`)
- * — the rule surfaces `tooltip_js_enhancer_present` and appends a short
- * enrichment clause to the message. Those libraries replace the native
- * `title` with a runtime ARIA-aware widget (`aria-describedby` +
- * `role="tooltip"` + keyboard dismiss), so the attribute-level evidence
- * is weaker than the agent's file-level evidence. The finding STAYS
- * LIVE at the same severity — this is reason-text enrichment, NOT
- * suppression or downgrade. The agent reads the cited file, verifies
- * the runtime widget is wired up, and dismisses with a
- * `<!-- ra11y-disable -->` pragma when confirmed. Per CLAUDE.md §1
- * "Surface, don't suppress" + "No heuristic suppression" and ADR 0009.
+ * — the rule surfaces `tooltip_js_enhancer_present`, appends a short
+ * enrichment clause to the message, AND downgrades severity from
+ * `warning` to `info`. Those libraries replace the native `title` with
+ * a runtime ARIA-aware widget (`aria-describedby` + `role="tooltip"` +
+ * keyboard dismiss), so the attribute-level evidence is weaker than
+ * the agent's file-level evidence and the message text concedes the
+ * predicate may not hold ("the native title may be an input to a
+ * runtime ARIA-aware widget. Verify the runtime behavior at the call
+ * site before fixing"). Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Reason text and severity must agree across all three channels" — a
+ * `couldBeWrongBecause` code paired with conceded-uncertainty reason
+ * text must not ship at `warning`/`error` severity; the agent budgets
+ * against severity and the contradiction is dishonest. The finding
+ * STAYS LIVE — this is a severity downgrade, NOT suppression. The
+ * agent reads the cited file, verifies the runtime widget is wired up,
+ * and dismisses with a `<!-- ra11y-disable -->` pragma when confirmed.
+ * Native-only tooltip cases (no enhancer attribute) keep severity
+ * `warning`. Per CLAUDE.md §1 "Surface, don't suppress" + "No heuristic
+ * suppression" and ADR 0009.
  *
  * Sole-name-source gate (deterministic, attribute-level): when the
  * titled element has NO additional accessible-name source beyond
@@ -185,7 +194,7 @@ export const rule = defineRule({
 });
 
 type Emit = (v: {
-  severity: "warning";
+  severity: "warning" | "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
@@ -436,7 +445,7 @@ function buildViolation(
   loc: { line: number; column: number },
   enhancer: EnhancerSignal | null,
 ): {
-  severity: "warning";
+  severity: "warning" | "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
@@ -462,8 +471,17 @@ function buildViolation(
     enhancer === null
       ? ""
       : ` Note: a JS tooltip library appears to enhance this element (sibling attribute ${describeEnhancerAttr(enhancer)}); the native title may be an input to a runtime ARIA-aware widget. Verify the runtime behavior at the call site before fixing.`;
+  // Severity downgrade gate: when an enhancer attribute is present, the
+  // message text concedes the predicate may not hold (the native title
+  // may be an input to a runtime ARIA-aware widget). Per
+  // docs/kb/architecture/ai-first-consumer.md "Reason text and severity
+  // must agree across all three channels," a couldBeWrongBecause code
+  // paired with conceded-uncertainty reason text must not ship at
+  // `warning`/`error` severity. Downgrade to `info`; native-only
+  // tooltip cases keep `warning`.
+  const severity: "warning" | "info" = enhancer === null ? "warning" : "info";
   return {
-    severity: "warning",
+    severity,
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `${baseMessage}${gateClause}${enrichmentClause}`,
     suggestion: buildSuggestion(tag, display),
