@@ -69,6 +69,13 @@ export const jsonFormatter = defineFormatter({
           ...(v.siblingInstances !== undefined && v.siblingInstances.length > 0
             ? { siblingInstances: [...v.siblingInstances] }
             : {}),
+          // Structured discriminating evidence — high-density rules
+          // (`semantics/list-structure`, `aria/expanded-on-disclosure`)
+          // promote the discriminator the prose `message` would
+          // otherwise bury to a typed sub-shape so JSON consumers can
+          // branch-route triage. Conditional spread per CLAUDE.md §1
+          // "Ambiguous field shapes are dishonest".
+          ...(v.evidence !== undefined && { evidence: v.evidence }),
         })),
       },
       report: {

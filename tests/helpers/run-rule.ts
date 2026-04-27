@@ -157,6 +157,13 @@ function shapeViolation(
     ...(v.siblingInstances && v.siblingInstances.length > 0
       ? { siblingInstances: v.siblingInstances }
       : {}),
+    // Mirror the engine's `stampViolation` conditional spread for the
+    // structured discriminating evidence sub-shape — see Violation.evidence
+    // for the surface contract. Unit tests assert on `evidence.kind` and
+    // its variant fields (offendingChildTag, predicateBranch, …) so the
+    // test helper must round-trip the field exactly the way the engine
+    // does at scan time.
+    ...(v.evidence !== undefined && { evidence: v.evidence }),
   };
 }
 

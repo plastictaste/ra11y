@@ -22,6 +22,8 @@ import { defineRule } from "../../api/plugin.ts";
 import {
   findHtmlElementsByTag,
   findJsxElementsByTag,
+  getHtmlAttribute,
+  getJsxAttributeString,
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
@@ -33,6 +35,7 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
+import type { ViolationEvidence } from "../../types/violation.ts";
 
 const LIST_PARENTS: ReadonlySet<string> = new Set(["ul", "ol", "menu"]);
 const ALLOWED_IN_LIST: ReadonlySet<string> = new Set(["li", "script", "template"]);
@@ -79,6 +82,7 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  evidence?: ViolationEvidence;
 }) => void;
 
 // NOTE: the primitive-component case is JSX-only. In HTML, a top-level
@@ -97,11 +101,23 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     emit(buildStrayLiViolation(li.loc.start));
   }
   for (const list of findHtmlListContainers(doc)) {
-    for (const child of list.children) {
-      if (child.kind !== "HtmlElement") continue;
-      if (ALLOWED_IN_LIST.has(child.tagName.toLowerCase())) continue;
-      emit(buildWrongChildViolation(list.tagName, child.tagName, child.loc.start));
-    }
+    emitHtmlWrongChildViolations(list, emit);
+  }
+}
+
+function emitHtmlWrongChildViolations(list: HtmlElement, emit: Emit): void {
+  for (const child of list.children) {
+    if (child.kind !== "HtmlElement") continue;
+    if (ALLOWED_IN_LIST.has(child.tagName.toLowerCase())) continue;
+    const childClass = getHtmlAttribute(child, "class");
+    emit(
+      buildWrongChildViolation(
+        list.tagName,
+        child.tagName,
+        child.loc.start,
+        childClass ?? undefined,
+      ),
+    );
   }
 }
 
@@ -173,7 +189,16 @@ function checkJsxListContainerChildren(module: TsxModule, emit: Emit): void {
       if (child.kind !== "JsxElement") continue;
       if (isJsxPascalCase(child.tagName)) continue;
       if (ALLOWED_IN_LIST.has(child.tagName)) continue;
-      emit(buildWrongChildViolation(list.tagName, child.tagName, child.loc.start));
+      const childClass =
+        getJsxAttributeString(child, "className") ?? getJsxAttributeString(child, "class");
+      emit(
+        buildWrongChildViolation(
+          list.tagName,
+          child.tagName,
+          child.loc.start,
+          childClass ?? undefined,
+        ),
+      );
     }
   }
 }
@@ -238,16 +263,36 @@ function buildWrongChildViolation(
   parentTag: string,
   childTag: string,
   loc: { line: number; column: number },
+  childClass: string | undefined,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  evidence: ViolationEvidence;
 } {
+  // Promote the discriminating evidence (offending child tag, optional
+  // class) from the prose `message` to a structured `evidence` field so
+  // an agent triaging a high-density cluster (canonical case: `<hr>` as
+  // a divider sibling under `<ul>` repeated dozens of times across a
+  // template catalog) can branch on `evidence.offendingChildTag`
+  // without parsing English. The prose still names the tag — the field
+  // is additive structured signal, not a replacement. See
+  // {@link ViolationEvidence} for the surface contract.
+  const trimmedClass = childClass?.trim();
+  const evidence: ViolationEvidence = {
+    kind: "list-wrong-child",
+    listTag: parentTag,
+    offendingChildTag: childTag,
+    ...(trimmedClass !== undefined && trimmedClass.length > 0
+      ? { offendingChildClass: trimmedClass }
+      : {}),
+  };
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<${parentTag}> contains <${childTag}> as a direct child — list containers must only contain <li>.`,
     suggestion: `Move the <${childTag}> inside an <li>, or — if the parent isn't really a list — use a <div> instead of <${parentTag}>.`,
+    evidence,
   };
 }

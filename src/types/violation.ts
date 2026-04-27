@@ -363,7 +363,102 @@ export interface Violation {
     readonly line: number;
     readonly id?: string;
   }[];
+  /**
+   * Structured discriminating evidence the rule observed when emitting
+   * this finding — the same fact the rule's prose `reason`/`message`
+   * names, exposed as a typed sub-shape so an agent triaging high-
+   * volume findings can branch on the evidence without parsing English.
+   *
+   * Canonical motivating case: `semantics/list-structure` fires on
+   * "list container has a non-`<li>` child" — at 59 emissions on one
+   * scan, an agent triaging "intentional `<hr>`-as-divider sibling
+   * under `<ul>`" vs "real list misnesting" otherwise has to read
+   * source for every finding because the offending tag is buried in
+   * the prose. With `evidence`, the agent reads
+   * `evidence.kind === "list-wrong-child"` plus
+   * `evidence.offendingChildTag` and routes the triage branch on the
+   * first finding. Same pattern for `aria/expanded-on-disclosure`
+   * (169 emissions, 4 predicate branches): the prose names the branch
+   * but the agent has no machine-readable lever to "skip every
+   * `disclosure-class`-branch finding and triage the
+   * `aria-controls`-branch ones first."
+   *
+   * Discriminated union by `kind`. Each variant names the rule-family
+   * that owns the shape — adding a new rule that wants structured
+   * evidence adds a new `kind`. Variants stay small (≤4 fields) by
+   * design: this is a discriminator, not a payload — anything that
+   * needs richer shape lives on a per-rule sibling field
+   * ({@link siblingInstances}, {@link classEvidence},
+   * {@link concentration}, …).
+   *
+   * Surface-don't-suppress: every finding still appears individually
+   * with its prose `message`/`suggestion`. `evidence` is ADDITIVE
+   * structured signal — agents that don't read the field see no
+   * regression from the existing prose; agents that do read it get a
+   * machine-routable lever for high-density triage. Per
+   * docs/kb/architecture/ai-first-consumer.md "Surface, don't
+   * suppress" + "Don't duplicate capability the agent already has":
+   * we are not interpreting the evidence, just exposing it as a
+   * structured field instead of letting the agent re-derive it from
+   * prose.
+   *
+   * Optional / present-when-meaningful per CLAUDE.md §1 "Ambiguous
+   * field shapes are dishonest": rules that don't populate the field
+   * omit it entirely (the rule-runner's stamp uses a conditional
+   * spread). Never `evidence: {}`. Currently emitted by
+   * `semantics/list-structure` (`list-wrong-child`) and
+   * `aria/expanded-on-disclosure` (`disclosure-predicate-branch`).
+   */
+  readonly evidence?: ViolationEvidence;
 }
+
+/**
+ * Structured discriminating evidence for high-density rules — see
+ * {@link Violation.evidence} for motivation and the surface contract.
+ *
+ * Each variant is owned by one rule family. Adding a new variant adds
+ * a new `kind` literal. Variant shapes stay narrow (≤4 fields) by
+ * design — `evidence` is the discriminator the agent branches on,
+ * not a payload that subsumes other Violation fields.
+ */
+export type ViolationEvidence =
+  /**
+   * `semantics/list-structure` — emitted on the "list container has a
+   * non-`<li>` child" branch. Names the offending child tag (e.g.
+   * `"hr"`, `"div"`) and, when present, its class attribute, so an
+   * agent can branch "intentional `<hr>`-as-divider" vs "real list
+   * misnesting" without reading the source. Stray-`<li>` and JSX-
+   * primitive emissions don't carry this evidence shape — the
+   * structural fact those emissions name (`<li>` is outside any list
+   * container) has no offending-child analog.
+   */
+  | {
+      readonly kind: "list-wrong-child";
+      readonly listTag: string;
+      readonly offendingChildTag: string;
+      readonly offendingChildClass?: string;
+    }
+  /**
+   * `aria/expanded-on-disclosure` — names which predicate branch
+   * fired so the agent can route the triage. The four branches map
+   * 1:1 onto the rule's internal `PredicateBranch` discriminator:
+   * `aria-controls` (the trigger references an existing id),
+   * `data-toggle` (a `data-*-toggle` attribute carries a disclosure
+   * value), `onclick-classlist` (an inline handler toggles a known
+   * visibility class), `disclosure-class` (the trigger's own class
+   * list contains a disclosure-pattern token). The `findingKind`
+   * field distinguishes the two findings the rule emits
+   * (`missing-expanded` vs `missing-controls`).
+   */
+  | {
+      readonly kind: "disclosure-predicate-branch";
+      readonly predicateBranch:
+        | "aria-controls"
+        | "data-toggle"
+        | "onclick-classlist"
+        | "disclosure-class";
+      readonly findingKind: "missing-expanded" | "missing-controls";
+    };
 
 /**
  * Per-rule coverage confidence for a single scan. Answers "this rule

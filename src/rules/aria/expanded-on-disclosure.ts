@@ -107,6 +107,7 @@ import type {
   JsxElement,
   TsxModule,
 } from "../../types/ast.ts";
+import type { ViolationEvidence } from "../../types/violation.ts";
 
 /**
  * Values (on `data-*-toggle` / `data-toggle`) that mark the element as
@@ -420,7 +421,27 @@ type Emit = (v: {
   message: string;
   suggestion: string;
   couldBeWrongBecause: readonly string[];
+  evidence: ViolationEvidence;
 }) => void;
+
+/**
+ * Promotes the rule's internal {@link PredicateBranch} discriminator and
+ * the {@link FindingKind} flag to a structured `evidence` shape on the
+ * emitted violation. An agent triaging a 169-finding cluster can branch
+ * on `evidence.predicateBranch === "aria-controls"` (strongest signal —
+ * the trigger references an existing id) vs `"disclosure-class"` (the
+ * weakest, class-token-only signal) without parsing the rule's prose
+ * `message`. The prose still names the branch — `evidence` is additive
+ * machine-routable signal. See {@link ViolationEvidence} for the
+ * surface contract.
+ */
+function buildPredicateEvidence(branch: PredicateBranch, finding: FindingKind): ViolationEvidence {
+  return {
+    kind: "disclosure-predicate-branch",
+    predicateBranch: branch.kind,
+    findingKind: finding,
+  };
+}
 
 /**
  * Per-emit severity choice. The rule's default severity is `"warning"`
@@ -478,6 +499,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
       couldBeWrongBecause: [DISCLOSURE_PREDICATE_HEURISTIC],
+      evidence: buildPredicateEvidence(branch, finding),
     });
   }
 }
@@ -673,6 +695,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
       couldBeWrongBecause: [DISCLOSURE_PREDICATE_HEURISTIC],
+      evidence: buildPredicateEvidence(branch, finding),
     });
   }
 }

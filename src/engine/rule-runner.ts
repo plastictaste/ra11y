@@ -291,6 +291,17 @@ function stampViolation(
     ...(emitted.siblingInstances && emitted.siblingInstances.length > 0
       ? { siblingInstances: emitted.siblingInstances }
       : {}),
+    // Structured discriminating evidence (`evidence.kind === "list-wrong-child"`,
+    // `"disclosure-predicate-branch"`, …) — see Violation.evidence for the
+    // surface contract. High-density rules promote the discriminating
+    // attribute from prose `reason`/`message` to a machine-routable field
+    // so an agent triaging a 50+ finding cluster can branch on
+    // `evidence.offendingChildTag` / `evidence.predicateBranch` without
+    // parsing English. Conditional spread keeps `evidence: undefined` off
+    // the wire per CLAUDE.md §1 "Ambiguous field shapes are dishonest" —
+    // rules that don't populate the field see no field on the stamped
+    // Violation. The rule is the sole emitter; the engine is shape-blind.
+    ...(emitted.evidence !== undefined && { evidence: emitted.evidence }),
   };
 }
 

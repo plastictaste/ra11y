@@ -223,6 +223,13 @@ function buildInheritedViolation(
     ...(source.couldBeWrongBecause && source.couldBeWrongBecause.length > 0
       ? { couldBeWrongBecause: source.couldBeWrongBecause }
       : {}),
+    // Structured discriminating evidence — an inherited finding
+    // describes the same evidence shape as its source site (the
+    // wrapper definition's emission), so the predicate-branch /
+    // offending-child discriminator forwards verbatim. Conditional
+    // spread keeps `evidence: undefined` off the wire on inherited
+    // findings whose source rule didn't populate the field.
+    ...(source.evidence !== undefined && { evidence: source.evidence }),
   };
 }
 

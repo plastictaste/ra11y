@@ -113,4 +113,53 @@ describe("rule semantics/list-structure", () => {
       expect(rule.satisfies).toContain("wcag21:1.3.1");
     });
   });
+
+  describe("structured evidence (high-density triage affordance)", () => {
+    // The wrong-child branch is the rule's high-density emitter (the
+    // 59-fires-on-one-scan acute case). The discriminating evidence
+    // (offending child tag, optional class) must surface as a typed
+    // sub-shape so an agent can route triage without parsing the prose
+    // `message`. Stray-`<li>` and JSX-primitive emissions intentionally
+    // do not carry `evidence` — the structural fact those emissions
+    // name has no offending-child analog.
+    it("wrong-child HTML emit names the offending child tag in evidence.offendingChildTag", () => {
+      const violations = runRule(rule, `<ul><hr><li>x</li></ul>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "list-wrong-child",
+        listTag: "ul",
+        offendingChildTag: "hr",
+      });
+    });
+
+    it("wrong-child HTML emit propagates the offending child class when present", () => {
+      const violations = runRule(rule, `<ul><div class="separator">x</div></ul>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "list-wrong-child",
+        listTag: "ul",
+        offendingChildTag: "div",
+        offendingChildClass: "separator",
+      });
+    });
+
+    it("wrong-child JSX emit reads className for evidence.offendingChildClass", () => {
+      const violations = runRule(rule, `const X = <ul><div className="divider">x</div></ul>;`);
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "list-wrong-child",
+        listTag: "ul",
+        offendingChildTag: "div",
+        offendingChildClass: "divider",
+      });
+    });
+
+    it("stray-li emit omits evidence (no offending-child analog)", () => {
+      const violations = runRule(rule, `<div><li>Home</li></div>`, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toBeUndefined();
+    });
+  });
 });

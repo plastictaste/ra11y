@@ -259,6 +259,13 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     // `undefined` off the wire per CLAUDE.md §1 "Ambiguous field shapes
     // are dishonest."
     ...mapSiblingInstancesToAgent(v.siblingInstances),
+    // Structured discriminating evidence forwarded from the upstream
+    // Violation. High-density rules promote the discriminator from
+    // prose to a typed sub-shape so the agent can branch-route triage.
+    // Conditional spread per CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest" — rules that don't populate the field see no field
+    // on the agent finding either.
+    ...(v.evidence !== undefined && { evidence: v.evidence }),
   };
 }
 

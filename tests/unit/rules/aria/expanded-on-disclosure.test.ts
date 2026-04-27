@@ -1068,4 +1068,116 @@ describe("rule aria/expanded-on-disclosure", () => {
       expect(violations[0]?.severity).toBe("warning");
     });
   });
+
+  describe("structured evidence (high-density triage affordance)", () => {
+    // The rule emits up to 169 findings on one scan in the field. The
+    // 4-way `predicateBranch` discriminator (which signal told the rule
+    // the element is a disclosure trigger) and the 2-way `findingKind`
+    // flag (missing aria-expanded vs missing aria-controls) must
+    // surface as structured evidence so an agent can route triage —
+    // strongest-signal-first (`aria-controls`) vs weakest-signal-last
+    // (`disclosure-class`) — without parsing the rule's prose
+    // `message`. The prose still names both — `evidence` is additive
+    // machine-routable signal.
+    it("aria-controls branch surfaces predicateBranch=aria-controls + findingKind=missing-expanded", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-controls="panel-1">Details</button>
+          <div id="panel-1" hidden>x</div>
+        </body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "aria-controls",
+        findingKind: "missing-expanded",
+      });
+    });
+
+    it("data-toggle branch surfaces predicateBranch=data-toggle on a Bootstrap-canonical collapse trigger", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#c1" data-bs-toggle="collapse">Toggle</a>
+        </body></html>`,
+        { filePath: "collapse.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "data-toggle",
+        findingKind: "missing-expanded",
+      });
+    });
+
+    it("onclick-classlist branch surfaces predicateBranch=onclick-classlist on an inline visibility toggler", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button onclick="document.getElementById('p').classList.toggle('collapse')">Toggle</button>
+        </body></html>`,
+        { filePath: "inline.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "onclick-classlist",
+        findingKind: "missing-expanded",
+      });
+    });
+
+    it("disclosure-class branch surfaces predicateBranch=disclosure-class on a class-token-only trigger", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="dropdown-toggle">Menu</button>
+        </body></html>`,
+        { filePath: "class-only.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "disclosure-class",
+        findingKind: "missing-expanded",
+      });
+    });
+
+    it("missing-controls finding surfaces findingKind=missing-controls on a data-toggle trigger that has aria-expanded", () => {
+      // `aria-expanded` is present, but the disclosure shape comes from
+      // `data-bs-toggle="collapse"` rather than `aria-controls` — so the
+      // rule emits the missing-controls variant. The structured
+      // `findingKind` discriminator lets an agent route this branch
+      // (where the fix is "add aria-controls") distinctly from the
+      // missing-expanded majority (where the fix is "add aria-expanded").
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" aria-expanded="false">Toggle</button>
+        </body></html>`,
+        { filePath: "missing-controls.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "data-toggle",
+        findingKind: "missing-controls",
+      });
+    });
+
+    it("evidence is also emitted on JSX (not just HTML)", () => {
+      const violations = runRule(
+        rule,
+        `const X = <button aria-controls="p1">Details</button>;
+         const Y = <div id="p1">x</div>;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "aria-controls",
+        findingKind: "missing-expanded",
+      });
+    });
+  });
 });

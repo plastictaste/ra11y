@@ -275,6 +275,16 @@ export interface AgentFinding {
     readonly line: number;
     readonly id?: string;
   }[];
+  /**
+   * Structured discriminating evidence forwarded from the upstream
+   * {@link import("../../types/violation.ts").Violation#evidence}.
+   * High-density rules (`semantics/list-structure`, `aria/expanded-on-disclosure`)
+   * promote the discriminator the prose `message` would otherwise bury
+   * (offending child tag, predicate-branch kind) to a typed sub-shape so
+   * an agent triaging a 50+ finding cluster can branch without parsing
+   * English. Absent when the rule did not populate the field.
+   */
+  readonly evidence?: import("../../types/violation.ts").ViolationEvidence;
 }
 
 export interface AgentFile {

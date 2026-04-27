@@ -62,6 +62,14 @@ export function stampProjectEmission(
     ...(em.snippet !== undefined && { snippet: em.snippet }),
     ...(em.couldBeWrongBecause?.length ? { couldBeWrongBecause: em.couldBeWrongBecause } : {}),
     ...(em.classEvidence ? { classEvidence: em.classEvidence } : {}),
+    // Structured discriminating evidence — project-scope emit twin of
+    // the per-file stamp in `rule-runner.ts`. No project-scope rule
+    // currently populates `evidence`, but keeping the engine's two
+    // stamp sites shape-symmetric means a future high-density project
+    // rule (e.g. an aggregate landmark check) can opt in without
+    // touching the engine. Conditional spread keeps `evidence:
+    // undefined` off the wire per CLAUDE.md §1.
+    ...(em.evidence !== undefined && { evidence: em.evidence }),
   };
 }
 
