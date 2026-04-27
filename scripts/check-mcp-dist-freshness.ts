@@ -131,7 +131,7 @@ try {
   console.error("  Fix:  bun run build");
   console.error("");
   console.error(
-    "  Background: docs/kb/architecture/ai-first-consumer.md (search 'V1-MCP-DIST-STALE-CI-GATE').",
+    "  Background: docs/kb/architecture/ai-first-consumer.md (search 'mcp dist staleness').",
   );
   process.exit(1);
 } finally {

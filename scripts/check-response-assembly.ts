@@ -47,8 +47,8 @@
  *
  * ## Pattern C — `plan: { … violations: <number> … }` composite counter
  *
- * `plan.violations` was removed per Q7-PLAN-VIOLATIONS-COMPOSITE
- * (2026-04-25) for the same reason as `plan.totalFindings` and
+ * `plan.violations` was removed (2026-04-25) for the same reason as
+ * `plan.totalFindings` and
  * `plan.safeEditsAvailable`: a flat top-level integer that summed
  * across the four `fixesByClass` lanes (mechanical, guidance,
  * runtimeOnly, verifyInSource) under a single headline. Agents
@@ -67,8 +67,8 @@
  * ## Pattern D — `automatedCoverage: { … automatedCriteriaPassRate … }` composite
  *
  * `checklist.summary.automatedCoverage.automatedCriteriaPassRate` was
- * removed per Q7-CHECKLIST-PASS-RATE-COMPOSITE (2026-04-25): the lone
- * scalar bundled "rule fired clean" (`clean`) with "rule never had
+ * removed (2026-04-25): the lone scalar bundled "rule fired clean"
+ * (`clean`) with "rule never had
  * eligible inputs" (`untestable`) with "rule found violations"
  * (`withFindings`) into one ratio — a composite headline summing
  * categorically different sub-buckets per the doctrine's "Composite
@@ -248,8 +248,8 @@ function analyzeNewTextEditPattern(
  * Flags a property assignment `plan: { … totalFindings … }` where the
  * `plan` initializer is an object literal AND the object literal
  * contains a `totalFindings` property. `totalFindings` was removed
- * from the scan-family plan by ADR 0024 / V1-RESPONSE-ASSEMBLER — it
- * summed severity-distinct lanes under one name, the doctrine's
+ * from the scan-family plan by ADR 0024 — it summed severity-distinct
+ * lanes under one name, the doctrine's
  * "Composite headline counts are dishonest" case. Legitimate shape:
  * `plan.violations` + `plan.notes` as separate counters.
  *
@@ -304,8 +304,8 @@ function analyzePlanTotalFindingsPattern(
  * Flags a property assignment `plan: { … violations: <numeric literal> … }`
  * where the `plan` initializer is an object literal AND the object
  * literal contains a numeric `violations` property. `plan.violations`
- * was removed per Q7-PLAN-VIOLATIONS-COMPOSITE — it summed across the
- * four `fixesByClass` lanes under one name, the doctrine's "Composite
+ * was removed — it summed across the four `fixesByClass` lanes under
+ * one name, the doctrine's "Composite
  * headline counts are dishonest" pattern. Legitimate shape: `plan.notes`
  * + `plan.fixesByClass` as separate top-level plan fields.
  *
@@ -388,9 +388,9 @@ function analyzePlanViolationsCompositePattern(
  * criteriaClean / criteriaWithFindings / criteriaUntestable` split, not
  * inside an `automatedCoverage:` envelope).
  *
- * Q7-CHECKLIST-PASS-RATE-COMPOSITE removed the scalar from the
- * checklist surface; the honest shape is the two non-overlapping
- * counters (`criteriaWithRulesAllClean` + `criteriaWithoutEligibleInputs`).
+ * The pass-rate composite was removed from the checklist surface; the
+ * honest shape is the two non-overlapping counters
+ * (`criteriaWithRulesAllClean` + `criteriaWithoutEligibleInputs`).
  */
 function analyzeAutomatedCoveragePassRatePattern(
   node: ts.ObjectLiteralExpression,
@@ -533,14 +533,14 @@ if (import.meta.main) {
         "    sums severity-distinct lanes under one name. Split into `plan.notes` +\n" +
         "    `plan.fixesByClass` (see src/mcp/scan-assembly.ts).\n" +
         "  plan-violations-composite:\n" +
-        "    `plan.violations` was removed per Q7-PLAN-VIOLATIONS-COMPOSITE — it summed\n" +
+        "    `plan.violations` was removed — it summed\n" +
         "    across the four `fixesByClass` lanes (mechanical, guidance, runtimeOnly,\n" +
         "    verifyInSource) under one headline. Use `plan.fixesByClass` (always present\n" +
         "    when violations > 0) as the structured per-lane tally; sum the four lanes\n" +
         "    when a flat count is needed.\n" +
         "  automated-coverage-pass-rate-composite:\n" +
-        "    `automatedCoverage.automatedCriteriaPassRate` was removed per\n" +
-        "    Q7-CHECKLIST-PASS-RATE-COMPOSITE — the lone scalar bundled `clean` /\n" +
+        "    `automatedCoverage.automatedCriteriaPassRate` was removed —\n" +
+        "    the lone scalar bundled `clean` /\n" +
         "    `untestable` / `withFindings` (rule fired clean, rule never had eligible\n" +
         "    inputs, rule found violations) into one ratio. Use the two non-overlapping\n" +
         "    counters `criteriaWithRulesAllClean` + `criteriaWithoutEligibleInputs`\n" +

@@ -88,8 +88,8 @@ const LIMITS_EXEMPT_HEADER_LINES = 20;
  * (stripped when the file shrinks under-budget; updated when its
  * rationale changes).
  *
- * Intent: this list shrinks monotonically as ADR 0024's
- * V1-RESPONSE-* migrations land. Every commit that brings a file
+ * Intent: this list shrinks monotonically as ADR 0024's shared
+ * response-assembler migrations land. Every commit that brings a file
  * under the scoped budget deletes the corresponding entry here. A
  * new file exceeding a scoped budget chooses between (a) extracting
  * work into the assembler/helpers (preferred) or (b) carrying the
@@ -102,20 +102,20 @@ interface HandlerBudgetExemption {
   readonly reason: string;
 }
 const HANDLER_BUDGET_EXEMPTIONS: readonly HandlerBudgetExemption[] = [
-  // Scan-family handlers — migrate through assembleScanFamilyResponse
-  // (V1-RESPONSE-SCAN-*). Extract call-sites shrink once the shared
-  // assembler owns plan/meta/warnings emission.
+  // Scan-family handlers — migrate through assembleScanFamilyResponse.
+  // Extract call-sites shrink once the shared assembler owns
+  // plan/meta/warnings emission.
   {
     path: "src/mcp/tool-scan.ts",
-    reason: "scan-family handler, pending V1-RESPONSE-SCAN-* extraction into assembler",
+    reason: "scan-family handler, pending extraction into shared response assembler",
   },
   {
     path: "src/mcp/tool-scan-file.ts",
-    reason: "scan-family handler, pending V1-RESPONSE-SCAN-* extraction into assembler",
+    reason: "scan-family handler, pending extraction into shared response assembler",
   },
   {
     path: "src/mcp/tool-scan-project.ts",
-    reason: "scan-family handler, pending V1-RESPONSE-SCAN-* extraction into assembler",
+    reason: "scan-family handler, pending extraction into shared response assembler",
   },
   {
     path: "src/mcp/tool-scan-process.ts",
@@ -123,34 +123,34 @@ const HANDLER_BUDGET_EXEMPTIONS: readonly HandlerBudgetExemption[] = [
   },
   {
     path: "src/mcp/tool-scan-diff.ts",
-    reason: "scan-family handler, pending V1-RESPONSE-SCAN-* extraction into assembler",
+    reason: "scan-family handler, pending extraction into shared response assembler",
   },
   {
     path: "src/mcp/tool-checklist.ts",
-    reason: "scan-family derivative, pending V1-RESPONSE-SCAN-DERIVATIVE extraction",
+    reason: "scan-family derivative, pending extraction",
   },
   {
     path: "src/mcp/tool-coverage.ts",
-    reason: "scan-family derivative, pending V1-RESPONSE-SCAN-DERIVATIVE extraction",
+    reason: "scan-family derivative, pending extraction",
   },
   {
     path: "src/mcp/tool-conformance-statement.ts",
-    reason: "scan-family derivative, pending V1-RESPONSE-SCAN-DERIVATIVE extraction",
+    reason: "scan-family derivative, pending extraction",
   },
   {
     path: "src/mcp/tool-review-candidates.ts",
-    reason: "scan-family derivative, pending V1-RESPONSE-SCAN-DERIVATIVE extraction",
+    reason: "scan-family derivative, pending extraction",
   },
-  // Fix-family handlers — shape call blocked on V1-RESPONSE-FIX-FAMILY
-  // decision (baseline.check/apply_fix/suggest_fix have bespoke meta
-  // shapes that can't be forced through the scan-family assembler).
+  // Fix-family handlers — shape call blocked on the fix-family response
+  // shape decision (baseline.check/apply_fix/suggest_fix have bespoke
+  // meta shapes that can't be forced through the scan-family assembler).
   {
     path: "src/mcp/tool-apply-fix-internals.ts",
-    reason: "fix-family internals, pending V1-RESPONSE-FIX-FAMILY decision",
+    reason: "fix-family internals, pending decision",
   },
   {
     path: "src/mcp/tool-baseline.ts",
-    reason: "fix-family handler, pending V1-RESPONSE-FIX-FAMILY decision",
+    reason: "fix-family handler, pending decision",
   },
   // Non-scan-family handlers that host synthesis, sampling, or
   // enumeration logic not covered by any assembler. These are candidates

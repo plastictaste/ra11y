@@ -29,8 +29,8 @@
  * Allowlist entries are structured tuples of { file, property, reason }.
  * Adding a new entry must come with a doc-comment above the site
  * explaining the semantic reason the null/sentinel is load-bearing
- * (e.g. Q2-WRAPPATH: `null` is emitted, not omitted — the attempt is
- * meaningful). The canonical pre-existing exception is
+ * (e.g. `null` is emitted, not omitted — the attempt is meaningful).
+ * The canonical pre-existing exception is
  * `detect-wrappers-core.ts::definitionFile`.
  *
  * Input-param normalization (`const x = strParam(params, "x") ?? ""`)
@@ -70,7 +70,7 @@ export const ALLOWLIST: readonly AllowlistEntry[] = [
     file: "src/mcp/detect-wrappers-core.ts",
     property: "definitionFile",
     reason:
-      "Q2-WRAPPATH: `null` is emitted, not omitted — the scanner attempted to locate the definition and deliberately communicates 'searched, not found'. Omitting would collapse 'unknown' and 'deliberately-absent' into the same shape.",
+      "`null` is emitted, not omitted — the scanner attempted to locate the definition and deliberately communicates 'searched, not found'. Omitting would collapse 'unknown' and 'deliberately-absent' into the same shape.",
   },
 ];
 
