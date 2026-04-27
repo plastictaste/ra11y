@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bootstrap 4 dropdown trigger missing aria-haspopup and aria-controls</title>
+  </head>
+  <body>
+    <!--
+      Failing case: data-toggle="dropdown" anchor (Bootstrap 4 / generic
+      shape) ships with no aria-haspopup and no aria-controls. AT
+      announces "Account, link" with no signal that activation reveals
+      a menu, and no way to navigate to the controlled region. The
+      sibling rule aria/expanded-on-disclosure will fire on the missing
+      aria-expanded axis; this rule fires on the haspopup + controls
+      axis. Per the AI-first consumer model, the two rules surface
+      different gaps so the agent can sequence the fix.
+    -->
+    <a class="dropdown-toggle" data-toggle="dropdown" href="#">Account</a>
+    <ul class="dropdown-menu">
+      <li><a href="/profile">Profile</a></li>
+      <li><a href="/logout">Sign out</a></li>
+    </ul>
+  </body>
+</html>

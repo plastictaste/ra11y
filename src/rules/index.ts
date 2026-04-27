@@ -9,6 +9,7 @@ import type { Rule } from "../types/rule.ts";
 import { rule as conflictingRole } from "./aria/conflicting-role.ts";
 import { rule as dialogRoleMissing } from "./aria/dialog-role-missing.ts";
 import { rule as disabledLinkSurrogate } from "./aria/disabled-link-surrogate.ts";
+import { rule as dropdownToggleTripleAriaMissing } from "./aria/dropdown-toggle-triple-aria-missing.ts";
 import { rule as expandedOnDisclosure } from "./aria/expanded-on-disclosure.ts";
 import { rule as hiddenFocus } from "./aria/hidden-focus.ts";
 import { rule as iconChildMissingAriaHidden } from "./aria/icon-child-missing-aria-hidden.ts";
@@ -138,6 +139,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   disabledLinkSurrogate,
   dragAlternative,
   draggableNoKeyboardAlt,
+  dropdownToggleTripleAriaMissing,
   duplicateId,
   duplicateLandmarkUnlabeled,
   emptyHeading,
@@ -248,6 +250,7 @@ export {
   disabledLinkSurrogate,
   dragAlternative,
   draggableNoKeyboardAlt,
+  dropdownToggleTripleAriaMissing,
   duplicateId,
   duplicateLandmarkUnlabeled,
   emptyHeading,

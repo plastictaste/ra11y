@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canonical Bootstrap dropdown trigger with full ARIA triple</title>
+  </head>
+  <body>
+    <!--
+      Compliant menu-button pattern: data-bs-toggle="dropdown" carries
+      all three ARIA properties — aria-haspopup names the popup type,
+      aria-controls names the menu region's id, aria-expanded carries
+      the initial collapsed state. The menu region (#user-menu) is
+      addressable by the aria-controls value.
+    -->
+    <button
+      type="button"
+      class="btn dropdown-toggle"
+      data-bs-toggle="dropdown"
+      aria-haspopup="menu"
+      aria-controls="user-menu"
+      aria-expanded="false"
+    >
+      Account
+    </button>
+    <ul id="user-menu" role="menu" hidden>
+      <li role="none"><a role="menuitem" href="/profile">Profile</a></li>
+      <li role="none"><a role="menuitem" href="/logout">Sign out</a></li>
+    </ul>
+  </body>
+</html>
