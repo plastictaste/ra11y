@@ -1,11 +1,11 @@
 ---
 title: "aria/expanded-on-disclosure"
-severity: "error"
+severity: "warning"
 scope: "node"
 satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"]
 ---
 # `aria/expanded-on-disclosure`
-- **Severity:** error
+- **Severity:** warning
 - **Scope:** node
 - **Satisfies:** `wcag22:4.1.2`, `wcag21:4.1.2`
 - **Applies to:** .html, .htm, .tsx, .jsx
