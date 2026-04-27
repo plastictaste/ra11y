@@ -59,6 +59,22 @@ Walk the artifact and emit a normalized list of observed signals. Sources:
 
 Skip signals that are just role-specific noise (planner returning `deferred[]` for sequencing reasons is normal). Focus on **prediction-vs-outcome divergence** and **stop-condition tokens**.
 
+## 1a. Compute co-occurrence pairs (cross-signal correlation)
+
+Two signals that fire on the same turn ≥3 times across the 20-turn ledger tail are likely the same root cause being observed twice. Patching them as if independent pollutes the harness with two patches against one cause.
+
+For each unordered pair `(A, B)` where both A and B appear in this turn's `signals[]` or in the ledger tail's `signals[]`:
+
+1. Count turns (current turn inclusive) where A and B both appear in the same entry's `signals[]`. Use exact code equality.
+2. If count ≥ 3, emit `correlations[]: { pair: [A, B], co_occurrences: <count> }` in this turn's return.
+3. For routing in §4, treat the pair as a unit: when both A and B independently pass the N≥2 + portability + allowlist gates this turn, emit a SINGLE harness patch addressing both, not two. The commit subject uses the lexicographically-smaller code: `chore(meta): <code_A>+<code_B> patch`.
+
+Co-occurrence does NOT lower the N≥2 gate. It only changes how routing groups co-firing signals into a single patch. A pair that co-occurs 3× but where neither signal individually crosses N≥2 still routes both to memory.
+
+Persist this turn's co-firing pairs into the ledger entry's `co_signals[]` field at step 10 so future turns can compute co-occurrence over the rolling window without re-deriving from raw `signals[]`. Ledger entries written before this rule existed lack `co_signals[]` — derive from `signals[]` directly when the field is absent.
+
+**Late-arriving correlation half.** If the signal's correlation pair already has a patch in the ledger tail's `writes.harness[]` (the other half was patched on a prior turn), do NOT emit a separate patch — surface a `findings[].kind: "structural_flag"` with the note `"<this_signal> co-occurs with already-patched <other_signal>; check whether the prior patch covers both halves before patching independently."` Add a self-finding `{ code: "correlated_signals", evidence: "<this_signal> ↔ <other_signal>, prior patch <sha>" }` for next-turn occurrence counts.
+
 ## 2. Read the ledger tail
 
 Read the last 20 entries of `.claude/turn-history.jsonl`:
@@ -86,6 +102,7 @@ Apply this decision tree:
    - **Portability test passes** (see §5).
    - Target file is on the **write allowlist** (see §6).
    - The specific lesson is not already documented at the target file (grep for the signal code or its key evidence phrase first).
+   - **When emitting**, if the signal pairs with another in this turn's `correlations[]` that also passes all gates above, bundle into a single combined patch: subject `chore(meta): <code_A>+<code_B> patch`, body cites evidence from both signals and explains they're co-occurring. The lexicographically-smaller code goes first in the subject. One bundled commit, not two.
 
 4. **Memory write** (default for everything else): write a memory entry under `~/.claude/projects/-Users-van-dev-ra11y/memory/` and add a one-line pointer to `MEMORY.md`. Memory is the catch-all for single-incident lessons, project-coupled lessons, and lessons that fail the portability test.
 
@@ -182,10 +199,12 @@ echo '<json>' >> .claude/turn-history.jsonl
 Schema (single line, no embedded newlines):
 
 ```json
-{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"signals":[{"code":"...","evidence":"..."}],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"backlog_reopens":[]}}
+{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"signals":[{"code":"...","evidence":"..."}],"co_signals":[["code_a","code_b"]],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"backlog_reopens":[]}}
 ```
 
 The `writes` block records what you actually did this turn — used for cross-turn dedup and for auditing the agent's behavior. Keep evidence strings short (≤200 chars); truncate with `...` if needed.
+
+`co_signals` is **present-when-meaningful** — omit when no pairs in this turn's `signals[]` co-fired. Each entry is a 2-element array of code strings, lexicographically sorted within the pair so cross-turn pair counting is deterministic. Pre-existing ledger entries that lack `co_signals` are read by future turns as "no co-firing pairs recorded for that turn"; the §1a derivation falls back to raw `signals[]` and is correct without migration.
 
 The ledger is gitignored (`.gitignore` adds `.claude/turn-history.jsonl`). It is local to each user's working copy.
 
@@ -208,6 +227,9 @@ Single JSON block, no prose:
       { "item": "Q-7-foo", "reason": "cherry_pick_dropped_commits" }
     ]
   },
+  "correlations": [
+    { "pair": ["branch_naming_drift", "cherry_pick_dropped_commits"], "co_occurrences": 3 }
+  ],
   "findings": [
     { "kind": "structural_flag", "signal": "classification_mismatch", "note": "Same item failed dispatch 3× — backlog text may be too vague for the planner's classifier." }
   ],
@@ -215,7 +237,7 @@ Single JSON block, no prose:
 }
 ```
 
-`signals_observed` is the count from step 1. `writes.harness[]` includes the commit SHA when a patch was made. `findings[].kind` is currently `structural_flag` (more kinds may be added). `ledger_appended: true` confirms step 10 succeeded; `false` if the append failed (do NOT skip silently — surface the failure).
+`signals_observed` is the count from step 1. `correlations[]` is **present-when-meaningful** — omit when no pairs reached the ≥3 co-occurrence threshold this turn. `pair` is sorted lexicographically; `co_occurrences` is the count from §1a (current turn inclusive). `writes.harness[]` includes the commit SHA when a patch was made. `findings[].kind` is currently `structural_flag` (more kinds may be added). `ledger_appended: true` confirms step 10 succeeded; `false` if the append failed (do NOT skip silently — surface the failure).
 
 When nothing fired and there is nothing to record, return:
 
