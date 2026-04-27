@@ -896,6 +896,133 @@ describe("classifyBuildArtifact — vendor-distribution classifications", () => 
   });
 });
 
+describe("classifyBuildArtifact — generic copyright-banner vendor-distribution", () => {
+  // Field-report shape: unminified vendor bundles whose first lines are
+  // a `/*!` banner with a Copyright / License / Released-under / SPDX
+  // token, but no `.min.` infix and no curated `VENDOR_LIBRARY_BANNERS`
+  // entry. Recurring across two corpora; in bulk corpora drove
+  // 150+ contrast findings emitted against vendor stylesheets that the
+  // long-line probe misclassified as `likely-minified-by-line-stats`.
+  // The generic copyright-banner predicate catches the publishing-
+  // convention shape (`/*!` opener + license token in the first 1024
+  // chars) for libraries that the curated table does not enumerate.
+
+  it("labels a Bootstrap CSS bundle carrying a `/*! Bootstrap v3.3.7 ... Copyright ... */` banner via the curated table (more informative `vendor-banner-version` signal)", () => {
+    // The curated table runs FIRST so a Bootstrap banner with a version
+    // slot still gets the more informative `vendor-banner-version`
+    // signal carrying `bootstrap v3.3.7`. The generic copyright-banner
+    // branch is the fallback for libraries the curated table does not
+    // enumerate; this test pins the precedence so the curated entries
+    // keep their version-bearing signal even when the generic branch
+    // would also match.
+    const source =
+      "/*! Bootstrap v3.3.7 (https://getbootstrap.com) Copyright 2011-2017 Twitter, Inc. Released under MIT license */\nbody { margin: 0; }\n";
+    const result = classifyBuildArtifactDetailed("vendor/bootstrap.css", source);
+    expect(result?.classification).toBe("likely-vendor-distribution");
+    expect(result?.signal).toEqual({
+      kind: "vendor-banner-version",
+      value: "bootstrap v3.3.7",
+    });
+  });
+
+  it("labels a `jquery-scrolltofixed` bundle with no curated entry as `likely-vendor-distribution` via the generic copyright-banner branch", () => {
+    // jquery-scrolltofixed is not on the curated `VENDOR_LIBRARY_BANNERS`
+    // table (the long tail of jQuery plugins is too broad to enumerate).
+    // Its banner follows the publishing convention: `/*!` opener +
+    // `Copyright` + `Released under` + a license identifier. The
+    // generic branch catches the shape without needing a curated entry.
+    const source =
+      "/*!\n * jQuery scrollToFixed Plugin\n * Copyright (c) 2011-2014 Joseph Cava-Lynch\n * Released under the MIT license\n */\n(function($) { $.fn.scrollToFixed = function() { return this; }; })(jQuery);\n";
+    const result = classifyBuildArtifactDetailed("vendor/jquery-scrolltofixed.js", source);
+    expect(result?.classification).toBe("likely-vendor-distribution");
+    expect(result?.signal.kind).toBe("vendor-copyright-banner");
+    // The `value` carries the matched bang-comment opener trimmed to
+    // ≤120 chars so the agent can grep for the banner shape.
+    expect(result?.signal.kind === "vendor-copyright-banner" && result.signal.value).toMatch(
+      /^\/\*!/u,
+    );
+  });
+
+  it("labels a generic vendor bundle whose banner cites the Apache license", () => {
+    // SPDX identifiers (Apache, MIT, GPL, BSD) are word-bounded in the
+    // matcher so a coincidental substring inside a longer identifier
+    // never over-fires. Apache is one of the canonical license tokens.
+    const source = "/*! some-vendor-lib v0.1 | Apache 2.0 License */\nfunction foo() {}\n";
+    const result = classifyBuildArtifactDetailed("vendor/some-lib.js", source);
+    expect(result?.classification).toBe("likely-vendor-distribution");
+    expect(result?.signal.kind).toBe("vendor-copyright-banner");
+  });
+
+  it("labels a Modernizr bundle carrying a `/*! modernizr ... */` banner via the curated table when the version is present", () => {
+    // Modernizr is on the curated table; the curated branch picks it up
+    // first and produces the version-bearing signal. This test pins
+    // that precedence (curated wins over generic when both would match).
+    const source = "/*! modernizr 3.6.0 (Custom Build) | MIT */\n!function(){}();\n";
+    const result = classifyBuildArtifactDetailed("vendor/modernizr.js", source);
+    expect(result?.classification).toBe("likely-vendor-distribution");
+    expect(result?.signal).toEqual({
+      kind: "vendor-banner-version",
+      value: "modernizr v3.6.0",
+    });
+  });
+
+  it("does NOT label a hand-authored file with a `/*` (non-bang) copyright banner — bang-comment is the publishing convention", () => {
+    // A regular `/*` comment with a copyright header is the canonical
+    // hand-authored license-header shape. The bang-comment `/*!` form
+    // is the minifier-preserve marker — rare in authored sources. The
+    // predicate requires the bang specifically so authored copyright
+    // headers stay unlabeled.
+    const source = "/* Copyright (c) 2024 Acme Corp. All rights reserved. */\nvar x = 1;\n";
+    expect(classifyBuildArtifact("src/utils.js", source)).toBe(null);
+  });
+
+  it("does NOT label a `/*!` banner without any license/copyright token", () => {
+    // The bang-comment opener alone is not enough — minifiers also
+    // preserve `/*!` for non-license markers (build timestamps, SRI
+    // hash hints). The predicate requires BOTH the bang opener AND a
+    // license/copyright token in the leading window.
+    const source = "/*! Built 2024-01-01 */\nvar x = 1;\n";
+    expect(classifyBuildArtifact("src/build-meta.js", source)).toBe(null);
+  });
+
+  it("does NOT label a file whose `/*!` banner sits beyond the 1024-char probe window", () => {
+    // The probe is bounded to the leading 1024 chars to keep the helper
+    // O(1) regardless of file size. Banners conventionally sit at the
+    // top of distributed bundles; a `/*!` comment buried deep in a
+    // multi-megabyte source is not the field-report shape this targets.
+    const padding = "x".repeat(1100);
+    const source = `${padding}\n/*! deep-banner Copyright 2024 */\nvar x = 1;\n`;
+    expect(classifyBuildArtifact("src/utils.js", source)).toBe(null);
+  });
+
+  it("captures the matched banner opener as the signal `value` for greppability", () => {
+    const source =
+      "/*! my-lib v2 | (c) 2024 Author | Released under MIT */\nfunction lib() {}\n";
+    const result = classifyBuildArtifactDetailed("vendor/my-lib.js", source);
+    expect(result?.signal.kind).toBe("vendor-copyright-banner");
+    if (result?.signal.kind === "vendor-copyright-banner") {
+      // The `value` is the matched bang-comment opener through the end
+      // of the first line (or 120 chars, whichever comes first).
+      expect(result.signal.value.startsWith("/*!")).toBe(true);
+      expect(result.signal.value.length).toBeLessThanOrEqual(120);
+      expect(result.signal.value).toContain("MIT");
+    }
+  });
+
+  it("does NOT mislabel a banner-bearing readable source whose body crosses the line-stats threshold as `likely-minified-by-line-stats`", () => {
+    // Field-report shape: a banner-bearing readable vendor bundle whose
+    // body happens to contain enough long lines to trigger the line-
+    // stats corroborator. The copyright-banner branch runs BEFORE the
+    // long-line probe so the honest verdict ("this is a release
+    // artifact") wins over the misleading "minified bytes" label.
+    const longLine = "x".repeat(600);
+    const source = `/*! some-vendor v0.1 | Copyright 2024 | MIT */\nvar code = "${longLine}";\nvar more = "${longLine}";\nvar third = "${longLine}";\n`;
+    const result = classifyBuildArtifactDetailed("vendor/some-vendor.js", source);
+    expect(result?.classification).toBe("likely-vendor-distribution");
+    expect(result?.signal.kind).toBe("vendor-copyright-banner");
+  });
+});
+
 describe("collectBuildArtifacts — sibling `.min.<ext>` vendor-distribution signal", () => {
   it("labels `wow.js` with `definite-vendor-distribution` when `wow.min.js` is also in the scanned set", () => {
     // Field-report shape: a vendor library shipped as both readable

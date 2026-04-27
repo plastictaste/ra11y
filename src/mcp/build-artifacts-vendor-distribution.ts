@@ -40,7 +40,8 @@
  */
 type VendorDistributionSignal =
   | { readonly kind: "sourcemap-pointer-min"; readonly value: string }
-  | { readonly kind: "vendor-banner-version"; readonly value: string };
+  | { readonly kind: "vendor-banner-version"; readonly value: string }
+  | { readonly kind: "vendor-copyright-banner"; readonly value: string };
 
 /**
  * Matches `//#` / `//@` `sourceMappingURL=<path>` where the target
@@ -108,6 +109,85 @@ export function formatVendorBannerSignal(banner: {
   const value =
     banner.version === undefined ? banner.library : `${banner.library} v${banner.version}`;
   return { kind: "vendor-banner-version", value };
+}
+
+/**
+ * Matches a `/*!` bang-comment opener anywhere in the leading slice of a
+ * source. The bang-comment form is the publishing convention for
+ * "preserve this comment through minification" — minifiers honor it,
+ * authored sources rarely use it, and library build pipelines emit it
+ * verbatim alongside the canonical banner header. Both `/*!` and
+ * `/*\!` variants are covered by the literal sequence; the matcher is
+ * non-anchored because a banner can sit at byte 0, after a UTF-8 BOM,
+ * after an `'use strict';` declaration, or after a leading newline.
+ */
+const BANG_COMMENT_OPENER_RE = /\/\*!/u;
+
+/**
+ * Matches one of the canonical license / copyright tokens a banner
+ * conventionally carries alongside the library identification:
+ * `Copyright`, `License`, `Released under`, `MIT`, `Apache`, `GPL`,
+ * `BSD`. Case-insensitive because banners ship under both
+ * "Copyright" and "copyright" forms; the SPDX identifiers (`MIT` /
+ * `Apache` / `GPL` / `BSD`) are word-bounded so a coincidental
+ * substring inside a longer identifier (`commitMIT`, `apache-server`)
+ * never over-fires. "Released under" is case-insensitive and tolerates
+ * one or more whitespace characters between the two words so banner
+ * variants spanning a soft wrap still match.
+ */
+const LICENSE_TOKEN_RE = /\b(?:Copyright|License|Released\s+under|MIT|Apache|GPL|BSD)\b/iu;
+
+/**
+ * Returns the structured `vendor-copyright-banner` signal when the
+ * leading 1024 chars of `source` carry a `/*!` bang-comment opener
+ * paired with one of the curated license / copyright tokens
+ * (Copyright, License, Released under, MIT, Apache, GPL, BSD); `null`
+ * otherwise.
+ *
+ * The combination — `/*!` opener + license/copyright token — is a
+ * publishing convention used by library build pipelines to keep the
+ * legal banner intact through minification. Hand-authored sources do
+ * include copyright headers, but rarely under the bang-comment form
+ * (`/*!`) which is specifically the "minifier-preserved" marker. The
+ * verdict carries a `likely-` prefix at the classification layer
+ * because authored files COULD adopt the convention, but in practice
+ * the combination is strong evidence of distributed-bundle shape.
+ *
+ * The 1024-char probe window is wider than the curated banner table's
+ * 512-char first-line probe because copyright banners commonly span
+ * several lines (multi-line bang-comment shape: opener on line 1,
+ * library identification on line 2, license URL on line 3) and the
+ * license token can sit any of those lines. Bounding at 1024 keeps the
+ * helper effectively O(1) regardless of file size.
+ *
+ * The signal `value` is the matched bang-comment opener trimmed to its
+ * leading window so the agent can grep for the literal banner shape
+ * without re-reading the source. The trim caps at 120 chars so the
+ * meta payload stays bounded even when a banner runs long.
+ *
+ * Field-report shapes this targets: Bootstrap CSS / jQuery 1.x bundles
+ * whose first line is a `/*! Bootstrap v3.3.7 (https://getbootstrap.com)
+ * Copyright 2011-2017 ...` banner; jquery-scrolltofixed and similar
+ * libraries not on the curated `VENDOR_LIBRARY_BANNERS` table that
+ * still carry the banner-shape publishing convention. Without this
+ * branch, those bundles fell through to the long-line probe and were
+ * mislabeled as `likely-minified-by-line-stats`, routing the agent to
+ * skip findings on the file the user can read while the actually-
+ * minified sibling got the same label.
+ */
+export function detectVendorCopyrightBanner(source: string): VendorDistributionSignal | null {
+  const probe = source.length > 1024 ? source.slice(0, 1024) : source;
+  const bangMatch = probe.match(BANG_COMMENT_OPENER_RE);
+  if (bangMatch === null) return null;
+  if (!LICENSE_TOKEN_RE.test(probe)) return null;
+  // Capture the matched bang-comment + the prose up to a newline or 120
+  // chars, whichever comes first, so the agent reads enough of the
+  // banner to confirm the verdict without re-opening the source.
+  const start = bangMatch.index ?? 0;
+  const tail = probe.slice(start);
+  const newline = tail.indexOf("\n");
+  const end = newline === -1 ? Math.min(tail.length, 120) : Math.min(newline, 120);
+  return { kind: "vendor-copyright-banner", value: tail.slice(0, end) };
 }
 
 /**

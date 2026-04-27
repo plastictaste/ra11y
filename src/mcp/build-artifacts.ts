@@ -109,14 +109,26 @@
  *      reading. The sibling-set predicate runs in
  *      {@link collectBuildArtifacts}; the sourcemap-pointer predicate
  *      runs per-file in {@link classifyBuildArtifactDetailed}.
- *   7. `likely-vendor-distribution`. The source's first non-blank line
- *      matches a curated `VENDOR_LIBRARY_BANNERS` opener (Bootstrap,
- *      jQuery, Font Awesome, Modernizr, normalize.css, animate.css,
- *      Eric Meyer reset.css, fancyBox, jQuery UI). Banner-comment
+ *   7. `likely-vendor-distribution`. Either (a) the source's first
+ *      non-blank line matches a curated `VENDOR_LIBRARY_BANNERS`
+ *      opener (Bootstrap, jQuery, Font Awesome, Modernizr,
+ *      normalize.css, animate.css, Eric Meyer reset.css, fancyBox,
+ *      jQuery UI), OR (b) the leading 1024 chars carry a `/*!`
+ *      bang-comment opener paired with one of the curated license /
+ *      copyright tokens (Copyright, License, Released under, MIT,
+ *      Apache, GPL, BSD). The curated table runs first so libraries
+ *      with a canonical version slot get the more informative
+ *      `vendor-banner-version` signal; the generic copyright-banner
+ *      branch catches the long tail of jQuery plugins, internal
+ *      forks, and bundles whose banner follows the publishing
+ *      convention without matching a curated entry. Banner-comment
  *      shapes are heuristic — a hand-authored file COULD include a
  *      vendor-style banner — but the curated table is restricted to
  *      banners that include a library-specific token unique enough
- *      that authored files do not coincidentally produce them. The
+ *      that authored files do not coincidentally produce them, and
+ *      the generic branch requires the bang-comment opener (`/*!` is
+ *      specifically the "minifier-preserve-this-comment" marker,
+ *      rare in authored sources) paired with a license token. The
  *      `likely-` prefix names the residual uncertainty.
  *   8. `likely-minified-by-line-stats`. The source text crosses the
  *      single-long-line probe (> {@link MINIFIED_LINE_THRESHOLD}
@@ -178,6 +190,7 @@
 
 import {
   detectSourcemapPointerToMin,
+  detectVendorCopyrightBanner,
   findSiblingMinFile,
   findSiblingSourcemap,
   formatVendorBannerSignal,
@@ -289,6 +302,14 @@ export function isDefiniteBuildArtifactClassification(
  *     `<library>` or `<library> v<version>` so the agent can confirm
  *     the verdict by reading the banner. Carries
  *     `likely-vendor-distribution`.
+ *   - `vendor-copyright-banner` — the leading 1024 chars carry a
+ *     `/*!` bang-comment opener paired with one of the curated
+ *     license / copyright tokens (Copyright, License, Released
+ *     under, MIT, Apache, GPL, BSD). `value` is the matched banner
+ *     opener trimmed to ≤120 chars. Fires for vendor distributions
+ *     not on the curated `VENDOR_LIBRARY_BANNERS` table whose banner
+ *     still follows the publishing convention. Carries
+ *     `likely-vendor-distribution`.
  */
 export type BuildArtifactSignal =
   | { readonly kind: "min-infix"; readonly value: string }
@@ -304,7 +325,8 @@ export type BuildArtifactSignal =
   | { readonly kind: "sibling-map-file"; readonly value: string }
   | { readonly kind: "sibling-min-file"; readonly value: string }
   | { readonly kind: "sourcemap-pointer-min"; readonly value: string }
-  | { readonly kind: "vendor-banner-version"; readonly value: string };
+  | { readonly kind: "vendor-banner-version"; readonly value: string }
+  | { readonly kind: "vendor-copyright-banner"; readonly value: string };
 
 /**
  * One classified artifact entry. On `scan_project`, these records
@@ -572,6 +594,23 @@ export function classifyBuildArtifactDetailed(
       classification: "likely-vendor-distribution",
       signal: formatVendorBannerSignal(banner),
     };
+  }
+  // Generic copyright-banner shape: `/*!` opener paired with a
+  // license/copyright token (Copyright, License, Released under,
+  // MIT, Apache, GPL, BSD) in the leading 1024 chars. Catches vendor
+  // distributions not on the curated `VENDOR_LIBRARY_BANNERS` table
+  // (jquery-scrolltofixed, the long tail of jQuery plugins, internal
+  // forks of upstream libraries) that still follow the publishing
+  // convention — without this branch the same files fell through to
+  // the long-line probe and were mislabeled
+  // `likely-minified-by-line-stats`. The verdict is `likely-` because
+  // an authored file COULD adopt the bang-comment + license-token
+  // convention; the curated table runs first so libraries with a
+  // canonical version slot still get the more informative
+  // `vendor-banner-version` signal.
+  const copyrightBannerSignal = detectVendorCopyrightBanner(source);
+  if (copyrightBannerSignal !== null) {
+    return { classification: "likely-vendor-distribution", signal: copyrightBannerSignal };
   }
   const longLineSignal = detectLongMinifiedLine(source);
   if (longLineSignal !== null) {
