@@ -2,27 +2,32 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>motion/pause-stop-hide — bad (inline &lt;style&gt; transition + carousel auto-advance)</title>
+    <title>motion/pause-stop-hide — bad (inline &lt;style&gt; animation + carousel auto-advance)</title>
     <style>
       /*
-        Canonical Bootstrap 5 carousel pattern: the slide transition lives
-        in an inline <style> block (not a separate .css file). The
-        transition runs for 8 seconds — past the WCAG 2.2.2 5-second
-        threshold — and is outside any prefers-reduced-motion guard,
-        so users who prefer reduced motion cannot disable it. The
-        coexistence of the <style>-block transition with the
-        data-bs-ride="carousel" auto-advance attribute is the reported
-        failure mode: the rule must fire on the <style>-block path even
-        when the carousel auto-advance finding is also present in the
-        same HTML document.
+        Canonical Bootstrap 5 carousel pattern: an auto-starting CSS
+        animation lives in an inline <style> block (not a separate .css
+        file). The animation has `infinite` iteration and is outside any
+        prefers-reduced-motion guard, so users who prefer reduced motion
+        cannot disable it. The coexistence of the <style>-block animation
+        with the data-bs-ride="carousel" auto-advance attribute is the
+        reported failure mode: the rule must fire on the <style>-block
+        path even when the carousel auto-advance finding is also present
+        in the same HTML document.
+
+        CSS transitions are intentionally NOT exercised here — a
+        transition only fires on a property change, so the 2.2.2
+        "starts automatically" trigger gate is unobservable from the
+        declaration alone. User-interaction-gated transitions belong to
+        motion/animation-from-interactions (wcag22:2.3.3 AAA).
       */
-      .carousel-item {
-        transition: transform 8s ease;
+      .carousel-pulse {
+        animation: pulse 1s ease-in-out infinite;
       }
     </style>
   </head>
   <body>
-    <div id="hero" class="carousel slide" data-bs-ride="carousel">
+    <div id="hero" class="carousel slide carousel-pulse" data-bs-ride="carousel">
       <div class="carousel-inner">
         <div class="carousel-item active">
           <img src="/hero-1.jpg" class="d-block w-100" alt="Product family one" />

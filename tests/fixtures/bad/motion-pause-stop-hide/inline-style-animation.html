@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>motion/pause-stop-hide — bad (inline style= animation)</title>
+  </head>
+  <body>
+    <!--
+      Inline style= declarations cannot be scoped to a
+      prefers-reduced-motion media query — there is no selector to wrap.
+      The animation auto-starts when the element renders ("starts
+      automatically" per WCAG 2.2.2) and runs with `infinite` iteration,
+      crossing the SC's 5-second / repetition gate. A user with reduced-
+      motion enabled at the OS level cannot opt out.
+
+      CSS transitions are intentionally NOT exercised here — a transition
+      only runs on a property change, so its trigger source (auto-driven
+      by JS, user-driven by hover/click) is unobservable from the
+      declaration alone. The 2.2.2 "starts automatically" gate is
+      therefore unprovable for inline transitions; the sibling
+      motion/animation-from-interactions rule (2.3.3 AAA) covers
+      user-interaction-gated transitions via CSS selectors.
+    -->
+    <div class="panel" style="animation: pulse 4s ease-in-out infinite">
+      Notice
+    </div>
+  </body>
+</html>

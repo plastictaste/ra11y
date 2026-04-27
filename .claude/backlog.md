@@ -408,7 +408,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. 
 
 #### Q8b — accepted (P0 — heuristic-emission / reason-severity disagreement)
 
-- [ ] **Q8b-MOTION-PAUSE-STOP-USER-TRIGGERED-CITATION** `motion/pause-stop-hide` cites `wcag22:2.2.2` on user-interaction-driven CSS transitions; SC 2.2.2's normative gate requires auto-start, >5s, parallel content — none satisfied for hover/focus transitions. Citation-honesty issue distinct from severity. Fix: split branches — auto-playing animation cites 2.2.2; user-triggered transition cites 2.3.3 (AAA) or drops the citation entirely. Pairs with Q8-RULE-MOTION-ATTRIBUTE-DRIVEN-CAROUSEL (auto-rotating carousel scope) and J-1 (user input on signal-vs-noise strategy).
 
 #### Q8b — accepted (P0 — cross-surface drift)
 

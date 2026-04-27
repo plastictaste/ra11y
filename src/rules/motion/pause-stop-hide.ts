@@ -19,16 +19,26 @@
  *
  * The rule checks five surfaces:
  *   1. HTML <marquee> — obsolete, always animated, no built-in pause.
- *   2. Standalone .css files — animation/transition properties without
- *      a prefers-reduced-motion guard, skipping rules whose selector
- *      is entirely user-interaction-gated.
+ *   2. Standalone .css files — `animation` declarations (which auto-start
+ *      on apply) without a prefers-reduced-motion guard, skipping rules
+ *      whose selector is entirely user-interaction-gated. Bare
+ *      `transition` declarations are NOT in scope here — a CSS transition
+ *      only runs in response to a property change, so the 2.2.2
+ *      normative trigger ("starts automatically") is not provable from
+ *      the declaration alone. User-interaction-gated transitions belong
+ *      to the sibling `motion/animation-from-interactions` rule (2.3.3
+ *      AAA); transitions whose trigger source is unobservable (a JS
+ *      class toggle could be a timer or a click) carry no honest 2.2.2
+ *      citation, so this rule stays quiet on them.
  *   3. HTML <style> blocks — same walk, line numbers offset back into
  *      the HTML file.
- *   4. Inline style="animation: …" / style="transition-duration: …"
- *      attributes — a single element can't be meaningfully wrapped in
- *      a reduced-motion query, so a qualifying inline declaration is
- *      flagged. Inline styles aren't gated by a pseudo-class, so they
- *      always live in the 2.2.2 lane.
+ *   4. Inline style="animation: …" attributes — a single element can't be
+ *      meaningfully wrapped in a reduced-motion query, so a qualifying
+ *      inline animation declaration is flagged. Inline animations
+ *      auto-start when the element renders, so they sit firmly in the
+ *      2.2.2 lane. Inline `transition` declarations follow the same
+ *      trigger-unobservable logic as their stylesheet counterparts and
+ *      are NOT flagged here.
  *   5. Auto-playing carousel/slider markers — a static signal of
  *      auto-advancing content (typically a 5-second default cycle):
  *        - Bootstrap 5: `data-bs-ride="carousel"` / `="true"`.
@@ -49,38 +59,37 @@
  * Spec-mandated 5-second / repetition gate: WCAG 2.2.2 only mandates a
  * pause/stop/hide mechanism when motion "starts automatically, lasts
  * more than five seconds, and is presented in parallel with other
- * content" (Understanding 2.2.2, "Auto-updating information"). A CSS
- * animation or transition therefore qualifies under 2.2.2 only when at
- * least one of:
+ * content" (Understanding 2.2.2, "Auto-updating information"). The
+ * "starts automatically" clause is the trigger gate: a CSS animation
+ * starts when the declaration applies (auto-start), but a CSS transition
+ * only fires on a subsequent property change (trigger-unobservable from
+ * static markup — could be a JS timer, a class toggle on user click, a
+ * hover-driven CSS variable change, etc.). This rule therefore only
+ * flags animations, not transitions; transitions on user-interaction
+ * pseudo-classes route to the sibling `motion/animation-from-interactions`
+ * rule (2.3.3 AAA), and transitions with an unobservable trigger carry
+ * no honest 2.2.2 citation.
+ *
+ * On the duration / iteration-count axis, an animation qualifies under
+ * 2.2.2 only when at least one of:
  *   - `animation-iteration-count: infinite` is set;
  *   - `animation-iteration-count` is a literal integer > 3 (the
  *     conformance threshold below which a finite repeat does not exceed
  *     five seconds of total runtime for a typical sub-second loop);
- *   - `animation-duration` exceeds 5s;
- *   - `transition-duration` exceeds 5s.
+ *   - `animation-duration` exceeds 5s.
  * A one-shot `animation: hide 0.2s ease-out;` (default
- * iteration-count = 1) cannot exceed 5s of runtime and is spec-exempt;
- * a 0.15s transition is similarly out of scope. The 5s threshold is
- * normative in the spec — this is a spec gate, not a heuristic
- * suppression. Per the doctrinal "provable from the code 100% of the
- * time" test in `docs/kb/architecture/ai-first-consumer.md`, the
- * duration literal in CSS is the strongest evidence the scanner can
- * have: a `transition: color 0.15s ease` definitionally cannot
- * trigger 2.2.2, so routing it to 2.3.3 is correct criterion
- * assignment, not a heuristic dismissal. The duration +
- * iteration-count is encoded into the `message` text as additive
- * context so the agent can confirm.
+ * iteration-count = 1) cannot exceed 5s of runtime and is spec-exempt.
+ * The 5s threshold is normative in the spec — this is a spec gate, not
+ * a heuristic suppression. Per the doctrinal "provable from the code
+ * 100% of the time" test in `docs/kb/architecture/ai-first-consumer.md`,
+ * the duration literal in CSS is the strongest evidence the scanner can
+ * have. The duration + iteration-count is encoded into the `message`
+ * text as additive context so the agent can confirm.
  */
 
 import { defineRule } from "../../api/plugin.ts";
 import { findHtmlElementsByTag, walkHtmlElements } from "../../engine/ast-helpers.ts";
-import type {
-  CssDeclaration,
-  CssRule,
-  CssStylesheet,
-  HtmlDocument,
-  HtmlElement,
-} from "../../types/ast.ts";
+import type { CssRule, CssStylesheet, HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import { detectAutoplaySignal } from "./_carousel-signals.ts";
 import {
   ANIMATION_PROPERTIES,
@@ -107,11 +116,11 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "Moving or auto-updating content must have a mechanism to pause, stop, or hide. Flags <marquee>, CSS animations without a prefers-reduced-motion guard (including inline <style> blocks), inline style= animation/transition declarations, and Bootstrap data-bs-ride='carousel' auto-advance markers. Skips user-interaction-gated animations (:hover / :focus / :active) — those are the domain of motion/animation-from-interactions (wcag22:2.3.3).",
+      "Moving or auto-updating content must have a mechanism to pause, stop, or hide. Flags <marquee>, CSS animations without a prefers-reduced-motion guard (including inline <style> blocks), inline style= animation declarations, and Bootstrap data-bs-ride='carousel' auto-advance markers. CSS transitions are not in scope here — a transition runs only on a property change, so the 2.2.2 'starts automatically' gate is unobservable from the declaration; user-interaction-gated transitions belong to motion/animation-from-interactions (wcag22:2.3.3 AAA), and other transitions carry no honest 2.2.2 citation.",
     rationale:
-      "People with attention deficits, vestibular disorders, or seizure conditions can be severely affected by motion they cannot control. A prefers-reduced-motion media query lets the browser honor the user's OS-level motion preference. Inline styles and Bootstrap carousel auto-advance attributes evade stylesheet-level guards, so they need individual scrutiny. Animations gated by user-interaction pseudo-classes run only when the user asks for them, and WCAG 2.3.3 (not 2.2.2) is the correct criterion for that trigger shape.",
+      "People with attention deficits, vestibular disorders, or seizure conditions can be severely affected by motion they cannot control. A prefers-reduced-motion media query lets the browser honor the user's OS-level motion preference. Inline styles and Bootstrap carousel auto-advance attributes evade stylesheet-level guards, so they need individual scrutiny. Animations gated by user-interaction pseudo-classes run only when the user asks for them, and WCAG 2.3.3 (not 2.2.2) is the correct criterion for that trigger shape; the same trigger-evidence logic excludes transitions from this rule, since a transition's auto-start is not provable from the declaration.",
     goodExample: `@media (prefers-reduced-motion: reduce) {\n  .spinner { animation: none; }\n}`,
-    badExample: `<marquee>Breaking news</marquee>\n<div data-bs-ride="carousel">…</div>\n<div style="transition-duration: 2s"></div>\n\n.spinner { animation: spin 1s infinite; }`,
+    badExample: `<marquee>Breaking news</marquee>\n<div data-bs-ride="carousel">…</div>\n<div style="animation: pulse 4s infinite"></div>\n\n.spinner { animation: spin 1s infinite; }`,
     normativeQuote:
       "For moving, blinking, scrolling, or auto-updating information, all of the following are true.",
     references: [
@@ -156,15 +165,25 @@ function checkHtmlMarquee(doc: HtmlDocument, emit: Emit): void {
 }
 
 /**
- * Flags inline style="…" attributes that set animation or transition
- * properties crossing the spec-mandated 5-second / repetition gate.
- * Inline styles can't be wrapped in a prefers-reduced-motion query, so
- * a qualifying declaration is always a violation. Inline styles are
- * element-level and never gated by a pseudo-class, so this always
- * routes to the 2.2.2 lane.
+ * Flags inline style="…" attributes whose `animation` declaration crosses
+ * the spec-mandated 5-second / repetition gate. Inline styles can't be
+ * wrapped in a prefers-reduced-motion query, so a qualifying inline
+ * animation is always a 2.2.2 violation: animations auto-start when the
+ * element renders, satisfying the "starts automatically" trigger gate.
  *
- * The same threshold logic as the stylesheet path applies — short,
- * one-shot animations and sub-5s transitions are spec-exempt.
+ * Inline `transition` declarations are NOT flagged here. A transition
+ * fires on a subsequent property change — the trigger source (JS timer,
+ * class toggle on user click, hover-driven CSS variable, etc.) is
+ * unobservable from the inline declaration alone, so 2.2.2's
+ * "auto-start" predicate cannot be honestly proven. User-interaction-
+ * gated transitions belong to the sibling `motion/animation-from-
+ * interactions` rule (2.3.3 AAA) and inline declarations carry no
+ * selector to gate against, so trigger-unobservable inline transitions
+ * fall outside both rules' honest scope.
+ *
+ * The same duration / iteration-count threshold logic as the stylesheet
+ * path applies to inline animations — short, one-shot animations are
+ * spec-exempt.
  */
 function checkHtmlInlineStyles(doc: HtmlDocument, emit: Emit): void {
   for (const element of walkHtmlElements(doc)) {
@@ -172,7 +191,9 @@ function checkHtmlInlineStyles(doc: HtmlDocument, emit: Emit): void {
     if (style === null || style.trim().length === 0) continue;
     const inlineDecls = parseInlineStyleDecls(style);
     if (inlineDecls.length === 0) continue;
-    const triggering = inlineDecls.find((d) => ANIMATION_PROPERTIES.has(d.property));
+    const triggering = inlineDecls.find(
+      (d) => ANIMATION_PROPERTIES.has(d.property) && !isTransitionProperty(d.property),
+    );
     if (!triggering) continue;
     const profile = describeInlineProfile(inlineDecls, triggering);
     if (!profile.qualifies) continue;
@@ -189,6 +210,21 @@ function checkHtmlInlineStyles(doc: HtmlDocument, emit: Emit): void {
       suggestion: `Move the ${triggering.property} declaration into a stylesheet rule wrapped in @media (prefers-reduced-motion: reduce) { … } with a reduced-motion alternative (animation: none or duration: 0.01ms), or remove the inline declaration if the motion is decorative.`,
     });
   }
+}
+
+/**
+ * True for the three CSS property names that represent transition
+ * declarations. Used in both the stylesheet walk and the inline-style
+ * walk to skip transitions: their trigger source (auto vs user) is
+ * unobservable from the declaration alone, so 2.2.2's "starts
+ * automatically" gate cannot be honestly proven.
+ */
+function isTransitionProperty(property: string): boolean {
+  return (
+    property === "transition" ||
+    property === "transition-property" ||
+    property === "transition-duration"
+  );
 }
 
 interface InlineDecl {
@@ -210,9 +246,11 @@ function parseInlineStyleDecls(style: string): readonly InlineDecl[] {
 }
 
 /**
- * Inline-style analogue of `describeRuleProfile`. Treats the inline
- * style attribute as a synthetic CSS rule and applies the same
- * duration / iteration-count gate.
+ * Inline-style analogue of `describeRuleProfile` — animation-only.
+ * Inline transitions are filtered out before this call (see
+ * `checkHtmlInlineStyles`) because their trigger source is unobservable
+ * from the declaration alone, so 2.2.2's "starts automatically" gate
+ * cannot be honestly proven.
  */
 function describeInlineProfile(
   decls: readonly InlineDecl[],
@@ -220,18 +258,6 @@ function describeInlineProfile(
 ): QualificationProfile {
   if (isNoneValue(triggering.value) || isNearZeroDuration(triggering.value)) {
     return { qualifies: false, contextNote: "value is none/near-zero" };
-  }
-  const isTransition =
-    triggering.property === "transition" ||
-    triggering.property === "transition-property" ||
-    triggering.property === "transition-duration";
-  if (isTransition) {
-    const max = inlineMaxTransitionMs(decls);
-    return {
-      qualifies: max !== null && max > FIVE_SECONDS_MS,
-      contextNote:
-        max === null ? "transition-duration unparsed" : `transition-duration ~${formatMs(max)}`,
-    };
   }
   const summary = inlineAnimationSummary(decls);
   return {
@@ -242,23 +268,6 @@ function describeInlineProfile(
 
 function inlineAnimationSummary(decls: readonly InlineDecl[]): AnimationSummary {
   return summarizeAnimationDecls(decls);
-}
-
-function inlineMaxTransitionMs(decls: readonly InlineDecl[]): number | null {
-  let max: number | null = null;
-  for (const d of decls) {
-    let candidates: readonly (number | null)[] = [];
-    if (d.property === "transition-duration") {
-      candidates = d.value.split(",").map((part) => parseDurationMs(part));
-    } else if (d.property === "transition") {
-      candidates = d.value.split(",").map((part) => firstDurationInTokenList(part));
-    }
-    for (const ms of candidates) {
-      if (ms === null) continue;
-      if (max === null || ms > max) max = ms;
-    }
-  }
-  return max;
 }
 
 /**
@@ -345,20 +354,27 @@ function hasCarouselControlClass(el: HtmlElement): boolean {
 
 /**
  * Applies the stylesheet prefers-reduced-motion guard check in the
- * 2.2.2 lane. Skips CSS rules whose selector is ENTIRELY
- * user-interaction-gated — those belong to 2.3.3 and are flagged by
- * the sibling `motion/animation-from-interactions` rule. A mixed
- * selector list (`.foo, .foo:hover`) still fires under 2.2.2 because
- * the bare `.foo` part animates without interaction.
- *
- * Also gates on the spec-mandated 5-second / repetition threshold (see
- * file header) — short, one-shot animations and sub-5s transitions are
- * not in scope for 2.2.2.
+ * 2.2.2 lane. Three skip conditions:
+ *   1. The CSS rule's selector is ENTIRELY user-interaction-gated —
+ *      those belong to 2.3.3 and are flagged by the sibling
+ *      `motion/animation-from-interactions` rule. A mixed selector list
+ *      (`.foo, .foo:hover`) still fires under 2.2.2 because the bare
+ *      `.foo` part animates without interaction.
+ *   2. The triggering declaration is a `transition*` property — a
+ *      transition fires only on a property change, so 2.2.2's "starts
+ *      automatically" gate is unobservable from the declaration. The
+ *      sibling 2.3.3 rule covers user-interaction-gated transitions;
+ *      transitions whose trigger is unobservable carry no honest 2.2.2
+ *      citation.
+ *   3. The spec-mandated 5-second / repetition threshold (see file
+ *      header) is not crossed — short, one-shot animations are out of
+ *      scope.
  */
 function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: PositionOffset): void {
   for (const { rule: cssRule, decl } of walkCandidateRules(stylesheet)) {
     if (isUserInteractionGatedSelector(cssRule.selector)) continue;
-    const profile = describeRuleProfile(cssRule, decl);
+    if (isTransitionProperty(decl.property.toLowerCase())) continue;
+    const profile = describeRuleProfile(cssRule);
     if (!profile.qualifies) continue;
     const echoSelector = truncateForEcho(cssRule.selector);
     const mixedNote = anyPartHasUserInteractionPseudoClass(cssRule.selector)
@@ -409,35 +425,22 @@ interface QualificationProfile {
 }
 
 /**
- * Inspects every animation/transition declaration on the same CSS rule
- * to decide whether the rule meets the 2.2.2 spec gate. The rule passes
- * the gate if any of:
+ * Inspects every animation declaration on the same CSS rule to decide
+ * whether the rule meets the 2.2.2 spec gate. The rule passes the gate
+ * if any of:
  *   - animation-iteration-count: infinite
  *   - animation-iteration-count: integer > 3
  *   - animation-duration > 5s (parsed from longhand or shorthand)
- *   - transition-duration > 5s (parsed from longhand or shorthand)
+ *
+ * Transitions are filtered out before this call (see
+ * `checkCssStylesheet`) because their trigger source is unobservable
+ * from the declaration alone.
  *
  * The "trigger declaration" passed in (`decl`) is whichever the
  * `walkCandidateRules` helper hit first; we look at its sibling
  * declarations on the same rule to gather the full picture.
  */
-function describeRuleProfile(cssRule: CssRule, decl: CssDeclaration): QualificationProfile {
-  const property = decl.property.toLowerCase();
-  const isTransition =
-    property === "transition" ||
-    property === "transition-property" ||
-    property === "transition-duration";
-  if (isTransition) {
-    const durationMs = transitionDurationMs(cssRule);
-    const note =
-      durationMs === null
-        ? "transition-duration unparsed"
-        : `transition-duration ~${formatMs(durationMs)}`;
-    return {
-      qualifies: durationMs !== null && durationMs > FIVE_SECONDS_MS,
-      contextNote: note,
-    };
-  }
+function describeRuleProfile(cssRule: CssRule): QualificationProfile {
   const summary = animationSummary(cssRule);
   return {
     qualifies: animationQualifies(summary),
@@ -523,30 +526,6 @@ function animationContextNote(s: AnimationSummary): string {
   return parts.length === 0 ? "duration / iteration-count unparsed" : parts.join(", ");
 }
 
-/**
- * Returns the longest transition-duration on the rule. The
- * `transition` shorthand and the `transition-duration` longhand can
- * both list multiple durations; if any one of them exceeds 5s the rule
- * qualifies.
- */
-function transitionDurationMs(cssRule: CssRule): number | null {
-  let max: number | null = null;
-  for (const d of cssRule.declarations) {
-    const prop = d.property.toLowerCase();
-    let candidates: readonly (number | null)[] = [];
-    if (prop === "transition-duration") {
-      candidates = d.value.split(",").map((part) => parseDurationMs(part));
-    } else if (prop === "transition") {
-      candidates = d.value.split(",").map((part) => firstDurationInTokenList(part));
-    }
-    for (const ms of candidates) {
-      if (ms === null) continue;
-      if (max === null || ms > max) max = ms;
-    }
-  }
-  return max;
-}
-
 interface ShorthandParse {
   readonly durationMs: number | null;
   readonly iterationCount: number | null;
@@ -600,14 +579,6 @@ function parseSingleAnimationShorthand(segment: string): ShorthandParse {
     }
   }
   return { durationMs, iterationCount, hasInfinite };
-}
-
-function firstDurationInTokenList(value: string): number | null {
-  for (const token of tokenize(value)) {
-    const ms = parseDurationMs(token);
-    if (ms !== null) return ms;
-  }
-  return null;
 }
 
 function tokenize(value: string): readonly string[] {

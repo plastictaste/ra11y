@@ -44,12 +44,20 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain("infinite");
     });
 
-    it("transition with duration > 5s without reduced-motion guard", () => {
+    // CSS transitions are NOT in scope for this rule. A transition only
+    // fires on a property change, so the 2.2.2 "starts automatically"
+    // gate is unobservable from the declaration alone — the trigger
+    // could be a JS timer (auto), a class toggle on user click
+    // (interaction-driven), or a hover-driven CSS variable change. The
+    // sibling motion/animation-from-interactions rule (2.3.3 AAA) covers
+    // user-interaction-gated transitions; transitions whose trigger is
+    // unobservable carry no honest 2.2.2 citation, so this rule stays
+    // quiet on them.
+    it("bare-selector transition with duration > 5s does NOT fire under 2.2.2 (trigger unobservable)", () => {
       const v = runRule(rule, `.fade { transition: opacity 8s ease; }`, {
         filePath: "styles.css",
       });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.message).toContain("transition-duration");
+      expect(v).toHaveLength(0);
     });
 
     it("animation-duration > 5s with default iteration-count fires", () => {
@@ -141,7 +149,7 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("transition-duration of exactly 5s does NOT fire (threshold is > 5s)", () => {
+    it("transition-duration of exactly 5s does NOT fire (regardless of duration; transitions are out of scope)", () => {
       const v = runRule(rule, `.fade { transition-duration: 5s; }`, { filePath: "styles.css" });
       expect(v).toHaveLength(0);
     });
@@ -156,12 +164,11 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain("infinite");
     });
 
-    it("transition-duration shorthand list flags when ANY value exceeds 5s", () => {
+    it("transition-duration shorthand list does NOT fire even when one value exceeds 5s (transitions out of scope)", () => {
       const v = runRule(rule, `.x { transition-duration: 0.2s, 8s, 0.3s; }`, {
         filePath: "styles.css",
       });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.message).toContain("8s");
+      expect(v).toHaveLength(0);
     });
   });
 
@@ -183,13 +190,14 @@ describe("rule motion/pause-stop-hide", () => {
     });
 
     it("suggestion includes the selector and property", () => {
-      // Use a >5s transition so the spec gate fires; pre-gate version
-      // used 0.2s, which is now spec-exempt.
-      const v = runRule(rule, `.card { transition: transform 8s; }`, {
+      // CSS transitions are out of scope for this rule (trigger
+      // unobservable from declaration); test the analogous animation
+      // case so the suggestion still echoes the selector + property.
+      const v = runRule(rule, `.card { animation: spin 1s infinite; }`, {
         filePath: "styles.css",
       });
       expect(v[0]?.suggestion).toContain(".card");
-      expect(v[0]?.suggestion).toContain("transition");
+      expect(v[0]?.suggestion).toContain("animation");
     });
 
     it("marquee suggestion recommends prefers-reduced-motion alternative", () => {
@@ -284,15 +292,23 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("mixed list (one gated part, one bare) STILL fires under 2.2.2 when the duration crosses the spec gate", () => {
-      // Use 8s so the bare `.btn` part crosses the 5-second threshold.
-      // The mixed-list note is a 2.2.2-vs-2.3.3 lane discrimination
-      // signal, independent of the spec-gate question.
-      const v = runRule(rule, `.btn, .btn:hover { transition: transform 8s; }`, {
+    it("mixed list (one gated part, one bare) on an animation fires under 2.2.2 with the mixed-list note", () => {
+      // Animations auto-start when the declaration applies — so the
+      // bare `.btn` part runs without user interaction and lives in the
+      // 2.2.2 lane. The mixed-list note flags lane discrimination so
+      // the agent can confirm both parts are intentional.
+      const v = runRule(rule, `.btn, .btn:hover { animation: spin 1s infinite; }`, {
         filePath: "styles.css",
       });
       expect(v).toHaveLength(1);
       expect(v[0]?.message).toContain("mixes interaction-gated and always-on");
+    });
+
+    it("mixed list with transition does NOT fire under 2.2.2 (transitions out of scope; trigger unobservable)", () => {
+      const v = runRule(rule, `.btn, .btn:hover { transition: transform 8s; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
     });
 
     it("bare .spinner still fires under 2.2.2 even when a sibling .btn:hover rule exists", () => {
@@ -306,11 +322,11 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain(".spinner");
     });
 
-    it("inline style= transition still fires under 2.2.2 when duration exceeds 5s", () => {
+    it("inline style= transition does NOT fire under 2.2.2 (trigger unobservable from inline declaration)", () => {
       const v = runRule(rule, `<div style="transition: opacity 8s"></div>`, {
         filePath: "index.html",
       });
-      expect(v).toHaveLength(1);
+      expect(v).toHaveLength(0);
     });
   });
 
@@ -330,7 +346,7 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain(".spinner");
     });
 
-    it("transition-duration > 5s inside <style> without guard", () => {
+    it("transition-duration > 5s inside <style> does NOT fire (transitions out of scope)", () => {
       const src = [
         `<!doctype html><html><head>`,
         `<style>`,
@@ -339,11 +355,10 @@ describe("rule motion/pause-stop-hide", () => {
         `</head><body></body></html>`,
       ].join("\n");
       const v = runRule(rule, src, { filePath: "carousel.html" });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.message).toContain("transition-duration");
+      expect(v).toHaveLength(0);
     });
 
-    it("multiple <style> blocks each contribute findings (qualifying durations)", () => {
+    it("multiple <style> blocks: only the auto-starting animation fires; transitions stay quiet", () => {
       const src = [
         `<!doctype html><html><head>`,
         `<style>.a { animation: a 1s infinite; }</style>`,
@@ -351,7 +366,8 @@ describe("rule motion/pause-stop-hide", () => {
         `</head></html>`,
       ].join("\n");
       const v = runRule(rule, src, { filePath: "multi.html" });
-      expect(v).toHaveLength(2);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain(".a");
     });
   });
 
@@ -378,23 +394,15 @@ describe("rule motion/pause-stop-hide", () => {
   });
 
   describe("inline style= attribute: fires when", () => {
-    it("transition-duration crosses the 5-second gate", () => {
-      const v = runRule(rule, `<div style="transition-duration: 8s"></div>`, {
-        filePath: "index.html",
-      });
-      expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
-      expect(v[0]?.message).toContain("transition-duration");
-      expect(v[0]?.suggestion).toContain("prefers-reduced-motion");
-    });
-
-    it("animation shorthand declares infinite iteration", () => {
+    it("animation shorthand declares infinite iteration (auto-starts on render)", () => {
       const v = runRule(rule, `<span style="animation: pulse 2s infinite">!</span>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
       expect(v[0]?.message).toContain("animation");
       expect(v[0]?.message).toContain("infinite");
+      expect(v[0]?.suggestion).toContain("prefers-reduced-motion");
     });
 
     it("animation shorthand with iteration-count > 3 fires", () => {
@@ -405,14 +413,42 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.message).toContain("iteration-count 5");
     });
 
-    it("multiple offending properties on one element emit one finding", () => {
+    it("element with both animation and transition emits one finding (animation drives it)", () => {
+      // Inline animations auto-start on render; the rule fires on the
+      // animation. Transitions are out of scope here, so the element
+      // produces exactly one finding regardless of how many transition
+      // declarations sit alongside.
       const v = runRule(
         rule,
         `<div style="animation: a 1s infinite; transition: opacity 8s"></div>`,
         { filePath: "index.html" },
       );
-      // One-per-element — the element, not the declaration, is the unit.
       expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("animation");
+    });
+  });
+
+  describe("inline style= attribute: does NOT fire on transitions (out of scope)", () => {
+    // A CSS transition only fires on a property change, so the trigger
+    // source (auto-driven by JS, user-driven by hover/click) is not
+    // observable from the inline declaration. The 2.2.2 normative gate
+    // requires "starts automatically" — unprovable here. The sibling
+    // motion/animation-from-interactions rule (2.3.3 AAA) covers the
+    // user-interaction case via CSS selectors; inline styles carry no
+    // selector to gate against, so they fall outside both rules' honest
+    // scope.
+    it("inline transition-duration does NOT fire even when crossing 5s", () => {
+      const v = runRule(rule, `<div style="transition-duration: 8s"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("inline transition shorthand does NOT fire even when crossing 5s", () => {
+      const v = runRule(rule, `<div style="transition: opacity 8s"></div>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(0);
     });
   });
 
@@ -848,16 +884,21 @@ describe("rule motion/pause-stop-hide", () => {
       expect(v[0]?.decline).toBeUndefined();
     });
 
-    it("multi-line transition rule also splits selector and declaration", () => {
+    it("multi-line animation-name + animation-duration rule splits selector and declaration", () => {
+      // Transitions are out of scope (trigger unobservable). Use the
+      // animation analogue — same selector/decl line-split machinery.
       const src = [
         `.fade {`, // line 1 — selector
         `  opacity: 0;`, // line 2
-        `  transition: opacity 8s ease;`, // line 3 — offending declaration (>5s)
-        `}`, // line 4
+        `  animation-name: spin;`, // line 3 — first animation declaration
+        `  animation-duration: 8s;`, // line 4 — qualifying duration
+        `}`, // line 5
       ].join("\n");
       const v = runRule(rule, src, { filePath: "fade.css" });
       expect(v).toHaveLength(1);
       expect(v[0]?.location.line).toBe(1);
+      // walkCandidateRules emits on the first matching declaration, so
+      // `decline` points to animation-name on line 3.
       expect(v[0]?.decline).toBe(3);
     });
 
