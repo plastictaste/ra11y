@@ -1,13 +1,14 @@
 /**
  * Build-provenance annotation for MCP responses.
  *
- * Pairs with {@link annotateStaleSubprocess} — the stale-subprocess
- * warning is the *negative* signal ("the bundle changed, your session
- * is serving old bytes"); build-provenance is the *positive* signal
- * ("this is the exact build currently answering you"). Both are needed
- * so an agent can cross-check the tool version it's talking to against
- * the tool version it expected, without relying on the heuristic
- * mtime-comparison alone.
+ * Per-response identity signal: every tool result carries the ra11y
+ * version + git commit + bundle mtime that produced it, so an agent
+ * can cross-check the running build against any expected version
+ * without a separate roundtrip. The systemic guard against
+ * shipped-but-stale `dist/` lives in `scripts/check-mcp-dist-freshness.ts`
+ * (precommit + CI gate ensures `dist/cli.js` matches `src/` on every
+ * landed commit); the per-response signal here is what the agent reads
+ * to confirm which build is answering.
  *
  * Injects three fields under the top-level `meta` of every MCP tool
  * response:
@@ -16,19 +17,19 @@
  *     spread; omitted on non-git deployments, e.g. installs from npm).
  *   - `bundleMtime: string` — ISO timestamp of the running bundle/entry
  *     script's mtime. When the stat fails (bundle path inaccessible),
- *     the field is omitted — the stale-subprocess mechanism handles
- *     the same unavailable-path case, so we don't double-signal here.
+ *     the field is omitted via conditional spread rather than emitted
+ *     as an empty string (CLAUDE.md §1 "Ambiguous field shapes are
+ *     dishonest").
  *
- * Present-when-meaningful shape (CLAUDE.md §1 "Ambiguous field shapes
- * are dishonest"): `commitHash` and `bundleMtime` are conditional-
- * spread. `ra11yVersion` is always present — it's read at module load
- * and cannot fail at annotation time.
+ * Present-when-meaningful shape: `commitHash` and `bundleMtime` are
+ * conditional-spread. `ra11yVersion` is always present — it's read at
+ * module load and cannot fail at annotation time.
  *
  * Resolution is done once at module init and cached — provenance is
  * immutable within a process lifetime. Re-stat'ing per-call would cost
- * a syscall on every tool response for no signal (the bundle mtime
- * observed at startup IS the running build's mtime; the stale-
- * subprocess mechanism already watches for mid-session rewrites).
+ * a syscall on every tool response for no signal: an installed
+ * end-user's `dist/cli.js` does not change for the lifetime of the
+ * MCP subprocess.
  *
  * Git commit resolution reads `.git/HEAD` and follows refs directly
  * rather than shelling out to `git rev-parse HEAD` — shell-out would
@@ -68,12 +69,11 @@ let overrideBundlePath: string | null = null;
 
 /**
  * Resolves the filesystem path of the running bundle/entry script.
- * Mirrors the pattern in {@link stale-subprocess.ts} — when ra11y is
- * installed and run via `dist/cli.js`, `import.meta.url` resolves to
- * the bundled entry; in dev (`bun src/cli.ts`) it resolves to this
- * source file. Either way the mtime of the resolved path is a valid
- * "when was the running code written" signal. Returns `null` when the
- * URL scheme is not `file:` (custom loaders, data URLs).
+ * When ra11y is installed and run via `dist/cli.js`, `import.meta.url`
+ * resolves to the bundled entry; in dev (`bun src/cli.ts`) it resolves
+ * to this source file. Either way the mtime of the resolved path is a
+ * valid "when was the running code written" signal. Returns `null`
+ * when the URL scheme is not `file:` (custom loaders, data URLs).
  */
 function resolveBundlePath(): string | null {
   try {
@@ -235,9 +235,9 @@ function resolveCommitHash(bundlePath: string | null): string | undefined {
 /**
  * Resolves the bundle mtime as an ISO-8601 string. Returns `undefined`
  * on stat failure (bundle path inaccessible), which causes the field
- * to be conditional-spread out of the response — the stale-subprocess
- * mechanism handles the same unavailable case, so we don't
- * double-signal via an ambiguous empty string here.
+ * to be conditional-spread out of the response rather than emitted
+ * as an ambiguous empty string (CLAUDE.md §1 "Ambiguous field shapes
+ * are dishonest").
  */
 function resolveBundleMtime(bundlePath: string | null): string | undefined {
   if (bundlePath === null) return undefined;
@@ -296,7 +296,7 @@ export function __setBundlePathOverride(path: string | null): void {
  * the agent can cross-check the running build without relying on any
  * individual handler to thread provenance through.
  *
- * Shape handling mirrors {@link annotateStaleSubprocess}:
+ * Shape handling:
  *   - `content[0].text` is parsed as JSON. If parsing fails or the
  *     payload isn't a plain object, the result is returned unchanged.
  *   - Existing `meta` fields are preserved; provenance fields overlay

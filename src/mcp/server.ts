@@ -43,11 +43,6 @@ import {
   readKbResource,
 } from "./resources/index.ts";
 import { McpSession, type SessionRoot } from "./session.ts";
-import {
-  annotateStaleSubprocess,
-  isSubprocessStale,
-  recordSubprocessStart,
-} from "./stale-subprocess.ts";
 import type { McpTool } from "./tools.ts";
 import { MCP_TOOLS } from "./tools.ts";
 
@@ -126,7 +121,6 @@ const PROMPT_BY_NAME = new Map(BUILTIN_PROMPTS.map((p) => [p.name, p]));
  *   the user-authored rules/standards/finders into every tool handler.
  */
 export async function startMcpServer(registry?: Registry): Promise<void> {
-  recordSubprocessStart();
   const session = new McpSession(registry);
   const emitLog: LogEmitter = makeLogEmitter(
     session.logging,
@@ -302,16 +296,17 @@ async function handleToolsCall(
       LOGGER_SCAN,
     );
   }
-  // Build-provenance is the positive-signal companion to the
-  // stale-subprocess negative signal (ADR 0025 /).
-  // Runs unconditionally on every tool response so an agent can cross-
-  // check the exact build currently answering — even error envelopes
-  // carry the triple so "tool not found" failures still show which
-  // ra11y version rejected the request. Applied AFTER stale-subprocess
-  // annotation so the merge order is "stale warning first" (the more
-  // urgent signal), provenance fields second.
-  const staleAnnotated = isSubprocessStale() ? annotateStaleSubprocess(toolResult) : toolResult;
-  const finalResult = annotateBuildProvenance(staleAnnotated);
+  // Build-provenance is the per-response signal that lets an agent
+  // cross-check the exact build currently answering — version + commit
+  // + bundle mtime. Runs unconditionally on every tool response (even
+  // error envelopes) so "tool not found" failures still show which
+  // ra11y version rejected the request. The systemic guard against
+  // shipped-but-stale dist/ lives in scripts/check-mcp-dist-freshness.ts
+  // (precommit + CI gate); the per-response runtime mtime warning was
+  // removed as information-free noise — for installed end-users dist/
+  // is immutable for the session lifetime, and the agent already has
+  // bundleMtime here to verify against any expected version.
+  const finalResult = annotateBuildProvenance(toolResult);
   return { jsonrpc: "2.0", id, result: finalResult };
 }
 
