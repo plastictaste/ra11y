@@ -8,7 +8,11 @@
 import { buildContext } from "../../src/engine/context-builder.ts";
 import { parseCss, parseHtml, parseMarkdown, parseTsx } from "../../src/input/parsers/index.ts";
 import type { Ast } from "../../src/types/ast.ts";
-import type { CandidateFinder, ReviewCandidate } from "../../src/types/review.ts";
+import type {
+  CandidateFinder,
+  ProjectCandidateContext,
+  ReviewCandidate,
+} from "../../src/types/review.ts";
 import type { EmittedViolation } from "../../src/types/rule.ts";
 
 export interface RunFinderOptions {
@@ -24,12 +28,13 @@ export function runFinder(
   const filePath = options.filePath ?? guessFilePath(source);
   const ast = parseSource(filePath, source);
   const sink: EmittedViolation[] = [];
+  const enabledStandards = new Set(options.enabledStandards ?? ["wcag22", "wcag21"]);
   const ctx = buildContext(
     {
       filePath,
       source,
       ast,
-      enabledStandards: new Set(options.enabledStandards ?? ["wcag22", "wcag21"]),
+      enabledStandards,
       disableMap: new Map(),
     },
     sink,
@@ -41,6 +46,23 @@ export function runFinder(
   if (finder.afterFile) {
     const fileCtx = { ...ctx, nodes: ast.root };
     return finder.afterFile(fileCtx) ?? [];
+  }
+  if (finder.afterProject) {
+    // Single-file ProjectCandidateContext — mirrors run-rule.ts's
+    // afterProject pass so unit tests for cross-file finders can
+    // exercise the project-scope hook without spinning up runScan.
+    const projectCtx: ProjectCandidateContext = {
+      files: [
+        {
+          filePath,
+          source,
+          ast,
+          disableMap: new Map(),
+        },
+      ],
+      enabledStandards,
+    };
+    return finder.afterProject(projectCtx) ?? [];
   }
   return [];
 }

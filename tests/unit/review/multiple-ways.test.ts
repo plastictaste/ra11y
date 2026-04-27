@@ -3,8 +3,33 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { type ParsedFile, runScan } from "../../../src/engine/scanner.ts";
+import { parseHtml, parseTsx } from "../../../src/input/parsers/index.ts";
 import { finder } from "../../../src/review/finders/multiple-ways.ts";
+import { wcag22 } from "../../../src/standards/wcag22/standard.ts";
+import type { ReviewCandidate } from "../../../src/types/review.ts";
 import { runFinder } from "../../helpers/run-finder.ts";
+
+function htmlFile(filePath: string, source: string): ParsedFile {
+  const r = parseHtml(source);
+  return { filePath, source, ast: { language: "html", root: r.root, errors: r.errors } };
+}
+
+function tsxFile(filePath: string, source: string): ParsedFile {
+  const r = parseTsx(source);
+  return { filePath, source, ast: { language: "tsx", root: r.root, errors: r.errors } };
+}
+
+function runMultipleWays(files: readonly ParsedFile[]): readonly ReviewCandidate[] {
+  const { report } = runScan({
+    standards: [wcag22],
+    rules: [],
+    enabled: ["wcag22"],
+    files,
+    finders: [finder],
+  });
+  return (report.candidates ?? []).filter((c) => c.criterionId === "wcag22:2.4.5");
+}
 
 describe("review/multiple-ways", () => {
   it("flags an HTML root document with no alternate-navigation signals", () => {
@@ -750,6 +775,140 @@ describe("review/multiple-ways", () => {
       const reason = out[0]?.reason ?? "";
       expect(reason).toContain("fragment composed into a parent layout");
       expect(reason).not.toContain("sets of Web pages");
+    });
+  });
+
+  describe("cross-file evidence enrichment", () => {
+    // Per AI-first doctrine the candidate always surfaces — these
+    // hints are additive corpus-level context the agent uses to
+    // dismiss standalone-page or scattered-demo cases without
+    // reopening the cited file. The cross-file phrasing names the
+    // surrounding scan's shape (single-file vs multi-directory, with
+    // or without inter-page link evidence) so the agent can route
+    // dismissal vs investigation in one read.
+    it("annotates a single-file scan with the single-file phrasing", () => {
+      const source = `
+        <html>
+          <body>
+            <main>Dashboard</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runMultipleWays([htmlFile("/p/index.html", source)]);
+      expect(out.length).toBe(1);
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("single-file scan");
+      expect(reason).toContain("cross-page navigation cannot be evaluated");
+    });
+
+    it("annotates multi-file multi-directory scans with no cross-anchors", () => {
+      // Three files in three distinct directories, none linking to a
+      // sibling .html — the strongest "scattered demo files" signal.
+      // The reason must surface the directory count so the agent can
+      // dismiss in one read.
+      const shell =
+        '<html><body><main>x</main><a href="#top">Top</a></body></html>';
+      const out = runMultipleWays([
+        htmlFile("/p/app/index.html", shell),
+        htmlFile("/p/site/landing.html", shell),
+        htmlFile("/p/demos/widget.html", shell),
+      ]);
+      // uniquePerCriterion collapses to one survivor — the reason on
+      // that survivor still carries the corpus-level enrichment.
+      expect(out.length).toBe(1);
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("3 distinct directory roots");
+      expect(reason).toContain("no cross-anchors detected");
+      // Single-file phrasing must NOT be applied — the corpus is
+      // multi-file, just multi-directory without cross-anchor evidence.
+      expect(reason).not.toContain("single-file scan");
+    });
+
+    it("does NOT add the no-cross-anchors phrasing when any file has a sibling .html link", () => {
+      // The first file links to `about.html` — that's positive
+      // corpus-level evidence the scan covers a multi-page set.
+      // Even on the OTHER (zero-link) candidate file the reason
+      // suppresses the "no cross-anchors" framing because the agent
+      // already has multi-page evidence from the corpus.
+      const linksOut = `
+        <html>
+          <body>
+            <main>Home</main>
+            <a href="about.html">About</a>
+          </body>
+        </html>
+      `;
+      const fragmentOnly = `
+        <html>
+          <body>
+            <main>Other</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runMultipleWays([
+        htmlFile("/p/app/index.html", linksOut),
+        htmlFile("/p/site/other.html", fragmentOnly),
+      ]);
+      expect(out.length).toBe(1);
+      const reason = out[0]?.reason ?? "";
+      expect(reason).not.toContain("distinct directory roots");
+      expect(reason).not.toContain("no cross-anchors detected");
+      expect(reason).not.toContain("single-file scan");
+    });
+
+    it("uses the singular 'directory root' noun on a one-directory multi-file scan", () => {
+      // Two files in the same directory, no inter-page links — still
+      // multi-file (so the single-file hint doesn't apply) but only
+      // one distinct directory. The noun must agree with the count.
+      const shell =
+        '<html><body><main>x</main><a href="#top">Top</a></body></html>';
+      const out = runMultipleWays([
+        htmlFile("/p/site/a.html", shell),
+        htmlFile("/p/site/b.html", shell),
+      ]);
+      expect(out.length).toBe(1);
+      const reason = out[0]?.reason ?? "";
+      expect(reason).toContain("1 distinct directory root with no cross-anchors");
+      expect(reason).not.toContain("directory roots");
+    });
+
+    it("treats a JSX <Link to=\"about.html\"> as cross-anchor evidence", () => {
+      // React Router-style <Link to="..."> resolving to a sibling
+      // .html target is the JSX equivalent of an inter-page anchor;
+      // its presence in any scanned file suppresses the no-cross-
+      // anchors enrichment.
+      const layout = `
+        export function Layout() {
+          return (
+            <Layout>
+              <Link to="/pages/about.html">About</Link>
+            </Layout>
+          );
+        }
+      `;
+      const fragmentOnly = `
+        <html>
+          <body>
+            <main>Other</main>
+            <a href="#top">Top</a>
+          </body>
+        </html>
+      `;
+      const out = runMultipleWays([
+        tsxFile("/p/app/Layout.tsx", layout),
+        htmlFile("/p/site/other.html", fragmentOnly),
+      ]);
+      // Layout.tsx satisfies multi-way nav via the Link itself? No —
+      // <Link to="/pages/about.html"> is one anchor, below the 3-link
+      // nav threshold and not under a <nav> landmark, so the JSX
+      // candidate still fires. The reason on the surviving candidate
+      // must NOT carry the no-cross-anchors phrasing because corpus
+      // evidence exists.
+      expect(out.length).toBe(1);
+      const reason = out[0]?.reason ?? "";
+      expect(reason).not.toContain("no cross-anchors detected");
     });
   });
 });

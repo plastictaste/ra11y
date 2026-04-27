@@ -375,7 +375,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans: response-token-budget over
 
 ### v0.2.0 — accepted (P1 — finder reason-text enrichment)
 
-- [ ] **Q8-FINDER-2.4.5-CROSS-FILE-EVIDENCE** `review:wcag22:2.4.5` (Multiple Ways) fires on every standalone single-page demo without context. Add cross-file evidence to the reason — `scan covered N distinct directory roots with no cross-anchors` — so the agent dismisses standalone-page cases in one read. Pairs with V1-FINDER-2.4.5-MULTIPLE-WAYS-REQUIRE-BODY (closed) — different lever (gating); this is reason-enrichment.
 - [ ] **Q8-FINDER-2.3.1-ITERATION-COUNT-PREDICATE** `review:wcag22:2.3.1` (motion/three-flashes) heuristic equates animation-duration with frequency, firing on single-shot 150ms transitions where `animation-iteration-count: 1`. Fix predicate to require iteration-count > 1 (or `infinite`) before synthesizing a per-second cycle rate; encode iteration count as additive reason text otherwise. Pairs with V1-MOTION-2.3.1-CYCLES-PER-SECOND-MATH (closed) and Q7-RULE-ANIMATION-ITERATION-COUNT-GATE (open) — convergent fix; this is the finder-axis closure assertion.
 
 ### v0.2.0 — accepted (P1 — rule scope widening)
