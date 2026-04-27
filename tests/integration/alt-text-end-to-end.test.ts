@@ -106,6 +106,50 @@ describe("end-to-end: alt-text-missing against real WCAG 2.2 pipeline", () => {
     expect(violation?.suggestion).toContain("revenue 2026");
   });
 
+  it("does not echo placeholder-host URLs as alt values across multiple hosts", () => {
+    // Worked precedent: an `<img src="https://placehold.it/700x400">` once
+    // produced `<img> '700x400' is missing ...` and `alt="700x400"` —
+    // dimensions-as-alt is the antipattern `media/alt-text-placeholder`
+    // catches; the rule's own suggestion must not teach it.
+    //
+    // Three placeholder hosts cover the most-referenced shapes in the
+    // wild: `placehold.it` (NxN path), `via.placeholder.com` (single
+    // dimension), `picsum.photos` (NxN path). The fourth fixture image
+    // (dummyimage.com) is bundled into the JSX file to add a fourth host
+    // without inflating the file count.
+    const files = [
+      loadFixture("bad", "placeholder-placehold-it.html"),
+      loadFixture("bad", "placeholder-via-placeholder-com.html"),
+      loadFixture("bad", "placeholder-picsum-photos.tsx"),
+    ];
+    const { result } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+    const altViolations = result.violations.filter((v) => v.ruleId === "media/alt-text-missing");
+    // Two HTML fixtures with one img each + one JSX fixture with two imgs.
+    expect(altViolations).toHaveLength(4);
+    for (const v of altViolations) {
+      // The reason text must drop the dimension/identifier token and
+      // surface the placeholder signal as additive context — quoting
+      // `'700x400'` reads as if the dimension were a meaningful name.
+      expect(v.message).toContain("src looks like a placeholder image");
+      expect(v.message).not.toMatch(/'\d+x\d+'/);
+      expect(v.message).not.toContain("'150'");
+      // The suggestion must NOT round-trip the URL or its dimensions
+      // back as an alt value (sibling `media/alt-text-placeholder` rule
+      // would flag that). It must offer the decorative escape (`alt=""`)
+      // alongside the "describe what the image communicates" prompt.
+      expect(v.suggestion).not.toMatch(/alt="\d+x\d+"/);
+      expect(v.suggestion).not.toContain('alt="150"');
+      expect(v.suggestion).toContain("describing what the image communicates");
+      expect(v.suggestion).toContain("not the URL or its dimensions");
+      expect(v.suggestion).toContain('alt=""');
+    }
+  });
+
   it("throws a clear error if the user enables an unloaded standard", () => {
     const files = [loadFixture("good", "img-with-alt.html")];
     expect(() => {
