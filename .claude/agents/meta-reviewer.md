@@ -59,7 +59,21 @@ Walk the artifact and emit a normalized list of observed signals. Sources:
 
 Skip signals that are just role-specific noise (planner returning `deferred[]` for sequencing reasons is normal). Focus on **prediction-vs-outcome divergence** and **stop-condition tokens**.
 
-## 1a. Compute co-occurrence pairs (cross-signal correlation)
+## 2. Read the ledger tail
+
+Read the last 20 entries of `.claude/turn-history.jsonl`:
+
+```bash
+tail -20 .claude/turn-history.jsonl 2>/dev/null
+```
+
+If the file does not exist (first ever run), treat the tail as empty. Each entry is one JSON line with `{ ts, invocation_id, turn_n, signals: [...] }`.
+
+## 3. Compute occurrence counts
+
+For each signal code observed in step 1, count how many entries in the tail also carried that code (excluding the current turn). The threshold for a harness patch is **N≥2 occurrences in the last 20 turns** (current turn + at least one prior). A signal observed for the first time in the tail counts as N=1.
+
+## 3a. Compute co-occurrence pairs (cross-signal correlation)
 
 Two signals that fire on the same turn ≥3 times across the 20-turn ledger tail are likely the same root cause being observed twice. Patching them as if independent pollutes the harness with two patches against one cause.
 
@@ -74,20 +88,6 @@ Co-occurrence does NOT lower the N≥2 gate. It only changes how routing groups 
 Persist this turn's co-firing pairs into the ledger entry's `co_signals[]` field at step 10 so future turns can compute co-occurrence over the rolling window without re-deriving from raw `signals[]`. Ledger entries written before this rule existed lack `co_signals[]` — derive from `signals[]` directly when the field is absent.
 
 **Late-arriving correlation half.** If the signal's correlation pair already has a patch in the ledger tail's `writes.harness[]` (the other half was patched on a prior turn), do NOT emit a separate patch — surface a `findings[].kind: "structural_flag"` with the note `"<this_signal> co-occurs with already-patched <other_signal>; check whether the prior patch covers both halves before patching independently."` Add a self-finding `{ code: "correlated_signals", evidence: "<this_signal> ↔ <other_signal>, prior patch <sha>" }` for next-turn occurrence counts.
-
-## 2. Read the ledger tail
-
-Read the last 20 entries of `.claude/turn-history.jsonl`:
-
-```bash
-tail -20 .claude/turn-history.jsonl 2>/dev/null
-```
-
-If the file does not exist (first ever run), treat the tail as empty. Each entry is one JSON line with `{ ts, invocation_id, turn_n, signals: [...] }`.
-
-## 3. Compute occurrence counts
-
-For each signal code observed in step 1, count how many entries in the tail also carried that code (excluding the current turn). The threshold for a harness patch is **N≥2 occurrences in the last 20 turns** (current turn + at least one prior). A signal observed for the first time in the tail counts as N=1.
 
 ## 4. Decide routing per signal
 
