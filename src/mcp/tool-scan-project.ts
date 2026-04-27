@@ -686,9 +686,6 @@ function buildBaseWarningsForScanProject(args: {
   // shaped. Pairs with the broader `scanned_build_artifacts_present`
   // code (any classification); this finer code narrows to the two
   // minified-shaped branches specifically.
-  // the previous shape
-  // filtered by `reason === "minified"` — equivalent to the union of
-  // these two classifications under the new confidence-graded enum.
   const scannedMinifiedFiles = buildArtifacts.entries
     .filter(
       (e) =>

@@ -405,7 +405,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. 
 
 #### Q8b — accepted (P0 — heuristic-mislabeled meta sub-fields)
 
-- [ ] **Q8b-MINIFIED-LABEL-NEEDS-DISCRIMINATOR-AXIS** `scannedBuildArtifacts[].reason: "minified"` is a single composite token over multiple independent signals (single-long-line, hashed-filename, sourcemap-sibling, `.min.` token, license-header-only). On any one false-positive (hand-authored shim, glyph-font SVG, debug-build with banner), the agent can't tell which sub-signal fired. Fix: emit the discriminator that fired (`reason: "single-long-line-no-min-token"` / `"sourcemap-sibling-present"` / `"hashed-filename"`); stop synthesizing `"minified"` as a deterministic label. Builds on Q8-SCANNED-BUILD-ARTIFACTS-MINIFIED-SVG-LABEL — that is the SVG-extension carve-out; this is the structural axis covering all extensions.
 - [ ] **Q8b-EXTENSIONS-SKIPPED-NO-EXT-BUCKET-NAMES-PATHS** `warningsDetails.extensions_skipped_no_parser.extensions` includes `(no-ext)` lumping LICENSE / COPYING / NOTICE / Makefile / Dockerfile etc. into one bucket alongside dotted-but-binary skips. Agents triaging coverage cannot tell whether the bucket holds source-shaped files. Fix: name well-known textual filenames inline (`(no-ext): ["LICENSE", "Makefile", "Dockerfile"]`) and treat them as a separate sub-bucket from binary-extension skips so the agent can route once.
 
 #### Q8b — accepted (P0 — heuristic-emission / reason-severity disagreement)

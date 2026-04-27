@@ -166,7 +166,8 @@ describe("scan_project: violations split by scan kind", () => {
     try {
       writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
       // Build artifact with the canonical `.min.` infix — classifier
-      // returns `reason: "minified"`, `signal: { kind: "min-infix", … }`.
+      // returns `classification: "definite-min-infix"`,
+      // `signal: { kind: "min-infix", … }`.
       writeFileSync(
         join(root, "vendor.min.css"),
         ".faded { color: #444444; background-color: #5a5a5a; }\n",
