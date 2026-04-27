@@ -859,7 +859,6 @@ function isMarkdownFile(filePath: string): boolean {
   return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mkdn");
 }
 
-
 /**
  * Explains what the HTML parser does with the template-interpolation
  * tokens we detected. The parser treats `{% ... %}`, `{{ ... }}`, and

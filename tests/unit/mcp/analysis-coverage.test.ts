@@ -1103,10 +1103,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // paragraph continuation, not a code block, and the detector
       // must still see the live token. (CommonMark §4.4 requires the
       // blank-line precedent for indented code.)
-      const mdContinuation = htmlFile(
-        "README.md",
-        "Render via\n    {% assign user = 'alice' %}",
-      );
+      const mdContinuation = htmlFile("README.md", "Render via\n    {% assign user = 'alice' %}");
       const { analysisCoverage } = buildAnalysisCoverage([mdContinuation], [], NO_RULES, false);
       const tokens = analysisCoverage?.["templateInterpolationFound"] as
         | readonly { token: string; count: number }[]
