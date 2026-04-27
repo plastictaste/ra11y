@@ -1,6 +1,6 @@
 /**
  * Layout-tail diagnostic for the HTML parser's stray-closing-tag
- * recovery. Splits "Stray closing tag at top level" into two cases:
+ * recovery. Splits the generic stray-close wording into three cases:
  *
  *   1. The Liquid-composed-layout shape — Jekyll's canonical
  *      `_layouts/*.html` wraps `{{ content }}` between
@@ -12,11 +12,21 @@
  *      rename so an agent reading `partialParseFiles[].reason`
  *      routes to the include-chain composition instead of
  *      treating the file as a parser failure.
- *   2. Everything else — the generic "Stray closing tag at top
- *      level" wording stays so real structural bugs don't get
- *      dressed up as layout composition.
+ *   2. A genuine root-level stray — `depth === 0` with no
+ *      enclosing scope. The wording names the actual stray tag
+ *      ("Stray </X> at top level") so the agent doesn't read a
+ *      bare "Stray closing tag" and have to re-open the file to
+ *      learn which tag is the culprit.
+ *   3. A nested stray — `depth > 0`, an enclosing ancestor is
+ *      still open. Reformulated as "Mismatched </X> close at line
+ *      N (inside <ancestor>)" so the reason names both the
+ *      offending tag and the actual scope. The historic "at top
+ *      level" wording was the misdiagnosis: a stray observed
+ *      inside an open element body is NOT at the document root,
+ *      and an agent reading "top level" wastes a read confirming
+ *      the root closes cleanly. Reserve "top level" for case 2.
  *
- * The recoverable error still fires in both cases (so
+ * The recoverable error still fires in all three cases (so
  * `partialParseFiles` retains the honest "scan degraded"
  * telemetry); only the message string differs. Per the AI-first
  * consumer doctrine (surface, don't suppress), the move when a
@@ -35,31 +45,69 @@ const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"
 
 /**
  * Choose the recoverable-error message for a stray closing tag.
- * The Liquid layout-tail rename fires only when ALL three gates
- * hold:
  *
- *   - `depth === 0` — the closer is tailing the whole document,
- *     not orphaned inside an unclosed element body. Without this
- *     guard a nested recovered close on a Liquid-opened file
- *     would be mis-labeled as a layout tail on every ancestor
- *     re-entry.
- *   - Closer name is one of `html` / `body` / `head`. Any other
- *     closer (`</div>`, `</section>`, …) is a real structural bug,
- *     not the documented layout-tail shape.
- *   - First non-whitespace content in the source is a Liquid
- *     `{% include %}` / `{% render %}` directive — the partial
- *     that contributes the opening root tag.
+ * Branch order:
+ *
+ *   1. The Liquid layout-tail rename fires only when ALL three
+ *      gates hold:
+ *
+ *      - `depth === 0` — the closer is tailing the whole document,
+ *        not orphaned inside an unclosed element body. Without this
+ *        guard a nested recovered close on a Liquid-opened file
+ *        would be mis-labeled as a layout tail on every ancestor
+ *        re-entry.
+ *      - Closer name is one of `html` / `body` / `head`. Any other
+ *        closer (`</div>`, `</section>`, …) is a real structural
+ *        bug, not the documented layout-tail shape.
+ *      - First non-whitespace content in the source is a Liquid
+ *        `{% include %}` / `{% render %}` directive — the partial
+ *        that contributes the opening root tag.
+ *
+ *   2. Nested stray (`depth > 0`, an enclosing ancestor is still
+ *      open) — name the offending tag and the immediate enclosing
+ *      scope. `enclosingTag` MUST be the lowercased name at the
+ *      top of the parser's `#openStack`; the parser guarantees a
+ *      non-empty stack whenever `depth > 0` because each
+ *      `#consumeChildren` push happens before `depth` increments.
+ *
+ *   3. Genuine root-level stray (`depth === 0` after the layout-
+ *      tail check failed) — name the actual stray tag in the
+ *      message so the agent doesn't read a bare "Stray closing
+ *      tag" and have to re-open the file to learn which tag is
+ *      the culprit.
+ *
+ * @param closerName    — raw stray-tag name from the source (case
+ *   preserved for the rendered message; case-insensitive matching
+ *   against the layout-tail closer set).
+ * @param depth         — current `#consumeChildren` recursion depth
+ *   in the parser. `0` means the stray sits at the document root;
+ *   `> 0` means it sits inside one or more open element bodies.
+ * @param line          — 1-based source line of the stray's `<`,
+ *   surfaced verbatim in the nested-stray message so the reason
+ *   itself names the location (the `partialParseFiles[].reason`
+ *   field on the wire is just the message string; the underlying
+ *   `position` doesn't reach the agent).
+ * @param enclosingTag  — lowercased name of the nearest still-open
+ *   ancestor (`undefined` at `depth === 0`). Used only by branch 2.
+ * @param hasLiquidIncludeHead — pre-computed Liquid-head detector
+ *   result; passed in rather than re-derived so the parser caches
+ *   the detection across multiple stray-close events on one file.
  */
 export function strayClosingTagMessage(
   closerName: string,
   depth: number,
+  line: number,
+  enclosingTag: string | undefined,
   hasLiquidIncludeHead: boolean,
 ): string {
   const lower = closerName.toLowerCase();
   if (depth === 0 && LAYOUT_TAIL_CLOSERS.has(lower) && hasLiquidIncludeHead) {
     return `Elided layout-tail </${lower}> — file opens with a Liquid {% include %} directive whose sibling partial closes this root tag`;
   }
-  return "Stray closing tag at top level";
+  if (depth > 0 && enclosingTag !== undefined) {
+    return `Mismatched </${closerName}> close at line ${line} (inside <${enclosingTag}>)`;
+  }
+  return `Stray </${closerName}> at top level`;
 }
 
 /**

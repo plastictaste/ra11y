@@ -9,12 +9,12 @@
  * close can be inferred from context. Without these tables every
  * `<p>foo<p>bar`, `<li>one<li>two`, `<tr><td>a<td>b`, and the
  * canonical `<p>...</body></html>` ending surfaces in
- * `analysisCoverage.partialParseFiles` with reasons like "Stray
- * closing tag at top level" / "Unclosed <p>" / "Unclosed <li>" — the
- * unclosed descendants steal the `</body></html>` closers and the
- * trailing root-tag closers look stray. Agents reading those reasons
- * reasonably treat the file as broken HTML and skip it, silently
- * missing real a11y findings on the recovered subtree.
+ * `analysisCoverage.partialParseFiles` with reasons like
+ * "Stray </html> at top level" / "Unclosed <p>" / "Unclosed <li>" —
+ * the unclosed descendants steal the `</body></html>` closers and
+ * the trailing root-tag closers look stray. Agents reading those
+ * reasons reasonably treat the file as broken HTML and skip it,
+ * silently missing real a11y findings on the recovered subtree.
  *
  * The two tables here encode the spec mechanics:
  *

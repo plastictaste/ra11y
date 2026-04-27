@@ -20,8 +20,8 @@
  * Recoverable-error predicate (what surfaces in
  * `analysisCoverage.partialParseFiles[].reason`):
  *
- *   - "Stray closing tag at top level" fires ONLY when a closing tag
- *     has no matching opener anywhere in the open-element stack. The
+ *   - The stray-close diagnostic fires ONLY when a closing tag has
+ *     no matching opener anywhere in the open-element stack. The
  *     HTML5 implied-end-tag set ({@link IMPLIED_END_TAG_ELEMENTS} —
  *     `<p>`, `<li>`, `<dt>`, `<dd>`, `<option>`, `<thead>`/`<tbody>`/
  *     `<tfoot>`, `<tr>`/`<td>`/`<th>`, `<rt>`/`<rp>`, `<colgroup>`,
@@ -30,7 +30,12 @@
  *     hand-authored browser-renderable HTML (every `<p>` with no
  *     explicit `</p>`, every `<li>` whose sibling `<li>` opens, every
  *     `<tr>` followed by another `<tr>`, plus the trailing
- *     `</body></html>` after such elements) parses cleanly.
+ *     `</body></html>` after such elements) parses cleanly. The
+ *     message wording branches on whether the stray sits at the
+ *     document root (`Stray </X> at top level`) or inside an open
+ *     ancestor body (`Mismatched </X> close at line N (inside
+ *     <ancestor>)`); see {@link strayClosingTagMessage} for the
+ *     full predicate.
  *   - "Unclosed <X> element" fires ONLY when an element NOT in the
  *     implied-end set runs to EOF without its closer (`<div>`,
  *     `<span>`, `<section>`, …) — these still genuinely indicate a
@@ -393,23 +398,38 @@ class HtmlParser {
   }
 
   /**
-   * Consumes a stray top-level `</tag>` that has no matching open,
-   * records a recoverable ParseError, and returns an empty text node
-   * so the outer node iterator keeps progressing.
+   * Consumes a stray `</tag>` that has no matching open, records a
+   * recoverable ParseError, and returns an empty text node so the
+   * outer node iterator keeps progressing. Called both from the
+   * document root and from inside an unclosed element body — the
+   * `#depth` counter and `#openStack` together drive which message
+   * shape the recorded error gets.
    *
-   * The recorded error message discriminates the Liquid root-layout
-   * shape (top-level `</html>` / `</body>` / `</head>` on a file whose
-   * first non-whitespace content is `{% include %}` / `{% render %}`)
-   * from the generic recovered-stray-close path. Both still emit a
-   * recoverable error so `analysisCoverage.partialParseFiles` retains
-   * the honest "scan degraded" telemetry — the Liquid case just names
-   * the shape so an agent reading the entry routes to the include-
-   * chain composition instead of treating it as an unexpected parse
-   * failure. The partial AST (typically a `<body>` / `<main>` subtree
-   * plus a trailing stray closer) is still handed to the rule
-   * pipeline; document rules gate on `isHtmlFragment` /
-   * `isHtmlLayoutOrPartial` so this is reason-string enrichment, not
-   * suppression.
+   * The recorded error message branches on three cases (see
+   * {@link strayClosingTagMessage} for the full predicate):
+   *
+   *   1. The Liquid root-layout shape (top-level `</html>` /
+   *      `</body>` / `</head>` on a file whose first non-whitespace
+   *      content is `{% include %}` / `{% render %}`) — renamed so
+   *      an agent routes to include-chain composition instead of
+   *      treating it as a parser failure.
+   *   2. A nested stray (inside an open ancestor) — the message
+   *      names the offending tag and the immediate enclosing scope
+   *      so the agent reads "inside <div>" rather than the historic
+   *      misdiagnosis "at top level."
+   *   3. A genuine root-level stray — the message names the actual
+   *      stray tag ("Stray </X> at top level") so the agent doesn't
+   *      have to re-open the file to learn which tag is the
+   *      culprit.
+   *
+   * All three still emit a recoverable error so
+   * `analysisCoverage.partialParseFiles` retains the honest "scan
+   * degraded" telemetry — only the message wording differs. The
+   * partial AST (typically a `<body>` / `<main>` subtree plus a
+   * trailing stray closer) is still handed to the rule pipeline;
+   * document rules gate on `isHtmlFragment` /
+   * `isHtmlLayoutOrPartial` so this is reason-string enrichment,
+   * not suppression.
    */
   #consumeStrayClosingTag(): HtmlText {
     const start = this.#pos;
@@ -418,8 +438,21 @@ class HtmlParser {
     const closerName = this.#readTagName();
     this.#readUntil(">");
     if (this.#peek() === ">") this.#advance(1);
+    // Innermost still-open ancestor — the message names this scope
+    // for the nested-stray branch so an agent reads "inside <div>"
+    // instead of the historic (and misdiagnosing) "at top level".
+    // `#openStack` is outer-to-inner; `at(-1)` is the immediate
+    // parent. Guaranteed non-empty when `#depth > 0` because each
+    // `#consumeChildren` push happens before the depth increment.
+    const enclosingTag = this.#depth > 0 ? this.#openStack.at(-1) : undefined;
     this.#errors.push({
-      message: strayClosingTagMessage(closerName, this.#depth, this.#hasLiquidIncludeHead()),
+      message: strayClosingTagMessage(
+        closerName,
+        this.#depth,
+        startPos.line,
+        enclosingTag,
+        this.#hasLiquidIncludeHead(),
+      ),
       position: startPos,
       recoverable: true,
     });

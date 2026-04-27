@@ -299,9 +299,11 @@ describe("parseHtml", () => {
   //
   // The rename is narrow — `depth === 0` + root-tag closer + Liquid
   // `{% include %}` / `{% render %}` head. A nested stray close, a
-  // non-root closer, or a non-Liquid (or non-include) head keeps the
-  // generic "Stray closing tag at top level" wording so real structural
-  // bugs don't get dressed up as layout-composition tails.
+  // non-root closer, or a non-Liquid (or non-include) head falls
+  // through to the scope-aware default wording (`Stray </X> at top
+  // level` at depth 0; `Mismatched </X> close at line N (inside
+  // <ancestor>)` at depth > 0) so real structural bugs don't get
+  // dressed up as layout-composition tails.
 
   it("renames the stray-close diagnostic for a Liquid root-layout </html> tail", () => {
     const src = `{%- include top.html -%}
@@ -335,32 +337,36 @@ describe("parseHtml", () => {
     expect(errors[0]?.message).toContain("Elided layout-tail </html>");
   });
 
-  it("keeps the generic stray-close wording for a non-root closer under a Liquid head", () => {
+  it("keeps the root-level wording for a non-root closer under a Liquid head", () => {
+    // `</div>` at depth 0 is genuinely top-level (no enclosing
+    // ancestor on the open stack) — the message should name the
+    // actual stray and reserve the "top level" claim for this
+    // honest case.
     const src = `{%- include top.html -%}
 </div>
 `;
     const { errors } = parseHtml(src);
-    expect(errors[0]?.message).toBe("Stray closing tag at top level");
+    expect(errors[0]?.message).toBe("Stray </div> at top level");
   });
 
-  it("keeps the generic stray-close wording when the file does not open with a Liquid include", () => {
+  it("keeps the root-level wording when the file does not open with a Liquid include", () => {
     const src = `<!DOCTYPE html>
 <div>x</div>
 </html>
 `;
     const { errors } = parseHtml(src);
-    expect(errors[0]?.message).toBe("Stray closing tag at top level");
+    expect(errors[0]?.message).toBe("Stray </html> at top level");
   });
 
-  it("keeps the generic wording when the Liquid head is {% capture %} / {% if %} rather than an include", () => {
+  it("keeps the root-level wording when the Liquid head is {% capture %} / {% if %} rather than an include", () => {
     // `{% capture %}` and `{% if %}` don't delegate the root-tag open
     // to a sibling partial — they render their body inline. A trailing
     // bare `</html>` on those files really IS a parse bug; naming it
     // "elided layout-tail" would hide the signal an agent needs.
     const capture = parseHtml(`{% capture x %}a{% endcapture %}\n</html>\n`);
-    expect(capture.errors[0]?.message).toBe("Stray closing tag at top level");
+    expect(capture.errors[0]?.message).toBe("Stray </html> at top level");
     const conditional = parseHtml(`{% if x %}a{% endif %}\n</html>\n`);
-    expect(conditional.errors[0]?.message).toBe("Stray closing tag at top level");
+    expect(conditional.errors[0]?.message).toBe("Stray </html> at top level");
   });
 
   it("keeps the generic wording for a nested stray close even under a Liquid-include head", () => {
@@ -569,15 +575,43 @@ describe("parseHtml", () => {
     expect(errors).toEqual([]);
   });
 
-  it("still reports a stray closing tag when no ancestor matches", () => {
+  it("reports a nested stray with the actual stray + enclosing scope", () => {
     // `</span>` has no matching opener anywhere in the open stack;
-    // this is a genuine structural bug, not a spec-allowed implicit
-    // close, and the recoverable error must still surface so an
-    // agent reading `partialParseFiles[].reason` learns the file is
-    // really broken.
+    // it sits inside an open `<div>` body, so the message must name
+    // the enclosing scope rather than claim the stray is "at top
+    // level" — the historic wording was a misdiagnosis on every
+    // nested stray, forcing agents to re-open the file to confirm
+    // the root closes cleanly.
     const { errors } = parseHtml("<div>hello</span></div>");
     expect(errors.length).toBeGreaterThan(0);
-    expect(errors.some((e) => e.message === "Stray closing tag at top level")).toBe(true);
+    expect(
+      errors.some((e) => e.message === "Mismatched </span> close at line 1 (inside <div>)"),
+    ).toBe(true);
+  });
+
+  it("nested-stray message reports the line number of the stray, not the document head", () => {
+    // The `partialParseFiles[].reason` field on the wire is just the
+    // message string; the underlying `ParseError.position` doesn't
+    // reach the agent. Pinning the line number in the message keeps
+    // the reason itself self-locating — a stray on line 3 must read
+    // "line 3", not "line 1".
+    const src = "<section>\n  <p>x</p>\n  </span>\n</section>";
+    const { errors } = parseHtml(src);
+    expect(
+      errors.some((e) => e.message === "Mismatched </span> close at line 3 (inside <section>)"),
+    ).toBe(true);
+  });
+
+  it("nested-stray message names the innermost still-open ancestor", () => {
+    // `</p>` has no matching opener; the stray sits inside `<span>`
+    // (innermost open) which is itself inside `<div>`. The message
+    // must name the innermost ancestor — naming a more outer one
+    // would mislead the agent on which scope to grep for the
+    // mis-paired opener.
+    const { errors } = parseHtml("<div><span></p></span></div>");
+    expect(
+      errors.some((e) => e.message === "Mismatched </p> close at line 1 (inside <span>)"),
+    ).toBe(true);
   });
 
   it("still reports a stray closing tag for </> orphans inside content", () => {
