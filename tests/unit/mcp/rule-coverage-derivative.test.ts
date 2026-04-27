@@ -56,7 +56,7 @@ function mediumRow(ruleId: string): PerRuleCoverage {
     filesEligible: 1,
     findingsEmitted: 0,
     coverageConfidence: "medium",
-    reason: "cross_file_listener_resolution_limited_on_this_input",
+    reason: "cross_file_listener_resolution_not_attempted_by_rule",
   };
 }
 

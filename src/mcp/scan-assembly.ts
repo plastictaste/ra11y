@@ -748,8 +748,9 @@ const FRAGMENT_DOWNGRADE_RULE_IDS: ReadonlySet<string> = new Set([
  * Why `"medium"` and not `"low"`: the rule did run, eligibility was
  * met, the file parsed cleanly. The honest signal is "evidence horizon
  * was bounded by the substrate's lack of a document envelope" — a
- * peer to the `cross_file_*_resolution_limited` ADR-0026 downgrade
- * shape, not the parse-error invisibility shape. A `"low"` downgrade
+ * peer to the `cross_file_*_resolution_not_attempted_by_rule`
+ * ADR-0026 downgrade shape, not the parse-error invisibility shape.
+ * A `"low"` downgrade
  * would conflate this case with the parse-error case (file invisible /
  * partially-parsed), which is a stronger statement than the substrate
  * warrants here.

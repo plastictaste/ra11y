@@ -768,8 +768,14 @@ describe("buildPerRuleCoverage", () => {
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("medium");
     // Per-family structured reason code — agent-triage-useful beyond
-    // the flat `cross_file_evidence_bounded_on_this_input` fallback.
-    expect(row!.reason).toBe("cross_file_listener_resolution_limited_on_this_input");
+    // the flat `cross_file_evidence_bounded_not_attempted_by_rule` fallback.
+    // Suffix `_not_attempted_by_rule` names the permanent rule-design
+    // limitation honestly: the rule has `crossFileCapable: false`, so
+    // it doesn't attempt cross-file resolution at all — the earlier
+    // `_limited_on_this_input` framing read as "we tried this input
+    // and were limited" and could mislead an agent into a fruitless
+    // re-scan.
+    expect(row!.reason).toBe("cross_file_listener_resolution_not_attempted_by_rule");
     // No `remediation` on medium — the agent's next action is to read
     // the cited file, not to reshape the scan inputs. Conditional
     // spread at the builder keeps the field out of the row entirely.
@@ -834,11 +840,11 @@ describe("buildPerRuleCoverage", () => {
 
   it("routes per-family reason codes for each tagged rule (idref, click-alternative, listener)", () => {
     // The per-family mapping keeps triage signal sharp: agents reading
-    // `cross_file_idref_resolution_limited_on_this_input` know to look
+    // `cross_file_idref_resolution_not_attempted_by_rule` know to look
     // for ids in sibling layout partials; `cross_file_click_
-    // alternative_resolution_limited_on_this_input` points at a
+    // alternative_resolution_not_attempted_by_rule` points at a
     // possible parent-component fallback; `cross_file_listener_
-    // resolution_limited_on_this_input` points at external `.js`.
+    // resolution_not_attempted_by_rule` points at external `.js`.
     const rules = [
       mkRule("aria/labelledby-target-exists", [".html", ".htm"], { crossFileCapable: false }),
       mkRule("forms/error-message-not-associated", [".html", ".htm"], { crossFileCapable: false }),
@@ -875,16 +881,16 @@ describe("buildPerRuleCoverage", () => {
     ]);
     const byId = new Map(entries.map((r) => [r.ruleId, r.reason]));
     expect(byId.get("aria/labelledby-target-exists")).toBe(
-      "cross_file_idref_resolution_limited_on_this_input",
+      "cross_file_idref_resolution_not_attempted_by_rule",
     );
     expect(byId.get("forms/error-message-not-associated")).toBe(
-      "cross_file_idref_resolution_limited_on_this_input",
+      "cross_file_idref_resolution_not_attempted_by_rule",
     );
     expect(byId.get("navigation/skip-link")).toBe(
-      "cross_file_idref_resolution_limited_on_this_input",
+      "cross_file_idref_resolution_not_attempted_by_rule",
     );
     expect(byId.get("pointer/drag-alternative")).toBe(
-      "cross_file_click_alternative_resolution_limited_on_this_input",
+      "cross_file_click_alternative_resolution_not_attempted_by_rule",
     );
   });
 
@@ -908,7 +914,7 @@ describe("buildPerRuleCoverage", () => {
     );
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("medium");
-    expect(row!.reason).toBe("cross_file_evidence_bounded_on_this_input");
+    expect(row!.reason).toBe("cross_file_evidence_bounded_not_attempted_by_rule");
   });
 
   it("crossFileCapable:true (or unset) keeps coverageConfidence='high' (no downgrade)", () => {
@@ -943,17 +949,68 @@ describe("buildPerRuleCoverage", () => {
     // symmetry so rule authors can trust the flag regardless of
     // where they wire their check).
     //
-    // The reason suffix here is `_inherent_to_rule` rather than the
-    // extension-gated branch's `_on_this_input` — the project-scoped
-    // branch has no per-input candidate-token signal to gate on, so
-    // the downgrade fires unconditionally on every scan where the
-    // rule ran. Using `_on_this_input` would lie to the agent about
-    // the predicate strength.
+    // Both branches collapse to the same `_not_attempted_by_rule`
+    // suffix because both describe the same fact: a rule with
+    // `crossFileCapable: false` does not attempt cross-file resolution
+    // at all. The earlier per-input / inherent split was a framing
+    // distinction (per-input observed candidate token vs. unconditional
+    // downgrade) that read to agents as "we tried this input and were
+    // limited" — a rescannable hiccup. The honest framing is "the rule
+    // never tries," which both branches share.
     const rules = [mkRule("hypothetical/project-bounded", undefined, { crossFileCapable: false })];
     const entries = buildPerRuleCoverage(tracker({}), rules, passAllFilter, [], 5);
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("medium");
-    expect(row!.reason).toBe("cross_file_evidence_bounded_inherent_to_rule");
+    expect(row!.reason).toBe("cross_file_evidence_bounded_not_attempted_by_rule");
+  });
+
+  // Focused framing-honesty invariant for Q8c-COVERAGECONFIDENCE-REASON-
+  // SUFFIX-FRAMING: every reason code emitted by a rule with
+  // `crossFileCapable: false` carries the `_not_attempted_by_rule`
+  // suffix (never the older `_limited_on_this_input` /
+  // `_inherent_to_rule` variants). The earlier suffixes framed the
+  // limitation as input-specific, which agents could read as "maybe a
+  // different input would resolve it" and waste a re-scan. The actual
+  // situation is a permanent rule-design choice — the rule's whole
+  // implementation is bounded — and the suffix names that fact
+  // honestly, regardless of which builder branch produced the row.
+  it("every cross-file-bound reason code uses the not_attempted_by_rule suffix (never limited_on_this_input)", () => {
+    const rules = [
+      mkRule("aria/labelledby-target-exists", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("forms/error-message-not-associated", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("navigation/skip-link", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("pointer/drag-alternative", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("keyboard/handler-missing", [".html", ".htm"], { crossFileCapable: false }),
+      mkRule("contrast/minimum", [".css"], { crossFileCapable: false }),
+      mkRule("hypothetical/project-bounded", undefined, { crossFileCapable: false }),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({
+        "aria/labelledby-target-exists": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
+        "forms/error-message-not-associated": {
+          eligible: 1,
+          evaluated: 1,
+          crossFileCandidates: 1,
+        },
+        "navigation/skip-link": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
+        "pointer/drag-alternative": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
+        "keyboard/handler-missing": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
+        "contrast/minimum": { eligible: 1, evaluated: 1, crossFileCandidates: 1 },
+      }),
+      rules,
+      passAllFilter,
+      [],
+      5,
+    );
+    const reasons = entries
+      .map((r) => r.reason)
+      .filter((s): s is string => typeof s === "string" && s.startsWith("cross_file_"));
+    expect(reasons.length).toBeGreaterThan(0);
+    for (const reason of reasons) {
+      expect(reason).toMatch(/_not_attempted_by_rule$/u);
+      expect(reason).not.toMatch(/_limited_on_this_input$/u);
+      expect(reason).not.toMatch(/_inherent_to_rule$/u);
+    }
   });
 });
 

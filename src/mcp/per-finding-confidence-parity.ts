@@ -28,8 +28,8 @@
  *     `fragment-input-no-document-envelope`) wins when present — it
  *     names a substrate-level cause stronger than the rule-family code.
  *   - `reason` (rule-family snake_case code:
- *     `cross_file_listener_resolution_limited_on_this_input`,
- *     `cross_file_idref_resolution_limited_on_this_input`, …) is used
+ *     `cross_file_listener_resolution_not_attempted_by_rule`,
+ *     `cross_file_idref_resolution_not_attempted_by_rule`, …) is used
  *     otherwise.
  *
  * Both are normalized to a snake_case axis the agent can pattern-match
@@ -132,8 +132,9 @@ function snakeCase(code: string): string {
 /**
  * File-scoped substrate codes whose propagation must gate on the
  * finding's own file-path membership in the corresponding parse-state
- * set. Other reason codes (rule-family `cross_file_*_limited_on_this_input`
- * variants, `scss_unresolved_variables`, `fragment_input_no_document_envelope`)
+ * set. Other reason codes (rule-family
+ * `cross_file_*_not_attempted_by_rule` variants,
+ * `scss_unresolved_variables`, `fragment_input_no_document_envelope`)
  * describe a corpus-level limitation on the rule's evidence model and
  * propagate to every finding the rule emitted on this scan; these two
  * describe a per-file parse failure and only apply to findings on the

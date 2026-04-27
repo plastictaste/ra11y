@@ -189,7 +189,7 @@ export const rule = defineRule({
   // current document — the scanner cannot resolve across files in one
   // invocation. Declaring `crossFileCapable: false` downgrades a
   // clean tally on HTML substrates to `coverageConfidence: "medium"`
-  // with `reason: "cross_file_listener_resolution_limited_on_this_input"`
+  // with `reason: "cross_file_listener_resolution_not_attempted_by_rule"`
   // per ADR 0026 — honest "the rule ran but its evidence was bounded"
   // in place of a silent-miss `"high"`.
   crossFileCapable: false,

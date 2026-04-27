@@ -155,7 +155,7 @@ describe("per-rule coverage end-to-end", () => {
     expect(contrastMinRow!.filesEligible).toBeGreaterThan(0);
     expect(contrastMinRow!.coverageConfidence).toBe("medium");
     expect(contrastMinRow!.reason).toBe(
-      "cross_file_custom_property_resolution_limited_on_this_input",
+      "cross_file_custom_property_resolution_not_attempted_by_rule",
     );
   });
 
@@ -625,7 +625,7 @@ describe("per-rule coverage end-to-end", () => {
   // radius — propagate the reason code into `couldBeWrongBecause`.
   // The fixture exercises a substrate-axis downgrade
   // (`coverageConfidenceReason: "file-parse-error"`) and a rule-family
-  // axis downgrade (`reason: "cross_file_listener_resolution_limited_on_this_input"`)
+  // axis downgrade (`reason: "cross_file_listener_resolution_not_attempted_by_rule"`)
   // simultaneously: a `keyboard/handler-missing` finding on an HTML
   // file with a sibling `.html` parse error, sharing the same gate.
   it("per-finding couldBeWrongBecause carries the per-rule degradation reason for every degraded rule", () => {

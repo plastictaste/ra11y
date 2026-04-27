@@ -135,8 +135,8 @@ export function enrichForCrossFileScript<V extends CrossFileEnrichable>(
  * `<a href>` or it might be a bare `<div>`, and only the HTML knows.
  *
  * Mirrors the per-rule `coverageConfidence: "medium"` with reason
- * `cross_file_listener_resolution_limited_on_this_input` that
- * `CROSS_FILE_BOUND_REASONS_PER_INPUT` (in `src/engine/per-rule-coverage.ts`) already records, per the
+ * `cross_file_listener_resolution_not_attempted_by_rule` that
+ * `CROSS_FILE_BOUND_REASONS` (in `src/engine/per-rule-coverage.ts`) already records, per the
  * doctrine at docs/kb/architecture/ai-first-consumer.md "Per-finding
  * confidence must reflect per-rule coverage limitations" —
  * propagating the limitation to per-finding `confidence` keeps the

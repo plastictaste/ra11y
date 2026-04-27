@@ -537,7 +537,7 @@ export type ViolationEvidence =
  *         call where the click handler is wired from an external `.js`
  *         file the rule cannot see. The rule ran; its evidence was
  *         bounded. Carries a structured `reason` naming the bound
- *         (e.g. `"cross_file_listener_resolution_limited_on_this_input"`).
+ *         (e.g. `"cross_file_listener_resolution_not_attempted_by_rule"`).
  *         Introduced by ADR 0026; not yet emitted by any producer —
  * the downstream audit (-
  *         FILE-BLINDSPOT) wires the downgrade.
@@ -602,7 +602,7 @@ export interface PerRuleCoverage {
    *
    * Sibling of {@link reason}: `reason` is human-prose or rule-family
    * structured codes (`"no files matching .css were scanned"`,
-   * `"cross_file_listener_resolution_limited_on_this_input"`); this
+   * `"cross_file_listener_resolution_not_attempted_by_rule"`); this
    * field is a strict kebab-case enum that the response-assembly layer
    * stamps when files in the scan failed to parse cleanly. Both can
    * coexist on one row when a rule had a low-confidence cause AND a

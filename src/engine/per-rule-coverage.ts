@@ -54,49 +54,51 @@ const MIN_FILES_FOR_HIGH_CONFIDENCE = 1;
  *).
  *
  * Each entry is a stable snake_case identifier
- * (`cross_file_<kind>_resolution_limited_<suffix>`) naming the
+ * (`cross_file_<kind>_resolution_not_attempted_by_rule`) naming the
  * specific cross-file thing the rule can't see — `listener` for click
  * handlers wired in a sibling `.js`, `idref` for ARIA / anchor target
  * ids that may live in a layout partial, `click_alternative` for a
  * drag-rule's alternative-pointer pathway that may live in a parent
  * component.
  *
- * Two suffix variants exist so the code's framing matches the
- * predicate strength of its emission context (per
+ * Suffix framing — `_not_attempted_by_rule` (per
  * docs/kb/architecture/ai-first-consumer.md "Heuristic-mislabeled
- * meta sub-fields are dishonest" — a `reason` code that reads as a
- * per-input verdict but fires unconditionally on every scan is the
- * same shape as a meta sub-field whose label lies about its
- * predicate strength):
+ * meta sub-fields are dishonest"): every current emission gates on
+ * `crossFileCapable: false`, which declares "the rule's design does
+ * not attempt cross-file resolution at all." The earlier
+ * `_limited_on_this_input` framing read as "we tried this input and
+ * were limited," which agents could mis-interpret as "maybe a different
+ * input would resolve it" and waste a re-scan. The actual situation is
+ * a permanent rule-design limitation, not an input-specific hiccup —
+ * the suffix names that honestly. (`_inherent_to_rule` was an earlier
+ * peer suffix used in the project-scoped branch where there is no
+ * per-input candidate-token signal to gate on; both branches collapse
+ * to `_not_attempted_by_rule` because they describe the same fact:
+ * the rule never tries.)
  *
- *   - `_on_this_input` — the downgrade is predicate-strength gated:
- *     the rule actually observed at least one candidate token on this
- *     input whose resolution may extend beyond the current file
- *     (`crossFileCandidates > 0` on the tracker). The code
- *     re-evaluates per scan — a substrate carrying zero candidate
- *     tokens stays at `"high"`. Used by the extension-gated branch.
- *   - `_inherent_to_rule` — the downgrade is structural to the rule:
- *     it fires on every scan where the rule ran, regardless of
- *     per-input evidence, because the project-scoped branch has no
- *     per-input candidate-token signal to gate on. Used by the
- *     project-scoped branch ({@link buildProjectScopedEntry}).
+ * Reserved for the future case (b) where a rule actually attempts
+ * cross-file resolution but the input was incomplete (partial-parse,
+ * file-set-limited): `cross_file_<kind>_resolution_limited_on_this_input`
+ * stays available as the honest framing for "we tried and were
+ * limited by this input." No current producer is in that case, so the
+ * suffix is not emitted today.
  *
  * Agents read the code + the cited file and decide. The per-family
  * distinction stays triage-useful: "the listener lives in a sibling
  * `.js`" and "the `#main` target lives in a partial" route to
  * different follow-up reads. One flat code would flatten that signal.
  *
- * The fallback (`cross_file_evidence_bounded_<suffix>`) catches
- * rules that declare `crossFileCapable: false` but aren't yet in the
- * per-family mapping — honest default, surfaces the downgrade without
- * inventing specifics the per-family codes earn.
+ * The fallback (`cross_file_evidence_bounded_not_attempted_by_rule`)
+ * catches rules that declare `crossFileCapable: false` but aren't yet
+ * in the per-family mapping — honest default, surfaces the downgrade
+ * without inventing specifics the per-family codes earn.
  */
-const CROSS_FILE_BOUND_REASONS_PER_INPUT: Readonly<Record<string, string>> = {
-  "keyboard/handler-missing": "cross_file_listener_resolution_limited_on_this_input",
-  "aria/labelledby-target-exists": "cross_file_idref_resolution_limited_on_this_input",
-  "navigation/skip-link": "cross_file_idref_resolution_limited_on_this_input",
-  "forms/error-message-not-associated": "cross_file_idref_resolution_limited_on_this_input",
-  "pointer/drag-alternative": "cross_file_click_alternative_resolution_limited_on_this_input",
+const CROSS_FILE_BOUND_REASONS: Readonly<Record<string, string>> = {
+  "keyboard/handler-missing": "cross_file_listener_resolution_not_attempted_by_rule",
+  "aria/labelledby-target-exists": "cross_file_idref_resolution_not_attempted_by_rule",
+  "navigation/skip-link": "cross_file_idref_resolution_not_attempted_by_rule",
+  "forms/error-message-not-associated": "cross_file_idref_resolution_not_attempted_by_rule",
+  "pointer/drag-alternative": "cross_file_click_alternative_resolution_not_attempted_by_rule",
   // `contrast/minimum` resolves `:root { --name }` custom properties
   // same-file only; design-system CSS routinely declares tokens in a
   // separate `tokens.css` stylesheet, so a clean tally on any single-
@@ -104,20 +106,10 @@ const CROSS_FILE_BOUND_REASONS_PER_INPUT: Readonly<Record<string, string>> = {
   // next-read triage routes to "check for a tokens.css the consumer
   // stylesheet `var(--fg)`s against" rather than a generic "ran but
   // bounded" message.
-  "contrast/minimum": "cross_file_custom_property_resolution_limited_on_this_input",
+  "contrast/minimum": "cross_file_custom_property_resolution_not_attempted_by_rule",
 };
 
-const CROSS_FILE_BOUND_REASONS_INHERENT: Readonly<Record<string, string>> = {
-  "keyboard/handler-missing": "cross_file_listener_resolution_limited_inherent_to_rule",
-  "aria/labelledby-target-exists": "cross_file_idref_resolution_limited_inherent_to_rule",
-  "navigation/skip-link": "cross_file_idref_resolution_limited_inherent_to_rule",
-  "forms/error-message-not-associated": "cross_file_idref_resolution_limited_inherent_to_rule",
-  "pointer/drag-alternative": "cross_file_click_alternative_resolution_limited_inherent_to_rule",
-  "contrast/minimum": "cross_file_custom_property_resolution_limited_inherent_to_rule",
-};
-
-const CROSS_FILE_BOUND_REASON_FALLBACK_PER_INPUT = "cross_file_evidence_bounded_on_this_input";
-const CROSS_FILE_BOUND_REASON_FALLBACK_INHERENT = "cross_file_evidence_bounded_inherent_to_rule";
+const CROSS_FILE_BOUND_REASON_FALLBACK = "cross_file_evidence_bounded_not_attempted_by_rule";
 
 /**
  * Minimum total-findings-per-rule before a per-file concentration hint
@@ -494,11 +486,15 @@ function buildExtensionGatedEntry(
       filesEligible: eligible,
       findingsEmitted,
       coverageConfidence: "medium",
-      // Per-input variant: the gate above (`crossFileCandidates > 0`)
-      // confirms the rule observed at least one candidate token whose
-      // resolution may extend beyond this file, so the `_on_this_input`
-      // suffix honestly names a verdict that re-evaluates per scan.
-      reason: crossFileBoundReason(ruleId, "per-input"),
+      // The `crossFileCandidates > 0` gate confirms the rule observed
+      // at least one candidate token whose resolution would require
+      // cross-file lookup — but `crossFileCapable: false` declares the
+      // rule's design does not attempt that lookup at all. The
+      // `_not_attempted_by_rule` suffix names the permanent rule-design
+      // limitation honestly, instead of the earlier `_on_this_input`
+      // framing that read as "we tried this input and were limited"
+      // (and could mislead an agent into a fruitless re-scan).
+      reason: crossFileBoundReason(ruleId),
       ...concentrationSpread,
       ...classPatternSpread,
     };
@@ -577,13 +573,14 @@ function buildProjectScopedEntry(
       filesEligible: filesScanned,
       findingsEmitted,
       coverageConfidence: "medium",
-      // Inherent variant: this branch has no per-input candidate-token
-      // signal to gate on, so the downgrade is structural to the rule
-      // (fires on every scan where the rule ran). The `_inherent_to_rule`
-      // suffix names that honestly — using `_on_this_input` here would
-      // lie about the predicate strength, since nothing about the input
-      // re-evaluates the verdict.
-      reason: crossFileBoundReason(ruleId, "inherent"),
+      // Project-scoped rules with `crossFileCapable: false` describe a
+      // structural rule-design limitation — the rule's whole design is
+      // bounded to a single substrate. The `_not_attempted_by_rule`
+      // suffix names that fact, the same way it does in the
+      // extension-gated branch — both emission contexts collapse to the
+      // same honest framing because both describe a rule whose design
+      // never attempts cross-file resolution.
+      reason: crossFileBoundReason(ruleId),
       ...concentrationSpread,
       ...classPatternSpread,
     };
@@ -638,31 +635,29 @@ function buildLevelGatedEntry(
 /**
  * Resolves the structured reason code for a `crossFileCapable: false`
  * rule whose coverage downgraded from `"high"` to `"medium"`. Looks up
- * the rule ID in the per-family mapping appropriate to the emission
- * context's predicate strength; falls back to the generic
- * `cross_file_evidence_bounded_<suffix>` code for rules that opted in
- * but aren't in the per-family mapping yet.
+ * the rule ID in the per-family mapping; falls back to the generic
+ * `cross_file_evidence_bounded_not_attempted_by_rule` code for rules
+ * that opted in but aren't in the per-family mapping yet.
  *
- * The `predicateStrength` parameter selects the suffix variant:
- *   - `"per-input"` — the caller has gated the downgrade on a
- *     re-evaluating per-input signal (`crossFileCandidates > 0`).
- *     Returns the `_on_this_input` variant.
- *   - `"inherent"` — the caller has no per-input signal to gate on
- *     and the downgrade fires unconditionally on every scan where the
- *     rule ran. Returns the `_inherent_to_rule` variant so the suffix
- *     doesn't mislead the agent into reading a per-input verdict.
+ * Both emission contexts (extension-gated branch with
+ * `crossFileCandidates > 0`, project-scoped branch with no per-input
+ * signal) route through this single helper because both describe the
+ * same fact: the rule's design declares it does not attempt cross-file
+ * resolution. The `_not_attempted_by_rule` suffix names that honestly
+ * regardless of how the downgrade was gated — see
+ * docs/kb/architecture/ai-first-consumer.md "Heuristic-mislabeled meta
+ * sub-fields are dishonest" for the framing rationale (the earlier
+ * `_on_this_input` / `_inherent_to_rule` split read as a per-input
+ * verdict in the first variant; both branches collapse here because
+ * both describe a permanent rule-design limitation).
  *
  * The fallback is an honest default, not a suppression — the agent
  * still sees the downgrade and re-reads the rule's docs. Rule authors
  * adding `crossFileCapable: false` should also add the per-family
- * code here (in BOTH suffix maps) so the downstream triage signal
- * stays sharp.
+ * code here so the downstream triage signal stays sharp.
  */
-function crossFileBoundReason(ruleId: string, predicateStrength: "per-input" | "inherent"): string {
-  if (predicateStrength === "per-input") {
-    return CROSS_FILE_BOUND_REASONS_PER_INPUT[ruleId] ?? CROSS_FILE_BOUND_REASON_FALLBACK_PER_INPUT;
-  }
-  return CROSS_FILE_BOUND_REASONS_INHERENT[ruleId] ?? CROSS_FILE_BOUND_REASON_FALLBACK_INHERENT;
+function crossFileBoundReason(ruleId: string): string {
+  return CROSS_FILE_BOUND_REASONS[ruleId] ?? CROSS_FILE_BOUND_REASON_FALLBACK;
 }
 
 /**
