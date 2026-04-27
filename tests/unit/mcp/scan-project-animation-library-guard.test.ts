@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { computeAnimationLibraryGuardCandidates } from "../../../src/mcp/tool-scan-project.ts";
+import { computeAnimationLibraryGuardCandidates } from "../../../src/mcp/scan-time-warnings.ts";
 
 function finding(ruleId: string, severity = "error") {
   return {

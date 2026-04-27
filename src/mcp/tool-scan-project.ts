@@ -41,6 +41,10 @@ import {
   buildScanProjectReviewCandidates,
   type ScanProjectReviewCandidate,
 } from "./scan-project-review-candidates.ts";
+import {
+  computeAnimationLibraryGuardCandidates,
+  computeVendorCssNoise,
+} from "./scan-time-warnings.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
 import { detectSsgFramework, ssgEmptyResultMetaFields, withSsgHint } from "./ssg-detect.ts";
@@ -61,9 +65,7 @@ import {
 } from "./tools-helpers.ts";
 import { enrichPerRuleCoverageWithVendorConcentration } from "./vendor-concentration.ts";
 import {
-  ANIMATION_LIB_GUARD_FINDING_FLOOR,
   computeTemplateDirectiveOverlap,
-  type WarningInputs,
   warningsField,
   warningsFieldFromScanMeta,
 } from "./warnings.ts";
@@ -802,148 +804,11 @@ function warningsFieldsForAssembler(warningsFromMeta: {
   };
 }
 
-/**
- * Cross-references the build-artifact detector's output with the
- * per-file findings list to drive the
- * `vendor_css_dominates_findings` warning. Returns `undefined`
- * when the scan produced no findings at all (the dominance
- * question isn't meaningful on a clean scan) — otherwise returns
- * the tally plus the densest CSS build-artifact file so the
- * warning payload has a concrete first-pivot.
- *
- * CSS-only scope: JS/HTML build artifacts (sourcemap pairs,
- * `dist/*.js`) are surfaced under `scanned_build_artifacts_present`
- * but aren't counted here — the dominance regime we're naming is
- * specifically "vendor CSS bundles (bootstrap.css, font-awesome.css,
- * compiled Tailwind) firing contrast / motion rules at scale," not
- * the broader "build artifact presence" signal.
- */
-function computeVendorCssNoise(
-  buildArtifacts: readonly ScannedBuildArtifact[],
-  files: ScanFormatted["files"],
-): WarningInputs["vendorCssNoise"] | undefined {
-  const vendorCssPaths = new Set<string>();
-  for (const artifact of buildArtifacts) {
-    const lower = artifact.path.toLowerCase();
-    if (lower.endsWith(".css") || lower.endsWith(".scss")) {
-      vendorCssPaths.add(artifact.path);
-    }
-  }
-  let totalFindingsCount = 0;
-  let vendorFindingsCount = 0;
-  let topVendorFile: { readonly path: string; readonly findingsCount: number } | undefined;
-  for (const file of files) {
-    const count = file.findings.length;
-    totalFindingsCount += count;
-    if (vendorCssPaths.has(file.path)) {
-      vendorFindingsCount += count;
-      if (topVendorFile === undefined || count > topVendorFile.findingsCount) {
-        topVendorFile = { path: file.path, findingsCount: count };
-      }
-    }
-  }
-  if (totalFindingsCount === 0) return undefined;
-  return {
-    totalFindingsCount,
-    vendorFindingsCount,
-    ...(topVendorFile === undefined ? {} : { topVendorFile }),
-  };
-}
-
-/**
- * cross-references the
- * banner-detected vendor libraries with the per-rule per-file finding
- * counts. Returns the (ruleId, file, findingCount, library, suggestion)
- * tuples for every (ruleId, file) pair that satisfies BOTH halves of
- * the predicate: the file is in `vendorLibraries[]` (deterministic
- * banner-comment match) AND the rule emitted ≥
- * {@link ANIMATION_LIB_GUARD_FINDING_FLOOR} findings on that file.
- *
- * Both predicate halves are deterministic per CLAUDE.md §1 "Labeled
- * buckets are only honest when provable from the code" — banner match
- * is regex-anchored to first-non-blank-line text; finding count is
- * exact arithmetic on the per-rule per-file tally. The threshold gates
- * only the warning's emission; every individual finding stays in
- * `files[]` regardless (surface-don't-suppress).
- *
- * Empty input (no vendor libraries OR no findings) returns an empty
- * array, which the warnings module treats identically to `undefined`
- * (the code drops conservatively).
- */
-export function computeAnimationLibraryGuardCandidates(args: {
-  readonly vendorLibraries: readonly import("./build-artifacts.ts").DetectedVendorLibrary[];
-  readonly files: ScanFormatted["files"];
-}): readonly {
-  readonly ruleId: string;
-  readonly file: string;
-  readonly findingCount: number;
-  readonly library: string;
-  readonly suggestion: string;
-}[] {
-  if (args.vendorLibraries.length === 0) return [];
-  // Index the vendor-library identifications by path so the per-file
-  // walk is O(1) per file.
-  const libraryByPath = new Map<string, string>();
-  for (const lib of args.vendorLibraries) libraryByPath.set(lib.path, lib.library);
-  const out: {
-    readonly ruleId: string;
-    readonly file: string;
-    readonly findingCount: number;
-    readonly library: string;
-    readonly suggestion: string;
-  }[] = [];
-  for (const file of args.files) {
-    const library = libraryByPath.get(file.path);
-    if (library === undefined) continue;
-    // Per-rule tally inside this file. Inline rather than reusing
-    // `computeTopRules` from `scan-assembly.ts` because we want
-    // ALL rule IDs that clear the floor, not the top-N.
-    const perRule = new Map<string, number>();
-    for (const finding of file.findings) {
-      perRule.set(finding.ruleId, (perRule.get(finding.ruleId) ?? 0) + 1);
-    }
-    for (const [ruleId, findingCount] of perRule) {
-      if (findingCount < ANIMATION_LIB_GUARD_FINDING_FLOOR) continue;
-      out.push({
-        ruleId,
-        file: file.path,
-        findingCount,
-        library,
-        suggestion: animationLibraryGuardSuggestion({ library, ruleId, findingCount }),
-      });
-    }
-  }
-  return out;
-}
-
-/**
- * builds the library-aware
- * remediation prose surfaced on
- * `warningsDetails.animation_library_without_reduced_motion_guard.suggestion`.
- * Names the concrete edit (wrap-the-`@import` / wrap-the-`<link>` for
- * library-import shapes) keyed off the rule ID — `motion/*` rules
- * earn the `prefers-reduced-motion` wrap; other rules (e.g. a future
- * contrast rule firing on a vendor stylesheet) earn a generic
- * exclude-or-suppress pointer because the remediation isn't a media
- * query.
- *
- * The suggestion is conditional remediation prose, not a deterministic
- * claim — the agent reads the cited file to verify the import shape
- * (an `@import` versus a `<link>` versus a bundler-side import) before
- * applying. Per CLAUDE.md §1 "Heuristic-mislabeled meta sub-fields
- * are dishonest," the prose names the EDIT (concrete) and the AGENT
- * verifies the SHAPE (the part static analysis can't decide).
- */
-function animationLibraryGuardSuggestion(args: {
-  readonly library: string;
-  readonly ruleId: string;
-  readonly findingCount: number;
-}): string {
-  if (args.ruleId.startsWith("motion/")) {
-    return `Wrap the \`${args.library}\` import (e.g. \`@import\`, \`<link rel="stylesheet">\`, or a bundler-side import) in \`@media (prefers-reduced-motion: no-preference) { ... }\`. One wrap addresses all ${args.findingCount} \`${args.ruleId}\` findings on this file.`;
-  }
-  return `Consider adding the \`${args.library}\` distribution to the \`exclude\` glob in \`ra11y.config.ts\`, or scoping it under a source-level disable pragma. One change addresses all ${args.findingCount} \`${args.ruleId}\` findings on this file.`;
-}
+// `computeVendorCssNoise` and `computeAnimationLibraryGuardCandidates`
+// were extracted to `./scan-time-warnings.ts` so `tool-checklist` and
+// `tool-coverage` can compute the same scan-time warning channel
+// without duplicating predicates. `scan-time-warnings.ts`
+// re-exports them; `tool-scan-project` consumes via the import above.
 
 /**
  * Maps a loaded project config onto the discovery-side options

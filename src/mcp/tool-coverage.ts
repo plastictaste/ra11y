@@ -9,13 +9,12 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
-import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
-import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { outputFilePathSet } from "./scan-assembly.ts";
+import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { configSearchedFromField } from "./scanner-meta.ts";
 import type { McpSession } from "./session.ts";
@@ -32,7 +31,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { computeTemplateDirectiveOverlap, fillMissingWarningDetails } from "./warnings.ts";
+import { fillMissingWarningDetails } from "./warnings.ts";
 
 export const coverageTool: McpTool = {
   def: {
@@ -88,11 +87,11 @@ export const coverageTool: McpTool = {
     }
     const level = resolveLevel(strParam(params, "level"), session);
     const projectConfig = await session.loadProjectConfig(cwd);
-    const { files, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
-      paths,
-      session,
-      cwd,
-    );
+    const {
+      files,
+      diagnostics: discoveryDiagnostics,
+      jsInnerHtmlDeclinedCount,
+    } = await parseFilesWithDiagnostics(paths, session, cwd);
     const attestations = await loadDurableAttestations(cwd);
 
     // Q-SHARED-RULES-EVALUATED-SSOT: load project config and route
@@ -295,17 +294,25 @@ export const coverageTool: McpTool = {
     // honest scan-confidence codes — same input → same labels.
     const configSearchSawProjectMarker =
       projectConfig.sourcePath === null ? sawProjectMarkerInWalk(cwd) : false;
-    const buildArtifactEntries = collectBuildArtifacts(files);
     const filesByExtension = countFilesByExtension(files);
-    const baseWarnings = buildDerivativeScanWarnings({
-      filesScanned: files.length,
-      rootSource: null,
+    // Routes through the shared scan-time helper so the warning code
+    // set is identical to `scan_project` / `checklist` on the same cwd
+    // — cross-surface drift on this channel is a silent-miss failure
+    // mode per `docs/kb/architecture/ai-first-consumer.md`
+    // "Cross-surface count invariant" (warning-channel extension). The
+    // helper internally classifies build artifacts, the SCSS unresolved-
+    // variables list, vendor-CSS noise, etc., so callers don't have to
+    // duplicate the predicates that previously diverged here.
+    const baseWarnings = buildScanTimeWarnings({
+      parsedFiles: files,
+      violations: result.violations,
+      root: cwd,
       configSource: projectConfig.sourcePath,
-      configSearchedFromForWarning: cwd,
+      configSearchSawProjectMarker,
+      rootSource: null,
       analysisCoverage: analysisCoverageField.analysisCoverage,
       filesByExtension,
-      scannedBuildArtifactsPresent: buildArtifactEntries.length > 0,
-      configSearchSawProjectMarker,
+      jsInnerHtmlDeclinedCount,
       // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate truncation so the
       // response-level `response_meta_truncated` code fires AND its
       // `warningsDetails.response_meta_truncated.fields` payload names
@@ -317,21 +324,6 @@ export const coverageTool: McpTool = {
       ...(analysisCoverageField.metaArrayTruncated === true
         ? { metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"] }
         : {}),
-      // gate
-      // `template_files_parsed_as_literal` on actual overlap between
-      // emitted findings and detected template-directive lines — the
-      // code only fires when the literal-parse actually reached a
-      // finding the agent must triage. `coverage` runs `runScan` over
-      // the same parsed-file set it discovered; cross-reference
-      // `result.violations` with the per-file source already in
-      // `files`.
-      templateDirectivesOverlap: computeTemplateDirectiveOverlap({
-        findings: result.violations.map((v) => ({
-          filePath: v.location.filePath,
-          line: v.location.line,
-        })),
-        sourcesByPath: new Map(files.map((f) => [f.filePath, f.source])),
-      }),
     });
     // every coverage entry ships the
     // legacy `id` field alongside the canonical `criterionId` for one
@@ -577,7 +569,7 @@ function withTitles(
 /**
  * append the deprecation code for the
  * legacy `id` alias to the warnings fragment returned by
- * {@link buildDerivativeScanWarnings}. The base helper conditionally
+ * {@link buildScanTimeWarnings}. The base helper conditionally
  * spreads `warnings` and `warningsDetails` — `warnings` may be absent
  * when no scan-level code fired. We fold our code in either way:
  *   - if `warnings` is already present, append.

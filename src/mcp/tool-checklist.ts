@@ -26,9 +26,9 @@ import {
 } from "./manual-applicability.ts";
 import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
-import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { outputFilePathSet } from "./scan-assembly.ts";
+import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
 import {
@@ -51,7 +51,6 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { computeTemplateDirectiveOverlap } from "./warnings.ts";
 
 /**
  * Per-criterion-group disable-pragma spellings for the four comment
@@ -479,11 +478,11 @@ export const checklistTool: McpTool = {
     // the canonical cross-surface drift the AI-first doctrine flags
     // in `ai-first-consumer.md` §"One tool call should answer 'what
     // next?'". Details are computed downstream from `analysisCoverage`.
-    const { files, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
-      paths,
-      session,
-      cwd,
-    );
+    const {
+      files,
+      diagnostics: discoveryDiagnostics,
+      jsInnerHtmlDeclinedCount,
+    } = await parseFilesWithDiagnostics(paths, session, cwd);
     const attestations = await loadDurableAttestations(cwd);
 
     // Q-SHARED-RULES-EVALUATED-SSOT: load project config and route
@@ -803,7 +802,8 @@ export const checklistTool: McpTool = {
       nextCursor: page.paginationFields.nextCursor,
       configSource: projectConfig.sourcePath,
       configSearchSawProjectMarker,
-      configSearchedFromForWarning: cwd,
+      cwd,
+      jsInnerHtmlDeclinedCount,
       ...(perCriterionClamp ? { perCriterionClamp } : {}),
     });
     return textResult({
@@ -822,18 +822,21 @@ export const checklistTool: McpTool = {
 
 /**
  * Assembles the `warnings` + `warningsDetails` fragment for `checklist`.
- * Merges the shared scan-derivative codes (from `buildDerivativeScanWarnings`)
- * with the bespoke `results_truncated_use_nextcursor` code that only the
- * checklist tool emits when per-criterion elision left an unfetched tail.
+ * Routes through the shared scan-time helper
+ * ({@link buildScanTimeWarnings}) so checklist's scan-time warning code
+ * set is identical to `scan_project` / `coverage` on the same cwd —
+ * cross-surface drift on this channel is a silent-miss failure mode per
+ * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant" (warning-channel extension). Tool-local response-instance
+ * codes (`results_truncated_use_nextcursor` for paginated tails,
+ * `max_candidates_per_criterion_clamped` for the per-criterion clamp,
+ * `response_meta_truncated` when this tool's meta-array cap fires)
+ * merge on top — those originate from this tool's own envelope
+ * construction and do NOT propagate.
  *
  * Extracted from the handler so the handler stays under the lint's
  * cognitive-complexity cap; the two-channel merge is narrow enough that
  * a helper keeps the handler's shape flat without obscuring intent.
- *
- * surfacing a structured warning code
- * alongside `nextCursor` makes the pairing honest per the "zero-output
- * success is ambiguous failure" doctrine — a perCriterionClipped response
- * with a cursor is success-with-more-to-fetch, not success-complete.
  */
 function buildChecklistWarnings(args: {
   readonly files: readonly ParsedFile[];
@@ -846,9 +849,7 @@ function buildChecklistWarnings(args: {
    * loaded project config. Threaded through so `no_config_found` fires
    * here on the same predicate `scan_project` uses — without it the
    * code silently drops on checklist even when scan_project surfaces
-   * it on the same cwd. `null` means the walk-up found nothing;
-   * `undefined` would mean the tool didn't attempt config resolution
-   * at all (not possible here — we always load the config).
+   * it on the same cwd. `null` means the walk-up found nothing.
    */
   readonly configSource: string | null;
   /**
@@ -858,35 +859,27 @@ function buildChecklistWarnings(args: {
    * demo directories without a parent project root never trip the code.
    */
   readonly configSearchSawProjectMarker: boolean;
+  /** Resolved scan root the loader walked from. */
+  readonly cwd: string;
   /**
-   * Absolute path the loader walked from (the resolved `cwd`). Drives
-   * `warningsDetails.no_config_found.searchedFrom` so the agent gets
-   * the same canonical answer here as on `scan_project` /
-   * `coverage` for identical input.
+   * Count of innerHTML/insertAdjacentHTML/document.write template-
+   * literal patterns the parser declined. Drives
+   * `js_innerhtml_template_literal_unparsed` so the code fires on
+   * checklist when scan_project's call on the same cwd would.
    */
-  readonly configSearchedFromForWarning: string;
+  readonly jsInnerHtmlDeclinedCount: number;
   readonly perCriterionClamp?: { readonly requested: number; readonly applied: number };
 }): { readonly warnings?: readonly string[]; readonly warningsDetails?: unknown } {
-  const derivative = buildDerivativeScanWarnings({
-    filesScanned: args.files.length,
-    rootSource: null,
+  const scanTime = buildScanTimeWarnings({
+    parsedFiles: args.files,
+    violations: args.violations,
+    root: args.cwd,
     configSource: args.configSource,
     configSearchSawProjectMarker: args.configSearchSawProjectMarker,
-    configSearchedFromForWarning: args.configSearchedFromForWarning,
+    rootSource: null,
     analysisCoverage: args.analysisCoverageField.analysisCoverage,
     filesByExtension: args.filesByExtension,
-    // gate `template_files_parsed_as_literal`
-    // on actual overlap between emitted findings and detected
-    // template-directive lines. Cross-reference `result.violations` with
-    // the per-file source so the code fires only when the literal-parse
-    // actually polluted a finding.
-    templateDirectivesOverlap: computeTemplateDirectiveOverlap({
-      findings: args.violations.map((v) => ({
-        filePath: v.location.filePath,
-        line: v.location.line,
-      })),
-      sourcesByPath: new Map(args.files.map((f) => [f.filePath, f.source])),
-    }),
+    jsInnerHtmlDeclinedCount: args.jsInnerHtmlDeclinedCount,
     // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage helper's
     // truncation bit so `response_meta_truncated` fires AND the paired
     // `warningsDetails.response_meta_truncated.fields` payload names
@@ -898,7 +891,7 @@ function buildChecklistWarnings(args: {
       ? { metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"] }
       : {}),
   });
-  const merged = new Set<string>(derivative.warnings ?? []);
+  const merged = new Set<string>(scanTime.warnings ?? []);
   if (args.nextCursor !== undefined) merged.add("results_truncated_use_nextcursor");
   if (args.perCriterionClamp !== undefined) {
     merged.add("max_candidates_per_criterion_clamped");
@@ -913,7 +906,7 @@ function buildChecklistWarnings(args: {
   // would leave the caller unable to tell "clamped from 500 to 100"
   // from "clamped from 101 to 100."
   const mergedDetails: Record<string, unknown> = {
-    ...(derivative.warningsDetails === undefined ? {} : { ...derivative.warningsDetails }),
+    ...(scanTime.warningsDetails === undefined ? {} : { ...scanTime.warningsDetails }),
     ...(args.perCriterionClamp
       ? {
           max_candidates_per_criterion_clamped: {
