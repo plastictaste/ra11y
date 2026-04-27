@@ -17,8 +17,10 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildNextStep,
+  bulkVendorScopeDownNextStep,
   perRuleNarrowingNextStep,
   pickTopRuleByCount,
+  shouldRerouteToBulkVendorScopeDown,
   shouldRerouteToPerRuleNarrowing,
 } from "../../../src/mcp/next-step.ts";
 import type { ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
@@ -1017,6 +1019,129 @@ describe("per-rule narrowing reroute", () => {
       // Prose names the per-rule narrowing pattern explicitly so the
       // agent reads the escape from the per-file pagination loop.
       expect(result.prose).toContain("file-by-file");
+    });
+  });
+});
+
+describe("bulk-vendor scope-down reroute", () => {
+  describe("shouldRerouteToBulkVendorScopeDown", () => {
+    it("fires when groupedCount ≥ 10 and totalFilesWithFindings > 50", () => {
+      expect(
+        shouldRerouteToBulkVendorScopeDown({ groupedCount: 10, totalFilesWithFindings: 51 }),
+      ).toBe(true);
+      expect(
+        shouldRerouteToBulkVendorScopeDown({ groupedCount: 25, totalFilesWithFindings: 1793 }),
+      ).toBe(true);
+    });
+
+    it("does not fire below the basename-group floor", () => {
+      // Nine vendor groups means a thin vendor footprint — the agent
+      // can dismiss inline; the standard `suggest_fix` first call is
+      // the right routing.
+      expect(
+        shouldRerouteToBulkVendorScopeDown({ groupedCount: 9, totalFilesWithFindings: 1793 }),
+      ).toBe(false);
+    });
+
+    it("does not fire on a strict-equality 50-file inventory boundary", () => {
+      // Strict `>`, not `>=` — at 50 files the standard routing is
+      // fine even with vendor noise; the bulk-vendor pathology starts
+      // above this floor.
+      expect(
+        shouldRerouteToBulkVendorScopeDown({ groupedCount: 25, totalFilesWithFindings: 50 }),
+      ).toBe(false);
+    });
+
+    it("does not fire when both thresholds individually clear but the conjunction fails", () => {
+      // groupedCount above the floor BUT inventory below — small
+      // authored repo that happens to vendor a lot of basenames. The
+      // structural reroute would be noise; standard routing wins.
+      expect(
+        shouldRerouteToBulkVendorScopeDown({ groupedCount: 12, totalFilesWithFindings: 30 }),
+      ).toBe(false);
+    });
+
+    it("does not fire on a clean scan with no vendor groups", () => {
+      expect(
+        shouldRerouteToBulkVendorScopeDown({ groupedCount: 0, totalFilesWithFindings: 200 }),
+      ).toBe(false);
+    });
+  });
+
+  describe("bulkVendorScopeDownNextStep", () => {
+    it("routes the structured hint to propose_config with empty args", () => {
+      const result = bulkVendorScopeDownNextStep({
+        topGroupHints: [
+          { basename: "bootstrap.css", count: 45, suggestedGlob: "**/bootstrap.css" },
+        ],
+        groupedTotal: 12,
+        totalFilesWithFindings: 800,
+      });
+      expect(result.structured).toEqual({ tool: "propose_config", args: {} });
+    });
+
+    it("names the suggestedGlob entries inline so the agent has paste-ready exclude paths", () => {
+      const result = bulkVendorScopeDownNextStep({
+        topGroupHints: [
+          { basename: "bootstrap.css", count: 45, suggestedGlob: "**/bootstrap.css" },
+          { basename: "fontawesome.css", count: 30, suggestedGlob: "**/fontawesome.css" },
+        ],
+        groupedTotal: 2,
+        totalFilesWithFindings: 800,
+      });
+      expect(result.prose).toContain("**/bootstrap.css");
+      expect(result.prose).toContain("**/fontawesome.css");
+      expect(result.prose).toContain("bootstrap.css");
+      expect(result.prose).toContain("45");
+      expect(result.prose).toContain("ra11y.config.ts");
+      expect(result.prose).toContain("exclude");
+    });
+
+    it("offers additionalPaths narrowing as the alternative scope-down path", () => {
+      const result = bulkVendorScopeDownNextStep({
+        topGroupHints: [
+          { basename: "bootstrap.css", count: 45, suggestedGlob: "**/bootstrap.css" },
+        ],
+        groupedTotal: 10,
+        totalFilesWithFindings: 800,
+      });
+      expect(result.prose).toContain("additionalPaths");
+    });
+
+    it("caps inline glob hints and reports overflow groups via meta pointer", () => {
+      // Twelve groups, cap is five — prose should name the top five
+      // verbatim and point the agent at meta for the rest so the
+      // overflow stays visible without prose bloat.
+      const groups = Array.from({ length: 12 }, (_, i) => ({
+        basename: `vendor-${i}.css`,
+        count: 50 - i,
+        suggestedGlob: `**/vendor-${i}.css`,
+      }));
+      const result = bulkVendorScopeDownNextStep({
+        topGroupHints: groups,
+        groupedTotal: 12,
+        totalFilesWithFindings: 800,
+      });
+      // Top five named.
+      expect(result.prose).toContain("**/vendor-0.css");
+      expect(result.prose).toContain("**/vendor-4.css");
+      // Sixth onwards omitted from prose.
+      expect(result.prose).not.toContain("**/vendor-5.css");
+      // Pointer to grouped meta for the residue.
+      expect(result.prose).toContain("scannedBuildArtifacts.grouped");
+      expect(result.prose).toContain("7 more");
+    });
+
+    it("names the inventory + group-count totals so the agent sees the corpus shape", () => {
+      const result = bulkVendorScopeDownNextStep({
+        topGroupHints: [
+          { basename: "bootstrap.css", count: 45, suggestedGlob: "**/bootstrap.css" },
+        ],
+        groupedTotal: 18,
+        totalFilesWithFindings: 1793,
+      });
+      expect(result.prose).toContain("1793");
+      expect(result.prose).toContain("18");
     });
   });
 });

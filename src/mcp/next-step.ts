@@ -1045,3 +1045,129 @@ const PER_RULE_REROUTE_MAX_PAGE_FILES = 2;
  * conservative floor.
  */
 const PER_RULE_REROUTE_MIN_INVENTORY = 100;
+
+/**
+ * Compact group descriptor consumed by the bulk-vendor scope-down
+ * reroute. Mirrors the load-bearing fields of
+ * `BuildArtifactGroup` from `src/mcp/build-artifacts.ts` — `basename`
+ * + `count` + `suggestedGlob` is the minimum the reroute needs to
+ * compose a paste-ready exclude/additionalPaths recommendation. We
+ * accept this narrow shape rather than the full
+ * `BuildArtifactGroup` so the helper stays decoupled from the
+ * artifact module's wider type and easy to unit-test with synthetic
+ * fixtures.
+ */
+export interface BulkVendorGroupHint {
+  readonly basename: string;
+  readonly count: number;
+  readonly suggestedGlob: string;
+}
+
+/**
+ * Builds the structural scope-down `nextStep` for the bulk-vendor
+ * regime: the scan classified ≥ {@link BULK_VENDOR_MIN_GROUPS}
+ * basename clusters as build artifacts AND the inventory carries
+ * > {@link BULK_VENDOR_MIN_INVENTORY} files-with-findings. Under that
+ * combination, naming the first vendor finding via `suggest_fix`
+ * routes the agent into edits it can't apply (vendor stylesheets,
+ * compiled bundles, banner-attributed third-party libraries); the
+ * structural answer is "exclude these basenames from `ra11y.config.ts`
+ * and re-scan."
+ *
+ * Reroute target: `propose_config({})` so the agent's first action
+ * lands on the deterministic config-emission tool. The prose names
+ * the top suggestedGlobs verbatim so the agent sees concrete entries
+ * inline — agents that prefer to skip the round-trip and write
+ * `ra11y.config.ts` directly have everything they need from the
+ * prose alone. Per the AI-first doctrine "Don't duplicate capability
+ * the agent already has," `propose_config` is the existing tool whose
+ * job is exactly this; routing through it (rather than fabricating a
+ * `scan_project` recipe with hard-coded `exclude` args) keeps the
+ * structured hint pointing at canonical surfaces.
+ *
+ * `topGroupHints` should already be sorted by `count` descending — the
+ * caller (build-artifacts module) sorts groups that way as part of
+ * `BuildArtifactsGrouped`'s contract, so we trust the order. Caps the
+ * inline glob list at {@link BULK_VENDOR_GLOB_HINT_LIMIT} so the prose
+ * doesn't bloat on extreme corpora; the rest are still implicit in the
+ * grouped meta the agent can read alongside.
+ */
+export function bulkVendorScopeDownNextStep(args: {
+  readonly topGroupHints: readonly BulkVendorGroupHint[];
+  readonly groupedTotal: number;
+  readonly totalFilesWithFindings: number;
+}): NextStepResult {
+  const { topGroupHints, groupedTotal, totalFilesWithFindings } = args;
+  const shown = topGroupHints.slice(0, BULK_VENDOR_GLOB_HINT_LIMIT);
+  const globList = shown
+    .map((g) => `\`${g.suggestedGlob}\` (${g.count}× \`${g.basename}\`)`)
+    .join(", ");
+  const groupsPlural = groupedTotal === 1 ? "" : "s";
+  const moreSuffix =
+    groupedTotal > shown.length
+      ? ` (plus ${groupedTotal - shown.length} more group${groupedTotal - shown.length === 1 ? "" : "s"} on \`meta.scannedBuildArtifacts.grouped\`)`
+      : "";
+  return {
+    prose: `${totalFilesWithFindings} files-with-findings on this scan; ${groupedTotal} build-artifact basename group${groupsPlural} dominate the corpus${moreSuffix}, so the next \`suggest_fix\` would land in vendor code the agent can't edit. Structural fix: add the suggestedGlob entries to \`ra11y.config.ts\` \`exclude\` (top: ${globList}), or rerun \`scan_project\` with \`additionalPaths\` narrowed to an authored subtree. Call \`propose_config\` to emit the exclude block deterministically.`,
+    structured: { tool: "propose_config", args: {} },
+  };
+}
+
+/**
+ * gate predicate for the bulk-vendor scope-down reroute. Fires when
+ * `scannedBuildArtifacts.grouped.length >= 10` AND
+ * `totalFilesWithFindings > 50`. Both thresholds are named constants
+ * so the predicate's intent is visible in one place; both must clear
+ * for the reroute to fire so small scans that happen to ship a vendor
+ * basename cluster (e.g. 10 normalize/reset/bootstrap groups in a 40-
+ * file authored repo) keep the standard `suggest_fix` routing.
+ *
+ * NOT a numeric-threshold suppression (per the AI-first doctrine):
+ * the standard `nextStep` still ships when this gate fails, AND the
+ * findings under the vendor basenames remain in `files[]` regardless
+ * of whether the reroute fires. The reroute only changes which call
+ * the agent makes first — surface-don't-suppress at the file level
+ * stays load-bearing. Both thresholds are encoded as named constants
+ * so the predicate is auditable.
+ */
+export function shouldRerouteToBulkVendorScopeDown(args: {
+  readonly groupedCount: number;
+  readonly totalFilesWithFindings: number;
+}): boolean {
+  return (
+    args.groupedCount >= BULK_VENDOR_MIN_GROUPS &&
+    args.totalFilesWithFindings > BULK_VENDOR_MIN_INVENTORY
+  );
+}
+
+/**
+ * Minimum `scannedBuildArtifacts.grouped.length` that qualifies the
+ * scan for the bulk-vendor scope-down reroute. Each group represents
+ * a basename cluster of ≥ 3 same-named build artifacts (per
+ * `BASENAME_GROUP_THRESHOLD` in `src/mcp/build-artifacts.ts`), so 10
+ * groups means ~30+ vendor files clustered into actionable
+ * suggestedGlobs. Below this floor the corpus's structural-vendor
+ * shape is too small to justify steering the agent away from the
+ * standard `suggest_fix` first call; the agent can dismiss a handful
+ * of vendor findings inline.
+ */
+const BULK_VENDOR_MIN_GROUPS = 10;
+
+/**
+ * Minimum `totalFilesWithFindings` that qualifies the scan for the
+ * bulk-vendor scope-down reroute. Strict `>` (not `>=`) so the
+ * reroute never fires on a 50-file scan — at that boundary, ~50
+ * findings is small enough that the standard `suggest_fix` routing
+ * is fine even with vendor noise mixed in. The vendor-saturation
+ * pathology starts well above this; 50 is a conservative floor.
+ */
+const BULK_VENDOR_MIN_INVENTORY = 50;
+
+/**
+ * Maximum number of suggestedGlob entries to inline in the
+ * bulk-vendor scope-down prose. Above this the prose bloats and the
+ * agent reads `meta.scannedBuildArtifacts.grouped` directly instead.
+ * The cap is a presentation choice, not a suppression — the full
+ * grouped list ships in meta regardless.
+ */
+const BULK_VENDOR_GLOB_HINT_LIMIT = 5;

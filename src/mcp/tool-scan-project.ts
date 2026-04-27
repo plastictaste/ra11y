@@ -32,7 +32,12 @@ import { buildFileLimitation } from "./file-limitations.ts";
 import type { Hint } from "./hint-codes.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { metaModeSchema } from "./meta-cache.ts";
-import { buildNextStep } from "./next-step.ts";
+import {
+  buildNextStep,
+  bulkVendorScopeDownNextStep,
+  type NextStepStructured,
+  shouldRerouteToBulkVendorScopeDown,
+} from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import { withTopRules, withViolationsByScanKind } from "./scan-assembly.ts";
@@ -344,7 +349,7 @@ export const scanProjectTool: McpTool = {
     const pageParams = readPageParams(params);
     const page = paginateFiles(formatted.files, pageParams);
     const willBeTruncated = page.paginationFields.truncated === true;
-    const nextStep = buildNextStep(formatted, {
+    const baseNextStep = buildNextStep(formatted, {
       iterativeTip:
         actualMode === "full"
           ? ' For iterative work on a branch, pass `since: "HEAD~1"` or `changedOnly: true` to scan only diffs.'
@@ -369,6 +374,24 @@ export const scanProjectTool: McpTool = {
       // pagination path where the existing reroute's preconditions
       // don't fire.
       truncated: willBeTruncated,
+    });
+    // when the corpus carries ≥ 10
+    // build-artifact basename groups AND > 50 files-with-findings, the
+    // standard `suggest_fix` first call routes the agent into vendor
+    // code it can't edit. Override to a structural scope-down naming
+    // the top suggestedGlob entries inline, structured-pointing at
+    // `propose_config` so the agent's first action emits the exclude
+    // block deterministically. The per-finding vendor reroute inside
+    // `buildNextStep` only swaps WHICH vendor finding the agent is
+    // pointed at; this override addresses the orthogonal regime where
+    // the corpus shape itself argues for a config-level fix before any
+    // per-file action. Standard nextStep stays when either threshold
+    // fails — the override is additive routing for the bulk-vendor
+    // pathology, not a suppression of the standard hint.
+    const nextStep = applyBulkVendorScopeDownOverride({
+      baseNextStep,
+      buildArtifacts,
+      totalFilesWithFindings: formatted.files.length,
     });
     // option (b): hoist duplicated
     // `fix.description` prose into `referenceGuide.fixDescriptions`
@@ -1001,6 +1024,60 @@ function buildWrapperMeta(args: {
 // lockstep. A prior in-file implementation drifted from scan_file's
 // shape; the extraction is deliberate parity infrastructure, not a
 // refactor for its own sake.
+
+/**
+ * Layered nextStep override for the bulk-vendor regime: when the
+ * corpus carries enough build-artifact basename groups AND
+ * files-with-findings to tell us the structural fix is
+ * `ra11y.config.ts` `exclude` (not `suggest_fix` on a vendor finding),
+ * replaces `baseNextStep` with the scope-down hint.
+ *
+ * The helper threads through `buildArtifacts` rather than reading the
+ * fully-assembled `meta.scannedBuildArtifacts` so the predicate stays
+ * close to its inputs — the caller has both pieces in hand at the
+ * `buildNextStep` call site, and reaching back into `meta` would
+ * couple the override on field-naming the assembler owns. Returns
+ * `baseNextStep` unchanged when the predicate fails so the standard
+ * routing wins on every non-bulk-vendor scan (small repos, vendor-
+ * free corpora, vendor-light scans where suggest_fix is the right
+ * first call).
+ *
+ * Per the AI-first doctrine "NextStep prioritization on
+ * truncated/bulk responses must avoid first-by-filename routing,"
+ * generalized one axis: even when no truncation fires, a corpus whose
+ * shape is dominated by vendor groups belongs in a config-level scope-
+ * down lane rather than the per-finding `suggest_fix` lane. The
+ * findings under those vendor basenames still ship in `files[]`
+ * (surface-don't-suppress); the override only changes the canonical
+ * first call.
+ */
+export function applyBulkVendorScopeDownOverride(args: {
+  readonly baseNextStep: { readonly prose: string; readonly structured?: NextStepStructured };
+  readonly buildArtifacts: {
+    readonly metaField: { readonly scannedBuildArtifacts?: BuildArtifactsGrouped };
+  };
+  readonly totalFilesWithFindings: number;
+}): { readonly prose: string; readonly structured?: NextStepStructured } {
+  const { baseNextStep, buildArtifacts, totalFilesWithFindings } = args;
+  const grouped = buildArtifacts.metaField.scannedBuildArtifacts?.grouped ?? [];
+  if (
+    !shouldRerouteToBulkVendorScopeDown({
+      groupedCount: grouped.length,
+      totalFilesWithFindings,
+    })
+  ) {
+    return baseNextStep;
+  }
+  return bulkVendorScopeDownNextStep({
+    topGroupHints: grouped.map((g) => ({
+      basename: g.basename,
+      count: g.count,
+      suggestedGlob: g.suggestedGlob,
+    })),
+    groupedTotal: grouped.length,
+    totalFilesWithFindings,
+  });
+}
 
 /**
  * The scan scope for a given `scan_project` invocation. Either the
