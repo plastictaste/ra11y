@@ -81,4 +81,3 @@ The `+ 0.05` terms flatten the ratio near black. Without them, pure black (L=0) 
 - `src/utils/contrast.ts` — the formula implementation.
 - `src/rules/contrast/minimum.ts`, `src/rules/contrast/enhanced.ts` — WCAG 1.4.3 and 1.4.6 rules.
 - WCAG 1.4.3: https://www.w3.org/TR/WCAG22/#contrast-minimum
-- [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/) — interactive color tuner.
