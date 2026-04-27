@@ -505,11 +505,7 @@ function parseForExtension(filePath: string, source: string): Ast | null {
   // Markdown extension (Vim, older static-site generators) — routing
   // it through the same adapter avoids dropping otherwise-valid
   // Markdown input.
-  if (
-    filePath.endsWith(".md") ||
-    filePath.endsWith(".markdown") ||
-    filePath.endsWith(".mkdn")
-  ) {
+  if (filePath.endsWith(".md") || filePath.endsWith(".markdown") || filePath.endsWith(".mkdn")) {
     const r = parseMarkdown(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
