@@ -207,6 +207,52 @@ The integrator returns a tight `{ integrated, skipped, blocked, verifyOk, backlo
 - Build the turn summary entry (one line: `turn N: ✓ D/demo-record (a1b2c3d), ✓ M/tool-baseline (b2c3d4e), — R/nav (no changes)`).
 - Decide whether to continue to the next turn or stop.
 
+### 4a. Post-turn meta-review
+
+After the integrator returns and before looping, dispatch the `meta-reviewer` subagent **once** with the turn artifact. Its job is to compare what the planner predicted to what actually happened, extract signals from the structured returns, and write durable lessons back — to memory for single-incident observations or to a small allowlist of harness files for recurring patterns (gated by N≥2 occurrences within the last 20 turns plus a portability test).
+
+**Foreground, not background.** The meta-reviewer auto-commits harness patches as `chore(meta):` commits on `main`. Dispatching it in the background would race the next turn's specialist worktrees against an in-flight commit; foreground keeps the turn ordering clean. The agent is fast (read ledger, extract signals, decide, write 0–1 commits, return).
+
+**Input you pass to the meta-reviewer:**
+
+```json
+{
+  "turn_n": <N>,
+  "invocation_id": "<uuid for this /continue run>",
+  "ts_start": "<ISO timestamp at turn start>",
+  "ts_end":   "<ISO timestamp now>",
+  "main_sha_before": "<sha at turn start>",
+  "main_sha_after":  "<sha after integrator's tickoff commit>",
+  "planner_picks": <plan.turns[N-1].picks verbatim>,
+  "specialist_returns": [
+    { "branch_assigned": "<worktree-agent-X>",
+      "branch_returned": "<the branch the specialist actually returned>",
+      "wall_time_seconds": <int>,
+      "return": <the specialist's JSON return verbatim> }
+  ],
+  "integrator_return": <the integrator's JSON return verbatim>
+}
+```
+
+`main_sha_before` is the SHA on `main` when this turn started (cache it before step 3); `main_sha_after` is the SHA after the integrator's backlog tickoff commit. The agent uses the range to detect cherry-pick drops and coverage-regen misses.
+
+**Orchestrator handling of the meta-reviewer's return:**
+
+The agent returns `{ turn_n, signals_observed, writes: { memory, harness, backlog_reopens }, findings, ledger_appended }`.
+
+| Return | Orchestrator action |
+|---|---|
+| `signals_observed: 0`, `writes: { all empty }`, `findings: []` | Nothing to do. Append nothing to the user-facing turn summary. |
+| `writes.harness[]` non-empty | Note the patch SHA(s) in the turn summary so the user sees the auto-edit landed. Continue. |
+| `writes.memory[]` non-empty | No action — memory is silent by design. |
+| `writes.backlog_reopens[]` non-empty | The pick was reopened. Treat as if it had returned `blocked` for purposes of the "picks dispatched this invocation" set so it can be re-picked next invocation. |
+| `findings[].kind: "structural_flag"` | Surface in the final `/continue` report (not the per-turn summary) so the user sees the structural concern at end-of-run. |
+| `ledger_appended: false` | Surface in the per-turn summary as a warning. The next turn's occurrence counts will be off until the ledger is repaired. |
+
+**Do not block the loop on the meta-reviewer.** If the agent returns `findings[]` with structural concerns or `ledger_appended: false`, log them and continue to the next turn. The meta-reviewer is advisory; only an explicit user-blocking item from a structural flag (rare) stops the loop.
+
+**Skip the meta-reviewer when** the integrator returned `verifyOk: false` and main is in a partial state — the loop is stopping anyway, signals from a half-integrated turn are unreliable, and the orchestrator should prioritize surfacing the integrator's error to the user.
+
 ### 5. Loop
 
 Back to step 1. Stop when: `$1`/10 turns used, all active tracks empty, or unrecoverable failure.
