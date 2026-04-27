@@ -3,7 +3,7 @@
  * `parseErrorFiles` classification when a parse-error file ALSO emits
  * review candidates from a source-text finder.
  *
- * The bug (from V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL): a livereload-
+ * The bug (from): a livereload-
  * shaped distribution produces a TSX parser error (originally
  * `Unclosed JSX element <r.length>` from `r.length<b.length` shape on a
  * bare `.js` file; the underlying TSX-parser entry has since been

@@ -11,7 +11,7 @@ background-color:…"` inline attributes went unevaluated — a silent miss.
 inFile: "yellow-on-white.html", reasonIncludes: "inline background" }` — fails
 if the `checkHtmlInlineStyles` branch is removed or gated out.
 
-**Backlog item:** Q6-CONTRAST-INLINE-STYLE-REGRESSION-AUDIT (2026-04-22).
+**Backlog item:** (2026-04-22).
 **Diagnosis:** possibility (1) stale-subprocess — the closure shipped; field
 symptoms came from a pre-closure MCP subprocess. Fixture is green on HEAD.
 

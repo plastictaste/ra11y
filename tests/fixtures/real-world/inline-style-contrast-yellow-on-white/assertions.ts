@@ -9,7 +9,7 @@
  * miss on a common real-world pattern. The `_shared-inline.ts` module and the
  * `checkHtmlInlineStyles` branch in `minimum.ts` closed that gap.
  *
- * Backlog item: Q6-CONTRAST-INLINE-STYLE-REGRESSION-AUDIT (2026-04-22).
+ * Backlog item: (2026-04-22).
  * Diagnosis: possibility (1) — the closure shipped; field symptoms were from a
  * pre-closure MCP subprocess (stale-subprocess fault). The rule fires correctly
  * on the current HEAD.
@@ -38,7 +38,7 @@ export const assertions: FixtureAssertions = {
     "that was absent before Q-SHARED-INLINE-STYLE-CONTRAST shipped.",
   origin: {
     notes:
-      "Backlog item Q6-CONTRAST-INLINE-STYLE-REGRESSION-AUDIT (2026-04-22). Field symptoms " +
+      "Backlog item (2026-04-22). Field symptoms " +
       "(1.17:1 yellow-on-white on website-templates) were traced to a stale MCP subprocess " +
       "serving a pre-closure bundle — diagnosis (1): stale-subprocess. The rule fires " +
       "correctly on current HEAD. This fixture is a durable regression lock so a future " +

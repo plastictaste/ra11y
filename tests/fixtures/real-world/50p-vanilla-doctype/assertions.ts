@@ -47,7 +47,7 @@
  *
  * The hidden-search.html emit shifted from "Document has no <h1>"
  * (anchored at the <h3>) to "Page contains no <h1> heading" (anchored
- * at the <body>) once Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT landed —
+ * at the <body>) once landed —
  * the file's body shape (h3 + ul + button) clears `looksLikeFullPage`,
  * so the page-level variant takes precedence over the legacy
  * first-heading emit.

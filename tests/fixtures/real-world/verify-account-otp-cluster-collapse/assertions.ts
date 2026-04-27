@@ -1,7 +1,7 @@
 /**
  * verify-account-otp-cluster-collapse — guards the
  * `forms/labels-required` rule-emission dedupe contract for visually-
- * grouped sibling input clusters (Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE).
+ * grouped sibling input clusters.
  *
  * Canonical repro: a one-time-code (OTP) entry — six
  * `<input class="otp" type="number" maxlength="1">` siblings sharing
@@ -25,8 +25,8 @@
  *     in for N siblings — and knows to read `siblingInstances` for the
  *     per-sibling line/id trail.
  *
- * Pairs with the closed Q4-LIKELY-REDUCIBLE-SIBLING-IMAGE-DEDUPE
- * (review-finder image variant) and Q5-OTP-INPUT-CLUSTER-DETECTION
+ * Pairs with the closed
+ * (review-finder image variant) and
  * (review-finder cluster detection). Those address the cluster-
  * detection axis on the review surface; this one is the rule-emission
  * dedupe axis on the violation surface.
@@ -42,8 +42,8 @@ export const assertions: FixtureAssertions = {
   origin: {
     notes:
       "Sanitized from a verify-account UI's six <input class='otp' type='number' " +
-      "maxlength='1'> sibling cluster. Pairs with Q4-LIKELY-REDUCIBLE-SIBLING-IMAGE-DEDUPE " +
-      "(closed, image variant) and Q5-OTP-INPUT-CLUSTER-DETECTION (closed, OTP review " +
+      "maxlength='1'> sibling cluster. Pairs with " +
+      "(closed, image variant) and (closed, OTP review " +
       "finder). The unit suite at tests/unit/rules/forms/labels-required.test.ts covers " +
       "the count contract (6 → 1 with siblingInstances of length 6); this fixture guards " +
       "the rule still fires end-to-end on the canonical cluster shape.",

@@ -6,7 +6,7 @@
 // hole for vanilla-JS corpora — inline `onclick="…"` attributes get
 // flagged by the HTML branch of this rule, but the equivalent
 // `.addEventListener('click', …)` attach in a separate .js file was
-// invisible until Q5-KEYBOARD-HANDLER-EXTERNAL-JS-ADDEVENTLISTENER.
+// invisible until.
 //
 // Expected violation: 1 — pointed at the `btn.addEventListener(...)`
 // line, with `#save-tile` surfaced in the reason so the agent can grep

@@ -43,7 +43,7 @@
  *   2. The first parse-error reason names the layout-tail shape — the
  *      substring an agent routes on lives at the head of the message.
  *   3. `semantics/landmark-main` does not fire on the recovered file.
- *      Pre-Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION the rule emitted a
+ * Pre-the rule emitted a
  *      `partial_or_layout_file_requires_composed_check`-enriched
  *      "missing <main>" finding via the bodyless-partial branch — the
  *      composition directive `{% include top.html %}` qualified the
@@ -95,7 +95,7 @@ export const assertions: FixtureAssertions = {
       predicate: { contains: "Elided layout-tail" },
     },
 
-    // Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION: the file has none of
+    // the file has none of
     // <html>/<body>/<head> (only the recovered <main> subtree and the
     // trailing stray </html>). The shared `isFragmentFile` predicate's
     // branch (a) classifies it as a fragment whose composed parent

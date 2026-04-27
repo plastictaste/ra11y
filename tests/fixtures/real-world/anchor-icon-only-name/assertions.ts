@@ -12,7 +12,7 @@
  *   - <a href="#search"><svg aria-hidden="true">...</svg></a>   → FIRES
  *   - <a href="#home" aria-label="Home"><img alt=""></a>       → silent (aria-label present)
  *
- * The backlog item (Q6-ANCHOR-ICON-ONLY-NAME-REGRESSION) asked whether
+ * The backlog item asked whether
  * anchor-level findings were silently absent. Live scan answers: they are
  * not — navigation/link-descriptive-text fires correctly. This fixture
  * locks that in so a future refactor cannot silently regress anchor-level

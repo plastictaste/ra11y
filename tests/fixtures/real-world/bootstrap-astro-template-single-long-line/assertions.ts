@@ -15,7 +15,7 @@
  * authored source into the `scannedBuildArtifacts` bucket — the agent's
  * triage lane drops findings on those files.
  *
- * The fix (tracked as Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE)
+ * The fix (tracked as)
  * requires a second-tier corroborating predicate alongside the single-
  * long-line probe — any of: ≥25% of lines exceed the threshold, median
  * line length exceeds the threshold, `.min.` infix in filename, build-

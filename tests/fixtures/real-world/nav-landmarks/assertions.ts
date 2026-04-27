@@ -43,7 +43,7 @@ export const assertions: FixtureAssertions = {
     "rule or finder.",
   origin: {
     notes:
-      "V1-FIXTURE-NAV backlog item. Exercises navigation/skip-link (wcag22:2.4.1), " +
+      "backlog item. Exercises navigation/skip-link (wcag22:2.4.1), " +
       "navigation/link-descriptive-text (wcag22:2.4.4), semantics/landmark-main " +
       "(wcag22:1.3.1), and the consistent-navigation finder (wcag22:3.2.3) together " +
       "so that a refactor silencing any one of them turns a green harness red.",

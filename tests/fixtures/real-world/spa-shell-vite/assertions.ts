@@ -8,7 +8,7 @@
  *     hint, causing agents to treat the mount-point HTML as the fix
  *     location instead of redirecting to the React router config. The
  *     bc3aae4 fix added a "SPA index shell" reason enrichment.
- *   - The body+anchor/nav predicate gate (V1-FINDER-2.4.5-MULTIPLE-
+ * - The body+anchor/nav predicate gate (.4.5-MULTIPLE-
  *     WAYS-REQUIRE-BODY) tightened the finder so a bare HTML shell
  *     (body but no `<a>` and no `<nav>`) no longer qualifies as a
  *     candidate site root at all. The agent reading a body-only mount
@@ -31,7 +31,7 @@ export const assertions: FixtureAssertions = {
   origin: {
     commit: "bc3aae4",
     notes:
-      "Leela feedback: 2.4.5 candidate was pinned to the Vite index.html with no hint that navigation lives in the React router config. Two-step fix: bc3aae4 enriched the reason text; V1-FINDER-2.4.5-MULTIPLE-WAYS-REQUIRE-BODY tightened the predicate so the bare HTML shell no longer fires at all. The JSX side (App.tsx) carries the criterion via uniquePerCriterion dedup.",
+      "Leela feedback: 2.4.5 candidate was pinned to the Vite index.html with no hint that navigation lives in the React router config. Two-step fix: bc3aae4 enriched the reason text.4.5-MULTIPLE-WAYS-REQUIRE-BODY tightened the predicate so the bare HTML shell no longer fires at all. The JSX side (App.tsx) carries the criterion via uniquePerCriterion dedup.",
   },
   expectations: [
     { kind: "zero-parse-errors" },

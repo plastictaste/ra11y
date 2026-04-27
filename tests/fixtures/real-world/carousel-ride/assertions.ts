@@ -1,5 +1,5 @@
 /**
- * carousel-ride — locks in the V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER
+ * carousel-ride — locks in the
  * fix for Bootstrap 5's `data-bs-ride` auto-init attribute.
  *
  * Symptom: scanning a Bootstrap-derived carousel surfaced

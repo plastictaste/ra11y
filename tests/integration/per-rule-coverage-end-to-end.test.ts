@@ -69,14 +69,14 @@ describe("per-rule coverage end-to-end", () => {
       expect(row.coverageConfidence).toBe("low");
       expect(row.reason).toBeDefined();
       expect(row.remediation).toBeDefined();
-      // V1-SHAPE-RULECOV-COUNT: zero is meaningful — the rule didn't
+      // zero is meaningful — the rule didn't
       // run because nothing eligible existed, and 0 findings is the
       // honest read of that state. Pairs with coverageConfidence: "low"
       // for the agent to disambiguate "didn't run" from "ran clean."
       expect(row.findingsEmitted).toBe(0);
     }
 
-    // V1-SHAPE-RULECOV-COUNT invariant: findingsEmitted on each entry
+    // invariant: findingsEmitted on each entry
     // must equal the number of violations the scan produced for that
     // rule. The whole point is letting consumers skip the
     // re-derivation walk over `files[].findings[]`.
@@ -159,7 +159,7 @@ describe("per-rule coverage end-to-end", () => {
     );
   });
 
-  // V1-NOISE-RULE-PER-FILE-ROLLUP: the per-rule concentration hint
+  // the per-rule concentration hint
   // surfaces end-to-end through the scanner's `perRuleCoverage` array
   // when one file's findings clear both thresholds. Canonical fixture:
   // `media/alt-text-missing` firing 12× on one page and 1× on another —
@@ -195,7 +195,7 @@ describe("per-rule coverage end-to-end", () => {
     expect(row!.concentration!.count).toBeGreaterThan(emitted / 2);
   });
 
-  // V1-META-RULES-EVALUATED-COVERAGE-DRIFT: every rule the scan
+  // every rule the scan
   // evaluates must get exactly one `perRuleCoverage` entry — no silent
   // absences for project-scoped rules (`focus/outline-visible`,
   // `wrapper/drift`), which previously went missing because the
@@ -314,7 +314,7 @@ describe("per-rule coverage end-to-end", () => {
     }
   });
 
-  // Q4-RULES-EVALUATED-COMPOSITE: the MCP meta block now emits
+  // the MCP meta block now emits
   // `rulesEvaluated` as a three-field object ({ loaded,
   // withEligibleInputs, fired }) derived from `activeRules` +
   // `perRuleCoverage`. Previously it was a single number equal to
@@ -374,7 +374,7 @@ describe("per-rule coverage end-to-end", () => {
     expect(rulesEvaluated.fired).toBe(firedFromRows);
   });
 
-  // Q7-AAA-RULE-LOADER-SILENT-NORUN. An AAA-only rule (e.g.
+  //. An AAA-only rule (e.g.
   // `navigation/link-target-blank-announcement` satisfying
   // `wcag22:3.2.5` AAA, `contrast/enhanced` satisfying `wcag22:1.4.6`
   // AAA, `motion/animation-from-interactions` satisfying `wcag22:2.3.3`
@@ -461,7 +461,7 @@ describe("per-rule coverage end-to-end", () => {
   // `perRuleCoverage` — gated rules surface as a structured row
   // rather than vanishing. Without this, the agent reads two
   // different totals for "rules in this scan" depending on which
-  // surface it consults (Q7-AAA-RULE-LOADER-SILENT-NORUN).
+  // surface it consults.
   //
   // Rules whose `satisfies` resolves to no enabled-standard criterion
   // (e.g. `parsing/invalid-id-shape` cites only `wcag21:4.1.1` while
@@ -498,7 +498,7 @@ describe("per-rule coverage end-to-end", () => {
     }
   });
 
-  // Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE: an HTML-only project
+  // an HTML-only project
   // scanned with the full WCAG22 rule set used to ship ~30 boilerplate
   // perRuleCoverage entries for CSS/TSX-eligible rules, each carrying
   // identical "no files matching .css were scanned" remediation prose
@@ -540,7 +540,7 @@ describe("per-rule coverage end-to-end", () => {
       // verboseMeta: true — this assertion inspects the per-row
       // perRuleCoverage[] array (skipReason / coverageConfidence / etc).
       // Default verbosity surfaces only the compact summary
-      // (V1-TOOL-VERBOSE-META-INVERTED-DEFAULT).
+      //.
       verboseMeta: true,
       preset: undefined,
       suppressions: [],
@@ -562,7 +562,7 @@ describe("per-rule coverage end-to-end", () => {
     const surfaced = meta["perRuleCoverage"] as readonly PerRuleCoverage[];
     expect(surfaced).toBeDefined();
     // Every surfaced row either has eligible inputs OR carries the
-    // level-gated discriminator from Q7-AAA-RULE-LOADER-SILENT-NORUN.
+    // level-gated discriminator from.
     for (const row of surfaced) {
       const isEligible = row.filesEvaluated > 0 || row.filesEligible > 0;
       const isLevelGated = row.skipReason === "gated_by_level";
@@ -580,7 +580,7 @@ describe("per-rule coverage end-to-end", () => {
     expect(collapsed.count + surfaced.length).toBe(perRuleCoverage.length);
   });
 
-  // V1-MOTION-PAUSE-STOP-FILES-EVALUATED-OFF-BY-ONE: rules sharing the
+  // rules sharing the
   // same `appliesTo.fileExtensions` set must report the same
   // `filesEvaluated` count on a given scan. The eligibility pass is
   // purely a function of `(rule.appliesTo, file.extension)` — it's the

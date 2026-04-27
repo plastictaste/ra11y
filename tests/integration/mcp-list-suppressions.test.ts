@@ -1,5 +1,5 @@
 /**
- * Integration test for the `list_suppressions` MCP tool (Q2-LISTSUPP).
+ * Integration test for the `list_suppressions` MCP tool.
  *
  * Spawns the ra11y MCP subprocess and exercises the tool end-to-end
  * through JSON-RPC against a scratch fixture holding three pragmas
@@ -156,7 +156,7 @@ describe("MCP list_suppressions tool: end-to-end JSON-RPC round-trip", () => {
       // Meta carries scan-confidence telemetry. `rulesEvaluated` is
       // intentionally absent — pragma enumeration runs no rules, and
       // a `loaded` counter under that name would lie about what the
-      // tool did (V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT).
+      // tool did.
       expect(body.meta.cwd).toBe(dir);
       expect(body.meta.filesScanned).toBe(2);
       expect("rulesEvaluated" in body.meta).toBe(false);

@@ -46,7 +46,7 @@ export const assertions: FixtureAssertions = {
     notes:
       "Sanitized from Bootstrap js/tests/visual/modal.html (lines 63, 78, 92) " +
       "and js/tests/visual/collapse.html (lines 17, 32, 46, 60). Seven false " +
-      "positives reported in the backlog (Q3-RULE-NESTED-INTERACTIVE-ROLE-REGRESSION). " +
+      "positives reported in the backlog. " +
       "Live probe on main shows zero findings — isMateriallyInteractiveHtml already " +
       "excludes role-only wrappers for the <button>-inner case as well as <a href>. " +
       "Fixture guards this correct behavior against future regressions in the " +

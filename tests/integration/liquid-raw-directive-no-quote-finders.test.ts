@@ -3,8 +3,8 @@
  * quote raw Liquid/Jinja/ERB template directive tokens (`{%`, `{{`,
  * `<%`) in its emitted reason text.
  *
- * Background (Q4-REVIEW-SANITIZE-LIQUID-FINDERS): the rule-side fix
- * (Q4-LIQUID-TEXT-LITERAL + Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING)
+ * Background: the rule-side fix
+ *
  * stripped template directives in text-node and attribute-harvesting
  * paths under `src/rules/**`. The review finders under
  * `src/review/finders/**` were never audited, so an `<img>` with

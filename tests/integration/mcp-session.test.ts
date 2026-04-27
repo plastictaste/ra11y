@@ -118,7 +118,7 @@ describe("MCP session: full agent workflow", () => {
       };
       files: Array<{ findings: Array<{ ruleId: string; line: number }> }>;
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline is gone; sum the per-lane tally for the error+warning
     // total alongside `plan.notes`.
     const lanes = scanData.plan.fixesByClass;

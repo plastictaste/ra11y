@@ -1,5 +1,5 @@
 /**
- * jsdoc-intentional-tag — guards the Q2R2-INTENTIONAL feature
+ * jsdoc-intentional-tag — guards the feature
  * (honor `/** @ra11y-intentional <reason> *\/` JSDoc tag as a scoped
  * disable over the decorated declaration's body).
  *
@@ -33,10 +33,10 @@ export const assertions: FixtureAssertions = {
     "A Storybook-style 'bad example' component tagged with `/** @ra11y-intentional <reason> */` " +
     "produces a meta.suppressions entry with tag='ra11y-intentional' and the captured reason, " +
     "while non-decorated declarations in the same file still surface their violations. Guards " +
-    "Q2R2-INTENTIONAL (JSDoc variant of the ra11y-disable pragma).",
+    "(JSDoc variant of the ra11y-disable pragma).",
   origin: {
     notes:
-      "Q2R2-INTENTIONAL (round 2, agent 4). The JSDoc tag is functionally a file-scoped " +
+      "(round 2, agent 4). The JSDoc tag is functionally a file-scoped " +
       "`ra11y-disable *` pragma limited to the decorated declaration's JSX subtree. Required " +
       "reason — bare tags are NOT honored, per AI-first doctrine 'Ambiguous field shapes are " +
       "dishonest'.",

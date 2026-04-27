@@ -1,5 +1,5 @@
 /**
- * Cross-surface invariant (Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY):
+ * Cross-surface invariant:
  * warning codes carried across scan_project / scan_file / coverage /
  * checklist must ship the same `warningsDetails[code]` shape on
  * identical inputs, or OMIT the code entirely from surfaces that
@@ -160,7 +160,7 @@ const DISCOVERY_DEPENDENT_CODES: readonly string[] = [
   "template_files_parsed_as_literal",
 ] as const;
 
-describe("Q4-WARNING-DETAILS-CROSS-SURFACE-UNIFY — warnings + warningsDetails coherence across scan_project / scan_file / coverage / checklist", () => {
+describe("warnings + warningsDetails coherence across scan_project / scan_file / coverage / checklist", () => {
   it("scan_project, coverage, and checklist emit the same extensions_skipped_no_parser payload on the same scan root", async () => {
     const dir = await makeSkippedExtensionFixture();
     const responses = await mcpSession([

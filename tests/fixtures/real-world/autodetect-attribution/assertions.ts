@@ -59,7 +59,7 @@ export const assertions: FixtureAssertions = {
     },
 
     // The legacy `sessionNativeWrappers` field must also be absent — it
-    // was collapsed into the unified tagged list in Q2R2-WRAPPER-SOURCES.
+    // was collapsed into the unified tagged list in.
     // Callers relying on the old shape must migrate to reading
     // `activeNativeWrappers` entries tagged `source: "session"`.
     {

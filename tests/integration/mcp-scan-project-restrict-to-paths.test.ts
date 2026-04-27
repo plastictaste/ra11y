@@ -1,5 +1,5 @@
 /**
- * Integration test for V1-ADDITIONAL-PATHS-SCOPE-RESTRICT — asserts
+ * Integration test for — asserts
  * that `scan_project({ restrictToPaths: [...] })` intersects the
  * discovered file set with the supplied paths, surfaces the structured
  * `meta.restrictToPathsApplied` payload (paths + before/after counts),
@@ -97,7 +97,7 @@ function makeRoot(): string {
   return root;
 }
 
-describe("scan_project: V1-ADDITIONAL-PATHS-SCOPE-RESTRICT", () => {
+describe("scan_project: additional paths scope restriction", () => {
   it("intersects the discovered file set with restrictToPaths and reports the before/after counts", async () => {
     const root = makeRoot();
     try {

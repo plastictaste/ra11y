@@ -1,7 +1,7 @@
 /**
  * Cross-surface meta-block + warnings parity invariant.
  *
- * V1-COVERAGE-META-BLOCK-MISSING + V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT:
+ *:
  * every MCP tool that runs the scanner ships the same load-bearing
  * scan-confidence fields (`filesScanned`, `configSource`, `rootSource`,
  * `rulesEvaluated`) and the same warning code set on the same input.
@@ -152,7 +152,7 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
   });
 
   it("scan_project and coverage emit the same `no_config_found` and `scanned_build_artifacts_present` warning codes on the same cwd", async () => {
-    // V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT: the field-report
+    // the field-report
     // canonical case had `scan_project` firing `no_config_found` and
     // `scanned_build_artifacts_present` while `coverage` emitted only
     // `extensions_skipped_no_parser` + `parse_errors_present`. Same
@@ -207,7 +207,7 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
   });
 
   it("scan_file emits `parse_errors_present` when the file has parse errors", async () => {
-    // V1-CROSS-SURFACE-WARNINGS-CODE-SET-DRIFT: scan_file was missing
+    // scan_file was missing
     // `parse_errors_present` even when its own `analysisCoverage.
     // parseErrorFileCount > 0`. The assembler-seam routes through
     // `warningsField` whose `parseErrorCodes` predicate is keyed off
@@ -237,7 +237,7 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
     }
   });
 
-  it("scan_file omits `configSearchedFrom` when its value would echo `dirname(scanned.file)` (Q8-CONFIGSEARCHEDFROM-ECHO-RECURRENCE)", async () => {
+  it("scan_file omits `configSearchedFrom` when its value would echo `dirname(scanned.file)`", async () => {
     // The Q6 closure already omitted the field when caller-supplied
     // `cwd` matched the search base. Q8 widens the predicate so the
     // field is also omitted when its value equals `dirname(scanned.file)`

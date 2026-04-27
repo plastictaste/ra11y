@@ -1,6 +1,6 @@
 # nav-landmarks
 
-Guards commit V1-FIXTURE-NAV. Exercises four navigation and landmark
+Guards commit. Exercises four navigation and landmark
 invariants on a minimal two-route app shell.
 
 ## Failure mode

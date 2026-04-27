@@ -42,7 +42,7 @@
  *
  * Edge case (not covered here): a body with ONLY a `<script>` (vanilla
  * JS demo whose DOM is generated at runtime) is a different shape and
- * is tracked by V1-EMPTY-ROOT-DIV-SCRIPT-ONLY-WARNING. The visible-
+ * is tracked by. The visible-
  * descendant threshold (≥3 non-script, non-style) keeps this fixture's
  * fix conservative: a body holding only `<script>` does not cross the
  * bar.

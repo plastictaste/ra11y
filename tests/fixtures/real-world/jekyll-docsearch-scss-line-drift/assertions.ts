@@ -20,7 +20,7 @@
  *   - reason text loses the selector-specific phrasing → `candidate-
  *     present`'s `reasonIncludes` fails
  *
- * Pairs with Q2R2-FORM-TIMING (validation-timing finder, similar
+ * Pairs with (validation-timing finder, similar
  * "evidence line != finder-reported line" anti-pattern shape).
  */
 
@@ -36,7 +36,7 @@ export const assertions: FixtureAssertions = {
     notes:
       "Sanitized excerpt of docsearch `_sass/_docsearch.scss` shipped by every " +
       "jekyll-doc-theme site. Captures the multi-line-ruleset shape that " +
-      "exposed Q4-LIQUID-LINE-DRIFT-SASS-SELECTOR — the 2.3.1 finder cited " +
+      "exposed — the 2.3.1 finder cited " +
       "the `animation:` declaration line instead of the `:valid ~ " +
       ".searchbox__reset` selector line above it.",
   },

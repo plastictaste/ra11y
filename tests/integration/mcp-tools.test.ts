@@ -82,9 +82,9 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
  * subset of fields but biome counts every nested loop + conditional
  * against the test function).
  *
- * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the hoist
- * pointer is nested at `fix.descriptionRef`; the legacy sibling field
- * `fixDescriptionRef` on the finding is no longer emitted.
+ * Hoist contract: the pointer is nested at `fix.descriptionRef`; the
+ * legacy sibling field `fixDescriptionRef` on the finding is no longer
+ * emitted.
  */
 interface FixDescriptionHoistBody {
   readonly files: readonly {
@@ -140,8 +140,7 @@ function assertHoistShape(body: FixDescriptionHoistBody): {
 }
 
 /**
- * Discriminator for the cross-surface fix-shape invariant
- * (V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT). Returns
+ * Discriminator for the cross-surface fix-shape invariant. Returns
  * the shape category of a finding's `fix` so two surfaces (scan_file,
  * scan_project) can be compared without depending on the inline-vs-
  * hoisted decision — only on the shape contract holding (prose lives
@@ -232,7 +231,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       meta: { scanMode: string; scanned: { mode: string; root: string } };
     };
     expect(body.meta.scanned).toEqual({ mode: "project", root: BAD_ALT_DIR });
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline was deleted — sum the structured per-lane tally
     // alongside `plan.notes` for the total finding count.
     const lanes = body.plan.fixesByClass;
@@ -413,14 +412,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(["high", "medium", "low"]).toContain(fix.confidence);
   });
 
-  it("suggest_fix carries verifyCommand + verifyCommandStructured pointing at scan_file on a fix-bearing line (Q2-VERIFYCMD)", async () => {
+  it("suggest_fix carries verifyCommand + verifyCommandStructured pointing at scan_file on a fix-bearing line", async () => {
     // Suggest_fix responses on a real violation line — `kind: "edit"`
     // or `kind: "guidance"` — carry the prose + structured verify
     // pair. The structured form names scan_file (not scan_project) so
     // the re-check is narrow and deterministic, with `verifyRuleId` as
     // a sibling of `args` so the agent can post-filter the re-scan's
     // findings to the rule it just fixed. The `kind: "none"` lane
-    // omits the pair (V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE) — covered
+    // omits the pair — covered
     // by the sibling test below.
     const responses = await mcpSession([
       initMsg(1),
@@ -450,7 +449,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(fix.verifyCommandStructured.args).not.toHaveProperty("ruleId");
   });
 
-  it("suggest_fix OMITS verifyCommand on kind: 'none' (V1-SUGGEST-FIX-VERIFYCOMMAND-ON-NONE)", async () => {
+  it("suggest_fix OMITS verifyCommand on kind: 'none'", async () => {
     // When no violation exists at the cited line, the response is
     // `kind: "none"` and OMITS `verifyCommand` +
     // `verifyCommandStructured`. A populated verify pair next to "no
@@ -472,7 +471,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(fix).not.toHaveProperty("verifyCommandStructured");
   });
 
-  it("Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: suggest_fix returns kind: 'edit' with non-empty oldText/newText for a mechanical rule", async () => {
+  it("suggest_fix returns kind: 'edit' with non-empty oldText/newText for a mechanical rule", async () => {
     // Doctrine: a `fixClass: "mechanical"` rule must populate
     // `fixPaths.primary.edit` so suggest_fix returns `kind: "edit"`
     // with a concrete oldText/newText pair the agent can apply via
@@ -667,7 +666,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         limitations?: readonly string[];
       };
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline is gone; on a clean scan the per-lane `fixesByClass`
     // is omitted (present-when-meaningful), so absence is the
     // honest "no violations" signal.
@@ -678,7 +677,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.plan.limitations?.some((l) => /conformance|sufficient/i.test(l))).toBe(true);
   });
 
-  it("scan emits limitations on every response, including ones with findings (P2-N)", async () => {
+  it("scan emits limitations on every response, including ones with findings", async () => {
     // P2-N: previously limitations was gated to clean scans only.
     // That let agents overclaim conformance on mixed-result responses
     // — "we found a few things but it's otherwise clean" implied the
@@ -697,7 +696,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         limitations?: readonly string[];
       };
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat headline is gone;
+    // The flat headline is gone;
     // sum the per-lane tally for the error+warning total.
     const lanes = body.plan.fixesByClass;
     const errorWarning = lanes
@@ -708,11 +707,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.plan.limitations?.some((l) => /runtime/i.test(l))).toBe(true);
   });
 
-  it("scan_project carries both nextStep (prose) and nextStepStructured with matching tool name (P1-K)", async () => {
+  it("scan_project carries both nextStep (prose) and nextStepStructured with matching tool name", async () => {
     // Agents branching on the machine form should not have to parse
     // English — `nextStepStructured.tool` names the same call the
     // prose recommends, and `args` uses canonical parameter names
-    // (`file`, `ruleId`, `line`) per P2-R. Q2R2-FIX-DEDUPE carves
+    // (`file`, `ruleId`, `line`) per P2-R. carves
     // out the all-mechanical case: when every violation already
     // carries an inline mechanical fix, both `nextStep` and
     // `nextStepStructured` drop the `suggest_fix` nudge (pair is
@@ -721,7 +720,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // case or the paired-trim case, and asserts the pair stays in
     // lockstep.
     //
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: both fields live at the
+    // both fields live at the
     // top level of the response, not nested under `meta`. The
     // invariant test in tests/unit/mcp/next-step.test.ts asserts they
     // appear exactly once; here we just read them where they live.
@@ -736,7 +735,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(typeof body.nextStep).toBe("string");
     const structured = body.nextStepStructured;
     if (structured === undefined) {
-      // Q2R2-FIX-DEDUPE trim: prose must name the inline mechanical
+      // trim: prose must name the inline mechanical
       // fix path rather than still nudging at `suggest_fix` /
       // `explain_rule` (that would be the old pre-trim shape leaking
       // through).
@@ -759,8 +758,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     }
   });
 
-  it("scan_file also emits nextStepStructured alongside prose (P1-K)", async () => {
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+  it("scan_file also emits nextStepStructured alongside prose", async () => {
+    // top-level location.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_file", { path: BAD_ALT_FILE }),
@@ -772,7 +771,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(typeof body.nextStep).toBe("string");
     const structured = body.nextStepStructured;
     if (structured === undefined) {
-      // Q2R2-FIX-DEDUPE trim — see scan_project test above for the
+      // trim — see scan_project test above for the
       // paired-emission rationale. BAD_ALT fixture is all-mechanical.
       expect(body.nextStep).toContain("primary.edit");
       expect(body.nextStep).not.toContain("suggest_fix");
@@ -782,7 +781,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("scan (directory mode) emits nextStep + nextStepStructured at parity with scan_project and scan_file", async () => {
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+    // top-level location.
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [BAD_ALT_DIR] })]);
     const body = bodyOf(responses[1]) as {
       nextStep: string;
@@ -791,7 +790,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(typeof body.nextStep).toBe("string");
     const structured = body.nextStepStructured;
     if (structured === undefined) {
-      // Q2R2-FIX-DEDUPE trim: prose carries the inline-mechanical
+      // trim: prose carries the inline-mechanical
       // wording; structured is omitted (paired emission) rather than
       // still naming `suggest_fix`.
       expect(body.nextStep).toContain("primary.edit");
@@ -809,7 +808,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("clean scan (directory mode) points at checklist via the structured pair", async () => {
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+    // top-level location.
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
@@ -817,7 +816,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       nextStep: string;
       nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline is gone; on a clean scan the per-lane `fixesByClass`
     // is omitted (present-when-meaningful).
     expect((body.plan as Record<string, unknown>)["violations"]).toBeUndefined();
@@ -826,13 +825,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.nextStep).toContain("checklist");
   });
 
-  it("clean scan_project response emits matching pair pointing at checklist (P1-K)", async () => {
+  it("clean scan_project response emits matching pair pointing at checklist", async () => {
     // On a clean scan (no violations, no notes), the canonical next
     // call is `checklist` — structured form and prose both name it.
     // The "omit both" case (fallback branch where no concrete first
     // finding can be named) is covered by the unit test; end-to-end
     // scans don't reach it via the public surface.
-    // V1-NEXTSTEP-DEDUP-META-VS-TOP-LEVEL: top-level location.
+    // top-level location.
     const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
@@ -840,7 +839,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       nextStep: string;
       nextStepStructured?: { tool: string; args: Record<string, unknown> };
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline is gone; on a clean scan the per-lane `fixesByClass`
     // is omitted (present-when-meaningful).
     expect((body.plan as Record<string, unknown>)["violations"]).toBeUndefined();
@@ -880,7 +879,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("duplicated fix.description prose hoists into referenceGuide.fixDescriptions", async () => {
-    // V1-SIZE-RESPONSE-BUDGET-DENSITY option (b): when the same
+    // option (b): when the same
     // `(ruleId, description)` pair appears on ≥2 findings, the
     // description hoists into `referenceGuide.fixDescriptions[ruleId]
     // [hash]` and each affected finding drops inline `fix.description`
@@ -891,7 +890,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // identical short-template description (no per-finding
     // interpolation), so the hoist's ≥2-duplicate threshold reliably
     // engages on this fixture. Each input carries a DIFFERENT `type`
-    // so the Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE fingerprint
+    // so the fingerprint
     // (`tagName, type, attributes-modulo-id`) differs across siblings
     // and the rollup does not engage — three distinct findings still
     // fire, exercising the fix-description hoist as intended.
@@ -932,7 +931,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     }
   });
 
-  it("V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: same finding has same fix shape on scan_file and scan_project", async () => {
+  it("same finding has same fix shape on scan_file and scan_project", async () => {
     // Cross-surface invariant: pivoting from `scan_project` to
     // `scan_file` (or back) must surface the SAME `fix` shape for the
     // SAME `findingId`. Before the fix, hoist decisions were per-
@@ -1050,7 +1049,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       plan: { fixesByClass?: Record<string, number> };
       referenceGuide?: unknown;
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // headline is gone; on a clean scan the per-lane `fixesByClass`
     // is omitted (present-when-meaningful).
     expect((body.plan as Record<string, unknown>)["violations"]).toBeUndefined();
@@ -1147,7 +1146,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("includeRuleDetails: 'all' degrades to minimum-honest envelope when catalog crosses host ceiling", async () => {
-    // Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: the full rule catalog
+    // the full rule catalog
     // serialized at ~1.3KB per rule × ~85 rules = ~115KB on its own,
     // which crosses the ~96K hard ceiling regardless of fixture size.
     // The oversize guard correctly slims the response to the minimum-
@@ -1345,7 +1344,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       };
     };
     function planTotal(plan: PlanShape): number {
-      // Per Q7-PLAN-VIOLATIONS-COMPOSITE: sum the per-lane tally
+      // Per: sum the per-lane tally
       // alongside `plan.notes` for the total finding count.
       const lanes = plan.fixesByClass;
       const errorWarning = lanes
@@ -1394,7 +1393,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("checklist returns actionable items and ships bare-ID untargetedCriteriaList by default", async () => {
-    // V1-UNTARGETED-CRITERIA-DEFAULT-EMIT: default behavior inverts —
+    // default behavior inverts —
     // the full list used to be gated behind `showUntargeted: true`,
     // but per `ai-first-consumer.md` ("surface, don't suppress") the
     // default now ships a bare criterion-ID array so an agent
@@ -1444,7 +1443,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // deletion), deletion is durable; consumers compose their own
     // summary from the per-kind counters if they need one.
     expect(body.summary).not.toHaveProperty("headline");
-    // V1-CHECKLIST-PRIORITY-AXIS-DEGENERATE: the `byPriority`
+    // the `byPriority`
     // composite shipped `{high: N, medium: 0, low: 0}` on every
     // corpus because `priorityFor()` returned `"high"` for every
     // A/AA criterion. The field is dropped — confidence is the
@@ -1463,10 +1462,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     }
   });
 
-  it("checklist.summary.automatedCoverage carries the non-overlapping split (ADR 0010 + Q7-CHECKLIST-PASS-RATE-COMPOSITE)", async () => {
+  it("checklist.summary.automatedCoverage carries the non-overlapping split (ADR 0010 +)", async () => {
     // ADR 0010 trimmed the per-standard block that used to live on
     // `checklist.summary.automatedCoverage` — the full shape is
-    // canonical on `coverage` only. Q7-CHECKLIST-PASS-RATE-COMPOSITE
+    // canonical on `coverage` only.
     // then dropped the lone `automatedCriteriaPassRate` scalar (which
     // bundled "rule fired clean" with "rule never had eligible inputs"
     // with "rule found violations" into one ratio — composite headline
@@ -1492,7 +1491,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.summary.automatedCoverage.criteriaWithRulesAllClean).toBeGreaterThanOrEqual(0);
     expect(body.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBeGreaterThanOrEqual(0);
     // The dropped composite + the dropped per-standard block (both
-    // ADR 0010 and Q7-CHECKLIST-PASS-RATE-COMPOSITE closures) must not
+    // ADR 0010 and closures) must not
     // re-appear — re-introducing any of them recreates the
     // "three-places-reporting-the-same-shape" drift / composite-
     // headline dishonesty.
@@ -1524,7 +1523,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("checklist omits untargetedCriteriaList entirely when showUntargeted: false (size-pressure escape)", async () => {
-    // V1-UNTARGETED-CRITERIA-DEFAULT-EMIT: opt-out preserved. The
+    // opt-out preserved. The
     // default now ships bare IDs, but callers under a tight token
     // budget can drop the list entirely while the summary counter
     // keeps the enumeration visible.
@@ -1541,7 +1540,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("checklist annotates candidates that span multiple criteria with criteria array", async () => {
-    // V1-CHECKLIST-CRITERION-GROUP-DEDUP: a <video> element surfaces
+    // a <video> element surfaces
     // under wcag22:1.2.1 / 1.2.3 / 1.2.5 as separate items. Previously
     // the same file:line was re-read three times. The candidate now
     // carries `criteria: [...]` listing every criterion it covers
@@ -1578,7 +1577,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("checklist candidates carry suppressWith pragma spellings for all four comment dialects", async () => {
-    // V1-CHECKLIST-PRAGMA-IN-CANDIDATE: workflow tells agents to
+    // workflow tells agents to
     // suppress at source via `<!-- ra11y-disable -->` / `{/* ra11y-
     // disable */}`. Every checklist candidate now ships the ready-
     // to-paste pragma in all four dialects the inline-disable parser
@@ -1619,7 +1618,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("checklist narrates maxCandidatesPerCriterion clamps via a structured warning", async () => {
-    // V1-CHECKLIST-MAX-CANDIDATES-PER-CRITERION-CLAMP: caller-supplied
+    // caller-supplied
     // values outside [1, 100] are clamped, and the response carries a
     // paired warning + warningsDetails payload so the clamp is narrated.
     // Silent clamps would be the ambiguous-failure pattern — the caller
@@ -1861,7 +1860,7 @@ describe("MCP tools/call: missing-required-param error envelopes", () => {
 // for the apply-now subset). The former `safeEditsAvailable` composite
 // was dropped per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT —
 // it sat next to `fixesByClass.mechanical` and disagreed by up to 18×.
-describe("scan_project plan: composite counters split into honest top-level fields (P1-M + P1-H)", () => {
+describe("scan_project plan: composite counters split into honest top-level fields", () => {
   it("emits the honest per-lane counters at the top level of plan", async () => {
     // `bad/alt-text-missing` has violations and a full WCAG 2.2 load —
     // exercises both splits: guidance fixes on the violation side, and

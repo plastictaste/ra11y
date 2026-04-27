@@ -11,7 +11,7 @@
  *     downstream as "modified entire file" diffs in IDEs that
  *     auto-normalize, or as flaky tests on Windows where a tool reads
  *     the file and asserts on line counts.
- *   - V1-SOURCECONTEXT-LINE-ENDING-NORMALIZE detects the file's native
+ * - detects the file's native
  *     line ending (probe for `\r\n` vs `\n`) and normalizes the
  *     post-edit source to match before writing.
  *
@@ -33,7 +33,7 @@ export const assertions: FixtureAssertions = {
     "HTML file with CRLF line endings and an <img> missing alt — used by the apply_fix integration test to verify the on-disk byte-content stays CRLF after a fix is applied. The scan-time predicate locks in that the parser still emits media/alt-text-missing on a CRLF input.",
   origin: {
     notes:
-      "V1-SOURCECONTEXT-LINE-ENDING-NORMALIZE — apply_fix wrote LF-normalized newText into a CRLF file, mixing line endings silently. The fix detects the native line ending and normalizes newText to match before writing.",
+      "apply_fix wrote LF-normalized newText into a CRLF file, mixing line endings silently. The fix detects the native line ending and normalizes newText to match before writing.",
   },
   expectations: [
     { kind: "zero-parse-errors" },

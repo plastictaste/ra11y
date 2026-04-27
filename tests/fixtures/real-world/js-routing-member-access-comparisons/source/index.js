@@ -1,4 +1,4 @@
-// Sanitized from a Q8 field report (Q8-PARSER-ROUTING-JS-AS-TSX). The upstream
+// Sanitized from a Q8 field report. The upstream
 // scan reported a 538-entry `parseErrorFiles[]` with reasons like
 // "Unclosed JSX element <h>" and "<g.top>" — every plain-JS file with a `<Identifier`
 // or `<member.access` comparison shape was being misclassified as broken JSX.

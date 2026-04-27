@@ -1,6 +1,6 @@
 /**
  * Integration test for the top-level `warnings: string[]` surfaced on
- * `scan_project` and `scan` responses (Track Q / P0-E).
+ * `scan_project` and `scan` responses (/ P0-E).
  *
  * Closes the silent-success ambiguity documented in CLAUDE.md §1
  * "Zero-output success is ambiguous failure" — an agent calling
@@ -84,7 +84,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
   return JSON.parse(result.content[0].text) as Record<string, unknown>;
 }
 
-describe("scan_project emits top-level `warnings` for silent-failure modes (P0-E)", () => {
+describe("scan_project emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires when the scan root exists but contains zero parseable files", async () => {
     // Malformed-input paths (nonexistent cwd) now hard-error with the
     // `cwd-not-found` envelope under P0-F — that case is guarded by
@@ -158,7 +158,7 @@ describe("checklist emits top-level `warnings` for silent-failure modes", () => 
 });
 
 /**
- * Q7-CHECKLIST-META-PARITY: `checklist` field reports showed responses
+ * `checklist` field reports showed responses
  * that shipped only `stale_mcp_subprocess` in `warnings` (or no `meta`
  * block at all) on bulk-template sites where `scan_project` on the
  * same corpus surfaced `template_files_parsed_as_literal`,
@@ -245,7 +245,7 @@ describe("review_candidates emits top-level `warnings` for silent-failure modes"
   });
 });
 
-describe("scan emits top-level `warnings` for silent-failure modes (P0-E)", () => {
+describe("scan emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires when the paths exist but resolve to zero parseable files", async () => {
     // Nonexistent-path inputs now hard-error with `scan-paths-not-found`
     // under P0-F — that case lives in `mcp-scan-errors.test.ts`. Here we

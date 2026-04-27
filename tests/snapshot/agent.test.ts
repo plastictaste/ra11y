@@ -89,7 +89,7 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
   const raw = agentFormatter.format(result, report);
   return JSON.parse(raw) as {
     plan: {
-      // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `violations` headline
+      // the flat `violations` headline
       // was deleted from the agent plan — agents that want the
       // error+warning total sum the four `fixesByClass` lanes
       // themselves. The shape declared here matches the wire surface;
@@ -177,7 +177,7 @@ describe("formatter: agent — output shape", () => {
 
 describe("formatter: agent — plan", () => {
   it("plan exposes notes split from violations (no composite totalFindings or violations headline)", () => {
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat top-level `violations`
+    // The flat top-level `violations`
     // headline was deleted alongside the earlier `totalFindings`
     // composite — both summed categorically different lanes under
     // one name. The honest shape carries `plan.notes` (severity-info,
@@ -197,7 +197,7 @@ describe("formatter: agent — plan", () => {
   });
 
   it("plan.summary names the per-lane breakdown without a composite headline", () => {
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the prose drops the leading
+    // Per the prose drops the leading
     // "N findings" composite that summed across the four lanes; the
     // breakdown now reads as a flat lane list. RESULT has 1
     // mechanical + 3 verify-in-source, which surface as named
@@ -234,7 +234,7 @@ describe("formatter: agent — plan", () => {
     expect(plan.reviewNeeded).toBe(0);
   });
 
-  // V1-SHAPE-CLI-AGENT-HEADLINE: plan.summary parenthetical breaks down by fixClass lane.
+  // plan.summary parenthetical breaks down by fixClass lane.
   it("plan.summary parenthetical breaks down by fixClass lane, not by suggestion presence", () => {
     const { plan } = parse();
     // RESULT has 1 mechanical + 3 verify-in-source violations.
@@ -317,7 +317,7 @@ describe("formatter: agent — plan", () => {
   });
 
   it("zero violations produces plan.notes: 0, fixesByClass all-zero, and trivial effort", () => {
-    // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `plan.violations`
+    // the flat `plan.violations`
     // headline is gone; the empty-scan case carries `plan.notes: 0`
     // + an all-zero `fixesByClass` (or omits the per-lane field per
     // present-when-meaningful — either is honest because every lane
@@ -458,7 +458,7 @@ describe("formatter: agent — files", () => {
     expect(firstFinding?.fix).toBeDefined();
     expect(firstFinding?.fix?.description).toBe("Add onKeyDown or onKeyUp alongside onClick.");
     expect(firstFinding?.confidence).toBe("high");
-    // V1-FIX-SAFETY-CONSTANT-FIELD: `safety` was dropped — it rode as
+    // `safety` was dropped — it rode as
     // a constant `"safe"` on every emitted fix regardless of
     // `fixClass`, which conveyed no signal. Parent `finding.fixClass`
     // already distinguishes the remediation lane. Guard the shape.
@@ -495,7 +495,7 @@ describe("formatter: agent — files", () => {
     const { files } = parse();
     const btn = files.find((f) => f.path === "src/ui/Button.tsx");
     const first = btn?.findings[0];
-    // V1-SHAPE-SNIPPET-EMPTY: present-when-meaningful — omitted when
+    // present-when-meaningful — omitted when
     // the violation had no snippet, not emitted as an empty sentinel.
     expect(first).toBeDefined();
     expect(Object.hasOwn(first as object, "snippet")).toBe(false);

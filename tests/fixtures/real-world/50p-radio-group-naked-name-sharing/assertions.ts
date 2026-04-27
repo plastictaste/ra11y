@@ -15,7 +15,7 @@
  *
  * The `forms/fieldset-legend` rule covers the "has a fieldset but
  * no legend" variant; this fixture guards the "no wrapper at all" case —
- * the baseline that turn-31 (Q5-RADIO-GROUP-FIELDSET) introduced.
+ * the baseline that turn-31 introduced.
  *
  * What the fixture locks in:
  *   - The rule fires on four radios sharing `name="answer"` with no

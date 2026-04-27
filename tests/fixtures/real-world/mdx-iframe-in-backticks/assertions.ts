@@ -5,7 +5,7 @@
  * `<Example code={`…`}/>` template is still surfaced as a regular
  * synthesized JSX element.
  *
- * Field report (V1-CHECKLIST-IFRAME-FINDER-MDX-BACKTICKS):
+ * Field report:
  * An MDX file in a docs site (Astro Starlight content collection)
  * carries prose like:
  *
@@ -82,7 +82,7 @@ export const assertions: FixtureAssertions = {
       "anchored at prose lines while the real <iframe> inside " +
       "<Example code={`…`}/> went un-flagged. The 1.2.x emission " +
       "path was already closed by the iframe-as-1.2.x drop " +
-      "(V1-LIKELY-IRRELEVANT-INCONSISTENT, commit 35ed3179); this " +
+      "(commit 35ed3179); this " +
       "fixture pins the MDX-side hardening — strip inline-code spans " +
       "in the MDX adapter so prose backticks cannot surface as JSX " +
       "elements via any downstream finder, present or future.",

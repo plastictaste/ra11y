@@ -22,9 +22,9 @@ Rule fires when a `<table>` has one or more `<td>` cells but zero `<th>` cells. 
 
 The `reasonIncludes` substring `"no <th> header cells"` anchors the violation to the missing-header case. The substring `"screen readers will announce each value with no column or row context"` is in the full violation message and ties the assertion to `SimpleTable.tsx` specifically.
 
-## Gaps / Track R
+## Gaps /
 
-No table-specific review finder exists. Candidates for wcag22:1.3.1 (e.g. tables with `headers` IDs that reference non-existent `id` values, or tables where `scope` value is invalid) would require a new finder. Flagged for Track R.
+No table-specific review finder exists. Candidates for wcag22:1.3.1 (e.g. tables with `headers` IDs that reference non-existent `id` values, or tables where `scope` value is invalid) would require a new finder. Flagged for.
 
 ## Sanitization
 

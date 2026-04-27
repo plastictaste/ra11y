@@ -23,7 +23,7 @@ export const assertions: FixtureAssertions = {
     "Storybook story file with `args: { label, disabled }` produces a synthesized <Button/> element the parser appends to module.jsxElements; the synthesized element flows into the opaque-components accumulator and the disabled prop (interactive attr) lands Button on opaqueCustomComponentsTop. Without synthesis the parser sees no JSX element and Button is absent from both fields.",
   origin: {
     notes:
-      "Storybook 7+ stories render `<X {...args} />` for whichever component the file targets, but the source contains only the args data literal. The synthesis pass appends a virtual JSX element so accessibility rules can evaluate what would actually render. This fixture is the regression guard for the synthesis pass introduced in the Q2R2-STORYBOOK-PRESET follow-up.",
+      "Storybook 7+ stories render `<X {...args} />` for whichever component the file targets, but the source contains only the args data literal. The synthesis pass appends a virtual JSX element so accessibility rules can evaluate what would actually render. This fixture is the regression guard for the synthesis pass introduced in the follow-up.",
   },
   expectations: [
     { kind: "zero-parse-errors" },

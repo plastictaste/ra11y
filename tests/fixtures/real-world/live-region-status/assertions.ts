@@ -13,7 +13,7 @@
  *
  *   candidates: none  (no finder for wcag22:4.1.3 exists yet)
  *
- * Drift note: the backlog item V1-FIXTURE-LIVE-REGION mentioned asserting
+ * Drift note: the backlog item mentioned asserting
  * `couldBeWrongBecause: ["runtime_behavior_required"]` on violations where the
  * scanner cannot prove content actually updates at runtime. That reason code
  * does not exist in the codebase — the live-region rule only fires on
@@ -37,7 +37,7 @@ export const assertions: FixtureAssertions = {
     "aria/live-region-valid violations.",
   origin: {
     notes:
-      "V1-FIXTURE-LIVE-REGION backlog item. Guards the full surface of " +
+      "backlog item. Guards the full surface of " +
       "aria/live-region-valid (wcag22:4.1.3) so that a refactor silencing any " +
       "structural-fault detection turns a green harness red.",
   },

@@ -137,7 +137,7 @@ interface CoverageBody {
   readonly standardId: string;
   readonly criteriaManualReviewRequired: number;
   readonly untargetedCriteria: number;
-  // Q7-CRITERION-ID-FIELD-NAME-DRIFT: canonical name is `criterionId`
+  // canonical name is `criterionId`
   // (matches `checklist.items[].criterionId` and the namespaced-id
   // convention — `wcag22:1.4.3` — used elsewhere). The legacy `id`
   // field still ships alongside `criterionId` for one minor as a
@@ -248,7 +248,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
   });
 
   it("checklist zero-actionable nextStep mentions ra11y/audit and ra11y/vpat-narrative prompts", async () => {
-    // V1-PROMPT-LINK: when there are no actionable items the workflow
+    // when there are no actionable items the workflow
     // endpoint is VPAT/audit work. The prose must name both templates
     // so agents discover them without a separate prompts/list call.
     // Structured still points at `coverage` (the companion MCP tool) —
@@ -270,7 +270,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
   });
 
   it("checklist with actionable items and no truncation emits the pair pointing at scan_project + naming attest in prose", async () => {
-    // Q3-CHECKLIST-NEXTSTEP: the previously-empty "actionable items,
+    // the previously-empty "actionable items,
     // no truncation" branch now answers "what next?" honestly per the
     // AI-first consumer doctrine. Structured points at `scan_project`
     // (closed-form re-run); prose names `attest` as the verdict-
@@ -376,7 +376,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(coverageFailingIds).toEqual(firedInScanScoped);
   });
 
-  it("Q7-CRITERION-ID-FIELD-NAME-DRIFT: coverage emits canonical `criterionId` and the deprecated `id` alias agrees, with the deprecation warning code", async () => {
+  it("coverage emits canonical `criterionId` and the deprecated `id` alias agrees, with the deprecation warning code", async () => {
     // The alias is the transitional shape — both fields must point at
     // the same value so callers reading either name agree, and the
     // structured warning code must fire so agents know to drop the
@@ -404,7 +404,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
 
     // The deprecation code rides under the response-level `warnings`
     // channel — same shape as `proposed_config_deprecated_use_suggested_config`
-    // (V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN). Coverage entries
+    //. Coverage entries
     // always emit the criteria arrays, so the alias is always present
     // and the warning always fires on this surface.
     expect(coverage.warnings).toBeDefined();

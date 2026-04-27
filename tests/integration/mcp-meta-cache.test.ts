@@ -100,7 +100,7 @@ describe("MCP meta-cache: opt-in delta mode", () => {
 
     // Full meta telemetry is present on both responses as before.
     expect(typeof firstMeta.filesScanned).toBe("number");
-    // Q4-RULES-EVALUATED-COMPOSITE: rulesEvaluated is now a structured
+    // rulesEvaluated is now a structured
     // object with `loaded` (always present) + optional
     // `withEligibleInputs` / `fired` sub-counters.
     const secondRules = secondMeta.rulesEvaluated as {
@@ -138,7 +138,7 @@ describe("MCP meta-cache: opt-in delta mode", () => {
     expect(typeof first["sessionRef"]).toBe("string");
     expect(first["sessionRef"] as string).toMatch(/^scan-[0-9a-f]{8}$/);
     expect(typeof first["filesScanned"]).toBe("number");
-    // Q4-RULES-EVALUATED-COMPOSITE: rulesEvaluated is a structured object.
+    // rulesEvaluated is a structured object.
     const firstRules = first["rulesEvaluated"] as { readonly loaded: number };
     expect(typeof firstRules.loaded).toBe("number");
     const firstRef = first["sessionRef"] as string;

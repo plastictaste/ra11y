@@ -1,5 +1,5 @@
 /**
- * Integration test for Q4-SSG-BUILD-HINT — asserts that `scan_project`
+ * Integration test for — asserts that `scan_project`
  * surfaces `meta.detectedFramework` and appends the SSG hint to
  * `meta.analysisCoverage.hints` when a canonical static-site-generator
  * config is present at the scan root.
@@ -80,7 +80,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
   return JSON.parse(result.content[0].text) as Record<string, unknown>;
 }
 
-describe("scan_project: Q4-SSG-BUILD-HINT", () => {
+describe("scan_project:", () => {
   it("surfaces detectedFramework + analysisCoverage hint on an empty Jekyll repo", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-ssg-jekyll-empty-"));
     try {

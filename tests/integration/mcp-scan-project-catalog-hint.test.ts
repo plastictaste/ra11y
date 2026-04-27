@@ -1,5 +1,5 @@
 /**
- * Integration test for Q6-CATALOG-REPO-SIBLING-HINT — asserts that
+ * Integration test for — asserts that
  * `scan_project` surfaces `meta.catalogHint` (topLevelSiblings +
  * exampleSiblings) and appends the per-subdir-scan nudge to
  * `meta.analysisCoverage.hints` when the scan root carries ≥ 5
@@ -107,7 +107,7 @@ function makeFiveSiblingSites(root: string, withParseableHtml: boolean): readonl
   return names;
 }
 
-describe("scan_project: Q6-CATALOG-REPO-SIBLING-HINT", () => {
+describe("scan_project:", () => {
   it("surfaces catalogHint + analysisCoverage hint on a 5-sibling catalog with parseable content", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-catalog-populated-"));
     try {

@@ -1,5 +1,5 @@
 /**
- * website-templates-catalog-shape — guards Q6-CATALOG-REPO-SIBLING-HINT
+ * website-templates-catalog-shape — guards
  * against regression. Sanitized echo of a real catalog repo (174
  * stand-alone HTML/CSS/JS site templates under one root) shrunk to
  * the smallest layout that still trips the catalog detector.

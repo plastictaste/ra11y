@@ -8,7 +8,7 @@
  * `<button aria-label="Toggle navigation">`, two inside
  * `<a aria-label="...">` anchors — lack `aria-hidden="true"`.
  *
- * This fixture guards hypothesis (b) from Q6-ICON-FONT-LABELED-PARENT-
+ * This fixture guards hypothesis (b) from-
  * REGRESSION: the labeled-parent predicate must cover aria-label on
  * BOTH `<button>` and `<a>` parents, and must detect multiple instances
  * per file in a single pass.

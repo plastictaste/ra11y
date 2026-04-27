@@ -3,7 +3,7 @@
 Guards that `aria/icon-font-hidden` fires on all Font Awesome `<i>` glyphs in a
 Bootstrap-template navbar that mixes labeled `<button>` and labeled `<a>` parents.
 
-**Guarded commit:** Q6-ICON-FONT-LABELED-PARENT-REGRESSION — labeled-parent predicate
+**Guarded commit:** — labeled-parent predicate
 must handle `aria-label` on both `<button>` and `<a>` parents, and must detect all
 occurrences in a single file (bulk detection).
 

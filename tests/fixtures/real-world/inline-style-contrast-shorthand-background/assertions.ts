@@ -4,13 +4,13 @@
  * (not `background-color:`) and 3-digit hex (`#FFF`, `#FF1`) value
  * shapes.
  *
- * Background: Q7-RULE-INLINE-STYLE-CONTRAST-WIDEN re-reported the
+ * Background: re-reported the
  * `<strong style="color:#FFF317; background:#FFF">` silent-miss after
  * Q-SHARED-INLINE-STYLE-CONTRAST shipped. A live HEAD probe (2026-04-24)
  * confirmed the exact snippet fires `contrast/minimum` correctly — the
  * field signal traced to the canonical stale-MCP-subprocess fault
  * (recurring 2026-04-22+ pattern), not a missing code path. Cross-ref
- * Q6-CONTRAST-INLINE-STYLE-REGRESSION-AUDIT (closed, same root cause).
+ * (closed, same root cause).
  *
  * The existing `inline-style-contrast-yellow-on-white` fixture covers
  * the 6-digit `background-color:#ffffff` long form; this fixture

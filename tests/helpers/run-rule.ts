@@ -134,7 +134,7 @@ function shapeViolation(
     severity: v.severity,
     // Project-scope emitters set filePath themselves; per-file paths fall through.
     location: { ...v.location, filePath: effectivePath },
-    // Selector/declaration line split (Q7-MOTION-FINDING-SELECTOR-LINE).
+    // Selector/declaration line split.
     // Mirrors the engine's `stampViolation` conditional spread so unit
     // tests see the same shape the engine ships.
     ...(typeof v.decline === "number" ? { decline: v.decline } : {}),
@@ -152,7 +152,7 @@ function shapeViolation(
     // unit tests see the same shape the engine ships.
     ...(v.confidence !== undefined && { confidence: v.confidence }),
     // Mirror the engine's `stampViolation` conditional spread for the
-    // in-file rule-emitted sibling rollup (Q7-DUPLICATE-INPUT-SIBLING-
+    // in-file rule-emitted sibling rollup (-
     // COLLAPSE) so unit tests see the same shape the engine ships.
     ...(v.siblingInstances && v.siblingInstances.length > 0
       ? { siblingInstances: v.siblingInstances }

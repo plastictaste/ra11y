@@ -1,4 +1,4 @@
-/* V1-CSS-CONTRAST-CASCADE-INHERITED: control case. Same body/descendant
+/* control case. Same body/descendant
    shape as the fail fixture, but the inherited pair clears 4.5:1
    (black text on white background). Silence is honest — the fallback
    ran, resolved, and confirmed the pair passes — no finding fires. */

@@ -4,7 +4,7 @@
  * elements from prose mentions of the string "<iframe>" in developer
  * documentation text (code examples, prose paragraphs).
  *
- * Bug (Q7-CHECKLIST-IFRAME-FINDER-ELEMENT-VS-PROSE):
+ * Bug:
  * A documentation page that explains how to use `<iframe>` for video
  * embedding contains code-block examples whose text content includes
  * the literal string "<iframe>". A regex-based implementation would

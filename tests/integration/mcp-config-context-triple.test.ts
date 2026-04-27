@@ -1,7 +1,7 @@
 /**
- * Integration regression guard for V1-CONFIG-CONTEXT-TRIPLE-READOUT-REGRESSION.
+ * Integration regression guard for.
  *
- * Q6-CONFIG-CONTEXT-TRIPLE-READOUT closed the original three-field
+ * closed the original three-field
  * over-emission (`configSource: null` + `configSearchedFrom: <cwd>` +
  * `configNote: "No ra11y.config found …"`) by:
  *
@@ -101,7 +101,7 @@ function configContext(body: Record<string, unknown>): {
   };
 }
 
-describe("V1-CONFIG-CONTEXT-TRIPLE-READOUT-REGRESSION — meta.configSearchedFrom is present-when-meaningful", () => {
+describe("meta.configSearchedFrom is present-when-meaningful", () => {
   it("scan_project does NOT emit `configSearchedFrom` echoing the caller's cwd", async () => {
     // The original triple-emission regression:
     //   { configSource: null, configSearchedFrom: <cwd>, configNote: "No ra11y.config found …" }

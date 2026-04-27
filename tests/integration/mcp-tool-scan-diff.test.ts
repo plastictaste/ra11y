@@ -110,7 +110,7 @@ describe("MCP scan_diff tool: new-findings-only deltas", () => {
       expect(body.newViolations).toEqual([]);
       // Scan-confidence telemetry should still be present on a clean diff
       // so the agent can size scan coverage before acting on "0 new."
-      // Q4-RULES-EVALUATED-COMPOSITE: rulesEvaluated is now a
+      // rulesEvaluated is now a
       // structured object with `loaded` + derived sub-counters.
       const rulesEvaluated = body.meta.rulesEvaluated as {
         loaded: number;

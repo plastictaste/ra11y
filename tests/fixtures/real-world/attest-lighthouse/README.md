@@ -1,6 +1,6 @@
 # attest-lighthouse
 
-Guards the Lighthouse accessibility audit → attest bridge pattern (V1-FIXTURE-ATTEST, 2026-04-19).
+Guards the Lighthouse accessibility audit → attest bridge pattern (2026-04-19).
 
 ## Failure mode this locks in
 

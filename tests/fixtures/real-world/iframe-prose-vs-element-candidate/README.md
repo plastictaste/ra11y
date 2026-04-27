@@ -1,6 +1,6 @@
 # iframe-prose-vs-element-candidate
 
-**Guards commit:** fix for Q7-CHECKLIST-IFRAME-FINDER-ELEMENT-VS-PROSE
+**Guards commit:** fix for
 
 **Failure mode:** `review/media-alternatives` was matching the string `<iframe>` in text content (code examples and prose paragraphs in developer documentation pages) and emitting false 1.2.x review candidates. The text occurrences appear inside `<code>` blocks that explain how to use iframes for video embedding — they are not actual media elements. An AST-based implementation traverses the parsed DOM for element nodes and avoids this; a naive regex implementation fires on every substring occurrence.
 

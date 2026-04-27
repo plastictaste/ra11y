@@ -34,7 +34,7 @@ export const assertions: FixtureAssertions = {
   origin: {
     notes:
       "Synthetic fixture authored 2026-04-19 to lock in the full forms-validation " +
-      "surface. Covers V1-FIXTURE-FORMS from the backlog — ensures none of the four " +
+      "surface. Covers from the backlog — ensures none of the four " +
       "form rules or three validation finders silently regress after engine refactors.",
   },
   expectations: [

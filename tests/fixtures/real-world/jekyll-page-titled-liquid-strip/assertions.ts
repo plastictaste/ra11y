@@ -25,7 +25,7 @@
  *      as structured telemetry the agent can route on without parsing
  *      prose.
  *
- * Distinct from jekyll-partial-page-titled (Q4-PARTIAL-PAGE-TITLED):
+ * Distinct from jekyll-partial-page-titled:
  * that fixture guards partials missing `<body>` where `<title>` might
  * be injected from a parent layout. This fixture guards layouts whose
  * `<title>` IS present with a directive inside.

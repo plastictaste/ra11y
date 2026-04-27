@@ -291,7 +291,7 @@ describe("MCP tool: vpat", () => {
     // still publishable-shaped — the warning is the only structural
     // signal that no row carries a positive conformance verdict, so an
     // agent doesn't ship an all-fail VPAT thinking it represents real
-    // evaluated coverage. (V1-VPAT-NO-PASSING-CRITERIA-WARNING).
+    // evaluated coverage..
     const emptyDir = await mkdtemp(join(tmpdir(), "ra11y-vpat-allfail-"));
     try {
       const responses = await mcpSession([

@@ -3,7 +3,7 @@
  * template directive tokens (`{%`, `{{`, `<%`) in its emitted message,
  * suggestion, or snippet text.
  *
- * Background (Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING): the parser strips
+ * Background: the parser strips
  * template directives from HtmlText nodes, but (a) attribute values are
  * never stripped at parse time, so rules that echo raw `aria-label` /
  * `title` / `href` values can leak directives through, and (b) the

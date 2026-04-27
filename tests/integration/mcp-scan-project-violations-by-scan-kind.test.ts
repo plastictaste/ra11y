@@ -1,5 +1,5 @@
 /**
- * Integration test for V1-MINIFIED-FILE-SCAN-KIND-SPLIT — asserts that
+ * Integration test for — asserts that
  * `scan_project` surfaces `plan.violationsByScanKind: { source,
  * buildArtifact }` when the scan includes deterministic build-artifact
  * files (compiled CSS, minified bundles, etc.) classified by the
@@ -18,7 +18,7 @@
  * the load-bearing surface; consumers that want the flat number sum
  * the two lanes themselves.
  *
- * Per Q7-PLAN-VIOLATIONS-COMPOSITE (2026-04-25) the flat
+ * Per (2026-04-25) the flat
  * `plan.violations` headline was deleted entirely — the test now
  * derives the error+warning total from `plan.fixesByClass` and
  * checks that the per-kind lanes sum to it. The
@@ -87,7 +87,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
   return JSON.parse(result.content[0].text) as Record<string, unknown>;
 }
 
-describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
+describe("scan_project: violations split by scan kind", () => {
   it("emits plan.violationsByScanKind when the scan includes a build artifact alongside authored source", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-violations-by-scan-kind-"));
     try {
@@ -113,7 +113,7 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
       const body = bodyOf(scan as JsonRpcResponse);
       const plan = body.plan as Record<string, unknown>;
       expect(plan).toBeDefined();
-      // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // The flat `plan.violations`
       // headline was deleted; the per-kind sibling remains because
       // each lane (`source`, `buildArtifact`) names exactly one kind
       // of thing. Surface-don't-suppress still holds: every finding
@@ -150,7 +150,7 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
     }
   });
 
-  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: end-to-end confirmation
+  // end-to-end confirmation
   // that scan_project emits the new `scanned_minified_file` warning
   // code (and its paired `warningsDetails.scanned_minified_file:
   // { files: [paths] }` payload) when at least one classified-minified
@@ -251,7 +251,7 @@ describe("scan_project: V1-MINIFIED-FILE-SCAN-KIND-SPLIT", () => {
       const plan = body.plan as Record<string, unknown>;
       // Sanity check — the scan produced a finding so the test
       // isn't asserting on a vacuously-empty plan. Per
-      // Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+      // the flat `plan.violations`
       // counter is gone; sum the per-lane `fixesByClass` tally for
       // the error+warning total.
       const lanes = plan["fixesByClass"] as

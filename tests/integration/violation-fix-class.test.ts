@@ -37,7 +37,7 @@ describe("Violation.fixClass", () => {
   });
 
   it("stamps from rule metadata onto every emitted Violation", () => {
-    // V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: alt-text-missing
+    // alt-text-missing
     // is classified "verify-in-source" because the alt prose is never a
     // deterministic source transform — every surface needs the agent
     // to read adjacent code to write text describing what the image

@@ -1,6 +1,6 @@
 # sensory-callout-prose
 
-Guards `review/sensory-characteristics` (wcag22:1.3.3 / wcag21:1.3.3) callout-container reason-text enrichment added for the Q7-CHECKLIST-1.3.3-LOCATIVE-CALLOUT-PROSE backlog item.
+Guards `review/sensory-characteristics` (wcag22:1.3.3 / wcag21:1.3.3) callout-container reason-text enrichment added for the.3.3-LOCATIVE-CALLOUT-PROSE backlog item.
 
 ## Failure mode guarded
 

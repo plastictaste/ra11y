@@ -1,4 +1,4 @@
-/* V1-CSS-CONTRAST-CASCADE-INHERITED: mirror case with the background
+/* mirror case with the background
    on `html` and the foreground on a descendant. Same cascade-
    inheritance idiom, opposite direction: the child names `color` and
    the document default supplies the missing background. Pair resolves

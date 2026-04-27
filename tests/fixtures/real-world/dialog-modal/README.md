@@ -4,7 +4,7 @@ Guards the `review/no-keyboard-trap` finder and dialog-role ARIA rule behavior a
 
 ## What this fixture locks in
 
-Commit: synthetic fixture authored 2026-04-19 (V1-FIXTURE-DIALOG).
+Commit: synthetic fixture authored 2026-04-19.
 
 **Failure mode guarded:** A refactor that (a) removes `"dialog"` from the `no-keyboard-trap` finder's role list, (b) adds `dialog` to `REQUIRED_BY_ROLE` without the correct spec citation, (c) removes `"dialog"` from the valid-role dictionary, or (d) removes the `isBackdropPattern` carve-out from `keyboard/handler-missing` would silently break real-world dialog scanning.
 

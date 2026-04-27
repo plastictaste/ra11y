@@ -1,7 +1,7 @@
 /**
  * Integration tests for the hard-error envelope on nonexistent scan
- * targets (Track Q / P0-F). The soft-signal `warnings: [...]` path
- * (Track Q / P0-E) covers valid-but-empty scan targets; this test
+ * targets (/ P0-F). The soft-signal `warnings: [...]` path
+ * (/ P0-E) covers valid-but-empty scan targets; this test
  * covers the discriminator — "does the path even exist?" — and asserts
  * each scan tool emits the structured `errorResult` envelope for
  * malformed input instead of a successful empty response.
@@ -98,7 +98,7 @@ function resultOf(response: JsonRpcResponse): ToolResult {
 const NONEXISTENT_DIR = "/tmp/ra11y-definitely-not-here-p0f-xyz";
 const NONEXISTENT_FILE = "/tmp/ra11y-definitely-not-here-p0f-xyz.tsx";
 
-describe("scan_project hard-errors when cwd does not exist (P0-F)", () => {
+describe("scan_project hard-errors when cwd does not exist", () => {
   it("emits `cwd-not-found` envelope with the absent path in details", async () => {
     const responses = await mcpSession([
       initMsg(1),
@@ -143,7 +143,7 @@ describe("scan_project hard-errors when cwd does not exist (P0-F)", () => {
         };
       };
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // top-level integer was deleted. The honest "scan ran" signal
     // is that the plan exists with a numeric `notes` counter (and
     // optionally a `fixesByClass` per-lane tally, present-when-
@@ -152,7 +152,7 @@ describe("scan_project hard-errors when cwd does not exist (P0-F)", () => {
   });
 });
 
-describe("scan hard-errors when every path is missing (P0-F)", () => {
+describe("scan hard-errors when every path is missing", () => {
   it("emits `scan-paths-not-found` envelope with the missing paths in details", async () => {
     const responses = await mcpSession([
       initMsg(1),
@@ -190,7 +190,7 @@ describe("scan hard-errors when every path is missing (P0-F)", () => {
         };
       };
     };
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the flat `plan.violations`
+    // The flat `plan.violations`
     // top-level integer was deleted. The honest "scan ran" signal
     // is that the plan exists with a numeric `notes` counter (and
     // optionally a `fixesByClass` per-lane tally, present-when-

@@ -51,7 +51,7 @@ export const assertions: FixtureAssertions = {
     "aria/invalid-role and aria/required-attrs must not fire on valid dialog usage.",
   origin: {
     notes:
-      "V1-FIXTURE-DIALOG backlog item. Locks in the no-keyboard-trap finder surface for " +
+      "backlog item. Locks in the no-keyboard-trap finder surface for " +
       'role="dialog" and guards that valid dialog ARIA wiring does not trigger false positives ' +
       "on aria/invalid-role or aria/required-attrs after any engine refactor.",
   },

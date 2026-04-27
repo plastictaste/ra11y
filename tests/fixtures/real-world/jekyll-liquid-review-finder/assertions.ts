@@ -3,8 +3,8 @@
  * quoting raw Liquid/Jinja/ERB template directive tokens in their
  * emitted reason text.
  *
- * Background: the earlier fix (docs: "Q4-LIQUID-TEXT-LITERAL" +
- * "Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING") stripped template
+ * Background: the earlier fix (docs: "" +
+ * "") stripped template
  * directives in the rule-side text-node and attribute-harvesting paths
  * under `src/rules/**`. The review candidate finders under
  * `src/review/finders/**` were never audited — so an `<img>` with
@@ -41,8 +41,8 @@ export const assertions: FixtureAssertions = {
     "raw template expression like `{{ entry.name }}`.",
   origin: {
     notes:
-      "Pairs with the closed Q4-LIQUID-TEXT-LITERAL (rule-side text nodes) " +
-      "and Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING (rule-side attribute " +
+      "Pairs with the closed (rule-side text nodes) " +
+      "and (rule-side attribute " +
       "harvesting under src/rules/semantics/** + src/rules/navigation/**). " +
       "Finder-side harvesting under src/review/finders/** was never audited " +
       "— this fixture locks the finder-side strip so the bug can't silently " +

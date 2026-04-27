@@ -1,5 +1,5 @@
 /**
- * bootstrap-label-orphan-no-id — locks in the Q6-RULE-LABEL-ADJACENT-
+ * bootstrap-label-orphan-no-id — locks in the-
  * UNASSOCIATED-NO-IDS fix on the canonical Bootstrap-template orphan
  * shape observed in website-templates' sb-admin/forms.html.
  *

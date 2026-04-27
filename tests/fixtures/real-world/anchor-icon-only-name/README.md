@@ -1,7 +1,7 @@
 # anchor-icon-only-name
 
 **Guarded commit:** 45525d85
-**Backlog item:** Q6-ANCHOR-ICON-ONLY-NAME-REGRESSION
+**Backlog item:**
 
 ## What this fixture guards
 
@@ -11,7 +11,7 @@ The rule stays silent when a non-empty `alt` attribute provides the anchor's acc
 
 ## Failure mode captured
 
-Field report (Q6-ANCHOR-ICON-ONLY-NAME-REGRESSION): a deeper scan appeared to emit only `media/alt-text-missing` at the `<img>` level, with no secondary anchor-level finding. Live probe on current `src/` confirms anchor-level detection is working. This fixture locks that in: if a future refactor silences anchor-level detection and emits only the img-level violation, the `violation-present` + `reasonIncludes` assertions on the `no accessible name` message string will fail.
+Field report: a deeper scan appeared to emit only `media/alt-text-missing` at the `<img>` level, with no secondary anchor-level finding. Live probe on current `src/` confirms anchor-level detection is working. This fixture locks that in: if a future refactor silences anchor-level detection and emits only the img-level violation, the `violation-present` + `reasonIncludes` assertions on the `no accessible name` message string will fail.
 
 ## Sanitization
 

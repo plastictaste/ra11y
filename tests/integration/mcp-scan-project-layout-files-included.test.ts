@@ -1,5 +1,5 @@
 /**
- * Integration test for V1-SCAN-PROJECT-LAYOUT-FILES-DROPPED.
+ * Integration test for.
  *
  * Prior behavior: cross-file vendor-dedupe (`src/mcp/vendor-dedupe.ts`)
  * keyed on `(basename, ruleId, patternId ?? message)` for every violation
@@ -84,7 +84,7 @@ interface ScanProjectBody {
   readonly files: readonly { readonly path: string; readonly findings: readonly unknown[] }[];
 }
 
-describe("scan_project: V1-SCAN-PROJECT-LAYOUT-FILES-DROPPED", () => {
+describe("scan_project: same-basename layout files included from sibling dirs", () => {
   it("includes same-basename Astro layout files from sibling directories in files[]", async () => {
     // Two sibling mini-projects, each with its own authored
     // `BaseLayout.astro`. Both emit a missing-lang finding so the dedupe

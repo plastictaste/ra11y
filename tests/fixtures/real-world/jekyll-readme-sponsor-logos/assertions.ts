@@ -46,9 +46,9 @@ export const assertions: FixtureAssertions = {
     notes:
       "Sanitized from jekyll/jekyll README.markdown:58-67 — ten adjacent " +
       "<a href='...'><img class='sponsor-logo' alt='Jekyll Sponsor N'/></a> " +
-      "siblings. Pairs with closed Q6-ICON-FONT-HIDDEN-GROUP-DEDUP-CLASS-PATTERN " +
+      "siblings. Pairs with closed " +
       "(per-rule meta concentration, different surface) and open " +
-      "Q6-PATTERN-FINGERPRINT-CROSS-TEMPLATE (cross-file sibling of the same " +
+      "(cross-file sibling of the same " +
       "honest-pattern-aggregation doctrine).",
   },
   expectations: [

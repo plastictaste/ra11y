@@ -235,7 +235,7 @@ describe("MCP tools/list: schema shape", () => {
     for (const name of expected) {
       expect(names.has(name)).toBe(true);
     }
-    // `configure` is a dispatch-only backward-compat alias (Q2-SESSIONCFG)
+    // `configure` is a dispatch-only backward-compat alias
     // and must NOT appear in tools/list — agents should migrate to
     // `sessionConfigure`, which makes the ephemeral semantics explicit.
     expect(names.has("configure")).toBe(false);

@@ -379,7 +379,7 @@ export async function loadAndScanFixture(
     toolInput.verboseMeta === true,
   );
 
-  // Mirror tool-scan-project's catalog-shape probe (Q6-CATALOG-REPO-
+  // Mirror tool-scan-project's catalog-shape probe (-
   // SIBLING-HINT) so fixtures asserting on `meta.catalogHint` and the
   // accompanying `analysisCoverage.hints` entry exercise the same
   // surface an MCP scan_project response would carry. The detector
@@ -990,7 +990,7 @@ function evalMetaHintIncludes(
 
 /**
  * Reads `meta.analysisCoverage.hints[].text` out of the formatted
- * scan. Post V1-HINTS-STRUCTURED-CODE hints are
+ * scan. Post hints are
  * `{ code, text, detail? }` objects; `meta-hint-includes` substring
  * predicates match against `text`, which is the human-readable
  * mirror kept populated on every hint. The `code` discriminator is
@@ -1201,7 +1201,7 @@ function lookupPath(
  * `activeNativeWrappers` list shaped like `{ name, source, confirmed? }`),
  * matches an entry whose `name` equals the needle — so fixture
  * assertions can keep using the `{ contains: "Button" }` predicate
- * after the Q2R2-WRAPPER-SOURCES shape collapse.
+ * after the shape collapse.
  */
 function containsValue(value: unknown, needle: string): boolean {
   if (typeof value === "string") return value.includes(needle);

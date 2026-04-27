@@ -1,4 +1,4 @@
-/* V1-CSS-CONTRAST-CASCADE-INHERITED: "unresolvable via cascade" case.
+/* "unresolvable via cascade" case.
    The document default lives on a compound selector (`body.dark`) —
    condition-gated, not a plain ancestor — so the fallback declines to
    walk up. The child rule declares only `color`; no `background`

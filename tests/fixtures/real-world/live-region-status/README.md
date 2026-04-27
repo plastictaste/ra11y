@@ -1,6 +1,6 @@
 # live-region-status
 
-Guards V1-FIXTURE-LIVE-REGION. Exercises `aria/live-region-valid`
+Guards. Exercises `aria/live-region-valid`
 (wcag22:4.1.3) on a polite status container + dynamic update pattern.
 
 ## Failure mode

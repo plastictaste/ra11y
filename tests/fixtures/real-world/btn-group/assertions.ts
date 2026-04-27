@@ -1,5 +1,5 @@
 /**
- * btn-group — locks in the V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER fix
+ * btn-group — locks in the fix
  * for Bootstrap 5's `<div class="btn-group" data-bs-toggle="buttons">`
  * pattern.
  *

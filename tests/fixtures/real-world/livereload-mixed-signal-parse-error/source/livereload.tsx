@@ -1,4 +1,4 @@
-// Sanitized fixture for V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL.
+// Sanitized fixture for.
 //
 // Two co-located signals on the same file:
 //   1. A broken JSX element (no closing tag) at the bottom forces the

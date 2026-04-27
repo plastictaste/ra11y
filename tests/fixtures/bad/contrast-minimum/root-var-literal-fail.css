@@ -1,4 +1,4 @@
-/* V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION: silent-miss repro.
+/* silent-miss repro.
    `:root { --fg:#fff; --bg:#fff }` feeds `.card { color: var(--fg);
    background: var(--bg) }` — resolves to 1.00:1 and must fire.
    Before the resolver landed, this was the canonical silent miss on

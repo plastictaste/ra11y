@@ -1,6 +1,6 @@
 /**
  * contact-form-title-tooltip-orphan — locks in the
- * V1-RULE-FORM-LABEL-ADJACENT-INPUT-WITHOUT-ID fix observed on a
+ * fix observed on a
  * real Bootstrap-derived contact template.
  *
  * Symptom: a five-row contact form had four <label>/<input> pairs and

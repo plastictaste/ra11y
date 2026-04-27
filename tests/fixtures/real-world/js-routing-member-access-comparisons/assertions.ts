@@ -5,7 +5,6 @@
  * with reasons like "Unclosed JSX element <h>" and "<g.top>" — every plain-JS
  * file with a `<member.access` length comparison was being misclassified as
  * broken JSX, flooding the response and dominating token-budget overrun
- * (Q8-PARSER-ROUTING-JS-AS-TSX).
  *
  * The fix surface is two-layered:
  *   1. `parseTsx`'s `inferJsxMode` already gates JSX-mode entry on

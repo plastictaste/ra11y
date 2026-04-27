@@ -226,7 +226,7 @@ describe("MCP invariant: untargetedCriteria agrees across surfaces", () => {
   });
 });
 
-// ADR 0024 stage 4 (V1-RESPONSE-SCAN-DERIVATIVE): the scan-derivative
+// ADR 0024 stage 4: the scan-derivative
 // tools (`checklist`, `coverage`, `conformance_statement`) now route
 // their scan-confidence warnings through the same
 // `buildDerivativeScanWarnings` seam the primary scan tools use. The

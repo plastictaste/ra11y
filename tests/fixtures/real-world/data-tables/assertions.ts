@@ -37,7 +37,7 @@ export const assertions: FixtureAssertions = {
     notes:
       "Synthetic fixture authored 2026-04-19. Locks in the data-table surface for " +
       "semantics/table-headers (wcag22:1.3.1). No table-specific review finder exists " +
-      "yet — candidate assertions would be added when a finder lands (Track R item).",
+      "yet — candidate assertions would be added when a finder lands (item).",
   },
   expectations: [
     // All three files must parse cleanly — a parse error would mask real findings.

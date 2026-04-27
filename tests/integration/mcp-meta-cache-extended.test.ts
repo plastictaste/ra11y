@@ -87,7 +87,7 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
       { jsonrpc: "2.0", method: "notifications/initialized" },
       // Legacy caller — must see no cache-mode `meta` fields
       // (`metaMode`, `sessionRef`). Provenance-only meta still rides
-      // every response per Q3-META-BUILD-PROVENANCE.
+      // every response per.
       toolCall(2, "checklist", { paths: [FIXTURES_DIR] }),
       // First delta-mode call — full meta + sessionRef baseline.
       toolCall(3, "checklist", { paths: [FIXTURES_DIR], metaMode: "delta" }),
@@ -99,7 +99,7 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
 
     const legacy = bodyOf(responses.find((r) => r.id === 2)!);
     // Legacy shape: checklist had no cache-mode meta fields historically.
-    // After Q3-META-BUILD-PROVENANCE, `meta` always exists (provenance
+    // After, `meta` always exists (provenance
     // triple) but it must not carry `metaMode` / `sessionRef`.
     const legacyMeta = (legacy.meta ?? {}) as Record<string, unknown>;
     expect("metaMode" in legacyMeta).toBe(false);
@@ -113,7 +113,7 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
     expect(firstMeta["sessionRef"] as string).toMatch(/^checklist-[0-9a-f]{8}$/);
     // Scan-confidence telemetry rides the baseline.
     expect(typeof firstMeta["filesScanned"]).toBe("number");
-    // Q4-RULES-EVALUATED-COMPOSITE: the meta field is an object with
+    // the meta field is an object with
     // `loaded` + the derived sub-counters, not a bare number.
     const rulesEvaluated = firstMeta["rulesEvaluated"] as {
       readonly loaded: number;
@@ -151,7 +151,7 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
 
     const legacy = bodyOf(responses.find((r) => r.id === 2)!);
     // Legacy shape: coverage had no cache-mode meta fields historically.
-    // After Q3-META-BUILD-PROVENANCE, `meta` always exists (provenance
+    // After, `meta` always exists (provenance
     // triple) but it must not carry `metaMode` / `sessionRef`.
     const legacyMeta = (legacy.meta ?? {}) as Record<string, unknown>;
     expect("metaMode" in legacyMeta).toBe(false);
@@ -164,7 +164,7 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
     expect(typeof firstMeta["sessionRef"]).toBe("string");
     expect(firstMeta["sessionRef"] as string).toMatch(/^coverage-[0-9a-f]{8}$/);
     expect(typeof firstMeta["filesScanned"]).toBe("number");
-    // Q4-RULES-EVALUATED-COMPOSITE: the meta field is an object with
+    // the meta field is an object with
     // `loaded` + the derived sub-counters, not a bare number.
     const rulesEvaluated = firstMeta["rulesEvaluated"] as {
       readonly loaded: number;
@@ -214,7 +214,7 @@ describe("MCP meta-cache: opt-in delta mode on checklist / coverage / list_suppr
     expect(typeof firstMeta["sessionRef"]).toBe("string");
     expect(firstMeta["sessionRef"] as string).toMatch(/^list_suppressions-[0-9a-f]{8}$/);
     expect(typeof firstMeta["filesScanned"]).toBe("number");
-    // V1-LIST-SUPPRESSIONS-RULES-EVALUATED-DRIFT: this tool runs no
+    // this tool runs no
     // rules, so `rulesEvaluated` must not appear in meta (full or
     // delta). Pinning here catches regressions that would re-add the
     // field as scan-confidence telemetry borrowed from scan_project.
