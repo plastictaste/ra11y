@@ -615,7 +615,7 @@ function findProbableMainCandidate(body: HtmlElement): ProbableMainCandidate | u
   return {
     tag,
     line: best.el.loc.start.line,
-    ...(selectorHint !== undefined ? { selectorHint } : {}),
+    ...(selectorHint === undefined ? {} : { selectorHint }),
   };
 }
 
@@ -670,7 +670,7 @@ function probableCandidateEvidence(probable: ProbableMainCandidate): ViolationEv
     kind: "landmark-main-probable-candidate",
     tag: probable.tag,
     line: probable.line,
-    ...(probable.selectorHint !== undefined ? { selectorHint: probable.selectorHint } : {}),
+    ...(probable.selectorHint === undefined ? {} : { selectorHint: probable.selectorHint }),
   };
 }
 
