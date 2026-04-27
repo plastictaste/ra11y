@@ -534,7 +534,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Reason-severity mismatches (recurring)
 
-- [ ] **Q9-IN-PAGE-LINK-FRAGMENT-FRAGMENT-FILE-CONCESSION** `navigation/in-page-link-fragment-missing` reason: `"anchor links to fragment #X but no element with that id exists in this document. Verify the id is added or correct the href."` ships at `severity: "warning"` even when the host file is fragment-classified (`_includes/_partials/`) and the id may be supplied by the parent layout. Closure: move to review-candidate when host file is fragment-classified (composes with Q9-FRAGMENT-CLASSIFICATION-NO-PER-RULE-DOWNGRADE).
 
 ### Rule predicate gaps (false negatives)
 
