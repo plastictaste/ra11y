@@ -676,8 +676,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 ### Rule predicate gaps (false positives — parent-walk + multi-rule overlap)
 
 
-- [ ] **Q11-RULE-EXPANDED-DISCLOSURE-FIX-CONCEDES-MAY-NOT-APPLY-AT-ERROR** `aria/expanded-on-disclosure`'s `fix.description` literally instructs `"If this control is not a disclosure trigger, the detection is wrong — suppress with a source-level pragma"` while ship at `severity: "error"`. The fix-description-channel concedes the predicate may not hold; severity claims it does. Bulk-template corpus, every navbar toggler. Fix: when fix.description hedges with "if this is not a disclosure trigger" or "suppress with a pragma," downgrade severity to `warning` AND populate per-finding `couldBeWrongBecause: ["disclosure_predicate_relies_on_class_token"]`; OR move to a review candidate. Per AI-first doctrine "Reason / priority / fix-description must agree across all three channels" (codified 2026-04-26).
-
 ### Missing rules (corpus-driven, recurring across ≥2 corpora)
 
 - [ ] **Q11-RULE-TABLIST-ON-NON-TAB-CONTAINER** No rule fires on `role="tablist"` applied to a tabpanels container (e.g. `<div class="tab-content" role="tablist">` housing `role="tabpanel"` children). This is a real ARIA misuse — assistive tech announces a tablist but the children are panels, not tabs. CSS-framework corpus, `tab.html:35`. Fix: add `aria/tablist-on-non-tab-container` — fires when a `role="tablist"` element's children carry `role="tabpanel"` (or no `role="tab"` descendant at any depth). Satisfies wcag22:1.3.1 + 4.1.2.
