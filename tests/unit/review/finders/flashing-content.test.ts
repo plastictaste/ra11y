@@ -373,6 +373,31 @@ describe("review/flashing-content — CSS @keyframes short cycle", () => {
     expect(reason).toContain("iteration-count: 5×");
   });
 
+  it("DOES quote cycles/s when `animation-iteration-count: 2` (boundary — smallest integer that repeats)", () => {
+    // Boundary case for the iteration-count > 1 predicate: count of 2
+    // is the smallest integer that turns a one-shot animation into a
+    // repeating one. The cycles/s figure is meaningful here — a 200ms
+    // animation repeated twice covers 400ms of paint, which against the
+    // >3-flashes/s WCAG 2.3.1 threshold the agent verifies in context.
+    // Pinning this at the boundary guards against the predicate drifting
+    // back to a `>= 3` or stricter bound that would silently miss real
+    // two-cycle flashes.
+    const source = `
+      @keyframes pulse { 0% { opacity: 1; } 100% { opacity: 0; } }
+      .twice {
+        animation-name: pulse;
+        animation-duration: 200ms;
+        animation-iteration-count: 2;
+      }
+    `;
+    const out = runFinder(finder, source, { filePath: "styles.css" });
+    expect(out.length).toBeGreaterThan(0);
+    const reason = out[0]?.reason ?? "";
+    expect(reason).toContain("200ms");
+    expect(reason).toContain("cycles/s");
+    expect(reason).toContain("iteration-count: 2×");
+  });
+
   it("does NOT fire on `transition: opacity 0.15s` (transitions are not animations and the finder skips them)", () => {
     // `transition` triggers on state change and runs once per change,
     // so it cannot generate a sustained flash on its own. The finder

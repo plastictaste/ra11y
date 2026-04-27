@@ -371,10 +371,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans: response-token-budget over
 ### v0.2.0 — accepted (P0 — heuristic-emission / reason-severity disagreement)
 
 
-### v0.2.0 — accepted (P1 — finder reason-text enrichment)
-
-- [ ] **Q8-FINDER-2.3.1-ITERATION-COUNT-PREDICATE** `review:wcag22:2.3.1` (motion/three-flashes) heuristic equates animation-duration with frequency, firing on single-shot 150ms transitions where `animation-iteration-count: 1`. Fix predicate to require iteration-count > 1 (or `infinite`) before synthesizing a per-second cycle rate; encode iteration count as additive reason text otherwise. Pairs with V1-MOTION-2.3.1-CYCLES-PER-SECOND-MATH (closed) and Q7-RULE-ANIMATION-ITERATION-COUNT-GATE (open) — convergent fix; this is the finder-axis closure assertion.
-
 ### v0.2.0 — accepted (P1 — rule scope widening)
 
 
