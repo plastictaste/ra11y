@@ -1085,6 +1085,36 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(literals).toEqual(["{%x%}"]);
     });
 
+    it("does not emit `<%x%>` when `<%= x %>` lives in a 4-space-indented code block in a .md file", () => {
+      // CommonMark §4.4 indented code blocks: a 4-space-indented run
+      // preceded by a blank line is a code block. Quoting an ERB
+      // example in a docs page often uses this form when the author
+      // doesn't want a syntax-highlight language tag.
+      const mdIndented = htmlFile(
+        "docs/guide.md",
+        ["# Guide", "", "Example follows:", "", "    <%= Time.now %>", "", "End."].join("\n"),
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mdIndented], [], NO_RULES, false);
+      expect(analysisCoverage?.["templateInterpolationFound"]).toBeUndefined();
+    });
+
+    it("does not strip a 4-space-indented line that is paragraph-continuation, not a code block", () => {
+      // A 4-space indent that immediately follows a prose line is
+      // paragraph continuation, not a code block, and the detector
+      // must still see the live token. (CommonMark §4.4 requires the
+      // blank-line precedent for indented code.)
+      const mdContinuation = htmlFile(
+        "README.md",
+        "Render via\n    {% assign user = 'alice' %}",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([mdContinuation], [], NO_RULES, false);
+      const tokens = analysisCoverage?.["templateInterpolationFound"] as
+        | readonly { token: string; count: number }[]
+        | undefined;
+      const literals = (tokens ?? []).map((entry) => entry.token);
+      expect(literals).toEqual(["{%x%}"]);
+    });
+
     it("does not strip code regions in non-markdown HTML files — prose + fences are an .md concern only", () => {
       // A plain `.html` file with literal backticks does not go
       // through the markdown stripper (backticks are not HTML

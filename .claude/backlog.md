@@ -432,7 +432,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans this round: minified/build-
 #### Q8c — accepted (P0 — heuristic-mislabeled meta sub-fields)
 
 - [ ] **Q8c-PERRULECOVERAGE-PARSER-FIELD-NAME-AMBIGUOUS** `parseErrorFiles[].parser: "tsx"` reads as a content classification ("this file IS tsx") but is actually a routing decision (".js was sent to the tsx parser"). Agent reading a `.js` file with `parser: "tsx"` may infer "this codebase uses TSX" and re-route fix suggestions accordingly. Fix: rename to `parserAttempted` or `routedTo`; OR add a sibling `naturalParser` (per-extension default) so the agent can see the routing mismatch in one read. Pairs with Q8b-PARSE-ERROR-REASON-NAMES-WRONG-CULPRIT (reason text on parse error) — this is the field-naming axis on the meta record.
-- [ ] **Q8c-TEMPLATE-DIRECTIVE-CODE-FENCE-FALSE-POSITIVE** `templateDirectivesFound: ["erb-or-ejs"]` / `["jinja-or-liquid"]` fires when the directive token appears inside Markdown fenced code blocks or inline-code spans (e.g. a docs page quoting `<%= Time.now %>` in prose; release-notes markdown mentioning template syntax). The detector tokenizes everywhere in the source. Fix: when scanning a `.md`/`.markdown` file for template-family directives, exclude content inside triple-backtick fences AND inline-code spans before running the matcher. Pairs with V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE (closed) — recurrence at the field-emission axis on a different corpus.
 
 #### Q8c — accepted (P0 — heuristic-emission / reason-severity disagreement)
 
