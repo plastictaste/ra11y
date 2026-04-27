@@ -177,7 +177,16 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
     });
     const bareDetails = bare.warningsDetails.response_token_budget_truncated;
     expect(bareDetails).toBeDefined();
-    expect(Object.keys(bareDetails ?? {})).toEqual(["requestedLimit", "effectiveLimit", "reason"]);
+    // `sortOrder` is mandatory whenever the density cap fires (always
+    // present alongside `reason`) so the agent's page-walk strategy
+    // after a truncation is informed; the contributor triple stays
+    // present-when-meaningful and is absent on this branch.
+    expect(Object.keys(bareDetails ?? {})).toEqual([
+      "requestedLimit",
+      "effectiveLimit",
+      "reason",
+      "sortOrder",
+    ]);
 
     // With an unambiguous winner the triple appears alongside the
     // request/effective numbers.

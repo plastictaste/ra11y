@@ -369,6 +369,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
           requestedLimit: 50,
           effectiveLimit: 1,
           reason: "token_density",
+          sortOrder: "alphabetical-by-path",
         },
       },
       nextStep: "Call suggest_fix on the first finding.",

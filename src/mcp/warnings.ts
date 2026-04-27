@@ -1158,6 +1158,22 @@ export interface ScanWarningDetails {
    *   REQUEST-VS-EFFECTIVE: the shape mirrors the top-level
    *   `pageClipReason` on the paginated-response surface so an agent
    *   reading either field gets the same vocabulary.
+   * - `sortOrder` names the order the surviving `files[]` entries
+   *   appear in. Without it, an agent paginating after a density-cap
+   *   clip cannot tell whether the dropped tail follows alphabetical /
+   *   finding-density / severity order — and the page-walk strategy
+   *   depends on the answer. Always `"alphabetical-by-path"` today:
+   *   `discoverFiles` returns paths in `localeCompare` order
+   *   (`src/input/discover.ts`), `groupViolationsByFile` re-sorts the
+   *   per-file entries with `localeCompare`
+   *   (`src/mcp/tools-helpers.ts`), the paginator slices that ordered
+   *   list (`paginateFiles` in `tool-scan-project.ts`), and the
+   *   density cap drops trailing entries (`applyTokenBudget` in
+   *   `token-budget.ts`) — preserving alphabetical order across the
+   *   chain. The field is a literal-token enum so a future shape that
+   *   sorts by finding density or severity can extend the union
+   *   without re-shaping existing consumers; today only the one token
+   *   is honest.
    *
    * Both counts are raw, not parameters — the `limit` kwarg on
    * `scan_project` is clamped and resolved before the guard sees it,
@@ -1192,6 +1208,7 @@ export interface ScanWarningDetails {
     readonly requestedLimit: number;
     readonly effectiveLimit: number;
     readonly reason: "token_density";
+    readonly sortOrder: "alphabetical-by-path";
     readonly topContributorRule?: string;
     readonly topContributorByteCount?: number;
     readonly dominantContributor?:
@@ -3180,6 +3197,20 @@ export function tokenBudgetTruncatedDetailsField(args: {
         // use the same vocabulary on either surface. Q-SHARED-LIMIT-
         // REQUEST-VS-EFFECTIVE.
         reason: "token_density" as const,
+        // The surviving `files[]` are alphabetical-by-path:
+        // `discoverFiles` sorts via `localeCompare`,
+        // `groupViolationsByFile` re-sorts via `localeCompare` in
+        // `tools-helpers.ts`, `paginateFiles` slices that ordered list,
+        // and `applyTokenBudget` drops trailing entries — so the
+        // dropped tail also sits at the alphabetical-by-path tail. An
+        // agent paginating via `nextOffset` (or re-scoping after a
+        // truncation) needs this ordering pinned to choose its
+        // page-walk strategy honestly; without it the agent has to
+        // guess between alphabetical / finding-density / severity
+        // orders. Mandatory whenever the density cap fires; the field
+        // is a literal-token enum so future sort orders extend the
+        // union without re-shaping existing consumers.
+        sortOrder: "alphabetical-by-path" as const,
         // present-when-meaningful
         // top-contributor triple. Omitted entirely when the analyzer
         // could not pick a single winner (ties, no findings) so the

@@ -1449,16 +1449,55 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
     // field is always present so consumers branching on either the
     // top-level `pageClipReason` or this `warningsDetails` reason use
     // the same enum.
+    //
+    // `sortOrder` is mandatory whenever the density cap fires — without
+    // it the agent paginating via `nextOffset` (or re-scoping after a
+    // truncation) cannot choose a page-walk strategy honestly. The
+    // surviving `files[]` are alphabetical-by-path because
+    // `discoverFiles` + `groupViolationsByFile` both sort by
+    // `localeCompare` and the density cap drops trailing entries.
     expect(out.warningsDetails.response_token_budget_truncated).toEqual({
       requestedLimit: 50,
       effectiveLimit: 10,
       reason: "token_density",
+      sortOrder: "alphabetical-by-path",
     });
     // Shape: `warningsDetails` is the only top-level key — the
     // fragment is designed to spread directly into a response body
     // alongside `warnings: [...]` without fighting object-spread
     // semantics.
     expect(Object.keys(out)).toEqual(["warningsDetails"]);
+  });
+
+  it("`response_token_budget_truncated` payload always carries `sortOrder: 'alphabetical-by-path'` so a paginating agent's page-walk strategy is informed", () => {
+    // Mandatory-field invariant: agents paginating after a density-cap
+    // truncation depend on the sort order of the surviving `files[]`
+    // entries to decide their page-walk strategy (alphabetical
+    // resumption via `nextOffset` vs. re-scoping by directory vs.
+    // re-scanning under a tighter `cwd`). Without `sortOrder`, the
+    // agent cannot tell whether the dropped tail follows alphabetical /
+    // finding-density / severity order. The field is present on every
+    // density-cap emission and must NOT be conditional-spread away.
+    //
+    // Repeats the assertion across the contributor-triple-present
+    // branch + the contributor-absent branch so the field rides on
+    // BOTH conditional shapes (the present-when-meaningful contributor
+    // fields don't gate the always-on sortOrder).
+    const withoutContributor = tokenBudgetTruncatedDetailsField({
+      requestedLimit: 18,
+      effectiveLimit: 1,
+    }).warningsDetails.response_token_budget_truncated;
+    expect(withoutContributor?.sortOrder).toBe("alphabetical-by-path");
+    const withContributor = tokenBudgetTruncatedDetailsField({
+      requestedLimit: 50,
+      effectiveLimit: 12,
+      topContributor: {
+        topContributorRule: "color/contrast-minimum",
+        topContributorByteCount: 4321,
+        dominantContributor: "fix_description",
+      },
+    }).warningsDetails.response_token_budget_truncated;
+    expect(withContributor?.sortOrder).toBe("alphabetical-by-path");
   });
 
   it("warnings-details schema discipline — every fired code has a corresponding key in `warningsDetails` (rich payload OR empty `{}` for binary codes OR truncation sentinel for payload-bearing codes without inputs)", () => {

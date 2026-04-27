@@ -163,6 +163,7 @@ describe("oversizeEnvelopeWarningsField", () => {
           requestedLimit: 50,
           effectiveLimit: 1,
           reason: "token_density",
+          sortOrder: "alphabetical-by-path",
         },
       },
     });
