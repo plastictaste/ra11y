@@ -17,7 +17,7 @@ Closing an item = deleting its `- [ ] **<ID>**` line in the same commit that lan
 
 Tracks below are independent. `/continue` picks the next open item from each of up to 3 active tracks per turn and dispatches them in parallel (details in `.claude/skills/continue/SKILL.md`). Within a track, items run in order — some tracks have sequencing; cross-track work is always parallelizable.
 
-Active tracks: **D** (docs/release) · **M** (MCP hardening) · **R** (rules + review candidates) · **F** (real-world fixtures) · **S** (MCP sampling) · **E** (ecosystem/evals) · **Q2** (agent-consumer feedback round 3) · **Q3** (design-system field test) · **Q4** (static-site-generator field test) · **Q5** (vanilla HTML/CSS/JS field test) · **Q6** (bulk-template field test) · **Q7** (multi-repo OSS field test). Track Q (rounds 1-2) closed 2026-04-17.
+Active tracks: **Q4** (static-site-generator field test) · **Q5** (vanilla HTML/CSS/JS field test) · **Q6** (bulk-template field test) · **Q7** (multi-repo OSS field test) · **Q8b** (agent-consumer round, 2026-04-25 second pass) · **Q8c** (agent-consumer round, 2026-04-25 third pass) · **Q9** (multi-corpus AI-first sweep 2026-04-25 evening) · **Q10** (multi-corpus AI-first sweep 2026-04-26) · **Q11** (multi-corpus AI-first sweep 2026-04-26 round 2) · **Q12** (multi-corpus AI-first sweep 2026-04-26 round 3) · **V** (v1.0.0 readiness). Tracks **D**/**M**/**R**/**F**/**S**/**E** retired 2026-04-26 (no open items). Tracks Q (rounds 1-2), Q2, Q3, Q8 closed.
 
 Staged tracks: **C** (conformance-claim gaps — v0.3.0 foundation + v1.0.0 capstone). Tracks S and E were promoted on 2026-04-17 after the user directed "go all the way without releasing until finalized" — M/R/F are complete, so the remaining pre-release work spans S and E. ADR 0005 §Follow-up work still applies to the speculative tool choices inside S; foundation items (sampling.ts, capability, prompt library, KB docs) are safe to build.
 
@@ -246,8 +246,6 @@ Deduped against Q3 where applicable. Items marked `[dup-Q3]` overlap and should 
 
 ### v0.3.0 — accepted (P2)
 
-- [ ] **Q4-LABELS-REQUIRED-VS-LABEL-ADJACENT-OVERLAP** (follow-up from Q5-LABEL-ADJACENT-UNASSOCIATED) The new `forms/label-adjacent-unassociated` rule can fire alongside `forms/labels-required` on the same input when there is an adjacent `<label>` without `for=`. Both emissions are honest per AI-first surface-don't-suppress doctrine, but field use may reveal whether the overlap is readable or noisy. Observation path: if field reports cite "same input flagged twice," consider de-overlapping by making `labels-required` silent when a label sibling exists (and let `label-adjacent-unassociated` be the canonical voice for that shape). Do NOT preemptively suppress — wait for evidence that the dual-emission confuses consumers. WCAG 1.3.1 / 3.3.2 / 4.1.2. Cross-ref commits 5fdc228+a3f04657.
-
 ### Considered and rejected (per CLAUDE.md §1)
 
 - **Auto-suppress React-specific rules on non-React projects** → rejected per §1 "Labeled buckets are suppression too." The rules correctly no-op when `filesEligible: 0`; the agent sees that in `perRuleCoverage`. Don't filter — surface. Q4-RULES-EVALUATED-COMPOSITE is the right fix (make the empty-eligible-set state legible at the headline level, keep the per-rule data honest).
@@ -379,7 +377,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans: response-token-budget over
 
 ### v0.2.0 — accepted (P0 — heuristic-mislabeled meta sub-fields)
 
-- [~] **Q8-CSS-COVERAGE-SCSS-ELIGIBILITY** `perRuleCoverage` CSS eligibility check requires `.css` extension when the `parser='css'` registry already accepts `.scss`/`.sass`/`.less`. On scss-only file scans the per-rule `filesEligible` reads `0` and the rule reports "no css files." Fix: derive eligibility from the parser registry, not a hard-coded extension list, so scss-only scans report honest CSS coverage. Pairs with V1-RULE-CONTRAST-MINIMUM-SCSS-ELIGIBILITY (closed for the contrast rules). — classification_mismatch_not_reproducible (verified by general-purpose specialist 2026-04-26): per-rule eligibility for `.scss` files already passes through `EXTENSION_ALIASES` in src/utils/path.ts:107-118 (.scss → [.css], .less → [.css]) used by `extensionMatches` in `runRulesForFile`/`bumpTracker`. Probe via runScan() with parseScss-routed `.scss` files showed `text-spacing` (declares only `[".css"]`) reports `filesEligible: 1, filesEvaluated: 1, coverageConfidence: "high"` — premise false against current main. If field-report corpus was `.sass` indented syntax (no parser), that's a parser-coverage gap not an eligibility gap; file fresh entry framed as parser widening.
 
 ### v0.2.0 — accepted (P0 — heuristic-emission / reason-severity disagreement)
 
