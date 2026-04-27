@@ -208,11 +208,13 @@ function tallyResolvableBranches(body: ResolvableScanBody): {
   readonly groupRef: number;
 } {
   const fixDescriptions = body.referenceGuide?.fixDescriptions ?? {};
+  const counts: Record<string, number> = {
+    "fix-omitted": 0,
+    inline: 0,
+    "per-finding-ref": 0,
+    "group-ref": 0,
+  };
   let total = 0;
-  let fixOmitted = 0;
-  let inline = 0;
-  let perFindingRef = 0;
-  let groupRef = 0;
   for (const file of body.files) {
     for (const f of file.findings) {
       total += 1;
@@ -221,13 +223,16 @@ function tallyResolvableBranches(body: ResolvableScanBody): {
         branch,
         `finding ${f.findingId} (rule ${f.ruleId}) at ${file.path} carried a fix object with no resolvable description — expected inline, per-finding-ref, group-ref, or fix-omitted; got null (silent-miss shape)`,
       ).not.toBeNull();
-      if (branch === "fix-omitted") fixOmitted += 1;
-      else if (branch === "inline") inline += 1;
-      else if (branch === "per-finding-ref") perFindingRef += 1;
-      else if (branch === "group-ref") groupRef += 1;
+      if (branch !== null) counts[branch] = (counts[branch] ?? 0) + 1;
     }
   }
-  return { total, fixOmitted, inline, perFindingRef, groupRef };
+  return {
+    total,
+    fixOmitted: counts["fix-omitted"] ?? 0,
+    inline: counts.inline ?? 0,
+    perFindingRef: counts["per-finding-ref"] ?? 0,
+    groupRef: counts["group-ref"] ?? 0,
+  };
 }
 
 describe("MCP scan response: every finding's fix.description is resolvable", () => {
