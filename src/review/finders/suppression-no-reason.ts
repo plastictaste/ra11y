@@ -14,8 +14,8 @@
  * reviewing a PR can propose a reason (or decide the suppression is
  * wrong and remove it).
  *
- * The finder also covers the JSDoc `@ra11y-intentional` tag variant
- * (Q2R2-INTENTIONAL). Semantics differ slightly: a bare
+ * The finder also covers the JSDoc `@ra11y-intentional` tag variant.
+ * Semantics differ slightly: a bare
  * `@ra11y-intentional` is NOT honored (no disableMap entry is created)
  * — the reason slot is load-bearing for that tag — so the candidate's
  * `reason` text invites the author to *add* the reason rather than

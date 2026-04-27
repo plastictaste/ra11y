@@ -30,7 +30,7 @@
  *      expose the same residual shape so downstream consumers (the
  *      TSX scanner today, any future token-walking finder) cannot
  *      drift on whether prose backticks are visible. Mirrors the
- *      Q6/Q7 iframe-finder lineage (V1-CHECKLIST-IFRAME-FINDER-MDX-
+ * Q6/Q7 iframe-finder lineage (-
  *      BACKTICKS).
  *   4. Strip top-level `import` / `export` statements. These are ESM
  *      module wiring — they can contain `<` characters (`Array<T>` in

@@ -127,7 +127,7 @@ const PATH_MOVE_PATTERN = /addEventListener\s*\(\s*['"`](touchmove|pointermove)[
  * the token can't bleed into unrelated identifiers like `panels`,
  * `panelSlide`, `span`, `planet`, or `expanded` (the prior left-only
  * boundary was the substring-match bug, see backlog
- * Q5-POINTER-GESTURES-SUBSTRING-FALSE-POSITIVE).
+ *).
  */
 const NAME_TOKENS = ["swipe", "pan", "pinch", "rotate"] as const;
 type NameToken = (typeof NAME_TOKENS)[number];
@@ -416,7 +416,7 @@ function findPathBasedPairs(ctx: RuleContext, out: ReviewCandidate[]): void {
  * strong enough to act on — it was firing on things like
  * `const panels = document.querySelectorAll(".panel")` where `pan`
  * is a coincidental substring. See backlog entry
- * `Q5-POINTER-GESTURES-SUBSTRING-FALSE-POSITIVE`.
+ * ``.
  */
 function findNamePatternHits(ctx: RuleContext, out: ReviewCandidate[]): void {
   if (!hasCompanionSignal(ctx.source)) return;

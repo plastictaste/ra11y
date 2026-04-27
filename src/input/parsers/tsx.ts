@@ -7,8 +7,8 @@
  * drive the first wave of a11y rules (alt-text, link text, lang
  * attribute, etc.) that only need JSX structure, not full type info.
  *
- * Phase 5 replaces this with a TypeScript-compiler-API-backed parser
- * that pools the `ts` import. The API shape stays the same.
+ * A future iteration will replace this with a TypeScript-compiler-API-backed
+ * parser that pools the `ts` import. The API shape stays the same.
  *
  * Implementation strategy: we treat JSX like HTML but with {expression}
  * children tracked separately. We skip over JS/TS code outside JSX,
@@ -126,10 +126,9 @@ class TsxParser {
    * a minified `.js` whose `r.length<b.length` parses as `<b.length>` open
    * tag once a stray JSX-import signal flipped `#jsxEnabled` back on — the
    * reason text rewrites to name the false-JSX context honestly instead of
-   * blaming the author for "Unclosed JSX element <r.length>"
-   * (V1-JS-PARSE-ERROR-REASON-MISLEADING). The fragment is preserved
-   * verbatim in both shapes so grep against historical reports still
-   * matches.
+   * blaming the author for "Unclosed JSX element <r.length>".
+   * The fragment is preserved verbatim in both shapes so grep against
+   * historical reports still matches.
    */
   readonly #nonJsxExtension: boolean;
 
@@ -517,8 +516,7 @@ class TsxParser {
    * on a `<` that was almost certainly a JS comparison operator, and an
    * agent reading the report should fix the parser routing rather than
    * "fix the JSX." The original `<tagName>` fragment is preserved so
-   * grep against earlier reports still matches
-   * (V1-JS-PARSE-ERROR-REASON-MISLEADING).
+   * grep against earlier reports still matches.
    */
   #formatStructuralJsxError(kind: "Unterminated" | "Unclosed", tagName: string): string {
     if (!this.#nonJsxExtension) return `${kind} JSX element <${tagName}>`;
@@ -695,7 +693,7 @@ function hasJsxImportSignal(source: string): boolean {
  * `#formatStructuralJsxError` reason rewrite so the
  * `partialParseFiles[].reason` an agent reads on a `.js`/`.ts`/`.css`/
  * etc. file names the false-JSX context honestly instead of pretending
- * the author left a JSX tag unclosed (V1-JS-PARSE-ERROR-REASON-MISLEADING).
+ * the author left a JSX tag unclosed.
  *
  * Returns `false` when `filePath` is undefined — back-compat for the
  * many call sites (test helpers, MCP session, apply-fix internals) that

@@ -372,7 +372,7 @@ export const STATEMENT_STRIP_AT_RULES: ReadonlySet<string> = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// SCSS unresolved-variable detection (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT)
+// SCSS unresolved-variable detection
 // ---------------------------------------------------------------------------
 
 /**
@@ -408,7 +408,6 @@ const RESOLVED_COLOR_LITERAL_RE = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\s*\(|\b
 /**
  * Honest "did SCSS variable substitution produce any usable color
  * literal in this file's CSS output?" predicate
- * (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT).
  *
  * Returns `true` when the source declares at least one `$var: …`
  * AND the resulting CSS AST carries no literal-color value across all

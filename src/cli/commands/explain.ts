@@ -9,7 +9,7 @@ import { ExitCode } from "../exit-codes.ts";
 import type { ScanExit } from "./scan.ts";
 
 export function runExplain(ruleId: string, registry: Registry = createBuiltinRegistry()): ScanExit {
-  // V1-INFRA-RULE-ID-ALIAS-TABLE: accept the old ID of a renamed rule
+  // accept the old ID of a renamed rule
   // and look up the canonical form in the registry. The `deprecated`
   // record stays visible in stderr so humans reading the CLI output
   // see the same `deprecated_rule_id:<old>:<new>` signal MCP agents

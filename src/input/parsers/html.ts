@@ -15,8 +15,7 @@
  *
  * Out of scope for v0.0.x: CDATA outside foreign content, full error
  * recovery per the HTML5 parsing algorithm, XML processing instructions.
- * The full HTML5 spec parsing lands in Phase 5 polish, driven by fuzz
- * tests.
+ * The full HTML5 spec parsing arrives later, driven by fuzz tests.
  *
  * Recoverable-error predicate (what surfaces in
  * `analysisCoverage.partialParseFiles[].reason`):

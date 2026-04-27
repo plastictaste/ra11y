@@ -45,7 +45,7 @@
  * (`src/output/agent-response/`) depend on it; co-locating it under
  * `src/mcp/` would force `src/output/` to import from `src/mcp/`,
  * inverting the formatter→engine→shared-utils direction the cycle
- * guard enforces (V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT).
+ * guard enforces.
  */
 
 export interface WidenInput {

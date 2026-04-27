@@ -143,7 +143,7 @@ export function parseInlineDisables(source: string): DisableMap {
  * read `declarations` instead of re-parsing the source.
  *
  * Rule-ID tokens flow through `resolveRuleId` so an old ID still under
- * an active alias (V1-INFRA-RULE-ID-ALIAS-TABLE) keeps suppressing
+ * an active alias keeps suppressing
  * findings on the new ID. The original user-typed token stays in
  * `declarations[].ruleIds` so audit surfaces show the source verbatim;
  * only the `disableMap` (which the runtime consults via

@@ -326,7 +326,7 @@ export interface BuildConformanceStatementInputs {
    * disagree, the caller wins ({@link filesCount} is source of truth);
    * the builder does not reconcile.
    *
-   * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: callers compute this as
+   * callers compute this as
    * the post-skip count (parsed minus build-artifact-flagged) so the
    * claim's headline never sums categorically different file kinds.
    * The companion {@link skippedFilesCount} carries the skipped count.
@@ -334,8 +334,8 @@ export interface BuildConformanceStatementInputs {
   readonly filesCount?: number;
   /**
    * Files the caller parsed but the build-artifact classifier flagged
-   * — surfaces as `statement.scope.skippedFiles` per
-   * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK. Present-when-meaningful:
+   * — surfaces as `statement.scope.skippedFiles` per.
+   * Present-when-meaningful:
    * an `undefined` or empty list omits the field entirely. The tool
    * layer is responsible for the array's size — the builder mirrors
    * what's passed.

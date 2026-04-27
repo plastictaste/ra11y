@@ -45,7 +45,7 @@
  * predicate, `manual-applicability.ts`, sees no `<video>`/`<audio>`)
  * AND with iframe-grounded candidates for the very criteria the bucket
  * marks irrelevant. That dual signal is the inconsistency callers
- * reported as `V1-LIKELY-IRRELEVANT-INCONSISTENT`.
+ * reported as ``.
  *
  * 1.2.2 (captions prerecorded) IS automatable for iframe-embedded
  * media — the rule `media/video-captions-missing` fires a warning on

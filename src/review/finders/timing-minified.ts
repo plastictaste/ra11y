@@ -9,7 +9,7 @@
  * and the per-match column values are invisible to the agent reading
  * a compact display ("bootstrap.min.js:6 col 1" eight times over on
  * the same six-line minified bundle is the canonical field-report
- * shape — Q6-MINIFIED-FILE-SNIPPET-COLUMN-ENRICHMENT).
+ * shape).
  *
  * This module supplies {@link minifiedLocatorClause}, which the
  * finder appends to its reason text in that narrow case. The clause

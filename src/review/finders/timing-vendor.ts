@@ -18,7 +18,7 @@
  *     file. Strictly additive: candidate stays at the same
  *     confidence, every WCAG criterion stays attached, no severity
  *     change. The dedicated content-level vendor-banner detector
- *     (V1-VENDOR-LIBRARY-BANNER-DETECTION) is not yet shipped — once
+ * is not yet shipped — once
  *     it lands as a project-wide primitive this filename probe should
  *     defer to it.
  *

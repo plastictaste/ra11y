@@ -24,8 +24,8 @@
  *
  * The runtime import of Config from ../types/config.ts keeps this
  * a pure identity — no validation happens here. Schema errors
- * surface when the loader calls validateConfig() (TODO: Phase 14
- * adds a schema validator; for v0.0.x we trust the types).
+ * surface when the loader calls validateConfig() (TODO: a schema
+ * validator will arrive later; for v0.0.x we trust the types).
  */
 
 import type { Config } from "../types/config.ts";

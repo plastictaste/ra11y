@@ -42,7 +42,7 @@
  *     hint is additive context the agent uses to dismiss in one read.
  *     Per ai-first-consumer.md we explicitly do NOT silence on this
  *     signal — the dedicated content-level vendor-banner detector
- *     (V1-VENDOR-LIBRARY-BANNER-DETECTION) is not yet shipped and the
+ * is not yet shipped and the
  *     filename match is a heuristic. Annotation, not suppression.
  */
 
@@ -343,14 +343,14 @@ function parseDurationLiteralMs(duration: string): number | "non-literal" {
  *      existing assertions on `coreReason`/`PAUSE_STOP_HIDE_PREFIX`
  *      keep passing.
  *   4. Minified-file locator clause suffixed when the file is
- *      minified (Q6-MINIFIED-FILE-SNIPPET-COLUMN-ENRICHMENT) — the
+ * minified — the
  *      cited `line:column` pointer alone is unhelpful on a single-
  *      line file, so this clause adds the byte-column offset and a
  *      ~80-char context window so the agent can locate the specific
  *      call-site among N same-line matches.
  *   5. Vendor-bundle filename clause suffixed when the cited file's
  *      basename matches a canonical vendor library bundle name
- *      (V1-FINDER-2.2.1-SETTIMEOUT-VENDOR-FILE-GATE). The clause
+ * (.2.1-SETTIMEOUT-VENDOR-FILE-GATE). The clause
  *      surfaces the dismissal hint inline so the agent can choose to
  *      open the file or move on after one read; per ai-first-consumer
  *      doctrine the candidate is NEVER suppressed on this signal.

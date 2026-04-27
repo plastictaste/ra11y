@@ -118,7 +118,7 @@ function findHtmlCandidates(
     const visibleText = visibleHtmlText(el);
     // Empty body, no presentational child, no other non-color signal —
     // color cannot be the sole indicator of *nothing*. Drop the
-    // candidate per V1-FINDER-1.4.1-COLOR-EMPTY-BODY-FALSE-POSITIVE
+    // candidate per.4.1-COLOR-EMPTY-BODY-FALSE-POSITIVE
     // (validation-message placeholder pattern: <p class="help-block
     // text-danger"></p>). The earlier non-color-signal check has
     // already cleared elements with <svg>/<img>/<i> children, so an
@@ -198,9 +198,9 @@ function jsxElementHasNonColorSignal(el: JsxElement): boolean {
  * <script>, <style>, <noscript>, <template>, and any element with
  * `aria-hidden="true"`. Returns the trimmed concatenation.
  *
- * This is the body-content gate driving V1-FINDER-1.4.1-COLOR-EMPTY-
+ * This is the body-content gate driving.4.1-COLOR-EMPTY-
  * BODY-FALSE-POSITIVE (zero-length body must not fire) and the body-
- * read input to the reason text per V1-FINDER-1.4.1-COLOR-READ-
+ * read input to the reason text per.4.1-COLOR-READ-
  * ELEMENT-BODY (reason mentions the actual visible text).
  */
 function visibleHtmlText(element: HtmlElement): string {
@@ -286,7 +286,7 @@ function emit(
   // the agent can see what color may be styling without re-reading the
   // file just to triage the candidate.
   //
-  // Per V1-FINDER-1.4.1-COLOR-READ-ELEMENT-BODY: the reason text must
+  // Per.4.1-COLOR-READ-ELEMENT-BODY: the reason text must
   // reflect the actual content, not claim "no visible text."
   const echoed = collapseWhitespace(visibleText);
   const trimmed =
@@ -301,7 +301,7 @@ function emit(
   // with one read on the common case, and still investigates when the
   // prose framing is too generic ("Failed" alone vs. "Upload failed:
   // network error"). Per AI-first doctrine: finders surface; agents
-  // dismiss. The rule-side closure (Q7-RULE-COLOR-TEXT-CONTAINMENT-
+  // dismiss. The rule-side closure (-
   // CHECK) suppresses on this branch instead, because the rule emits
   // at `error` severity and the doctrine "reason text and severity
   // must agree" forbids a self-contradicting reason; the finder

@@ -87,7 +87,7 @@ function renderMarkdownHeader(statement: ConformanceStatement): readonly string[
 
 /**
  * `## Scope` — root, file count, optional commit hash, optional config
- * snapshot. V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: when the scan
+ * snapshot.: when the scan
  * partitioned files into evaluated + build-artifact-flagged, the
  * skipped count surfaces alongside `Files scanned` so a procurement
  * reviewer reading the markdown sees the post-skip count is the

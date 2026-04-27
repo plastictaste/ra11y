@@ -3,7 +3,7 @@
  * manifest, build-artifact-skipped manifest, scan root, and per-claim
  * commit/config anchors. Extracted from `conformance.ts` so that file
  * stays under the 500-effective-line budget after the
- * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK split surfaced
+ * split surfaced
  * `skippedFiles` / `skippedFilesCount` as siblings of `files` /
  * `filesCount`. The renderer module (`conformance-markdown.ts`)
  * imports `ConformanceStatementScope` from here transitively via
@@ -35,7 +35,7 @@ export interface SkippedConformanceFile {
  * config snapshot, and process definitions; the commit/config fields
  * are optional and follow the AI-first consumer model's
  * present-when-meaningful rule. The signing flow
- * (V1-CERT-STATEMENT-SIGN) is the call site that wires the commit
+ * is the call site that wires the commit
  * hash through.
  */
 export interface ConformanceStatementScope {
@@ -47,7 +47,7 @@ export interface ConformanceStatementScope {
    * stays honest even when {@link files} is capped or elided for
    * response-size reasons.
    *
-   * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: this counter reflects
+   * this counter reflects
    * EVALUATED files only — files the build-artifact classifier flagged
    * (minified bundles, hashed vendors, sourcemap-paired output) are
    * excluded from the claim and surface separately on
@@ -85,7 +85,7 @@ export interface ConformanceStatementScope {
    * classification. Present whenever it would be non-zero; omitted
    * (alongside {@link skippedFiles}) when no file was skipped.
    *
-   * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: split from
+   * split from
    * {@link filesCount} so a top-level "what did this claim cover?"
    * count never sums evaluated + skipped. Composite headline counts
    * are dishonest at the procurement-surface layer too.
@@ -129,7 +129,7 @@ export interface ConformanceScopeInputs {
  * present-when-meaningful — empty strings and empty objects map to
  * field omission, not sentinel values.
  *
- * V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: `skippedFiles` /
+ * `skippedFiles` /
  * `skippedFilesCount` are paired present-when-meaningful — both
  * omitted when zero files were skipped, both populated when at least
  * one build-artifact-flagged file was excluded from the claim.
