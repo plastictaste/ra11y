@@ -44,6 +44,10 @@ import {
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import {
+  collectHtmlAdjacentUnassociatedControls,
+  collectJsxAdjacentUnassociatedControls,
+} from "./_label-adjacency.ts";
+import {
   buildSiblingCollapsedMessage,
   collectFailingHtmlControls,
   computeHtmlCollapseDecisions,
@@ -128,7 +132,12 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   const labelFors = collectLabelFors(doc);
   const implicitLabelIds = collectImplicitlyLabeledIds(doc);
-  checkHtmlNativeControls(doc, labelFors, implicitLabelIds, emit);
+  // Defer to `forms/label-adjacent-unassociated` on the canonical
+  // bare-label-then-input shape. That rule speaks more specifically and
+  // ships a mechanical fix; surfacing both findings doubled the count
+  // for one defect with one fix path.
+  const adjacentlyHandled = collectHtmlAdjacentUnassociatedControls(doc);
+  checkHtmlNativeControls(doc, labelFors, implicitLabelIds, adjacentlyHandled, emit);
   checkHtmlEditableHosts(doc, labelFors, implicitLabelIds, emit);
 }
 
@@ -136,6 +145,7 @@ function checkHtmlNativeControls(
   doc: HtmlDocument,
   labelFors: ReadonlySet<string>,
   implicitLabelIds: ReadonlySet<string>,
+  adjacentlyHandled: ReadonlySet<HtmlElement>,
   emit: Emit,
 ): void {
   // Collapse decisions are computed per-parent over the failing-control
@@ -143,9 +153,16 @@ function checkHtmlNativeControls(
   // fingerprint AND ≥3 siblings → emit ONE finding with
   // `siblingInstances`; otherwise emit each individually as before.
   // The `consumed` set marks elements rolled into a collapsed finding
-  // so the per-tag loop below skips them.
+  // so the per-tag loop below skips them. Adjacent-unassociated cases
+  // are excluded from the failing set so neither the collapse pass nor
+  // the per-element emit path picks them up — they're owned by the
+  // sibling rule.
   const isFailing = (el: HtmlElement): boolean =>
-    !(isExcludedHtmlControl(el) || htmlHasLabel(el, labelFors, implicitLabelIds));
+    !(
+      isExcludedHtmlControl(el) ||
+      htmlHasLabel(el, labelFors, implicitLabelIds) ||
+      adjacentlyHandled.has(el)
+    );
   const failing = collectFailingHtmlControls(doc, LABELABLE_TAGS, isFailing, walkHtmlElements);
   const { primary, consumed } = computeHtmlCollapseDecisions(failing);
 
@@ -296,6 +313,9 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
   // inside label) handled by JSX element children structure.
   const labelHtmlFors = collectJsxLabelHtmlFors(module);
   const implicitIds = collectJsxImplicitlyLabeledControls(module, wrappersForInput);
+  // Defer to `forms/label-adjacent-unassociated` on the canonical
+  // bare-label-then-input shape — see the HTML branch comment.
+  const adjacentlyHandled = collectJsxAdjacentUnassociatedControls(module);
 
   // Pre-pass: detect collapsible sibling clusters among direct-child
   // intrinsic `<input>` / `<select>` / `<textarea>` failing controls.
@@ -308,6 +328,7 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
   const { primary, consumed } = computeJsxCollapseDecisions(module, LABELABLE_TAGS, (el) => {
     if (isExcludedJsxControl(el)) return false;
     if (jsxHasLabel(el, labelHtmlFors, implicitIds)) return false;
+    if (adjacentlyHandled.has(el)) return false;
     return true;
   });
 
@@ -317,12 +338,21 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
     wrappersForInput,
     labelHtmlFors,
     implicitIds,
+    adjacentlyHandled,
     seen,
     primary,
     consumed,
     emit,
   );
-  checkJsxSelectsAndTextareas(module, labelHtmlFors, implicitIds, primary, consumed, emit);
+  checkJsxSelectsAndTextareas(
+    module,
+    labelHtmlFors,
+    implicitIds,
+    adjacentlyHandled,
+    primary,
+    consumed,
+    emit,
+  );
   checkJsxEditableHosts(module, labelHtmlFors, implicitIds, seen, emit);
 }
 
@@ -334,6 +364,7 @@ function checkJsxInputs(
   wrappersForInput: ReadonlySet<string>,
   labelHtmlFors: ReadonlySet<string>,
   implicitIds: ReadonlySet<number>,
+  adjacentlyHandled: ReadonlySet<JsxElement>,
   seen: Set<JsxElement>,
   primary: ReadonlyMap<JsxElement, readonly SiblingInstance[]>,
   consumed: ReadonlySet<JsxElement>,
@@ -349,6 +380,7 @@ function checkJsxInputs(
     // `<Button as="input">` still excludes it.
     if (isExcludedJsxControl(el)) continue;
     if (jsxHasLabel(el, labelHtmlFors, implicitIds)) continue;
+    if (adjacentlyHandled.has(el)) continue;
     if (consumed.has(el)) continue;
     const siblings = primary.get(el);
     emit(buildJsxViolation(el, siblings));
@@ -363,6 +395,7 @@ function checkJsxSelectsAndTextareas(
   module: TsxModule,
   labelHtmlFors: ReadonlySet<string>,
   implicitIds: ReadonlySet<number>,
+  adjacentlyHandled: ReadonlySet<JsxElement>,
   primary: ReadonlyMap<JsxElement, readonly SiblingInstance[]>,
   consumed: ReadonlySet<JsxElement>,
   emit: Emit,
@@ -370,6 +403,7 @@ function checkJsxSelectsAndTextareas(
   for (const tag of ["select", "textarea"] as const) {
     for (const el of findJsxElementsByTag(module, tag)) {
       if (jsxHasLabel(el, labelHtmlFors, implicitIds)) continue;
+      if (adjacentlyHandled.has(el)) continue;
       if (consumed.has(el)) continue;
       const siblings = primary.get(el);
       emit(buildJsxViolation(el, siblings));

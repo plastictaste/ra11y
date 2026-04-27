@@ -395,4 +395,20 @@ describe("rule forms/label-adjacent-unassociated", () => {
       expect(violations).toHaveLength(0);
     });
   });
+
+  // Predicate ownership: this rule owns the bare-label-then-input
+  // shape; `forms/labels-required` defers to it via the shared
+  // adjacency helper. Pinning the fire here guards the contract from
+  // either side regressing — if this rule stops firing on the canonical
+  // shape, `labels-required` would also stay silent (because the
+  // suppression set still excludes the control), and the agent would
+  // see ZERO findings on a real defect.
+  describe("predicate ownership against forms/labels-required", () => {
+    it("fires solo on the canonical form-group shape with no id on the input", () => {
+      const html = `<div class="form-group"><label>Email</label><input type="email"></div>`;
+      const violations = runRule(rule, html, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.ruleId).toBe("forms/label-adjacent-unassociated");
+    });
+  });
 });

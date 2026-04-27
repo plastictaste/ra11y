@@ -38,12 +38,14 @@
  *
  * Distinct from `forms/labels-required`. That rule fires whenever an
  * input has no accessible name at all; this one fires specifically on
- * the adjacent-but-unassociated shape. Both may fire on the same input
- * today — the agent sees both findings and the distinct suggestions tell
- * it which lever to pull (add `for=` + `id=`, vs. add a label from
- * scratch). De-overlapping the two rules is tracked as a follow-up;
- * silently suppressing one on this shape would hide the more specific,
- * mechanically-fixable signal.
+ * the adjacent-but-unassociated shape. When this rule's predicate
+ * matches, `labels-required` re-detects it via `_label-adjacency.ts`
+ * and skips emission — the two rules used to dual-fire on the same
+ * `<input>` whose visible-but-unassociated `<label>` is a structural
+ * sibling under the same parent, doubling the count for one defect
+ * with one fix path. The mechanical edits + adjacency evidence on
+ * THIS finding carry the full signal; the agent sees one row, one
+ * fix, and the more specific rule retains its severity.
  *
  * The mechanical edits fire whenever the corresponding open tag is
  * simple enough to rewrite safely (attribute-free `<label>` for the

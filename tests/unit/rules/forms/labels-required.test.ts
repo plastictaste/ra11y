@@ -681,4 +681,97 @@ describe("rule forms/labels-required", () => {
       expect(v[0]?.message).toContain("siblingInstances");
     });
   });
+
+  // Dedup with `forms/label-adjacent-unassociated`. Both rules used to
+  // fire on the same `<input>` whose preceding sibling is a bare
+  // `<label>`. The sibling rule now owns that shape — `labels-required`
+  // recognises the adjacent predicate and stays silent so the agent
+  // sees one finding with one mechanical fix path, not two.
+  describe("does NOT fire when forms/label-adjacent-unassociated owns the case", () => {
+    it("HTML: bare <label> immediately precedes the control under a shared parent", () => {
+      const v = runRule(
+        rule,
+        `<div class="form-group"><label>Email</label><input type="email"></div>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: dedup applies even when the input carries an id (id alone doesn't make it associated)", () => {
+      const v = runRule(rule, `<label>Length</label><input id="length" type="number">`, {
+        filePath: "page.html",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: still fires when the preceding sibling is NOT a label", () => {
+      // No label sibling → adjacency predicate doesn't match → labels-
+      // required keeps emitting on the truly-orphan control.
+      const v = runRule(rule, `<form><span>Heading</span><input type="text"></form>`, {
+        filePath: "page.html",
+      });
+      expect(v).toHaveLength(1);
+    });
+
+    it("HTML: still fires on the first input when only the SECOND has an adjacent label", () => {
+      // The first input has no preceding label sibling — adjacency
+      // doesn't apply to it; labels-required keeps firing. The second
+      // input does have one — adjacency owns it; labels-required stays
+      // silent.
+      const v = runRule(
+        rule,
+        `<form><input type="text"><label>Email</label><input type="email"></form>`,
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+    });
+
+    it("JSX: bare <label> immediately precedes the control", () => {
+      const v = runRule(
+        rule,
+        `const Form = () => (
+          <div className="form-group">
+            <label>Email</label>
+            <input type="email" />
+          </div>
+        );`,
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("JSX: still fires when the <label> already carries htmlFor (adjacency predicate doesn't match)", () => {
+      // Label has htmlFor → adjacency rule doesn't fire → labels-required
+      // also doesn't fire because htmlFor matches a missing id; this
+      // tests that the dedup doesn't mask the real labels-required case.
+      // Here the input has no id, so labels-required SHOULD fire.
+      const v = runRule(
+        rule,
+        `const Form = () => (
+          <div>
+            <label htmlFor="missing">Email</label>
+            <input type="email" />
+          </div>
+        );`,
+      );
+      expect(v).toHaveLength(1);
+    });
+
+    it("JSX: dedup does NOT silence the spread-bearing primitive (info finding survives)", () => {
+      // `label-adjacent-unassociated` skips spread-bearing controls
+      // because the spread may carry an external aria-label/id; the
+      // info-severity primitive finding from `labels-required` must
+      // still surface so component authors see it.
+      const v = runRule(
+        rule,
+        `const Input = (props) => (
+          <div>
+            <label>Email</label>
+            <input {...props} />
+          </div>
+        );`,
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+    });
+  });
 });

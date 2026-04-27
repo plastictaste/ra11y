@@ -58,5 +58,13 @@ export const assertions: FixtureAssertions = {
       ruleId: "forms/label-adjacent-unassociated",
       reasonIncludes: "number-input",
     },
+    // `forms/labels-required` MUST stay silent on every input in this
+    // file. The sibling rule owns the adjacent-unassociated shape and
+    // ships a richer mechanical pair; surfacing both finders for one
+    // defect doubled the count for one fix path. If a future refactor
+    // reverts the dedup, this assertion goes red on every Bootstrap-
+    // template form in the wild — recurring shape, ~12+ instances per
+    // form.
+    { kind: "no-violation", ruleId: "forms/labels-required" },
   ],
 };
