@@ -97,6 +97,15 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     // path's stamping of the same flag in `mergeBudgetedFields`.
     expect(response.truncated).toBe(true);
     expect(response.totalFilesWithFindings).toBe(formatted.files.length);
+    // `filesArrayDropped: true` disambiguates the slim path's empty
+    // `files[]` from the density-cap path's surviving-head shape: both
+    // stamp `truncated: true` but only the slim path drops every per-
+    // file entry. Without this flag an agent cannot tell "envelope
+    // dropped all per-file detail" from "envelope kept some, trimmed
+    // others" by reading the truncation pair alone — the canonical
+    // "Truncated containers must rename or sentinel" silent-distinction
+    // failure mode.
+    expect(response.filesArrayDropped).toBe(true);
     expect(typeof response.nextStep).toBe("string");
     expect((response.nextStep as string).length).toBeGreaterThan(0);
     expect(response.nextStepStructured).toBeDefined();
@@ -372,6 +381,13 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     // `response_token_budget_truncated` OR `response_dropped_files_oversize`
     // is in `warnings[]`, the top-level flag must be `true`.
     expect(response.truncated).toBe(true);
+    // The slim path's empty `files[]` is structurally distinct from
+    // the density-cap path's surviving-head shape: the
+    // `filesArrayDropped: true` sibling flag rides on the slim
+    // envelope even when the density cap fired first, so the agent
+    // can tell which clip pass produced the empty `files[]` without
+    // counting entries.
+    expect(response.filesArrayDropped).toBe(true);
 
     const warnings = response.warnings as readonly string[];
     // Both codes ride together on the wire — the density cap fired
@@ -431,5 +447,10 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     // top-level `truncated` flag rides as `false` — the paginator's
     // negative answer survives untouched ("this IS the full inventory").
     expect(response.truncated).toBe(false);
+    // `filesArrayDropped` is present-when-meaningful — it only rides
+    // on the slim envelope path. On a clean pass-through the field is
+    // absent (not `false`); the agent reads `files[]` directly when
+    // no truncation engaged.
+    expect(response.filesArrayDropped).toBeUndefined();
   });
 });

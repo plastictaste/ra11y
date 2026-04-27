@@ -523,6 +523,26 @@ function buildSlimScanProjectEnvelope(args: {
     // `docs/kb/architecture/ai-first-consumer.md`.
     truncated: true as const,
     totalFilesWithFindings: formatted.files.length,
+    // Disambiguates the slim path's `files: []` from the
+    // density-cap path's `files: [<survivors>]` and from a clean
+    // small-corpus response that legitimately ships fewer files than
+    // the inventory. `truncated: true` + `totalFilesWithFindings`
+    // already imply truncation engaged, but the density-cap path
+    // stamps the same pair while still shipping a non-empty `files[]`
+    // (trimmed tail, surviving head). Without a dedicated flag the
+    // agent cannot tell "envelope dropped every per-file entry" from
+    // "envelope kept some, trimmed others" by reading the truncation
+    // pair alone — both paths look the same until the agent counts
+    // `files[]` and discovers it's empty, which is the
+    // silent-distinction failure mode the
+    // "Truncated containers must rename or sentinel, not retain"
+    // doctrine bullet calls out. Sibling boolean rather than
+    // restructuring `files` into a `{ truncated, droppedCount }`
+    // object — keeps the wire-shape contract for `files` (always an
+    // array) intact for every consumer that already iterates it, and
+    // the count payload already lives on
+    // `warningsDetails.response_dropped_files_oversize.droppedFileCount`.
+    filesArrayDropped: true as const,
     nextStep: SLIM_NEXT_STEP_PROSE,
     nextStepStructured: buildSlimNextStepStructured({
       formatted,
