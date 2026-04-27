@@ -500,6 +500,18 @@ function isTextEquivalentToTitle(text: string, title: string): boolean {
  * does not already convey the title content.
  */
 function buildSuggestion(tag: string, display: string): string {
+  // Anchor-specific path: for <a> elements the title tooltip is almost
+  // always a redundant label (markdown link title syntax, CMS-generated
+  // href+title pairs) rather than a genuine tooltip widget. The fix
+  // direction is removal rather than widget replacement — the link text
+  // already provides the accessible name; adding a custom tooltip or an
+  // aria-label would double-narrate the destination. Deterministic on tag
+  // identity alone (no guessed markdown origin); only fires when the
+  // sole-name-source and title-equals-visible-text gates passed, so the
+  // link text IS present and IS already non-empty.
+  if (tag === "a") {
+    return `Remove the title="${display}" attribute from this <a> — anchor tooltips almost never add information beyond the link text itself, and the dismissability/hoverability requirements of WCAG 1.4.13 make any supplementary title a compliance burden. If the title conveys something the link text doesn't (e.g., a destination warning), incorporate it into the visible link text or a visually-hidden <span> inside the link.`;
+  }
   return `Replace title="${display}" on this <${tag}> with one of: (a) a visible text label inside the element, (b) aria-label="${display}" if a visible label is impractical, or (c) a custom tooltip component that supports Escape-to-dismiss, hover-bridging, and stays visible until the trigger loses focus. The native title attribute remains acceptable on non-interactive elements like <abbr> for term expansion.`;
 }
 
