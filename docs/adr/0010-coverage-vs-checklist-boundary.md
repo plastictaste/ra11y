@@ -57,9 +57,10 @@ through to drive the review session.
 
 1. **`coverage` never emits `candidates[]`** (file:line review pointers).
    Adding them would recreate `checklist`.
-2. **`checklist` never emits `failingAutomatedCriteria`, `criteriaTotal`,
-   `criteriaAutomatable`, or `criteriaAutomatablePassing`.** Those are
-   compliance-dashboard fields; the agent reads them from `coverage`.
+2. **`checklist` never emits `failingAutomatedCriteria`,
+   `warningAutomatedCriteria`, `criteriaTotal`, `criteriaAutomatable`,
+   or `criteriaAutomatablePassing`.** Those are compliance-dashboard
+   fields; the agent reads them from `coverage`.
 3. **`checklist.summary.automatedCoverage` drops to a structured-split
    gloss**: `{ standardId, criteriaWithRulesAllClean,
    criteriaWithoutEligibleInputs }`. The two counters name
@@ -92,13 +93,16 @@ pairs following the P1-K contract.
   non-empty, points at `checklist`:
   `"Call 'checklist' to work through the manual criteria with concrete
    candidates."` with `nextStepStructured: { tool: "checklist", args: {
-   cwd, standard?, level? } }`. When it is empty but `failingAutomatedCriteria`
-  is non-empty, points at `scan_project` instead. Both fields omitted
+   cwd, standard?, level? } }`. When it is empty but either
+  `failingAutomatedCriteria` (≥1 error-severity emission) or
+  `warningAutomatedCriteria` (only warning-severity emissions) is
+  non-empty, points at `scan_project` instead. Both fields omitted
   when the report is clean — same conditional-spread discipline as
   `scan_project`. Each criterion-bearing entry on these arrays
-  (`failingAutomatedCriteria`, `manualWithCandidates`,
-  `likelyIrrelevantCriteria`, `untestableCriteria`,
-  `untargetedCriteriaList`) carries the canonical `criterionId` field —
+  (`failingAutomatedCriteria`, `warningAutomatedCriteria`,
+  `manualWithCandidates`, `likelyIrrelevantCriteria`,
+  `untestableCriteria`, `untargetedCriteriaList`) carries the
+  canonical `criterionId` field —
   matching `checklist.items[].criterionId` so agents joining the two
   surfaces can key on the same name. The legacy `id` field still ships
   alongside `criterionId` for one minor as a deprecated alias and a

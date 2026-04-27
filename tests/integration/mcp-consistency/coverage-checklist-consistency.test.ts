@@ -152,6 +152,10 @@ interface CoverageBody {
     readonly criterionId: string;
     readonly id: string;
   }[];
+  readonly warningAutomatedCriteria: readonly {
+    readonly criterionId: string;
+    readonly id: string;
+  }[];
   readonly warnings?: readonly string[];
   readonly nextStep?: string;
   readonly nextStepStructured?: NextStepStructured;
@@ -327,20 +331,23 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(checklistHasProse).toBe(checklistHasStructured);
   });
 
-  it("coverage.failingAutomatedCriteria is a subset of scan_project's fired criteria on the same cwd", async () => {
-    // Cross-surface invariant: "failing" means "a rule satisfying
-    // criterion C emitted a violation in this scan" — the contract
-    // spelled out in docs/kb/architecture/ai-first-consumer.md ("one
-    // tool call should answer 'what next?'"). If `coverage` surfaces
-    // a failing criterion ID that `scan_project` didn't emit a
-    // matching finding for, or if it silently drops a criterion that
-    // `scan_project` did surface, the agent has to reconcile the
-    // drift across two tool calls.
+  it("coverage's automated emission lanes are a subset of scan_project's fired criteria on the same cwd", async () => {
+    // Cross-surface invariant: a criterion lands in
+    // `failingAutomatedCriteria` (≥1 error-severity emission) or
+    // `warningAutomatedCriteria` (only warning-severity emissions)
+    // exactly when "a rule satisfying criterion C emitted a violation
+    // in this scan" — the contract spelled out in
+    // docs/kb/architecture/ai-first-consumer.md ("one tool call
+    // should answer 'what next?'"). If `coverage` surfaces a
+    // criterion ID that `scan_project` didn't emit a matching finding
+    // for, or if it silently drops a criterion that `scan_project`
+    // did surface, the agent has to reconcile the drift across two
+    // tool calls.
     //
     // The regression this locks in: wcag22:1.4.1 "Use of Color" is
     // `automatable: "manual"` in the standards module, but the
     // `color/meaning-by-color-only` rule satisfies it. Before the fix
-    // coverage dropped 1.4.1 from `failingAutomatedCriteria` purely
+    // coverage dropped 1.4.1 from the failing-criteria surface purely
     // because of the metadata flag, while scan_project surfaced
     // findings against it — exactly the silent-miss failure mode this
     // invariant forbids.
@@ -361,18 +368,31 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(firedInScan.has("wcag22:1.4.1")).toBe(true);
 
     // Coverage must NOT drop a criterion whose rule already fired.
-    for (const c of coverage.failingAutomatedCriteria) {
-      expect(firedInScan.has(c.criterionId)).toBe(true);
+    // The two severity-split lanes partition the legacy "any non-info
+    // emission" set; their union must be a subset of fired-in-scan.
+    const failingErrorIds = coverage.failingAutomatedCriteria.map((c) => c.criterionId);
+    const warningOnlyIds = coverage.warningAutomatedCriteria.map((c) => c.criterionId);
+    for (const id of [...failingErrorIds, ...warningOnlyIds]) {
+      expect(firedInScan.has(id)).toBe(true);
+    }
+    // The two lanes must be disjoint — `warningAutomatedCriteria` is
+    // "only warning emissions" by construction. A criterion in both
+    // would mean a per-severity index was double-counted somewhere.
+    const failingErrorSet = new Set(failingErrorIds);
+    for (const id of warningOnlyIds) {
+      expect(failingErrorSet.has(id)).toBe(false);
     }
 
     // And coverage must include every fired criterion that falls
     // inside its scoped standard (wcag22 by default). The scan can
     // also surface wcag21:1.4.1 via equivalentTo, so we compare
-    // against the wcag22-prefixed subset.
+    // against the wcag22-prefixed subset. Combine the severity-split
+    // lanes for the equality check — the union is what the legacy
+    // single field stood for.
     const firedInScanScoped = new Set(
       [...firedInScan].filter((id) => id.startsWith(`${coverage.standardId}:`)),
     );
-    const coverageFailingIds = new Set(coverage.failingAutomatedCriteria.map((c) => c.criterionId));
+    const coverageFailingIds = new Set([...failingErrorIds, ...warningOnlyIds]);
     expect(coverageFailingIds).toEqual(firedInScanScoped);
   });
 
@@ -399,6 +419,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
       expect(entry.criterionId).toBe(entry.id);
     }
     for (const entry of coverage.failingAutomatedCriteria) {
+      expect(entry.criterionId).toBe(entry.id);
+    }
+    for (const entry of coverage.warningAutomatedCriteria) {
       expect(entry.criterionId).toBe(entry.id);
     }
 

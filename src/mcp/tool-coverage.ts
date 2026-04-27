@@ -112,6 +112,24 @@ export const coverageTool: McpTool = {
     });
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
+    // Per-severity criterion sets used to split the
+    // legacy `failingCriteria` lump into honest fields. The internal
+    // `c.failingCriteria` set treats any non-info violation as
+    // "failing" — that conflates an `error`-severity blocker with a
+    // single `warning`-severity nudge under one label whose name
+    // (`failingAutomatedCriteria`) reads as test-runner fail/pass.
+    // Split at the tool boundary so the response carries discriminator
+    // info; the internal report shape stays unchanged because
+    // `certification.ts` and the CLI `coverage` command consume
+    // `failingCriteria` as a union-of-blockers count by design (any
+    // non-info finding still surfaces as a blocking item there).
+    const criteriaWithErrorViolations = new Set<string>();
+    for (const violation of result.violations) {
+      if (violation.severity !== "error") continue;
+      for (const criterionId of violation.criteria) {
+        criteriaWithErrorViolations.add(criterionId);
+      }
+    }
     const applicability = detectApplicability(files, discoveryDiagnostics);
     // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
     // perRuleCoverage so the coverage report can split automatable-pass
@@ -153,6 +171,24 @@ export const coverageTool: McpTool = {
       const { applicable, likelyIrrelevant } = splitManualCriteria(c.manualCriteria, applicability);
       const withCandidates = applicable.filter((id) => candidateCriteria.has(id));
       const untargeted = applicable.filter((id) => !candidateCriteria.has(id));
+      // Q11-COVERAGE-FAILINGAUTOMATEDCRITERIA-NAME-CONFLATES-SEVERITY:
+      // split `c.failingCriteria` (criteria with ≥1 non-info emission)
+      // by per-criterion error presence. A criterion lands in the
+      // tightened `failingAutomatedCriteria` only when ≥1 of its
+      // emissions was `severity: "error"`; criteria whose only
+      // emissions are `severity: "warning"` move to the new
+      // `warningAutomatedCriteria` field. The two arrays partition
+      // `c.failingCriteria` (no overlap, no orphans) so the legacy
+      // count splits exactly between the discriminator fields.
+      const failingErrorIds: string[] = [];
+      const warningOnlyIds: string[] = [];
+      for (const criterionId of c.failingCriteria) {
+        if (criteriaWithErrorViolations.has(criterionId)) {
+          failingErrorIds.push(criterionId);
+        } else {
+          warningOnlyIds.push(criterionId);
+        }
+      }
       return {
         standardId: c.standardId,
         // Named so the denominator is unmistakable: it's the share of
@@ -212,8 +248,19 @@ export const coverageTool: McpTool = {
         likelyIrrelevantCriteria: withTitles(likelyIrrelevant, session),
         // Renamed from "automatedGaps" — agents consistently misread
         // that as "criteria automation can't cover" when it actually
-        // listed automated criteria that are currently failing.
-        failingAutomatedCriteria: withTitles(c.failingCriteria, session),
+        // listed automated criteria that are currently failing. The
+        // field used to be a union of every non-info emission,
+        // conflating `error`-severity blockers with `warning`-severity
+        // nudges under a label that reads as test-runner fail/pass
+        // (per `docs/kb/architecture/ai-first-consumer.md`
+        // §"Heuristic-mislabeled meta sub-fields are dishonest" — the
+        // honest-label rule applies to top-level fields too). Now
+        // tightened to "criteria with ≥1 error-severity emission";
+        // warning-only criteria ride alongside under
+        // `warningAutomatedCriteria` so the discriminator info is
+        // preserved without flattening the severity distinction.
+        failingAutomatedCriteria: withTitles(failingErrorIds, session),
+        warningAutomatedCriteria: withTitles(warningOnlyIds, session),
         // drop the `(N%)` tail when
         // the scan evaluated zero files — the `%` is cosmetically
         // precise but materially meaningless. Pair with the
@@ -388,7 +435,13 @@ export const coverageTool: McpTool = {
       const nextStep = entry
         ? buildCoverageNextStep({
             manualWithCandidatesLen: entry.manualWithCandidates.length,
-            failingAutomatedLen: entry.failingAutomatedCriteria.length,
+            // Sum the two severity-split lanes so the route still
+            // fires when the only emissions are `warning`-severity —
+            // an agent that ignores warning-only criteria would still
+            // miss real findings the rule emitted, so `scan_project`
+            // is the honest next call either way.
+            failingAutomatedLen:
+              entry.failingAutomatedCriteria.length + entry.warningAutomatedCriteria.length,
             cwd,
             standard: strParam(params, "standard"),
             level: strParam(params, "level"),
