@@ -125,6 +125,7 @@ function buildReviewCandidates(
         // an MCP review_candidates caller does.
         ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
         ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+        ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
         // sourceCount mirrors siblingOccurrences for stem-deduped
         // candidates (count of source occurrences). Omitted on
         // singletons.

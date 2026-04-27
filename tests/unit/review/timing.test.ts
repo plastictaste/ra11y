@@ -602,7 +602,7 @@ describe("review/timing", () => {
     });
   });
 
-  describe("structured additive evidence (vendorPathHint, durationLiteralMs)", () => {
+  describe("structured additive evidence (vendorPathHint, durationLiteralMs, durationExpression)", () => {
     // Companion to the reason-text enrichment: the same dismissal
     // signals surface as typed structured fields so the agent does
     // not have to parse free-form prose to read them. Per
@@ -653,7 +653,7 @@ describe("review/timing", () => {
       expect(hit?.durationLiteralMs).toBe(30000);
     });
 
-    it("emits durationLiteralMs:'non-literal' for a member-access duration", () => {
+    it("populates durationExpression for a member-access duration (durationLiteralMs omitted)", () => {
       const src = `
         function bootstrap() {
           var self = this;
@@ -662,32 +662,72 @@ describe("review/timing", () => {
       `;
       const out = runFinder(finder, src);
       const hit = out.find((c) => c.reason.includes("setTimeout"));
-      expect(hit?.durationLiteralMs).toBe("non-literal");
+      // Single-typed channels: literal field is omitted, the verbatim
+      // expression appears on the sibling string field so the agent
+      // never type-checks before reading.
+      expect(hit?.durationLiteralMs).toBeUndefined();
+      expect(hit?.durationExpression).toBe("self.options.interval");
     });
 
-    it("emits durationLiteralMs:'non-literal' for a bare identifier duration", () => {
+    it("populates durationExpression for a bare identifier duration (durationLiteralMs omitted)", () => {
       const out = runFinder(finder, `setTimeout(cb, delay);`);
       const hit = out.find((c) => c.reason.includes("setTimeout"));
-      expect(hit?.durationLiteralMs).toBe("non-literal");
+      expect(hit?.durationLiteralMs).toBeUndefined();
+      expect(hit?.durationExpression).toBe("delay");
     });
 
-    it("emits durationLiteralMs:'non-literal' for a call-expression duration", () => {
+    it("populates durationExpression for a call-expression duration (durationLiteralMs omitted)", () => {
       const out = runFinder(finder, `setTimeout(cb, getDelay());`);
       const hit = out.find((c) => c.reason.includes("setTimeout"));
-      expect(hit?.durationLiteralMs).toBe("non-literal");
+      expect(hit?.durationLiteralMs).toBeUndefined();
+      expect(hit?.durationExpression).toBe("getDelay()");
     });
 
-    it("emits durationLiteralMs:'non-literal' for a computed-expression duration", () => {
+    it("populates durationExpression for a computed-expression duration (durationLiteralMs omitted)", () => {
       const out = runFinder(finder, `setTimeout(cb, delay * 2);`);
       const hit = out.find((c) => c.reason.includes("setTimeout"));
-      expect(hit?.durationLiteralMs).toBe("non-literal");
+      expect(hit?.durationLiteralMs).toBeUndefined();
+      expect(hit?.durationExpression).toBe("delay * 2");
     });
 
-    it("omits durationLiteralMs when the call has no second argument", () => {
+    it("omits both duration fields when the call has no second argument", () => {
       const out = runFinder(finder, `setTimeout(() => tick());`);
       const hit = out.find((c) => c.reason.includes("setTimeout"));
       expect(hit).toBeDefined();
       expect(hit?.durationLiteralMs).toBeUndefined();
+      expect(hit?.durationExpression).toBeUndefined();
+    });
+
+    it("populates durationLiteralMs as a number (not a polymorphic string sentinel)", () => {
+      // Type-shape pin: the field is single-typed `number | undefined`
+      // — agents must not have to runtime-type-check before reading.
+      // A literal duration sets the number; non-literals route to
+      // `durationExpression` instead.
+      const out = runFinder(finder, `setTimeout(() => tick(), 100);`);
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(typeof hit?.durationLiteralMs).toBe("number");
+      expect(hit?.durationExpression).toBeUndefined();
+    });
+
+    it("never populates both duration fields on the same candidate", () => {
+      // Mutual-exclusion invariant across literal and non-literal
+      // call sites: at most one of the two duration fields is set.
+      const sources = [
+        `setTimeout(() => tick(), 100);`,
+        `setTimeout(cb, delay);`,
+        `setTimeout(cb, self.options.interval);`,
+        `setTimeout(cb, getDelay());`,
+        `setTimeout(cb, delay * 2);`,
+        `setTimeout(() => tick());`,
+      ];
+      for (const src of sources) {
+        const out = runFinder(finder, src);
+        for (const c of out) {
+          if (!c.reason.includes("setTimeout")) continue;
+          const both = c.durationLiteralMs !== undefined && c.durationExpression !== undefined;
+          expect(both).toBe(false);
+        }
+      }
     });
 
     it("does NOT downgrade confidence on either field — additive only", () => {
@@ -719,6 +759,7 @@ describe("review/timing", () => {
       expect(out.length).toBeGreaterThan(0);
       for (const c of out) {
         expect(c.durationLiteralMs).toBeUndefined();
+        expect(c.durationExpression).toBeUndefined();
         expect(c.vendorPathHint).toBeUndefined();
       }
     });

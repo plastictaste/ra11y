@@ -137,6 +137,24 @@ describe("dedupeReviewCandidatesForSingleFile — Pass 2 (cross-finder positiona
     expect(out[0]?.snippet).toBe('<button onclick="...">');
   });
 
+  it("back-fills durationExpression from a later finder when the first carries no duration evidence", () => {
+    // Mirror of the durationLiteralMs back-fill: the non-literal
+    // sibling string field must traverse the cross-finder fold the
+    // same way so that an agent reading the deduped surface sees the
+    // verbatim expression regardless of which finder contributed it.
+    const out = dedupeReviewCandidatesForSingleFile([
+      candidate("std:a", "reason A", 4, 0),
+      candidate("std:b", "reason B", 4, 0, {
+        durationExpression: "self.options.interval",
+      }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.durationExpression).toBe("self.options.interval");
+    // Single-typed channels: literal field stays absent because no
+    // numeric literal was observed at this site.
+    expect(out[0]?.durationLiteralMs).toBeUndefined();
+  });
+
   it("preserves first-seen order across pass 2 folds", () => {
     const out = dedupeReviewCandidatesForSingleFile([
       candidate("std:a", "rA", 5, 0),

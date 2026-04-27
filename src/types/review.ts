@@ -119,18 +119,22 @@ export interface ReviewCandidate {
   /**
    * Additive structured evidence for timing-related candidates: the
    * duration argument of the underlying `setTimeout` / `setInterval`
-   * call. When the second argument is a numeric literal that resolves
-   * cleanly to a millisecond count (`300`, `60_000`, `0x100`, `5e2`,
-   * `1.5`), this is that number; when the duration is any non-literal
-   * shape — member access (`self.options.interval`), identifier
-   * (`delay`), call expression (`getDelay()`), computed expression
-   * (`delay * 2`) — this is the sentinel string `"non-literal"`.
+   * call resolved to a millisecond count when — and only when — the
+   * second argument is a numeric literal (`300`, `60_000`, `0x100`,
+   * `5e2`, `1.5`).
    *
-   * The tagged union is preferred over `number | undefined` so
-   * "duration was non-literal" reads as positive evidence rather than
-   * being indistinguishable from "the finder doesn't track durations"
-   * (per ai-first-consumer.md "Ambiguous field shapes are dishonest").
-   * Omitted when the candidate has no duration to report (e.g.
+   * Strictly typed as `number | undefined`: the field is omitted when
+   * the duration is non-literal (member access, identifier, call,
+   * computed expression) so the agent never has to type-check before
+   * reading. The non-literal case surfaces as a sibling
+   * {@link ReviewCandidate#durationExpression} carrying the verbatim
+   * expression — separating "literal value" and "non-literal handle"
+   * into two single-typed fields rather than a polymorphic
+   * `number | "non-literal"` (per ai-first-consumer.md "Ambiguous
+   * field shapes are dishonest" — a polymorphic field forces a
+   * type-check on every read).
+   *
+   * Also omitted when the candidate has no duration to report (e.g.
    * `<meta http-equiv="refresh">` or a degenerate `setTimeout(fn)`
    * with no second argument). Per the same doctrine the field is
    * additive context only — never gates suppression, never adjusts
@@ -138,7 +142,21 @@ export interface ReviewCandidate {
    * surrounding code is the only correct arbiter of whether the
    * duration governs a user-facing time limit.
    */
-  readonly durationLiteralMs?: number | "non-literal";
+  readonly durationLiteralMs?: number;
+  /**
+   * Verbatim non-literal duration expression for timing-related
+   * candidates — populated when the second argument of the underlying
+   * `setTimeout` / `setInterval` call is not a numeric literal (member
+   * access `self.options.interval`, identifier `delay`, call
+   * `getDelay()`, computed `delay * 2`). Sibling to
+   * {@link ReviewCandidate#durationLiteralMs}: exactly one of the two
+   * is populated when the call has a duration argument; both are
+   * omitted otherwise. The verbatim text lets the agent grep for the
+   * binding in the surrounding code without parsing the reason text.
+   * Truncated by {@link truncateForEcho} so a pathological computed
+   * expression can't balloon the field.
+   */
+  readonly durationExpression?: string;
   /**
    * Number of source occurrences this candidate represents. When a finder
    * deduplicates near-identical candidates by accessible-name pattern

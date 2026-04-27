@@ -209,6 +209,9 @@ export const reviewCandidatesTool: McpTool = {
           // same confidence regardless of the values.
           ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
           ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+          ...(c.durationExpression === undefined
+            ? {}
+            : { durationExpression: c.durationExpression }),
           // sourceCount counts the source occurrences for a stem-deduped
           // candidate. Omitted on singletons (present-when-meaningful).
           ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),

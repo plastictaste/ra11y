@@ -137,11 +137,19 @@ interface ChecklistCandidateOut {
   readonly vendorPathHint?: boolean;
   /**
    * Structured duration evidence for timing-related candidates (see
-   * `ReviewCandidate.durationLiteralMs`). `number` for literal-resolved
-   * millisecond counts, `"non-literal"` for non-literal duration
-   * expressions, omitted when the candidate has no duration to report.
+   * `ReviewCandidate.durationLiteralMs`). Populated only when the
+   * duration argument is a numeric literal; non-literal expressions
+   * surface on the sibling `durationExpression` field. Omitted when
+   * the candidate has no duration to report.
    */
-  readonly durationLiteralMs?: number | "non-literal";
+  readonly durationLiteralMs?: number;
+  /**
+   * Verbatim non-literal duration expression for timing-related
+   * candidates (see `ReviewCandidate.durationExpression`). Sibling to
+   * `durationLiteralMs`: exactly one is populated when the call has
+   * a duration argument; both omitted otherwise.
+   */
+  readonly durationExpression?: string;
   /**
    * Per-sibling trail for an aggregated/deduped candidate — present
    * when the finder collapsed ≥2 same-shape siblings or ≥2 same-stem
@@ -1090,6 +1098,7 @@ function mapCandidates(
         // to re-call review_candidates to recover the typed fields.
         ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
         ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+        ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
         // sourceCount carries through for stem-deduped candidates so
         // checklist consumers see the source occurrence count on the
         // consolidated row. Omitted on singletons.

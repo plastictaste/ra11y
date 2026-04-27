@@ -382,13 +382,24 @@ export interface AgentReviewCandidate {
   readonly vendorPathHint?: boolean;
   /**
    * Structured duration evidence for timing-related candidates
-   * (`setTimeout` / `setInterval`). `number` for literal-resolved
-   * millisecond counts, `"non-literal"` for non-literal duration
-   * expressions (member access, identifier, call, computed).
-   * Omitted when the candidate has no duration to report (HTML
-   * `<meta refresh>`, degenerate calls).
+   * (`setTimeout` / `setInterval`). Populated only when the duration
+   * argument is a numeric literal — the agent reads a single-typed
+   * `number` rather than type-checking a `number | "non-literal"`
+   * polymorphic shape. Non-literal expressions surface as a sibling
+   * {@link AgentReviewCandidate#durationExpression}. Omitted when the
+   * candidate has no duration to report (HTML `<meta refresh>`,
+   * degenerate calls).
    */
-  readonly durationLiteralMs?: number | "non-literal";
+  readonly durationLiteralMs?: number;
+  /**
+   * Verbatim non-literal duration expression for timing-related
+   * candidates — populated when the underlying duration argument is
+   * not a numeric literal (member access, identifier, call, computed
+   * expression). Sibling to {@link AgentReviewCandidate#durationLiteralMs}:
+   * exactly one of the two is populated when the call has a duration;
+   * both are omitted otherwise.
+   */
+  readonly durationExpression?: string;
   /**
    * Number of source occurrences this candidate represents. Present
    * when the finder collapsed ≥2 candidates whose accessible names

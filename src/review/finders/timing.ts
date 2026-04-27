@@ -261,7 +261,7 @@ function emitJsCandidates(
   // doesn't fire / no duration to report).
   const vendorPathHint =
     isVendorBundleBasename(ctx.filePath) || isMinifiedForEnrichment(ctx.filePath, ctx.source);
-  const durationLiteralMs = duration ? parseDurationLiteralMs(duration) : undefined;
+  const durationFields = buildDurationFields(duration);
   for (const criterionId of criteriaForSite) {
     // Confidence "medium": setTimeout/setInterval is concrete evidence
     // of a timer, but the reviewer's question — "does this govern a
@@ -277,7 +277,7 @@ function emitJsCandidates(
       reason,
       confidence: "medium",
       ...(vendorPathHint ? { vendorPathHint: true } : {}),
-      ...(durationLiteralMs === undefined ? {} : { durationLiteralMs }),
+      ...durationFields,
       // Anchor a tight snippet on the literal `setTimeout(` / `setInterval(`
       // token. The matcher already knows the byte offset and the keyword
       // length; emitting both lets the snippet builder show the matched
@@ -290,11 +290,39 @@ function emitJsCandidates(
 }
 
 /**
+ * Single-typed channels for the duration evidence: when the duration
+ * argument is a numeric literal, the result carries
+ * `durationLiteralMs` (number); when the argument is any non-literal
+ * shape (member access, identifier, call, computed), the result
+ * carries `durationExpression` (verbatim string); when the call has
+ * no duration argument at all, the result is empty. Exactly one of
+ * the two fields is populated when a duration exists.
+ *
+ * Per ai-first-consumer.md "Ambiguous field shapes are dishonest" —
+ * the earlier polymorphic `number | "non-literal"` shape forced
+ * agents to runtime-type-check before reading. Splitting into two
+ * single-typed fields lets the agent read whichever is present
+ * without a runtime guard. Structured-evidence fields are
+ * additive — never gate suppression, never adjust confidence.
+ */
+function buildDurationFields(duration: string | null): {
+  readonly durationLiteralMs?: number;
+  readonly durationExpression?: string;
+} {
+  if (!duration) return {};
+  const literalMs = parseDurationLiteralMs(duration);
+  if (literalMs !== undefined) return { durationLiteralMs: literalMs };
+  return { durationExpression: duration };
+}
+
+/**
  * Parse the duration argument echoed by {@link extractDurationArg}
  * into a millisecond count when the value is a numeric literal that
- * resolves cleanly, or `"non-literal"` when it is any other shape
+ * resolves cleanly, or `undefined` when it is any other shape
  * (member access, identifier, call expression, computed expression,
- * unary, parenthesised, etc.).
+ * unary, parenthesised, etc.) — non-literal shapes surface verbatim
+ * on the sibling `ReviewCandidate.durationExpression` field rather
+ * than collapsing into a polymorphic sentinel here.
  *
  * Mirrors the literal/non-literal split used by
  * {@link durationClassClause} so the structured field
@@ -308,10 +336,10 @@ function emitJsCandidates(
  * the value still sees the cited verbatim string in the reason text
  * if precision matters), with optional `_` separators. BigInt's `n`
  * suffix is stripped before parsing. `+1000` / `-1000` /
- * parenthesised forms fall through to `"non-literal"` to match the
+ * parenthesised forms fall through to `undefined` to match the
  * reason-text classifier's "expression" bucket.
  */
-function parseDurationLiteralMs(duration: string): number | "non-literal" {
+function parseDurationLiteralMs(duration: string): number | undefined {
   const text = duration.trim();
   // Use the same literal-shape regex the reason-text classifier uses
   // (NUMERIC_LITERAL_PATTERN in timing-vendor.ts). Mirroring the
@@ -319,11 +347,11 @@ function parseDurationLiteralMs(duration: string): number | "non-literal" {
   // channels in lockstep — see classifyDurationExpression.
   const literalMatch =
     /^(?:0[xXbBoO][0-9a-fA-F_]+|[0-9][0-9_]*(?:\.[0-9_]*)?(?:[eE][+-]?[0-9_]+)?)n?$/.exec(text);
-  if (!literalMatch) return "non-literal";
+  if (!literalMatch) return undefined;
   // Strip BigInt suffix and `_` separators before Number parsing.
   const cleaned = text.replace(/n$/, "").replace(/_/g, "");
   const parsed = Number(cleaned);
-  if (!Number.isFinite(parsed)) return "non-literal";
+  if (!Number.isFinite(parsed)) return undefined;
   return parsed;
 }
 
