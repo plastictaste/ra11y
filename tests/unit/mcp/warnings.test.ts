@@ -1375,18 +1375,15 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       filesByExtension: undefined,
       configSearchSawProjectMarker: true,
     });
-    // Only `no_config_found` fires; presence-only code with no
-    // structured payload — but per the schema-discipline amendment,
-    // every fired code MUST have a corresponding key in
-    // `warningsDetails` (use `{}` to deterministically signal "no
-    // further detail by design"). Without the key, an agent reading
-    // the response can't distinguish "no payload defined for this
-    // code" from "payload exists but this surface didn't compute
-    // it" — the asymmetric-discipline anti-pattern the doctrine
-    // names.
+    // `no_config_found` fires; the payload-bearing slot drops the
+    // `searchedFrom` field because the caller did not thread
+    // `configSearchedFromForWarning` (the dispatch falls through to
+    // the empty-object marker). Schema-discipline still holds: every
+    // fired code has a key on `warningsDetails`.
     expect(out.warnings).toEqual(["no_config_found"]);
     expect(out.warningsDetails).toBeDefined();
-    expect(out.warningsDetails?.no_config_found).toEqual({});
+    expect(out.warningsDetails?.no_config_found).toBeDefined();
+    expect(Object.keys(out.warningsDetails?.no_config_found ?? {})).toHaveLength(0);
   });
 
   it("omits both fields on a clean scan (no `warnings: []` and no `warningsDetails: {}`)", () => {
@@ -1465,8 +1462,12 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
     expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".scss");
     // The two presence-only codes get the empty-object marker — the
     // membership invariant holds: keys on `warningsDetails` exactly
-    // match the codes in `warnings[]`.
-    expect(out.warningsDetails?.no_config_found).toEqual({});
+    // match the codes in `warnings[]`. (`no_config_found` is now
+    // payload-bearing, but the caller didn't supply
+    // `configSearchedFromForWarning`, so the dispatch falls through
+    // to the empty-object marker for this case.)
+    expect(out.warningsDetails?.no_config_found).toBeDefined();
+    expect(Object.keys(out.warningsDetails?.no_config_found ?? {})).toHaveLength(0);
     expect(out.warningsDetails?.root_source_defaulted).toEqual({});
     const codes = out.warnings ?? [];
     const detailKeys = Object.keys(out.warningsDetails ?? {}).sort();
@@ -1824,16 +1825,28 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     expect(detailsMap?.scanned_build_artifacts_present).toEqual({});
   });
 
-  it("warnings-details schema discipline — binary-presence code `no_config_found` ships the empty-object marker", () => {
-    // `no_config_found` is the canonical binary code: the bare
-    // emission IS the entire signal — `meta.configSource: null`
-    // already carries the same bit, and the warning's prose names
-    // the remediation. There's no follow-on quantity an agent
-    // would branch on differently. Per the schema-discipline
-    // amendment, the code still carries an entry on the wire (as
-    // the empty-object marker `{}`) so the membership invariant
-    // holds across the whole `warnings[]` set.
-    const out = warningsField({
+  it("warnings-details schema discipline — `no_config_found` carries `searchedFrom` when supplied; falls back to the empty-object marker otherwise", () => {
+    // `no_config_found` is now payload-bearing — the new
+    // `searchedFrom: <cwd>` field gives the agent one canonical
+    // answer to "where did the loader walk from" regardless of which
+    // tool emitted the code. When the caller threads
+    // `configSearchedFromForWarning`, the payload populates; when it
+    // doesn't, the dispatch falls through to the empty-object
+    // marker so the schema-discipline membership invariant still
+    // holds (every fired code has a key on `warningsDetails`).
+    const withPayload = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      configSearchedFromForWarning: "/proj/root",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(withPayload.warnings).toContain("no_config_found");
+    expect(withPayload.warningsDetails?.no_config_found).toEqual({ searchedFrom: "/proj/root" });
+
+    const withoutPayload = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: null,
@@ -1841,9 +1854,9 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
       filesByExtension: undefined,
       configSearchSawProjectMarker: true,
     });
-    expect(out.warnings).toContain("no_config_found");
-    expect(out.warningsDetails).toBeDefined();
-    expect(out.warningsDetails?.no_config_found).toEqual({});
+    expect(withoutPayload.warnings).toContain("no_config_found");
+    expect(withoutPayload.warningsDetails?.no_config_found).toBeDefined();
+    expect(Object.keys(withoutPayload.warningsDetails?.no_config_found ?? {})).toHaveLength(0);
   });
 
   it("warnings-details schema discipline — binary-presence code `template_files_parsed_as_literal` ships the empty-object marker", () => {
@@ -1921,7 +1934,8 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     // "no payload defined for this code" from "payload exists but
     // this surface didn't compute it" — the asymmetric-discipline
     // anti-pattern the doctrine names.
-    expect(out.warningsDetails?.no_config_found).toEqual({});
+    expect(out.warningsDetails?.no_config_found).toBeDefined();
+    expect(Object.keys(out.warningsDetails?.no_config_found ?? {})).toHaveLength(0);
     expect(out.warningsDetails?.template_files_parsed_as_literal).toEqual({});
     // Membership invariant: keys on `warningsDetails` exactly match
     // the codes in `warnings[]` (no extras, no omissions).
@@ -2010,7 +2024,8 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
       count: 17,
       topPath: "vendor/x.css",
     });
-    expect(out.warningsDetails?.no_config_found).toEqual({});
+    expect(out.warningsDetails?.no_config_found).toBeDefined();
+    expect(Object.keys(out.warningsDetails?.no_config_found ?? {})).toHaveLength(0);
     expect(out.warningsDetails?.template_files_parsed_as_literal).toEqual({});
   });
 });
