@@ -49,6 +49,8 @@ Stage files by explicit path (`git add src/rules/foo.ts tests/rules/foo.test.ts`
 
 **No backlog IDs in source or test code.** Tokens like `V1-…`, `Q7-…`, `Q3-…`, `R/nav` etc. belong in the commit message and `.claude/backlog.md` — not in source comments, JSDoc, test names, fixture filenames, or `it("…")` strings. PM trace rots in the codebase: items get renumbered, closed, superseded; the comment then misleads. Commit messages and ADRs are the durable trail.
 
+**Tick off your backlog item in the closing commit.** Before returning, your work is not complete unless the `- [ ] **<ID>**` line for the pick is deleted from `.claude/backlog.md` and the closing commit message carries a `Closes: <ID>` (shipped) or `Drops: <ID>` (rejected/superseded) trailer per CLAUDE.md §9 #7. Stage the backlog edit alongside your last logical commit, or in a sibling `chore(backlog):` commit if your feat/fix landed first. Specialists who skip the tickoff force the integrator to do it on their behalf, costing an extra round-trip and burning context. If the worktree-guard hook blocks the edit, return `signals[].code: backlog_tickoff_blocked` with the hook output in `evidence`; do not silently leave the line.
+
 ## 4. Precommit verify before returning
 
 After your final commit in the worktree, run:
