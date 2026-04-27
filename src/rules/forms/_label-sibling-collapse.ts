@@ -1,14 +1,24 @@
 /**
- * Sibling-collapse helpers for `forms/labels-required` (-
- * INPUT-SIBLING-COLLAPSE).
+ * Sibling-collapse helpers for `forms/labels-required` and
+ * `forms/placeholder-as-label`.
  *
  * When ≥3 direct-child labelable controls under one parent share the
  * same `(tagName, type, attributes-modulo-id)` fingerprint AND all
- * fail the rule's label check, the rule emits ONE canonical finding
- * carrying `siblingInstances: [{ line, id? }, …]` instead of N near-
- * identical findings. The agent reads one row carrying the full per-
- * sibling line/id trail; the silent-miss surface is preserved (the
- * collapsed finding still fires — surface-don't-suppress).
+ * fail the consuming rule's predicate check, the rule emits ONE
+ * canonical finding carrying `siblingInstances: [{ line, id? }, …]`
+ * instead of N near-identical findings. The agent reads one row
+ * carrying the full per-sibling line/id trail; the silent-miss
+ * surface is preserved (the collapsed finding still fires — surface-
+ * don't-suppress).
+ *
+ * Both consumer rules emit at the same `(filePath, line-text)`
+ * locations on a visually-grouped sibling cluster, so without
+ * collapse the engine's `findingId` recipe (intentionally line-text-
+ * keyed for line-drift resilience) stamps every emission in the
+ * cluster with the same id — the agent's dedupe/suppress flows then
+ * silently merge N entries to one. Collapsing into one
+ * `siblingInstances`-bearing finding makes the per-cluster id unique
+ * and surfaces the per-sibling trail for the agent to enumerate.
  *
  * Honest-aggregation discipline (AI-first doctrine, "Labeled buckets
  * are suppression too"): collapse only emits when the group label is

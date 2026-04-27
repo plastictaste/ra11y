@@ -58,6 +58,12 @@ import {
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import {
+  collectFailingHtmlControls,
+  computeHtmlCollapseDecisions,
+  computeJsxCollapseDecisions,
+  type SiblingInstance,
+} from "./_label-sibling-collapse.ts";
 
 /** Form controls whose `placeholder` attribute the user sees as a label. */
 const LABELABLE_TAGS: ReadonlySet<string> = new Set(["input", "select", "textarea"]);
@@ -127,6 +133,7 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  siblingInstances?: readonly SiblingInstance[];
 }) => void;
 
 // ---------------------------------------------------------------------------
@@ -136,13 +143,40 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   const labelFors = collectLabelFors(doc);
   const implicitIds = collectImplicitlyLabeledElementRanges(doc);
+
+  // Sibling-collapse: when ≥3 direct-child labelable controls under one
+  // parent share the same `(tagName, type, attributes-modulo-id)`
+  // fingerprint AND all fail the placeholder-vs-label predicate, emit
+  // ONE canonical finding carrying `siblingInstances` instead of N
+  // near-identical findings. Mirrors `forms/labels-required` so a
+  // visually-grouped sign-up form (six `<input placeholder="Email">`
+  // siblings) reads as one row instead of six entries colliding under
+  // one `findingId` (the line-text-keyed id recipe collapses bytes-
+  // identical line text by design — collapse at emit time keeps the
+  // per-cluster id unique and surfaces the per-sibling trail).
+  const isFailing = (el: HtmlElement): boolean =>
+    !(
+      isExcludedHtmlControl(el) ||
+      getNonEmptyPlaceholder(el) === null ||
+      htmlHasLabel(el, labelFors, implicitIds)
+    );
+  const failingByParent = collectFailingHtmlControls(
+    doc,
+    LABELABLE_TAGS,
+    isFailing,
+    walkHtmlElements,
+  );
+  const { primary, consumed } = computeHtmlCollapseDecisions(failingByParent);
+
   for (const tag of LABELABLE_TAGS) {
     for (const el of findHtmlElementsByTag(doc, tag)) {
-      if (isExcludedHtmlControl(el)) continue;
+      if (!isFailing(el)) continue;
+      if (consumed.has(el)) continue;
       const placeholder = getNonEmptyPlaceholder(el);
+      // Predicate already gated on non-null placeholder — narrow the
+      // type for the builder.
       if (placeholder === null) continue;
-      if (htmlHasLabel(el, labelFors, implicitIds)) continue;
-      emit(buildHtmlViolation(el, placeholder));
+      emit(buildHtmlViolation(el, placeholder, primary.get(el)));
     }
   }
 }
@@ -208,17 +242,22 @@ function htmlHasLabel(
   return false;
 }
 
-function buildHtmlViolation(el: HtmlElement, placeholder: string): Parameters<Emit>[0] {
+function buildHtmlViolation(
+  el: HtmlElement,
+  placeholder: string,
+  siblings: readonly SiblingInstance[] | undefined,
+): Parameters<Emit>[0] {
+  const type = getHtmlAttribute(el, "type");
+  const message =
+    siblings === undefined
+      ? buildMessage(el.tagName, type, placeholder)
+      : buildPlaceholderSiblingCollapsedMessage(el.tagName, type, placeholder, siblings.length);
   return {
     severity: "warning",
     location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-    message: buildMessage(el.tagName, getHtmlAttribute(el, "type"), placeholder),
-    suggestion: buildSuggestion(
-      el.tagName,
-      getHtmlAttribute(el, "type"),
-      getHtmlAttribute(el, "id"),
-      placeholder,
-    ),
+    message,
+    suggestion: buildSuggestion(el.tagName, type, getHtmlAttribute(el, "id"), placeholder),
+    ...(siblings === undefined ? {} : { siblingInstances: siblings }),
   };
 }
 
@@ -230,20 +269,37 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
   const labelHtmlFors = collectJsxLabelHtmlFors(module);
   const implicitRanges = collectJsxImplicitlyLabeledElementRanges(module, wrappersForInput);
 
+  // Sibling-collapse: same shape as the HTML branch — when ≥3 direct-
+  // child intrinsic `<input>` / `<select>` / `<textarea>` siblings share
+  // a `(tagName, attributes-modulo-id)` fingerprint AND all fail the
+  // placeholder-vs-label predicate, emit ONE canonical finding carrying
+  // `siblingInstances` instead of N near-identical findings. Wrappers
+  // and polymorphic `<Tag as="input">` resolutions stay out of collapse
+  // (the helper opts them out — clusters of those are rare and the
+  // fingerprint would be less stable across the resolution boundary).
+  const { primary, consumed } = computeJsxCollapseDecisions(module, LABELABLE_TAGS, (el) => {
+    if (isExcludedJsxControl(el)) return false;
+    if (getNonEmptyJsxPlaceholder(el) === null) return false;
+    if (jsxHasLabel(el, labelHtmlFors, implicitRanges)) return false;
+    return true;
+  });
+
   // `<input>` via native-tag + wrapper + polymorphic channels.
   const seen = new Set<JsxElement>();
   for (const el of findJsxElementsForTag(module, "input", wrappersForInput)) {
     if (seen.has(el)) continue;
     seen.add(el);
     if (isExcludedJsxControl(el)) continue;
-    maybeEmitJsxViolation(el, labelHtmlFors, implicitRanges, emit);
+    if (consumed.has(el)) continue;
+    maybeEmitJsxViolation(el, labelHtmlFors, implicitRanges, primary.get(el), emit);
   }
 
   // `<select>` and `<textarea>` native-only (no wrapper opt-in; same
   // scope decision as `forms/labels-required`).
   for (const tag of ["select", "textarea"] as const) {
     for (const el of findJsxElementsByTag(module, tag)) {
-      maybeEmitJsxViolation(el, labelHtmlFors, implicitRanges, emit);
+      if (consumed.has(el)) continue;
+      maybeEmitJsxViolation(el, labelHtmlFors, implicitRanges, primary.get(el), emit);
     }
   }
 }
@@ -253,12 +309,13 @@ function maybeEmitJsxViolation(
   el: JsxElement,
   labelHtmlFors: ReadonlySet<string>,
   implicitRanges: ReadonlySet<number>,
+  siblings: readonly SiblingInstance[] | undefined,
   emit: Emit,
 ): void {
   const placeholder = getNonEmptyJsxPlaceholder(el);
   if (placeholder === null) return;
   if (jsxHasLabel(el, labelHtmlFors, implicitRanges)) return;
-  emit(buildJsxViolation(el, placeholder));
+  emit(buildJsxViolation(el, placeholder, siblings));
 }
 
 function getNonEmptyJsxPlaceholder(el: JsxElement): string | null {
@@ -372,14 +429,23 @@ function jsxHasForAssociation(el: JsxElement, labelHtmlFors: ReadonlySet<string>
   return idAttr?.value?.kind === "Expression" && labelHtmlFors.has("__expr__");
 }
 
-function buildJsxViolation(el: JsxElement, placeholder: string): Parameters<Emit>[0] {
+function buildJsxViolation(
+  el: JsxElement,
+  placeholder: string,
+  siblings: readonly SiblingInstance[] | undefined,
+): Parameters<Emit>[0] {
   const type = getJsxAttributeString(el, "type");
   const id = getJsxAttributeString(el, "id");
+  const message =
+    siblings === undefined
+      ? buildMessage(el.tagName, type, placeholder)
+      : buildPlaceholderSiblingCollapsedMessage(el.tagName, type, placeholder, siblings.length);
   return {
     severity: "warning",
     location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
-    message: buildMessage(el.tagName, type, placeholder),
+    message,
     suggestion: buildSuggestion(el.tagName, type, id, placeholder),
+    ...(siblings === undefined ? {} : { siblingInstances: siblings }),
   };
 }
 
@@ -394,6 +460,46 @@ function buildMessage(tagName: string, type: string | null, placeholder: string)
       ? "an expression-valued placeholder"
       : `\`placeholder="${truncateForEcho(placeholder)}"\``;
   return `${descriptor} has ${quoted} but no <label>, aria-label, aria-labelledby, or title — the placeholder is the field's only hint, but it disappears on focus and is announced inconsistently by screen readers.`;
+}
+
+/**
+ * Message for the canonical sibling-rollup finding when ≥3 direct-
+ * child labelable controls under one parent share a fingerprint and
+ * all fail the placeholder-vs-label predicate. Names the cluster
+ * shape and the rollup count so an agent reading the message alone
+ * knows it is one finding standing in for N siblings — and knows to
+ * read `siblingInstances` for the per-sibling line/id trail. Quotes
+ * the actual placeholder copy (truncated) so the agent sees the
+ * concrete antipattern the cluster shares.
+ *
+ * The shared `_label-sibling-collapse.ts` helper ships its own
+ * collapsed-message builder for `forms/labels-required` (the "no
+ * accessible name" framing); this one is rule-specific because the
+ * placeholder antipattern wording quotes the placeholder text, which
+ * the labels-required surface doesn't carry.
+ */
+function buildPlaceholderSiblingCollapsedMessage(
+  tagName: string,
+  type: string | null,
+  placeholder: string,
+  count: number,
+): string {
+  const descriptor = type ? `<${tagName} type="${type}">` : `<${tagName}>`;
+  const quoted =
+    placeholder === "<expression>"
+      ? "an expression-valued placeholder"
+      : `\`placeholder="${truncateForEcho(placeholder)}"\``;
+  const others = count - 1;
+  return (
+    `${descriptor} has ${quoted} but no <label>, aria-label, aria-labelledby, or title — and` +
+    ` ${others} adjacent sibling ${tagName} element${others === 1 ? "" : "s"} sharing the same` +
+    ` parent and the same (tag, type, attributes-modulo-id) shape carry the same placeholder-as-` +
+    `label antipattern (collapsed into one finding; see siblingInstances for the per-sibling` +
+    ` line/id trail). The placeholder disappears on focus and is announced inconsistently by` +
+    ` screen readers; the fix is the same per-cluster — promote the placeholder copy into a` +
+    ` persistent <label> or aria-label on every sibling, or wrap the cluster in a single` +
+    ` <fieldset><legend> when one shared label fits the whole group.`
+  );
 }
 
 function buildSuggestion(

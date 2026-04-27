@@ -98,9 +98,7 @@ describe("Violation.findingId — cross-rule uniqueness invariant on a single sc
       files: [htmlFile("signup.html", source)],
     });
 
-    const placeholder = result.violations.filter(
-      (v) => v.ruleId === "forms/placeholder-as-label",
-    );
+    const placeholder = result.violations.filter((v) => v.ruleId === "forms/placeholder-as-label");
     // Surface-don't-suppress: the cluster must still be visible — the
     // collapsed shape carries `siblingInstances` so all six lines are
     // enumerable from one finding.

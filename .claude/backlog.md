@@ -629,8 +629,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Finding-emission shape bugs
 
-- [ ] **Q10-DUPLICATE-FINDING-IDS-ACROSS-DISTINCT-EMISSIONS** `forms/placeholder-as-label` emits 6 separate finding entries on consecutive lines that share the same `findingId` AND `groupKey`, while `forms/labels-required` on the exact same input collapses to one entry with `siblingInstances: [...]`. Identical IDs across distinct entries break consumer dedup keyed by `findingId`. Fix: assert `findingId` uniqueness across emissions in the same response; emit one entry with `siblingInstances: []` when multiple consecutive findings collapse. Per AI-first doctrine "Ambiguous field shapes are dishonest" (id-collision is the worst-case ambiguity).
-
 ### scan_file surface gaps
 
 - [ ] **Q10-SCAN-FILE-NO-TRUNCATION-NO-OVERSIZE-PROTECTION** `scan_file` has no `limit`/`offset`/`restrictToPaths` and no oversize-success protection; a single dense HTML file produces 68k–84k character responses that blow the host token cap, returning only a transport error with no `truncated` flag, no warning, no minimum-honest envelope. Same silent failure mode as `scan_project` but worse because there's no scope-down lever. Fix: add `limit`/`offset`/`maxBytes` parameters; pre-serialization size estimator; minimum-honest envelope fallback (drop `findings[]` body, keep `meta + warnings + nextStep`) when the post-clip envelope still exceeds the host cap. Per AI-first doctrine "Oversize-success is ambiguous failure" — extends Q9-OVERSIZE-MITIGATION-DOES-NOT-ENGAGE-PRE-SERIALIZATION to the scan_file surface.

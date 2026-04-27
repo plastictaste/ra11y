@@ -208,4 +208,102 @@ describe("rule forms/placeholder-as-label", () => {
       expect(violations).toHaveLength(0);
     });
   });
+
+  // Sibling-collapse: when ≥3 direct-child labelable controls under one
+  // parent share the same `(tagName, type, attributes-modulo-id)`
+  // fingerprint AND all carry the placeholder-as-label antipattern,
+  // the rule emits ONE canonical finding carrying `siblingInstances`
+  // instead of N near-identical findings. Mirrors `forms/labels-
+  // required` precedent so a sign-up form with six placeholder-only
+  // inputs reads as one row with the per-sibling line trail —
+  // surface-don't-suppress is preserved (the collapsed finding still
+  // fires and enumerates every sibling), and the line-text-keyed
+  // `findingId` collision is no longer worn by N entries on the wire.
+  describe("HTML: sibling collapse", () => {
+    it("collapses 6 visually-grouped sign-up <input> siblings into one finding with siblingInstances", () => {
+      const source = `<form>
+        <input type="email" placeholder="Email">
+        <input type="email" placeholder="Email">
+        <input type="email" placeholder="Email">
+        <input type="email" placeholder="Email">
+        <input type="email" placeholder="Email">
+        <input type="email" placeholder="Email">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "signup.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.siblingInstances).toBeDefined();
+      expect(v[0]?.siblingInstances?.length).toBe(6);
+      // Message names the rollup so an agent reading the message alone
+      // knows it is one finding standing in for N siblings; quotes the
+      // shared placeholder copy so the antipattern is concrete.
+      expect(v[0]?.message).toContain("siblingInstances");
+      expect(v[0]?.message).toContain("5 adjacent sibling");
+      expect(v[0]?.message).toContain('placeholder="Email"');
+    });
+
+    it("emits per-element when 2 sibling inputs share a fingerprint (below threshold)", () => {
+      const source = `<form>
+        <input type="text" placeholder="First name">
+        <input type="text" placeholder="First name">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "pair.html" });
+      expect(v).toHaveLength(2);
+      expect(v[0]?.siblingInstances).toBeUndefined();
+      expect(v[1]?.siblingInstances).toBeUndefined();
+    });
+
+    it("does not collapse siblings under different parents", () => {
+      const source = `<form>
+        <input type="text" placeholder="First name">
+        <input type="text" placeholder="First name">
+      </form>
+      <form>
+        <input type="text" placeholder="First name">
+        <input type="text" placeholder="First name">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "two-forms.html" });
+      expect(v).toHaveLength(4);
+      for (const finding of v) {
+        expect(finding.siblingInstances).toBeUndefined();
+      }
+    });
+
+    it("groups siblings by fingerprint within one parent (different placeholders do not cross-collapse)", () => {
+      // One parent, three identical "Email" inputs and three identical
+      // "Phone" inputs — two separate groups, each ≥3, each collapses
+      // independently because the `placeholder` attribute participates
+      // in the fingerprint.
+      const source = `<form>
+        <input type="text" placeholder="Email">
+        <input type="text" placeholder="Email">
+        <input type="text" placeholder="Email">
+        <input type="text" placeholder="Phone">
+        <input type="text" placeholder="Phone">
+        <input type="text" placeholder="Phone">
+      </form>`;
+      const v = runRule(rule, source, { filePath: "mixed.html" });
+      expect(v).toHaveLength(2);
+      expect(v[0]?.siblingInstances?.length).toBe(3);
+      expect(v[1]?.siblingInstances?.length).toBe(3);
+      expect(v[0]?.location.line).not.toBe(v[1]?.location.line);
+    });
+  });
+
+  describe("JSX: sibling collapse", () => {
+    it("collapses 4 sign-up JSX <input> siblings into one finding", () => {
+      const source = `const X = (
+        <form>
+          <input type="text" placeholder="Given name" />
+          <input type="text" placeholder="Given name" />
+          <input type="text" placeholder="Given name" />
+          <input type="text" placeholder="Given name" />
+        </form>
+      );`;
+      const v = runRule(rule, source, { filePath: "signup.tsx" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.siblingInstances?.length).toBe(4);
+      expect(v[0]?.message).toContain("siblingInstances");
+      expect(v[0]?.message).toContain('placeholder="Given name"');
+    });
+  });
 });
