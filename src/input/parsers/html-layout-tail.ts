@@ -103,12 +103,12 @@ const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"
  * @param hasLiquidIncludeHead — pre-computed Liquid-head detector
  *   result; passed in rather than re-derived so the parser caches
  *   the detection across multiple stray-close events on one file.
- * @param layoutTailCloserCount — pre-computed count of root-envelope
- *   closers (`</html>` / `</body>` / `</head>`, case-insensitive)
- *   in the file. Cached at the parser so repeated stray-close
- *   events on one document don't rescan the source. The elision
- *   rename requires exactly one such closer total — see branch 1
- *   for the rationale.
+ * @param source — the file source, used by branch 1 to count
+ *   `</html>` / `</body>` / `</head>` tokens (case-insensitive).
+ *   The elision rename requires exactly one such closer total —
+ *   see branch 1 for the rationale. Scanned per call rather than
+ *   cached because branch 1 only runs when the prior gates hold,
+ *   and on most files no stray-close event reaches branch 1 at all.
  */
 export function strayClosingTagMessage(
   closerName: string,
@@ -116,14 +116,14 @@ export function strayClosingTagMessage(
   line: number,
   enclosingTag: string | undefined,
   hasLiquidIncludeHead: boolean,
-  layoutTailCloserCount: number,
+  source: string,
 ): string {
   const lower = closerName.toLowerCase();
   if (
     depth === 0 &&
     LAYOUT_TAIL_CLOSERS.has(lower) &&
     hasLiquidIncludeHead &&
-    layoutTailCloserCount === 1
+    countLayoutTailClosers(source) === 1
   ) {
     return `Elided layout-tail </${lower}> — file opens with a Liquid {% include %} directive whose sibling partial closes this root tag`;
   }

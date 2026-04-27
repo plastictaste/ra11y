@@ -67,11 +67,7 @@ import {
   peekClosingTagName,
   peekOpeningTagName,
 } from "./html-implicit-close.ts";
-import {
-  countLayoutTailClosers,
-  detectLiquidIncludeHead,
-  strayClosingTagMessage,
-} from "./html-layout-tail.ts";
+import { detectLiquidIncludeHead, strayClosingTagMessage } from "./html-layout-tail.ts";
 import {
   matchesTemplateEndTag,
   OPAQUE_BLOCK_DIRECTIVES,
@@ -144,17 +140,6 @@ class HtmlParser {
    * `undefined` until first query; the detector runs at most once.
    */
   #liquidIncludeHead: boolean | undefined;
-  /**
-   * Lazily-computed count of root-envelope closing tags
-   * (`</html>` / `</body>` / `</head>`, case-insensitive) in the
-   * source. The layout-tail elision rename requires exactly one such
-   * closer — a wrapper that delegates root closure to a sibling
-   * partial has only the diagnosed stray; a file whose tail reads
-   * `</body>\n</html>` has two and is closing its own root document.
-   * Cached so repeated stray-close events on one file don't rescan
-   * the source.
-   */
-  #layoutTailCloserCount: number | undefined;
   /**
    * Stack of currently-open element names (lowercased), in
    * outer-to-inner order. Pushed on entry to `#consumeChildren`,
@@ -465,18 +450,15 @@ class HtmlParser {
     // parent. Guaranteed non-empty when `#depth > 0` because each
     // `#consumeChildren` push happens before the depth increment.
     const enclosingTag = this.#depth > 0 ? this.#openStack.at(-1) : undefined;
-    this.#errors.push({
-      message: strayClosingTagMessage(
-        closerName,
-        this.#depth,
-        startPos.line,
-        enclosingTag,
-        this.#hasLiquidIncludeHead(),
-        this.#getLayoutTailCloserCount(),
-      ),
-      position: startPos,
-      recoverable: true,
-    });
+    const message = strayClosingTagMessage(
+      closerName,
+      this.#depth,
+      startPos.line,
+      enclosingTag,
+      this.#hasLiquidIncludeHead(),
+      this.#source,
+    );
+    this.#errors.push({ message, position: startPos, recoverable: true });
     return {
       kind: "HtmlText",
       range: this.#range(start),
@@ -695,20 +677,6 @@ class HtmlParser {
   #hasLiquidIncludeHead(): boolean {
     this.#liquidIncludeHead ??= detectLiquidIncludeHead(this.#source);
     return this.#liquidIncludeHead;
-  }
-
-  /**
-   * Count of root-envelope closing tags
-   * (`</html>` / `</body>` / `</head>`, case-insensitive) in the
-   * source. Cached on first call so repeated stray-close events on
-   * one document don't rescan the source. See
-   * {@link countLayoutTailClosers} for the shared scanner (kept
-   * module-level so it is unit-testable without instantiating the
-   * parser).
-   */
-  #getLayoutTailCloserCount(): number {
-    this.#layoutTailCloserCount ??= countLayoutTailClosers(this.#source);
-    return this.#layoutTailCloserCount;
   }
 
   // -------------------------------------------------------------------------
