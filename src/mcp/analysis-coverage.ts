@@ -45,8 +45,12 @@
  *     `.css`-gated rule's `filesEvaluated` without appearing as a
  *     separate `.scss` lane (the SCSS adapter emits a CSS AST). Values
  *     are either `"native"` (extension name equals AST language — no
- *     alias to explain) or the AST-language tag an alias routes
- *     through (`"css"`, `"html"`, `"tsx"`). Present-when-meaningful.
+ *     alias to explain), the AST-language tag an alias routes through
+ *     (`"css"`, `"html"`, `"tsx"`), or `"markdown-html-residue"` for
+ *     `.md`/`.markdown` sources (HTML parser runs on stripped residue
+ *     per ADR 0025 — distinct from native HTML so agents don't read
+ *     the bare `"html"` tag as full HTML coverage on Markdown input).
+ *     Present-when-meaningful.
  *   - `hints`: actionable suggestions derived from the above counts —
  *     e.g., "add these 8 design-system wrappers to nativeWrappers" when
  *     `opaqueCustomComponents` is high, or "post-compile CSS likely not
@@ -884,22 +888,47 @@ function describeTemplateDirectiveHandling(tokens: ReadonlyMap<string, number>):
  * Per-extension disclosure of which parser / AST-language each file
  * routed through. Mirrors `parseForExtension` in `src/mcp/session.ts`
  * and the EXTENSION_ALIASES table in `src/utils/path.ts`. Values are
- * either `"native"` (extension name equals AST language — no alias to
- * explain) or the AST-language tag an alias routes through
- * (`"css"`, `"html"`, `"tsx"`). Canonical mappings: `.scss → "css"`,
- * `.less → "css"`, `.mdx → "tsx"`, `.astro → "html"`,
- * `.md`/`.markdown → "html"`, `.erb → "html"`, `.js`/`.ts → "tsx"`.
- * Native pairs:
- * `.css`, `.html`, `.htm`, `.tsx`, `.jsx`. Values mirror the AST
- * `language` alphabet so cross-
- * referencing against `parseErrorFiles[].parser` is unambiguous.
- * Derived from the ParsedFile list (no re-dispatch): every file
- * carries `ast.language` and the extension comes off the path.
- * `parseForExtension` dispatches purely on suffix, so two files with
- * the same extension always produce the same language — safe to stop
- * at the first sighting. Sorted for deterministic wire output.
+ * one of:
+ *   - `"native"` — extension name equals AST language (no alias to
+ *     explain).
+ *   - `"css"` / `"html"` / `"tsx"` — alias-routed extension whose
+ *     source IS source of that AST language (`.scss → "css"`,
+ *     `.less → "css"`, `.mdx → "tsx"`, `.astro → "html"`,
+ *     `.erb → "html"`, `.js`/`.ts → "tsx"`).
+ *   - `"markdown-html-residue"` — Markdown source (`.md`/`.markdown`)
+ *     processed through the HTML parser as an HTML-residue projection
+ *     per ADR 0025 Option B. Distinct from a bare `"html"` value
+ *     because the source is NOT HTML: ATX/Setext headings, link text,
+ *     and prose readability are stripped or out-of-scope; only
+ *     embedded HTML (tables, iframes, admonition divs) and image
+ *     alt-text reach rules. Agents cross-referencing
+ *     `parseErrorFiles[].parser` (which still tags `"html"` for these
+ *     files, since the AST language tag tracks the running parser)
+ *     should treat `markdown-html-residue` as the disclosure axis
+ *     orthogonal to AST language: same parser, narrower evidence.
+ *     Native pairs (extension equals AST language): `.css`, `.html`,
+ *     `.htm`, `.tsx`, `.jsx`. Values are deterministic tokens chosen
+ *     so the agent can dispatch on equality without substring
+ *     matching. Derived from the ParsedFile list (no re-dispatch):
+ *     every file carries `ast.language` and the extension comes off
+ *     the path. `parseForExtension` dispatches purely on suffix, so
+ *     two files with the same extension always produce the same
+ *     language — safe to stop at the first sighting. Sorted for
+ *     deterministic wire output.
  */
 const NATIVE_EXT_LANG: Readonly<Record<string, string>> = { htm: "html", jsx: "tsx" };
+
+/**
+ * Token for `.md` / `.markdown` files routed through the HTML parser.
+ * Distinct from the bare `"html"` AST-language tag: the source is
+ * Markdown processed for HTML residue per ADR 0025, not native HTML.
+ * Surfaced on `parseModeByExtension` so an agent reading the field
+ * can tell native HTML routing apart from the markdown-residue
+ * downgrade (the bare `"html"` value would silently conflate the two,
+ * mis-cuing the agent into expecting heading-hierarchy / link-purpose
+ * coverage that the residue projection intentionally omits).
+ */
+const MARKDOWN_HTML_RESIDUE_MODE = "markdown-html-residue";
 
 function parseModeByExtension(files: readonly ParsedFile[]): Record<string, string> {
   const seen = new Map<string, string>();
@@ -909,7 +938,20 @@ function parseModeByExtension(files: readonly ParsedFile[]): Record<string, stri
     if (ext.length === 0 || seen.has(ext)) continue;
     const lang = f.ast.language;
     const isNative = ext.slice(1) === lang || NATIVE_EXT_LANG[ext.slice(1)] === lang;
-    seen.set(ext, isNative ? "native" : lang);
+    if (isNative) {
+      seen.set(ext, "native");
+      continue;
+    }
+    // `.md` / `.markdown` route through the HTML parser per ADR 0025
+    // Option B but the source is not HTML — emit a distinct token so
+    // the disclosure label honestly distinguishes Markdown-residue
+    // from native HTML routing instead of relying on the bare AST
+    // language tag.
+    if (lang === "html" && (ext === ".md" || ext === ".markdown")) {
+      seen.set(ext, MARKDOWN_HTML_RESIDUE_MODE);
+      continue;
+    }
+    seen.set(ext, lang);
   }
   return Object.fromEntries([...seen.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }

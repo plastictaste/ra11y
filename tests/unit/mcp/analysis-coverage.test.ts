@@ -1729,13 +1729,16 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(mode?.[".js"]).toBe("tsx");
     });
 
-    it("covers every EXTENSION_ALIASES row: .scss → css, .mdx → tsx, .astro/.md/.markdown → html, .ts/.js → tsx", () => {
+    it("covers every EXTENSION_ALIASES row: .scss → css, .mdx → tsx, .astro → html, .md/.markdown → markdown-html-residue, .ts/.js → tsx", () => {
       // Pin the full alias table to the parse-mode disclosure so a
       // future alias addition in `src/utils/path.ts EXTENSION_ALIASES`
       // can't silently drift the disclosure out of sync. AST languages
       // mirror what the dedicated parsers in `src/mcp/session.ts
       // parseForExtension` produce (the TSX parser handles the whole
-      // JSX family and tags everything `tsx`).
+      // JSX family and tags everything `tsx`). Markdown sources route
+      // through the HTML parser (ADR 0025) but emit a distinct
+      // `markdown-html-residue` token so the disclosure honestly
+      // distinguishes Markdown-residue from native HTML routing.
       const files = [
         fileWith("a.scss", "css"),
         fileWith("b.mdx", "tsx"),
@@ -1750,12 +1753,30 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(mode).toEqual({
         ".astro": "html",
         ".js": "tsx",
-        ".markdown": "html",
-        ".md": "html",
+        ".markdown": "markdown-html-residue",
+        ".md": "markdown-html-residue",
         ".mdx": "tsx",
         ".scss": "css",
         ".ts": "tsx",
       });
+    });
+
+    it("does not label `.md` / `.markdown` as the bare `html` tag (markdown source, not native HTML)", () => {
+      // The disclosure axis is orthogonal to AST language: `.md`
+      // routes through the HTML parser per ADR 0025 Option B, but the
+      // source is not HTML — ATX/Setext headings are stripped before
+      // the residue reaches `parseHtml`, link text and prose
+      // readability are out-of-scope. A bare `"html"` value would
+      // silently mis-cue an agent into expecting full HTML coverage.
+      // Pin equality on the distinct token so the disclosure can't
+      // regress to the conflated shape.
+      const files = [fileWith("readme.md", "html"), fileWith("changelog.markdown", "html")];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
+      expect(mode?.[".md"]).not.toBe("html");
+      expect(mode?.[".markdown"]).not.toBe("html");
+      expect(mode?.[".md"]).toBe("markdown-html-residue");
+      expect(mode?.[".markdown"]).toBe("markdown-html-residue");
     });
 
     it("omits the field when no parseable files were scanned (present-when-meaningful)", () => {
