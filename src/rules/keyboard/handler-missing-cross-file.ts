@@ -78,11 +78,25 @@ export interface CrossFileEnrichable {
 
 /**
  * When a cross-file source is present, append a sentence to the
- * existing suggestion naming the cross-file possibility and stamp
- * `confidence: "medium"` with a structured `couldBeWrongBecause` code.
+ * existing suggestion naming the cross-file possibility, stamp
+ * `confidence: "medium"` with a structured `couldBeWrongBecause` code,
+ * AND downgrade severity from `"error"` to `"warning"` so the
+ * attention-budget signal agrees with the conceded uncertainty in the
+ * suggestion text (the appended sentence literally instructs the agent
+ * to "verify the keyboard wiring there before treating this finding as
+ * live"). Per the doctrine extension at
+ * docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+ * fix-description must agree across all three channels": severity,
+ * confidence, and fix-description-imperative-verbs must agree on the
+ * same predicate-strength claim. A `severity: "error"` paired with a
+ * "verify before treating as live" suggestion sentence ships
+ * contradictory attention-budget signals on the same finding.
+ *
  * When no cross-file source is detected, the violation passes through
- * unchanged. Doctrine: surface-don't-suppress with reason-text
- * enrichment so the agent can verify the binding rather than guess.
+ * unchanged — the binding is in-file, the rule has full evidence, and
+ * `"error"` severity is honest. Doctrine: surface-don't-suppress with
+ * reason-text enrichment so the agent can verify the binding rather
+ * than guess.
  */
 export function enrichForCrossFileScript<V extends CrossFileEnrichable>(
   v: V,
@@ -92,6 +106,7 @@ export function enrichForCrossFileScript<V extends CrossFileEnrichable>(
   const enrichmentSuffix = ` Cross-file follow-up: this file has no inline keyboard handler, but the binding may live in an external script (\`${externalSource}\`) — verify the keyboard wiring there before treating this finding as live.`;
   return {
     ...v,
+    severity: downgradeIfError(v.severity),
     suggestion: `${v.suggestion}${enrichmentSuffix}`,
     confidence: "medium",
     couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
@@ -131,9 +146,22 @@ export function enrichExternalJsFinding<V extends CrossFileEnrichable>(
   v: V,
   siblingImport: string | null,
 ): V {
+  // Severity downgrades unconditionally on the external-JS path,
+  // matching the unconditional `confidence: "medium"` stamp. The base
+  // suggestion already concedes the predicate may not hold ("Cross-file
+  // check: grep the selector in your HTML to confirm the target isn't
+  // already a `<button>` or `<a href>`" lives in
+  // `buildExternalJsSuggestion`), so `severity: "error"` paired with
+  // that text ships contradictory attention-budget signals — the
+  // suggestion-text channel concedes the predicate may not hold while
+  // severity claims it does. Per doctrine extension at
+  // docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+  // fix-description must agree across all three channels", downgrade
+  // severity → warning so the channels agree.
   if (siblingImport === null) {
     return {
       ...v,
+      severity: downgradeIfError(v.severity),
       confidence: "medium",
       couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
     };
@@ -141,8 +169,22 @@ export function enrichExternalJsFinding<V extends CrossFileEnrichable>(
   const enrichmentSuffix = ` Cross-file follow-up: this file has no inline keyboard handler, but the binding may live in an external script (\`${siblingImport}\`) — verify the keyboard wiring there before treating this finding as live.`;
   return {
     ...v,
+    severity: downgradeIfError(v.severity),
     suggestion: `${v.suggestion}${enrichmentSuffix}`,
     confidence: "medium",
     couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
   };
+}
+
+/**
+ * Downgrades `"error"` to `"warning"` and leaves `"warning"` / `"info"`
+ * unchanged. The cross-file enrichers stamp `confidence: "medium"`
+ * because the binding lives in a file the scanner could not see; the
+ * matching attention-budget signal at the severity layer is `"warning"`,
+ * not `"error"`. Lower severities pass through — no upgrade path is
+ * meaningful here because the enrichers only ever express "less
+ * confident than the baseline finding," never more.
+ */
+function downgradeIfError(severity: "error" | "warning" | "info"): "error" | "warning" | "info" {
+  return severity === "error" ? "warning" : severity;
 }

@@ -494,7 +494,14 @@ describe("rule keyboard/handler-missing", () => {
 btn.addEventListener('click', () => save());`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("error");
+      // External-JS findings are inherently cross-file ambiguous (the
+      // click target resolves against the DOM, not the .js source), and
+      // the suggestion concedes "Cross-file check: grep the selector in
+      // your HTML…". Severity downgrades from `"error"` to `"warning"`
+      // so the attention-budget signal agrees with the conceded
+      // uncertainty, per the doctrine "Reason / priority / fix-
+      // description must agree across all three channels."
+      expect(v[0]?.severity).toBe("warning");
       expect(v[0]?.message).toContain("addEventListener('click'");
       expect(v[0]?.message).toContain("btn");
     });
@@ -653,7 +660,12 @@ btn.addEventListener('click', save);`;
 div.addEventListener('click', handle);`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("error");
+      // External-JS path always carries `confidence: "medium"` and
+      // therefore severity downgrades to `"warning"` — the createElement
+      // gate confirms the receiver is a `<div>`, but the click-attach
+      // shape is still the cross-file-ambiguous one this rule can't
+      // verify in-file beyond the bound tag.
+      expect(v[0]?.severity).toBe("warning");
     });
 
     it("target was bound from document.createElement('span')", () => {
@@ -856,6 +868,95 @@ tile.onclick = () => activate();`;
       const v = runRule(rule, source);
       expect(v).toHaveLength(1);
       expect(v[0]?.confidence).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Severity-channel agreement with cross-file confidence and suggestion-
+  // text hedging — doctrine source: docs/kb/architecture/ai-first-
+  // consumer.md "Reason / priority / fix-description must agree across
+  // all three channels." When `confidence` downgrades to `"medium"`
+  // because the binding may live in a file the scanner could not see
+  // AND the suggestion text concedes the predicate may not hold
+  // ("verify the keyboard wiring there before treating this finding as
+  // live" / "Cross-file check: grep the selector in your HTML…"),
+  // severity must downgrade in lockstep — `"error"` paired with that
+  // concession is contradictory attention-budget signaling.
+  // ---------------------------------------------------------------------------
+  describe("severity agrees with cross-file confidence and suggestion hedging", () => {
+    it("HTML: severity downgrades to warning when an external <script src> triggers enrichment", () => {
+      const source = `<!DOCTYPE html><html><body>
+<script src="app.js"></script>
+<div onclick="doThing()">Click</div>
+</body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.suggestion).toContain("verify the keyboard wiring");
+    });
+
+    it("HTML: severity stays error when no external script is present (binding is in-file)", () => {
+      const source = `<!DOCTYPE html><html><body>
+<div onclick="doThing()">Click</div>
+</body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("JSX: severity downgrades to warning when sibling-module import triggers enrichment", () => {
+      const source = `import { wireHandlers } from "./handlers.js";
+const X = <div onClick={wireHandlers}>Click</div>;`;
+      const v = runRule(rule, source);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.confidence).toBe("medium");
+    });
+
+    it("JSX: severity stays error when only bare-package imports are present", () => {
+      const source = `import { useState } from "react";
+const X = <div onClick={useState}>x</div>;`;
+      const v = runRule(rule, source);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.confidence).toBeUndefined();
+    });
+
+    it("external-JS: severity downgrades to warning unconditionally (cross-file ambiguity is structural)", () => {
+      const source = `const btn = document.getElementById('save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+      // The base suggestion already concedes "Cross-file check: grep
+      // the selector in your HTML…", so severity at "error" would
+      // contradict the hedge. The downgrade applies whether or not a
+      // sibling-module import is detected — the click target resolves
+      // against the DOM either way.
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.confidence).toBe("medium");
+      expect(v[0]?.suggestion).toContain("Cross-file check: grep");
+    });
+
+    it("external-JS: severity downgrades to warning with sibling import as well", () => {
+      const source = `import { keyboardWiring } from "./keyboard.ts";
+const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.confidence).toBe("medium");
+    });
+
+    it("HTML: attribute-interaction (data-bs-toggle) downgrades to warning under external script", () => {
+      const source = `<!DOCTYPE html><html><body>
+<script src="bootstrap-bundle.js"></script>
+<div data-bs-toggle="modal" data-bs-target="#m">Open</div>
+</body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.confidence).toBe("medium");
     });
   });
 });
