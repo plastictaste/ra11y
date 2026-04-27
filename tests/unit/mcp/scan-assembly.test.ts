@@ -19,6 +19,10 @@ import type { ParsedFile } from "../../../src/engine/scanner.ts";
 import { parseHtml } from "../../../src/input/parsers/html.ts";
 import { parseScss } from "../../../src/input/parsers/scss.ts";
 import {
+  applyExtensionPresentSubkindAdjustment,
+  collectExtensionsForSubkindProbe,
+} from "../../../src/mcp/extension-subkind.ts";
+import {
   applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   computeTopRules,
@@ -983,5 +987,237 @@ describe("withTopRules — plan-stamping helper", () => {
     }));
     const out = withTopRules(plan, files, 3);
     expect((out["topRules"] as readonly { ruleId: string }[]).length).toBe(3);
+  });
+});
+
+describe("collectExtensionsForSubkindProbe", () => {
+  const cssRule = {
+    id: "css/example",
+    satisfies: [],
+    severity: "warning",
+    scope: "node",
+    fixClass: "guidance",
+    appliesTo: { fileExtensions: [".css"] },
+    docs: { title: "css/example", rationale: "", goodExample: "", badExample: "" },
+  } as unknown as Rule;
+  const htmlRule = {
+    id: "html/example",
+    satisfies: [],
+    severity: "warning",
+    scope: "node",
+    fixClass: "guidance",
+    appliesTo: { fileExtensions: [".HTML", ".HTM"] },
+    docs: { title: "html/example", rationale: "", goodExample: "", badExample: "" },
+  } as unknown as Rule;
+  const projectRule = {
+    id: "project/example",
+    satisfies: [],
+    severity: "warning",
+    scope: "project",
+    fixClass: "guidance",
+    docs: { title: "project/example", rationale: "", goodExample: "", badExample: "" },
+  } as unknown as Rule;
+
+  it("collects gated extensions only from `eligible === 0`, low-confidence rows", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+      },
+      {
+        ruleId: "html/example",
+        filesEvaluated: 4,
+        filesEligible: 4,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+    ];
+    const out = collectExtensionsForSubkindProbe(rows, [cssRule, htmlRule]);
+    expect(out.has(".css")).toBe(true);
+    expect(out.has(".html")).toBe(false);
+  });
+
+  it("lowercases extensions for cache-key stability", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "html/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+      },
+    ];
+    const out = collectExtensionsForSubkindProbe(rows, [htmlRule]);
+    expect(out.has(".html")).toBe(true);
+    expect(out.has(".HTML")).toBe(false);
+  });
+
+  it("skips project-scoped rules (no `appliesTo.fileExtensions`)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "project/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+      },
+    ];
+    const out = collectExtensionsForSubkindProbe(rows, [projectRule]);
+    expect(out.size).toBe(0);
+  });
+
+  it("skips rows that already carry a `subkind` (idempotent re-runs)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        subkind: "extension-absent",
+      },
+    ];
+    const out = collectExtensionsForSubkindProbe(rows, [cssRule]);
+    expect(out.size).toBe(0);
+  });
+});
+
+describe("applyExtensionPresentSubkindAdjustment", () => {
+  const cssRule = {
+    id: "css/example",
+    satisfies: [],
+    severity: "warning",
+    scope: "node",
+    fixClass: "guidance",
+    appliesTo: { fileExtensions: [".css"] },
+    docs: { title: "css/example", rationale: "", goodExample: "", badExample: "" },
+  } as unknown as Rule;
+  const scssAliasRule = {
+    id: "css/scss-aliased",
+    satisfies: [],
+    severity: "warning",
+    scope: "node",
+    fixClass: "guidance",
+    // SCSS files alias-match the `.css` gate via `extensionMatches`.
+    appliesTo: { fileExtensions: [".css"] },
+    docs: { title: "css/scss-aliased", rationale: "", goodExample: "", badExample: "" },
+  } as unknown as Rule;
+
+  it("returns the input array unchanged when the probe result is undefined (caller skipped probe)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        reason: "no files matching .css were scanned",
+        remediation: "add CSS source files to the scan path",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], undefined);
+    expect(out).toBe(rows);
+  });
+
+  it("stamps `extension-absent` when the probe found no matching extensions at the cwd", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        reason: "no files matching .css were scanned",
+        remediation: "add CSS source files to the scan path",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], new Set());
+    expect(out[0]?.subkind).toBe("extension-absent");
+    // Existing remediation untouched on the absent branch — it
+    // correctly names the absent-extension fix.
+    expect(out[0]?.remediation).toBe("add CSS source files to the scan path");
+  });
+
+  it("stamps `extension-present-but-out-of-scope` and rewrites remediation when the probe found a matching extension", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        reason: "no files matching .css were scanned",
+        remediation: "add CSS source files to the scan path",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], new Set([".css"]));
+    expect(out[0]?.subkind).toBe("extension-present-but-out-of-scope");
+    // Remediation rewrites — the original "add additionalPaths for
+    // compiled output" steers agents toward the WRONG fix when source
+    // files were excluded by `additionalPaths` / `exclude` already.
+    expect(out[0]?.remediation).toContain("pruned");
+    expect(out[0]?.remediation).toContain("broader scope");
+  });
+
+  it("honors the alias table — `.scss` present at root credits a `.css`-gated rule", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/scss-aliased",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        reason: "no files matching .css were scanned",
+        remediation: "add CSS source files to the scan path",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [scssAliasRule], new Set([".scss"]));
+    expect(out[0]?.subkind).toBe("extension-present-but-out-of-scope");
+  });
+
+  it("leaves rows with `eligible > 0` unchanged (subkind is for the no-eligible-files case only)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 5,
+        filesEligible: 5,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], new Set([".css"]));
+    expect(out[0]?.subkind).toBeUndefined();
+  });
+
+  it("leaves rows that already carry a `subkind` unchanged (idempotent)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        coverageConfidence: "low",
+        subkind: "extension-absent",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], new Set([".css"]));
+    expect(out[0]?.subkind).toBe("extension-absent");
+  });
+
+  it("returns the input array unchanged when no row qualifies (object identity stable)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 5,
+        filesEligible: 5,
+        findingsEmitted: 0,
+        coverageConfidence: "high",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], new Set([".css"]));
+    expect(out).toBe(rows);
   });
 });

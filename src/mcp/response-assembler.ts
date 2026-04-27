@@ -63,6 +63,7 @@ import type { ConfigPreset } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { applyExtensionPresentSubkindAdjustment } from "./extension-subkind.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import {
   buildPerRuleLimitationMap,
@@ -161,6 +162,21 @@ export interface ScanFamilyResponseInput {
    * was handed; omit when the tool did not resolve a search root.
    */
   readonly configSearchedFromForWarning?: string;
+  /**
+   * Pre-computed result of a cwd-rooted directory walk that probes
+   * whether a rule's gated extensions exist anywhere under the project
+   * root. Drives the {@link applyExtensionPresentSubkindAdjustment}
+   * pass that stamps a `subkind: "extension-absent" |
+   * "extension-present-but-out-of-scope"` discriminator on
+   * `eligible === 0` extension-gated `perRuleCoverage` rows. The
+   * caller computes the set via
+   * {@link probeExtensionsAtRoot} and passes it through; the
+   * assembler stays sync. Omit on single-file / explicit-paths
+   * surfaces (`scan_file` has no cwd-rooted scope to reason about);
+   * rows then ship without the `subkind` discriminator (honest
+   * present-when-meaningful shape).
+   */
+  readonly extensionsPresentAtRoot?: ReadonlySet<string>;
 }
 
 export interface ScanFamilyResponseOptions {
@@ -478,11 +494,22 @@ export function assembleScanFamilyResponse(
     activeRules,
     new Set(scssUnresolvedFiles),
   );
-  const adjustedPerRuleCoverage = applyFragmentInputAdjustment(
+  const fragmentInputAdjusted = applyFragmentInputAdjustment(
     scssAdjusted,
     parsedFiles,
     activeRules,
     new Set(fragmentFiles),
+  );
+  // Disambiguate `eligible === 0` extension-gated rows by stamping
+  // `subkind: "extension-absent" | "extension-present-but-out-of-scope"`.
+  // The caller pre-computed `extensionsPresentAtRoot` from a bounded
+  // directory walk that does NOT respect scope filters — the whole
+  // point is to detect what scope filters pruned. Skipped (no-op) on
+  // surfaces without a cwd-rooted scope (`scan_file` explicit paths).
+  const adjustedPerRuleCoverage = applyExtensionPresentSubkindAdjustment(
+    fragmentInputAdjusted,
+    activeRules,
+    input.extensionsPresentAtRoot,
   );
   // Per-finding confidence parity (in the
   // backlog; doctrine source: docs/kb/architecture/ai-first-consumer.md

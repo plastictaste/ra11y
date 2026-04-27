@@ -16,6 +16,7 @@
  */
 
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
+import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
@@ -156,6 +157,21 @@ export const scanTool: McpTool = {
       wrapperSources: buildWrapperSourcesFromConfig(projectConfig, session),
       cwd,
     });
+    // Probe `cwd` for files whose extensions match an `eligible === 0`
+    // extension-gated rule's gate but didn't reach the scan — drives
+    // the `subkind: "extension-present-but-out-of-scope"` discriminator
+    // on `meta.perRuleCoverage` rows whose remediation would otherwise
+    // misroute (the existing "add additionalPaths for compiled output"
+    // text steers agents the wrong way when source files were excluded
+    // by `additionalPaths` / `exclude` / `.gitignore` rather than
+    // genuinely absent). Bounded directory walk; no-op fast path when
+    // no row qualifies. The helper returns a spread-ready fragment so
+    // the assembler call below stays straight-line.
+    const extensionsField = await probeExtensionsPresentAtRoot({
+      cwd,
+      perRuleCoverage: collected.perRuleCoverage,
+      activeRules: collected.activeRules,
+    });
     // Disable the assembler's internal token-density cap so the cap
     // measures the FINAL response shape — after we've overlaid the
     // tool-specific outer fields (scanned, configSource, nextStep,
@@ -179,6 +195,7 @@ export const scanTool: McpTool = {
         // project-rooted tool answers "where was the search?" the
         // same way.
         configSearchedFromForWarning: cwd,
+        ...extensionsField,
       },
       { tokenBudget: 0 },
     );

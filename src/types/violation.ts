@@ -646,6 +646,44 @@ export interface PerRuleCoverage {
     | "scss-unresolved-variables"
     | "fragment-input-no-document-envelope";
   /**
+   * Discriminator for an `eligible === 0` extension-gated row,
+   * differentiating two structurally distinct gaps the original
+   * `reason: "no files matching .css were scanned"` text conflated:
+   *
+   *   - `"extension-absent"` — the cwd genuinely contains no files of
+   *     this rule's gated extension(s) anywhere under the project
+   *     root. Acute case: a Tailwind project pre-build where no `.css`
+   *     source exists; the agent should `additionalPaths: ["dist/"]`
+   *     to reach compiled output, OR add `.css` source files.
+   *   - `"extension-present-but-out-of-scope"` — files of the gated
+   *     extension(s) DO exist somewhere under the cwd but were pruned
+   *     from the scan by `additionalPaths`, the user's `exclude` list,
+   *     default build-dir skips (`dist`, `build`, …), or `.gitignore`.
+   *     The agent should broaden the scan scope, NOT add more paths.
+   *     Acute case: a project with `.css` under `assets/` whose user
+   *     ran `additionalPaths: ["dist/assets"]` thinking it widened
+   *     coverage when it actually narrowed an already-out-of-scope
+   *     subtree. The original `reason` text steered them toward the
+   *     wrong fix; this field carries the structured discriminator
+   *     and the row's `remediation` is rewritten accordingly.
+   *
+   * Stamped only on rows with `coverageConfidence: "low"`,
+   * `filesEligible: 0`, and a non-empty `appliesTo.fileExtensions`.
+   * Determined by a bounded directory walk at the cwd that does NOT
+   * respect `.gitignore` / `exclude` / `additionalPaths` filters — the
+   * point is to detect what the scoped scan was blind to. The walk
+   * skips infrastructure dirs (`node_modules`, `.git`, language
+   * virtualenvs) only; user-source extensions never live in those.
+   *
+   * Per `docs/kb/architecture/ai-first-consumer.md` "Heuristic-
+   * mislabeled meta sub-fields are dishonest," the value is provable
+   * from the directory walk's evidence — not a heuristic guess. Absent
+   * when the caller didn't run the probe (e.g. `scan_file`'s explicit-
+   * paths surface has no cwd-rooted scope to reason about), or when
+   * the row is not an `eligible === 0` extension-gated case.
+   */
+  readonly subkind?: "extension-absent" | "extension-present-but-out-of-scope";
+  /**
    * Reason this rule was loaded but did not run on this scan. Sibling of
    * {@link coverageConfidence} for the orthogonal "rule never executed"
    * axis: `coverageConfidence` answers "trust the clean tally" for rules

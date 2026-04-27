@@ -25,6 +25,7 @@ import {
 import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
 import type { Violation } from "../types/violation.ts";
+import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
 import {
@@ -746,11 +747,18 @@ export async function runScanAndFormat(
     activeRules,
     new Set(scssUnresolvedFiles),
   );
-  const adjustedPerRuleCoverage = applyFragmentInputAdjustment(
-    scssAdjusted,
-    files,
+  // Disambiguate `eligible === 0` extension-gated rows by probing
+  // whether the gated extensions exist anywhere under cwd. Two cases
+  // route to different remediations: (a) `extension-absent` — the cwd
+  // has no files of this extension at all (current text correct);
+  // (b) `extension-present-but-out-of-scope` — files exist but were
+  // pruned by `additionalPaths` / `exclude` / `.gitignore` / default
+  // build-dir skips, in which case the agent should broaden scope
+  // rather than narrow `additionalPaths` further.
+  const adjustedPerRuleCoverage = await applyExtensionSubkindFromRoot(
+    applyFragmentInputAdjustment(scssAdjusted, files, activeRules, new Set(fragmentFiles)),
     activeRules,
-    new Set(fragmentFiles),
+    cwd,
   );
   // Per-finding confidence parity with per-rule coverage limitations.
   // When a rule's adjusted `coverageConfidence !== "high"`, propagate
