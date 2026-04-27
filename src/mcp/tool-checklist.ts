@@ -17,6 +17,7 @@ import { buildCoverageReport, type PerStandardCoverage } from "../reports/covera
 import type { AttestationRecord } from "../types/evidence.ts";
 import type { ReviewCandidate, ReviewConfidence } from "../types/review.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
+import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import {
   type Applicability,
@@ -52,38 +53,22 @@ import {
   textResult,
 } from "./tools-helpers.ts";
 
-/**
- * Per-criterion-group disable-pragma spellings for the four comment
- * dialects ra11y's inline-disable parser accepts today. Shipped on
- * every candidate so an agent dismissing in source has the ready-to-
- * paste form for every file type without cross-referencing rule IDs.
- *
- * Mirrors `src/config/inline-disables.ts` recognized forms: HTML
- * comments, JSX JavaScript-comment expressions, Liquid
- * `{% comment %}` blocks, and Hugo `{{/_ _/}}` templates (the pragma
- * uses `/*` / `*` / `/` delimiters at emission time — stylized here
- * to keep this docstring a valid block comment). The `<id>` token is
- * the criterion ID (e.g. `wcag22:1.4.5`) — same granularity the
- * disable parser scopes against. Present always on every candidate
- * (schema-required, not optional): agents that open the cited file
- * and decide to suppress need the spelling regardless of file type,
- * so conditional-spread would just force a per-candidate lookup.
- */
-interface SuppressWith {
-  readonly html: string;
-  readonly jsx: string;
-  readonly liquid: string;
-  readonly hugo: string;
-}
-
-function buildSuppressWith(id: string): SuppressWith {
-  return {
-    html: `<!-- ra11y-disable ${id} -->`,
-    jsx: `{/* ra11y-disable ${id} */}`,
-    liquid: `{% comment %}ra11y-disable ${id}{% endcomment %}`,
-    hugo: `{{/* ra11y-disable ${id} */}}`,
-  };
-}
+// `suppressWith` is built per-candidate via
+// `pragmaFormForExtension(candidate.path, criterionId)` from
+// `./checklist-suppress-pragma.ts`. The earlier 4-key
+// `{ html, jsx, liquid, hugo }` shape shipped every dialect on
+// every candidate regardless of file extension — an agent picking
+// the `html` form on a `.scss` candidate would corrupt source
+// because HTML-comment syntax is invalid in CSS. The single string
+// keyed off the candidate's actual extension is the honest shape
+// (see `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+// shapes are dishonest"): the response now advertises the one form
+// that is syntactically valid for THAT file. The helper covers
+// `.css` / `.scss` / `.sass` / `.less` / `.js` / `.ts` / `.mjs` /
+// `.cjs` (block-comment form), `.jsx` / `.tsx` / `.mdx`
+// (JSX-expression form), and `.html` / `.htm` / `.xhtml` /
+// `.markdown` / `.md` / `.mkdn` / `.svg` / `.astro` / `.vue` /
+// `.svelte` / `.erb` / `.liquid` (HTML-comment form).
 
 interface ChecklistCandidateOut {
   readonly path: string;
@@ -92,14 +77,32 @@ interface ChecklistCandidateOut {
   readonly confidence: ReviewConfidence;
   readonly snippet?: string;
   /**
-   * Source-level `ra11y-disable` pragma spellings for the four comment
-   * dialects the inline-disable parser accepts. Scoped to the owning
+   * Source-level `ra11y-disable` pragma — the canonical region-form
+   * spelling for THIS candidate's file extension. Scoped to the owning
    * criterion ID (or, when {@link ChecklistCandidateOut#criteria}
    * lists multiple criteria, to the first criterion — see that field's
    * note on dedup). Always present so an agent dismissing in source
-   * has the ready-to-paste form regardless of file type.
+   * has the ready-to-paste form without re-deriving the comment shape.
+   *
+   * Per-extension forms (see `pragmaFormForExtension`):
+   *   - `.jsx` / `.tsx` / `.mdx` → `{/* ra11y-disable <id> *\/}`
+   *   - `.css` / `.scss` / `.sass` / `.less` / `.js` / `.ts` / `.mjs` /
+   *     `.cjs` → `/* ra11y-disable <id> *\/`
+   *   - `.html` / `.htm` / `.xhtml` / `.markdown` / `.md` / `.mkdn` /
+   *     `.svg` / `.astro` / `.vue` / `.svelte` / `.erb` / `.liquid` →
+   *     `<!-- ra11y-disable <id> -->`
+   *
+   * The earlier 4-key `{ html, jsx, liquid, hugo }` shape shipped
+   * every dialect on every candidate regardless of file extension —
+   * an agent picking the `html` form on a `.scss` candidate would
+   * corrupt source because HTML-comment syntax is invalid in CSS.
+   * The single string keyed off the candidate's actual extension is
+   * the honest shape per `docs/kb/architecture/ai-first-consumer.md`
+   * "Ambiguous field shapes are dishonest" — the response now
+   * advertises the one form that is syntactically valid for THAT
+   * file.
    */
-  readonly suppressWith: SuppressWith;
+  readonly suppressWith: string;
   /**
    * Every criterion ID this candidate covers, sorted, when the same
    * `(path, line, reason)` evidence supports more than one criterion —
@@ -424,7 +427,7 @@ export const checklistTool: McpTool = {
   def: {
     name: "checklist",
     description:
-      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: { html, jsx, liquid, hugo }` — ready-to-paste `ra11y-disable` pragma spellings scoped to the owning criterion. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
+      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1080,7 +1083,7 @@ function mapCandidates(
         line: c.location.line,
         reason: c.reason,
         confidence: c.confidence,
-        suppressWith: buildSuppressWith(criterionId),
+        suppressWith: pragmaFormForExtension(c.location.filePath, criterionId),
         ...(snippet === undefined ? {} : { snippet }),
         // Pass aggregated siblingOccurrences through to the checklist
         // surface so an agent paginating the checklist sees the full

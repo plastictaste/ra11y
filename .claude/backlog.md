@@ -560,8 +560,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Pragma extension mismatch
 
-- [ ] **Q9-SUGGESTWITH-PER-EXTENSION-PRAGMA-FORM** `suggestWith` ships only the `<!-- ra11y-disable -->` HTML-comment pragma form; candidates emit on `.scss` / `.css` / `.js` files where HTML-comment syntax is invalid and would corrupt source. Recurring across 3 corpora. Fix: extend `suggestWith` to ship per-extension pragma forms — `/* ra11y-disable */` for `.css` / `.scss` / `.sass` / `.less` / `.js` / `.ts`, `{/* ra11y-disable */}` for `.jsx` / `.tsx` / `.mdx`, `<!-- ra11y-disable -->` for `.html` / `.htm` / `.xhtml` / `.markdown` / `.md`. Pairs with Q8c-FIX-DESCRIPTION-MARKDOWN-FOR-MD-FILES (open, markdown-axis already named) — this is the across-file-extensions superset.
-
 ### 2026-04-26 round recurrences (folded onto existing Q9 rows)
 
 Each line: `Q9 row id — N recurrences observed in 2026-04-26 round, evidence summary`. The 2026-04-26 sweep replayed the 4-corpora × 5-angles probe; items below recurred without behavior change against the same Q9 closure framing, so this round folds them as recurrence counts rather than new rows.

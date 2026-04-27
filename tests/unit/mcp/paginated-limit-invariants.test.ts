@@ -133,12 +133,7 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
           line: i + 1,
           reason: "manual review candidate",
           confidence: "medium" as const,
-          suppressWith: {
-            html: "<!-- ra11y-disable wcag22:2.4.5 -->",
-            jsx: "{/* ra11y-disable wcag22:2.4.5 */}",
-            liquid: "{% comment %}ra11y-disable wcag22:2.4.5{% endcomment %}",
-            hugo: "{{/* ra11y-disable wcag22:2.4.5 */}}",
-          },
+          suppressWith: "{/* ra11y-disable wcag22:2.4.5 */}",
         })),
       },
     ];

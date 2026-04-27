@@ -212,6 +212,44 @@ function assertHashResolves(
   expect(resolved).toBe(true);
 }
 
+/**
+ * Per-extension regex matcher mirroring `pragmaFormForExtension` —
+ * keeps the `suppressWith` integration test under the cognitive-
+ * complexity budget by collapsing the long if/else chain into a
+ * single table lookup.
+ */
+const SUPPRESS_PATTERNS: ReadonlyArray<readonly [readonly string[], RegExp]> = [
+  [[".tsx", ".jsx", ".mdx"], /^\{\/\* ra11y-disable .+ \*\/\}$/],
+  [
+    [".css", ".scss", ".sass", ".less", ".js", ".ts", ".mjs", ".cjs"],
+    /^\/\* ra11y-disable .+ \*\/$/,
+  ],
+  [
+    [
+      ".html",
+      ".htm",
+      ".xhtml",
+      ".markdown",
+      ".md",
+      ".mkdn",
+      ".svg",
+      ".astro",
+      ".vue",
+      ".svelte",
+      ".erb",
+      ".liquid",
+    ],
+    /^<!-- ra11y-disable .+ -->$/,
+  ],
+];
+function expectedSuppressShape(path: string): RegExp {
+  const lower = path.toLowerCase();
+  for (const [exts, rx] of SUPPRESS_PATTERNS) {
+    if (exts.some((e) => lower.endsWith(e))) return rx;
+  }
+  return /^\/\/ ra11y-disable .+$/;
+}
+
 describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   it("scan_project returns a scanned envelope and plan", async () => {
     const responses = await mcpSession([
@@ -1576,12 +1614,17 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     }
   });
 
-  it("checklist candidates carry suppressWith pragma spellings for all four comment dialects", async () => {
-    // workflow tells agents to
-    // suppress at source via `<!-- ra11y-disable -->` / `{/* ra11y-
-    // disable */}`. Every checklist candidate now ships the ready-
-    // to-paste pragma in all four dialects the inline-disable parser
-    // recognizes, scoped to the owning criterion ID.
+  it("checklist candidates carry suppressWith as a single string keyed off the candidate's file extension", async () => {
+    // The earlier 4-key `{ html, jsx, liquid, hugo }` shape shipped
+    // every dialect on every candidate regardless of file extension —
+    // an agent picking the `html` form on a `.scss` candidate would
+    // corrupt source because HTML-comment syntax is invalid in CSS.
+    // The honest shape per the AI-first consumer model is a single
+    // string scoped to the candidate's actual file extension (see
+    // `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+    // shapes are dishonest"). Each form here is also recognized by
+    // `parseInlineDisables` so the suppression actually fires on
+    // subsequent scans.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR] }),
@@ -1590,29 +1633,23 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       items: Array<{
         criterionId: string;
         candidates: Array<{
-          suppressWith?: {
-            html?: string;
-            jsx?: string;
-            liquid?: string;
-            hugo?: string;
-          };
+          path: string;
+          suppressWith?: string;
         }>;
       }>;
     };
     expect(body.items.length).toBeGreaterThan(0);
     for (const item of body.items) {
       for (const c of item.candidates) {
-        expect(typeof c.suppressWith?.html).toBe("string");
-        expect(typeof c.suppressWith?.jsx).toBe("string");
-        expect(typeof c.suppressWith?.liquid).toBe("string");
-        expect(typeof c.suppressWith?.hugo).toBe("string");
-        expect(c.suppressWith?.html).toContain("ra11y-disable");
-        expect(c.suppressWith?.jsx).toContain("ra11y-disable");
-        expect(c.suppressWith?.liquid).toContain("ra11y-disable");
-        expect(c.suppressWith?.hugo).toContain("ra11y-disable");
+        expect(typeof c.suppressWith).toBe("string");
+        expect(c.suppressWith).toContain("ra11y-disable");
         // Scoped to the owning criterion ID.
-        expect(c.suppressWith?.html).toContain(item.criterionId);
-        expect(c.suppressWith?.jsx).toContain(item.criterionId);
+        expect(c.suppressWith).toContain(item.criterionId);
+        // Per-extension form: HTML / CSS / JSX comment shape MUST
+        // match the file's extension so the agent pasting the pragma
+        // doesn't corrupt source.
+        const expected = expectedSuppressShape(c.path);
+        expect(c.suppressWith).toMatch(expected);
       }
     }
   });
