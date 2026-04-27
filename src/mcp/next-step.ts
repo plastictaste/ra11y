@@ -69,6 +69,31 @@ export interface NextStepOptions {
    * as today" constraint.
    */
   readonly vendorPaths?: ReadonlySet<string>;
+  /**
+   * True when the response will ship `truncated: true` — either the
+   * caller's pagination clipped trailing entries (`paginateFiles`
+   * `hasMore`) or the density-cap secondary budget will drop entries
+   * inside the assembler. Per the AI-first doctrine "NextStep
+   * prioritization on truncated/bulk responses must avoid first-by-
+   * filename routing," the alphabetically-first finding is a poor
+   * default when the response can't carry the whole inventory: visual-
+   * regression fixtures, scaffold dirs (`_template/index.html`), and
+   * vendor stylesheets routinely sort earliest. When `truncated` is
+   * true AND the alphabetical first pick isn't already the highest-
+   * firing non-vendor rule's first finding, the picker reroutes to
+   * that target instead — same logic the all-vendor lane uses for the
+   * "every callable finding is vendor" case, generalized to "the
+   * agent will be paging this corpus and the first action should land
+   * on the rule with the broadest authored impact."
+   *
+   * Behavior when `truncated` is absent/false is unchanged — the first
+   * callable finding wins regardless of inventory size, matching the
+   * pre-change shape `scan` / `scan_file` / small-scan callers depend
+   * on. Additive: when no reroute applies (alphabetical first IS the
+   * highest-firing non-vendor target, or no findings exist), the
+   * structured hint is identical to today.
+   */
+  readonly truncated?: boolean;
 }
 
 /**
@@ -140,6 +165,18 @@ interface NextStepInputs {
    * when the same-ruleId reroute succeeded or no reroute happened.
    */
   readonly dominantRuleReroute?: boolean;
+  /**
+   * Set when {@link pickFirstFinding} took the truncation lane and
+   * rerouted away from an authored alphabetical-first pick (i.e. the
+   * rerouted-from path was NOT vendor — the corpus is paged and the
+   * first-by-filename default would have surfaced a low-impact target
+   * like a visual-regression fixture or scaffold dir). The reason-text
+   * prefix uses a paged-corpus framing instead of the vendor framing
+   * so the agent reads the correct cause for the substitution.
+   * `undefined` when the reroute was vendor-driven OR no reroute
+   * happened.
+   */
+  readonly truncatedAlphabeticalReroute?: boolean;
   readonly iterativeTip: string;
   /**
    * Present-when-meaningful per CLAUDE.md §1 — omitted on the project-
@@ -199,7 +236,7 @@ export function buildNextStep(
   // per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT, and
   // `fixesByClass` is the honest per-lane source this predicate has
   // always read.
-  const firstPick = pickFirstFinding(formatted.files, options.vendorPaths);
+  const firstPick = pickFirstFinding(formatted.files, options.vendorPaths, options.truncated);
   // the flat `plan.violations` headline
   // was deleted because it summed across the four `fixesByClass` lanes
   // under one number. The branching predicate ("are there any
@@ -225,6 +262,9 @@ export function buildNextStep(
       : { reroutedFromVendorPath: firstPick.reroutedFromVendorPath }),
     ...(firstPick.allFindingsVendor === true ? { allFindingsVendor: true } : {}),
     ...(firstPick.dominantRuleReroute === true ? { dominantRuleReroute: true } : {}),
+    ...(firstPick.truncatedAlphabeticalReroute === true
+      ? { truncatedAlphabeticalReroute: true }
+      : {}),
     allViolationsMechanical: allViolationsMechanical(formatted.files),
   };
   if (inputs.violations === 0 && inputs.notes === 0) return cleanScanNextStep(inputs);
@@ -330,24 +370,36 @@ function notesNextStep(inputs: NextStepInputs, first: FirstFinding): NextStepRes
 
 /**
  * Builds the reason-text prefix that precedes the violation-branch
- * prose when the picker rerouted away from a vendor-code first
- * finding. Two reroute flavors share this surface:
- *   - same-ruleId reroute (default): the authored target shares the
- *     vendor pick's rule family, so the agent's mental model carries —
- *     "same-family fix is applicable."
- *   - dominant-rule fallback: no same-ruleId non-vendor sibling existed,
- *     so the picker chose the highest-firing non-vendor rule's first
- *     finding instead. Naming the rule-family change in the prefix is
- *     load-bearing — the agent's first-action target now sits under a
- *     different rule than the vendor pick, and the prose must say so or
- *     the agent will assume the same-family substitution.
+ * prose when the picker rerouted away from the alphabetical first
+ * pick. Three reroute flavors share this surface:
+ *   - same-ruleId vendor reroute (default): the alphabetical first
+ *     finding sat on a vendor path; the picker found a same-`ruleId`
+ *     finding on an authored path. Prose: "same-family fix is
+ *     applicable."
+ *   - dominant-rule vendor fallback: no same-ruleId non-vendor sibling
+ *     existed for the vendor first pick, so the picker chose the
+ *     highest-firing non-vendor rule's first finding instead. Prose
+ *     names the rule-family change so the agent doesn't assume a
+ *     same-family substitution.
+ *   - truncated-alphabetical reroute: the response is paged AND the
+ *     alphabetical first pick was non-vendor (visual-regression
+ *     fixture, scaffold dir, etc.) but not the highest-firing non-
+ *     vendor rule's first finding. The picker reroutes to the
+ *     dominant target so the agent's first action lands on the rule
+ *     with broadest authored impact. Prose names the paged-corpus
+ *     framing so the agent reads the correct cause for the
+ *     substitution (the prior framings would name the rerouted-from
+ *     path as "vendor code" when it's authored-but-low-impact).
  *
- * Returns an empty string when no reroute happened (clean first pick on
- * a non-vendor path, or the vendor-aware code path was disabled by an
- * empty `vendorPaths`).
+ * Returns an empty string when no reroute happened (clean first pick
+ * on a non-vendor path, the vendor-aware code path was disabled by
+ * an empty `vendorPaths`, AND the truncation lane didn't fire).
  */
 function buildReroutePrefix(inputs: NextStepInputs, first: FirstFinding): string {
   if (inputs.reroutedFromVendorPath === undefined) return "";
+  if (inputs.truncatedAlphabeticalReroute === true) {
+    return `note: response is truncated; first-by-filename pick (\`${inputs.reroutedFromVendorPath}\`) is low-impact for a paged corpus, so next-step points at \`${first.path}\` (rule \`${first.ruleId}\`) — the highest-firing non-vendor rule on this scan. `;
+  }
   if (inputs.dominantRuleReroute === true) {
     return `note: highest-severity finding in this scan is in vendor code (\`${inputs.reroutedFromVendorPath}\`); no same-family non-vendor alternative exists, so next-step points at \`${first.path}\` (rule \`${first.ruleId}\`) — the highest-firing non-vendor rule on this scan. `;
   }
@@ -440,24 +492,29 @@ function sumFixesByClass(plan: Record<string, unknown>): number {
  * prose can name the rule-family change. `allFindingsVendor` fires
  * when every callable finding sits on a vendor path — the violation
  * branch routes to a scope-down structured suggestion instead of
- * naming any specific vendor target.
+ * naming any specific vendor target. `truncatedAlphabeticalReroute`
+ * fires when the response is truncated AND the alphabetical first
+ * pick was rerouted to the highest-firing non-vendor target — the
+ * rerouted-from path was authored, not vendor, so the prose prefix
+ * names a paged-corpus framing rather than the vendor framing.
  */
 interface FirstFindingPick {
   readonly finding: FirstFinding | null;
   readonly reroutedFromVendorPath?: string;
   readonly dominantRuleReroute?: boolean;
   readonly allFindingsVendor?: boolean;
+  readonly truncatedAlphabeticalReroute?: boolean;
 }
 
 /**
  * Picks the first (file, line, ruleId) triple the `nextStep` hint
- * should name, with an optional vendor-code reroute. The default
- * answer is the first callable finding in `files[]` order — the
- * response-assembly sort already puts the highest-priority finding
- * first, so that's the one the agent should act on. The reroute
- * kicks in when `vendorPaths` is non-empty AND the first callable
- * finding sits on a path in that set; the picker then walks two
- * fallback lanes:
+ * should name, with optional vendor-code and truncation reroutes. The
+ * default answer is the first callable finding in `files[]` order —
+ * the response-assembly sort already puts the highest-priority
+ * finding first, so that's the one the agent should act on. The
+ * reroute kicks in when `vendorPaths` is non-empty AND the first
+ * callable finding sits on a path in that set; the picker then walks
+ * two fallback lanes:
  *
  *   1. Same-`ruleId` non-vendor sibling (default). Keeps the agent's
  *      fix workflow identical — same rule family means same primary
@@ -478,26 +535,109 @@ interface FirstFindingPick {
  *      on truncated/bulk responses must avoid first-by-filename
  *      routing."
  *
- * When `vendorPaths` is absent or empty, the whole vendor-aware path
- * short-circuits and the behavior is exactly the pre-change
- * `firstCallableFinding` output.
+ * When `truncated` is true AND the first callable finding is itself
+ * non-vendor (so the vendor-reroute lanes don't fire), the picker
+ * STILL reroutes when the alphabetical-first pick isn't the highest-
+ * firing non-vendor rule's first finding. Generalizes the doctrine
+ * rule from "vendor first finding" to "any first-by-filename pick on
+ * a paged corpus": the alphabetical default surfaces visual-regression
+ * fixtures, scaffold dirs, and underscore-prefixed templates ahead of
+ * the rule with the broadest authored impact, and an agent following
+ * the reroute lands on the action-target with leverage instead of
+ * the corpus's earliest path. When `truncated` is absent or false,
+ * this lane short-circuits and the alphabetical first pick wins —
+ * matching the pre-change shape on small scans where the whole
+ * inventory ships and pagination is trivially complete.
+ *
+ * When `vendorPaths` is absent or empty AND `truncated` is absent or
+ * false, the whole reroute path short-circuits and the behavior is
+ * exactly the pre-change `firstCallableFinding` output.
  */
 function pickFirstFinding(
   files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
   vendorPaths: ReadonlySet<string> | undefined,
+  truncated: boolean | undefined,
 ): FirstFindingPick {
   const firstRaw = firstCallableFinding(files);
   if (firstRaw === null) return { finding: null };
-  // No vendor classification, or first pick is already authored → keep
-  // it verbatim. Matches the pre-Q6 behavior for `scan` / `scan_file`
-  // callers that don't plumb `scannedBuildArtifacts` through.
-  if (vendorPaths === undefined || vendorPaths.size === 0) {
+  const safeVendorPaths: ReadonlySet<string> =
+    vendorPaths === undefined ? new Set<string>() : vendorPaths;
+  // Vendor reroute takes precedence — the vendor lane already routes
+  // to highest-firing non-vendor on its dominant-rule fallback, so
+  // when both signals fire (vendor first pick AND truncated), the
+  // existing three-lane walk is the right answer. Skipping straight
+  // to the truncation lane below would lose the same-`ruleId` fast
+  // path the vendor lane prefers.
+  if (safeVendorPaths.size > 0 && safeVendorPaths.has(firstRaw.path)) {
+    return reroutePickAwayFromVendor(files, safeVendorPaths, firstRaw);
+  }
+  // Truncation lane — fires when the response is paged AND the
+  // alphabetical first pick isn't the highest-firing non-vendor rule's
+  // first finding. Reuses the existing dominant-rule walker so the
+  // reroute target matches the vendor lane's lane-2 fallback, and the
+  // prose channel uses the same `dominantRuleReroute: true` framing
+  // (no need to invent a parallel framing for the same routing
+  // decision).
+  if (truncated === true) {
+    return rerouteOnTruncation(files, safeVendorPaths, firstRaw);
+  }
+  return { finding: firstRaw };
+}
+
+/**
+ * Reroute lane for the truncated-response case where the first
+ * callable finding is itself non-vendor. Generalizes the doctrine
+ * from "vendor first finding" to "any first-by-filename pick on a
+ * paged corpus": when the alphabetical first pick differs from the
+ * highest-firing non-vendor rule's first finding, route to the
+ * dominant target so the agent's first action lands on the rule with
+ * the broadest authored impact instead of whatever path sorted
+ * earliest (visual-regression fixture, scaffold dir, etc.).
+ *
+ * Branches:
+ *   - When the dominant pick equals the alphabetical first pick (same
+ *     file + line + rule), no reroute — the alphabetical default IS
+ *     already the highest-impact target, and the prose stays clean.
+ *   - When the dominant pick is a non-vendor finding under a
+ *     different rule (or different file/line under the same rule),
+ *     return the dominant pick with `reroutedFromVendorPath: firstRaw.path`
+ *     and `dominantRuleReroute: true`. The vendor-path field is
+ *     reused as "rerouted-from path" — the prose surface reads it as
+ *     the path the picker steered away from regardless of whether
+ *     that path was vendor or just alphabetical-first.
+ *   - When NO non-vendor finding exists across the paged response
+ *     (every finding sits in `vendorPaths`), signal the all-vendor
+ *     case so the caller branches to scope-down. Same shape as the
+ *     vendor lane's lane-3 exit.
+ */
+function rerouteOnTruncation(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+  firstRaw: FirstFinding,
+): FirstFindingPick {
+  // No non-vendor finding exists at all → all-vendor scope-down.
+  // Matches the vendor lane's lane-3 exit so the caller branches the
+  // same way regardless of which lane diagnosed the all-vendor shape.
+  const dominantPick = pickHighestFiringNonVendorFinding(files, vendorPaths);
+  if (dominantPick === null) {
+    return { finding: firstRaw, allFindingsVendor: true };
+  }
+  // Alphabetical first IS the highest-firing non-vendor target →
+  // no reroute. The reason-text channel stays clean and the prose
+  // looks like a small-scan response.
+  if (
+    dominantPick.path === firstRaw.path &&
+    dominantPick.line === firstRaw.line &&
+    dominantPick.ruleId === firstRaw.ruleId
+  ) {
     return { finding: firstRaw };
   }
-  if (!vendorPaths.has(firstRaw.path)) {
-    return { finding: firstRaw };
-  }
-  return reroutePickAwayFromVendor(files, vendorPaths, firstRaw);
+  return {
+    finding: dominantPick,
+    reroutedFromVendorPath: firstRaw.path,
+    dominantRuleReroute: true,
+    truncatedAlphabeticalReroute: true,
+  };
 }
 
 /**

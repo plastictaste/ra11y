@@ -671,6 +671,239 @@ describe("buildNextStep", () => {
       expect(result.prose).toContain("additionalPaths");
     });
   });
+
+  // ── truncated-response reroute ──────────────────────────────
+  // Per the AI-first doctrine "NextStep prioritization on truncated/
+  // bulk responses must avoid first-by-filename routing": when the
+  // response is paged (truncated: true), the alphabetical first pick
+  // is a poor default — visual-regression fixtures, scaffold dirs
+  // (`_template/index.html`), and underscore-prefixed templates
+  // routinely sort earliest. The picker reroutes to the highest-
+  // firing non-vendor rule's first finding so the agent's first
+  // action lands on the rule with broadest authored impact.
+  describe("truncated-response reroute", () => {
+    const labelsFinding = (line: number) => ({
+      ruleId: "forms/labels-required",
+      line,
+      column: 1,
+      severity: "error" as const,
+      fixClass: "guidance" as const,
+    });
+    const altFinding = (line: number) => ({
+      ruleId: "alt-text/missing",
+      line,
+      column: 1,
+      severity: "error" as const,
+      fixClass: "guidance" as const,
+    });
+
+    it("reroutes alphabetical-first to the highest-firing rule's first finding when truncated", () => {
+      // Alphabetical first sits at `__fixtures__/visual.tsx` under
+      // `alt-text/missing` (one occurrence). The dominant non-vendor
+      // rule is `forms/labels-required` (3 occurrences across two
+      // authored files); reroute lands on its first finding at
+      // `app/login.tsx:10`.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "__fixtures__/visual.tsx", findings: [altFinding(20)] },
+            { path: "app/login.tsx", findings: [labelsFinding(10), labelsFinding(45)] },
+            { path: "app/signup.tsx", findings: [labelsFinding(15)] },
+          ],
+        }),
+        { truncated: true },
+      );
+      expect(result.structured?.args).toEqual({
+        ruleId: "forms/labels-required",
+        file: "app/login.tsx",
+        line: 10,
+      });
+      // Prose names the rerouted-from path AND the paged-corpus
+      // framing so the agent reads the correct cause for the
+      // substitution. The vendor framing must not appear — the
+      // rerouted-from path is authored, not vendor.
+      expect(result.prose).toContain("__fixtures__/visual.tsx");
+      expect(result.prose).toContain("app/login.tsx");
+      expect(result.prose).toContain("response is truncated");
+      expect(result.prose).toContain("highest-firing non-vendor rule");
+      expect(result.prose).not.toContain("vendor code");
+    });
+
+    it("does not reroute when truncated:true but alphabetical first IS the highest-firing rule's first finding", () => {
+      // Alphabetical first sits at `app/login.tsx:10` under
+      // `forms/labels-required` — same rule, same file, same line as
+      // the dominant pick. No reroute should fire; the prose stays
+      // clean and reads like a non-truncated response.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 3, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "app/login.tsx", findings: [labelsFinding(10), labelsFinding(45)] },
+            { path: "app/signup.tsx", findings: [labelsFinding(15)] },
+          ],
+        }),
+        { truncated: true },
+      );
+      expect(result.structured?.args).toEqual({
+        ruleId: "forms/labels-required",
+        file: "app/login.tsx",
+        line: 10,
+      });
+      expect(result.prose).not.toContain("response is truncated");
+      expect(result.prose).not.toContain("highest-firing non-vendor rule");
+    });
+
+    it("does not reroute when truncated is false (behavior unchanged on small scans)", () => {
+      // Same input as the first reroute test, but `truncated: false`.
+      // The alphabetical first (`__fixtures__/visual.tsx`) wins
+      // unchanged — small scans where the whole inventory ships
+      // shouldn't pay the reroute's prose-noise cost.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "__fixtures__/visual.tsx", findings: [altFinding(20)] },
+            { path: "app/login.tsx", findings: [labelsFinding(10), labelsFinding(45)] },
+            { path: "app/signup.tsx", findings: [labelsFinding(15)] },
+          ],
+        }),
+        { truncated: false },
+      );
+      expect(result.structured?.args).toEqual({
+        ruleId: "alt-text/missing",
+        file: "__fixtures__/visual.tsx",
+        line: 20,
+      });
+      expect(result.prose).not.toContain("response is truncated");
+    });
+
+    it("does not reroute when truncated is omitted entirely (default behavior)", () => {
+      // Same input, no `truncated` option. Behavior must be identical
+      // to the pre-change shape so existing callers (scan, scan_file)
+      // that don't plumb truncation through aren't impacted.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "__fixtures__/visual.tsx", findings: [altFinding(20)] },
+            { path: "app/login.tsx", findings: [labelsFinding(10), labelsFinding(45)] },
+            { path: "app/signup.tsx", findings: [labelsFinding(15)] },
+          ],
+        }),
+      );
+      expect(result.structured?.args).toEqual({
+        ruleId: "alt-text/missing",
+        file: "__fixtures__/visual.tsx",
+        line: 20,
+      });
+      expect(result.prose).not.toContain("response is truncated");
+    });
+
+    it("does not reroute to a finding whose path is in scannedBuildArtifacts (vendor lane wins)", () => {
+      // Mixed signal: alphabetical first is a vendor file AND
+      // truncated: true. The vendor-aware reroute lane fires first
+      // (it has a same-`ruleId` non-vendor sibling), so the prose
+      // uses the vendor framing — the truncation lane only kicks in
+      // when the alphabetical first is non-vendor. Per the backlog
+      // test: when scannedBuildArtifacts contains the candidate,
+      // nextStep does NOT route to it.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 3, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "vendor/bootstrap.css", findings: [labelsFinding(365)] },
+            { path: "app/login.tsx", findings: [labelsFinding(10), labelsFinding(45)] },
+          ],
+        }),
+        {
+          vendorPaths: new Set(["vendor/bootstrap.css"]),
+          truncated: true,
+        },
+      );
+      // Reroute target is the authored file under same-`ruleId` lane.
+      expect(result.structured?.args).toEqual({
+        ruleId: "forms/labels-required",
+        file: "app/login.tsx",
+        line: 10,
+      });
+      // Vendor-lane prose; truncation framing must NOT appear when
+      // the vendor lane diagnosed the reroute first.
+      expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("same-family fix");
+      expect(result.prose).not.toContain("response is truncated");
+    });
+
+    it("routes to scope-down when only vendor paths exist on a truncated response", () => {
+      // Per backlog test (c): when only vendor + scaffold paths are
+      // available, nextStep routes to "scope down via additionalPaths"
+      // structured suggestion. The all-vendor lane fires regardless of
+      // the truncation flag — every callable finding sits in
+      // scannedBuildArtifacts, so naming any specific finding wastes
+      // the suggest_fix round-trip.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "vendor/bootstrap.css", findings: [labelsFinding(365)] },
+            { path: "vendor/font-awesome.css", findings: [labelsFinding(12)] },
+          ],
+        }),
+        {
+          vendorPaths: new Set(["vendor/bootstrap.css", "vendor/font-awesome.css"]),
+          truncated: true,
+        },
+      );
+      expect(result.structured).toEqual({
+        tool: "scan_project",
+        args: {},
+      });
+      expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("additionalPaths");
+    });
+
+    it("routes to scope-down on truncated:true when no non-vendor finding exists at all", () => {
+      // Edge case: the truncation lane diagnoses the all-vendor shape
+      // even when the alphabetical first happened to BE non-vendor in
+      // a partial-vendor classification — but here we test the lane
+      // exit when EVERY finding is vendor (vendorPaths covers every
+      // file), to confirm the all-vendor signal flows through both
+      // entry lanes (vendor-first and truncation-first).
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+          },
+          files: [
+            { path: "_a/vendor.css", findings: [labelsFinding(1)] },
+            { path: "_b/vendor.css", findings: [labelsFinding(2)] },
+          ],
+        }),
+        {
+          vendorPaths: new Set(["_a/vendor.css", "_b/vendor.css"]),
+          truncated: true,
+        },
+      );
+      expect(result.structured).toEqual({
+        tool: "scan_project",
+        args: {},
+      });
+      expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("additionalPaths");
+    });
+  });
 });
 
 describe("per-rule narrowing reroute", () => {

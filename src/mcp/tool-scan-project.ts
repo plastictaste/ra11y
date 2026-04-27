@@ -325,6 +325,25 @@ export const scanProjectTool: McpTool = {
         formatted.files,
       ),
     };
+    // probe the canonical baseline path so agents see whether
+    // a baseline is in play alongside the scan result — prevents
+    // re-proposing fixes for grandfathered violations without the
+    // separate `baseline check` round-trip. Omitted when no baseline
+    // exists (honest shape per CLAUDE.md §1).
+    const baselineStatus = await probeBaselineStatus(root);
+    // Response-size guard: the scan always runs over every file, but
+    // the emitted `files` array is capped so large monorepos don't
+    // blow through MCP token limits. `truncated` + `nextOffset` are
+    // omitted when the whole result fits. Computed before `buildNextStep`
+    // so the truncation predicate can feed the next-step picker — per
+    // the AI-first doctrine "NextStep prioritization on truncated/bulk
+    // responses must avoid first-by-filename routing," the picker
+    // reroutes alphabetical-first to the highest-firing non-vendor
+    // rule's first finding when the response can't carry the whole
+    // inventory.
+    const pageParams = readPageParams(params);
+    const page = paginateFiles(formatted.files, pageParams);
+    const willBeTruncated = page.paginationFields.truncated === true;
     const nextStep = buildNextStep(formatted, {
       iterativeTip:
         actualMode === "full"
@@ -338,19 +357,19 @@ export const scanProjectTool: McpTool = {
       // alternative exists, the vendor target stays. Additive — empty
       // set is a no-op.
       vendorPaths,
+      // when the response will ship
+      // `truncated: true`, the alphabetical first pick is a poor
+      // default — visual-regression fixtures, scaffold dirs, and
+      // underscore-prefixed templates routinely sort earliest on a
+      // paged corpus. Reroute to the highest-firing non-vendor rule's
+      // first finding so the agent's first action lands on the rule
+      // with broadest authored impact. Density-cap-driven truncation
+      // (`mergeBudgetedFields`) is handled by the existing per-rule
+      // narrowing reroute downstream; this addresses the standard
+      // pagination path where the existing reroute's preconditions
+      // don't fire.
+      truncated: willBeTruncated,
     });
-    // probe the canonical baseline path so agents see whether
-    // a baseline is in play alongside the scan result — prevents
-    // re-proposing fixes for grandfathered violations without the
-    // separate `baseline check` round-trip. Omitted when no baseline
-    // exists (honest shape per CLAUDE.md §1).
-    const baselineStatus = await probeBaselineStatus(root);
-    // Response-size guard: the scan always runs over every file, but
-    // the emitted `files` array is capped so large monorepos don't
-    // blow through MCP token limits. `truncated` + `nextOffset` are
-    // omitted when the whole result fits.
-    const pageParams = readPageParams(params);
-    const page = paginateFiles(formatted.files, pageParams);
     // option (b): hoist duplicated
     // `fix.description` prose into `referenceGuide.fixDescriptions`
     // over the PAGED `files` — so pointers and the top-level map
