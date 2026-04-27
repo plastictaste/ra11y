@@ -865,5 +865,59 @@ describe("rule aria/expanded-on-disclosure", () => {
       // structured tally.
       expect(rule.fixClass).toBe("verify-in-source");
     });
+
+    it("declares severity 'warning' (not 'error') because the fix.description hedges", () => {
+      // The fix.description concedes the predicate may not hold ("If
+      // this control is not a disclosure trigger, the detection is
+      // wrong — suppress with a source-level pragma"). Per
+      // docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+      // fix-description must agree across all three channels," a
+      // hedged fix-description cannot ship at `error` severity. The
+      // downgrade to `warning` is paired with a per-finding
+      // `couldBeWrongBecause` token so all three attention-budget
+      // channels (severity, reason, fix.description) carry the same
+      // uncertainty signal.
+      expect(rule.severity).toBe("warning");
+    });
+  });
+
+  describe("predicate-uncertainty signal (couldBeWrongBecause)", () => {
+    it("populates couldBeWrongBecause with the predicate-uncertainty token on every emit (HTML)", () => {
+      // Pairs with the severity downgrade per
+      // docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+      // fix-description must agree across all three channels": when the
+      // fix.description hedges, the per-finding axis the agent reads to
+      // weigh false-positive risk must carry a structured code naming
+      // why.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-controls="panel-1">Details</button>
+          <div id="panel-1" hidden>x</div>
+        </body></html>`,
+        { filePath: "predicate-axis.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("warning");
+      expect(violations[0]?.couldBeWrongBecause).toBeDefined();
+      expect(violations[0]?.couldBeWrongBecause).toContain(
+        "disclosure_predicate_relies_on_class_token",
+      );
+    });
+
+    it("populates couldBeWrongBecause on JSX emissions too", () => {
+      const violations = runRule(
+        rule,
+        `function Menu() {
+           return <button data-bs-toggle="dropdown" aria-expanded="false">Menu</button>;
+         }`,
+        { filePath: "Menu.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("warning");
+      expect(violations[0]?.couldBeWrongBecause).toContain(
+        "disclosure_predicate_relies_on_class_token",
+      );
+    });
   });
 });

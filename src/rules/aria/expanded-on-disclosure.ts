@@ -309,10 +309,39 @@ interface LabelEvidence {
 
 const NO_LABEL_EVIDENCE: LabelEvidence = { ariaLabel: false, visuallyHiddenClassToken: null };
 
+/**
+ * Stable structured code propagated on every emitted finding's
+ * `couldBeWrongBecause`. The rule's predicate detects disclosure shape
+ * from a small evidence set (aria-controls referent, data-*-toggle
+ * value, inline classList toggler, disclosure-pattern class token), and
+ * the fix suggestion concedes the predicate may be wrong by instructing
+ * the agent to suppress with a source-level pragma when the control
+ * isn't actually a disclosure trigger. Per
+ * docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+ * fix-description must agree across all three channels," the severity
+ * channel is downgraded to `warning` AND each finding ships a
+ * structured `couldBeWrongBecause` code naming the predicate-uncertainty
+ * axis the agent should weigh when triaging. The token is intentionally
+ * branch-agnostic — every disclosure-shape branch (class-token,
+ * data-toggle, onclick-classlist, aria-controls) is heuristic on
+ * attribute-level evidence weaker than the agent's file-level read.
+ */
+const DISCLOSURE_PREDICATE_HEURISTIC = "disclosure_predicate_relies_on_class_token";
+
 export const rule = defineRule({
   id: "aria/expanded-on-disclosure",
   satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
-  severity: "error",
+  // Severity downgraded from `error` to `warning` because the rule's
+  // fix.description hedges with "If this control is not a disclosure
+  // trigger, the detection is wrong — suppress with a source-level
+  // pragma." Per docs/kb/architecture/ai-first-consumer.md "Reason /
+  // priority / fix-description must agree across all three channels,"
+  // a fix.description that concedes the predicate may not hold cannot
+  // ship at `error`. The downgrade pairs with a per-finding
+  // `couldBeWrongBecause: ["disclosure_predicate_relies_on_class_token"]`
+  // so the agent reading severity, reason, and fix-description sees
+  // the same uncertainty signal across all channels.
+  severity: "warning",
   scope: "node",
   // re-tagged `mechanical` →
   // `verify-in-source`. Neither finding lane is a deterministic single
@@ -377,10 +406,11 @@ export const rule = defineRule({
 });
 
 type Emit = (v: {
-  severity: "error";
+  severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  couldBeWrongBecause: readonly string[];
 }) => void;
 
 // ---------------------------------------------------------------------------
@@ -398,10 +428,11 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (!finding) continue;
     const labelEvidence = collectHtmlLabelEvidence(el);
     emit({
-      severity: "error",
+      severity: "warning",
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
+      couldBeWrongBecause: [DISCLOSURE_PREDICATE_HEURISTIC],
     });
   }
 }
@@ -592,10 +623,11 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (!finding) continue;
     const labelEvidence = collectJsxLabelEvidence(el);
     emit({
-      severity: "error",
+      severity: "warning",
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
+      couldBeWrongBecause: [DISCLOSURE_PREDICATE_HEURISTIC],
     });
   }
 }
