@@ -91,7 +91,9 @@ import {
 } from "../../engine/ast-helpers.ts";
 import {
   htmlSubtreeHasStrippedDirective,
+  htmlSubtreeRenderedTextIsOnlyTemplateDirective,
   stripTemplateDirectives,
+  TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED,
   TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
 } from "../../input/parsers/html-template-directives.ts";
 import type {
@@ -256,6 +258,13 @@ type Emit = (v: {
    * field doc on `EmittedViolation`.
    */
   variantKey?: string;
+  /**
+   * Structured uncertainty codes (e.g.
+   * `template_directive_interpolation_unresolved`) propagated to the
+   * stamped Violation. Conditional spread at the runner site keeps
+   * `couldBeWrongBecause: []` off the wire per CLAUDE.md §1.
+   */
+  couldBeWrongBecause?: readonly string[];
 }) => void;
 
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
@@ -325,8 +334,15 @@ function emitIconOnlyHtml(a: HtmlElement, emit: Emit): void {
   // — but rephrase the reason so the agent routes to "verify rendered
   // output" in one read instead of looping through suggest_fix on a
   // template-directive false positive. Mirrors the parallel handling in
-  // semantics/empty-heading.
-  const templateStripped = htmlSubtreeHasStrippedDirective(a);
+  // semantics/empty-heading. The narrower predicate
+  // (`htmlSubtreeRenderedTextIsOnlyTemplateDirective`) catches the
+  // canonical "only directive in body" cases; the broader
+  // `htmlSubtreeHasStrippedDirective` is retained as a fallback so a
+  // mixed body with both icon-evidence AND a stripped directive still
+  // gets the suffix-style hint without hijacking the template-directive
+  // branch.
+  const onlyDirective = htmlSubtreeRenderedTextIsOnlyTemplateDirective(a);
+  const templateStripped = onlyDirective || htmlSubtreeHasStrippedDirective(a);
   const baseMessage = templateStripped
     ? buildIconOnlyTemplateMessage("a")
     : buildIconOnlyMessage("a", iconEvidence);
@@ -336,6 +352,15 @@ function emitIconOnlyHtml(a: HtmlElement, emit: Emit): void {
     message: templateStripped ? `${baseMessage}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : baseMessage,
     suggestion: buildIconOnlySuggestion(getHtmlAttribute(a, "href"), iconEvidence),
     variantKey: "icon-only",
+    // Per AI-first consumer doctrine, the conceded-uncertainty axis
+    // gets a structured code so an agent (and the meta-reviewer
+    // occurrence-count gate) can match the template-directive
+    // dimension across rules. Only attached when the predicate is
+    // narrowly the directive case — not when icon-evidence + a
+    // separate stripped span both contributed.
+    ...(onlyDirective
+      ? { couldBeWrongBecause: [TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED] }
+      : {}),
   });
 }
 
@@ -721,10 +746,12 @@ function buildIconOnlyMessage(tagName: string, evidence: readonly string[]): str
  */
 function buildIconOnlyTemplateMessage(tagName: string): string {
   return (
-    `<${tagName}> link content is interpolated by a template directive (Liquid/Jinja/ERB) — ` +
-    "static analysis cannot see what the expression renders, so the link may be silent at " +
-    "runtime if the value resolves to an empty string. SC 2.4.4 / 4.1.2 require a non-empty " +
-    "accessible name; verify the rendered output describes the link's destination."
+    `<${tagName}> link content is interpolated (template directive); ` +
+    "verify rendered output is non-empty — static analysis stripped a " +
+    "Liquid/Jinja/ERB expression so the link's accessible name is " +
+    "knowable only at render time. SC 2.4.4 / 4.1.2 require a non-empty " +
+    "accessible name; an expression resolving to empty would silently " +
+    "leave the link without a name."
   );
 }
 

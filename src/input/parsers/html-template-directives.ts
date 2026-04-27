@@ -242,6 +242,24 @@ export function readTemplateTagName(source: string, openPos: number): string {
 // biome-ignore format: single-line keeps parser bundle compact.
 export const TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX = " note: the only rendered content was a template expression (Liquid/Jinja/ERB) stripped by the parser — verify the expression resolves to non-empty text at render time, or if the interpolation is trusted suppress at source with `<!-- ra11y-disable <rule-id> -->`.";
 
+/**
+ * Structured `couldBeWrongBecause` code attached to findings whose
+ * "empty" / "no accessible name" predicate fired against a subtree
+ * whose only visible-text contribution came from a parsed-and-stripped
+ * Liquid/Jinja/ERB template directive. Stable identifier so the
+ * meta-reviewer's occurrence-count gate (and any agent-side filtering)
+ * can match the conceded-uncertainty axis across rules.
+ *
+ * Consumed by `semantics/empty-heading` and
+ * `navigation/link-descriptive-text` on their template-directive
+ * branches. Per the AI-first consumer doctrine ("Reason text and
+ * severity must agree"), rules carrying this code emit at `warning`
+ * severity rather than `error` — the predicate concedes the rendered
+ * output is unobservable from static analysis.
+ */
+export const TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED =
+  "template_directive_interpolation_unresolved";
+
 export function htmlSubtreeHasStrippedDirective(element: HtmlElement): boolean {
   const visit = (node: HtmlNode): boolean => {
     if (node.kind === "HtmlText") return node.containsTemplateDirective === true;
@@ -283,6 +301,55 @@ export function htmlElementOnlyChildIsTemplateDirective(element: HtmlElement): b
     if (child.containsTemplateDirective === true) sawStrippedDirective = true;
   }
   return sawStrippedDirective;
+}
+
+/**
+ * True when the element's subtree visible-text contribution came
+ * exclusively from stripped template directives — i.e. (a) at least
+ * one descendant text node carried a Liquid/Jinja/ERB span the parser
+ * stripped, and (b) every text node's post-strip value is whitespace-
+ * only. Element children are walked through, so a heading wrapping a
+ * link whose body is a stripped expression
+ * (`<h2><a>{{ post.title }}</a></h2>`) returns true under this
+ * predicate while the narrower {@link htmlElementOnlyChildIsTemplateDirective}
+ * (which rejects on the first element child) returns false.
+ *
+ * Used by rules that consume visible text and emit "empty" / "no
+ * accessible name" findings: when this returns true, the rule's
+ * predicate is satisfied only by speculation about the template
+ * binding's runtime value. Per the AI-first consumer doctrine
+ * ("Reason text and severity must agree" + "Heuristic emission is
+ * the symmetric twin of heuristic suppression"), the rule should
+ * surface (don't suppress) but at conceded-uncertainty severity
+ * (`warning`) with reason text framing the rendered-output question
+ * and a structured `couldBeWrongBecause:
+ * [{@link TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED}]` code.
+ *
+ * Mixed shapes — e.g. `<h1>{{ x }} static text</h1>` — return false:
+ * the literal " static text" makes the visible-text contribution non-
+ * empty regardless of the stripped expression's runtime value, so
+ * the rule's "empty" predicate is not satisfied in the first place
+ * (callers should bypass the template-directive branch entirely on
+ * that shape).
+ */
+export function htmlSubtreeRenderedTextIsOnlyTemplateDirective(element: HtmlElement): boolean {
+  let sawStrippedDirective = false;
+  let sawLiteralText = false;
+  const visit = (node: HtmlNode): void => {
+    if (sawLiteralText) return;
+    if (node.kind === "HtmlText") {
+      if (node.value.trim().length > 0) {
+        sawLiteralText = true;
+        return;
+      }
+      if (node.containsTemplateDirective === true) sawStrippedDirective = true;
+      return;
+    }
+    if (node.kind !== "HtmlElement") return;
+    for (const child of node.children) visit(child);
+  };
+  for (const child of element.children) visit(child);
+  return sawStrippedDirective && !sawLiteralText;
 }
 
 export function matchesTemplateEndTag(source: string, openPos: number, endTag: string): boolean {

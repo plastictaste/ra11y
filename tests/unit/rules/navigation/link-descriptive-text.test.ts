@@ -337,6 +337,10 @@ describe("rule navigation/link-descriptive-text", () => {
       expect(v[0]?.message).toContain("interpolated");
       expect(v[0]?.message).toContain("template");
       expect(v[0]?.message).toContain("ra11y-disable");
+      // Conceded-uncertainty axis carries a structured code so an
+      // agent (and the meta-reviewer occurrence-count gate) can match
+      // the template-directive dimension across rules.
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
     });
 
     it("rephrases reason when sole child is an ERB expression", () => {
@@ -344,6 +348,7 @@ describe("rule navigation/link-descriptive-text", () => {
       expect(v).toHaveLength(1);
       expect(v[0]?.severity).toBe("warning");
       expect(v[0]?.message).toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
     });
 
     it("rephrases reason when sole child is a Liquid tag", () => {
@@ -352,6 +357,26 @@ describe("rule navigation/link-descriptive-text", () => {
       });
       expect(v).toHaveLength(1);
       expect(v[0]?.message).toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
+    });
+
+    // Canonical wrapper case — Jekyll post-list shape. The link is
+    // wrapped in a heading and its body is a stripped Liquid expression;
+    // the icon-only path's template-directive branch fires.
+    it("rephrases reason when the link sits inside a heading with templated href", () => {
+      const v = runRule(
+        rule,
+        `<h2 itemprop="headline"><a href="{{ post.url }}">{{- post.title -}}</a></h2>`,
+        { filePath: "index.html" },
+      );
+      const linkFinding = v.find(
+        (x) => x.location.line === 1 && x.message.includes("interpolated"),
+      );
+      expect(linkFinding).toBeDefined();
+      expect(linkFinding?.severity).toBe("warning");
+      expect(linkFinding?.couldBeWrongBecause).toEqual([
+        "template_directive_interpolation_unresolved",
+      ]);
     });
 
     it("keeps the original generic-phrase reason when no template directive is present", () => {
@@ -359,6 +384,7 @@ describe("rule navigation/link-descriptive-text", () => {
       expect(v).toHaveLength(1);
       expect(v[0]?.message).toContain("not descriptive");
       expect(v[0]?.message).not.toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
     });
 
     it("keeps the original icon-only reason when the anchor is truly empty", () => {
@@ -366,6 +392,7 @@ describe("rule navigation/link-descriptive-text", () => {
       expect(v).toHaveLength(1);
       expect(v[0]?.message).toContain("no accessible name");
       expect(v[0]?.message).not.toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
     });
   });
 

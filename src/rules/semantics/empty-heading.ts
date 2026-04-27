@@ -27,8 +27,9 @@ import {
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 import {
-  htmlElementOnlyChildIsTemplateDirective,
   htmlSubtreeHasStrippedDirective,
+  htmlSubtreeRenderedTextIsOnlyTemplateDirective,
+  TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED,
   TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
 } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
@@ -76,6 +77,7 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  couldBeWrongBecause?: readonly string[];
 }) => void;
 
 /**
@@ -100,23 +102,33 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     const el = findHtmlHeadingAt(doc, heading);
     if (el === null) continue;
     if (hasAccessibleContentHtml(el)) continue;
-    // Predicate-axis closure: when the heading's only child is a
-    // stripped template directive (`<h1>{{ page.title }}</h1>`), the
-    // static scanner has no evidence the rendered text is empty — the
-    // binding might resolve to a non-empty string. The rule must not
-    // assert "empty" as a violation. The review/headings-and-labels
-    // finder picks up the same shape at confidence "low" with reason
-    // text framing the binding-resolves question; suppressing here
-    // avoids double-surfacing while keeping the location visible to
-    // the agent through the manual-review surface.
-    if (htmlElementOnlyChildIsTemplateDirective(el)) continue;
+    // Conceded-uncertainty branch: when the heading's subtree visible-
+    // text contribution came exclusively from stripped Liquid/Jinja/ERB
+    // template directives — directly (`<h1>{{ page.title }}</h1>`) or
+    // through a wrapping element (`<h2><a>{{ post.title }}</a></h2>`,
+    // the canonical Jekyll post-list shape) — the static scanner has
+    // no runtime evidence the heading is empty. Per AI-first consumer
+    // doctrine ("Reason text and severity must agree" + "Heuristic
+    // emission is the symmetric twin of heuristic suppression"),
+    // surface but at `warning` (not `error`) with a structured
+    // `couldBeWrongBecause` code and reason text framing the rendered-
+    // output question. Mixed-content shapes (`<h1>{{ x }} literal</h1>`)
+    // bypass this branch — the literal text already cleared
+    // `hasAccessibleContentHtml`.
+    if (htmlSubtreeRenderedTextIsOnlyTemplateDirective(el)) {
+      emitTemplateDirectiveViolation(heading, emit);
+      continue;
+    }
     const preceding = findPrecedingNonEmpty(headings, i);
     // Mixed-content fallback: when a stripped directive sits alongside
-    // other empty/whitespace nodes (predicate above caught the
-    // canonical case) or in any other shape that survived
-    // `hasAccessibleContentHtml`, the finding still emits — reason
-    // text carries the template_directive_stripped signal so the
-    // agent routes to "verify rendered output" in one read.
+    // a non-text element child that doesn't satisfy the visible-text
+    // predicate (`<h2><svg aria-hidden></svg></h2>` — svg is empty,
+    // svg-only fails `hasAccessibleContentHtml`, predicate above is
+    // false because no stripped directive contributed text), the
+    // finding still emits at `error` — reason text carries the
+    // `template_directive_stripped` signal when any descendant did
+    // strip a directive so the agent routes to "verify rendered output"
+    // in one read.
     const templateStripped = htmlSubtreeHasStrippedDirective(el);
     emitViolation(heading, preceding, templateStripped, emit);
   }
@@ -304,6 +316,38 @@ function emitViolation(
     location: { filePath: "", line: entry.line, column: entry.column },
     message: templateStripped ? `${base}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : base,
     suggestion: buildEmptyHeadingSuggestion(entry, preceding),
+  });
+}
+
+/**
+ * Conceded-uncertainty emit: heading content is interpolated by a
+ * stripped Liquid/Jinja/ERB template directive (`{{ page.title }}`,
+ * `<%= post.title %>`, `{% include … %}`). Static analysis cannot see
+ * the rendered output, so the rule surfaces but at `warning` (not
+ * `error`) with a structured `couldBeWrongBecause` code naming the
+ * conceded-uncertainty axis. Per the AI-first consumer doctrine the
+ * agent reads the warning + framing in one pass and decides whether
+ * the binding can resolve to empty at runtime.
+ */
+function emitTemplateDirectiveViolation(entry: HeadingEntry, emit: Emit): void {
+  const tag = `<${entry.tagName}>`;
+  emit({
+    severity: "warning",
+    location: { filePath: "", line: entry.line, column: entry.column },
+    message:
+      `${tag} content is interpolated (template directive); ` +
+      "verify rendered output is non-empty — static analysis stripped a " +
+      "Liquid/Jinja/ERB expression so the heading's accessible name is " +
+      "knowable only at render time. SC 2.4.6 requires headings describe " +
+      "topic or purpose; an expression resolving to empty would silently " +
+      "violate the criterion.",
+    suggestion:
+      `Confirm the template binding cannot resolve to empty (e.g. \`${tag}{{ page.title | default: "Untitled" }}</${entry.tagName}>\` ` +
+      "or a fallback in the layout). If the binding is trusted to always " +
+      "produce non-empty text, suppress at source with " +
+      "`<!-- ra11y-disable semantics/empty-heading -->` to make the " +
+      "dismissal durable across re-runs.",
+    couldBeWrongBecause: [TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED],
   });
 }
 

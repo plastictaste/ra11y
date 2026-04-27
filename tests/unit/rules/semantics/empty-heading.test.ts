@@ -142,53 +142,86 @@ describe("rule semantics/empty-heading", () => {
     });
   });
 
-  // Predicate-axis closure: when the heading's only child is a
-  // stripped Liquid/Jinja/ERB template directive, the static scanner
-  // has no evidence the rendered text is empty. The rule must not
-  // emit a violation; the review/headings-and-labels finder picks up
-  // the same location at confidence "low" with reason text framing
-  // the binding-resolves question. See AI-first consumer doctrine
-  // §"Reason text and severity must agree."
-  describe("HTML: template-directive-only child suppresses rule emission", () => {
-    it("does NOT fire when sole child is a Liquid interpolation", () => {
+  // Conceded-uncertainty branch: when the heading's subtree visible-
+  // text contribution came exclusively from stripped Liquid/Jinja/ERB
+  // template directives — directly (`<h1>{{ page.title }}</h1>`) or
+  // through a wrapping element (`<h2><a>{{ post.title }}</a></h2>`,
+  // the canonical Jekyll post-list shape) — the static scanner has no
+  // runtime evidence the heading is empty. Per AI-first consumer
+  // doctrine ("Reason text and severity must agree" + "Heuristic
+  // emission is the symmetric twin of heuristic suppression"), the
+  // rule surfaces (don't suppress) but at `warning` (not `error`)
+  // with a structured `couldBeWrongBecause` code and reason text
+  // framing the rendered-output question.
+  describe("HTML: template-directive-only content surfaces at conceded uncertainty", () => {
+    it("surfaces at warning when sole child is a Liquid interpolation", () => {
       const v = runRule(rule, `<h1>{{ page.title }}</h1>`, { filePath: "index.html" });
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
     });
 
-    it("does NOT fire when sole child is a Liquid tag", () => {
+    it("surfaces at warning when sole child is a Liquid tag", () => {
       const v = runRule(rule, `<h2>{% include title.html %}</h2>`, { filePath: "index.html" });
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
     });
 
-    it("does NOT fire when sole child is an ERB expression", () => {
+    it("surfaces at warning when sole child is an ERB expression", () => {
       const v = runRule(rule, `<h2><%= @post.title %></h2>`, { filePath: "index.html" });
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
     });
 
-    it("still fires on a plainly empty heading (no template directive)", () => {
+    // Canonical wrapper case — Jekyll post-list shape. The heading
+    // wraps a link whose body is a stripped Liquid expression; both
+    // empty-heading and link-descriptive-text fire on this shape, and
+    // empty-heading must use the conceded-uncertainty framing rather
+    // than asserting "is empty" at error severity.
+    it("surfaces at warning when content is wrapped in an inner element", () => {
+      const v = runRule(
+        rule,
+        `<h2 itemprop="headline"><a href="{{ post.url }}">{{- post.title -}}</a></h2>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("interpolated");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
+    });
+
+    it("still fires at error on a plainly empty heading (no template directive)", () => {
       const v = runRule(rule, `<h1></h1>`, { filePath: "index.html" });
       expect(v).toHaveLength(1);
-      expect(v[0]?.message).not.toContain("template expression");
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).not.toContain("interpolated");
     });
 
-    it("still fires on mixed content where literal text sits alongside the directive", () => {
+    it("does not fire on mixed content where literal text sits alongside the directive", () => {
       // `htmlTextContent` strips the directive but the literal " static
       // text" remains, so `hasAccessibleContentHtml` already passes
-      // before the predicate runs — no violation expected here, but
-      // recorded as the canonical "mixed content is fine" case.
+      // before the predicate runs — no violation expected here.
       const v = runRule(rule, `<h4>{{ x }} static text</h4>`, { filePath: "index.html" });
       expect(v).toHaveLength(0);
     });
 
-    it("still fires on a heading whose only child is an empty <svg> alongside a stripped directive", () => {
-      // The non-text child (<svg>) takes the heading out of the
-      // template-directive-only predicate; the standard "empty heading
-      // with only a non-text child" branch still fires.
+    it("surfaces at warning on a heading whose only child is an empty <svg> alongside a stripped directive", () => {
+      // The svg is presentational (aria-hidden) so its absence-of-text
+      // adds no evidence; the only visible-text contribution candidate
+      // is the stripped directive. Per the conceded-uncertainty branch
+      // the rule surfaces at warning rather than asserting "empty" at
+      // error.
       const v = runRule(rule, `<h2><svg aria-hidden="true"></svg>{{ x }}</h2>`, {
         filePath: "index.html",
       });
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
     });
   });
 
