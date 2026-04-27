@@ -15,6 +15,7 @@
  */
 
 import type { FixPath } from "../types/violation.ts";
+import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
 
 /**
  * Machine-parseable verify hint shared across every `suggest_fix`
@@ -161,4 +162,69 @@ export function buildGuidanceAlternatives(
     approach: p.label,
     explanation: p.label,
   }));
+}
+
+/**
+ * Build per-call enrichment alternatives for `kind: "guidance"`
+ * responses whose rule supplied no structured `FixPath` alternatives.
+ *
+ * The tool description advertises `kind: "guidance"` returns "a ranked
+ * `primary` fix and `alternatives`." Shipping `kind: "guidance"` with
+ * NO `alternatives` array makes the slot a phantom — the promise
+ * dishonest (CLAUDE.md §1 "Ambiguous field shapes are dishonest"). The
+ * doctrinal closure is to populate the slot with deterministic, per-
+ * call enrichments derived from data the request already carries
+ * (filePath + criteria) — never heuristics about file content.
+ *
+ * Two enrichment paths today:
+ *
+ *   1. Suppression pragma — the canonical source-level disable form
+ *      for the file's extension, scoped to the rule's first criterion.
+ *      `docs/kb/architecture/ai-first-consumer.md` "No heuristic
+ *      suppression" names this as the deterministic escape hatch when
+ *      an agent investigates and dismisses; surfacing it here gives
+ *      the agent a ready-to-paste second path. Omitted when the
+ *      violation has no `criteria` to scope the pragma — a bare
+ *      `ra11y-disable` would silence every rule on the region, which
+ *      is dishonest.
+ *
+ *   2. Verify-by-reading prompt — names the file and line the agent
+ *      should open to investigate the primary advice in source. Always
+ *      available because both fields are part of the request. Survives
+ *      the "Don't duplicate capability the agent already has" check
+ *      because it's a *pointer* to the agent's own Read tool, not
+ *      in-tool analysis.
+ *
+ * Returns `undefined` only if both paths are unavailable (no file path
+ * at all — never happens in practice since the request requires it).
+ * In every realistic call, the verify-by-reading prompt guarantees a
+ * non-empty array.
+ */
+export function buildPerCallEnrichmentAlternatives(
+  filePath: string,
+  line: number,
+  criteria: readonly string[],
+): ReadonlyArray<{ readonly approach: string; readonly explanation: string }> | undefined {
+  const out: { readonly approach: string; readonly explanation: string }[] = [];
+  // Verify-by-reading prompt — always available because filePath +
+  // line are required suggest_fix params. Listed first because it's
+  // the cheapest honest fallback when the primary advice doesn't
+  // apply. Naming the line lets the agent jump straight there with
+  // its Read tool's offset/limit pair rather than scanning the file.
+  out.push({
+    approach: "Verify by reading the source",
+    explanation: `Open ${filePath} at line ${line} and read the surrounding context to confirm whether the primary advice applies; the rule fires on static evidence the agent reading the whole file may overrule.`,
+  });
+  // Suppression pragma — scoped to the rule's first criterion. Skip
+  // when the violation has no criteria (a bare `ra11y-disable` would
+  // silence every rule on the region — dishonest scope).
+  const firstCriterion = criteria[0];
+  if (firstCriterion !== undefined) {
+    const pragma = pragmaFormForExtension(filePath, firstCriterion);
+    out.push({
+      approach: "Dismiss in source via suppression pragma",
+      explanation: `If you investigate the cited line and conclude the criterion does not apply, paste \`${pragma}\` above the cited element to make the dismissal durable on subsequent scans.`,
+    });
+  }
+  return out.length > 0 ? out : undefined;
 }

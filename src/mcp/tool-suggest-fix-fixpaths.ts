@@ -21,6 +21,7 @@ import type { FixPath, Violation } from "../types/violation.ts";
 import { widenToUniqueAnchor } from "../utils/unique-anchor.ts";
 import {
   buildGuidanceAlternatives,
+  buildPerCallEnrichmentAlternatives,
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
 import { POISONED_NEWTEXT_CAVEAT, sanitizeFixPathAgainstPoison } from "./suggest-fix-sanitize.ts";
@@ -178,7 +179,18 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
   // `meta.mechanicalInPrinciple: true` alongside `kind: "guidance"`
   // was itself the contradiction the rule warns against. Cross-surface
   // honesty now flows entirely through `plan.fixesByClass`.
-  const guidanceAlternatives = buildGuidanceAlternatives(alternatives);
+  // Rule-supplied alternatives win when present (richer signal than
+  // generic enrichments). When the rule supplied none, fall back to
+  // per-call enrichments derived from filePath + criteria so the
+  // advertised slot is real rather than a phantom — same closure as
+  // the prose-only fallback lane in `tool-suggest-fix-routing.ts`.
+  const guidanceAlternatives =
+    buildGuidanceAlternatives(alternatives) ??
+    buildPerCallEnrichmentAlternatives(
+      match.location.filePath,
+      match.location.line,
+      match.criteria,
+    );
   return {
     kind: "guidance",
     primary: {

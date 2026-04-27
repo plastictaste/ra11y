@@ -16,6 +16,7 @@
 
 import type { Violation } from "../types/violation.ts";
 import {
+  buildPerCallEnrichmentAlternatives,
   deriveApproachFromProse,
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
@@ -155,6 +156,12 @@ function routeMatchedFallback(args: {
     ? stripContextBlindTailwindHint(match.suggestion, a.tailwindDetected)
     : `Violation found but no fix guidance available for ${a.ruleId}. ${match.message}`;
   const primaryConfidence = match.suggestion ? confidence : "low";
+  // No rule-supplied paths to demote on this branch — populate
+  // `alternatives` with per-call enrichments derived deterministically
+  // from filePath + criteria so the slot the tool description promised
+  // is real, not a phantom. See `suggest-fix-guidance-shape.ts`
+  // `buildPerCallEnrichmentAlternatives` for the doctrine rationale.
+  const enrichments = buildPerCallEnrichmentAlternatives(a.filePath, a.line, match.criteria);
   return {
     kind: "guidance",
     primary: {
@@ -163,6 +170,7 @@ function routeMatchedFallback(args: {
       sourceContext: a.sourceContext,
       confidence: primaryConfidence,
     },
+    ...(enrichments ? { alternatives: enrichments } : {}),
     ...snippetField,
     ...shared.verify,
     ...shared.warningsField,
