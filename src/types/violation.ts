@@ -488,6 +488,26 @@ export type ViolationEvidence =
       readonly tag: string;
       readonly line: number;
       readonly selectorHint?: string;
+    }
+  /**
+   * `semantics/table-caption-missing` — emitted on the missing-caption
+   * branch when a heading element (`<h1>`–`<h6>`) precedes the data
+   * table within the same ancestor chain. Names the heading's tag and
+   * line so the agent has a per-finding signal that the rule's
+   * `aria-labelledby` alternative fix path is grounded in real markup
+   * (rather than a generic "you could use aria-labelledby" prose).
+   *
+   * `id` is populated only when the heading already carries an `id`
+   * attribute — its absence means the agent (or a mechanical edit)
+   * would need to mint one before wiring `aria-labelledby` on the
+   * `<table>`. The suggestion text exposes the same distinction in
+   * prose; `evidence.id` is the machine-routable echo.
+   */
+  | {
+      readonly kind: "table-caption-preceding-heading";
+      readonly tag: string;
+      readonly line: number;
+      readonly id?: string;
     };
 
 /**

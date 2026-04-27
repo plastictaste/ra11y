@@ -302,6 +302,133 @@ describe("rule semantics/table-caption-missing", () => {
     });
   });
 
+  describe("aria-labelledby alternative when a heading precedes the table", () => {
+    it("HTML: heading has an id — suggestion wires aria-labelledby to it and evidence carries id", () => {
+      const violations = runRule(
+        rule,
+        `<section>
+          <h2 id="sales-q1">Quarterly sales by region</h2>
+          <table>
+            <tr><th scope="col">Region</th></tr>
+            <tr><td>North</td></tr>
+          </table>
+        </section>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.suggestion).toContain('aria-labelledby="sales-q1"');
+      expect(v?.suggestion).toContain("<h2>");
+      // Both fix paths surfaced in one suggestion — the <caption>
+      // template and the aria-labelledby alternative.
+      expect(v?.suggestion).toContain("<caption>Quarterly sales by region</caption>");
+      const evidence = v?.evidence;
+      expect(evidence?.kind).toBe("table-caption-preceding-heading");
+      if (evidence?.kind === "table-caption-preceding-heading") {
+        expect(evidence.tag).toBe("h2");
+        expect(evidence.id).toBe("sales-q1");
+        expect(typeof evidence.line).toBe("number");
+      }
+    });
+
+    it("HTML: heading has no id — suggestion instructs adding an id then wiring aria-labelledby; evidence omits id", () => {
+      const violations = runRule(
+        rule,
+        `<section>
+          <h2>Quarterly sales by region</h2>
+          <table>
+            <tr><th scope="col">Region</th></tr>
+            <tr><td>North</td></tr>
+          </table>
+        </section>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      // Auto-id guidance: instruct adding a slug to the heading, then
+      // referencing it from aria-labelledby.
+      expect(v?.suggestion).toContain('id="<slug>"');
+      expect(v?.suggestion).toContain('aria-labelledby="<slug>"');
+      const evidence = v?.evidence;
+      expect(evidence?.kind).toBe("table-caption-preceding-heading");
+      if (evidence?.kind === "table-caption-preceding-heading") {
+        expect(evidence.tag).toBe("h2");
+        // Present-when-meaningful: id is omitted when the heading
+        // doesn't already carry one.
+        expect(evidence.id).toBeUndefined();
+        expect(typeof evidence.line).toBe("number");
+      }
+    });
+
+    it("HTML: no preceding heading — default reason and <caption> fix; no preceding-heading evidence", () => {
+      const violations = runRule(
+        rule,
+        `<table>
+          <tr><th scope="col">Region</th></tr>
+          <tr><td>North</td></tr>
+        </table>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      // Default reason path: generic aria-labelledby fallback prose, no
+      // concrete heading anchor, structured evidence omitted entirely.
+      expect(v?.suggestion).toContain("<caption>Describe what this table shows</caption>");
+      expect(v?.suggestion).toContain('aria-labelledby="<id-of-existing-heading>"');
+      expect(v?.evidence).toBeUndefined();
+    });
+
+    it("JSX: heading has an id — suggestion wires aria-labelledby and evidence carries id", () => {
+      const violations = runRule(
+        rule,
+        `const x = (
+          <section>
+            <h2 id="inv-hdr">Product inventory</h2>
+            <table>
+              <tr><th>SKU</th></tr>
+              <tr><td>A-001</td></tr>
+            </table>
+          </section>
+        );`,
+        { filePath: "file.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.suggestion).toContain('aria-labelledby="inv-hdr"');
+      const evidence = v?.evidence;
+      expect(evidence?.kind).toBe("table-caption-preceding-heading");
+      if (evidence?.kind === "table-caption-preceding-heading") {
+        expect(evidence.tag).toBe("h2");
+        expect(evidence.id).toBe("inv-hdr");
+      }
+    });
+
+    it("JSX: heading has no id — suggestion instructs adding an id then wiring aria-labelledby", () => {
+      const violations = runRule(
+        rule,
+        `const x = (
+          <section>
+            <h2>Product inventory</h2>
+            <table>
+              <tr><th>SKU</th></tr>
+              <tr><td>A-001</td></tr>
+            </table>
+          </section>
+        );`,
+        { filePath: "file.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.suggestion).toContain('id="<slug>"');
+      expect(v?.suggestion).toContain('aria-labelledby="<slug>"');
+      const evidence = v?.evidence;
+      expect(evidence?.kind).toBe("table-caption-preceding-heading");
+      if (evidence?.kind === "table-caption-preceding-heading") {
+        expect(evidence.id).toBeUndefined();
+      }
+    });
+  });
+
   describe("rule metadata", () => {
     it("satisfies WCAG 1.3.1 across all four loaded standards", () => {
       expect(rule.satisfies).toEqual([

@@ -64,6 +64,7 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
+import type { ViolationEvidence } from "../../types/violation.ts";
 
 export const rule = defineRule({
   id: "semantics/table-caption-missing",
@@ -118,11 +119,25 @@ type Emit = (v: {
 // Shared suggestion builder
 // ---------------------------------------------------------------------------
 
+interface PrecedingHeadingInfo {
+  readonly tag: string;
+  readonly line: number;
+  readonly id?: string;
+}
+
 interface CaptionHint {
   /** Proposed caption text inferred from surrounding context; may be empty. */
   readonly inferredLabel: string;
   /** Where the inference came from — included in the suggestion so the agent knows. */
   readonly inferredFrom: "preceding-heading" | "figcaption-sibling" | "none";
+  /**
+   * Structured details for a preceding-heading inference, populated only
+   * when {@link inferredFrom} is `"preceding-heading"`. Drives both the
+   * `aria-labelledby` alternative-fix prose in the suggestion and the
+   * per-finding {@link ViolationEvidence} sub-shape so an agent reading
+   * either channel sees the same heading anchor.
+   */
+  readonly precedingHeading?: PrecedingHeadingInfo;
 }
 
 function buildSuggestion(hint: CaptionHint): string {
@@ -138,12 +153,48 @@ function buildSuggestion(hint: CaptionHint): string {
         ? ` (inferred from the sibling <figcaption>)`
         : "";
 
+  // When a preceding heading is in scope, surface the `aria-labelledby`
+  // path with concrete id wiring (mint one if the heading lacks an id)
+  // alongside the `<caption>` insertion. Both fixes are valid per the
+  // accessible-name spec; surfacing both lets the agent pick based on
+  // whether the heading is already visible to sighted users.
+  const labelledByAlternative = buildLabelledByAlternative(hint.precedingHeading);
+
   return (
     `Add \`${template}\` as the first child of this <table>${origin}. ` +
     "The <caption> is the HTML-native accessible name for a table and is announced by screen readers before the cells. " +
-    'Alternative labels: `aria-label="…"` on the <table>, or `aria-labelledby="<id-of-existing-heading>"` when the label is already visible in surrounding prose. ' +
+    `${labelledByAlternative} ` +
     'If this <table> is used purely for visual layout, mark it `role="presentation"` instead.'
   );
+}
+
+/**
+ * Builds the `aria-labelledby` alternative-fix sentence. When a preceding
+ * heading is known, names the existing heading id (or instructs to mint
+ * one when absent) so the agent can apply the alternative as a mechanical
+ * edit. Falls back to generic prose when no preceding heading is in scope.
+ */
+function buildLabelledByAlternative(heading: PrecedingHeadingInfo | undefined): string {
+  if (!heading) {
+    return 'Alternative labels: `aria-label="…"` on the <table>, or `aria-labelledby="<id-of-existing-heading>"` when the label is already visible in surrounding prose.';
+  }
+  if (heading.id !== undefined && heading.id.length > 0) {
+    return `Alternative: add \`aria-labelledby="${heading.id}"\` to the <table>, pointing at the preceding <${heading.tag}> (line ${heading.line}). \`aria-label="…"\` on the <table> also works.`;
+  }
+  return `Alternative: add \`id="<slug>"\` to the preceding <${heading.tag}> (line ${heading.line}) and \`aria-labelledby="<slug>"\` to the <table>. \`aria-label="…"\` on the <table> also works.`;
+}
+
+/**
+ * Builds the structured `evidence` sub-shape for the preceding-heading
+ * variant. See {@link ViolationEvidence} for the union contract.
+ */
+function precedingHeadingEvidence(heading: PrecedingHeadingInfo): ViolationEvidence {
+  return {
+    kind: "table-caption-preceding-heading",
+    tag: heading.tag,
+    line: heading.line,
+    ...(heading.id === undefined || heading.id.length === 0 ? {} : { id: heading.id }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +284,7 @@ function buildHtmlViolation(
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  evidence?: ViolationEvidence;
 } {
   const hint = inferHtmlCaptionHint(table, doc);
   return {
@@ -245,6 +297,7 @@ function buildHtmlViolation(
     message:
       "<table> has data cells but no <caption>, aria-label, aria-labelledby, or title — screen readers announce only the dimensions, not what the table represents.",
     suggestion: buildSuggestion(hint),
+    ...(hint.precedingHeading ? { evidence: precedingHeadingEvidence(hint.precedingHeading) } : {}),
   };
 }
 
@@ -257,7 +310,19 @@ function inferHtmlCaptionHint(table: HtmlElement, doc: HtmlDocument): CaptionHin
   const heading = findHtmlPrecedingHeading(table, doc);
   if (heading) {
     const text = htmlTextContent(heading);
-    if (text.length > 0) return { inferredLabel: text, inferredFrom: "preceding-heading" };
+    if (text.length > 0) {
+      const id = getHtmlAttribute(heading, "id");
+      const headingInfo: PrecedingHeadingInfo = {
+        tag: heading.tagName.toLowerCase(),
+        line: heading.loc.start.line,
+        ...(id !== null && id.trim().length > 0 ? { id: id.trim() } : {}),
+      };
+      return {
+        inferredLabel: text,
+        inferredFrom: "preceding-heading",
+        precedingHeading: headingInfo,
+      };
+    }
   }
   return { inferredLabel: "", inferredFrom: "none" };
 }
@@ -417,6 +482,7 @@ function buildJsxViolation(
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  evidence?: ViolationEvidence;
 } {
   const hint = inferJsxCaptionHint(table, module);
   return {
@@ -429,6 +495,7 @@ function buildJsxViolation(
     message:
       "<table> has data cells but no <caption>, aria-label, aria-labelledby, or title — screen readers announce only the dimensions, not what the table represents.",
     suggestion: buildSuggestion(hint),
+    ...(hint.precedingHeading ? { evidence: precedingHeadingEvidence(hint.precedingHeading) } : {}),
   };
 }
 
@@ -442,7 +509,19 @@ function inferJsxCaptionHint(table: JsxElement, module: TsxModule): CaptionHint 
   const heading = findJsxPrecedingHeading(table, parents);
   if (heading) {
     const text = jsxTextContent(heading);
-    if (text.length > 0) return { inferredLabel: text, inferredFrom: "preceding-heading" };
+    if (text.length > 0) {
+      const id = getJsxAttributeString(heading, "id");
+      const headingInfo: PrecedingHeadingInfo = {
+        tag: heading.tagName,
+        line: heading.loc.start.line,
+        ...(id !== null && id.trim().length > 0 ? { id: id.trim() } : {}),
+      };
+      return {
+        inferredLabel: text,
+        inferredFrom: "preceding-heading",
+        precedingHeading: headingInfo,
+      };
+    }
   }
   return { inferredLabel: "", inferredFrom: "none" };
 }

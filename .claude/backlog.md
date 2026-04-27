@@ -395,7 +395,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. 
 
 #### Q8b — accepted (P1 — finder reason-text enrichment)
 
-- [ ] **Q8b-FINDER-CAPTION-PRECEDING-HEADING-AS-LABELLEDBY-CANDIDATE** `semantics/table-caption-missing` reason and fix are identical across emits regardless of context. When a heading element precedes the table within the same section, propose `aria-labelledby` pointing at the heading's id (auto-id the heading if needed) as the mechanical-edit alternative to inserting a `<caption>`.
 - [ ] **Q8b-FINDER-SCANNED-BUILD-ARTIFACTS-OVERSIZE-NEXT-STEP** When `scannedBuildArtifacts.grouped.length` is large AND `totalFilesWithFindings > threshold`, the canonical `nextStep` should swap from `suggest_fix` (which points at the first vendor-CSS finding) to `"add suggestedGlob entries to ra11y.config.ts exclude"` or `"rerun scan_project with additionalPaths narrowed"`. Otherwise the agent's first-tool-call routes into vendor noise instead of the structural fix.
 
 #### Q8b — accepted (P1 — rule scope widening)
