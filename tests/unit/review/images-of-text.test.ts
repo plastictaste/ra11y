@@ -439,10 +439,14 @@ describe("review/images-of-text", () => {
       expect(hit?.siblingOccurrences?.length).toBe(4);
     });
 
-    it("does NOT aggregate when alt-text differs in more than one token position", () => {
-      // First token is enumerated ("Gold"/"Silver"/etc.); second token
-      // is also distinct word ("Star"/"Comet"/etc.) — two divergent
-      // positions break the enumerated-token check.
+    it("falls back to parent-shape-contiguous-range when alt-text differs in more than one token position", () => {
+      // First token differs ("Gold"/"Silver"/etc.); second token also
+      // distinct ("Star"/"Comet"/etc.) — two divergent positions reject
+      // the strict enumerated-token predicate. The parent-shape
+      // contiguous-range fallback still collapses the run because
+      // (parent, wrapping shape, ≥4 contiguous siblings) is provable
+      // from the AST. The full alt-text trail is preserved via
+      // siblingOccurrences so no fidelity is lost.
       const source = `<div>
         <a href="/a"><img class="sponsor-logo" src="/a.png" alt="Gold Star"/></a>
         <a href="/b"><img class="sponsor-logo" src="/b.png" alt="Silver Comet"/></a>
@@ -451,10 +455,13 @@ describe("review/images-of-text", () => {
       </div>`;
       const out = runFinder(finder, source, { filePath: "x.html" });
       const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBe(4);
-      for (const c of aa) {
-        expect(c.siblingOccurrences).toBeUndefined();
-      }
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.reason).toContain("aggregated from 4 adjacent sibling images at line");
+      expect(hit?.reason).toContain("alt text varies");
+      expect(hit?.siblingOccurrences?.length).toBe(4);
+      expect(hit?.siblingOccurrences?.[0]?.alt).toBe("Gold Star");
+      expect(hit?.siblingOccurrences?.[3]?.alt).toBe("Iron Moon");
     });
 
     it("aggregates 4+ adjacent JSX <a><img/></a> siblings with enumerated-token alt", () => {
@@ -487,6 +494,156 @@ describe("review/images-of-text", () => {
       // CLAUDE.md §1 ("Ambiguous field shapes are dishonest").
       expect(hit?.siblingOccurrences).toBeUndefined();
       expect(hit?.sourceCount).toBeUndefined();
+    });
+  });
+
+  describe("parent-shape contiguous-range aggregation", () => {
+    // Q7 axis: when ≥4 adjacent same-shape sibling images share the
+    // same parent and same wrapping shape but their alt text is too
+    // divergent for the strict enumerated-token predicate (>1 varying
+    // token positions), fall back to a contiguous-range collapse. The
+    // reason names the line span ("at lines X-Y") and the full per-
+    // sibling trail is preserved via siblingOccurrences. Honest
+    // aggregation per AI-first doctrine: same parent + same shape +
+    // contiguous run is provable from the AST.
+    //
+    // Captured shape: contributor-list / sponsor-avatar clusters where
+    // each row carries a person name (`<img alt="Alice Liddell">`,
+    // `<img alt="Bob Bouvier">`, …) — divergent alts but a deterministic
+    // structural cluster.
+
+    it("collapses 4 adjacent <a><img/></a> siblings whose alts diverge in 2+ token positions", () => {
+      // Same parent (<div>), same wrapping shape (linked-img), 4
+      // siblings, alts have divergent token shapes ("First Last" vs
+      // "Single") — enumerated-token rejects, contiguous-range
+      // fallback fires. Each img must fire individually (probe-list
+      // gate); the `contributor-logo` class trips the keyword hint
+      // for every member, so all 4 are probes.
+      const source = `<div>
+        <a href="/u/1"><img class="contributor-logo" src="/u1.png" alt="Alice Liddell"/></a>
+        <a href="/u/2"><img class="contributor-logo" src="/u2.png" alt="Bob Bouvier"/></a>
+        <a href="/u/3"><img class="contributor-logo" src="/u3.png" alt="Carol Danvers"/></a>
+        <a href="/u/4"><img class="contributor-logo" src="/u4.png" alt="Diana Prince"/></a>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "contributors.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.reason).toContain("aggregated from 4 adjacent sibling images at lines");
+      expect(hit?.reason).toContain("alt text varies");
+      expect(hit?.reason).toContain("contiguous-range cluster");
+      expect(hit?.siblingOccurrences?.length).toBe(4);
+      expect(hit?.siblingOccurrences?.[0]?.alt).toBe("Alice Liddell");
+      expect(hit?.siblingOccurrences?.[3]?.alt).toBe("Diana Prince");
+      expect(hit?.siblingOccurrences?.[0]?.href).toBe("/u/1");
+    });
+
+    it("collapses 4 adjacent bare <img/> siblings under contiguous-range fallback", () => {
+      const source = `<section>
+        <img class="banner" src="/h1.png" alt="Welcome Friend"/>
+        <img class="banner" src="/h2.png" alt="Buy Now Today"/>
+        <img class="banner" src="/h3.png" alt="Visit Us Soon"/>
+        <img class="banner" src="/h4.png" alt="Browse Our Catalog"/>
+      </section>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.reason).toContain("aggregated from 4 adjacent sibling images at lines");
+      expect(hit?.reason).toContain("<img/>");
+      expect(hit?.siblingOccurrences?.length).toBe(4);
+    });
+
+    it("does NOT collapse when only 3 same-shape siblings are present (below MIN_GROUP_SIZE)", () => {
+      // 3 same-shape same-parent siblings — below the 4-member
+      // threshold for the contiguous-range collapse. Each fires
+      // individually (per-sibling emit path on the keyword hint);
+      // siblingOccurrences is omitted on each. (The post-emit
+      // stem-dedup pass also doesn't fire on these because the alts
+      // have no shared trailing enumeration token — distinct
+      // multi-word names — confirming the contiguous-range axis is
+      // the only one that could have collapsed them.)
+      const source = `<div>
+        <a href="/u/1"><img class="contributor-logo" src="/u1.png" alt="Alice Liddell"/></a>
+        <a href="/u/2"><img class="contributor-logo" src="/u2.png" alt="Bob Bouvier"/></a>
+        <a href="/u/3"><img class="contributor-logo" src="/u3.png" alt="Carol Danvers"/></a>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "contributors.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(3);
+      for (const c of aa) {
+        expect(c.siblingOccurrences).toBeUndefined();
+      }
+    });
+
+    it("does NOT collapse across shape boundaries — different wrapping shapes break the run", () => {
+      // 4 same-parent imgs but alternating bare-img / linked-img
+      // shapes. The run-extension predicate breaks on shape change,
+      // producing four runs of length 1 — none of which reach
+      // MIN_GROUP_SIZE, so no aggregation fires. Each img emits its
+      // own per-sibling candidate. (`banner` keyword keeps each img
+      // firing on the per-sibling path.)
+      //
+      // NOTE: After per-sibling emit, the post-emit stem-dedup pass
+      // does NOT fire either — these alts ("Alice Liddell" /
+      // "Bob Bouvier" / "Carol Danvers" / "Diana Prince") have no
+      // shared trailing enumeration token, so accessibleNameStem
+      // returns null for each. The cross-axis isolation makes this
+      // the cleanest test of "shape boundary stops the contiguous-
+      // range collapse without smuggling in stem-dedup as a backup."
+      const source = `<div>
+        <img class="banner" src="/h1.png" alt="Alice Liddell"/>
+        <a href="/u/2"><img class="banner" src="/u2.png" alt="Bob Bouvier"/></a>
+        <img class="banner" src="/h3.png" alt="Carol Danvers"/>
+        <a href="/u/4"><img class="banner" src="/u4.png" alt="Diana Prince"/></a>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      // All 4 imgs emit per-sibling candidates with no aggregation.
+      expect(aa.length).toBe(4);
+      for (const c of aa) {
+        expect(c.siblingOccurrences).toBeUndefined();
+      }
+    });
+
+    it("prefers enumerated-token reason when alts qualify under both predicates", () => {
+      // Same shape, same parent, ≥4 siblings, AND alts pass the strict
+      // enumerated-token check ("Sponsor 1/2/3/4"). The aggregator
+      // chooses the enumerated-token variant — its reason text names
+      // the enumerated-token predicate, NOT the contiguous-range
+      // fallback. This pins precedence: the more-specific predicate
+      // wins when both fit.
+      const source = `<div>
+        <a href="/s1"><img class="sponsor-logo" src="/s1.png" alt="Sponsor 1"/></a>
+        <a href="/s2"><img class="sponsor-logo" src="/s2.png" alt="Sponsor 2"/></a>
+        <a href="/s3"><img class="sponsor-logo" src="/s3.png" alt="Sponsor 3"/></a>
+        <a href="/s4"><img class="sponsor-logo" src="/s4.png" alt="Sponsor 4"/></a>
+      </div>`;
+      const out = runFinder(finder, source, { filePath: "x.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.reason).toContain("differing only by an enumerated-token");
+      expect(hit?.reason).not.toContain("contiguous-range cluster");
+    });
+
+    it("collapses contiguous-range cluster on the JSX path", () => {
+      const source = `
+        const x = (
+          <div>
+            <a href="/u/1"><img className="contributor-logo" src="/u1.png" alt="Alice Liddell" /></a>
+            <a href="/u/2"><img className="contributor-logo" src="/u2.png" alt="Bob Bouvier" /></a>
+            <a href="/u/3"><img className="contributor-logo" src="/u3.png" alt="Carol Danvers" /></a>
+            <a href="/u/4"><img className="contributor-logo" src="/u4.png" alt="Diana Prince" /></a>
+          </div>
+        );
+      `;
+      const out = runFinder(finder, source);
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBe(1);
+      const hit = aa[0];
+      expect(hit?.reason).toContain("contiguous-range cluster");
+      expect(hit?.siblingOccurrences?.length).toBe(4);
     });
   });
 

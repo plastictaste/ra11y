@@ -10,9 +10,12 @@
  *   - short alt text (1-5 words) repeated in surrounding visible text
  *   - class/src names suggesting logo, banner, heading, title, or header art
  *
- * Also aggregates adjacent sibling runs (>= 4 same-shape, enumerated-
- * token alt) into a single consolidated candidate per the AI-first
- * honest-aggregation doctrine — see `images-of-text-aggregate.ts`.
+ * Also aggregates adjacent sibling runs (>= 4 same-shape) into a
+ * single consolidated candidate per the AI-first honest-aggregation
+ * doctrine — under the strict enumerated-token predicate ("Sponsor
+ * 1/2/3/…") OR, when alt text is too divergent for that, a
+ * parent-shape-contiguous-range fallback. See
+ * `images-of-text-aggregate.ts`.
  *
  * WCAG 1.4.5 permits images of text only when the presentation is
  * essential or customizable. A static finder cannot decide whether an
