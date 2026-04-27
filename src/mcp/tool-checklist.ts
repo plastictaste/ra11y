@@ -248,11 +248,57 @@ function wcagPrincipleFor(standardId: string, localId: string): WcagPrinciple | 
  * reminder the reviewer already has from reading the spec. We rank by
  * candidates first, level second, so the output doesn't drown real
  * finds in a sea of criterion titles.
+ *
+ * Hedging-aware downgrade: when every grounded candidate's reason text
+ * concedes the predicate may not apply (e.g. "if this is a standalone
+ * single-page file or SPA, the criterion may not apply", "flashing
+ * only if iteration-count is set to..."), the item is not actually a
+ * "do this in the next minute" item — the agent has to verify the
+ * applicability question first. Per ai-first-consumer.md "Reason /
+ * priority / fix-description must agree across all three channels",
+ * the priority must not contradict the reason. Downgrade to "medium"
+ * so the budget signal matches the framing the candidate already
+ * carries. Mirrors the conceded-uncertainty branch of "Reason text and
+ * severity must agree" on the rule surface.
  */
-function priorityFor(level: string, hasCandidates: boolean): ChecklistPriority {
-  if (!hasCandidates) return "low";
-  if (level === "A" || level === "AA") return "high";
-  return "medium";
+function priorityFor(
+  level: string,
+  candidates: readonly { readonly reason: string }[],
+): ChecklistPriority {
+  if (candidates.length === 0) return "low";
+  const base: ChecklistPriority = level === "A" || level === "AA" ? "high" : "medium";
+  if (base !== "high") return base;
+  if (everyCandidateHedges(candidates)) return "medium";
+  return "high";
+}
+
+/**
+ * Hedging tokens an agent reads as "the predicate this candidate names
+ * may not even apply here." Drawn from the doctrine list in
+ * ai-first-consumer.md ("Reason / priority / fix-description must
+ * agree across all three channels"): `may not apply`, `only if`,
+ * `verify…before`, `if this is`, plus `Cross-file check: grep` from
+ * the fix-description twin case. Matched case-insensitively against
+ * each candidate's reason text. The list is intentionally narrow — it
+ * targets self-conceding framings, not generic guidance ("verify the
+ * heading order is logical" is not a hedge; the predicate is
+ * affirmed). Add new tokens only when the same self-cancelling shape
+ * appears in a finder's reason text and the agent should not read the
+ * candidate as "high attention".
+ */
+const HEDGING_TOKENS: readonly RegExp[] = [
+  /\bmay not apply\b/i,
+  /\bonly if\b/i,
+  /\bverify[^.]*\bbefore\b/i,
+  /\bif this is\b/i,
+  /Cross-file check:\s*grep/i,
+];
+
+function everyCandidateHedges(candidates: readonly { readonly reason: string }[]): boolean {
+  for (const c of candidates) {
+    if (!HEDGING_TOKENS.some((re) => re.test(c.reason))) return false;
+  }
+  return true;
 }
 
 /**
@@ -1162,7 +1208,7 @@ function buildChecklistItem(
     criterionId: criterion.id,
     title: criterion.title,
     level: criterion.level,
-    priority: priorityFor(criterion.level, mapped.length > 0),
+    priority: priorityFor(criterion.level, mapped),
     confidence: itemConfidence,
     ...(principle === null ? {} : { principle }),
     candidates: mapped,

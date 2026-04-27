@@ -95,6 +95,49 @@ describe("review/multiple-ways", () => {
     expect(out).toEqual([]);
   });
 
+  it("does not flag when nav anchors are wrapped in <ul><li> (descendant count)", () => {
+    // Real-world primary-nav shape: `<nav><ul><li><a>...</a></li>...</ul></nav>`.
+    // Counting only direct children of `<nav>` would see zero anchors and
+    // claim "no navigation signal" on a page with a 17-anchor menu — the
+    // canonical bug. Descendant counting is correct: SC 2.4.5 cares
+    // whether a real navigation menu exists, not how its children are
+    // wrapped for layout.
+    const source = `
+      <html>
+        <body>
+          <nav>
+            <ul>
+              <li><a href="/a">A</a></li>
+              <li><a href="/b">B</a></li>
+              <li><a href="/c">C</a></li>
+              <li><a href="/d">D</a></li>
+            </ul>
+          </nav>
+        </body>
+      </html>
+    `;
+    const out = runFinder(finder, source, { filePath: "index.html" });
+    expect(out).toEqual([]);
+  });
+
+  it("does not flag a JSX nav whose anchors are wrapped in <ul><li>", () => {
+    const source = `
+      const page = (
+        <Layout>
+          <nav>
+            <ul>
+              <li><a href="/a">A</a></li>
+              <li><a href="/b">B</a></li>
+              <li><a href="/c">C</a></li>
+            </ul>
+          </nav>
+        </Layout>
+      );
+    `;
+    const out = runFinder(finder, source, { filePath: "layout.tsx" });
+    expect(out).toEqual([]);
+  });
+
   it("does not flag when a breadcrumb signal is present", () => {
     const source = `
       const page = (

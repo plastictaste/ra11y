@@ -34,7 +34,7 @@ const CRITERION_IDS = [
 const ROOT_LAYOUT_FILE_RE = /(?:^|[\\/])(?:layout|_app|app|root)\.[jt]sx?$/i;
 const SITEMAP_RE = /site-?map/i;
 const BREADCRUMB_RE = /breadcrumb/i;
-const DIRECT_NAV_LINK_MIN = 3;
+const NAV_LINK_MIN = 3;
 
 // Path tokens used by static-site generators (Jekyll, Hugo, Eleventy,
 // Astro) and component-scaffolded apps to mark files that are stitched
@@ -249,7 +249,7 @@ function hasJsxSitemapSignal(root: TsxModule): boolean {
 
 function hasHtmlNavigationSignal(root: HtmlDocument): boolean {
   for (const el of walkHtmlElements(root)) {
-    if (isHtmlNavigationContainer(el) && countDirectHtmlAnchors(el) >= DIRECT_NAV_LINK_MIN) {
+    if (isHtmlNavigationContainer(el) && countDescendantHtmlAnchors(el) >= NAV_LINK_MIN) {
       return true;
     }
   }
@@ -258,7 +258,7 @@ function hasHtmlNavigationSignal(root: HtmlDocument): boolean {
 
 function hasJsxNavigationSignal(root: TsxModule): boolean {
   for (const el of walkJsxElements(root)) {
-    if (isJsxNavigationContainer(el) && countDirectJsxAnchors(el) >= DIRECT_NAV_LINK_MIN) {
+    if (isJsxNavigationContainer(el) && countDescendantJsxAnchors(el) >= NAV_LINK_MIN) {
       return true;
     }
   }
@@ -316,22 +316,40 @@ function isJsxNavigationContainer(el: JsxElement): boolean {
   return el.tagName === "nav" || normalizeLower(getJsxAttributeString(el, "role")) === "navigation";
 }
 
-function countDirectHtmlAnchors(el: HtmlElement): number {
+/**
+ * Count descendant `<a>` anchors anywhere under a navigation landmark.
+ *
+ * The classic real-world primary-nav shape is `<nav><ul><li><a>...</a>
+ * </li>...</ul></nav>` — a list-wrapped sequence of links. Counting
+ * only direct children misses that shape entirely (the anchors are
+ * grandchildren of the `<nav>`), which makes the finder claim "no
+ * 3-link navigation signal" on a page with a 17-anchor primary nav.
+ * SC 2.4.5 Multiple Ways is satisfied by the existence of a real
+ * navigation menu — the wrapping element doesn't change that — so the
+ * count walks descendants. Same pattern for JSX.
+ */
+function countDescendantHtmlAnchors(el: HtmlElement): number {
   let count = 0;
-  for (const child of el.children) {
-    if (child.kind !== "HtmlElement") continue;
-    if (child.tagName.toLowerCase() === "a") count += 1;
+  for (const descendant of walkHtmlElements(el)) {
+    if (descendant.tagName.toLowerCase() === "a") count += 1;
   }
   return count;
 }
 
-function countDirectJsxAnchors(el: JsxElement): number {
+function countDescendantJsxAnchors(el: JsxElement): number {
   let count = 0;
-  for (const child of el.children) {
-    if (child.kind !== "JsxElement") continue;
-    if (child.tagName === "a") count += 1;
+  for (const descendant of walkJsxDescendants(el)) {
+    if (descendant.tagName === "a") count += 1;
   }
   return count;
+}
+
+function* walkJsxDescendants(el: JsxElement): Iterable<JsxElement> {
+  for (const child of el.children) {
+    if (child.kind !== "JsxElement") continue;
+    yield child;
+    yield* walkJsxDescendants(child);
+  }
 }
 
 function firstHtmlElement(root: HtmlDocument): HtmlElement | null {
@@ -389,10 +407,10 @@ function candidatesForAllCriteria(
   // Confidence "low": the finder infers the root-layout role from
   // filename/root-tag heuristics, and the "no multiple-ways signal"
   // determination rides on a small set of structural proxies
-  // (search input, sitemap href, breadcrumb aria-label, ≥3 direct
-  // nav anchors) that legitimate layouts can route through other
-  // files. Biased toward false positives — the candidate is a prompt
-  // to verify, not a failure claim.
+  // (search input, sitemap href, breadcrumb aria-label, ≥3 anchors
+  // anywhere under a nav landmark) that legitimate layouts can route
+  // through other files. Biased toward false positives — the
+  // candidate is a prompt to verify, not a failure claim.
   return CRITERION_IDS.map((criterionId) => ({
     criterionId,
     location: { filePath, line, column },
@@ -626,7 +644,7 @@ function isJsxEmptyShellSinglePage(root: TsxModule, signals: SignalSummary): boo
 function hasHtmlNavLandmarkWithAnchors(root: HtmlDocument): boolean {
   for (const el of walkHtmlElements(root)) {
     if (!isHtmlNavigationContainer(el)) continue;
-    if (countDirectHtmlAnchors(el) > 0) return true;
+    if (countDescendantHtmlAnchors(el) > 0) return true;
   }
   return false;
 }
@@ -634,7 +652,7 @@ function hasHtmlNavLandmarkWithAnchors(root: HtmlDocument): boolean {
 function hasJsxNavLandmarkWithAnchors(root: TsxModule): boolean {
   for (const el of walkJsxElements(root)) {
     if (!isJsxNavigationContainer(el)) continue;
-    if (countDirectJsxAnchors(el) > 0) return true;
+    if (countDescendantJsxAnchors(el) > 0) return true;
   }
   return false;
 }
