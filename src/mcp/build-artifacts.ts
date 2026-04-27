@@ -583,34 +583,17 @@ export function classifyBuildArtifactDetailed(
   if (sourcemapPointerSignal !== null) {
     return { classification: "definite-vendor-distribution", signal: sourcemapPointerSignal };
   }
-  // Defer to `detectVendorLibraryForFile` so the curated
-  // `VENDOR_LIBRARY_BANNERS` table is the single source of truth for
-  // both `meta.scannedBuildArtifacts.vendorLibraries` and the
-  // classifier verdict. `value` joins library + version so the agent
-  // can grep for the literal banner shape.
-  const banner = detectVendorLibraryForFile(filePath, source);
-  if (banner !== null) {
-    return {
-      classification: "likely-vendor-distribution",
-      signal: formatVendorBannerSignal(banner),
-    };
-  }
-  // Generic copyright-banner shape: `/*!` opener paired with a
-  // license/copyright token (Copyright, License, Released under,
-  // MIT, Apache, GPL, BSD) in the leading 1024 chars. Catches vendor
-  // distributions not on the curated `VENDOR_LIBRARY_BANNERS` table
-  // (jquery-scrolltofixed, the long tail of jQuery plugins, internal
-  // forks of upstream libraries) that still follow the publishing
-  // convention — without this branch the same files fell through to
-  // the long-line probe and were mislabeled
-  // `likely-minified-by-line-stats`. The verdict is `likely-` because
-  // an authored file COULD adopt the bang-comment + license-token
-  // convention; the curated table runs first so libraries with a
-  // canonical version slot still get the more informative
-  // `vendor-banner-version` signal.
-  const copyrightBannerSignal = detectVendorCopyrightBanner(source);
-  if (copyrightBannerSignal !== null) {
-    return { classification: "likely-vendor-distribution", signal: copyrightBannerSignal };
+  // Banner-driven `likely-vendor-distribution`: defers first to the
+  // curated `VENDOR_LIBRARY_BANNERS` table (more informative
+  // `vendor-banner-version` signal carrying `<library> v<version>`)
+  // and falls back to the generic `/*!` + license-token shape so the
+  // long tail of jQuery plugins, internal forks, and bundles whose
+  // banner does not match a curated entry still get classified.
+  // Without the generic branch, those files fell through to the
+  // long-line probe and were mislabeled `likely-minified-by-line-stats`.
+  const bannerSignal = detectBannerSignal(filePath, source);
+  if (bannerSignal !== null) {
+    return { classification: "likely-vendor-distribution", signal: bannerSignal };
   }
   const longLineSignal = detectLongMinifiedLine(source);
   if (longLineSignal !== null) {
@@ -632,6 +615,18 @@ function detectBuildDirMarker(filePath: string): BuildArtifactSignal | null {
     }
   }
   return null;
+}
+
+/**
+ * Returns the banner-shape signal for `likely-vendor-distribution`:
+ * curated `VENDOR_LIBRARY_BANNERS` entry first (more informative
+ * `vendor-banner-version` signal), generic `/*!` + license-token
+ * fallback second (`vendor-copyright-banner`); `null` when neither
+ * fires.
+ */
+function detectBannerSignal(filePath: string, source: string): BuildArtifactSignal | null {
+  const banner = detectVendorLibraryForFile(filePath, source);
+  return banner !== null ? formatVendorBannerSignal(banner) : detectVendorCopyrightBanner(source);
 }
 
 function detectMinInfix(filePath: string): BuildArtifactSignal | null {
