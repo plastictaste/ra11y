@@ -28,10 +28,24 @@
  * comparison) is the additive evidence the agent needs to verify the
  * read without the parser echoing the fragment as if it were
  * authored ground truth. Absent on conventional prose-reason entries.
+ *
+ * `parsedThroughLine` is present-when-meaningful: the 1-based source
+ * line of the first parse error — the natural "parser stopped here"
+ * signal so an agent can bound trust in per-rule findings on the file
+ * (rules may have visited the first 5 lines or the first 500). Without
+ * it, an agent triaging a `partialParseFiles` entry has no way to
+ * scope the verification read short of the whole file, defeating the
+ * static-scanner premise. Sourced from the head error's
+ * {@link ../types/ast.SourcePosition.line | `position.line`}; absent
+ * when the parser couldn't record an exact line (`position.line` is 0
+ * or otherwise non-meaningful) — never `0` or `null` as a sentinel,
+ * per the AI-first consumer model's rule against ambiguous field
+ * shapes.
  */
 export interface ParseErrorEntry {
   readonly path: string;
   readonly parser: string;
   readonly reason: string;
   readonly triggerToken?: string;
+  readonly parsedThroughLine?: number;
 }

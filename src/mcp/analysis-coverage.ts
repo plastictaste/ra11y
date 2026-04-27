@@ -1129,11 +1129,21 @@ function recordParseErrorEntry(file: ParsedFile, acc: CoverageAccumulator): void
   if (isBuildArtifact(file.filePath, file.source)) return;
   const headError = file.ast.errors[0];
   const triggerToken = headError?.triggerToken;
+  // 1-based line where the head parse error fired — the natural
+  // "parser stopped here" signal an agent uses to bound trust in
+  // per-rule findings on the file (e.g. line 12 of a 400-line file
+  // means the recovered slice is the first ~3% of the source). Omitted
+  // when the parser couldn't record a meaningful line (`position.line`
+  // is 0 or absent); the AI-first consumer model rejects `0`/`null`
+  // sentinels for "unknown" because the agent cannot distinguish them
+  // from a genuinely-line-1 error.
+  const parsedThroughLine = headError?.position.line;
   acc.parseErrorEntries.push({
     path: file.filePath,
     parser: file.ast.language,
     reason: truncateParseErrorReason(headError?.message ?? ""),
     ...(triggerToken === undefined ? {} : { triggerToken }),
+    ...(parsedThroughLine && parsedThroughLine > 0 ? { parsedThroughLine } : {}),
   });
 }
 

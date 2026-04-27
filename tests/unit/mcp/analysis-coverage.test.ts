@@ -1233,6 +1233,7 @@ describe("buildAnalysisCoverage — hints", () => {
           path: "modal.mdx",
           parser: "html",
           reason: "Unexpected end of input while parsing tag",
+          parsedThroughLine: 1,
         },
       ]);
       expect(analysisCoverage?.["partialParseFileCount"]).toBeUndefined();
@@ -1263,6 +1264,7 @@ describe("buildAnalysisCoverage — hints", () => {
           path: "modal.mdx",
           parser: "html",
           reason: "Unexpected end of input while parsing tag",
+          parsedThroughLine: 1,
         },
       ]);
     });
@@ -1322,6 +1324,7 @@ describe("buildAnalysisCoverage — hints", () => {
           path: "modal.mdx",
           parser: "html",
           reason: "Unexpected end of input while parsing tag",
+          parsedThroughLine: 1,
         },
       ]);
       expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
@@ -1329,6 +1332,7 @@ describe("buildAnalysisCoverage — hints", () => {
           path: "broken.html",
           parser: "html",
           reason: "Unexpected end of input while parsing tag",
+          parsedThroughLine: 1,
         },
       ]);
     });
@@ -1347,6 +1351,7 @@ describe("buildAnalysisCoverage — hints", () => {
           path: "a.html",
           parser: "html",
           reason: "Unexpected end of input while parsing tag",
+          parsedThroughLine: 1,
         },
       ]);
       expect(analysisCoverage?.["partialParseFileCount"]).toBeUndefined();
@@ -1391,6 +1396,7 @@ describe("buildAnalysisCoverage — hints", () => {
           parser: "tsx",
           reason: "tsx_parser_on_non_jsx_input",
           triggerToken: "<b.length>",
+          parsedThroughLine: 2,
         },
       ]);
     });
@@ -1500,6 +1506,113 @@ describe("buildAnalysisCoverage — hints", () => {
       // signal is at the start, so truncation from the tail preserves
       // the triage signal.
       expect(partial?.[0]?.reason.startsWith("SyntaxError:")).toBe(true);
+    });
+
+    it("ships parsedThroughLine on partialParseFiles entries from the head error position", () => {
+      // The natural "parser stopped here" signal an agent uses to bound
+      // trust in per-rule findings: partial-parse files may have been
+      // visited for the first 5 lines or the first 500. Without
+      // `parsedThroughLine`, the agent has no way to scope verification
+      // short of reading the whole file, defeating the static-scanner
+      // premise. Sourced from the head error's `position.line`.
+      const errored: ParsedFile = {
+        filePath: "broken.html",
+        source: "<header>\n<main>\n<div\n<footer>",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "Unexpected end of input while parsing tag",
+              position: { line: 3, column: 5, offset: 17 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [errored],
+        [],
+        NO_RULES,
+        true,
+        0,
+        undefined,
+        undefined,
+        new Set(["broken.html"]),
+      );
+      const partial = analysisCoverage?.["partialParseFiles"] as
+        | { path: string; parsedThroughLine?: number }[]
+        | undefined;
+      expect(partial?.[0]?.parsedThroughLine).toBe(3);
+    });
+
+    it("ships parsedThroughLine on parseErrorFiles entries (invisible-bucket path)", () => {
+      // Mirror of the partial bucket — the field is meaningful on both
+      // lists, since "where parsing stopped" is independent of whether
+      // any rules fired on the recovered slice. An agent reading
+      // `parseErrorFiles` to triage entirely-invisible files still
+      // benefits from knowing whether the parser made it past the
+      // doctype or bailed at the first byte.
+      const files = [htmlFileWithErrors("a.html")];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, true);
+      const invisible = analysisCoverage?.["parseErrorFiles"] as
+        | { path: string; parsedThroughLine?: number }[]
+        | undefined;
+      expect(invisible?.[0]?.parsedThroughLine).toBe(1);
+    });
+
+    it("omits parsedThroughLine when the parser cannot record a meaningful line (present-when-meaningful)", () => {
+      // Per the AI-first consumer model rule against ambiguous field
+      // shapes: omit the field when no line was recorded rather than
+      // ship `0` or `null` as "unknown" — an agent cannot distinguish
+      // those sentinels from a genuinely-line-1 error, and the silent
+      // mistake is downstream over-trust in the parsed-through bound.
+      const errored: ParsedFile = {
+        filePath: "no-line.html",
+        source: "",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "Unexpected end of input",
+              position: { line: 0, column: 0, offset: 0 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [errored],
+        [],
+        NO_RULES,
+        true,
+        0,
+        undefined,
+        undefined,
+        new Set(["no-line.html"]),
+      );
+      const partial = analysisCoverage?.["partialParseFiles"] as
+        | { path: string; parsedThroughLine?: number }[]
+        | undefined;
+      expect(partial?.[0]?.parsedThroughLine).toBeUndefined();
+      expect(Object.hasOwn(partial?.[0] ?? {}, "parsedThroughLine")).toBe(false);
     });
   });
 
