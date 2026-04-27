@@ -127,6 +127,76 @@ const VISUAL_SIGNIFIERS: ReadonlySet<string> = new Set([
   "little",
 ]);
 
+/**
+ * Common UI nouns whose presence next to a locative ("button above",
+ * "form below") names the target by its kind. SC 1.3.3 prohibits
+ * sensory-only / position-only references when there is no other
+ * identifier; when a UI noun anchors the reference, the position is
+ * supplementary, not the sole locator. The candidate still surfaces
+ * (per the AI-first "no heuristic suppression" rule) but the reason
+ * text is reframed: the question becomes "can a screen-reader user
+ * locate '<noun>' by its name," not "is the position word the only
+ * cue."
+ */
+const UI_NOUNS: ReadonlySet<string> = new Set([
+  "button",
+  "buttons",
+  "form",
+  "forms",
+  "menu",
+  "menus",
+  "panel",
+  "panels",
+  "link",
+  "links",
+  "section",
+  "sections",
+  "page",
+  "pages",
+  "screenshot",
+  "screenshots",
+  "table",
+  "tables",
+  "icon",
+  "icons",
+  "image",
+  "images",
+  "list",
+  "lists",
+  "field",
+  "fields",
+  "dialog",
+  "dialogs",
+  "sidebar",
+  "header",
+  "footer",
+  "tab",
+  "tabs",
+  "checkbox",
+  "checkboxes",
+  "input",
+  "inputs",
+  "toolbar",
+  "navigation",
+  "nav",
+  "card",
+  "cards",
+  "banner",
+  "modal",
+  "tooltip",
+  "dropdown",
+  "paragraph",
+  "heading",
+  "headings",
+  "diagram",
+  "chart",
+  "graph",
+  "map",
+]);
+
+/** Window for noun-anchor detection — adjacent or with a small word gap. */
+const NOUN_ANCHOR_WINDOW_TOKENS = 2;
+
 const COOCCURRENCE_WINDOW_TOKENS = 10;
 
 const TOKEN_RE = /[A-Za-z]+/g;
@@ -194,10 +264,46 @@ function locativeHasCooccurrence(
   return false;
 }
 
+/**
+ * If a UI noun sits within ±NOUN_ANCHOR_WINDOW_TOKENS of the locative
+ * match, return that noun. Returns the closest match — preferring a
+ * noun that immediately precedes the locative ("button above",
+ * "form below") since that is the canonical English noun-modifier
+ * order that anchors the reference. Returns undefined when no UI
+ * noun is in the window.
+ *
+ * The narrow window (vs the ±10 cooccurrence window above) is
+ * deliberate: a noun three sentences away does not anchor the
+ * reference; "button" must be local enough that AT users hear it as
+ * naming the target.
+ */
+function findNounAnchor(
+  tokens: readonly Token[],
+  matchStart: number,
+  matchEnd: number,
+): string | undefined {
+  const anchor = findAnchorIndex(tokens, matchStart, matchEnd);
+  if (anchor === -1) return undefined;
+  // Prefer the closest noun, preferring backward (preceding the locative).
+  for (let dist = 1; dist <= NOUN_ANCHOR_WINDOW_TOKENS; dist++) {
+    const before = tokens[anchor - dist];
+    if (before && UI_NOUNS.has(before.value)) return before.value;
+    const after = tokens[anchor + dist];
+    if (after && UI_NOUNS.has(after.value)) return after.value;
+  }
+  return undefined;
+}
+
 /** Match descriptor: matched phrase + its byte offset in the searched text. */
 interface MatchHit {
   readonly phrase: string;
   readonly offset: number;
+  /**
+   * UI noun within ±NOUN_ANCHOR_WINDOW_TOKENS of the matched locative,
+   * if any. Present only for locative matches; STRONG_SENSORY_PATTERN
+   * hits never carry a noun anchor (the phrase itself names the cue).
+   */
+  readonly nounAnchor?: string;
 }
 
 function matchLocativeWithCooccurrence(text: string): MatchHit | undefined {
@@ -208,7 +314,10 @@ function matchLocativeWithCooccurrence(text: string): MatchHit | undefined {
   while ((m = LOCATIVE_PATTERN.exec(text)) !== null) {
     const start = m.index;
     const end = start + m[0].length;
-    if (locativeHasCooccurrence(tokens, start, end)) return { phrase: m[0], offset: start };
+    if (locativeHasCooccurrence(tokens, start, end)) {
+      const noun = findNounAnchor(tokens, start, end);
+      return { phrase: m[0], offset: start, nounAnchor: noun };
+    }
   }
   return undefined;
 }
@@ -555,6 +664,7 @@ function checkHtmlElement(
     hit.phrase,
     candidates,
     calloutLabel,
+    hit.nounAnchor,
   );
 }
 
@@ -619,6 +729,7 @@ function checkJsxElement(
     hit.phrase,
     candidates,
     calloutLabel,
+    hit.nounAnchor,
   );
 }
 
@@ -670,6 +781,16 @@ function emitSensoryCandidates(
    * the agent can dismiss in one read without opening the file.
    */
   calloutLabel?: string,
+  /**
+   * UI noun (e.g. "button", "form") sitting within a small token
+   * window of the matched locative — when present, the position word
+   * is supplementary to a noun that names the target. The reason
+   * text is reframed to ask whether AT users can locate the noun by
+   * its name, rather than implying the position word is the sole
+   * locator. Per AI-first "no heuristic suppression" doctrine, the
+   * candidate stays in the primary list — only the framing changes.
+   */
+  nounAnchor?: string,
 ): void {
   // HtmlText is parser-stripped, but attribute values and JSX text are
   // not (see images-of-text.ts for the rationale) — strip defensively
@@ -701,7 +822,18 @@ function emitSensoryCandidates(
   const calloutNote = calloutLabel
     ? ` -- inside a ${calloutLabel} callout block: likely developer-facing documentation, not a user-facing UI instruction; verify the rendered output uses non-sensory alternatives`
     : "";
-  const reason = `text references sensory characteristic "${matchedPhrase}" in: "${context}" -- verify a non-sensory alternative exists${calloutNote}`;
+  // When a UI noun anchors the locative, reframe the question: the
+  // position is supplementary to a name, so the predicate the agent
+  // verifies is "can a screen-reader user locate this noun by its
+  // name," not "is the position the sole cue." Same priority — the
+  // candidate still surfaces (no heuristic suppression), only the
+  // framing changes. SC 1.3.3 may still bind if the noun is generic
+  // and there are multiple instances on the page (e.g. "the button
+  // below" with three unlabeled buttons), so the agent retains the
+  // judgment call.
+  const reason = nounAnchor
+    ? `verify users who linearize content (screen readers) can locate "${nounAnchor}" by its name -- "${matchedPhrase}" is a layout cue, not a name -- in: "${context}"${calloutNote}`
+    : `text references sensory characteristic "${matchedPhrase}" in: "${context}" -- verify a non-sensory alternative exists${calloutNote}`;
   const snippet = context.length > 0 ? context : renderedBody.slice(0, 120);
   for (const criterionId of CRITERION_IDS) {
     // Confidence "low": regex on visible text. "Click below" and

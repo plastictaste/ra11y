@@ -283,4 +283,76 @@ describe("review/sensory-characteristics", () => {
     expect(c.reason).toContain('class="warning"');
     expect(c.reason).toContain("callout block");
   });
+
+  // ---------------------------------------------------------------------------
+  // Noun-anchored locative reframing
+  // ---------------------------------------------------------------------------
+  //
+  // SC 1.3.3 prohibits sensory-only / position-only references when there is
+  // no other identifier. When a UI noun ("button", "form", "screenshot",
+  // ...) sits adjacent to the locative, the noun anchors the reference and
+  // the position word is supplementary, not the sole locator. Per the
+  // AI-first "no heuristic suppression" rule, the candidate still surfaces;
+  // only the framing of the reason changes — the question becomes "can a
+  // screen-reader user locate the noun by its name," not "is the position
+  // the sole cue."
+
+  it("reframes reason text when a UI noun anchors the locative ('button above')", () => {
+    const source = `<p>Click the button above to continue.</p>`;
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    // New framing: name-by-noun, not sensory-cue-only.
+    expect(c.reason).toContain('locate "button" by its name');
+    expect(c.reason).toContain('"above" is a layout cue, not a name');
+    // The old sensory-cue framing must not be used when a noun anchors.
+    expect(c.reason).not.toContain("sensory characteristic");
+  });
+
+  it("reframes reason text for 'screenshot below'", () => {
+    const source = `<p>See the screenshot below for the exact button location.</p>`;
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    // The closest noun in the ±2-token window of "below" is
+    // "screenshot" (preceding by 1 token), so the reframing names it.
+    expect(c.reason).toContain('locate "screenshot" by its name');
+    expect(c.reason).toContain('"below" is a layout cue');
+  });
+
+  it("keeps the bare-locative framing when no UI noun anchors the position word", () => {
+    // "view above" — pointing-verb cooccurrence ("see") fires, but the
+    // closest noun in the ±2 window ("summary") is not in the UI-noun
+    // set, so the bare locative framing stays. The agent is told what
+    // the matched phrase was; nothing is claimed about a noun that is
+    // not nearby.
+    const source = `<p>To see the summary, view above.</p>`;
+    const candidates = runFinder(finder, source, { filePath: "input.html" });
+    expect(candidates.length).toBeGreaterThan(0);
+    const c = candidates[0];
+    if (!c) throw new Error("expected at least one candidate");
+    // Original framing — sensory characteristic, not noun-anchored.
+    expect(c.reason).toContain("sensory characteristic");
+    expect(c.reason).not.toContain('locate "');
+  });
+
+  it("noun-anchored candidate keeps the same confidence as a bare locative", () => {
+    // The reframing changes only the reason text. The candidate must
+    // still surface at the same confidence — per AI-first doctrine,
+    // priority/severity downgrades to "hide things" are dishonest.
+    const nounAnchored = runFinder(finder, `<p>Click the button above to continue.</p>`, {
+      filePath: "input.html",
+    });
+    const bareLocative = runFinder(finder, `<p>To see the summary, view above.</p>`, {
+      filePath: "input.html",
+    });
+    expect(nounAnchored.length).toBeGreaterThan(0);
+    expect(bareLocative.length).toBeGreaterThan(0);
+    const a = nounAnchored[0];
+    const b = bareLocative[0];
+    if (!a || !b) throw new Error("expected at least one candidate from each source");
+    expect(a.confidence).toBe(b.confidence);
+  });
 });
