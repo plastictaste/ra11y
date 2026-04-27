@@ -920,4 +920,152 @@ describe("rule aria/expanded-on-disclosure", () => {
       );
     });
   });
+
+  describe("severity downgrade for layered conceded uncertainty (visually-hidden label child)", () => {
+    // Doctrine source: docs/kb/architecture/ai-first-consumer.md
+    // "Reason text and severity must agree." When the message adds a
+    // second hedge layered on top of the base predicate hedge — "if
+    // that is the disclosure label, verify the accessible name is
+    // complete" — the agent is being asked to verify two distinct
+    // judgments before the finding becomes actionable. Two stacked
+    // concessions earn a per-emit downgrade from `warning` to `info`
+    // so attention-budget signal stays aligned with reason text. The
+    // base predicate hedge alone (no label evidence) leaves severity
+    // at `warning`; an inline `aria-label` is provably part of the
+    // accessible name per ARIA, so it does NOT trigger the downgrade.
+    it("emits at info when an HTML disclosure trigger has a .sr-only text child", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+            <span class="navbar-toggler-icon"></span>
+            <span class="sr-only">Toggle navigation</span>
+          </button>
+        </body></html>`,
+        { filePath: "sr-only.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+      // Reason text still ships the layered hedge; severity now agrees.
+      expect(violations[0]?.message).toMatch(/visually-hidden text child \(\.sr-only\)/);
+      expect(violations[0]?.message).toMatch(
+        /if that is the disclosure label, verify the accessible name is complete/,
+      );
+    });
+
+    it("emits at info when an HTML disclosure trigger has a .visually-hidden text child", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#m" data-bs-toggle="collapse">
+            <i class="bi bi-list"></i>
+            <span class="visually-hidden">Open menu</span>
+          </a>
+        </body></html>`,
+        { filePath: "visually-hidden.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+    });
+
+    it("emits at info on the missing-aria-controls finding when a .sr-only child is present", () => {
+      // The Bootstrap-canonical missing-controls case enriched with
+      // an sr-only child also carries the layered hedge — same
+      // downgrade rationale.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="dropdown" aria-expanded="false">
+            <span class="sr-only">Open user menu</span>
+          </button>
+        </body></html>`,
+        { filePath: "bs-dropdown-sr.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/missing aria-controls/);
+      expect(violations[0]?.severity).toBe("info");
+    });
+
+    it("emits at info on JSX disclosure triggers with a .sr-only child", () => {
+      const violations = runRule(
+        rule,
+        `function Toggle() {
+           return (
+             <button data-bs-toggle="collapse" data-bs-target="#m">
+               <span className="sr-only">Toggle navigation</span>
+             </button>
+           );
+         }`,
+        { filePath: "Toggle.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+    });
+
+    it("stays at warning when only an inline aria-label is present (provably the accessible name)", () => {
+      // aria-label IS provably part of the accessible name computation
+      // per ARIA, so the "verify the accessible name is complete"
+      // framing collapses to a single hedge (the base predicate one).
+      // No layered uncertainty → no further downgrade.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-label="Open menu" data-bs-toggle="collapse" data-bs-target="#m"></button>
+        </body></html>`,
+        { filePath: "aria-label-only.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("warning");
+      expect(violations[0]?.message).toMatch(/an inline aria-label/);
+    });
+
+    it("downgrades to info when both aria-label AND a .sr-only child are present (the hidden-child layered hedge dominates)", () => {
+      // The layered "if that is the disclosure label, verify..." hedge
+      // is triggered by the visually-hidden child branch; the
+      // aria-label branch does not on its own. When both signals
+      // co-occur, the hidden-child concession is still in the message,
+      // so the downgrade still applies.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-label="Toggle" data-bs-toggle="collapse" data-bs-target="#m">
+            <span class="sr-only">Toggle navigation</span>
+          </button>
+        </body></html>`,
+        { filePath: "both.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("info");
+    });
+
+    it("stays at warning when no label evidence is present (base predicate hedge only)", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m">Toggle</button>
+        </body></html>`,
+        { filePath: "no-label.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("warning");
+    });
+
+    it("stays at warning when a deep descendant (not a direct child) carries the visually-hidden token", () => {
+      // The label evidence is direct-child-only (the rule already
+      // documents this). A deep descendant with `.sr-only` does not
+      // populate `LabelEvidence.visuallyHiddenClassToken`, so the
+      // severity stays at the baseline `warning`.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m">
+            <span class="wrapper"><span class="sr-only">Toggle</span></span>
+          </button>
+        </body></html>`,
+        { filePath: "deep.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("warning");
+    });
+  });
 });

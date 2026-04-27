@@ -341,6 +341,13 @@ export const rule = defineRule({
   // `couldBeWrongBecause: ["disclosure_predicate_relies_on_class_token"]`
   // so the agent reading severity, reason, and fix-description sees
   // the same uncertainty signal across all channels.
+  //
+  // The per-emit severity drops a further notch to `info` when the
+  // flagged trigger has a visually-hidden text child — see
+  // {@link severityForLabelEvidence} for the rationale (the message
+  // adds a layered "if that is the disclosure label, verify..." hedge
+  // on top of the base predicate hedge, and two stacked concessions
+  // earn the further downgrade).
   severity: "warning",
   scope: "node",
   // re-tagged `mechanical` →
@@ -405,13 +412,51 @@ export const rule = defineRule({
   },
 });
 
+type EmitSeverity = "warning" | "info";
+
 type Emit = (v: {
-  severity: "warning";
+  severity: EmitSeverity;
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
   couldBeWrongBecause: readonly string[];
 }) => void;
+
+/**
+ * Per-emit severity choice. The rule's default severity is `"warning"`
+ * because the fix.description hedges (per the rule-level comment on
+ * {@link rule}). When the flagged trigger ALSO carries a visually-hidden
+ * text child (`.sr-only` / `.visually-hidden` / etc.), the message and
+ * suggestion add a second hedge — `"if that is the disclosure label,
+ * verify the accessible name is complete"` — which concedes the agent
+ * must verify both:
+ *
+ *   1. whether the predicate-detected control is actually a disclosure
+ *      trigger (the base hedge), AND
+ *   2. whether the hidden child is actually serving as the disclosure
+ *      label (the layered enrichment hedge).
+ *
+ * Two stacked concessions earn the further downgrade to `"info"` — the
+ * agent is being asked to verify two distinct judgments before the
+ * finding becomes actionable, and a `warning`-level signal would
+ * over-budget that work. Per
+ * docs/kb/architecture/ai-first-consumer.md "Reason text and severity
+ * must agree" — when the reason hedges twice, severity drops a notch
+ * to keep the channels aligned.
+ *
+ * The `aria-label` enrichment branch does NOT trigger the downgrade:
+ * an inline `aria-label` is provably part of the accessible name
+ * computation per ARIA, so the `"verify the accessible name is
+ * complete"` framing is a single hedge (only the base predicate hedge
+ * applies); the existing `warning` severity already matches.
+ *
+ * No label evidence at all → `warning` (the baseline; only the base
+ * predicate hedge applies).
+ */
+function severityForLabelEvidence(evidence: LabelEvidence): EmitSeverity {
+  if (evidence.visuallyHiddenClassToken !== null) return "info";
+  return "warning";
+}
 
 // ---------------------------------------------------------------------------
 // HTML
@@ -428,7 +473,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (!finding) continue;
     const labelEvidence = collectHtmlLabelEvidence(el);
     emit({
-      severity: "warning",
+      severity: severityForLabelEvidence(labelEvidence),
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
@@ -623,7 +668,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (!finding) continue;
     const labelEvidence = collectJsxLabelEvidence(el);
     emit({
-      severity: "warning",
+      severity: severityForLabelEvidence(labelEvidence),
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
