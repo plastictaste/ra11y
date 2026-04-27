@@ -803,6 +803,7 @@ export const checklistTool: McpTool = {
       nextCursor: page.paginationFields.nextCursor,
       configSource: projectConfig.sourcePath,
       configSearchSawProjectMarker,
+      configSearchedFromForWarning: cwd,
       ...(perCriterionClamp ? { perCriterionClamp } : {}),
     });
     return textResult({
@@ -857,6 +858,13 @@ function buildChecklistWarnings(args: {
    * demo directories without a parent project root never trip the code.
    */
   readonly configSearchSawProjectMarker: boolean;
+  /**
+   * Absolute path the loader walked from (the resolved `cwd`). Drives
+   * `warningsDetails.no_config_found.searchedFrom` so the agent gets
+   * the same canonical answer here as on `scan_project` /
+   * `coverage` for identical input.
+   */
+  readonly configSearchedFromForWarning: string;
   readonly perCriterionClamp?: { readonly requested: number; readonly applied: number };
 }): { readonly warnings?: readonly string[]; readonly warningsDetails?: unknown } {
   const derivative = buildDerivativeScanWarnings({
@@ -864,6 +872,7 @@ function buildChecklistWarnings(args: {
     rootSource: null,
     configSource: args.configSource,
     configSearchSawProjectMarker: args.configSearchSawProjectMarker,
+    configSearchedFromForWarning: args.configSearchedFromForWarning,
     analysisCoverage: args.analysisCoverageField.analysisCoverage,
     filesByExtension: args.filesByExtension,
     // gate `template_files_parsed_as_literal`

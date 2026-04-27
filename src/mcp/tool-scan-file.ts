@@ -193,6 +193,11 @@ export const scanFileTool: McpTool = {
         configSource: projectConfig.sourcePath,
         rootSource: null,
         configSearchSawProjectMarker,
+        // Surface the loader's search root on
+        // `warningsDetails.no_config_found.searchedFrom` so an agent
+        // calling scan_file gets the same canonical "where was the
+        // search?" answer scan / scan_project surface.
+        configSearchedFromForWarning: configSearchBase,
       },
       { tokenBudget: 0, includeReviewCandidates: true },
     );

@@ -206,8 +206,25 @@ export const vpatTool: McpTool = {
       product: report.product,
       configSource,
       configSearchSawProjectMarker,
+      configSearchedFromForWarning: cwd,
       report,
     });
+    // Pair `no_config_found` with its `searchedFrom` payload so VPAT
+    // matches scan_project / coverage / checklist on the cross-surface
+    // shape. Other VPAT-specific codes
+    // (`product_metadata_placeholders_in_use`,
+    // `vpat_no_passing_criteria`, `scanned_zero_files`) are
+    // binary-presence — the empty marker rides on every fired code so
+    // the warnings-details schema-discipline membership invariant
+    // ("every code in `warnings[]` has a key in `warningsDetails`")
+    // holds.
+    const warningsDetails =
+      warnings.length === 0
+        ? undefined
+        : buildVpatWarningsDetails({
+            codes: warnings,
+            configSearchedFromForWarning: cwd,
+          });
 
     const nextStep = buildNextStep(report);
     const includeMarkdown = format === "markdown";
@@ -222,9 +239,40 @@ export const vpatTool: McpTool = {
       nextStep: nextStep.prose,
       nextStepStructured: nextStep.structured,
       ...(warnings.length > 0 ? { warnings } : {}),
+      ...(warningsDetails === undefined ? {} : { warningsDetails }),
     });
   },
 };
+
+/**
+ * Builds VPAT's `warningsDetails` block. Pairs the payload-bearing
+ * `no_config_found` code with its `searchedFrom: cwd` payload (so an
+ * agent has the same canonical answer here it gets on
+ * scan_project / coverage / checklist) and stamps the empty-object
+ * marker for every other fired code so the warnings-details
+ * schema-discipline membership invariant holds.
+ *
+ * Pure shape-builder. The `BinaryPresenceMarker`-shaped marker is the
+ * shared frozen constant from `warnings.ts`'s `fillMissingWarningDetails`
+ * pathway — re-derived here as `{}` because VPAT's code surface is
+ * narrower than the scan-family dispatch table and pulling the
+ * constant in just for one local stamp would inflate the import
+ * surface.
+ */
+function buildVpatWarningsDetails(args: {
+  readonly codes: readonly string[];
+  readonly configSearchedFromForWarning: string;
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const code of args.codes) {
+    if (code === "no_config_found") {
+      out[code] = { searchedFrom: args.configSearchedFromForWarning };
+    } else {
+      out[code] = {};
+    }
+  }
+  return out;
+}
 
 /**
  * Validated, resolved params for the `vpat` handler. Collapsing all the
@@ -375,6 +423,8 @@ function computeWarnings(inputs: {
   readonly product: VpatProductMetadata;
   readonly configSource: string | null;
   readonly configSearchSawProjectMarker: boolean;
+  /** Absolute path the config loader walked from. */
+  readonly configSearchedFromForWarning: string;
   readonly report: VpatReport;
 }): readonly string[] {
   const out: string[] = [];

@@ -301,6 +301,7 @@ export const coverageTool: McpTool = {
       filesScanned: files.length,
       rootSource: null,
       configSource: projectConfig.sourcePath,
+      configSearchedFromForWarning: cwd,
       analysisCoverage: analysisCoverageField.analysisCoverage,
       filesByExtension,
       scannedBuildArtifactsPresent: buildArtifactEntries.length > 0,

@@ -139,6 +139,7 @@ export const scanTool: McpTool = {
           filesScanned: 0,
           rootSource: null,
           configSource: projectConfig.sourcePath,
+          configSearchedFromForWarning: cwd,
           analysisCoverage: undefined,
           filesByExtension: undefined,
           configSearchSawProjectMarker,
@@ -173,6 +174,11 @@ export const scanTool: McpTool = {
         // here by construction.
         rootSource: null,
         configSearchSawProjectMarker,
+        // Surface the loader's search root on
+        // `warningsDetails.no_config_found.searchedFrom` so every
+        // project-rooted tool answers "where was the search?" the
+        // same way.
+        configSearchedFromForWarning: cwd,
       },
       { tokenBudget: 0 },
     );

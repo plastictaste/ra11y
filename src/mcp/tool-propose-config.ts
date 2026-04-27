@@ -66,6 +66,7 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { gitRoot } from "../utils/git.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
+import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
@@ -156,11 +157,39 @@ export const proposeConfigTool: McpTool = {
     const foreignWarning = foreignEcosystemWarning(root);
     const foreignEcosystem = detectForeignEcosystem(root);
 
+    // Cross-surface count invariant
+    // (`docs/kb/architecture/ai-first-consumer.md`): every project-rooted
+    // tool that emits `meta.configSource` must surface the same
+    // `no_config_found` + `searchedFrom` warning shape on the same
+    // input. `propose_config` is the canonical onboarding tool — when
+    // it runs against a Node project that lacks a config, the same
+    // `no_config_found` signal scan_project surfaces must ride here so
+    // the agent doesn't have to call back to discover the missing-
+    // config state the proposal is being built against.
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(root) : false;
+    const noConfigFires = shouldEmitNoConfigFound({
+      configSource: projectConfig.sourcePath,
+      filesScanned: files.length,
+      configSearchSawProjectMarker,
+    });
+
     const suggestedConfig = buildConfigString({
       wrappers: confirmedWrappers,
       excludes: buildArtifacts,
       topRules,
     });
+
+    const warningCodes: string[] = [];
+    const warningsDetails: Record<string, unknown> = {};
+    if (foreignWarning !== null) {
+      warningCodes.push(foreignWarning);
+      warningsDetails[foreignWarning] = {};
+    }
+    if (noConfigFires) {
+      warningCodes.push("no_config_found");
+      warningsDetails["no_config_found"] = { searchedFrom: root };
+    }
 
     return textResult({
       suggestedConfig,
@@ -201,13 +230,12 @@ export const proposeConfigTool: McpTool = {
       // empty-object marker on `warningsDetails` keeps the
       // warnings-details schema-discipline membership invariant honest
       // (every fired code has a corresponding key on `warningsDetails`)
-      // while signaling "no further detail by design."
-      ...(foreignWarning === null
-        ? {}
-        : {
-            warnings: [foreignWarning],
-            warningsDetails: { [foreignWarning]: {} },
-          }),
+      // while signaling "no further detail by design." The
+      // `no_config_found` code rides here too with its `searchedFrom`
+      // payload so cross-surface emission stays consistent with the
+      // scan-family tools.
+      ...(warningCodes.length > 0 ? { warnings: warningCodes } : {}),
+      ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
     });
   },
 };

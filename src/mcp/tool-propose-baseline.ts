@@ -88,6 +88,7 @@ import { existsSync } from "node:fs";
 import { runScan } from "../engine/scanner.ts";
 import { gitRoot } from "../utils/git.ts";
 import { compileGlobs } from "../utils/glob.ts";
+import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import {
   buildProposedEntries,
@@ -216,6 +217,25 @@ export const proposeBaselineTool: McpTool = {
     const { entries: proposed, rationales } = hoistRationales(dedupedRaw);
     const counts = tallyReasons(proposed);
 
+    // Cross-surface count invariant
+    // (`docs/kb/architecture/ai-first-consumer.md`): every project-rooted
+    // tool that emits `meta.configSource` must surface the same
+    // `no_config_found` + `searchedFrom` warning shape on the same
+    // input. `propose_baseline` runs a real scan against the project
+    // and the agent reads its meta to gate "is the proposal trustworthy
+    // on this corpus?" — a missing config warning here forces the
+    // agent into a second `scan_project` call to discover the same
+    // bit. Mirror the gate.
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(root) : false;
+    const noConfigFires = shouldEmitNoConfigFound({
+      configSource: projectConfig.sourcePath,
+      filesScanned: files.length,
+      configSearchSawProjectMarker,
+    });
+    const warnings = noConfigFires ? (["no_config_found"] as const) : [];
+    const warningsDetails = noConfigFires ? { no_config_found: { searchedFrom: root } } : undefined;
+
     return textResult({
       proposed,
       rationales,
@@ -230,6 +250,8 @@ export const proposeBaselineTool: McpTool = {
         }),
         standards: [...result.enabledStandards].sort(),
       },
+      ...(warnings.length > 0 ? { warnings } : {}),
+      ...(warningsDetails === undefined ? {} : { warningsDetails }),
       nextStep: buildProposedNextStep(proposed.length, counts),
       nextStepStructured: { tool: "baseline", args: { mode: "create" } },
     });

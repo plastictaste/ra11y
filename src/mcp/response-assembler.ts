@@ -152,6 +152,14 @@ export interface ScanFamilyResponseInput {
    * warning drops conservatively in that case.
    */
   readonly configSearchSawProjectMarker?: boolean;
+  /**
+   * Absolute path the config loader walked from. Drives the
+   * `warningsDetails.no_config_found.searchedFrom` payload so every
+   * project-rooted tool surfaces the same canonical "where did the
+   * loader walk from" answer. Pass the same `cwd`/`root` the loader
+   * was handed; omit when the tool did not resolve a search root.
+   */
+  readonly configSearchedFromForWarning?: string;
 }
 
 export interface ScanFamilyResponseOptions {
@@ -280,6 +288,7 @@ function buildAssemblerWarningsField(args: {
   readonly storybookPresetActive: boolean | undefined;
   readonly sessionWrappersMismatchCwd: boolean | undefined;
   readonly configSearchSawProjectMarker: boolean | undefined;
+  readonly configSearchedFromForWarning: string | undefined;
   readonly scssUnresolvedVariableFiles?: readonly string[];
 }): {
   readonly warnings?: readonly ScanWarningCode[];
@@ -326,6 +335,9 @@ function buildAssemblerWarningsField(args: {
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
+    ...(args.configSearchedFromForWarning === undefined
+      ? {}
+      : { configSearchedFromForWarning: args.configSearchedFromForWarning }),
     ...(metaArrayTruncatedFields.length > 0 ? { metaArrayTruncatedFields } : {}),
     ...(args.scssUnresolvedVariableFiles === undefined ||
     args.scssUnresolvedVariableFiles.length === 0
@@ -365,6 +377,7 @@ export function assembleScanFamilyResponse(
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     configSearchSawProjectMarker,
+    configSearchedFromForWarning,
   } = input;
   // Cross-surface count invariant: when the caller supplied raw
   // (pre-filter) violations, derive the parser/finder-honesty
@@ -539,6 +552,7 @@ export function assembleScanFamilyResponse(
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     configSearchSawProjectMarker,
+    configSearchedFromForWarning,
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
   });
 

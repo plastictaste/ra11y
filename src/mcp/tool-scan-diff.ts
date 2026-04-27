@@ -37,6 +37,7 @@ import {
   stagedFiles,
 } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
+import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { applyScanDiffTokenBudget } from "./scan-diff-budget.ts";
@@ -231,6 +232,18 @@ async function handleBaselineMode(
     configSource: projectConfig.sourcePath,
     baselineVersion: baseline.version,
   };
+  // Cross-surface count invariant
+  // (`docs/kb/architecture/ai-first-consumer.md`): every project-rooted
+  // tool that emits `meta.configSource` must surface the same
+  // `no_config_found` + `searchedFrom` warning shape on the same
+  // input. Mirror the gate so an agent gating "did this PR regress?"
+  // through scan_diff sees the same scan-confidence signal it would
+  // get from scan_project on the same cwd.
+  const noConfigField = computeNoConfigWarningField({
+    configSource: projectConfig.sourcePath,
+    filesScanned: files.length,
+    cwd,
+  });
   const tentative: Record<string, unknown> = {
     mode: "diff",
     baselinePath,
@@ -250,10 +263,50 @@ async function handleBaselineMode(
     ...(hoistedGuide.referenceGuide === undefined
       ? {}
       : { referenceGuide: hoistedGuide.referenceGuide }),
+    ...noConfigField,
     meta: applyMetaCacheMode({ toolName: "scan_diff", params, fullMeta, session }),
     nextStep: buildNextStep(newCount, newFiles, resolved.length),
   };
   return textResult(applyScanDiffTokenBudget(tentative, hoistedGuide.files, "newViolations"));
+}
+
+/**
+ * Builds the spreadable `warnings` + `warningsDetails` fragment for the
+ * `no_config_found` code on tools that don't route through
+ * `assembleScanFamilyResponse` /
+ * `buildAssemblerWarningsField`. Mirrors the same gate predicate the
+ * scan-family tools use so emission stays consistent across surfaces:
+ *
+ *   - `configSource === null` (loader walk-up returned nothing)
+ *   - `filesScanned >= NO_CONFIG_FOUND_FILE_COUNT_THRESHOLD`
+ *   - `sawProjectMarkerInWalk(cwd) === true`
+ *
+ * Returns `{}` when the gate doesn't fire so callers can spread
+ * unconditionally. Doesn't merge with sibling warning channels —
+ * callers that emit multiple codes (see `handleHunksMode` →
+ * `no_hunks_in_comparison`) build the merged shape themselves; this
+ * helper is the narrowest dependency for the most common branch.
+ */
+function computeNoConfigWarningField(args: {
+  readonly configSource: string | null;
+  readonly filesScanned: number;
+  readonly cwd: string;
+}): {
+  readonly warnings?: readonly ["no_config_found"];
+  readonly warningsDetails?: { readonly no_config_found: { readonly searchedFrom: string } };
+} {
+  const configSearchSawProjectMarker =
+    args.configSource === null ? sawProjectMarkerInWalk(args.cwd) : false;
+  const fires = shouldEmitNoConfigFound({
+    configSource: args.configSource,
+    filesScanned: args.filesScanned,
+    configSearchSawProjectMarker,
+  });
+  if (!fires) return {};
+  return {
+    warnings: ["no_config_found"] as const,
+    warningsDetails: { no_config_found: { searchedFrom: args.cwd } },
+  };
 }
 
 /** Default comparison ref for hunks mode when the caller omits `comparisonRef`. */
@@ -318,15 +371,27 @@ async function handleHunksMode(
     hunksResult.status === "ok"
       ? hunksResult.hunksByFile
       : (new Map<string, readonly HunkRange[]>() as ReadonlyMap<string, readonly HunkRange[]>);
-  const noHunksWarning =
-    hunksResult.status === "no-hunks" ? { warnings: ["no_hunks_in_comparison"] as const } : {};
+  const noConfigField = computeNoConfigWarningField({
+    configSource: projectConfig.sourcePath,
+    filesScanned: files.length,
+    cwd,
+  });
+  const mergedWarningsField = mergeWarningFields(
+    hunksResult.status === "no-hunks"
+      ? {
+          warnings: ["no_hunks_in_comparison"] as const,
+          warningsDetails: { no_hunks_in_comparison: {} },
+        }
+      : {},
+    noConfigField,
+  );
 
   if (files.length === 0) {
     return textResult({
       mode: "diff",
       newCount: 0,
       newViolations: [],
-      ...noHunksWarning,
+      ...mergedWarningsField,
       meta: {
         filesScanned: 0,
         scanned: scannedProject(cwd),
@@ -360,7 +425,7 @@ async function handleHunksMode(
     mode: "diff",
     newCount,
     newViolations: hoistedGuide.files,
-    ...noHunksWarning,
+    ...mergedWarningsField,
     ...(hoistedGuide.referenceGuide === undefined
       ? {}
       : { referenceGuide: hoistedGuide.referenceGuide }),
@@ -374,6 +439,37 @@ async function handleHunksMode(
     nextStep: buildHunkNextStep(newCount, newFiles, comparisonRef, hunksResult.status),
   };
   return textResult(applyScanDiffTokenBudget(tentative, hoistedGuide.files, "newViolations"));
+}
+
+/**
+ * Merges two `{ warnings, warningsDetails }` fragments into one. Used
+ * by hunks mode where two independent codes
+ * (`no_hunks_in_comparison`, `no_config_found`) can fire on the same
+ * response. Preserves the warnings-details schema-discipline membership
+ * invariant: every code in the merged `warnings[]` has a key on
+ * `warningsDetails`. Returns `{}` when both inputs are empty so callers
+ * can spread unconditionally.
+ */
+function mergeWarningFields(
+  a: {
+    readonly warnings?: readonly string[];
+    readonly warningsDetails?: Record<string, unknown>;
+  },
+  b: {
+    readonly warnings?: readonly string[];
+    readonly warningsDetails?: Record<string, unknown>;
+  },
+): {
+  readonly warnings?: readonly string[];
+  readonly warningsDetails?: Record<string, unknown>;
+} {
+  const codes = [...(a.warnings ?? []), ...(b.warnings ?? [])];
+  if (codes.length === 0) return {};
+  const details: Record<string, unknown> = {
+    ...(a.warningsDetails ?? {}),
+    ...(b.warningsDetails ?? {}),
+  };
+  return { warnings: codes, warningsDetails: details };
 }
 
 /**

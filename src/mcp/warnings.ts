@@ -527,6 +527,17 @@ export interface WarningInputs {
    */
   readonly configSource: string | null | undefined;
   /**
+   * Absolute path the config loader walked from. Drives the
+   * `warningsDetails.no_config_found.searchedFrom` payload so an agent
+   * reading the code has one canonical answer regardless of which tool
+   * emitted it. Pass the same `cwd`/`root` the loader was handed; pass
+   * `undefined` when the tool did not resolve a search root (in which
+   * case the payload drops conservatively and the bare code stays the
+   * only signal). The value is surfaced on the warning channel
+   * deterministically — no second filesystem walk.
+   */
+  readonly configSearchedFromForWarning?: string;
+  /**
    * The analysisCoverage block as returned by `buildAnalysisCoverage` —
    * we read `hints` for the Tailwind signal and `templateInterpolationFound`
    * for the literal-template signal. Pass the full block; the helper
@@ -1485,7 +1496,23 @@ export interface ScanWarningDetails {
    */
   readonly scanned_zero_files?: BinaryPresenceMarker;
   readonly root_source_defaulted?: BinaryPresenceMarker;
-  readonly no_config_found?: BinaryPresenceMarker;
+  /**
+   * Payload for `no_config_found`. Carries the absolute path the config
+   * loader walked from when no `ra11y.config.*` resolved — the
+   * deterministic answer to "where did the search start?". Without the
+   * path, an agent reading the bare code learns "no config found" but
+   * has to re-derive the search root from the response's other fields
+   * (`scanned.root`, `cwd`, etc.), and the cross-tool drift on which
+   * field carries the root makes that derivation noisy. With
+   * `searchedFrom`, the agent has one canonical answer regardless of
+   * which tool emitted the warning — closing the cross-surface
+   * inconsistency where some emitters paired the warning with `cwd` on
+   * the meta block and others with `scanned.root`. Pure shape-builder;
+   * the value is the same `cwd`/`root` the loader was handed.
+   */
+  readonly no_config_found?: {
+    readonly searchedFrom: string;
+  };
   readonly tailwind_detected_css_undercounted?: BinaryPresenceMarker;
   readonly template_files_parsed_as_literal?: BinaryPresenceMarker;
   readonly no_hunks_in_comparison?: BinaryPresenceMarker;
@@ -2266,6 +2293,12 @@ type ScanMetaWarningArgs = {
   readonly additionalPathsRedundant?: boolean;
   readonly restrictToPathsEmpty?: boolean;
   readonly configSearchSawProjectMarker?: boolean;
+  /**
+   * Pass-through for the `searchedFrom` payload on
+   * `warningsDetails.no_config_found`. See
+   * {@link WarningInputs.configSearchedFromForWarning}.
+   */
+  readonly configSearchedFromForWarning?: string;
   readonly metaArrayTruncatedFields?: readonly string[];
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly scannedMinifiedFiles?: readonly string[];
@@ -2324,6 +2357,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "additionalPathsRedundant",
   "restrictToPathsEmpty",
   "configSearchSawProjectMarker",
+  "configSearchedFromForWarning",
   "metaArrayTruncatedFields",
   "scssUnresolvedVariableFiles",
   "scannedMinifiedFiles",
@@ -2444,6 +2478,10 @@ export function computeScanWarningDetails(
     {
       code: "cwd_appears_misrooted",
       summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
+    },
+    {
+      code: "no_config_found",
+      summarize: () => summarizeNoConfigFound(inputs.configSearchedFromForWarning),
     },
     {
       code: "response_meta_truncated",
@@ -2674,6 +2712,29 @@ function summarizeCwdAppearsMisrooted(
 ): NonNullable<ScanWarningDetails["cwd_appears_misrooted"]> | undefined {
   if (typeof ancestor !== "string" || ancestor.length === 0) return undefined;
   return { nearestConfigAncestor: ancestor };
+}
+
+/**
+ * Builds the `no_config_found` payload from the caller-supplied
+ * `configSearchedFromForWarning` path. Returns `undefined` when the
+ * input is absent or empty so the dispatch table conditional-spreads
+ * the entry away — the bare code still carries the signal in that case
+ * (the predicate that fires the code is independent from this payload
+ * helper). Pure shape-builder; surfaces the value the loader was
+ * handed without re-walking.
+ *
+ * Drives the cross-surface invariant: every project-rooted tool that
+ * emits `no_config_found` ships the same `searchedFrom: cwd` payload
+ * so the agent has one canonical answer regardless of which tool
+ * emitted the warning. Closes the inconsistency where some emitters
+ * left the agent re-deriving the search root from `scanned.root` /
+ * `meta.cwd` / response-level `cwd`.
+ */
+function summarizeNoConfigFound(
+  searchedFrom: WarningInputs["configSearchedFromForWarning"],
+): NonNullable<ScanWarningDetails["no_config_found"]> | undefined {
+  if (typeof searchedFrom !== "string" || searchedFrom.length === 0) return undefined;
+  return { searchedFrom };
 }
 
 /**

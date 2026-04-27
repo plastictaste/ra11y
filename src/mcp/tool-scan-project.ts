@@ -473,6 +473,7 @@ export const scanProjectTool: McpTool = {
           parsedFiles: files,
           rootSource,
           configSource: projectConfig.sourcePath,
+          root,
           buildArtifacts,
           storybookPresetActive,
           sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
@@ -611,6 +612,13 @@ function buildBaseWarningsForScanProject(args: {
   readonly parsedFiles: readonly ParsedFile[];
   readonly rootSource: "explicit" | "host-root" | "git" | "spawn-cwd";
   readonly configSource: string | null;
+  /**
+   * Resolved scan root — drives the
+   * `warningsDetails.no_config_found.searchedFrom` payload so every
+   * project-rooted tool surfaces the same canonical "where did the
+   * loader walk from" answer when no config resolved.
+   */
+  readonly root: string;
   readonly buildArtifacts: {
     readonly present: boolean;
     readonly entries: readonly ScannedBuildArtifact[];
@@ -634,6 +642,7 @@ function buildBaseWarningsForScanProject(args: {
     parsedFiles,
     rootSource,
     configSource,
+    root,
     buildArtifacts,
     storybookPresetActive,
     sessionWrappersMismatchCwd,
@@ -716,6 +725,12 @@ function buildBaseWarningsForScanProject(args: {
     meta: formatted.meta,
     rootSource,
     configSource,
+    // Surface the loader's search root on
+    // `warningsDetails.no_config_found.searchedFrom` so every
+    // project-rooted tool answers "where was the search?" the same way.
+    // Threaded through here regardless of the gate predicate; the
+    // summarizer drops the payload when the code itself didn't fire.
+    configSearchedFromForWarning: root,
     scannedBuildArtifactsPresent: buildArtifacts.present,
     ...(scannedBuildArtifactsSummary === undefined ? {} : { scannedBuildArtifactsSummary }),
     ...(scannedBuildArtifactsAllFiles ? { scannedBuildArtifactsAllFiles: true } : {}),
@@ -1277,6 +1292,7 @@ function buildEmptyFilesResult(args: {
       filesScanned: 0,
       rootSource,
       configSource,
+      configSearchedFromForWarning: root,
       analysisCoverage: undefined,
       filesByExtension: undefined,
       configSearchSawProjectMarker: args.configSearchSawProjectMarker,

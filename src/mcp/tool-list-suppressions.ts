@@ -50,6 +50,7 @@
 
 import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
 import { gitRoot } from "../utils/git.ts";
+import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { type McpTool, parseFiles, strArrayParam, strParam, textResult } from "./tools-helpers.ts";
 import { type ActiveNativeWrapper, resolveWrapperSources } from "./wrappers-meta.ts";
@@ -136,13 +137,39 @@ export const listSuppressionsTool: McpTool = {
     // list_suppressions against another sees the anchor mismatch
     // alongside the stale `source: "session"` entries.
     const sessionWrappersMismatchCwd = session.sessionWrappersMismatchCwd(root);
-    const warnings = sessionWrappersMismatchCwd
-      ? (["session_wrappers_configured_for_different_cwd"] as const)
-      : [];
+    // Cross-surface count invariant
+    // (`docs/kb/architecture/ai-first-consumer.md`): every project-rooted
+    // tool that emits `meta.configSource` must surface the same
+    // `no_config_found` + `searchedFrom` warning shape on the same
+    // input. `list_suppressions` previously emitted only the session-
+    // wrapper drift code; an agent sequencing
+    // `list_suppressions({ cwd })` first against a no-config repo got
+    // zero scan-confidence signal that the loaded wrappers / per-rule
+    // overrides were the schema defaults rather than the project's
+    // committed config. Mirror the gate in the scan-family warnings
+    // module so emission is consistent across surfaces.
+    const configSearchSawProjectMarker =
+      projectConfig.sourcePath === null ? sawProjectMarkerInWalk(root) : false;
+    const noConfigFires = shouldEmitNoConfigFound({
+      configSource: projectConfig.sourcePath,
+      filesScanned: files.length,
+      configSearchSawProjectMarker,
+    });
+    const warnings: string[] = [];
+    if (sessionWrappersMismatchCwd) warnings.push("session_wrappers_configured_for_different_cwd");
+    if (noConfigFires) warnings.push("no_config_found");
+    const warningsDetails: Record<string, unknown> = {};
+    if (sessionWrappersMismatchCwd) {
+      warningsDetails["session_wrappers_configured_for_different_cwd"] = {};
+    }
+    if (noConfigFires) {
+      warningsDetails["no_config_found"] = { searchedFrom: root };
+    }
     return textResult({
       suppressions: entries,
       meta: applyMetaCacheMode({ toolName: "list_suppressions", params, fullMeta, session }),
       ...(warnings.length > 0 ? { warnings } : {}),
+      ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
       nextStep: buildNextStep(entries),
     });
   },
