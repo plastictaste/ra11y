@@ -27,10 +27,8 @@ import {
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 import {
-  htmlSubtreeHasStrippedDirective,
   htmlSubtreeRenderedTextIsOnlyTemplateDirective,
   TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED,
-  TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX,
 } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 
@@ -119,18 +117,17 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
       emitTemplateDirectiveViolation(heading, emit);
       continue;
     }
+    // Past the conceded-uncertainty branch: every remaining
+    // would-be-empty heading either has no template directive at all,
+    // or has one alongside literal visible text (in which case
+    // `hasAccessibleContentHtml` already passed and we never got
+    // here). The plainly-empty path emits at `error` with the
+    // context-aware fix; concession-text reason suffixes are
+    // intentionally NOT layered on top of `error` here — per AI-first
+    // doctrine "Reason text and severity must agree," conceded-
+    // uncertainty framing belongs only on the `warning` branch above.
     const preceding = findPrecedingNonEmpty(headings, i);
-    // Mixed-content fallback: when a stripped directive sits alongside
-    // a non-text element child that doesn't satisfy the visible-text
-    // predicate (`<h2><svg aria-hidden></svg></h2>` — svg is empty,
-    // svg-only fails `hasAccessibleContentHtml`, predicate above is
-    // false because no stripped directive contributed text), the
-    // finding still emits at `error` — reason text carries the
-    // `template_directive_stripped` signal when any descendant did
-    // strip a directive so the agent routes to "verify rendered output"
-    // in one read.
-    const templateStripped = htmlSubtreeHasStrippedDirective(el);
-    emitViolation(heading, preceding, templateStripped, emit);
+    emitViolation(heading, preceding, emit);
   }
 }
 
@@ -212,9 +209,10 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     }
     const preceding = findPrecedingNonEmpty(headings, i);
     // JSX branch: expression-child guard in `hasAccessibleContentJsx`
-    // already exempts `<h1>{label}</h1>`, so no template-stripped
-    // enrichment is needed on this path.
-    emitViolation(heading, preceding, false, emit);
+    // already exempts `<h1>{label}</h1>`, so the JSX path never needs
+    // a template-stripped enrichment — runtime expressions never
+    // reach this emission.
+    emitViolation(heading, preceding, emit);
   }
 }
 
@@ -304,17 +302,11 @@ function findPrecedingNonEmpty(headings: readonly HeadingEntry[], i: number): He
   return null;
 }
 
-function emitViolation(
-  entry: HeadingEntry,
-  preceding: HeadingEntry | null,
-  templateStripped: boolean,
-  emit: Emit,
-): void {
-  const base = `<${entry.tagName}> is empty — it appears in the heading outline but describes no topic or purpose.`;
+function emitViolation(entry: HeadingEntry, preceding: HeadingEntry | null, emit: Emit): void {
   emit({
     severity: "error",
     location: { filePath: "", line: entry.line, column: entry.column },
-    message: templateStripped ? `${base}${TEMPLATE_DIRECTIVE_STRIPPED_SUFFIX}` : base,
+    message: `<${entry.tagName}> is empty — it appears in the heading outline but describes no topic or purpose.`,
     suggestion: buildEmptyHeadingSuggestion(entry, preceding),
   });
 }

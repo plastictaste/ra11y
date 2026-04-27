@@ -223,6 +223,42 @@ describe("rule semantics/empty-heading", () => {
       expect(v[0]?.severity).toBe("warning");
       expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
     });
+
+    // Invariant: any finding whose reason concedes the rendered content
+    // came from a stripped template directive must surface at `warning`
+    // (the conceded-uncertainty severity) — not `error`. The previous
+    // implementation layered a "the only rendered content was a
+    // template expression … verify the expression resolves to non-empty
+    // text at render time" suffix onto an `error` finding when a
+    // descendant text node carried a stripped directive but the
+    // narrower predicate didn't fire; that combination violates the
+    // AI-first doctrine "Reason text and severity must agree." This
+    // sweep across every template-directive shape the rule recognizes
+    // pins the invariant so a future change to `hasAccessibleContentHtml`
+    // (or the predicate above) cannot silently re-introduce the shape.
+    it("never produces an error-severity finding with the conceded stripped-directive reason text", () => {
+      const samples = [
+        `<h1>{{ page.title }}</h1>`,
+        `<h2>{% include title.html %}</h2>`,
+        `<h3><%= @post.title %></h3>`,
+        `<h4><a href="{{ post.url }}">{{- post.title -}}</a></h4>`,
+        `<h2><svg aria-hidden="true"></svg>{{ x }}</h2>`,
+        `<h2><img src="icon.png">{{ x }}</h2>`,
+      ];
+      for (const source of samples) {
+        const v = runRule(rule, source, { filePath: "index.html" });
+        for (const finding of v) {
+          const concedes =
+            finding.message.includes("template expression") ||
+            finding.message.includes("interpolated") ||
+            finding.message.includes("template directive") ||
+            finding.message.includes("render time");
+          if (concedes) {
+            expect(finding.severity).toBe("warning");
+          }
+        }
+      }
+    });
   });
 
   describe("context-aware fix: preceding heading", () => {
