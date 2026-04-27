@@ -56,6 +56,8 @@ import {
 } from "./_label-sibling-collapse.ts";
 import {
   buildSuggestion,
+  collectHtmlAdjacentUnassociatedLabelText,
+  collectJsxAdjacentUnassociatedLabelText,
   getNonEmptyHtmlPlaceholder,
   getNonEmptyJsxPlaceholder,
 } from "./_label-suggestion.ts";
@@ -142,7 +144,20 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   // ships a mechanical fix; surfacing both findings doubled the count
   // for one defect with one fix path.
   const adjacentlyHandled = collectHtmlAdjacentUnassociatedControls(doc);
-  checkHtmlNativeControls(doc, labelFors, implicitLabelIds, adjacentlyHandled, emit);
+  // Adjacent unassociated `<label>` text — additive context surfaced in
+  // the suggestion when this rule still emits but a sibling label exists
+  // (immediate-NEXT input/label pair, label whose for= dangles, etc.).
+  // The immediate-PREV case is owned by the sibling rule above and is
+  // already excluded from emission via `adjacentlyHandled`.
+  const adjacentLabelText = collectHtmlAdjacentUnassociatedLabelText(doc);
+  checkHtmlNativeControls(
+    doc,
+    labelFors,
+    implicitLabelIds,
+    adjacentlyHandled,
+    adjacentLabelText,
+    emit,
+  );
   checkHtmlEditableHosts(doc, labelFors, implicitLabelIds, emit);
 }
 
@@ -151,6 +166,7 @@ function checkHtmlNativeControls(
   labelFors: ReadonlySet<string>,
   implicitLabelIds: ReadonlySet<string>,
   adjacentlyHandled: ReadonlySet<HtmlElement>,
+  adjacentLabelText: ReadonlyMap<HtmlElement, string>,
   emit: Emit,
 ): void {
   // Collapse decisions are computed per-parent over the failing-control
@@ -175,7 +191,7 @@ function checkHtmlNativeControls(
     for (const el of findHtmlElementsByTag(doc, tag)) {
       if (!isFailing(el)) continue;
       if (consumed.has(el)) continue;
-      emit(buildHtmlNativeControlViolation(el, primary.get(el)));
+      emit(buildHtmlNativeControlViolation(el, primary.get(el), adjacentLabelText.get(el) ?? null));
     }
   }
 }
@@ -183,6 +199,7 @@ function checkHtmlNativeControls(
 function buildHtmlNativeControlViolation(
   el: HtmlElement,
   siblings: readonly SiblingInstance[] | undefined,
+  adjacentLabelText: string | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
@@ -204,6 +221,7 @@ function buildHtmlNativeControlViolation(
       type,
       getHtmlAttribute(el, "id"),
       getNonEmptyHtmlPlaceholder(el),
+      adjacentLabelText,
     ),
     ...(siblings === undefined ? {} : { siblingInstances: siblings }),
   };
@@ -321,6 +339,9 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
   // Defer to `forms/label-adjacent-unassociated` on the canonical
   // bare-label-then-input shape — see the HTML branch comment.
   const adjacentlyHandled = collectJsxAdjacentUnassociatedControls(module);
+  // Adjacent unassociated `<label>` text (additive context) — see the
+  // HTML branch comment.
+  const adjacentLabelText = collectJsxAdjacentUnassociatedLabelText(module);
 
   // Pre-pass: detect collapsible sibling clusters among direct-child
   // intrinsic `<input>` / `<select>` / `<textarea>` failing controls.
@@ -347,6 +368,7 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
     seen,
     primary,
     consumed,
+    adjacentLabelText,
     emit,
   );
   checkJsxSelectsAndTextareas(
@@ -356,6 +378,7 @@ function checkJsx(module: TsxModule, wrappersForInput: ReadonlySet<string>, emit
     adjacentlyHandled,
     primary,
     consumed,
+    adjacentLabelText,
     emit,
   );
   checkJsxEditableHosts(module, labelHtmlFors, implicitIds, seen, emit);
@@ -373,6 +396,7 @@ function checkJsxInputs(
   seen: Set<JsxElement>,
   primary: ReadonlyMap<JsxElement, readonly SiblingInstance[]>,
   consumed: ReadonlySet<JsxElement>,
+  adjacentLabelText: ReadonlyMap<JsxElement, string>,
   emit: Emit,
 ): void {
   for (const el of findJsxElementsForTag(module, "input", wrappersForInput)) {
@@ -388,7 +412,7 @@ function checkJsxInputs(
     if (adjacentlyHandled.has(el)) continue;
     if (consumed.has(el)) continue;
     const siblings = primary.get(el);
-    emit(buildJsxViolation(el, siblings));
+    emit(buildJsxViolation(el, siblings, adjacentLabelText.get(el) ?? null));
   }
 }
 
@@ -403,6 +427,7 @@ function checkJsxSelectsAndTextareas(
   adjacentlyHandled: ReadonlySet<JsxElement>,
   primary: ReadonlyMap<JsxElement, readonly SiblingInstance[]>,
   consumed: ReadonlySet<JsxElement>,
+  adjacentLabelText: ReadonlyMap<JsxElement, string>,
   emit: Emit,
 ): void {
   for (const tag of ["select", "textarea"] as const) {
@@ -411,7 +436,7 @@ function checkJsxSelectsAndTextareas(
       if (adjacentlyHandled.has(el)) continue;
       if (consumed.has(el)) continue;
       const siblings = primary.get(el);
-      emit(buildJsxViolation(el, siblings));
+      emit(buildJsxViolation(el, siblings, adjacentLabelText.get(el) ?? null));
     }
   }
 }
@@ -485,7 +510,11 @@ function buildJsxEditableViolation(el: JsxElement) {
   };
 }
 
-function buildJsxViolation(el: JsxElement, siblings?: readonly SiblingInstance[]) {
+function buildJsxViolation(
+  el: JsxElement,
+  siblings?: readonly SiblingInstance[],
+  adjacentLabelText: string | null = null,
+) {
   const type = getJsxAttributeString(el, "type");
   const id = getJsxAttributeString(el, "id");
   const location = { filePath: "", line: el.loc.start.line, column: el.loc.start.column };
@@ -504,7 +533,13 @@ function buildJsxViolation(el: JsxElement, siblings?: readonly SiblingInstance[]
       siblings === undefined
         ? buildMessage(el.tagName, type)
         : buildSiblingCollapsedMessage(el.tagName, type, siblings.length),
-    suggestion: buildSuggestion(el.tagName, type, id, getNonEmptyJsxPlaceholder(el)),
+    suggestion: buildSuggestion(
+      el.tagName,
+      type,
+      id,
+      getNonEmptyJsxPlaceholder(el),
+      adjacentLabelText,
+    ),
     ...(siblings === undefined ? {} : { siblingInstances: siblings }),
   };
 }

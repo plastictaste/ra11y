@@ -774,4 +774,74 @@ describe("rule forms/labels-required", () => {
       expect(v[0]?.severity).toBe("info");
     });
   });
+
+  // Additive context for the suggestion: when an unassociated `<label>`
+  // with usable text exists adjacent to the firing control under the
+  // same parent, surface the visible text verbatim and tell the agent
+  // the likely-correct fix is to associate the existing label rather
+  // than introducing a new one. The immediate-PRECEDING-sibling case is
+  // already owned by `forms/label-adjacent-unassociated` (suppression
+  // set above), so this enrichment fires on the gaps that rule doesn't
+  // cover — immediate-NEXT siblings, label with for= dangling, etc.
+  describe("suggestion enriches with adjacent <label> visible text when present", () => {
+    it("HTML: input followed by an unassociated <label> as immediate-next sibling", () => {
+      // `<input/><label>Email</label>` — the sibling rule looks back, so
+      // this layout is not covered by `forms/label-adjacent-unassociated`.
+      // labels-required fires; the suggestion should surface "Email".
+      const v = runRule(rule, `<form><input type="text" id="email"><label>Email</label></form>`, {
+        filePath: "index.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("`<label>Email</label>`");
+      expect(v[0]?.suggestion).toContain('id="email"');
+    });
+
+    it("HTML: input with adjacent <label for=dangling> still gets the visible-text note", () => {
+      // Label has for= to a non-matching id → adjacent-unassociated
+      // bails (it requires no for=) → labels-required fires. The
+      // adjacent-text helper also bails in this case (label has for=)
+      // so the suggestion stays generic — the agent reads the file.
+      const v = runRule(
+        rule,
+        `<form><label for="other-id">Email</label><input type="text" id="email"></form>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      // Visible label text is NOT surfaced when the adjacent label
+      // already carries `for=` — its text belongs to a different id.
+      expect(v[0]?.suggestion).not.toContain("`<label>Email</label>`");
+    });
+
+    it("HTML: still emits the generic suggestion when no adjacent label exists", () => {
+      const v = runRule(rule, `<form><input type="text"></form>`, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).not.toContain("exists adjacent to this control");
+    });
+
+    it("HTML: omits the adjacent-text note when only intervening prose between control and label", () => {
+      // Non-whitespace text between input and label weakens the
+      // visual association — treat as not-adjacent.
+      const v = runRule(
+        rule,
+        `<form><input type="text" id="x">Please verify<label>Email</label></form>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).not.toContain("exists adjacent to this control");
+    });
+
+    it("JSX: input followed by an unassociated <label> as immediate-next sibling", () => {
+      const v = runRule(
+        rule,
+        `const Form = () => (
+          <div>
+            <input type="text" id="email" />
+            <label>Email</label>
+          </div>
+        );`,
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.suggestion).toContain("`<label>Email</label>`");
+    });
+  });
 });
