@@ -184,9 +184,9 @@ function emitIfMissingIndicator(
   interactiveClasses: ClassSet,
   emit: Emit,
 ): void {
-  const focusMatch = FOCUS_PSEUDO_PATTERN.test(cssRule.selector);
   const universalMatch = hasUniversalSubject(cssRule.selector);
-  if (!(focusMatch || universalMatch)) return;
+  const focusBranches = splitFocusBranches(cssRule.selector);
+  if (!universalMatch && focusBranches.length === 0) return;
   if (!removesOutline(cssRule)) return;
   if (hasReplacementIndicator(cssRule)) return;
 
@@ -207,28 +207,76 @@ function emitIfMissingIndicator(
     return;
   }
 
-  const scoped = isScopedSelector(cssRule.selector);
-  const className = scoped ? extractPrimaryClass(cssRule.selector) : null;
-  if (scoped && className !== null && usage.has(className)) {
-    // Deterministic class-token link, not a heuristic: the exact
-    // className from the CSS selector appears on an element that also
-    // carries a `focus-visible:ring|outline|shadow-*` utility. Suppresses
-    // `error` and `info` candidates alike — an explicit author
-    // replacement supersedes both.
-    return;
-  }
-  // Upgrade scoped candidate to `error` when its primary class is
-  // applied to a concrete interactive element somewhere in the project.
-  // Class-to-tag link is deterministic (string equality on the tag
-  // name), not a heuristic.
-  const interactiveEvidence = scoped && className !== null && interactiveClasses.has(className);
-  const severity: "error" | "info" = !scoped || interactiveEvidence ? "error" : "info";
+  // Per-branch evaluation: a compound selector like
+  // `a:hover, a:focus { outline: 0 }` (and its SCSS-flattened siblings)
+  // shares one rule body across multiple branches, but only the
+  // branches containing `:focus` / `:focus-visible` drive the F78
+  // failure. Each focus branch's own scope (bare element vs. class,
+  // primary class, interactivity, focus-visible cross-reference)
+  // contributes independently; the lexically-last branch must not
+  // shadow a focus branch on a different class.
+  const severity = classifyFocusBranches(focusBranches, usage, interactiveClasses);
+  if (severity === null) return; // suppressed by cross-reference
   emit({
     severity,
     location: { filePath, line: cssRule.loc.start.line, column: cssRule.loc.start.column },
     message: buildMessage(cssRule.selector),
     suggestion: buildSuggestion(cssRule.selector),
   });
+}
+
+/**
+ * Aggregate severity across every focus branch of a compound selector.
+ * Returns `null` when the rule must be suppressed (any focus branch's
+ * primary class carries a `focus-visible:ring|outline|shadow-*` utility
+ * — explicit author replacement). Otherwise picks the most severe
+ * outcome across branches: `error` if any branch is bare-element /
+ * pseudo-only or its class is bound to a concrete interactive element;
+ * `info` if every branch is class-scoped without interactivity evidence.
+ */
+function classifyFocusBranches(
+  branches: readonly string[],
+  usage: ClassSet,
+  interactiveClasses: ClassSet,
+): "error" | "info" | null {
+  let severity: "error" | "info" = "info";
+  for (const branch of branches) {
+    const scoped = isScopedSelector(branch);
+    const className = scoped ? extractPrimaryClass(branch) : null;
+    if (className !== null && usage.has(className)) return null;
+    if (!scoped) severity = "error";
+    else if (className !== null && interactiveClasses.has(className)) severity = "error";
+  }
+  return severity;
+}
+
+/**
+ * Split the selector on top-level commas and return only the branches
+ * that contain `:focus` / `:focus-visible`. Empty result means the rule
+ * has no focus branch (and thus the focus-zeroing predicate doesn't
+ * apply). Branches are trimmed; commas inside `[]` / `()` (attribute
+ * selectors, `:is(...)`) are not splits.
+ */
+function splitFocusBranches(selector: string): readonly string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  const push = (raw: string): void => {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return;
+    if (FOCUS_PSEUDO_PATTERN.test(trimmed)) out.push(trimmed);
+  };
+  for (let i = 0; i < selector.length; i += 1) {
+    const ch = selector[i];
+    if (ch === "(" || ch === "[") depth += 1;
+    else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
+    else if (ch === "," && depth === 0) {
+      push(selector.slice(start, i));
+      start = i + 1;
+    }
+  }
+  push(selector.slice(start));
+  return out;
 }
 
 /**

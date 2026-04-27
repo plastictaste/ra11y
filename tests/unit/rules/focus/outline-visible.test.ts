@@ -544,4 +544,92 @@ describe("rule focus/outline-visible", () => {
       expect(v[0]?.suggestion).toContain("F78");
     });
   });
+
+  // Compound selectors share one rule body across multiple branches
+  // (`a:hover, a:focus { outline: 0 }`, `.btn { &:hover, &:focus {...} }`
+  // in SCSS). The outline-zeroing predicate must be evaluated per
+  // comma-separated branch so the `:focus` branch's own scope (bare
+  // element vs. class, interactivity evidence, focus-visible utility
+  // cross-reference) drives severity — not whichever branch happens to
+  // be lexically last in the selector list.
+  describe("compound selector branches", () => {
+    it("fires error when a focus branch is on a bare element even if a sibling branch is class-scoped", () => {
+      // `a:focus` is a bare-element focus branch — same severity as
+      // a single `a:focus { outline: 0 }`. The class-scoped sibling
+      // (`.btn:hover`) does not lower the focus branch's severity.
+      const v = runRule(rule, `a:focus, .btn:hover { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("fires error when a focus branch is on a bare element regardless of branch order", () => {
+      const v = runRule(rule, `.btn:hover, a:focus { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("fires error when a focus branch is on a bare element and a sibling is a bare class without :focus", () => {
+      // `.x { outline: 0 }` alone wouldn't fire (no focus); the
+      // sibling `a:focus` branch is what triggers the rule.
+      const v = runRule(rule, `.x, a:focus { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("upgrades to error when a focus branch's class lands on a <button> even if a sibling branch carries a different class", () => {
+      // Per-branch primary-class extraction: focus branch is `.btn`,
+      // and `<button class="btn">` provides interactivity evidence on
+      // that class. The lexically-last branch (`.other`) must not
+      // shadow the focus-branch class lookup.
+      const v = scanFiles([
+        cssFile("styles.css", `.btn:focus, .other:hover { outline: 0; }`),
+        htmlFile(
+          "index.html",
+          `<!doctype html><html><body><button class="btn">Go</button></body></html>`,
+        ),
+      ]);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+    });
+
+    it("suppresses when a focus branch's class has a focus-visible utility even if a sibling branch carries a different class", () => {
+      // Cross-reference must scan every focus branch's primary class,
+      // not just the lexically-last branch. The focus-visible utility
+      // is on the `.btn` element; `.other` has no relevance to the
+      // focus branch.
+      expect(
+        scanFiles([
+          cssFile("styles.css", `.btn:focus, .other:hover { outline: 0; }`),
+          tsxFile(
+            "App.tsx",
+            `export const App = () => <button className="btn focus-visible:ring-2">Go</button>;`,
+          ),
+        ]),
+      ).toHaveLength(0);
+    });
+
+    it("does NOT fire when no branch contains :focus", () => {
+      // `:hover` alone is not the rule's predicate — only `:focus` /
+      // `:focus-visible` branches drive the F78 failure pattern.
+      const v = runRule(rule, `a:hover, .btn:hover { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT fire when the compound rule provides a replacement indicator", () => {
+      // The replacement applies to every branch in the rule body;
+      // per-branch evaluation must respect that.
+      const v = runRule(rule, `a:hover, a:focus { outline: 0; box-shadow: 0 0 0 2px blue; }`, {
+        filePath: "styles.css",
+      });
+      expect(v).toHaveLength(0);
+    });
+
+    it("includes the full original selector in the message even when only one branch carries :focus", () => {
+      // The agent reads the message + reads the cited file; we keep
+      // the full selector so the agent sees what the rule body covers.
+      const v = runRule(rule, `a:hover, a:focus { outline: 0; }`, { filePath: "styles.css" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("a:hover, a:focus");
+    });
+  });
 });
