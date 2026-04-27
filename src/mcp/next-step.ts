@@ -488,36 +488,46 @@ function pickFirstFinding(
 ): FirstFindingPick {
   const firstRaw = firstCallableFinding(files);
   if (firstRaw === null) return { finding: null };
-  // No vendor classification → keep the first pick verbatim. Matches
-  // the pre-Q6 behavior for `scan` / `scan_file` callers that don't
-  // plumb `scannedBuildArtifacts` through.
+  // No vendor classification, or first pick is already authored → keep
+  // it verbatim. Matches the pre-Q6 behavior for `scan` / `scan_file`
+  // callers that don't plumb `scannedBuildArtifacts` through.
   if (vendorPaths === undefined || vendorPaths.size === 0) {
     return { finding: firstRaw };
   }
   if (!vendorPaths.has(firstRaw.path)) {
     return { finding: firstRaw };
   }
-  // First finding is on a vendor path. Lane 1: scan forward for a
-  // same-`ruleId` finding on a non-vendor path. Same-rule keeps the
+  return reroutePickAwayFromVendor(files, vendorPaths, firstRaw);
+}
+
+/**
+ * Reroute lane for the case where the first callable finding sits on
+ * a vendor path. Walks the three-tier fallback documented in {@link
+ * pickFirstFinding}: same-`ruleId` non-vendor sibling → highest-firing
+ * non-vendor rule's first finding → all-vendor signal. Extracted so
+ * `pickFirstFinding` stays under the cognitive-complexity lint cap;
+ * the early-exit cases (no findings, no vendor classification, first
+ * pick already authored) are conceptually distinct from this reroute
+ * walk and read better as separate functions.
+ */
+function reroutePickAwayFromVendor(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+  firstRaw: FirstFinding,
+): FirstFindingPick {
+  // Lane 1: same-`ruleId` non-vendor sibling. Same-rule keeps the
   // agent's fix workflow identical and is preferred over the broader
   // dominant-rule fallback.
-  for (const file of files) {
-    if (vendorPaths.has(file.path)) continue;
-    for (const raw of file.findings) {
-      const extracted = readFindingRuleIdAndLine(raw);
-      if (extracted === null) continue;
-      if (extracted.ruleId !== firstRaw.ruleId) continue;
-      return {
-        finding: { path: file.path, ...extracted },
-        reroutedFromVendorPath: firstRaw.path,
-      };
-    }
+  const sameRulePick = findSameRuleIdNonVendorFinding(files, vendorPaths, firstRaw.ruleId);
+  if (sameRulePick !== null) {
+    return {
+      finding: sameRulePick,
+      reroutedFromVendorPath: firstRaw.path,
+    };
   }
-  // Lane 2: no same-`ruleId` non-vendor sibling exists. Pick the
-  // highest-firing non-vendor rule's first finding instead, so the
-  // agent's first action lands on the rule with the broadest authored
-  // impact. The reroute crosses rule families — the prose surfaces
-  // that explicitly via `dominantRuleReroute: true`.
+  // Lane 2: highest-firing non-vendor rule's first finding. Crosses
+  // rule families — the caller widens the prose to name the
+  // rule-family change via `dominantRuleReroute: true`.
   const dominantPick = pickHighestFiringNonVendorFinding(files, vendorPaths);
   if (dominantPick !== null) {
     return {
@@ -526,16 +536,39 @@ function pickFirstFinding(
       dominantRuleReroute: true,
     };
   }
-  // Lane 3: every callable finding sits on a vendor path. Naming any
-  // specific finding wastes the `suggest_fix` round-trip — the agent
-  // can't edit a vendor stylesheet. Signal the all-vendor case so the
-  // caller branches to a scope-down structured suggestion. We still
-  // return the vendor `firstRaw` so the prose can name what was
-  // rerouted away from for context.
+  // Lane 3: every callable finding sits on a vendor path. Signal the
+  // all-vendor case so the caller branches to a scope-down structured
+  // suggestion. The vendor `firstRaw` is still returned so the prose
+  // can name what was rerouted away from for context.
   return {
     finding: firstRaw,
     allFindingsVendor: true,
   };
+}
+
+/**
+ * Walks `files` looking for a non-vendor finding whose `ruleId`
+ * matches `targetRuleId`. Returns the first match (file order is
+ * pre-sorted by response priority) or `null` when no same-`ruleId`
+ * non-vendor sibling exists. Extracted from {@link
+ * reroutePickAwayFromVendor} for readability; the same-rule lane is
+ * the most common reroute path in practice.
+ */
+function findSameRuleIdNonVendorFinding(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+  targetRuleId: string,
+): FirstFinding | null {
+  for (const file of files) {
+    if (vendorPaths.has(file.path)) continue;
+    for (const raw of file.findings) {
+      const extracted = readFindingRuleIdAndLine(raw);
+      if (extracted === null) continue;
+      if (extracted.ruleId !== targetRuleId) continue;
+      return { path: file.path, ...extracted };
+    }
+  }
+  return null;
 }
 
 /**
@@ -560,6 +593,23 @@ function pickHighestFiringNonVendorFinding(
   files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
   vendorPaths: ReadonlySet<string>,
 ): FirstFinding | null {
+  const counts = countNonVendorFindingsByRuleId(files, vendorPaths);
+  if (counts.size === 0) return null;
+  const topCount = maxValue(counts);
+  return firstNonVendorFindingMatchingCount(files, vendorPaths, counts, topCount);
+}
+
+/**
+ * Tallies finding counts per `ruleId` over non-vendor files only.
+ * Extracted from {@link pickHighestFiringNonVendorFinding} so the
+ * function stays under the cognitive-complexity lint cap; the tally,
+ * max-pick, and walk-for-first-match phases are conceptually distinct
+ * and read better as three helpers.
+ */
+function countNonVendorFindingsByRuleId(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+): Map<string, number> {
   const counts = new Map<string, number>();
   for (const file of files) {
     if (vendorPaths.has(file.path)) continue;
@@ -569,13 +619,36 @@ function pickHighestFiringNonVendorFinding(
       counts.set(extracted.ruleId, (counts.get(extracted.ruleId) ?? 0) + 1);
     }
   }
-  if (counts.size === 0) return null;
-  let topCount = 0;
+  return counts;
+}
+
+/**
+ * Returns the maximum value across a non-empty `Map<string, number>`.
+ * Caller has already checked `counts.size > 0`; returns 0 on the
+ * unreachable empty-map case for type safety.
+ */
+function maxValue(counts: ReadonlyMap<string, number>): number {
+  let top = 0;
   for (const c of counts.values()) {
-    if (c > topCount) topCount = c;
+    if (c > top) top = c;
   }
-  // Walk `files` in order, returning the first non-vendor finding whose
-  // ruleId hits `topCount`. File order resolves ties deterministically.
+  return top;
+}
+
+/**
+ * Walks `files` in order, returning the first non-vendor finding whose
+ * `ruleId` hits `topCount`. File order resolves dominant-rule ties
+ * deterministically — when two rules tie at the top, the one whose
+ * first non-vendor finding appears earliest on the page wins. Returns
+ * `null` when no such finding exists (the caller short-circuits before
+ * this point on empty `counts`, so this is defensive only).
+ */
+function firstNonVendorFindingMatchingCount(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+  counts: ReadonlyMap<string, number>,
+  topCount: number,
+): FirstFinding | null {
   for (const file of files) {
     if (vendorPaths.has(file.path)) continue;
     for (const raw of file.findings) {
