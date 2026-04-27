@@ -108,11 +108,13 @@ function buildSuppressPragma(filePath: string, ruleId: string): string {
   if (
     lower.endsWith(".html") ||
     lower.endsWith(".htm") ||
+    lower.endsWith(".xhtml") ||
     lower.endsWith(".astro") ||
     lower.endsWith(".svg") ||
     lower.endsWith(".erb") ||
     lower.endsWith(".md") ||
-    lower.endsWith(".markdown")
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".mkdn")
   ) {
     // Astro templates are HTML, so the HTML-comment disable form is
     // the one that parses inside an Astro template body (a
@@ -153,13 +155,14 @@ function buildSuppressPlacement(filePath: string): string {
   if (
     lower.endsWith(".html") ||
     lower.endsWith(".htm") ||
+    lower.endsWith(".xhtml") ||
     lower.endsWith(".astro") ||
     lower.endsWith(".svg") ||
     lower.endsWith(".erb")
   ) {
     return "Place on the line immediately above the opening tag of the flagged element.";
   }
-  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+  if (lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mkdn")) {
     return "Place on the line immediately above the embedded-HTML element the finding refers to (the markdown parser only flags findings on raw HTML residue — `<table>`, `<iframe>`, `<img>` synthesized from `![alt](url)`, etc.). The `<!-- … -->` shape passes through the markdown renderer verbatim.";
   }
   return "Place on the line immediately above the flagged statement.";

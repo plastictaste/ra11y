@@ -70,11 +70,9 @@ const HEADING_TAGS: ReadonlySet<string> = new Set(["h1", "h2", "h3", "h4", "h5",
 /**
  * True when `filePath` is a markdown source file whose ATX / Setext
  * headings get stripped by `parseMarkdown` before the rule runs. The
- * `.md` / `.markdown` extensions mirror the EXTENSION_ALIASES entry in
- * `src/utils/path.ts` that routes them into the HTML-family rule gate;
- * `.mkdn` is included defensively so any future PARSEABLE_EXTENSIONS
- * widening (or third-party adapter routing through parseMarkdown) keeps
- * the rule's residue-aware framing intact.
+ * `.md` / `.markdown` / `.mkdn` extensions all mirror the
+ * EXTENSION_ALIASES entry in `src/utils/path.ts` that routes them
+ * into the HTML-family rule gate via the markdown adapter.
  */
 function isMarkdownSourceFile(filePath: string): boolean {
   const ext = extension(filePath);

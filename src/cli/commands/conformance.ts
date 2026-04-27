@@ -376,11 +376,18 @@ async function parseScanInputs(
 }
 
 function parseFor(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".erb")) {
+  if (
+    filePath.endsWith(".html") ||
+    filePath.endsWith(".htm") ||
+    filePath.endsWith(".xhtml") ||
+    filePath.endsWith(".erb")
+  ) {
     // `.erb` — Ruby embedded-template routed through parseHtml (the
     // parser strips `<%= … %>` / `<% … %>` / `<%# … %>` from text
-    // nodes). See `src/utils/path.ts::EXTENSION_ALIASES` for the
-    // alias rationale.
+    // nodes). `.xhtml` — XML-serialized HTML; the HTML tokenizer
+    // tolerates the `<?xml ... ?>` prologue and self-closing tags.
+    // See `src/utils/path.ts::EXTENSION_ALIASES` for the alias
+    // rationale.
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }

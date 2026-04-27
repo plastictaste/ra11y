@@ -844,12 +844,13 @@ function buildOpaqueComponentsHint(
 }
 
 /**
- * True when `filePath` is a markdown source file (`.md` or
- * `.markdown`). Kept in sync with the PARSEABLE_EXTENSIONS entry and
+ * True when `filePath` is a markdown source file (`.md`, `.markdown`,
+ * or `.mkdn`). Kept in sync with the PARSEABLE_EXTENSIONS entry and
  * the parser dispatch in `src/mcp/session.ts`.
  */
 function isMarkdownFile(filePath: string): boolean {
-  return filePath.toLowerCase().endsWith(".md") || filePath.toLowerCase().endsWith(".markdown");
+  const lower = filePath.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mkdn");
 }
 
 /**

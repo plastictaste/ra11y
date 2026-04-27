@@ -72,8 +72,10 @@ const EXT_SHAPES: Readonly<Record<string, PragmaShape>> = {
   ".js": { kind: "line", open: "// ", close: "" },
   ".html": { kind: "html", open: "<!-- ", close: " -->" },
   ".htm": { kind: "html", open: "<!-- ", close: " -->" },
+  ".xhtml": { kind: "html", open: "<!-- ", close: " -->" },
   ".md": { kind: "html", open: "<!-- ", close: " -->" },
   ".markdown": { kind: "html", open: "<!-- ", close: " -->" },
+  ".mkdn": { kind: "html", open: "<!-- ", close: " -->" },
   ".css": { kind: "block", open: "/* ", close: " */" },
 };
 

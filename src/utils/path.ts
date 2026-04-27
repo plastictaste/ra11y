@@ -33,6 +33,7 @@ export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".jsx",
   ".html",
   ".htm",
+  ".xhtml",
   ".css",
   ".scss",
   ".less",
@@ -40,6 +41,7 @@ export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".astro",
   ".md",
   ".markdown",
+  ".mkdn",
   ".svg",
   ".erb",
 ]);
@@ -87,10 +89,17 @@ const STORY_BASENAME_RE = /^[^.]+\.(?:stories|story)\.(?:tsx|jsx|ts|js)$/;
  *     AST, so every `.tsx`/`.jsx`-scoped rule applies.
  *   - `.astro` aliases into HTML-family: the Astro adapter produces
  *     an HTML AST, so every `.html`/`.htm`-scoped rule applies.
- *   - `.md` / `.markdown` alias into HTML-family: the Markdown
+ *   - `.md` / `.markdown` / `.mkdn` alias into HTML-family: the Markdown
  *     adapter (ADR 0025 Option B) strips markdown syntax, rewrites
  *     `![alt](url)` as `<img>`, and feeds the residue to parseHtml,
- *     producing an HTML AST.
+ *     producing an HTML AST. `.mkdn` is a common alternate Markdown
+ *     extension (Vim, older static-site generators); routing it through
+ *     the same adapter avoids dropping otherwise-valid Markdown input.
+ *   - `.xhtml` aliases into HTML-family: XHTML is XML-serialized HTML
+ *     (close-bracket angle slashes, `<?xml ... ?>` prologue, mandatory
+ *     namespace on `<html>`); the existing HTML parser tolerates the
+ *     prologue and self-closing tags so every `.html`-scoped rule
+ *     applies without a dedicated XHTML adapter.
  *   - `.svg` aliases into HTML-family: the SVG adapter passes through
  *     to parseHtml (the HTML tokenizer tolerates SVG's tag zoo and
  *     preserves `<title>` as raw-text), so every `.html`/`.htm`-scoped
@@ -113,6 +122,8 @@ const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly
   { from: ".astro", to: [".html", ".htm"] },
   { from: ".md", to: [".html", ".htm"] },
   { from: ".markdown", to: [".html", ".htm"] },
+  { from: ".mkdn", to: [".html", ".htm"] },
+  { from: ".xhtml", to: [".html", ".htm"] },
   { from: ".svg", to: [".html", ".htm"] },
   { from: ".erb", to: [".html", ".htm"] },
 ];
@@ -153,8 +164,8 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
  * surrounding code may be a packed plugin embedding HTML strings, a
  * JS-API wrapper, or anything else where the substring isn't
  * a real DOM element. JSX-bearing extensions (`.jsx`, `.tsx`, `.mdx`,
- * `.astro`) and HTML-family extensions (`.html`, `.htm`, `.svg`, `.md`,
- * `.markdown`, `.erb`, `.vue`, `.svelte`) are trusted as DOM-origin.
+ * `.astro`) and HTML-family extensions (`.html`, `.htm`, `.xhtml`, `.svg`, `.md`,
+ * `.markdown`, `.mkdn`, `.erb`, `.vue`, `.svelte`) are trusted as DOM-origin.
  *
  * `.vue` and `.svelte` are listed for forward compatibility — the parser
  * registry doesn't dispatch dedicated SFC parsers today, but when it does
@@ -164,6 +175,7 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
 const DOM_ORIGIN_EXTENSIONS: ReadonlySet<string> = new Set([
   ".html",
   ".htm",
+  ".xhtml",
   ".jsx",
   ".tsx",
   ".mdx",
@@ -171,6 +183,7 @@ const DOM_ORIGIN_EXTENSIONS: ReadonlySet<string> = new Set([
   ".svg",
   ".md",
   ".markdown",
+  ".mkdn",
   ".erb",
   ".vue",
   ".svelte",

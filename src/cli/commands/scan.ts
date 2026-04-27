@@ -296,12 +296,22 @@ async function handleBaselineMode(
 }
 
 function parseFor(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".erb")) {
+  if (
+    filePath.endsWith(".html") ||
+    filePath.endsWith(".htm") ||
+    filePath.endsWith(".xhtml") ||
+    filePath.endsWith(".erb")
+  ) {
     // `.erb` — Ruby embedded-template (Rails views, Middleman,
     // Jekyll `*.md.erb`). Routes straight to parseHtml; the HTML
     // parser's stripTemplateDirectives pass removes `<%= … %>` /
     // `<% … %>` / `<%# … %>` from text nodes so rules see the
     // rendered-text shape.
+    //
+    // `.xhtml` — XML-serialized HTML (mandatory `<?xml ... ?>`
+    // prologue, self-closing tags). The HTML tokenizer tolerates the
+    // prologue and the close-bracket angle slashes, so every
+    // `.html`-scoped rule applies without a dedicated XHTML adapter.
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }

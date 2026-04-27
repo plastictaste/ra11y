@@ -498,13 +498,22 @@ function extensionOf(filePath: string): Ext | null {
   ) {
     return "tsx";
   }
-  if (lower.endsWith(".html") || lower.endsWith(".htm")) return "html";
+  if (lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".xhtml")) {
+    // `.xhtml` — XML-serialized HTML; the HTML tokenizer tolerates
+    // the `<?xml ... ?>` prologue and self-closing tags. See
+    // `src/utils/path.ts::EXTENSION_ALIASES` for the alias rationale.
+    return "html";
+  }
   if (lower.endsWith(".css")) return "css";
   if (lower.endsWith(".scss")) return "scss";
   if (lower.endsWith(".less")) return "less";
   if (lower.endsWith(".mdx")) return "mdx";
   if (lower.endsWith(".astro")) return "astro";
-  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown";
+  if (lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mkdn")) {
+    // `.mkdn` is a common alternate Markdown extension; route through
+    // the same parseMarkdown adapter as `.md` / `.markdown`.
+    return "markdown";
+  }
   if (lower.endsWith(".svg")) return "svg";
   if (lower.endsWith(".erb")) return "erb";
   return null;

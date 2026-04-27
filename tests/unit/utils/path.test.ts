@@ -55,6 +55,31 @@ describe("extensionMatches", () => {
     expect(extensionMatches(".erb", [".css"])).toBe(false);
     expect(extensionMatches(".erb", [".tsx", ".jsx"])).toBe(false);
   });
+
+  test(".xhtml aliases into .html/.htm — XHTML is XML-serialized HTML", () => {
+    // XHTML 1.x docs ship with an `<?xml ... ?>` prologue, mandatory
+    // `xmlns` on `<html>`, and self-closing tags. The HTML parser
+    // tolerates the prologue and self-closers, so every HTML-scoped
+    // rule applies without a dedicated XHTML adapter.
+    expect(extensionMatches(".xhtml", [".html", ".htm"])).toBe(true);
+    expect(extensionMatches(".xhtml", [".html"])).toBe(true);
+    expect(extensionMatches(".xhtml", [".htm"])).toBe(true);
+    // Not a CSS / TSX shape.
+    expect(extensionMatches(".xhtml", [".css"])).toBe(false);
+    expect(extensionMatches(".xhtml", [".tsx", ".jsx"])).toBe(false);
+  });
+
+  test(".mkdn aliases into .html/.htm — common alternate Markdown extension", () => {
+    // `.mkdn` is a long-standing alternate Markdown extension (Vim,
+    // older static-site generators); routing it through the same
+    // markdown adapter as `.md` / `.markdown` avoids dropping
+    // otherwise-valid Markdown input.
+    expect(extensionMatches(".mkdn", [".html", ".htm"])).toBe(true);
+    expect(extensionMatches(".mkdn", [".html"])).toBe(true);
+    expect(extensionMatches(".mkdn", [".htm"])).toBe(true);
+    expect(extensionMatches(".mkdn", [".css"])).toBe(false);
+    expect(extensionMatches(".mkdn", [".tsx", ".jsx"])).toBe(false);
+  });
 });
 
 describe("hasParseableExtension", () => {
@@ -74,6 +99,22 @@ describe("hasParseableExtension", () => {
     expect(hasParseableExtension("x.less")).toBe(true);
     expect(hasParseableExtension("x.md")).toBe(true);
     expect(hasParseableExtension("x.svg")).toBe(true);
+  });
+
+  test(".xhtml is parseable — XML-serialized HTML routes through parseHtml", () => {
+    // `.xhtml` is rejected as `file-unsupported` if missing from the
+    // allow-list while sibling `.html` is accepted; both are equivalent
+    // input shapes. See `src/utils/path.ts::EXTENSION_ALIASES`.
+    expect(hasParseableExtension("page.xhtml")).toBe(true);
+    expect(hasParseableExtension("docs/index.xhtml")).toBe(true);
+  });
+
+  test(".mkdn is parseable — alternate Markdown extension routes through parseMarkdown", () => {
+    // `.mkdn` is a common alternate Markdown extension (Vim, older
+    // static-site generators); rejecting it while accepting `.markdown`
+    // silently drops valid input.
+    expect(hasParseableExtension("README.mkdn")).toBe(true);
+    expect(hasParseableExtension("docs/intro.mkdn")).toBe(true);
   });
 
   test("unknown extensions are still rejected", () => {

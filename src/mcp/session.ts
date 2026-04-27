@@ -447,7 +447,12 @@ function fileUriToPath(uri: string): string | null {
   return null;
 }
 function parseForExtension(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".erb")) {
+  if (
+    filePath.endsWith(".html") ||
+    filePath.endsWith(".htm") ||
+    filePath.endsWith(".xhtml") ||
+    filePath.endsWith(".erb")
+  ) {
     // `.erb` — Ruby embedded-template (Rails views, Middleman
     // templates, Jekyll `*.md.erb` scaffolds). The HTML parser's
     // `stripTemplateDirectives` pass already removes `<%= … %>` /
@@ -455,6 +460,11 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     // rendered-text shape the same way a mixed ERB+Liquid `.html`
     // file already does. Aliased to `.html`/`.htm` in
     // PARSEABLE_EXTENSIONS so every `.html`-scoped rule applies.
+    //
+    // `.xhtml` — XML-serialized HTML (`<?xml ... ?>` prologue,
+    // mandatory `xmlns` on `<html>`, self-closing tags). The HTML
+    // tokenizer tolerates the prologue and self-closers, so every
+    // `.html`-scoped rule applies without a dedicated XHTML adapter.
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
@@ -487,12 +497,19 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     const r = parseSvg(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  // `.md` / `.markdown` — ADR 0025 Option B. Strip markdown syntax
-  // and feed the HTML residue (embedded tables, iframes, admonition
-  // divs, `<img>` synthesized from `![alt](url)`) to parseHtml. Rules
-  // see the same `language: "html"` AST shape they would from a plain
-  // HTML file.
-  if (filePath.endsWith(".md") || filePath.endsWith(".markdown")) {
+  // `.md` / `.markdown` / `.mkdn` — ADR 0025 Option B. Strip markdown
+  // syntax and feed the HTML residue (embedded tables, iframes,
+  // admonition divs, `<img>` synthesized from `![alt](url)`) to
+  // parseHtml. Rules see the same `language: "html"` AST shape they
+  // would from a plain HTML file. `.mkdn` is a common alternate
+  // Markdown extension (Vim, older static-site generators) — routing
+  // it through the same adapter avoids dropping otherwise-valid
+  // Markdown input.
+  if (
+    filePath.endsWith(".md") ||
+    filePath.endsWith(".markdown") ||
+    filePath.endsWith(".mkdn")
+  ) {
     const r = parseMarkdown(source);
     return { language: "html", root: r.root, errors: r.errors };
   }

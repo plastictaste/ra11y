@@ -170,6 +170,10 @@ function parseSource(filePath: string, source: string): Ast {
   if (
     filePath.endsWith(".html") ||
     filePath.endsWith(".htm") ||
+    // `.xhtml` is XML-serialized HTML; the HTML tokenizer tolerates
+    // the `<?xml ... ?>` prologue and self-closing tags so every
+    // `.html`-scoped rule applies (see `src/utils/path.ts`).
+    filePath.endsWith(".xhtml") ||
     // `.svg` routes through `parseHtml` via the `parseSvg` adapter in
     // production (see `src/input/parsers/svg.ts`). Unit tests that
     // point `filePath` at an `.svg` get the same HTML-AST shape.
@@ -178,7 +182,14 @@ function parseSource(filePath: string, source: string): Ast {
     const result = parseHtml(source);
     return { language: "html", root: result.root, errors: result.errors };
   }
-  if (filePath.endsWith(".md") || filePath.endsWith(".markdown")) {
+  if (
+    filePath.endsWith(".md") ||
+    filePath.endsWith(".markdown") ||
+    // `.mkdn` is a common alternate Markdown extension (Vim, older
+    // static-site generators); routes through the same `parseMarkdown`
+    // adapter as `.md` / `.markdown`.
+    filePath.endsWith(".mkdn")
+  ) {
     // `.md` / `.markdown` route through `parseMarkdown` in production
     // (ADR 0025 Option B): markdown syntax is stripped, `![alt](url)`
     // is rewritten to `<img>`, and the residue feeds `parseHtml`.

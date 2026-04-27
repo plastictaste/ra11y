@@ -82,7 +82,10 @@ function productMetadataFromEnv(): Partial<VpatProductMetadata> {
 }
 
 function parseFor(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm")) {
+  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".xhtml")) {
+    // `.xhtml` is XML-serialized HTML; the HTML tokenizer handles the
+    // `<?xml ... ?>` prologue and self-closing tags, so every
+    // `.html`-scoped rule applies (see `src/utils/path.ts`).
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }

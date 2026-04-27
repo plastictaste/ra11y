@@ -643,14 +643,22 @@ describe("rule semantics/heading-hierarchy", () => {
       expect(multi?.couldBeWrongBecause).toContain(MARKDOWN_RESIDUE_CODE);
     });
 
-    // `.mkdn` is included in `isMarkdownSourceFile` defensively so any
-    // future PARSEABLE_EXTENSIONS widening or third-party adapter
-    // routing through `parseMarkdown` keeps the residue framing intact.
-    // No content-based test here: `.mkdn` is not currently parseable
-    // (PARSEABLE_EXTENSIONS doesn't list it), so the rule's `appliesTo`
-    // filter would block it from the production rule-runner before the
-    // residue branch could fire. The predicate's `.mkdn` check is a
-    // forward-compatibility hedge, not a runtime gate that exists today.
+    it("enriches missing-h1 emits for .mkdn files (mkdn is the alternate Markdown extension)", () => {
+      // Mirror the `.markdown` partial-path test above: wrap in
+      // `<html><body>` so the fragment gate doesn't reclassify the
+      // file as a composed fragment, then expect the missing-h1 emit
+      // to carry both the markdown-residue note and the partial-path
+      // enrichment.
+      const source =
+        "<html>\n<body>\n" +
+        '<div class="admonition note"><h5>Note</h5>\nHeads up.</div>\n' +
+        "</body>\n</html>\n";
+      const v = runRule(rule, source, { filePath: "_docs/intro.mkdn" });
+      const missing = v.find((x) => x.message.includes("Document has no <h1>"));
+      expect(missing).toBeDefined();
+      expect(missing?.message).toContain("Markdown ATX-syntax headings");
+      expect(missing?.couldBeWrongBecause).toContain(MARKDOWN_RESIDUE_CODE);
+    });
 
     it("does NOT enrich sibling .html files (extension is the gate)", () => {
       // Narrow the residue framing to the markdown extensions only —
