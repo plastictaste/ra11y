@@ -495,11 +495,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
         durationMs: 5,
         bloatedField: hugePayload,
       },
-      baseWarnings: [
-        "bulk_catalog_detected",
-        "scanned_minified_file",
-        "scss_unresolved_variables",
-      ],
+      baseWarnings: ["bulk_catalog_detected", "scanned_minified_file", "scss_unresolved_variables"],
       baseWarningsDetails: {
         bulk_catalog_detected: {
           trigger: "bulk_and_vendor_heavy",
