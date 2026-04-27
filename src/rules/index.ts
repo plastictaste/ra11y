@@ -50,6 +50,7 @@ import { rule as labelAdjacentMismatch } from "./forms/label-adjacent-mismatch.t
 import { rule as labelAdjacentUnassociated } from "./forms/label-adjacent-unassociated.ts";
 import { rule as labelForIdMismatch } from "./forms/label-for-id-mismatch.ts";
 import { rule as labelsRequired } from "./forms/labels-required.ts";
+import { rule as multipleLabelForSameId } from "./forms/multiple-label-for-same-id.ts";
 import { rule as noSubmitControl } from "./forms/no-submit-control.ts";
 import { rule as nonEmptyLabel } from "./forms/non-empty-label.ts";
 import { rule as placeholderAsLabel } from "./forms/placeholder-as-label.ts";
@@ -183,6 +184,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   malformedTag,
   meaningByColorOnly,
   metaRefresh,
+  multipleLabelForSameId,
   nestedInteractive,
   noSubmitControl,
   nonEmptyLabel,
@@ -294,6 +296,7 @@ export {
   malformedTag,
   meaningByColorOnly,
   metaRefresh,
+  multipleLabelForSameId,
   nestedInteractive,
   nonEmptyLabel,
   noSubmitControl,

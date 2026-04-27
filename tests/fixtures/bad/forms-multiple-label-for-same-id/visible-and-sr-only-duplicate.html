@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Bad: two labels target the same input id</title>
+    <style>
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+      }
+    </style>
+  </head>
+  <body>
+    <form>
+      <!-- Visible caption + visually-hidden long-form caption — common
+           copy-paste shape that produces inconsistent AT announcement. -->
+      <label for="email">Email</label>
+      <label for="email" class="sr-only">Email address (required)</label>
+      <input id="email" type="email" required autocomplete="email" />
+
+      <button type="submit">Sign in</button>
+    </form>
+  </body>
+</html>
