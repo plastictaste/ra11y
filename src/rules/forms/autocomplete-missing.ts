@@ -27,6 +27,9 @@ import {
   getJsxAttributeString,
   hasHtmlAttribute,
   hasJsxAttribute,
+  htmlTextContent,
+  truncateForEcho,
+  walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { FixPaths } from "../../types/violation.ts";
@@ -138,7 +141,8 @@ function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
     const match = matchPurpose(type, nameAttr, idAttr);
     if (!match) continue;
     const edit = buildAutocompleteInsertEditHtml(input, match.expected, source);
-    emit(buildViolation("input", match, input.loc.start, edit));
+    const label = resolveHtmlInputLabel(doc, input);
+    emit(buildViolation("input", match, input.loc.start, edit, label));
   }
 }
 
@@ -159,7 +163,8 @@ function checkJsxInput(input: JsxElement, source: string, emit: Emit): void {
   const match = matchPurpose(type, nameAttr, idAttr);
   if (!match) return;
   const edit = buildAutocompleteInsertEditJsx(input, match.expected, source);
-  emit(buildViolation("input", match, input.loc.start, edit));
+  const label = resolveJsxInputLabel(input);
+  emit(buildViolation("input", match, input.loc.start, edit, label));
 }
 
 /**
@@ -482,11 +487,104 @@ function describeTrigger(trigger: TriggerEvidence): string {
   return `${trigger.kind} "${trigger.attrValue}" matched the personal-info heuristic on token "${trigger.matchedToken}"`;
 }
 
+/**
+ * Resolved accessible-name evidence for the input. The agent reads
+ * `text` to decide whether the autocomplete token applies — e.g. an
+ * input labeled "Recipient email" almost certainly does NOT take
+ * `autocomplete="email"` (that token names the user's *own* email,
+ * which a recipient field collects from someone else). The `source`
+ * field documents WHERE the text came from so the agent can weight
+ * its trust accordingly:
+ *   - `aria-label`  : explicit author intent, highest trust
+ *   - `label-for`   : `<label for="<id>">` matching this input's id
+ *   - `wrapping-label` : input is wrapped inside `<label>…</label>`
+ *   - `placeholder` : weakest signal (often a format hint, not a name)
+ *
+ * Per AI-first doctrine ("the tool's job is to point; the agent's
+ * job is to investigate"), we don't try to *decide* whether an
+ * autocomplete is wrong from the label — we surface the label
+ * verbatim so the agent's one-read dismissal is grounded.
+ */
+interface InputLabelEvidence {
+  readonly source: "aria-label" | "label-for" | "wrapping-label" | "placeholder";
+  readonly text: string;
+}
+
+function resolveHtmlInputLabel(
+  doc: HtmlDocument,
+  input: HtmlElement,
+): InputLabelEvidence | null {
+  const ariaLabel = getHtmlAttribute(input, "aria-label");
+  if (ariaLabel && ariaLabel.trim().length > 0) {
+    return { source: "aria-label", text: ariaLabel.trim() };
+  }
+  const id = getHtmlAttribute(input, "id");
+  if (id && id.length > 0) {
+    for (const label of findHtmlElementsByTag(doc, "label")) {
+      const forAttr = getHtmlAttribute(label, "for");
+      if (forAttr === id) {
+        const text = htmlTextContent(label);
+        if (text.length > 0) return { source: "label-for", text };
+      }
+    }
+  }
+  // Wrapping <label>: walk doc, find any label that has this input as a
+  // descendant. Cheap on realistic forms — labels are leaf-y and few.
+  for (const label of findHtmlElementsByTag(doc, "label")) {
+    if (containsHtmlElement(label, input)) {
+      // Don't double-count when the wrapping label *also* has a for=
+      // attr matching the input — that case is already captured above.
+      const text = htmlTextContent(label);
+      if (text.length > 0) return { source: "wrapping-label", text };
+    }
+  }
+  const placeholder = getHtmlAttribute(input, "placeholder");
+  if (placeholder && placeholder.trim().length > 0) {
+    return { source: "placeholder", text: placeholder.trim() };
+  }
+  return null;
+}
+
+function containsHtmlElement(root: HtmlElement, target: HtmlElement): boolean {
+  for (const descendant of walkHtmlElements(root)) {
+    if (descendant === target) return true;
+  }
+  return false;
+}
+
+function resolveJsxInputLabel(input: JsxElement): InputLabelEvidence | null {
+  // JSX cross-element label resolution (htmlFor/id matching) requires
+  // module-level state — checkJsx already iterates the module, but
+  // routing the label-fors set down to here would force a wider
+  // signature for a marginal precision gain. The two channels we DO
+  // surface (aria-label literal, placeholder literal) are the
+  // self-contained ones the agent reads first; the agent cracking the
+  // file open recovers the cross-element <label> in one read.
+  const ariaLabel = getJsxAttributeString(input, "aria-label");
+  if (ariaLabel && ariaLabel.trim().length > 0) {
+    return { source: "aria-label", text: ariaLabel.trim() };
+  }
+  const placeholder = getJsxAttributeString(input, "placeholder");
+  if (placeholder && placeholder.trim().length > 0) {
+    return { source: "placeholder", text: placeholder.trim() };
+  }
+  return null;
+}
+
+function describeLabel(label: InputLabelEvidence): string {
+  const text = truncateForEcho(label.text);
+  if (label.source === "aria-label") return `aria-label="${text}"`;
+  if (label.source === "label-for") return `labelled "${text}" via <label for=…>`;
+  if (label.source === "wrapping-label") return `wrapped by <label>${text}</label>`;
+  return `placeholder="${text}"`;
+}
+
 function buildViolation(
   tagName: string,
   match: PurposeMatch,
   loc: { line: number; column: number },
   edit: { readonly oldText: string; readonly newText: string } | null,
+  label: InputLabelEvidence | null,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
@@ -506,11 +604,24 @@ function buildViolation(
     },
     alternatives: [],
   };
+  // Interpolate the resolved label so the agent can dismiss in one
+  // read: a `type="email"` input labelled "Recipient email" is
+  // collecting the recipient's email (not the user's own), so
+  // `autocomplete="email"` is the wrong token (likely "off" or a
+  // domain-specific value); a `type="email"` input labelled "Your
+  // email" is the canonical SC 1.3.5 case where the suggestion
+  // applies. Surface the label verbatim per AI-first doctrine — the
+  // tool points, the agent decides.
+  const labelClause = label ? ` (input ${describeLabel(label)})` : "";
+  const recipientHint =
+    match.trigger.kind === "type" && match.trigger.value === "email"
+      ? ` autocomplete="${match.expected}" applies if this collects the user's own email; if it collects someone else's (e.g. a recipient address), use autocomplete="off" instead.`
+      : "";
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> appears to collect information about the user but has no autocomplete attribute — ${describeTrigger(match.trigger)}. WCAG 2.2 SC 1.3.5 (AA) requires an autocomplete value drawn from the 53 input-purpose tokens so the field's purpose can be programmatically determined.`,
-    suggestion: `Add autocomplete="${match.expected}" so the field's purpose is programmatically determinable per SC 1.3.5. See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of 53 tokens.`,
+    message: `<${tagName}> appears to collect information about the user but has no autocomplete attribute — ${describeTrigger(match.trigger)}${labelClause}. WCAG 2.2 SC 1.3.5 (AA) requires an autocomplete value drawn from the 53 input-purpose tokens so the field's purpose can be programmatically determined.`,
+    suggestion: `Add autocomplete="${match.expected}" so the field's purpose is programmatically determinable per SC 1.3.5.${recipientHint} See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of 53 tokens.`,
     fixPaths,
   };
 }

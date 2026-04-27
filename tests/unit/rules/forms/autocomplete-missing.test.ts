@@ -243,6 +243,139 @@ describe("rule forms/autocomplete-missing", () => {
     });
   });
 
+  // The label interpolation lets the agent dismiss recipient-email
+  // vs user-email cases (and similar) in one read without cracking
+  // the rule definition open. Without a resolved label, every
+  // `type="email"` input emits an identical reason — the agent
+  // has to read each surrounding source to triage. With the label,
+  // the agent can decide from the response shape alone.
+  describe("label interpolation in reason text", () => {
+    it("HTML: <label for> matching the input's id surfaces the label text", () => {
+      const violations = runRule(
+        rule,
+        `<label for="recip">Recipient email</label><input id="recip" type="email" name="email">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Recipient email");
+      // The recipient-hint clause is part of the dismissal payload
+      // — agent reads "applies if this collects the user's own
+      // email; if it collects someone else's, use autocomplete='off'"
+      // and the labelled "Recipient email" makes the answer obvious.
+      expect(violations[0]?.suggestion).toContain(`autocomplete="off"`);
+    });
+
+    it("HTML: aria-label surfaces verbatim and is preferred over placeholder", () => {
+      const violations = runRule(
+        rule,
+        `<input type="email" name="email" aria-label="Your email" placeholder="you@example.com">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      // aria-label wins over placeholder for the surfaced label.
+      expect(violations[0]?.message).toContain(`aria-label="Your email"`);
+      // placeholder text contains `@` and digits — should not be
+      // confused with the resolved label evidence.
+      expect(violations[0]?.message).not.toContain("you@example.com");
+    });
+
+    it("HTML: wrapping <label> surfaces the label text", () => {
+      const violations = runRule(
+        rule,
+        `<label>Email address<input type="email" name="email"></label>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Email address");
+    });
+
+    it("HTML: placeholder surfaces as a fallback when no label/aria-label is present", () => {
+      const violations = runRule(rule, `<input type="email" placeholder="Email address">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`placeholder="Email address"`);
+    });
+
+    it("HTML: unlabeled input emits no label clause but still fires", () => {
+      const violations = runRule(rule, `<input type="email" name="email">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      // No label channel resolved — message must not invent a label.
+      expect(violations[0]?.message).not.toContain("aria-label=");
+      expect(violations[0]?.message).not.toContain("placeholder=");
+      expect(violations[0]?.message).not.toContain("via <label for");
+      expect(violations[0]?.message).not.toContain("wrapped by");
+      // But it must still cite the type-trigger so the agent has
+      // something to read.
+      expect(violations[0]?.message).toContain(`type="email"`);
+    });
+
+    it("HTML: type=email recipient case — agent can dismiss in one read", () => {
+      // The canonical case from the backlog — a recipient-email input
+      // labelled "Recipient email" emits identical reason text to a
+      // user's-own-email input under the unfixed rule. With label
+      // interpolation, the agent reads the label + the suggestion's
+      // `autocomplete="off"` hint and dismisses without cracking the
+      // file open.
+      const violations = runRule(
+        rule,
+        `<label for="r">Recipient email</label><input id="r" type="email" name="recipient">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Recipient email");
+      expect(violations[0]?.suggestion).toContain(`autocomplete="off"`);
+    });
+
+    it("HTML: type=tel does NOT add the recipient-email hint clause", () => {
+      // The recipient-email hint is scoped to email triggers — the
+      // ambiguity it resolves is specific to "user's own email" vs
+      // "someone else's email." For tel/url/etc., adding an "or use
+      // autocomplete='off'" clause would be over-broad noise.
+      const violations = runRule(rule, `<input type="tel" name="phone">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).not.toContain(`autocomplete="off"`);
+    });
+
+    it("JSX: aria-label literal surfaces in the message", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="email" name="email" aria-label="Your email" />;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`aria-label="Your email"`);
+    });
+
+    it("JSX: placeholder literal surfaces when no aria-label is present", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="email" name="email" placeholder="Recipient email" />;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain(`placeholder="Recipient email"`);
+    });
+
+    it("HTML: long label is truncated for echo", () => {
+      // Labels are user-authored strings that get echoed into the
+      // reason — the same `truncateForEcho` cap that protects
+      // forms/labels-required's suggestion path applies here so
+      // pathological labels don't blow the per-finding token budget.
+      const longLabel = "Recipient email ".repeat(20).trim();
+      const source = `<label for="r">${longLabel}</label><input id="r" type="email" name="recipient">`;
+      const violations = runRule(rule, source, { filePath: "index.html" });
+      expect(violations).toHaveLength(1);
+      const msg = violations[0]?.message ?? "";
+      // The full 320-char label exceeds the 200-char default cap and
+      // is replaced by a truncated form ending in U+2026.
+      expect(msg.includes(longLabel)).toBe(false);
+      expect(msg).toContain("…");
+    });
+  });
+
   describe("fixPaths.primary.edit", () => {
     // Doctrine: a `fixClass: "mechanical"` rule must populate
     // `fixPaths.primary.edit` so `suggest_fix` returns `kind: "edit"`.
