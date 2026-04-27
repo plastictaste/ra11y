@@ -458,6 +458,36 @@ export type ViolationEvidence =
         | "onclick-classlist"
         | "disclosure-class";
       readonly findingKind: "missing-expanded" | "missing-controls";
+    }
+  /**
+   * `semantics/landmark-main` — emitted on the missing-`<main>` branch
+   * when a probable wrapper candidate exists in the document. Names the
+   * largest top-level non-landmark block under `<body>` (the candidate
+   * the rule would suggest wrapping in `<main>` or relabelling with
+   * `role="main"`).
+   *
+   * The probable candidate is reproducible from the AST: among the
+   * `<body>`'s direct element children, exclude landmark / non-visible
+   * tags (`<header>`, `<footer>`, `<nav>`, `<aside>`, `<script>`,
+   * `<style>`, `<noscript>`, `<template>`) and pick the one with the
+   * most descendant elements (ties broken by document order). The
+   * `selectorHint` field is populated when the candidate carries an
+   * `id` or `class` attribute (rendered as `div#content` or
+   * `div.app-shell`); omitted otherwise. Pre-fix, every fire on a
+   * page-shaped HTML file with no `<main>` carried identical reason
+   * text, leaving the agent with no per-file signal to triage. The
+   * hint surfaces a concrete wrapping target.
+   *
+   * Same shape polarity as the other variants: discriminating evidence
+   * exposed as a typed sub-shape so the agent can branch-route triage
+   * without parsing prose. The prose `message` is also enriched with
+   * the same evidence; `evidence` is the additive structured signal.
+   */
+  | {
+      readonly kind: "landmark-main-probable-candidate";
+      readonly tag: string;
+      readonly line: number;
+      readonly selectorHint?: string;
     };
 
 /**

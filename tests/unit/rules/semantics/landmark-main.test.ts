@@ -1198,4 +1198,370 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Probable-main candidate enrichment.
+  //
+  // The pre-fix message was identical across page-shaped HTML files with no
+  // per-file context. The probable-candidate hint identifies the largest
+  // top-level non-header/footer/nav/aside block under <body> and surfaces
+  // it as a concrete wrapping target — both in the prose `message` and as
+  // a structured `evidence` sub-shape so an agent can branch-route triage
+  // without parsing English. Reason-enrichment only — severity stays
+  // "warning", no new emissions.
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("probable-main candidate hint", () => {
+    it("populates evidence with the largest non-landmark block (selector hint with id)", () => {
+      // Body has header + footer (excluded landmarks) + a `div#content`
+      // with three descendant blocks (the content area). The candidate
+      // should pick `div#content` over the empty header/footer.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          '    <div id="content">',
+          "      <h1>Title</h1>",
+          "      <p>One.</p>",
+          "      <p>Two.</p>",
+          "    </div>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.evidence).toEqual({
+        kind: "landmark-main-probable-candidate",
+        tag: "div",
+        line: 4,
+        selectorHint: "div#content",
+      });
+      // Prose enrichment: agent reads the candidate without parsing the
+      // structured field.
+      expect(v[0]?.message).toContain("<div#content>");
+      expect(v[0]?.message).toContain("(line 4)");
+    });
+
+    it("uses the first class token in the selector hint when no id is present", () => {
+      // `<section class="app-shell layout">` — only the first whitespace-
+      // separated class token rides the hint so it stays stable on long
+      // class lists (Tailwind, BEM cascades).
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <section class="app-shell layout">',
+          "      <h1>Title</h1>",
+          "      <p>Body.</p>",
+          "      <p>More.</p>",
+          "    </section>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "shell.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.evidence).toEqual({
+        kind: "landmark-main-probable-candidate",
+        tag: "section",
+        line: 4,
+        selectorHint: "section.app-shell",
+      });
+      expect(v[0]?.message).toContain("<section.app-shell>");
+    });
+
+    it("includes both id and first class token when both are present", () => {
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <div id="root" class="container fluid">',
+          "      <h1>Hello</h1>",
+          "      <p>One.</p>",
+          "      <p>Two.</p>",
+          "    </div>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "both.html" },
+      );
+      expect(v).toHaveLength(1);
+      const evidence = v[0]?.evidence;
+      expect(evidence?.kind).toBe("landmark-main-probable-candidate");
+      if (evidence?.kind === "landmark-main-probable-candidate") {
+        expect(evidence.selectorHint).toBe("div#root.container");
+      }
+    });
+
+    it("omits selectorHint when the candidate has no id or class (bare tag)", () => {
+      // `<article>` with no identifying attributes — the hint adds no
+      // signal beyond the tag, so per AI-first doctrine we omit it
+      // entirely (present-when-meaningful) rather than emit empty.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          "    <article>",
+          "      <h1>Title</h1>",
+          "      <p>Body.</p>",
+          "      <p>More body.</p>",
+          "      <p>Yet more body.</p>",
+          "    </article>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "bare.html" },
+      );
+      expect(v).toHaveLength(1);
+      const evidence = v[0]?.evidence;
+      expect(evidence?.kind).toBe("landmark-main-probable-candidate");
+      if (evidence?.kind === "landmark-main-probable-candidate") {
+        expect(evidence.tag).toBe("article");
+        expect(evidence.line).toBe(4);
+        expect(evidence.selectorHint).toBeUndefined();
+      }
+    });
+
+    it("picks the block with the most descendants when multiple candidates compete", () => {
+      // Two non-landmark blocks: a small <div> wrapper and a large
+      // <article> with multiple paragraphs. The article has more
+      // descendant elements and should win.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <div id="sidebar">',
+          "      <p>x</p>",
+          "    </div>",
+          '    <article id="main-content">',
+          "      <h1>Title</h1>",
+          "      <p>One.</p>",
+          "      <p>Two.</p>",
+          "      <p>Three.</p>",
+          "    </article>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "compete.html" },
+      );
+      expect(v).toHaveLength(1);
+      const evidence = v[0]?.evidence;
+      expect(evidence?.kind).toBe("landmark-main-probable-candidate");
+      if (evidence?.kind === "landmark-main-probable-candidate") {
+        expect(evidence.tag).toBe("article");
+        expect(evidence.selectorHint).toBe("article#main-content");
+      }
+    });
+
+    it("breaks ties by document order (first eligible child wins)", () => {
+      // Two same-size candidates; document order picks the first.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <div id="first"><p>a</p></div>',
+          '    <div id="second"><p>b</p></div>',
+          '    <div id="third"><p>c</p></div>',
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "ties.html" },
+      );
+      expect(v).toHaveLength(1);
+      const evidence = v[0]?.evidence;
+      expect(evidence?.kind).toBe("landmark-main-probable-candidate");
+      if (evidence?.kind === "landmark-main-probable-candidate") {
+        expect(evidence.selectorHint).toBe("div#first");
+      }
+    });
+
+    it("excludes header/nav/footer/aside from candidate selection", () => {
+      // Every direct child is a landmark. With nothing eligible, evidence
+      // is omitted entirely — the rule still fires (surface-don't-suppress)
+      // but without a per-file candidate hint.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>top</header>",
+          "    <nav>links</nav>",
+          "    <aside>side</aside>",
+          "    <footer>bottom</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "all-landmarks.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.evidence).toBeUndefined();
+    });
+
+    it("excludes script/style/noscript/template from candidate selection", () => {
+      // Body has a <header>, a <script>, and a single content <div>. The
+      // script must not be picked even though its descendant count is
+      // technically zero — script tags are non-visible per the existing
+      // body-shape descriptor's accounting.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <script src="a.js"></script>',
+          '    <div id="real-content">',
+          "      <h1>Title</h1>",
+          "      <p>One.</p>",
+          "      <p>Two.</p>",
+          "    </div>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "with-script.html" },
+      );
+      expect(v).toHaveLength(1);
+      const evidence = v[0]?.evidence;
+      expect(evidence?.kind).toBe("landmark-main-probable-candidate");
+      if (evidence?.kind === "landmark-main-probable-candidate") {
+        expect(evidence.tag).toBe("div");
+        expect(evidence.selectorHint).toBe("div#real-content");
+      }
+    });
+
+    it("severity stays warning across populated and omitted hint branches", () => {
+      // Hint populated.
+      const populated = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <div id="content">',
+          "      <h1>X</h1>",
+          "      <p>Body.</p>",
+          "      <p>More.</p>",
+          "    </div>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      // Hint omitted (every direct child is a landmark).
+      const omitted = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>top</header>",
+          "    <nav>n</nav>",
+          "    <footer>bottom</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "b.html" },
+      );
+      expect(populated).toHaveLength(1);
+      expect(omitted).toHaveLength(1);
+      expect(populated[0]?.severity).toBe("warning");
+      expect(omitted[0]?.severity).toBe("warning");
+    });
+
+    it("layout-partial branch carries the candidate evidence when a body block exists", () => {
+      // Layout files frequently have a body with a non-landmark wrapper
+      // around a {{ content }} site (the wrapper is the candidate the
+      // layout author should consider relabelling, even though the
+      // <main> may end up in the composed child).
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          '    <div id="layout-shell">',
+          "      <h1>Site</h1>",
+          "      {{ content }}",
+          "      <p>Footer area.</p>",
+          "    </div>",
+          "    <footer>f</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "default.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+      const evidence = v[0]?.evidence;
+      expect(evidence?.kind).toBe("landmark-main-probable-candidate");
+      if (evidence?.kind === "landmark-main-probable-candidate") {
+        expect(evidence.tag).toBe("div");
+        expect(evidence.selectorHint).toBe("div#layout-shell");
+      }
+    });
+
+    it("two pages with different probable candidates produce different messages", () => {
+      // Pre-fix: identical message text across page-shaped HTML files
+      // with no <main>. With the candidate hint, two structurally
+      // different pages produce structurally different messages.
+      const aside = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <div id="content">',
+          "      <h1>About</h1>",
+          "      <p>One.</p>",
+          "      <p>Two.</p>",
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "a.html" },
+      );
+      const article = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>h</header>",
+          '    <article class="post">',
+          "      <h1>Article</h1>",
+          "      <p>Body.</p>",
+          "      <p>More.</p>",
+          "    </article>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "b.html" },
+      );
+      expect(aside).toHaveLength(1);
+      expect(article).toHaveLength(1);
+      expect(aside[0]?.message).not.toBe(article[0]?.message);
+      expect(aside[0]?.message).toContain("<div#content>");
+      expect(article[0]?.message).toContain("<article.post>");
+    });
+  });
 });

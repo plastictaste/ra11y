@@ -41,6 +41,7 @@ import {
 } from "../../engine/layout-partial.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
+import type { ViolationEvidence } from "../../types/violation.ts";
 
 export const rule = defineRule({
   id: "semantics/landmark-main",
@@ -164,7 +165,14 @@ function collectMainLandmarks(doc: HtmlDocument): readonly HtmlElement[] {
 function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
   const htmlElements = findHtmlElementsByTag(doc, "html");
   const anchor = htmlElements[0];
-  ctx.emit(buildLayoutPartialEmit(anchor?.loc.start.line ?? 1, anchor?.loc.start.column ?? 1, ""));
+  ctx.emit(
+    buildLayoutPartialEmit(
+      anchor?.loc.start.line ?? 1,
+      anchor?.loc.start.column ?? 1,
+      "",
+      undefined,
+    ),
+  );
 }
 
 /**
@@ -209,8 +217,10 @@ function emitMissingMain(
   const line = body?.loc.start.line ?? 1;
   const column = body?.loc.start.column ?? 1;
   const shape = body ? describeBodyShape(body, doc) : "";
+  const probable = body ? findProbableMainCandidate(body) : undefined;
+  const candidateSuffix = probable ? ` ${describeProbableCandidate(probable)}` : "";
   if (layoutOrPartial) {
-    ctx.emit(buildLayoutPartialEmit(line, column, shape));
+    ctx.emit(buildLayoutPartialEmit(line, column, shape, probable));
     return;
   }
   const shapeSuffix = shape ? ` ${shape}` : "";
@@ -218,10 +228,10 @@ function emitMissingMain(
   ctx.emit({
     severity: "warning",
     location: { filePath: "", line, column },
-    message: `Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.${shapeSuffix}`,
-    suggestion:
-      'Document has no <main>. Wrap the primary content region — typically the main article/content below the header/nav — in <main> or add role="main" to an existing container. Do not wrap the <header>, <nav>, or <footer> regions in the main landmark.',
+    message: `Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.${shapeSuffix}${candidateSuffix}`,
+    suggestion: buildMissingMainSuggestion(probable),
     ...(isolatedDemo ? { couldBeWrongBecause: [ISOLATED_COMPONENT_DEMO_CODE] } : {}),
+    ...(probable ? { evidence: probableCandidateEvidence(probable) } : {}),
   });
 }
 
@@ -325,21 +335,25 @@ function buildLayoutPartialEmit(
   line: number,
   column: number,
   bodyShape: string,
+  probable: ProbableMainCandidate | undefined,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
   couldBeWrongBecause: readonly string[];
+  evidence?: ViolationEvidence;
 } {
   const shapeSuffix = bodyShape ? ` ${bodyShape}` : "";
+  const candidateSuffix = probable ? ` ${describeProbableCandidate(probable)}` : "";
   return {
     severity: "warning",
     location: { filePath: "", line, column },
-    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}${shapeSuffix}`,
+    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}${shapeSuffix}${candidateSuffix}`,
     suggestion:
       "Document has no <main> in this file, but it looks like a layout wrapper or template partial — the <main> may be authored in the included/yielded file. Verify against the parent layout or partial chain; if this file is the root layout, add <main> around the composition point (typically surrounding the {{ content }} / <%= yield %> / @RenderBody site). Use a <!-- ra11y-disable semantics/landmark-main --> pragma if the composition is deliberate and the <main> lives in sibling files.",
     couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE],
+    ...(probable ? { evidence: probableCandidateEvidence(probable) } : {}),
   };
 }
 
@@ -530,3 +544,145 @@ function formatTagTally(counts: ReadonlyMap<string, number>): string {
 // MISSING-H1-VARIANT) — the predicate is the conceptual opposite of
 // `looksLikePartialFile`, and keeping both in the same module gives one
 // canonical answer to "is this file a page or a fragment?"
+
+// ---------------------------------------------------------------------------
+// Probable-main candidate
+// ---------------------------------------------------------------------------
+
+/**
+ * Direct-child tags excluded from probable-main candidate selection
+ * because they are themselves landmarks (and so cannot be the wrapping
+ * candidate the rule recommends) or contribute no rendered content.
+ *
+ * Distinct from {@link NON_VISIBLE_DIRECT_CHILD_TAGS} (descriptor-only)
+ * because `<main>` is irrelevant here (the rule fires only when no
+ * `<main>` exists) but `<header>`/`<nav>`/`<aside>`/`<footer>` are not
+ * eligible candidates: wrapping the navigation in `<main>` would be
+ * worse than the missing landmark. The body-shape descriptor includes
+ * landmarks in its tally; the candidate selector excludes them.
+ */
+const PROBABLE_MAIN_EXCLUDED_TAGS: ReadonlySet<string> = new Set([
+  "header",
+  "footer",
+  "nav",
+  "aside",
+  "script",
+  "style",
+  "noscript",
+  "template",
+]);
+
+interface ProbableMainCandidate {
+  readonly tag: string;
+  readonly line: number;
+  readonly selectorHint?: string;
+}
+
+/**
+ * Picks the largest non-landmark top-level block under `<body>` that
+ * could plausibly be wrapped in `<main>` or relabelled with
+ * `role="main"`. Reproducible from the AST:
+ *
+ *   1. Walk `<body>`'s direct element children, skipping
+ *      {@link PROBABLE_MAIN_EXCLUDED_TAGS}.
+ *   2. Score each candidate by descendant-element count (recursively).
+ *   3. Pick the highest score; ties broken by document order (the
+ *      first child wins, matching the agent's "the first wrapping
+ *      target the file presents" reading).
+ *
+ * Returns `undefined` when the body has no eligible children — the
+ * rule fires without a hint in that case (per AI-first doctrine,
+ * present-when-meaningful: omit the field when no plausible candidate
+ * exists). This branch covers degenerate page shapes where every
+ * direct child is a landmark or non-visible tag.
+ */
+function findProbableMainCandidate(body: HtmlElement): ProbableMainCandidate | undefined {
+  let best: { el: HtmlElement; score: number; index: number } | undefined;
+  let index = 0;
+  for (const child of directHtmlChildren(body)) {
+    if (child.kind !== "HtmlElement") continue;
+    const tag = child.tagName.toLowerCase();
+    index += 1;
+    if (PROBABLE_MAIN_EXCLUDED_TAGS.has(tag)) continue;
+    const score = countDescendantElements(child);
+    if (best === undefined || score > best.score || (score === best.score && index < best.index)) {
+      best = { el: child, score, index };
+    }
+  }
+  if (best === undefined) return undefined;
+  const tag = best.el.tagName.toLowerCase();
+  const selectorHint = buildSelectorHint(best.el, tag);
+  return {
+    tag,
+    line: best.el.loc.start.line,
+    ...(selectorHint !== undefined ? { selectorHint } : {}),
+  };
+}
+
+/** Counts every element node strictly below `el` in document order. */
+function countDescendantElements(el: HtmlElement): number {
+  let n = 0;
+  for (const _ of walkHtmlElements(el)) n += 1;
+  return n;
+}
+
+/**
+ * Builds a CSS-style selector hint (`div#content`, `div.app-shell`,
+ * `section#main-content.layout`) from the candidate's tag plus its
+ * `id` and first `class` token, when present. Returns `undefined` for
+ * bare elements with no identifying attribute — the agent reads the
+ * tag from the `tag` field directly and the hint would add no signal.
+ *
+ * Only the first whitespace-separated class token is included to keep
+ * the hint stable on long class lists (Tailwind, BEM cascades). When
+ * both `id` and `class` are present both are included so the hint
+ * reads as authored.
+ */
+function buildSelectorHint(el: HtmlElement, tag: string): string | undefined {
+  const id = getHtmlAttribute(el, "id");
+  const cls = getHtmlAttribute(el, "class");
+  const firstClass = cls?.trim().split(/\s+/)[0];
+  const parts: string[] = [];
+  if (id && id.trim().length > 0) parts.push(`#${id.trim()}`);
+  if (firstClass && firstClass.length > 0) parts.push(`.${firstClass}`);
+  if (parts.length === 0) return undefined;
+  return `${tag}${parts.join("")}`;
+}
+
+/**
+ * Renders the probable-candidate prose enrichment appended to the
+ * missing-`<main>` message. Reads as e.g. "Consider wrapping
+ * `<div#content>` (line 42) in `<main>` or adding `role=\"main\"` to
+ * it." When no selector hint is available, falls back to bare tag
+ * notation (`<div>`).
+ */
+function describeProbableCandidate(probable: ProbableMainCandidate): string {
+  const display = probable.selectorHint ?? probable.tag;
+  return `Consider wrapping <${display}> (line ${probable.line}) in <main> or adding role="main" to it.`;
+}
+
+/**
+ * Builds the structured `evidence` sub-shape for the probable-candidate
+ * variant. See {@link ViolationEvidence} for the union contract.
+ */
+function probableCandidateEvidence(probable: ProbableMainCandidate): ViolationEvidence {
+  return {
+    kind: "landmark-main-probable-candidate",
+    tag: probable.tag,
+    line: probable.line,
+    ...(probable.selectorHint !== undefined ? { selectorHint: probable.selectorHint } : {}),
+  };
+}
+
+/**
+ * Builds the suggestion string for the missing-`<main>` emit. When a
+ * probable candidate is available, names it explicitly so the agent
+ * reads a concrete edit target alongside the criterion-level guidance.
+ */
+function buildMissingMainSuggestion(probable: ProbableMainCandidate | undefined): string {
+  const base =
+    'Document has no <main>. Wrap the primary content region — typically the main article/content below the header/nav — in <main> or add role="main" to an existing container. Do not wrap the <header>, <nav>, or <footer> regions in the main landmark.';
+  if (probable === undefined) return base;
+  const display = probable.selectorHint ?? probable.tag;
+  return `${base} The largest non-landmark block in this file is <${display}> (line ${probable.line}); consider wrapping it in <main> or adding role="main" to it.`;
+}
