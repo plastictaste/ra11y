@@ -23,6 +23,7 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
+import { isBuildArtifact } from "./build-artifacts.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
@@ -475,7 +476,20 @@ export function applyParseErrorAdjustment(
   activeRules: readonly Rule[],
   findingFilePaths: ReadonlySet<string> | undefined,
 ): readonly PerRuleCoverage[] {
-  const erroredFiles = files.filter((f) => f.ast.errors.length > 0);
+  // Build-artifact files routinely produce phantom parse errors (the
+  // TSX parser reading minified `r.length<b.length` as an unclosed
+  // `<r.length>` JSX element is the canonical case). Those phantoms
+  // are suppressed from `meta.analysisCoverage.parseErrorFiles[]` —
+  // see `accumulateCoverageForFile` — so the per-rule `coverageConfidence`
+  // downgrade must skip them too, otherwise an agent reading
+  // `coverageConfidenceReason: "file-parse-error"` would chase a parse
+  // error that doesn't appear in any file list. Keeps the cross-surface
+  // story honest: build-artifact files are classified by the artifact
+  // labeller; the parse-error lane stays for genuine parser failures
+  // on authored content.
+  const erroredFiles = files.filter(
+    (f) => f.ast.errors.length > 0 && !isBuildArtifact(f.filePath, f.source),
+  );
   if (erroredFiles.length === 0) return rows;
   const parseErrorFiles: ParsedFile[] = [];
   const partialParseFiles: ParsedFile[] = [];

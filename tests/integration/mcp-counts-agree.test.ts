@@ -356,5 +356,102 @@ describe("MCP invariant: parseErrorFileCount agrees between scan_project and cov
   });
 });
 
+/**
+ * Builds a fixture where a minified vendor file at a `.min.js` path
+ * carries a comparison expression (`r.length<b.length`) that the TSX
+ * parser reads as an unclosed `<r.length>` JSX element. The file would
+ * historically appear in BOTH `meta.scannedBuildArtifacts.grouped` (or
+ * `ungrouped`) AND `meta.analysisCoverage.parseErrorFiles[]` with
+ * contradictory reasons ("definite-min-infix" vs "Unclosed JSX
+ * element"). The clean `page.html` sibling keeps `filesScanned > 0`
+ * so `analysisCoverage` actually rides on the response.
+ *
+ * Three identically-named-basename siblings nudge the build-artifact
+ * grouper toward `grouped` over `ungrouped` for stability — the
+ * invariant under test (no path appears in both lists) holds either
+ * way, but assertion against `grouped` is the more common bulk-corpus
+ * shape.
+ */
+async function makeBuildArtifactParseErrorFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-bld-art-parse-err-"));
+  await writeFile(join(dir, "page.html"), `<html><body><p>hello</p></body></html>`);
+  // Minified-shape JS: TSX parser reads `r.length<b.length` as a JSX
+  // tag open and trips on the missing close. `.min.js` infix flips
+  // the build-artifact classifier to `definite-min-infix`.
+  const minified = `var r=function(b){return r.length<b.length?r:b};module.exports=r;`;
+  await writeFile(join(dir, "jquery.min.js"), minified);
+  await writeFile(join(dir, "lodash.min.js"), minified);
+  await writeFile(join(dir, "modernizr.min.js"), minified);
+  return dir;
+}
+
+interface BuildArtifactGroupShape {
+  readonly basename: string;
+}
+interface BuildArtifactUngroupedShape {
+  readonly path: string;
+}
+interface ScanBodyForArtifactInvariant {
+  readonly meta?: {
+    readonly scannedBuildArtifacts?: {
+      readonly grouped?: readonly BuildArtifactGroupShape[];
+      readonly ungrouped?: readonly BuildArtifactUngroupedShape[];
+    };
+    readonly analysisCoverage?: {
+      readonly parseErrorFiles?: readonly { readonly path: string }[];
+      readonly partialParseFiles?: readonly { readonly path: string }[];
+    };
+  };
+}
+
+describe("MCP invariant: parseErrorFiles ∩ scannedBuildArtifacts is empty", () => {
+  it("a minified vendor file is classified as build artifact only, never co-listed as parse error", async () => {
+    const dir = await makeBuildArtifactParseErrorFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+    ]);
+    const scanBody = body<ScanBodyForArtifactInvariant>(responses[1]);
+    const ungrouped = scanBody.meta?.scannedBuildArtifacts?.ungrouped ?? [];
+    const grouped = scanBody.meta?.scannedBuildArtifacts?.grouped ?? [];
+    const buildArtifactPaths = new Set<string>(ungrouped.map((e) => e.path));
+    // Sanity: at least one of the seeded `.min.js` paths landed in the
+    // build-artifact list (either `ungrouped` directly or grouped by
+    // basename — three same-basename peers don't always cluster, but
+    // every one carries `.min.` in the basename and triggers the
+    // `definite-min-infix` predicate). A 0/0 result here would mean
+    // the classifier missed the fixture and the disjointness check
+    // would pass vacuously.
+    const sawArtifactSignal = buildArtifactPaths.size > 0 || grouped.length > 0;
+    expect(sawArtifactSignal).toBe(true);
+    const parseErrorPaths = new Set(
+      (scanBody.meta?.analysisCoverage?.parseErrorFiles ?? []).map((e) => e.path),
+    );
+    const partialParsePaths = new Set(
+      (scanBody.meta?.analysisCoverage?.partialParseFiles ?? []).map((e) => e.path),
+    );
+    // Every `.min.js` in the fixture must be absent from both
+    // parse-error lists. The artifact classifier owns these paths;
+    // co-listing them with a phantom `Unclosed JSX element` reason is
+    // dishonest in the same way as a heuristic-mislabeled meta
+    // sub-field.
+    for (const basename of ["jquery.min.js", "lodash.min.js", "modernizr.min.js"]) {
+      for (const errPath of parseErrorPaths) {
+        expect(errPath.endsWith(basename)).toBe(false);
+      }
+      for (const errPath of partialParsePaths) {
+        expect(errPath.endsWith(basename)).toBe(false);
+      }
+    }
+    // Tighter form: the intersection of build-artifact paths (when the
+    // classifier put them in `ungrouped` rather than collapsing to a
+    // group) and parse-error paths is empty.
+    for (const p of buildArtifactPaths) {
+      expect(parseErrorPaths.has(p)).toBe(false);
+      expect(partialParsePaths.has(p)).toBe(false);
+    }
+  });
+});
+
 // Silence the unused warning on the helper used implicitly above.
 void mkdir;

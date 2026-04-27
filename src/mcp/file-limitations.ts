@@ -33,6 +33,7 @@
 
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { FileLimitation } from "../output/agent-response/types.ts";
+import { isBuildArtifact } from "./build-artifacts.ts";
 
 export type { FileLimitation };
 
@@ -67,6 +68,21 @@ export function buildFileLimitation(
   fileHasFindings: boolean,
 ): FileLimitation | null {
   if (file.ast.errors.length === 0) return null;
+  // Build-artifact files (jquery.min.js, hashed bundles, tailwind-
+  // compiled stylesheets) routinely emit phantom parse errors when the
+  // TSX parser encounters minified comparison expressions like
+  // `r.length<b.length` and reads `<r.length>` as an unclosed JSX
+  // element. The artifact classifier already labels the file under
+  // `meta.scannedBuildArtifacts`; surfacing a per-file
+  // `limitations: { reason: "parse_error", ... }` alongside that
+  // classification ships two contradictory verdicts on the same path
+  // (artifact-classified vs parser-failed) and forces the agent to
+  // pick one. Per docs/kb/architecture/ai-first-consumer.md
+  // "Heuristic-mislabeled meta sub-fields are dishonest" + the
+  // single-list invariant that gates `parseErrorFiles[]` in
+  // `analysis-coverage.ts`, the artifact lane wins and the parse-error
+  // limitation is suppressed for these files.
+  if (isBuildArtifact(file.filePath, file.source)) return null;
   const firstMessage = file.ast.errors[0]?.message ?? "";
   const detail = firstMessage.length > 0 ? truncateDetail(firstMessage) : undefined;
   return {

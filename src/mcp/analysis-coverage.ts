@@ -971,35 +971,66 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
   if (isHtmlFragment(file.ast.root as HtmlDocument)) acc.fragmentFiles.push(file.filePath);
 }
 
+/**
+ * Pushes a `{ path, parser, reason, triggerToken? }` record onto
+ * `acc.parseErrorEntries` when the file emitted parse errors AND is
+ * not a classified build artifact. Extracted from
+ * {@link accumulateCoverageForFile} to keep that function under the
+ * cognitive-complexity budget and to centralize the build-artifact
+ * gate.
+ *
+ * The first parse error drives the `reason` an agent sees when
+ * classifying the entry. Subsequent errors often cascade from it
+ * (one unclosed tag spawns a dozen "unexpected token" complaints),
+ * so the head message is both the most actionable and the least
+ * noisy signal. Message truncation keeps the wire size bounded on
+ * pathological cases (e.g. a recovered HTML parser echoing back a
+ * 10 KB line). `parser` comes straight from the AST language tag so
+ * the agent sees which in-house parser owned the failure (`html`,
+ * `css`, `tsx`, `jsx`, `ts`, `js`) — distinct from the file
+ * extension because e.g. `.mdx` routes through the MDX → TSX bridge
+ * and emits `tsx`-class diagnostics under a `.mdx` path.
+ *
+ * Build-artifact gate: a file the build-artifact classifier already
+ * labels (jquery.min.js, app.a1b2c3d4.js, html5shiv.js, a
+ * tailwind-compiled stylesheet) frequently produces phantom parse
+ * errors — the TSX parser reading minified `r.length<b.length` as
+ * an unclosed `<r.length>` JSX element is the canonical case.
+ * Letting both lists carry the same path with contradictory reasons
+ * ("minified" vs "Unclosed JSX element <r.length>") is dishonest in
+ * the same way as a heuristic-mislabeled meta sub-field — the agent
+ * reads two contradictory verdicts on the same file and cannot tell
+ * which to trust. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest" + the
+ * "Cross-surface count invariant," a build-artifact file lands in
+ * `scannedBuildArtifacts` only; the parse-error reason is the
+ * less-informative half of the pair and gets suppressed. The file
+ * still rides in `filesScanned` and in
+ * `scannedBuildArtifacts.grouped` so neither count goes silent.
+ * Single-list invariant pinned by
+ * `tests/integration/mcp-counts-agree.test.ts` "parseErrorFiles ∩
+ * scannedBuildArtifacts is empty."
+ */
+function recordParseErrorEntry(file: ParsedFile, acc: CoverageAccumulator): void {
+  if (file.ast.errors.length === 0) return;
+  if (isBuildArtifact(file.filePath, file.source)) return;
+  const headError = file.ast.errors[0];
+  const triggerToken = headError?.triggerToken;
+  acc.parseErrorEntries.push({
+    path: file.filePath,
+    parser: file.ast.language,
+    reason: truncateParseErrorReason(headError?.message ?? ""),
+    ...(triggerToken === undefined ? {} : { triggerToken }),
+  });
+}
+
 function accumulateCoverageForFile(
   file: ParsedFile,
   wrapperSet: ReadonlySet<string>,
   acc: CoverageAccumulator,
   preset: ConfigPreset | undefined,
 ): void {
-  if (file.ast.errors.length > 0) {
-    // The first parse error drives the `reason` an agent sees when
-    // classifying the entry. Subsequent errors often cascade from it
-    // (one unclosed tag spawns a dozen "unexpected token" complaints),
-    // so the head message is both the most actionable and the least
-    // noisy signal. Message truncation keeps the wire size bounded on
-    // pathological cases (e.g. a recovered HTML parser echoing back a
-    // 10 KB line). The cap is generous — real parser messages are
-    // ≤120 chars; this only bites on hostile input. `parser` comes
-    // straight from the AST language tag so the agent sees which
-    // in-house parser owned the failure (`html`, `css`, `tsx`, `jsx`,
-    // `ts`, `js`) — distinct from the file extension because e.g.
-    // `.mdx` routes through the MDX → TSX bridge and emits `tsx`-class
-    // diagnostics under a `.mdx` path.
-    const headError = file.ast.errors[0];
-    const triggerToken = headError?.triggerToken;
-    acc.parseErrorEntries.push({
-      path: file.filePath,
-      parser: file.ast.language,
-      reason: truncateParseErrorReason(headError?.message ?? ""),
-      ...(triggerToken === undefined ? {} : { triggerToken }),
-    });
-  }
+  recordParseErrorEntry(file, acc);
   if (file.ast.language === "html") {
     accumulateHtmlCoverageForFile(file, acc);
     return;
