@@ -163,6 +163,7 @@ export const suggestFixTool: McpTool = {
       cwd: suggestFixCwd,
       filePath,
       matchUndefined: match === undefined,
+      ruleId,
     });
     const payload = buildSuggestFixPayload({
       ruleId,
@@ -181,6 +182,12 @@ export const suggestFixTool: McpTool = {
       ...(ctx.inheritedFromWrapper === null
         ? {}
         : { inheritedFromWrapper: ctx.inheritedFromWrapper }),
+      ...(ctx.templateDirectiveContext === null
+        ? {}
+        : { templateDirectiveContext: ctx.templateDirectiveContext }),
+      ...(ctx.markdownHeadingCollision === null
+        ? {}
+        : { markdownHeadingCollision: ctx.markdownHeadingCollision }),
       ...optionalSuggestFixFields(ctx.scanWarnings, ctx.vendorContext, disambiguationNote),
     });
     return textResult(payload as Record<string, unknown>);
