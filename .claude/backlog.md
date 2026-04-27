@@ -419,8 +419,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. 
 
 #### Q8b — accepted (P2 — finder fix-suggestion polish)
 
-- [ ] **Q8b-FIX-SUGGESTION-SENTENCE-SPLITTER-ELLIPSIS-BREAK** `suggest_fix` `approach` field is truncated mid-word on findings whose `explanation` contains the literal `"— e.g."` — sentence splitter breaks on the period inside the abbreviation. Single-character bug, observed across rules whose fix prose uses common abbreviations. Fix: sentence splitter must not break on `"e.g."`, `"i.e."`, `"vs."`, `"etc."` mid-clause; or use a length-based fallback rather than period-counting.
-
 #### Q8 confirmations — cross-corpus signal (2nd-pass)
 
 These existing Q8 items reproduced across multiple lenses/corpora in the 2nd-pass field test, signaling high priority for prompt closure (no new work — duplicate evidence, durable closure target):
