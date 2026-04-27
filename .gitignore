@@ -36,6 +36,7 @@ yarn-error.log*
 .claude/test-status.json
 .claude/env
 .claude/scheduled_tasks.lock
+.claude/turn-history.jsonl
 # Agent-isolation worktrees (real git worktrees under .git/worktrees/;
 # their checkouts sit here so dispatched agents can work in parallel
 # without disturbing the main tree). Main-tree tooling must not descend
