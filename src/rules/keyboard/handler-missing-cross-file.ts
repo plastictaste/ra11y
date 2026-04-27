@@ -1,6 +1,15 @@
 /**
  * Cross-file handler enrichment helpers for `keyboard/handler-missing`.
  *
+ * Satisfies (via host rule): wcag22:2.1.1, wcag21:2.1.1
+ * Spec: https://www.w3.org/TR/WCAG22/#keyboard
+ *
+ * This file holds detectors only; the host rule
+ * (`src/rules/keyboard/handler-missing.ts`) carries the `defineRule` call
+ * and the canonical `satisfies` array. The citations are echoed here so
+ * the SubagentStop guard's per-file scan recognizes the helper as part
+ * of the SC 2.1.1 surface area.
+ *
  * SC 2.1.1 evidence is bounded to one file at scan time — a click attach
  * or a missing handler may be answered by JS in a sibling script. The
  * rule still surfaces the finding (per "surface-don't-suppress"), but
