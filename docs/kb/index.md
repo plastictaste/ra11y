@@ -96,6 +96,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/conflicting-role](./rules/aria__conflicting-role.md)
 - [aria/dialog-role-missing](./rules/aria__dialog-role-missing.md)
 - [aria/disabled-link-surrogate](./rules/aria__disabled-link-surrogate.md)
+- [aria/dropdown-toggle-triple-aria-missing](./rules/aria__dropdown-toggle-triple-aria-missing.md)
 - [aria/expanded-on-disclosure](./rules/aria__expanded-on-disclosure.md)
 - [aria/hidden-focus](./rules/aria__hidden-focus.md)
 - [aria/icon-child-missing-aria-hidden](./rules/aria__icon-child-missing-aria-hidden.md)
