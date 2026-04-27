@@ -460,8 +460,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans this round: minified/build-
 
 #### Q8c — accepted (P0 — heuristic-emission / reason-severity disagreement)
 
-- [ ] **Q8c-NAVIGATION-HREF-VOID-FRAGMENT-TARGET-REASON-MISMATCH** `navigation/href-javascript-void` reason text reads "has no fragment target" on `<a href="#component-id" role="button" data-slide="prev">` — the href IS a non-empty fragment target; the rule may be tripping on `role="button"` short-circuiting the predicate. Reason text contradicts the input. Fix: the reason text must accurately reflect the matched predicate (empty fragment vs non-empty fragment-with-role-button vs `javascript:` scheme); audit the rule's branching to ensure each branch's reason names the actual evidence. Pairs with V1-RULE-NAVIGATION-HREF-VOID-RENAME (closed, predicate widening) — this is the post-rename reason-text honesty fix.
-
 #### Q8c — accepted (P0 — cross-surface drift)
 
 - [ ] **Q8c-FILESCANNED-OVERSTATES-RULE-REACH** `meta.filesScanned: 472` is the headline but per-rule `filesEvaluated` ranges from 6 (SVG-only rules) to 472 (focus-outline) — typical eligibility 327 (HTML-shape rules) with 145 files (SCSS + plain JS) evaluated by NO rule for that bucket. Headline overstates actual rule reach by ≥30% on multiple scans. Fix: surface `filesWithAnyRuleEvaluated: N` and `filesWithZeroRuleEvaluation: M` alongside `filesScanned`; agent can read in one pass how much of the input was a no-op. Pairs with V1-FILES-BY-EXTENSION-GROUND-TRUTH-UNDERCOUNT (open, denominator-honesty axis) — this is the rule-reach denominator companion.
