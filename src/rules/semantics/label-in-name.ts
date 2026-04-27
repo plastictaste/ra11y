@@ -99,7 +99,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     // breaks on `<` — a Liquid tag like `{% if foo < 5 %}` leaks raw
     // tokens into the HtmlText value. Both failure modes produce
     // false-positive violations that quote raw directives as "visible
-    // text" (Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING).
+    // text".
     const visibleText = collapseWhitespace(stripDirectives(visibleTextHtml(element)));
     const normalizedAria = collapseWhitespace(stripDirectives(ariaLabelRaw));
     if (visibleText.length === 0) continue;

@@ -59,7 +59,7 @@ export const rule = defineRule({
   fixClass: "verify-in-source",
   // Opt in: wrapper components declared as rendering `<button>` via the
   // object form of `nativeWrappers`, plus polymorphic `<Wrapper as="button">`
-  // / `<Slot asChild><button>…</button></Slot>` call sites (Q2R2-POLYMORPHIC).
+  // / `<Slot asChild><button>…</button></Slot>` call sites.
   // All three channels get the same icon-only / empty-button accessible-name
   // check as a bare `<button>`.
   wrapperTreatsAsElement: "button",
@@ -269,7 +269,7 @@ function checkJsxNativeButtons(
 ): void {
   // Three resolution channels: bare `<button>`, mapped wrappers
   // (`{ IconButton: "button" }`), and polymorphic `as="button"` /
-  // `asChild` → `<button>` (Q2R2-POLYMORPHIC). The accessible-name
+  // `asChild` → `<button>`. The accessible-name
   // rules apply uniformly — the call-site attrs/children on a wrapper
   // are what forward to the inner `<button>`.
   const seen = new Set<JsxElement>();
@@ -316,7 +316,7 @@ function buildJsxViolation(
       suggestion: `If the primitive is only consumed by callers that pass a label via props or children, this is fine — add \`{/* ra11y-disable semantics/button-name */}\` at the top of the file to silence this info note. Otherwise require callers to pass a name.`,
     };
   }
-  // V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT: when the button wraps a
+  // when the button wraps a
   // known FA glyph and `source` is plumbed through, ship the
   // `fixPaths.primary.edit` matching the prose so `suggest_fix`
   // returns `kind: "edit"` instead of `kind: "guidance"`.
@@ -344,7 +344,7 @@ function hasAccessibleNameJsx(element: JsxElement): boolean {
   // wrapper element doesn't hide the runtime-text signal. Flagging
   // `<button>{label}</button>` as "no name" would be a false positive.
   // (We deliberately do NOT short-circuit on bare JsxElement children:
-  // before V1-RULE-BUTTON-NAME-FA-ICON-ONLY-STATIC, any child element
+  // before, any child element
   // — including a presentational `<i class="fa-…">` icon — silenced
   // the rule. Now the only structural signals that count as "likely
   // has a name" are literal text, a JSX expression descendant, an
@@ -638,8 +638,8 @@ function buildIconAwareSuggestion(subject: string, icon: IconContext): string {
 }
 
 // ---------------------------------------------------------------------------
-// FA-icon mechanical edit (V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT,
-// V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY).
+// FA-icon mechanical edit (
+//).
 //
 // When the unnamed `<button>` / `role="button"` element wraps an
 // `<i class="(fa|fas|far|fab) fa-<glyph>">` whose glyph is in the

@@ -21,8 +21,8 @@
  *   - widths inside `@media (min-width: …)` queries are skipped, since
  *     the author is explicitly scoping the size to a breakpoint
  *
- * v0.0.x: scans standalone .css files. A Phase 5-polish theme
- * resolver will let us catch Tailwind `w-[600px]` arbitrary values.
+ * v0.0.x: scans standalone .css files. A theme resolver will later
+ * let us catch Tailwind `w-[600px]` arbitrary values.
  */
 
 import { defineRule } from "../../api/plugin.ts";

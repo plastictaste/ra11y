@@ -51,7 +51,7 @@ export interface StandardFilter {
    * other than level gating (no cited criteria belong to enabled
    * standards). Used by the per-rule-coverage builder to surface a
    * `skipReason: "gated_by_level"` row instead of letting the rule
-   * disappear from the response (Q7-AAA-RULE-LOADER-SILENT-NORUN).
+   * disappear from the response.
    */
   levelGateForInactiveRule(rule: Rule): LevelGateInfo | undefined;
 }
@@ -153,7 +153,6 @@ const LEVEL_RANK: Readonly<Record<ConformanceLevel, number>> = { A: 1, AA: 2, AA
  * Used by {@link StandardFilter.levelGateForInactiveRule} to decide
  * whether to surface a structured `skipReason: "gated_by_level"` row
  * for a rule the per-rule-coverage builder otherwise drops
- * (Q7-AAA-RULE-LOADER-SILENT-NORUN).
  */
 function lowestCitedLevel(
   rule: Rule,

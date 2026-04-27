@@ -44,7 +44,7 @@
  * a ratio; honestly surfaces the unknown (CLAUDE.md §1 "Surface, don't
  * suppress").
  *
- * Cross-selector cascade fallback (V1-CSS-CONTRAST-CASCADE-INHERITED):
+ * Cross-selector cascade fallback:
  * real-world CSS routinely declares one half of the contrast pair on
  * a document-default selector (`body { color: #fff }`) and the other
  * on a descendant (`.article { background: lightblue }`). Before this
@@ -87,10 +87,10 @@
  * and severity agree (see docs/kb/architecture/ai-first-consumer.md).
  *
  * v0.0.x coverage: in-file CSS rules (standalone .css and <style>
- * blocks). Custom properties resolve one level same-file (V1-CSS-
+ * blocks). Custom properties resolve one level same-file (-
  * CONTRAST-VAR-ROOT-RESOLUTION); inherited document defaults resolve
- * off plain `:root` / `html` / `body` selectors
- * (V1-CSS-CONTRAST-CASCADE-INHERITED). Does NOT implement full CSS
+ * off plain `:root` / `html` / `body` selectors.
+ * Does NOT implement full CSS
  * cascade resolution (specificity ordering, pseudo-class variants,
  * nested-descendant combinators, `@media`-scoped overrides) — those
  * remain follow-up items where the rule's `crossFileCapable: false`
@@ -168,7 +168,7 @@ export const rule = defineRule({
   // CSS routinely hosts that pair across files — a `tokens.css` with
   // `:root { --fg: #111 }` feeds `components.css`'s `color: var(--fg)`.
   // The pair extractor resolves `:root` custom properties same-file
-  // only (V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION) — a cross-file token
+  // only — a cross-file token
   // file keeps the consumer's `var(--fg)` unresolved, and a clean
   // tally on that substrate would silently read as "confidently
   // clean." Declaring `crossFileCapable: false` downgrades the row to

@@ -82,7 +82,7 @@ export type Emit = (v: {
    * `decline` to the declaration line so the agent reads both — the
    * structural anchor (`line`) for context and the offending token
    * (`decline`) for surgical fixes. Omitted when selector and
-   * declaration share a line. See Q7-MOTION-FINDING-SELECTOR-LINE.
+   * declaration share a line. See.
    */
   decline?: number;
   message: string;

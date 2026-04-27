@@ -14,9 +14,9 @@
  *   6. Return ScanResult + ReportData.
  *
  * v0.0.x: the scaffold is in place but the file-discovery and parser
- * wiring land in Phase 5. `scan()` currently runs against an explicit
- * list of already-parsed file inputs so we can unit-test the engine
- * end-to-end without needing the real parsers first.
+ * wiring will arrive in a follow-up. `scan()` currently runs against an
+ * explicit list of already-parsed file inputs so we can unit-test the
+ * engine end-to-end without needing the real parsers first.
  */
 
 import type { SuppressionDeclaration } from "../config/inline-disables.ts";
@@ -99,7 +99,8 @@ export interface ScanInputs {
    * object form of `Config.nativeWrappers`. Surfaces to rules that opt
    * in via {@link Rule.wrapperTreatsAsElement} through
    * `RuleContext.wrappersForElement`. Undefined or empty = rules see no
-   * additional wrappers, identical to pre-Q2-WRAPMAP-RULES behaviour.
+   * additional wrappers, identical to the engine's behaviour without
+   * a wrapper map.
    */
   readonly nativeWrapperElements?: Readonly<Record<string, string>>;
   /** Durable attestations from `.ra11y/attestations.jsonl`; merged with inline pragma-derived attestations before ledger construction. */
@@ -182,7 +183,7 @@ export function runScan(inputs: ScanInputs): ScanProducts {
   for (const v of runProjectRules(inputs, enabled, filter, tracker)) {
     allViolations.push(v);
   }
-  // Q2R2-INHERITED post-pass (ADR 0012): attribute definition-site findings
+  // Inherited-findings post-pass (ADR 0012): attribute definition-site findings
   // out to every wrapper call site across the parsed files.
   for (const v of synthesizeInheritedFindings({
     violations: allViolations,

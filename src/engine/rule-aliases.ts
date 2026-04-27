@@ -12,9 +12,9 @@
  *
  * Matches the shape every mainstream linter settled on (ESLint, Biome,
  * Stylelint, axe-core) — a tiny frozen table of `{ from, to,
- * deprecatedSince, removeIn }` records. The table grew with V1-RULE-
+ * deprecatedSince, removeIn }` records. The table grew with-
  * NAVIGATION-HREF-VOID-RENAME (the original umbrella rename) and then
- * Q7-NAVIGATION-HREF-RULE-RENAME (the umbrella split into two rules).
+ * (the umbrella split into two rules).
  *
  * The resolver is a pure function over its input + the frozen table.
  * Callers branch on the optional `deprecated` field to decide whether
@@ -55,7 +55,7 @@ export interface RuleAlias {
  * retires B so the alias table stays a one-hop map.
  */
 export const RULE_ALIASES: readonly RuleAlias[] = Object.freeze([
-  // Q7-NAVIGATION-HREF-RULE-RENAME: the umbrella `navigation/href-placeholder`
+  // the umbrella `navigation/href-placeholder`
   // rule (itself a rename from the older `navigation/href-javascript-void`)
   // covered three distinct placeholder shapes — `javascript:` schemes,
   // bare `#`, and empty `href=""` — under one ID. A pragma/config entry

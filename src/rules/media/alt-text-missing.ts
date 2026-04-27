@@ -66,7 +66,7 @@ export const rule = defineRule({
   satisfies: ["wcag22:1.1.1", "wcag21:1.1.1"],
   severity: "error",
   scope: "node",
-  // V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: alt-text is
+  // alt-text is
   // never a deterministic source transform — every surface (img, SVG
   // <image>, role="img", canvas) needs prose that describes what the
   // element communicates, which the static scanner cannot derive. Tagged
@@ -314,8 +314,8 @@ function checkJsx(module: TsxModule, wrappersForImg: ReadonlySet<string>, emit: 
  * Three resolution channels feed the img-accessible-name check:
  *   1. bare `<img>` — the native tag channel.
  *   2. `wrappersForImg` — PascalCase wrappers the user declared as
- *      rendering `<img>` via `nativeWrappers` (Q2-WRAPMAP-RULES).
- *   3. polymorphic `as="img"` / `asChild` → `<img>` (Q2R2-POLYMORPHIC) —
+ * rendering `<img>` via `nativeWrappers`.
+ * 3. polymorphic `as="img"` / `asChild` → `<img>` —
  *      surfaced by `findJsxElementsForTag` once per matching element.
  * `findJsxElementsForTag` unifies all three; the wrapper's own attrs
  * are the call-site attrs that get forwarded to the inner `<img>`, so

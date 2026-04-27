@@ -3,7 +3,6 @@
  * (and any future rule that wants to derive an aria-label candidate from
  * an icon-font class). One source of truth for the derivation so the
  * fix prose and the mechanical edit cannot drift apart — closes
- * V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY.
  *
  * The map is a suggestion surface, not a spec: the consuming agent
  * verifies the derived label against the button's actual action in one
@@ -39,7 +38,7 @@ export const FA_GLYPH_LABELS: Readonly<Record<string, string>> = {
   "fa-magnifying-glass": "Search",
   "fa-bell": "Notifications",
   "fa-user": "Account",
-  // V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT: extended after the field
+  // extended after the field
   // report cited two icon-only `<button>` patterns whose glyphs were
   // common in shipping projects but absent from the map (simple-timer
   // `fa-play`, password-generator `fa-clipboard`). Without these

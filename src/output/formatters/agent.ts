@@ -39,7 +39,7 @@ export const agentFormatter = defineFormatter({
     // severity. The honest per-axis counters are `notes` (info-
     // severity, single kind) and `fixesByClass` (per-remediation-
     // lane structured tally for error+warning). Per
-    // Q7-PLAN-VIOLATIONS-COMPOSITE the flat `violations` top-level
+    // the flat `violations` top-level
     // integer was deleted because it summed across the four
     // `fixesByClass` lanes under one number — same shape as the
     // earlier `totalFindings` and `safeEditsAvailable` precedents.

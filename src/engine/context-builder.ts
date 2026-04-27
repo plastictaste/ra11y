@@ -49,7 +49,7 @@ export type CrossFileCandidateMarker = () => void;
  * tag (`"a"`, `"img"`, `"input"`) — when set, the resulting context's
  * `wrappersForElement` carries the wrapper component names whose
  * `nativeWrapperElements` mapping targets that tag. When unset, the set
- * is always empty and the rule sees identical behaviour to pre-Q2-WRAPMAP-RULES.
+ * is always empty and the rule sees identical behaviour to pre-.
  *
  * `markCrossFileCandidate`, when supplied by the rule runner, lets a
  * rule signal "I observed a cross-file-resolution-candidate token on

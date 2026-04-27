@@ -21,7 +21,7 @@ export type Category = "auto-fix" | "review" | "manual";
  * By default derived from severity — `error` → `high`, `warning` →
  * `medium`, `info` → `low`. When the underlying Violation carries
  * `confidence: "inherited"` (synthesized from a wrapper-definition
- * finding per Q2R2-INHERITED / ADR 0012), the forwarder surfaces
+ * finding per / ADR 0012), the forwarder surfaces
  * `"inherited"` verbatim so agents can branch/sort/route on it. Per
  * CLAUDE.md §1 "Don't downgrade priority to hide things," `"inherited"`
  * is not a suppression axis — every inherited finding is surfaced.
@@ -41,7 +41,7 @@ export type Confidence = "high" | "medium" | "low" | "inherited";
  * on the wire: in MCP scan-family responses (scan, scan_file,
  * scan_project, scan_diff) `description` is stripped when the rule has
  * ≥2 findings carrying descriptions in a response — the prose hoists
- * into top-level `referenceGuide.fixDescriptions` (V1-SIZE-RESPONSE-
+ * into top-level `referenceGuide.fixDescriptions` (-
  * BUDGET-DENSITY option b) and the finding's `fix` object gains a
  * nested `descriptionRef: { hash }` pointer in place of the inline
  * `description`. Never emit BOTH the pointer and the inline
@@ -49,7 +49,7 @@ export type Confidence = "high" | "medium" | "low" | "inherited";
  * CLI `--format agent` output and tools that don't hoist (apply_fix,
  * baseline), `description` stays inline.
  *
- * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT:
+ *:
  * `descriptionRef` lives INSIDE `fix` — never as a sibling on
  * {@link AgentFinding}. The agent reads prose at one path
  * (`finding.fix.description ?? lookup(finding.fix.descriptionRef.hash)`)
@@ -64,7 +64,7 @@ export type Confidence = "high" | "medium" | "low" | "inherited";
  * was redundant.
  *
  * `safety` used to live here as a constant `"safe"` on every emitted fix,
- * regardless of `fixClass`. Dropped per V1-FIX-SAFETY-CONSTANT-FIELD — a
+ * regardless of `fixClass`. Dropped per — a
  * field that never varies conveys no signal, and claiming "safe" on a
  * runtime-only or guidance fix is arguably wrong (static analysis cannot
  * prove safety without runtime context). The parent finding's `fixClass`
@@ -82,7 +82,7 @@ export interface AgentFix {
    * top-level scan response. Present-when-meaningful: emitted only when
    * the prose that would otherwise live at `fix.description` was
    * hoisted out of this finding because the rule had ≥2 findings
-   * carrying descriptions in the response (V1-SIZE-RESPONSE-BUDGET-
+   * carrying descriptions in the response (-
    * DENSITY option b). Mutually exclusive with `description` on the
    * same fix — the response shape never carries both at once.
    *
@@ -92,7 +92,7 @@ export interface AgentFix {
    * Tools that don't hoist (apply_fix, baseline, CLI `--format agent`)
    * never emit this field; their responses carry descriptions inline.
    *
-   * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the ref
+   * the ref
    * lives INSIDE `fix` (never as a sibling on the finding). Shipping
    * it at two locations forced agents pivoting between `scan_file`
    * (inline) and `scan_project` (hoisted) to read different join
@@ -168,7 +168,7 @@ export interface AgentFinding {
    * when-meaningful: omitted when selector and declaration share a line
    * (`.x { animation: spin 1s infinite }`) or when the rule is not
    * selector-scoped, per CLAUDE.md §1 "Ambiguous field shapes are
-   * dishonest." See Q7-MOTION-FINDING-SELECTOR-LINE.
+   * dishonest." See.
    */
   readonly decline?: number;
   readonly message: string;
@@ -176,7 +176,7 @@ export interface AgentFinding {
    * The flagged source text, when the rule produced one. Present-when-
    * meaningful: omitted entirely when the violation had no snippet.
    *
-   * V1-SHAPE-SNIPPET-EMPTY: previously `{ before: [], highlighted, after: [] }`
+   * previously `{ before: [], highlighted, after: [] }`
    * where `before` and `after` had zero writers anywhere in src/. The
    * empty-array sentinel was indistinguishable from "snippet builder
    * failed" — canonical ambiguous-field-shape anti-pattern per
@@ -196,7 +196,7 @@ export interface AgentFinding {
    * the lifted cohort and instead surfaces the pointer on
    * {@link AgentFile#groupFixDescriptionRefs} keyed by `groupKey`.
    *
-   * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+   * the
    * single-finding ref previously rode as a sibling field
    * (`fixDescriptionRef`) on this interface. Moved inside `fix` so the
    * agent reads prose at one path regardless of which surface
@@ -223,7 +223,7 @@ export interface AgentFinding {
   /**
    * Present on findings synthesized from another location — canonically,
    * inherited findings at wrapper call sites whose root cause lives at
-   * a wrapper DEFINITION (Q2R2-INHERITED / ADR 0012). The agent should
+   * a wrapper DEFINITION (/ ADR 0012). The agent should
    * edit `sourceOfFinding`, not the call-site location. Omitted on
    * primary findings per CLAUDE.md §1 "Ambiguous field shapes are
    * dishonest."
@@ -281,7 +281,7 @@ export interface AgentFile {
   readonly path: string;
   readonly findings: readonly AgentFinding[];
   /**
-   * Q4-SCAN-FILE-PARSE-ERROR-LIMITATIONS-FIELD: per-file scan-
+   * per-file scan-
    * degradation telemetry. When the parser emitted errors on this
    * file, the surrounding findings ran on a degraded AST (recovered
    * slice) or didn't see the file at all. Without this signal on the
@@ -306,7 +306,7 @@ export interface AgentFile {
    *
    * The per-finding `fix.descriptionRef` already collapses N identical
    * prose descriptions into a single `referenceGuide.fixDescriptions`
-   * entry, but V1-REF-DEDUPE still re-inlined the pointer (`{ hash }`)
+   * entry, but still re-inlined the pointer (`{ hash }`)
    * on every finding. On the 50projects50days `verify-account-ui`
    * sample, six adjacent `forms/labels-required` findings shared one
    * `groupKey` and one `hash` — the same 12-hex-char pointer rode the
@@ -454,7 +454,7 @@ export interface FixesByClass {
  * many fixes an agent can apply," but measured different slices
  * (payload-availability vs. rule-demanded lane) and disagreed by up to
  * 18× on real field-report responses. The same disagreement-with-itself
- * pattern (Q7-PLAN-VIOLATIONS-COMPOSITE) drove the deletion of the
+ * pattern drove the deletion of the
  * top-level `violations` counter.
  */
 export interface AgentPlan {

@@ -187,7 +187,7 @@ function emitFinding(
   // came from a document-default selector (`:root` / `html` / `body`),
   // and the AAA rule honors the same honest surfacing: finding still
   // fires, `couldBeWrongBecause` names the cross-selector inference
-  // per V1-CSS-CONTRAST-CASCADE-INHERITED.
+  // per.
   const reasons: string[] = [];
   if (finding.cascadeSource) reasons.push(CASCADE_INHERITED_CONTEXT);
   if (tailwindOverride) reasons.push(TAILWIND_CLASS_ON_CONSUMER);

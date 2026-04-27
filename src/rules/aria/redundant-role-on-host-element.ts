@@ -297,7 +297,7 @@ function buildViolation(
   suggestion: string;
   fixPaths: FixPaths;
 } {
-  // Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: emit `fixPaths.primary.edit`
+  // emit `fixPaths.primary.edit`
   // so `suggest_fix` returns `kind: "edit"` with a concrete
   // oldText/newText pair. The edit is deterministic — we have the
   // attribute's byte range, the target value is empty, and removal is

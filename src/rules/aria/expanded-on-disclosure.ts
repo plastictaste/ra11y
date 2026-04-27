@@ -314,7 +314,7 @@ export const rule = defineRule({
   satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
   severity: "error",
   scope: "node",
-  // V1-SUGGEST-FIX-MECHANICAL-LANE-EMIT-EDIT: re-tagged `mechanical` →
+  // re-tagged `mechanical` →
   // `verify-in-source`. Neither finding lane is a deterministic single
   // attribute insertion the scanner can ship as `fixPaths.primary.edit`:
   //

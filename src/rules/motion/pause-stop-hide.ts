@@ -364,7 +364,7 @@ function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: Posit
     const mixedNote = anyPartHasUserInteractionPseudoClass(cssRule.selector)
       ? " (selector list mixes interaction-gated and always-on parts — the non-gated parts animate without user input)"
       : "";
-    // Q7-MOTION-FINDING-SELECTOR-LINE: report the rule's selector start
+    // report the rule's selector start
     // line as `line` — the structural anchor — and surface the
     // declaration line as the `decline` sibling when the two differ.
     // The agent landing on the selector immediately sees what the rule

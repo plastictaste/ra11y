@@ -6,7 +6,7 @@
  * `aria-hidden="true"`, an `aria-label`, or an adjacent sr-only
  * sibling that would carry the meaning to assistive tech.
  *
- * Real-world failure mode (V1-ICON-FONT-HIDDEN-NONINTERACTIVE-ANCESTOR):
+ * Real-world failure mode:
  *
  *   <h3>Double click on the image to <i class="fas fa-heart"></i> it</h3>
  *

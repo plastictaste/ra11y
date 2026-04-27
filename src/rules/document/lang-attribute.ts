@@ -24,7 +24,7 @@ export const rule = defineRule({
   satisfies: ["wcag22:3.1.1", "wcag21:3.1.1"],
   severity: "error",
   scope: "document",
-  // V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: the language code
+  // the language code
   // is rarely deterministic — the static scanner cannot identify the
   // primary language of an HTML document from the source alone unless
   // the author already wrote the answer somewhere on the page (a

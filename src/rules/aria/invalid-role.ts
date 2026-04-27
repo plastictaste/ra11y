@@ -260,7 +260,7 @@ function getRoleAttributeJsx(element: JsxElement): JsxAttribute | null {
  * Deterministic mechanical edit: replace the misspelled role token
  * with the nearest valid role when one exists within 2 edits.
  *
- * Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: the rule has enough evidence
+ * the rule has enough evidence
  * to rewrite the attribute value — `nearest` is computed from a fixed
  * dictionary and carries ≤2 edits of distance, which is exactly the
  * "typo substitution" the doctrine names as mechanical (see
@@ -320,7 +320,7 @@ function buildViolation(
 } {
   const firstBad = invalid[0] ?? roleValue;
   const nearest = nearestValidRole(firstBad);
-  // Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: the deterministic edit (when
+  // the deterministic edit (when
   // available) is the primary path so `suggest_fix` returns `kind:
   // "edit"`. The secondary "remove the role" path stays as an
   // alternative so the agent sees it without a second round-trip.

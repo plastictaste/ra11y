@@ -38,7 +38,7 @@
  * the four chevron/guillemet glyphs (« » ‹ ›) used in pagination
  * widgets. This rule covers the same shape *plus* every other one- or
  * two-character symbol/punctuation accessible name (×, +, →, ★, ♥, ▶,
- * etc.) regardless of pagination context — Q4-RULE-PAGINATION-GLYPH-NAME
+ * etc.) regardless of pagination context
  * (closed) is the narrow finder; this is the broader rule.
  *
  * Distinct from `navigation/link-descriptive-text`:

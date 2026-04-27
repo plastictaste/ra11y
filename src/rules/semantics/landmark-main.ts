@@ -70,7 +70,7 @@ export const rule = defineRule({
     const doc = ctx.ast as HtmlDocument;
     const bodies = findHtmlElementsByTag(doc, "body");
 
-    // Fragment-file gate (Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION).
+    // Fragment-file gate.
     // Component-fragment files without root <html>/<body>/<head>,
     // content-fragment files with `---` front-matter, and partials under
     // `_includes/`, `_layouts/`, `_partials/`, `partials/`, `components/`
@@ -84,7 +84,7 @@ export const rule = defineRule({
     // evidence (root-tag absence, front-matter delimiter, fragment-path
     // segment) — not a heuristic guess about composition. Pairs with the
     // matching gate on `semantics/heading-hierarchy`
-    // (Q7-FRAGMENT-FILE-HEADING-HIERARCHY); the shared `isFragmentFile`
+    //; the shared `isFragmentFile`
     // helper in `src/engine/layout-partial.ts` is the single source of
     // truth for both rules.
     const fragment = isFragmentFile(doc, ctx.source, ctx.filePath);
@@ -176,7 +176,7 @@ function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
  *
  * Both branches inject a per-file body-shape descriptor (see
  * {@link describeBodyShape}) so the message text varies by file: the
- * 18-fire-identical-sentence shape (Q7-LANDMARK-MAIN-REASON-IDENTICAL)
+ * 18-fire-identical-sentence shape
  * collapsed dismissal/triage signal — every fire on a single scan
  * produced the same prose. Encoding the body's direct-child tally and
  * the sibling-landmark presence into the message gives the agent
@@ -434,7 +434,7 @@ const SIBLING_LANDMARK_TAGS: readonly string[] = ["header", "nav", "footer", "as
 /**
  * Builds a per-file body-shape descriptor that fills in the
  * dismissal/triage signal a fixed boilerplate sentence cannot — the
- * 18-fire-identical-message shape (Q7-LANDMARK-MAIN-REASON-IDENTICAL)
+ * 18-fire-identical-message shape
  * left every fire on a single scan reading the same prose, so the agent
  * had to re-read each cited file to triage. The descriptor encodes:
  *
@@ -526,7 +526,7 @@ function formatTagTally(counts: ReadonlyMap<string, number>): string {
 }
 
 // `looksLikeFullPage` lives in `src/engine/layout-partial.ts` so that
-// `semantics/heading-hierarchy` can share it (per Q3-HEADING-HIERARCHY-
+// `semantics/heading-hierarchy` can share it (per-
 // MISSING-H1-VARIANT) — the predicate is the conceptual opposite of
 // `looksLikePartialFile`, and keeping both in the same module gives one
 // canonical answer to "is this file a page or a fragment?"

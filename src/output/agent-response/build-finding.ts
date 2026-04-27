@@ -10,7 +10,7 @@
  * `description` — no empty-string sentinels. Per CLAUDE.md §1 "Ambiguous
  * field shapes are dishonest."
  *
- * Cross-tool contract — `oldText` widening (V1-FIX-OLDTEXT-AMBIGUITY-LABEL-
+ * Cross-tool contract — `oldText` widening (-
  * ADJACENT). When the caller provides the file's `source`, `oldText` /
  * `newText` are widened to a unique anchor window via `widenToUniqueAnchor`
  * — the same helper `suggest_fix` runs on its `primary.edit`. This unifies
@@ -26,7 +26,7 @@
  * of `fixClass` — a field that never varies conveys no signal, and claiming
  * "safe" on a runtime-only or guidance fix is arguably wrong (static analysis
  * cannot prove safety without runtime context). Dropped per
- * V1-FIX-SAFETY-CONSTANT-FIELD — `fixClass` already distinguishes the
+ * `fixClass` already distinguishes the
  * remediation lane; a sibling constant is noise.
  */
 
@@ -44,7 +44,7 @@ export function severityToConfidence(severity: string): Confidence {
 /**
  * Resolves the agent-facing confidence for a Violation. Honours an
  * explicit `v.confidence` when present (canonically `"inherited"` on
- * synthesized wrapper-call-site findings — Q2R2-INHERITED), otherwise
+ * synthesized wrapper-call-site findings), otherwise
  * falls back to the severity-derived mapping.
  */
 function resolveConfidence(v: Violation): Confidence {
@@ -60,7 +60,7 @@ function buildFix(v: Violation, source: string | undefined): AgentFix | undefine
     // Deterministic rewrite — emit both text fields so an agent can apply verbatim.
     const edit = v.fixPaths.primary.edit;
     if (edit !== undefined) {
-      // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: widen the bare
+      // widen the bare
       // rule-emitted edit to a unique-in-file anchor window when the
       // caller threaded the file's source through. The same
       // `widenToUniqueAnchor` helper `suggest_fix` runs on its
@@ -181,7 +181,7 @@ export interface BuildAgentFindingOptions {
    */
   readonly suppressPlacement?: "inline" | "omit";
   /**
-   * V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: the file's source text. When
+   * the file's source text. When
    * provided AND the violation carries a mechanical edit
    * (`fixPaths.primary.edit`), `oldText` / `newText` are widened to a
    * unique-in-file anchor window via `widenToUniqueAnchor` — the same
@@ -251,7 +251,7 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     ...(v.vendorOccurrences !== undefined && v.vendorOccurrences.length > 0
       ? { vendorOccurrences: v.vendorOccurrences.map((o) => ({ path: o.path, line: o.line })) }
       : {}),
-    // In-file rule-emitted sibling rollup (Q7-DUPLICATE-INPUT-SIBLING-
+    // In-file rule-emitted sibling rollup (-
     // COLLAPSE). Conditional spread keeps `siblingInstances: []` /
     // `undefined` off the wire per CLAUDE.md §1 "Ambiguous field shapes
     // are dishonest."
@@ -276,7 +276,7 @@ function mapSiblingInstancesToAgent(
  * stays under the cognitive-complexity ceiling. `decline` is the
  * declaration-line sibling for selector-scoped CSS findings — present
  * only when the rule's selector start (`location.line`) differs from
- * the offending declaration line, per Q7-MOTION-FINDING-SELECTOR-LINE.
+ * the offending declaration line, per.
  * Conditional spread keeps `decline: undefined` off the wire per
  * CLAUDE.md §1 "Ambiguous field shapes are dishonest."
  */

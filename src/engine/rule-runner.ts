@@ -236,7 +236,7 @@ function stampViolation(
     severity: emitted.severity,
     location: { ...emitted.location, filePath },
     // Selector/declaration line split for selector-scoped CSS findings
-    // (Q7-MOTION-FINDING-SELECTOR-LINE). `location.line` carries the
+    //. `location.line` carries the
     // structural anchor (the CSS rule's selector start); `decline` carries
     // the offending declaration's line within that rule. Conditional
     // spread keeps `decline: undefined` off the wire per CLAUDE.md §1
@@ -283,7 +283,7 @@ function stampViolation(
     // `siblingInstances` is populated only by rules that detected ≥3
     // visually-grouped sibling emissions sharing one parent + a stable
     // `(tagName, type, attributes-modulo-id)` fingerprint and collapsed
-    // them into one canonical finding (Q7-DUPLICATE-INPUT-SIBLING-
+    // them into one canonical finding (-
     // COLLAPSE). The conditional spread keeps `siblingInstances: []` /
     // `undefined` off the wire (CLAUDE.md §1 "Ambiguous field shapes
     // are dishonest"). The rule is the only emitter — it has the

@@ -1,5 +1,5 @@
 /**
- * Synthesizer for inherited findings (Q2R2-INHERITED).
+ * Synthesizer for inherited findings.
  *
  * When a finding fires at a wrapper DEFINITION file — declared via
  * `LoadedConfig.nativeWrapperElements` — every call site of that wrapper

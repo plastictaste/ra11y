@@ -14,10 +14,10 @@
  *
  * See docs/adr/0011-evidence-as-first-class-primitive.md.
  *
- * Phase 1 ships the full shape but only `static` and `candidate`
- * sources have producers. `attested` / `runtime` / `sampled` slots
- * exist so later phases add producers without changing the public
- * type.
+ * The current implementation ships the full shape but only `static`
+ * and `candidate` sources have producers. `attested` / `runtime` /
+ * `sampled` slots exist so later work adds producers without changing
+ * the public type.
  */
 
 import type { ReviewConfidence } from "./review.ts";
@@ -33,9 +33,10 @@ import type { Location } from "./violation.ts";
  *   Later phases promote `runtime.outcome === "fail"` and
  *   `sampled.verdict === "fail"` to this bucket too.
  * - `"pass"` — the criterion is automatable (not `"manual"`) and
- *   carries no `"fail"`-yielding source. Phase 1 bases this on the
- *   absence of `static` sources alone; later phases may additionally
- *   require positive runtime/attested evidence before promoting.
+ *   carries no `"fail"`-yielding source. The current implementation
+ *   bases this on the absence of `static` sources alone; later iterations
+ *   may additionally require positive runtime/attested evidence before
+ *   promoting.
  * - `"partial"` — the criterion has at least one `attested: "pass"`
  *   source but the union of attested `ruleIds` does not cover every
  *   rule that satisfies this criterion. Some slice was verified;
@@ -46,7 +47,7 @@ import type { Location } from "./violation.ts";
  *   to inspect, they don't assert anything.
  * - `"n/a"` — the criterion does not apply (e.g., media-only criteria
  *   in a text-only app, declared via an attestation). Reserved for
- *   Phase 2+; no Phase 1 producer emits this.
+ *   future producers; no current producer emits this.
  */
 export type EvidenceStatus = "pass" | "fail" | "partial" | "unknown" | "n/a";
 
@@ -55,14 +56,14 @@ export type EvidenceStatus = "pass" | "fail" | "partial" | "unknown" | "n/a";
  * {@link EvidenceSource.kind} so consumers narrow via the discriminant
  * rather than optional-field archaeology.
  *
- * Phase 1 producers:
+ * Current producers:
  *   - `static` — one per violation, for each criterion in
  *     {@link Violation.criteria} (equivalence fan-out is already
  *     applied upstream by the standard filter).
  *   - `candidate` — one per review candidate, keyed by
  *     `candidate.criterionId`.
  *
- * Phase 2+ producers have no implementation yet but their shapes are
+ * Future producers have no implementation yet but their shapes are
  * locked in so future code never has to migrate the discriminant.
  *
  * A note on runtime evidence: there is deliberately no `"runtime"`

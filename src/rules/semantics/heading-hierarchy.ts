@@ -107,7 +107,7 @@ export const rule = defineRule({
   },
   afterFile(ctx) {
     if (ctx.language !== "html") return;
-    // Markdown-residue enrichment (V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT).
+    // Markdown-residue enrichment.
     // `.md` / `.markdown` / `.mkdn` files route through `parseMarkdown`,
     // which strips ATX (`# …`) and Setext headings before the residue
     // reaches `parseHtml` — see `src/input/parsers/markdown.ts` §"Passes"
@@ -133,7 +133,7 @@ export const rule = defineRule({
     const doc = ctx.ast as HtmlDocument;
     const headings = collectHeadings(doc);
 
-    // Fragment-file gate (Q7-FRAGMENT-FILE-HEADING-HIERARCHY).
+    // Fragment-file gate.
     // Component-fragment files without root <html>/<body>/<head>,
     // content-fragment files with `---` front-matter, and partials under
     // `_includes/`, `_layouts/`, `_partials/`, `partials/`, `components/`
@@ -146,13 +146,13 @@ export const rule = defineRule({
     // honest because fragment classification is structural evidence
     // (root-tag absence, front-matter delimiter, fragment-path
     // segment) — not a heuristic guess about composition. Pairs with
-    // Q7-RULE-LANDMARK-MAIN-FRAGMENT-SCOPE which extends the same gate
+    // which extends the same gate
     // to the landmark-main rule. The shared helper lives in
     // `src/engine/layout-partial.ts` so both rules consume the same
     // "is this file a fragment?" predicate.
     const fragment = isFragmentFile(doc, ctx.source, ctx.filePath);
 
-    // Partial / layout enrichment (Q4-HEADING-HIERARCHY-PARTIAL-ENRICH-REASON).
+    // Partial / layout enrichment.
     // For files that are NOT fragments but still look like partials (a
     // full-document layout opener with composition directives, a file
     // outside the conventional partial-path tree whose top-of-file is
@@ -165,7 +165,7 @@ export const rule = defineRule({
     // suppresses outright).
     const partialShape = looksLikePartialFile(ctx.filePath, ctx.source);
 
-    // Variant: missing-h1-on-full-page (Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT).
+    // Variant: missing-h1-on-full-page.
     // Bootstrap visual-test pages, 50projects50days demos, and similar
     // hand-authored hobby pages routinely ship with full-page DOCTYPE +
     // <html> + <body> shape but zero <h1> — the level-skip check above

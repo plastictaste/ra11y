@@ -17,7 +17,7 @@
  * `scan_project` again with `additionalPaths: ["dist/assets"]`.
  *
  * Companion case (ADR 0026,
- * Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT): a rule whose
+ *): a rule whose
  * *spec* spans cross-file wiring but whose *implementation* is
  * bounded to the current file (canonical: `keyboard/handler-missing`
  * can't see a click listener wired from a sibling `.js`; `navigation/
@@ -51,7 +51,7 @@ const MIN_FILES_FOR_HIGH_CONFIDENCE = 1;
  * Per-rule reason codes emitted when a `crossFileCapable: false` rule
  * is downgraded from `"high"` to `"medium"` coverage because its
  * evidence horizon is bounded to the current file (ADR 0026, follow-up
- * Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-FILE-BLINDSPOT).
+ *).
  *
  * Each entry is a stable snake_case identifier (`cross_file_<kind>_
  * resolution_limited_on_this_input`) naming the specific cross-file
@@ -83,7 +83,7 @@ const CROSS_FILE_BOUND_REASONS: Readonly<Record<string, string>> = {
   // file CSS substrate is bounded. Named explicitly so the agent's
   // next-read triage routes to "check for a tokens.css the consumer
   // stylesheet `var(--fg)`s against" rather than a generic "ran but
-  // bounded" message (V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION).
+  // bounded" message.
   "contrast/minimum": "cross_file_custom_property_resolution_limited_on_this_input",
 };
 
@@ -96,7 +96,7 @@ const CROSS_FILE_BOUND_REASON_FALLBACK = "cross_file_evidence_bounded_on_this_in
  * with 3 findings, all on one file, tells the agent nothing it can't
  * see from the underlying `files[].findings` listing. Surface-don't-
  * suppress: the findings themselves are always present; this gates
- * only the additive hint (V1-NOISE-RULE-PER-FILE-ROLLUP).
+ * only the additive hint.
  */
 const RULE_CONCENTRATION_MIN_TOTAL = 10;
 
@@ -108,7 +108,6 @@ const RULE_CONCENTRATION_MIN_TOTAL = 10;
  * deliberately honest about what the hint names: "one file is where
  * the idiom lives" is only true when the file holds a clear majority
  * of the rule's findings, not just a plurality
- * (V1-NOISE-RULE-PER-FILE-ROLLUP).
  */
 const RULE_CONCENTRATION_MIN_SHARE = 0.5;
 
@@ -170,8 +169,8 @@ const CLASS_PATTERN_RULES: ReadonlySet<string> = new Set(["aria/icon-font-hidden
  * gated rules get counts from the tracker; project-scoped rules (their
  * only lifecycle is `afterProject`, so per-file tracking doesn't apply)
  * get an entry synthesized from the scan-wide file count so every
- * evaluated rule is visible to the consumer
- * (V1-META-RULES-EVALUATED-COVERAGE-DRIFT). Invariant: every rule in
+ * evaluated rule is visible to the consumer.
+ * Invariant: every rule in
  * the "was evaluated" set — the same set that drives `rulesEvaluated`
  * — gets exactly one row. An agent reading `perRuleCoverage.length`
  * must get the same count as `rulesEvaluated`, so "didn't run" vs.
@@ -185,12 +184,12 @@ const CLASS_PATTERN_RULES: ReadonlySet<string> = new Set(["aria/icon-font-hidden
  * entries. `findingsEmitted` is computed from `violations` (a single
  * pass tally per rule ID) and ALWAYS populated — including zero, which
  * is the load-bearing "rule ran and found nothing" signal that pairs
- * with `coverageConfidence` (V1-SHAPE-RULECOV-COUNT). Pre-filter
+ * with `coverageConfidence`. Pre-filter
  * violations are the right input here: per-rule coverage describes
  * what the engine itself observed, not the post-severity / post-skip
  * view a particular consumer sees.
  *
- * `concentration` (V1-NOISE-RULE-PER-FILE-ROLLUP) is computed in the
+ * `concentration` is computed in the
  * same linear pass over violations. It is stamped on the row only when
  * both thresholds clear ({@link RULE_CONCENTRATION_MIN_TOTAL} and
  * {@link RULE_CONCENTRATION_MIN_SHARE}); otherwise omitted via
@@ -213,7 +212,7 @@ export function buildPerRuleCoverage(
   const sortedRules = [...rules].sort((a, b) => a.id.localeCompare(b.id));
   for (const rule of sortedRules) {
     if (!filter.isRuleActive(rule)) {
-      // Surface, don't suppress (Q7-AAA-RULE-LOADER-SILENT-NORUN). A
+      // Surface, don't suppress. A
       // rule pre-filtered by the active conformance level would
       // otherwise vanish from the response — the agent reading
       // `perRuleCoverage` cannot then distinguish "the rule isn't
@@ -271,7 +270,7 @@ export function buildPerRuleCoverage(
     // `filesScanned === 0`, the entry honestly surfaces "no files
     // scanned" rather than going silently absent, because "scan never
     // ran against the project" is the exact signal the consumer
-    // needs (V1-META-RULES-EVALUATED-COVERAGE-DRIFT).
+    // needs.
     out.push(
       buildProjectScopedEntry(
         rule.id,
@@ -289,8 +288,8 @@ export function buildPerRuleCoverage(
 /**
  * One linear pass over the post-scan violation stream tallying per-rule
  * counts. Cheaper than re-walking `files[].findings[]` at the consumer,
- * and lets the response-assembly layer drop the derivation entirely
- * (V1-SHAPE-RULECOV-COUNT). `internal/rule-crash` records still tally
+ * and lets the response-assembly layer drop the derivation entirely.
+ * `internal/rule-crash` records still tally
  * under their synthetic ruleId — they don't surface in
  * {@link buildPerRuleCoverage}'s output (no extension gate), so the
  * count is harmless and the helper stays general.
@@ -308,7 +307,7 @@ function countFindingsByRule(violations: readonly Violation[]): ReadonlyMap<stri
  * output is deterministic even when two files share the peak. Used
  * only for the optional `concentration` hint — the map is built
  * regardless of thresholds; {@link computeConcentration} decides
- * whether to stamp the row (V1-NOISE-RULE-PER-FILE-ROLLUP).
+ * whether to stamp the row.
  */
 function densestFileByRule(
   violations: readonly Violation[],
@@ -362,7 +361,6 @@ function pickDensest(
  * either threshold fails, so the caller spreads conditionally and the
  * field is absent (not `null`, not an empty object) per CLAUDE.md §1
  * "Ambiguous field shapes are dishonest"
- * (V1-NOISE-RULE-PER-FILE-ROLLUP).
  *
  * Thresholds:
  *   - total findings > {@link RULE_CONCENTRATION_MIN_TOTAL} (strict)
@@ -389,10 +387,9 @@ function computeConcentration(
  * High-confidence entries omit both reason and remediation — the
  * fields are present-when-meaningful (CLAUDE.md §1 "Ambiguous field
  * shapes are dishonest"). `findingsEmitted` is always populated
- * (including zero) per V1-SHAPE-RULECOV-COUNT. `concentration` is
+ * (including zero) per. `concentration` is
  * spread conditionally on every branch — omitted (never `null`, never
  * empty-object) when thresholds don't clear
- * (V1-NOISE-RULE-PER-FILE-ROLLUP).
  */
 function buildExtensionGatedEntry(
   ruleId: string,
@@ -492,7 +489,7 @@ function buildExtensionGatedEntry(
  * the entry honestly reads as low-confidence ("no files scanned") —
  * the same silent-miss failure mode {@link buildExtensionGatedEntry}
  * guards against at the per-rule level, now also closed for
- * project-scoped rules (V1-META-RULES-EVALUATED-COVERAGE-DRIFT). The
+ * project-scoped rules. The
  * concentration hint still applies when a project-scoped rule's
  * findings cluster on one file, so it spreads in on both branches.
  */
@@ -569,7 +566,7 @@ function buildProjectScopedEntry(
  * `filesEligible: 0`, and `coverageConfidence: "low"`; the orthogonal
  * `skipReason: "gated_by_level"` discriminator (plus
  * `requiredLevel` / `requestedLevel`) tells the agent exactly what
- * unlocks the rule (Q7-AAA-RULE-LOADER-SILENT-NORUN). The `reason`
+ * unlocks the rule. The `reason`
  * field carries human prose for parity with low-confidence rows.
  *
  * `coverageConfidence: "low"` is the honest classifier here — the
@@ -916,7 +913,7 @@ const MATERIAL_EXACT_PATTERN_TOKENS: ReadonlySet<string> = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// Boilerplate-collapse partition (Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE)
+// Boilerplate-collapse partition
 // ---------------------------------------------------------------------------
 
 /**
@@ -936,7 +933,7 @@ const MATERIAL_EXACT_PATTERN_TOKENS: ReadonlySet<string> = new Set([
  * collapsed counter preserves the actionable signal (which extensions
  * the scan failed to see) without the per-rule repetition. Level-gated
  * rows (`skipReason: "gated_by_level"` from
- * Q7-AAA-RULE-LOADER-SILENT-NORUN) are NEVER folded in — they are an
+ *) are NEVER folded in — they are an
  * orthogonal axis the agent can act on directly (re-run with
  * `level: 'AAA'`), and collapsing them would hide the exact remediation
  * a per-rule row carries.
@@ -971,7 +968,7 @@ export interface PerRuleCoveragePartition {
  *   - `retained`: rows the MCP `meta.perRuleCoverage` surface keeps
  *     verbatim — every row with at least one eligible file (`filesEligible
  *     > 0`), every level-gated row (`skipReason: "gated_by_level"`,
- *     surfaced for Q7-AAA-RULE-LOADER-SILENT-NORUN), every
+ * surfaced for), every
  *     project-scoped row (no `appliesTo.fileExtensions` — the
  *     `filesScanned === 0` zero-file case carries `"no files were
  *     scanned"` remediation that names a different gap than "wrong input

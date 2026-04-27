@@ -1,5 +1,5 @@
 /**
- * Sibling-collapse helpers for `forms/labels-required` (Q7-DUPLICATE-
+ * Sibling-collapse helpers for `forms/labels-required` (-
  * INPUT-SIBLING-COLLAPSE).
  *
  * When ≥3 direct-child labelable controls under one parent share the
@@ -347,7 +347,7 @@ function jsxSiblingFingerprint(el: JsxElement): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Message for the canonical sibling-rollup finding (Q7-DUPLICATE-INPUT-
+ * Message for the canonical sibling-rollup finding (-
  * SIBLING-COLLAPSE). Names the cluster shape and the rollup count so an
  * agent reading the message alone knows it is one finding standing in
  * for N siblings — and knows to read `siblingInstances` for the per-

@@ -175,7 +175,6 @@ function checkJsxInput(input: JsxElement, source: string, emit: Emit): void {
  * conditional comments, attributes with embedded `>` via entities)
  * fall through to `null` and the rule ships guidance — never an edit
  * the find-and-replace could silently apply to the wrong site. See
- * Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE.
  */
 function buildAutocompleteInsertEditHtml(
   input: HtmlElement,
@@ -436,7 +435,7 @@ function matchNameHeuristic(
  * users"`) all split cleanly. The standalone `q` branch catches the
  * canonical `<input name="q">` search shape without matching every
  * identifier that happens to contain the letter q — per the
- * Q5-POINTER-GESTURES-SUBSTRING-FALSE-POSITIVE doctrine on
+ * doctrine on
  * word-boundary identifier matching.
  */
 function isSearchInput(
@@ -495,7 +494,7 @@ function buildViolation(
   suggestion: string;
   fixPaths: FixPaths;
 } {
-  // Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: emit `fixPaths.primary.edit`
+  // emit `fixPaths.primary.edit`
   // whenever the open-tag regex resolved cleanly so `suggest_fix`
   // returns `kind: "edit"` with a concrete oldText/newText pair. The
   // expected autocomplete token is fully resolved at this point (see

@@ -71,7 +71,7 @@ function buildSummary(
 ): string {
   if (total === 0) return "No accessibility violations found.";
 
-  // Per Q7-PLAN-VIOLATIONS-COMPOSITE the prose drops the leading
+  // Per the prose drops the leading
   // composite "N findings" headline that summed across the four
   // `fixClass` lanes. The honest shape is the per-lane breakdown
   // emitted directly: "31 mechanical, 6 verify-in-source. Most
@@ -310,7 +310,7 @@ export function buildAgentPlan(
   );
 
   // `violations` (the flat error+warning count) was dropped per
-  // Q7-PLAN-VIOLATIONS-COMPOSITE — it summed across the four
+  // it summed across the four
   // `fixesByClass` lanes under a single headline, the dishonest-
   // composite pattern. Callers that want the flat count sum the
   // per-lane tally themselves.

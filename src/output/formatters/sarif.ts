@@ -73,7 +73,7 @@ interface SarifResult {
   /**
    * SARIF spec "relatedLocations" — each entry is a secondary location
    * carrying a `role` property. We use role `"origin"` on inherited
-   * findings (Q2R2-INHERITED / ADR 0012) to point at the wrapper
+   * findings (/ ADR 0012) to point at the wrapper
    * definition the finding was synthesized from. Omitted on primary
    * findings.
    */
@@ -218,7 +218,7 @@ function violationToSarifResult(violation: Violation): SarifResult {
     // properties object would be indistinguishable from "emitted
     // codes" vs "rule stayed silent." See ADR 0009 + ADR 0012.
     ...buildSarifProperties(violation),
-    // Inherited findings (Q2R2-INHERITED) carry a pointer back to the
+    // Inherited findings carry a pointer back to the
     // wrapper-definition location that originated the finding. SARIF
     // `relatedLocations` with `properties.role = "origin"` is the
     // canonical way to express "the real site lives here." See ADR

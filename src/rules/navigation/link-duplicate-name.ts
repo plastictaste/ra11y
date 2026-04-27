@@ -179,7 +179,7 @@ function buildJsxAnchorScopes(module: TsxModule): Map<JsxElement, string> {
  * `findingId` hash so this helper's "duplicate-name" findings don't
  * collide with the parent rule's "generic-phrase" / "icon-only" emits
  * when both fire on the same anchor. See
- * Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE. */
+ *. */
 type DupEmit = (v: {
   severity: "error" | "warning" | "info";
   location: { filePath: string; line: number; column: number };
@@ -200,7 +200,7 @@ export function normalizeAccessibleName(text: string): string {
  * `title`, or `href` would otherwise (a) group everything-expanding-
  * to-Liquid under one key and (b) echo raw directive text back at the
  * agent as "the duplicate name". Both are false positives the
- * Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING audit calls out.
+ * audit calls out.
  */
 function stripDirectives(text: string): string {
   return stripTemplateDirectives(text).value;
@@ -288,7 +288,7 @@ function emitBucket(
       // "generic-phrase" / "icon-only" emits at the same `(file,
       // line)` — the two concerns can legitimately co-fire on one
       // anchor (the link text is generic AND the destinations differ).
-      // Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE.
+      //.
       variantKey: "duplicate-name",
     });
   }

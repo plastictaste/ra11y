@@ -3,9 +3,9 @@
  *
  * Consumes the scanner's outputs (violations + review candidates) plus
  * the enabled-standards set and returns a per-criterion evidence
- * aggregate. The ledger is the substrate for Phase 2 attestations,
- * Phase 3 runtime ingest + sampling verdicts, and the eventual
- * conformance-statement emitter.
+ * aggregate. The ledger is the substrate for attestations, runtime
+ * ingest + sampling verdicts, and the eventual conformance-statement
+ * emitter.
  *
  * See docs/adr/0011-evidence-as-first-class-primitive.md.
  *
@@ -211,8 +211,7 @@ function compareAttestedSources(a: EvidenceSource, b: EvidenceSource): number {
 }
 
 /**
- * Phase 2 status derivation with ADR-0013 coverage check. Strict
- * precedence:
+ * Status derivation with ADR-0013 coverage check. Strict precedence:
  *
  *   1. Any `static` source OR any attested `"fail"` → `"fail"`. Static
  *      findings are in-tree evidence; they win over any claim to the

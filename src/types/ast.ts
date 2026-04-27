@@ -6,7 +6,7 @@
  * `RuleContext.language` first.
  *
  * These types are intentionally minimal in v0.0.x. They grow with the
- * parsers (Phase 5). Any change here is a potentially breaking ADR.
+ * parsers. Any change here is a potentially breaking ADR.
  *
  * See docs/kb/architecture/input-parsers.md.
  */
@@ -131,7 +131,7 @@ export interface CssComment extends BaseNode {
 }
 
 // ---------------------------------------------------------------------------
-// TSX/JSX AST — minimal surface for v0.0.x. Real parser in Phase 5.
+// TSX/JSX AST — minimal surface for v0.0.x. Real parser arrives later.
 // ---------------------------------------------------------------------------
 
 export interface TsxModule extends BaseNode {

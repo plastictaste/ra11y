@@ -69,7 +69,7 @@
  *   - The element has visible text content (textContent.trim().length > 0).
  *     Empty elements are decorative / background-only — a different
  *     shape of check and out of scope here (see backlog item
- *     Q3-TEXT-SUCCESS-CANDIDATE-IGNORES-TEXTCONTENT).
+ *).
  *   - None of the pass conditions above match.
  *
  * Out of scope (deliberate):

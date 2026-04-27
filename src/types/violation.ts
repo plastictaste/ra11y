@@ -117,7 +117,7 @@ export interface Violation {
    * carries the line of the offending declaration token within that
    * rule.
    *
-   * Canonical case (Q7-MOTION-FINDING-SELECTOR-LINE): an icon-spinner
+   * Canonical case: an icon-spinner
    * selector opens at line 80; an unprefixed `animation:` declaration
    * sits at line 84. Without the split, the finding cited line 84 and
    * the agent reading the file saw the declaration but had to scroll up
@@ -152,7 +152,7 @@ export interface Violation {
    *     Most rules leave this field unset; forwarders treat "unset" as
    *     "inherit from severity" (the agent-response layer does this).
    *   - `"inherited"` — this finding was synthesized from a finding at
-   *     a wrapper DEFINITION (Q2R2-INHERITED). The real site that
+   * a wrapper DEFINITION. The real site that
    *     needs fixing is `sourceOfFinding`; this location is a call site
    *     surfaced so the agent sees the downstream impact. Agents MAY
    *     branch on `"inherited"` to group, sort, or route, but per
@@ -165,7 +165,7 @@ export interface Violation {
   readonly confidence?: "high" | "medium" | "low" | "inherited";
   /**
    * When this finding was synthesized from another location (e.g.
-   * inherited from a wrapper definition, per Q2R2-INHERITED), points
+   * inherited from a wrapper definition, per), points
    * at the source of truth — the location the agent should fix.
    * Absent on primary findings. Present-when-meaningful; forwarders
    * use a conditional spread so `sourceOfFinding: undefined` never
@@ -186,7 +186,6 @@ export interface Violation {
    * line, ruleId)` matching. Survives line-number drift inside the
    * file when unrelated code is inserted above the violation, and
    * survives edits to ANY line other than the violation's own
-   * (V1-FINDING-ID-STABILITY).
    *
    * Computed as `sha256(ruleId, relativeFilePath, normalizedLineText,
    * variantKey?)` truncated to 12 hex chars. See
@@ -223,7 +222,7 @@ export interface Violation {
    * attribute order, trivial whitespace, unique id/class tokens, and
    * template/SSG interpolation placeholders.
    *
-   * Motivation (Q6-PATTERN-FINGERPRINT-CROSS-TEMPLATE): website-template
+   * Motivation: website-template
    * catalogs copy-paste the same Bootstrap navbar snippet across 174
    * sibling template directories. `findingId` differs by file, and
    * `groupKey` differs when attribute VALUES differ (e.g.
@@ -295,7 +294,7 @@ export interface Violation {
    * identified as identical copies of the same (ruleId, `patternId` or
    * canonicalized message) across sibling files sharing a basename.
    *
-   * Canonical acute case (Q6-CONTRAST-VENDOR-CSS-CROSS-FILE-DEDUPE):
+   * Canonical acute case:
    * website-template catalogs ship one `bootstrap.css` / `animate.css`
    * per template directory, so `contrast/minimum` emits the same
    * `(selector, ratio, colors)` finding 100+ times across sibling copies
@@ -334,7 +333,7 @@ export interface Violation {
    * is intra-file, intra-parent, and stamped by the rule at emit time
    * because only the rule has the parent-DOM context.
    *
-   * Canonical acute case (Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE): a
+   * Canonical acute case: a
    * one-time-code (OTP) cluster — six `<input class="otp" type="number"
    * maxlength="1">` siblings sharing one parent, each missing a label.
    * Without the rollup, `forms/labels-required` emitted six findings
@@ -373,8 +372,8 @@ export interface Violation {
  * `.css`, and a Tailwind project pre-build has 0 eligible CSS sources
  * — a clean tally means nothing.
  *
- * Invariant (V1-META-RULES-EVALUATED-COVERAGE-DRIFT,
- * Q7-AAA-RULE-LOADER-SILENT-NORUN): every rule the scanner loaded
+ * Invariant (
+ *): every rule the scanner loaded
  * (post-config-filter `activeRules`) gets exactly one entry — that's
  * the same set `meta.rulesEvaluated.loaded` counts, so
  * `perRuleCoverage.length === meta.rulesEvaluated.loaded` by
@@ -400,7 +399,7 @@ export interface Violation {
  *     "rule ran and found nothing" signal that pairs with
  *     `coverageConfidence` to distinguish "confidently clean" from
  *     "clean but didn't exercise the pattern." Schema-required: never
- *     omit, never `null` (V1-SHAPE-RULECOV-COUNT).
+ * omit, never `null`.
  *   - `coverageConfidence` — three-valued discriminator:
  *       - `"low"` when `filesEligible === 0` or the rule ran on fewer
  *         than `MIN_FILES_FOR_HIGH_CONFIDENCE` files. Carries the
@@ -415,7 +414,7 @@ export interface Violation {
  *         bounded. Carries a structured `reason` naming the bound
  *         (e.g. `"cross_file_listener_resolution_limited_on_this_input"`).
  *         Introduced by ADR 0026; not yet emitted by any producer —
- *         the downstream audit (Q5-COVERAGE-CONFIDENCE-HONESTY-CROSS-
+ * the downstream audit (-
  *         FILE-BLINDSPOT) wires the downgrade.
  *       - `"high"` otherwise — the rule ran on eligible inputs and the
  *         substrate was not known to bound its evidence horizon.
@@ -433,7 +432,7 @@ export interface Violation {
  *     remains in `files[].findings`; the field points the agent at the
  *     file where the idiom likely lives so a single read can triage
  *     many candidates. Omitted entirely when the rule doesn't clear
- *     both thresholds (V1-NOISE-RULE-PER-FILE-ROLLUP).
+ * both thresholds.
  *
  * Produced by the scanner as a sibling field on
  * {@link import("../engine/scanner.ts").ScanProducts} — not on
@@ -503,7 +502,7 @@ export interface PerRuleCoverage {
    *   - `"scss-unresolved-variables"` — at least one `.scss` file
    *     matching the rule's extension gate carried `$variable: …`
    *     declarations whose substitution pass produced zero literal-color
-   *     usages downstream (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT). The
+   * usages downstream. The
    *     file parsed cleanly; the SCSS preprocessor cannot statically
    *     resolve mixin bodies / `@function` / cross-file `@use` /
    *     interpolation — so a token-only theme partial like
@@ -544,7 +543,7 @@ export interface PerRuleCoverage {
    * field, a rule whose only eligible files all failed to parse would
    * surface as `findingsEmitted: 0, coverageConfidence: "high"` — the
    * agent reads "ran clean" when the truth is "rules never saw the
-   * file" (V1-PERRULE-COVERAGE-HONESTY-ON-PARSE-ERRORS).
+   * file".
    */
   readonly coverageConfidenceReason?:
     | "file-parse-error"
@@ -560,7 +559,7 @@ export interface PerRuleCoverage {
    * evaluation. Without this field, level-gated rules silently disappear
    * from `perRuleCoverage` and the agent reading "the AAA-only rule isn't
    * here" cannot tell "the rule wasn't loaded" from "the rule was loaded
-   * but the active level filtered it out" — the canonical Q7-AAA-RULE-
+   * but the active level filtered it out" — the canonical-
    * LOADER-SILENT-NORUN failure mode.
    *
    * Values:
@@ -604,7 +603,7 @@ export interface PerRuleCoverage {
    * top of the per-rule row so agents can read the idiom's home once
    * instead of N times. Omitted (conditional spread) when the rule
    * doesn't clear both thresholds, per CLAUDE.md §1 "Ambiguous field
-   * shapes are dishonest" (V1-NOISE-RULE-PER-FILE-ROLLUP).
+   * shapes are dishonest".
    *
    * The optional `kind: "vendor"` annotation is stamped by the MCP
    * response-assembly layer when the densest file is classified as a
@@ -616,7 +615,6 @@ export interface PerRuleCoverage {
    * didn't plumb vendor classification (e.g. `scan_file` on an
    * explicit path). Vendor awareness is additive signal only — no
    * findings are filtered or downgraded by the tag
-   * (Q6-MOTION-PAUSE-STOP-PER-FILE-AGGREGATION).
    */
   readonly concentration?: {
     readonly file: string;

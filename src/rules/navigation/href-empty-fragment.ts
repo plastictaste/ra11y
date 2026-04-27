@@ -20,7 +20,7 @@
  *
  * Companion rule `navigation/href-javascript-scheme` covers the `javascript:`
  * scheme variants. Splitting these surfaces means an agent suppressing one
- * shape doesn't silently suppress the other — see Q7-NAVIGATION-HREF-RULE-RENAME
+ * shape doesn't silently suppress the other — see
  * for the granularity rationale.
  *
  * Distinct from `navigation/link-no-href` (which targets `<a onClick>` without

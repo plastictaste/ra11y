@@ -10,7 +10,7 @@
  * rule files short and ensures any extraction bug gets fixed in
  * one place.
  *
- * `:root` custom-property resolution (V1-CSS-CONTRAST-VAR-ROOT-
+ * `:root` custom-property resolution (-
  * RESOLUTION): design-system CSS routinely declares tokens on `:root`
  * (`:root { --fg: #111; --bg: #fff }`) and consumes them via `var()`
  * (`.card { color: var(--fg); background: var(--bg) }`). The pair
@@ -83,7 +83,6 @@ export interface ContrastFinding {
    * (the scanner cannot prove `.btn` is actually rendered inside
    * `<body>` — the idiom is dominant, but the evidence is heuristic).
    * Omitted on same-rule pairs where both halves are declared locally
-   * (V1-CSS-CONTRAST-CASCADE-INHERITED).
    */
   readonly cascadeSource?: {
     readonly side: "foreground" | "background";
@@ -158,8 +157,8 @@ interface ColorPair {
 
 /**
  * Document-default color declarations walked off `:root` / `html` /
- * `body` selectors, fueling the cross-selector cascade fallback
- * (V1-CSS-CONTRAST-CASCADE-INHERITED). When a child rule declares one
+ * `body` selectors, fueling the cross-selector cascade fallback.
+ * When a child rule declares one
  * half of the contrast pair (e.g. `article { color: #999 }`) and the
  * other half lives on a document-default selector
  * (`body { background: #fff }`), the pair extractor walks up and
@@ -263,7 +262,7 @@ function extractColorPair(
   if (fgDecl && bgDecl) {
     return buildSameRulePair(fgDecl.value, bgDecl.value, rootVars);
   }
-  // Cross-selector cascade fallback (V1-CSS-CONTRAST-CASCADE-INHERITED):
+  // Cross-selector cascade fallback:
   // one half lives on the rule, the other on a document-default selector
   // elsewhere in the file. Skip for ancestor-default selectors themselves
   // (they ARE the source, no cascading into themselves), and keep the
@@ -412,7 +411,7 @@ function isBold(value: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// `:root` custom-property resolution (V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION)
+// `:root` custom-property resolution
 // ---------------------------------------------------------------------------
 
 /**
@@ -501,7 +500,7 @@ function resolveVarReference(token: string, rootVars: ReadonlyMap<string, string
 }
 
 // ---------------------------------------------------------------------------
-// Cross-selector cascade fallback (V1-CSS-CONTRAST-CASCADE-INHERITED)
+// Cross-selector cascade fallback
 // ---------------------------------------------------------------------------
 
 /**

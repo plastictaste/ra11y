@@ -326,7 +326,6 @@ export interface ProjectContext {
  * name across distinct hrefs" finding on the same anchor: without a
  * variant key the two collapse to the same `findingId` and the agent's
  * suppress + dedup flows silently merge them
- * (Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE).
  * Rules that only emit one kind of finding per site leave the field
  * unset.
  */

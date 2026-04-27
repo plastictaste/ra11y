@@ -406,7 +406,7 @@ function hasCompositionDirective(source: string): boolean {
 //      "no heading AND no landmark" condition guarantees branches
 //      A-D don't fire for a different reason. A body with ONLY a
 //      `<script>` (vanilla JS demo whose DOM is generated at runtime)
-//      is a different shape — covered by V1-EMPTY-ROOT-DIV-SCRIPT-
+// is a different shape — covered by-
 //      ONLY-WARNING and explicitly NOT by this branch (the visible-
 //      descendant tally excludes script + style nodes).
 //
@@ -426,7 +426,7 @@ function hasCompositionDirective(source: string): boolean {
 //
 // Shared between `semantics/landmark-main` (used to gate "missing
 // `<main>`" emits) and `semantics/heading-hierarchy` (used to gate the
-// "missing `<h1>` on a full page" variant per Q3-HEADING-HIERARCHY-
+// "missing `<h1>` on a full page" variant per-
 // MISSING-H1-VARIANT). Conceptual opposite of {@link looksLikeContentPartialPath}
 // + {@link hasLeadingTemplateDirective}: those mark a file as a
 // fragment composed by a parent layout; this one marks a file as a
@@ -461,7 +461,6 @@ interface BodyShape {
    * Used by branch E (`looksLikeFullPage`) to gate the empty-shell
    * detection so a body holding only a `<script>` does not cross the
    * threshold; that script-only shape is a distinct case tracked by
-   * V1-EMPTY-ROOT-DIV-SCRIPT-ONLY-WARNING.
    */
   readonly visibleDescendantCount: number;
 }
@@ -499,7 +498,7 @@ function tallySignals(tag: string, signals: ContentSignals): void {
  * so branch E (empty-structural-shell) doesn't flag a body whose only
  * children are `<script>` / `<style>` / `<noscript>` / `<template>`.
  * The script-only body shape is a different case tracked by
- * V1-EMPTY-ROOT-DIV-SCRIPT-ONLY-WARNING; keeping it out of branch E
+ *; keeping it out of branch E
  * ensures the two cases route separately.
  */
 const NON_VISIBLE_TAGS: ReadonlySet<string> = new Set(["script", "style", "noscript", "template"]);
@@ -572,7 +571,7 @@ export function looksLikeFullPage(body: HtmlElement, doc: HtmlDocument): boolean
   // a page with the wrong heading level. The visible-descendant
   // threshold (≥3, where visible excludes script/style/noscript/
   // template) keeps the branch from firing on tiny fragments and
-  // explicitly routes the script-only body shape through V1-EMPTY-
+  // explicitly routes the script-only body shape through-
   // ROOT-DIV-SCRIPT-ONLY-WARNING instead of through here.
   if (!(shape.hasExplicitLandmark || shape.hasHeading) && shape.visibleDescendantCount >= 3) {
     return true;

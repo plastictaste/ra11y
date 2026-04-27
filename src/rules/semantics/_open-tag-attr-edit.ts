@@ -9,8 +9,8 @@
  * private copies for now (each pre-dates the shared extraction); a
  * future cleanup pass can migrate them onto this helper. The shared
  * extraction here is necessary because `semantics/button-name.ts`
- * crossed the 500-LOC budget when V1-BUTTON-NAME-ICON-FONT-MECHANICAL-
- * EDIT inlined the scanner locally; V1-FA-GLYPH-ARIA-LABEL-DERIVATION-
+ * crossed the 500-LOC budget when-
+ * EDIT inlined the scanner locally
  * UNIFY (the dispatching item) is the consistency-axis that pulls it
  * out into a sibling module so the button-name file drops back under
  * the budget.

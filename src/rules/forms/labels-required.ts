@@ -357,7 +357,7 @@ function checkJsxInputs(
 
 // `<select>` and `<textarea>` keep native-only iteration —
 // `wrapperTreatsAsElement` carries a single target tag, so polymorphic
-// opt-in is scoped to `"input"` per Q2R2-POLYMORPHIC. Rule scope for
+// opt-in is scoped to `"input"` per. Rule scope for
 // those tags is unchanged.
 function checkJsxSelectsAndTextareas(
   module: TsxModule,
@@ -509,7 +509,7 @@ function collectJsxImplicitlyLabeledControls(
       // Polymorphic `<Field as="input" />` nested inside a <label> — the
       // resolved tag is the labeled control even though the call-site tag
       // isn't. Keeps implicit labeling consistent with the rule's
-      // polymorphic opt-in (Q2R2-POLYMORPHIC).
+      // polymorphic opt-in.
       const resolved = resolvePolymorphicTag(descendant);
       if (
         (resolved.resolvedFromAs || resolved.resolvedFromAsChild) &&
@@ -643,7 +643,7 @@ function inferLabelFromType(type: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Placeholder enrichment (Q6-PLACEHOLDER-IN-FIX-SUGGESTION)
+// Placeholder enrichment
 // ---------------------------------------------------------------------------
 
 /**

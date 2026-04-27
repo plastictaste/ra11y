@@ -34,7 +34,7 @@ export const jsonFormatter = defineFormatter({
           severity: v.severity,
           location: v.location,
           // Selector/declaration line split for selector-scoped CSS
-          // findings (Q7-MOTION-FINDING-SELECTOR-LINE). `location.line`
+          // findings. `location.line`
           // is the structural anchor (selector start); `decline` is the
           // sibling pointer at the offending declaration line. Omitted
           // when selector and declaration share a line, per CLAUDE.md
@@ -44,7 +44,7 @@ export const jsonFormatter = defineFormatter({
           ...(v.suggestion !== undefined && { suggestion: v.suggestion }),
           ...(v.snippet !== undefined && { snippet: v.snippet }),
           // Scanner-level confidence — canonically `"inherited"` on
-          // Q2R2-INHERITED findings synthesized from a wrapper
+          // findings synthesized from a wrapper
           // definition. Omit when unset so primary findings don't
           // carry a misleading default string.
           ...(v.confidence !== undefined && { confidence: v.confidence }),
@@ -60,7 +60,7 @@ export const jsonFormatter = defineFormatter({
           ...(v.couldBeWrongBecause && v.couldBeWrongBecause.length > 0
             ? { couldBeWrongBecause: [...v.couldBeWrongBecause] }
             : {}),
-          // In-file rule-emitted sibling rollup (Q7-DUPLICATE-INPUT-
+          // In-file rule-emitted sibling rollup (-
           // SIBLING-COLLAPSE). One canonical finding standing in for N
           // visually-grouped sibling controls; the list enumerates
           // every sibling's `(line, id?)` so JSON consumers can

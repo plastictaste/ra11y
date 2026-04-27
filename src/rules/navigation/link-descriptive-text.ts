@@ -252,7 +252,7 @@ type Emit = (v: {
    * 4.1.2 icon-only / SC 2.4.4 + 2.4.9 duplicate-name). Without a
    * variant key the co-fires collide on `findingId` and the agent's
    * suppress + dedup flows silently merge them. See
-   * Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE and the `variantKey`
+   * and the `variantKey`
    * field doc on `EmittedViolation`.
    */
   variantKey?: string;

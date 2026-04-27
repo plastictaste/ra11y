@@ -22,7 +22,7 @@
  * Companion rule `navigation/href-empty-fragment` covers the placeholder-href
  * shapes that don't use the `javascript:` scheme (`href="#"`, `href=""`,
  * whitespace-only). Splitting these surfaces means an agent suppressing one
- * shape doesn't silently suppress the other — see Q7-NAVIGATION-HREF-RULE-RENAME
+ * shape doesn't silently suppress the other — see
  * for the granularity rationale.
  */
 

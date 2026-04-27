@@ -60,7 +60,7 @@ export const rule = defineRule({
     // name heuristic: a document <title> is inside <head>.
     const docTitles = titles.filter((t) => isInsideHead(doc, t));
 
-    // Fragment-shape detection (Q4-PARTIAL-PAGE-TITLED). SSG head-
+    // Fragment-shape detection. SSG head-
     // partials (Jekyll `_includes/head.html`, Hugo `partials/head.html`,
     // Eleventy / Astro equivalents) open `<html>` + `<head>` but leave
     // `<body>` to the parent layout, and often inject `<title>` via a
@@ -75,7 +75,7 @@ export const rule = defineRule({
     // See docs/adr/0009-violation-could-be-wrong-because.md.
     const fragmentShape = findHtmlElementsByTag(doc, "body").length === 0;
 
-    // Q7-OPAQUE-COMPONENT-HEAD-DELEGATION. Layouts in component
+    //. Layouts in component
     // frameworks (Next.js `<Head>`, react-helmet `<Helmet>`, Gatsby
     // `<DocumentHead>`, custom `<Title>`/`<Meta>` wrappers) inject the
     // document <title> at render time. The literal JSX tag is in the
@@ -127,7 +127,7 @@ export const rule = defineRule({
         }
         continue;
       }
-      // Template-interpolated title (Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP):
+      // Template-interpolated title:
       // `<title>{{ page.title }}</title>` — the parser stripped the
       // directive span so `htmlTextContent` returns "", but the static
       // scanner has no way to know whether the rendered value will be
@@ -213,8 +213,8 @@ const MESSAGE_TEMPLATE_INTERPOLATED =
   "<title> is template-interpolated — verify the rendered output carries a non-empty title.";
 
 /**
- * Emit for the template-interpolated-title branch
- * (Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP). Downgraded to `warning`
+ * Emit for the template-interpolated-title branch.
+ * Downgraded to `warning`
  * because the static scanner can't see whether the rendered value will
  * be empty — the existing empty-title error would be a confident false
  * positive on `<title>{{ page.title }}</title>`. Per docs/kb/
