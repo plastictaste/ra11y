@@ -49,7 +49,6 @@ export const assertions: FixtureAssertions = {
     "shape mirrors an SCSS `@function` body with a long type signature; the harness " +
     "exercises it via the supported `.css` extension.",
   origin: {
-    feedbackRound: "V1-BUILD-ARTIFACT-REGRESSION-AUDIT-MINIFIED",
     notes:
       "Sanitized from design-system token modules / SCSS partials where a single rule " +
       "composes many CSS custom properties via calc(). The authored shape uses `.css` " +

@@ -54,7 +54,6 @@ export const assertions: FixtureAssertions = {
     "cleanly — no 'Stray closing tag at top level' on </body></html> and " +
     "no 'Unclosed <p>' / 'Unclosed <li>' cascades.",
   origin: {
-    feedbackRound: "Q8-HTML-PARSER-STRAY-CLOSING-TAG-PARTIAL-PARSE",
     notes:
       "Field-report: 208 HTML files reported as partialParseFiles with " +
       "reason 'Stray closing tag at top level' — including browser-renderable " +

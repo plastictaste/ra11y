@@ -25,7 +25,6 @@ export const assertions: FixtureAssertions = {
     "triggers contrast/minimum, and inline border on a <button> below 3:1 " +
     "triggers contrast/non-text — catching the static-site-template silent-miss.",
   origin: {
-    feedbackRound: "Q-SHARED-INLINE-STYLE-CONTRAST",
     notes:
       "Pattern sanitized from a static-site-template codebase where a paragraph " +
       "carried `style='background-color:#cccccc'` with dark inherited text — the " +

@@ -46,7 +46,6 @@ export const assertions: FixtureAssertions = {
     "using the `background:` CSS shorthand and 3-digit hex value shapes — " +
     "regression lock complementing the long-form yellow-on-white fixture.",
   origin: {
-    feedbackRound: "Q7-RULE-INLINE-STYLE-CONTRAST-WIDEN",
     notes:
       "Re-reported field signal traced to the canonical stale-MCP-subprocess " +
       "fault (recurring 2026-04-22+ pattern); the Q-SHARED-INLINE-STYLE-CONTRAST " +

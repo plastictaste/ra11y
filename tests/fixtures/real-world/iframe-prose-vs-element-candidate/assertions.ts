@@ -49,7 +49,6 @@ export const assertions: FixtureAssertions = {
     "<video> element nodes produce candidates; text-node '<iframe>' " +
     "occurrences in <code> blocks are not evidence for 1.2.x criteria.",
   origin: {
-    feedbackRound: "Q7-CHECKLIST-IFRAME-FINDER-ELEMENT-VS-PROSE",
     notes:
       "Documentation pages that explain iframe embedding contain multiple " +
       "code-block occurrences of the '<iframe>' string. A naive regex " +

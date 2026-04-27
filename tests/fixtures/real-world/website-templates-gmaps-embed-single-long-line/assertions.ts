@@ -47,7 +47,6 @@ export const assertions: FixtureAssertions = {
     "receive a `scannedBuildArtifacts` label. The single-long-line probe requires " +
     "second-tier corroboration; without it, the authored page stays unlabeled.",
   origin: {
-    feedbackRound: "Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE",
     notes:
       "Sanitized from the website-templates field scan pattern: contact / location " +
       'pages each embed a Google Maps iframe (`src="https://www.google.com/maps/embed/v1/' +

@@ -65,7 +65,6 @@ export const assertions: FixtureAssertions = {
     "of echoing the generic 'Stray closing tag at top level' wording — the partial " +
     "AST (including the recovered <main>) is still available to rules.",
   origin: {
-    feedbackRound: "Q4-LIQUID-ROOT-LAYOUT-PARSE-RECOVERY",
     notes:
       "Every `jekyll new` site inherits a `_layouts/default.html` with a trailing " +
       "bare `</html>` whose opener lives in `_includes/top.html`. Before this fix " +

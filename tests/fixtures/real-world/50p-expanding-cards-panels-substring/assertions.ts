@@ -39,7 +39,6 @@ export const assertions: FixtureAssertions = {
     "name-pattern branch — the substring `pan` inside `panels` is insufficient " +
     "evidence without a companion signal.",
   origin: {
-    feedbackRound: "Q5-POINTER-GESTURES-SUBSTRING-FALSE-POSITIVE",
     notes:
       "Sanitized from 50projects50days/01-expanding-cards/script.js. Identifier names " +
       "and DOM selectors preserved; the file has no `touchstart`/`touchmove`/`pointermove` " +

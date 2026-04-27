@@ -50,7 +50,6 @@ export const assertions: FixtureAssertions = {
     "visible text (label-in-name, list-structure, link-descriptive-text, page-titled) " +
     "operate on the rendered-text shape, not the template source shape.",
   origin: {
-    feedbackRound: "Q4-LIQUID-TEXT-LITERAL",
     notes:
       "Jekyll's canonical docs-nav templates embed `{% for %}` loops inside `<select>` " +
       "and `{% capture %}` blocks inside `<ul>`. Before the fix, label-in-name saw the " +

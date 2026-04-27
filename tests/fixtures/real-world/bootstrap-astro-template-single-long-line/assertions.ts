@@ -52,7 +52,6 @@ export const assertions: FixtureAssertions = {
     "NOT receive a `scannedBuildArtifacts` label. The single-long-line probe requires " +
     "second-tier corroboration; without it, the authored file stays unlabeled.",
   origin: {
-    feedbackRound: "Q3-BUILD-ARTIFACT-SINGLE-LONG-LINE-SECOND-PROBE",
     notes:
       "Sanitized from the Bootstrap docs site's Astro/Starlight example-preview pattern " +
       "(`site/src/assets/examples/blog-rtl/index.astro` and ~53 siblings). Upstream " +

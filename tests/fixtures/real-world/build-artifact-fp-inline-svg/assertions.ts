@@ -40,7 +40,6 @@ export const assertions: FixtureAssertions = {
     "`minified`; under the fix the ratio corroborator requires ≥3 long lines so a single " +
     "inline-SVG line in an otherwise-short authored page stays unlabeled.",
   origin: {
-    feedbackRound: "V1-BUILD-ARTIFACT-REGRESSION-AUDIT-MINIFIED",
     notes:
       "Sanitized from design-system / SSG output that inlines a brand-mark SVG into the " +
       "page body. The synthetic path command sequence preserves the line-length shape " +

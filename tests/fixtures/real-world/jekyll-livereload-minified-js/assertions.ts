@@ -29,7 +29,6 @@ export const assertions: FixtureAssertions = {
     "`<identifier` to a JSX open-tag even in non-JSX file contexts; the assertion " +
     "is commented out pending the fix tracked in Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS.",
   origin: {
-    feedbackRound: "Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS",
     notes:
       "Sanitized from jekyll/lib/jekyll/commands/serve/livereload_assets/livereload.js. " +
       "Upstream is a single-line minified build artifact; this reproduction preserves the " +

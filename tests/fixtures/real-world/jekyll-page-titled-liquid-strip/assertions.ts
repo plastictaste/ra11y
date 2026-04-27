@@ -44,7 +44,6 @@ export const assertions: FixtureAssertions = {
     "interpolation surfaces as a weaker-confidence warning with the " +
     "title_is_template_interpolated signal, rather than a confident empty-title error.",
   origin: {
-    feedbackRound: "Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP",
     notes:
       "Jekyll `_layouts/default.html` with `<title>{{ page.title }}</title>` parses with " +
       "an empty in-memory title-text (directive stripped). Pre-fix, page-titled fired a " +

@@ -25,7 +25,6 @@ export const assertions: FixtureAssertions = {
     "TS generics (Pick<T,K>, ForwardRefRenderFunction<...>, Array<...>, call-site generics) parse cleanly alongside real JSX without emitting parse errors.",
   origin: {
     commit: "2968d87",
-    feedbackRound: "leela-round-1",
     notes:
       "Before the fix, ~40% of a typical Vite/React/TS codebase misclassified generic type-application syntax as unclosed JSX and lost rule coverage below the false error.",
   },

@@ -47,7 +47,6 @@ export const assertions: FixtureAssertions = {
     "`partialParseFiles` (not `parseErrorFiles`). The latter bucket is " +
     "agent-doctrine for `invisible-to-rules`; mixed-signal files mislead it.",
   origin: {
-    feedbackRound: "V1-PARSE-ERROR-LIVERELOAD-MIXED-SIGNAL",
     notes:
       "Sanitized from a real livereload.js distribution. The combination of " +
       "a parser-error trigger (originally minified `<` length comparisons; here " +

@@ -27,7 +27,6 @@ export const assertions: FixtureAssertions = {
     "matching id in the document triggers aria/labelledby-target-exists, naming " +
     "the broken token so the agent knows the exact fix (add id or correct the reference).",
   origin: {
-    feedbackRound: "Q6-RULE-ARIA-REF-MISMATCH-WIDEN-ATTRS",
     notes:
       "Sanitized from coffee-shop-free-html5-template/index.html (website-templates corpus). " +
       'The modal header contains class="modal-title" but never id="myModalLabel". ' +

@@ -53,7 +53,6 @@ export const assertions: FixtureAssertions = {
     "but expanding-cards silently passed because branch B requires h1 and branch C requires " +
     "ul/ol/dl which this page lacks. Widening to include a script-in-body branch closes the gap.",
   origin: {
-    feedbackRound: "Q5-LANDMARK-MAIN-INCONSISTENT-PER-FILE",
     notes:
       "Sanitized from bradtraversy/50projects50days/03-drink-water and /01-expanding-cards. " +
       "Structure preserved verbatim: DOCTYPE, lang='en', standard meta tags, external " +

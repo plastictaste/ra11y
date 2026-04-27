@@ -40,7 +40,6 @@ export const assertions: FixtureAssertions = {
     "an agent reading the reason sees the rendered-text shape instead of a " +
     "raw template expression like `{{ entry.name }}`.",
   origin: {
-    feedbackRound: "Q4-REVIEW-SANITIZE-LIQUID-FINDERS",
     notes:
       "Pairs with the closed Q4-LIQUID-TEXT-LITERAL (rule-side text nodes) " +
       "and Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING (rule-side attribute " +

@@ -41,7 +41,6 @@ export const assertions: FixtureAssertions = {
     "provably not the sole meaning channel. The deterministic text-containment gate " +
     "resolves the severity / reason mismatch the doctrine flagged.",
   origin: {
-    feedbackRound: "V1-RULE-COLOR-MEANING-BY-COLOR-ONLY-REASON-CONCEDES",
     notes:
       "Sanitized from Bootstrap's own visual-test alert pages, where the canonical example " +
       "<button class='btn btn-danger'>Danger</button> drove the doctrine update on " +

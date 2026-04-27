@@ -48,7 +48,6 @@ export const assertions: FixtureAssertions = {
     "lines so a single SRI-concatenation line in an otherwise-short authored page stays " +
     "unlabeled.",
   origin: {
-    feedbackRound: "V1-BUILD-ARTIFACT-REGRESSION-AUDIT-MINIFIED",
     notes:
       "Sanitized from vanilla-JS / static-HTML scaffolds where one `<head>` line carries " +
       "three CDN preloads with sha512 integrity hashes. Synthetic SRI hashes preserve " +

@@ -38,7 +38,6 @@ export const assertions: FixtureAssertions = {
     '<fieldset>+<legend> and no role="radiogroup" wrapper triggers ' +
     "forms/radio-group-without-fieldset (naked name-sharing case).",
   origin: {
-    feedbackRound: "Q5-RADIO-GROUP-NAKED-NAME-SHARING",
     notes:
       "Sanitized from 50projects50days/17-quiz-app/index.html. Labels preserved; option text " +
       "replaced with generic placeholders. No structural rewrite — the HTML skeleton is faithful " +

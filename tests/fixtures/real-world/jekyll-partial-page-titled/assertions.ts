@@ -33,7 +33,6 @@ export const assertions: FixtureAssertions = {
     "with a template-injection signal on message + couldBeWrongBecause, rather than " +
     "being silently suppressed or emitted as a confident full-document finding.",
   origin: {
-    feedbackRound: "Q4-PARTIAL-PAGE-TITLED",
     notes:
       "Jekyll `_includes/head.html` (and equivalents in Hugo / Eleventy / Astro) " +
       "contains the <head> shell; the <title> is rendered by `{% seo %}` or similar. " +

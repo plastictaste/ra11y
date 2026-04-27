@@ -34,7 +34,6 @@ export const assertions: FixtureAssertions = {
     "or wcag22:1.2.5, which are scoped to synchronized media (video+audio tracks) and do not " +
     "apply to audio-only content.",
   origin: {
-    feedbackRound: "Q7-CHECKLIST-AUDIO-VS-VIDEO-CRITERION-FAN",
     notes:
       "Six audio elements in a real-world media player emitted 18 candidates across 3 criteria. " +
       "1.2.3 and 1.2.5 are normatively scoped to synchronized media only. " +

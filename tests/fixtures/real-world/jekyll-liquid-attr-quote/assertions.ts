@@ -29,7 +29,6 @@ export const assertions: FixtureAssertions = {
     'lang="{{ site.lang | default: "en-US" }}") must not truncate the attribute or ' +
     "trigger a false parsing/html-has-lang violation.",
   origin: {
-    feedbackRound: "Q4-LIQUID-ATTR-QUOTE-BUG",
     notes:
       "Jekyll's canonical `_layouts/default.html` (from `jekyll new`) uses Liquid " +
       "filter arguments with their own double-quoted literals inside a double-quoted " +

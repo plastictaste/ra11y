@@ -234,8 +234,6 @@ export interface FixtureToolInput {
 export interface FixtureOrigin {
   /** Source git commit the fixture guards against regression of. */
   readonly commit?: string;
-  /** Feedback-round identifier (e.g. "leela-round-1"). */
-  readonly feedbackRound?: string;
   /** Free-form notes about origin (GitHub issue URL, etc.). */
   readonly notes?: string;
 }

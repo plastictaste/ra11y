@@ -33,7 +33,6 @@ export const assertions: FixtureAssertions = {
     '(e.g. xml:lang="en" lang="en-us"), document/lang-attribute must flag the ' +
     "inconsistency — the announced language is otherwise nondeterministic.",
   origin: {
-    feedbackRound: "Q4-XMLLANG-LANG-MISMATCH",
     notes:
       "Observed in a Jekyll-style `_layouts/default.html` that paired a bare " +
       '`xml:lang="en"` with a region-qualified `lang="en-us"`. No rule caught ' +

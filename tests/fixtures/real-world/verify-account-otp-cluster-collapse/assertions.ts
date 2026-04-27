@@ -40,7 +40,6 @@ export const assertions: FixtureAssertions = {
     "and the same (tagName, type, attributes-modulo-id) fingerprint into ONE canonical " +
     "finding carrying `siblingInstances` for the per-sibling line/id trail.",
   origin: {
-    feedbackRound: "Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE",
     notes:
       "Sanitized from a verify-account UI's six <input class='otp' type='number' " +
       "maxlength='1'> sibling cluster. Pairs with Q4-LIKELY-REDUCIBLE-SIBLING-IMAGE-DEDUPE " +

@@ -39,7 +39,6 @@ export const assertions: FixtureAssertions = {
     "<a aria-label> elements — each trigger aria/icon-font-hidden (double-announce guard) " +
     "in a Bootstrap-template navbar. Guards bulk detection and mixed button/anchor parent types.",
   origin: {
-    feedbackRound: "Q6-ICON-FONT-LABELED-PARENT-REGRESSION",
     notes:
       "Pattern from the website-templates corpus (coffee-shop template shape, sanitized). " +
       "Real-world scans emitted zero findings on this pattern; investigation confirmed the " +

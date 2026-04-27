@@ -75,7 +75,6 @@ export const assertions: FixtureAssertions = {
     "fenced code blocks. The synthesized iframe inside <Example " +
     "code={`…`}/> is surfaced as a real (synthesized) JSX element.",
   origin: {
-    feedbackRound: "V1-CHECKLIST-IFRAME-FINDER-MDX-BACKTICKS",
     notes:
       "Mirrors Q6/Q7 iframe-finder fixes (JS string literals, HTML " +
       "<code> blocks) for the MDX inline-code-span surface. Field " +

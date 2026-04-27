@@ -32,7 +32,6 @@ export const assertions: FixtureAssertions = {
     "closing tags, and emits fake `Unclosed JSX element <…>` errors at EOF — flooding " +
     "`parseErrorFiles[]` with as many false errors as the project has plain-JS files.",
   origin: {
-    feedbackRound: "Q8-PARSER-ROUTING-JS-AS-TSX",
     notes:
       "Sanitized from a field report citing 538-entry parseErrorFiles[] with reasons " +
       "like `Unclosed JSX element <h>` and `<g.top>`. The reproduction preserves the " +

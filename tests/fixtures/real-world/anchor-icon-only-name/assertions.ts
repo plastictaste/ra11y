@@ -29,7 +29,6 @@ export const assertions: FixtureAssertions = {
     "provides a computable accessible name.",
   origin: {
     commit: "45525d85",
-    feedbackRound: "Q6-ANCHOR-ICON-ONLY-NAME-REGRESSION",
     notes:
       "Field report: deeper scan emitted media/alt-text-missing at the <img> level " +
       "but not a secondary finding at the anchor level. Live probe confirms anchor-level " +

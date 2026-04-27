@@ -37,7 +37,6 @@ export const assertions: FixtureAssertions = {
     "aria-hidden triggers aria/icon-font-hidden so the agent can investigate the " +
     "double-announce risk (labeled parent + unannotated icon glyph).",
   origin: {
-    feedbackRound: "Q6-ICON-FONT-LABELED-PARENT-REGRESSION",
     notes:
       "Pattern observed across website-templates corpus (Bootstrap 3 navbar-toggle + Font Awesome). " +
       "The coffee-shop-free-html5-template uses span.icon-bar (not Font Awesome), so the direct " +

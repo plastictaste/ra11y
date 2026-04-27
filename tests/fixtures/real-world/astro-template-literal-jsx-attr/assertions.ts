@@ -36,7 +36,6 @@ export const assertions: FixtureAssertions = {
     "closed early on the literal `}`, re-entered JSX-child mode mid-template, and emitted " +
     "`Unclosed JSX element <Example>` (or <iframe>/<body>/<span> on upstream MDX).",
   origin: {
-    feedbackRound: "Q-SHARED-TSX-PARSER-FALSE-JSX-CONTEXTS",
     notes:
       "Sanitized from bootstrap/site/src/content/docs/helpers/ratio.mdx and " +
       "components/dropdowns.mdx. Upstream is .mdx/.astro; reproduction fixture uses .tsx " +

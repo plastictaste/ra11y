@@ -43,7 +43,6 @@ export const assertions: FixtureAssertions = {
     "per-sibling trail. Guards against regression to the pre-aggregation " +
     "ten-candidate noise shape (jekyll/jekyll README.markdown:58-67).",
   origin: {
-    feedbackRound: "Q4-LIKELY-REDUCIBLE-SIBLING-IMAGE-DEDUPE",
     notes:
       "Sanitized from jekyll/jekyll README.markdown:58-67 — ten adjacent " +
       "<a href='...'><img class='sponsor-logo' alt='Jekyll Sponsor N'/></a> " +
