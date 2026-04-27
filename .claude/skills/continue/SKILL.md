@@ -51,7 +51,8 @@ The planner's classification table (for reference when you need to validate a pi
 | `src/input/parsers/**` | `parser-author` |
 | `src/output/formatters/**` | `formatter-author` |
 | `src/types/**`, `src/engine/ast-helpers.ts` | `type-smith` |
-| `src/mcp/**`, `src/review/finders/**`, `scripts/**`, `.github/workflows/**`, `docs/adr/**`, release/demo/tag | `main-session` |
+| `src/mcp/**`, `src/review/finders/**` | `general-purpose` (worktree-isolated; empirical 2026-04-26 — narrow tool-shape and finder-predicate fixes parallelize cleanly when file-sets don't overlap) |
+| `scripts/**`, `.github/workflows/**`, `docs/adr/**`, release/demo/tag | `main-session` |
 | `tests/fixtures/real-world/**` | `fixture-curator` |
 | `tests/**` (edge/fuzz/property) | `test-author` |
 | `docs/**` (user-facing) | `doc-writer` |
