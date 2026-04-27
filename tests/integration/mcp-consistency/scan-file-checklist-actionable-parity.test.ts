@@ -3,14 +3,22 @@
  * must agree with `checklist.summary.actionable` on the same fixture.
  *
  * Canonical drift case the test pins: `<input type="password">`
- * triggers BOTH `review/identify-purpose` (wcag22:1.3.6 + wcag21:1.3.6)
- * AND `review/password-inputs` (wcag22:3.3.8) at the same byte
- * position. Pre-fix, `scan_file.reviewCandidates` listed each
- * criterion as a separate entry while `checklist.items[].candidates`
- * annotated cross-criterion sharing via `criteria: [...]` per
- * `annotateSharedCandidates`. The asymmetric surface shape risked
- * agents budgeting against a list length that disagreed with the
- * companion tool.
+ * triggers `review/password-inputs` (wcag22:3.3.8) at its byte position.
+ * The `review/identify-purpose` finder would also emit a candidate for
+ * wcag22:1.3.6 at the same line, but the per-line subset dedup wired
+ * into `runScan` (see `src/review/criterion-subsets.ts`) suppresses it
+ * because `forms/autocomplete-missing` fires for wcag22:1.3.5 at the
+ * same input — SC 1.3.5 is a subset signal of SC 1.3.6 and the agent
+ * reads the violation in the findings list instead of a redundant
+ * candidate.
+ *
+ * Pre-subset-dedup, `scan_file.reviewCandidates` listed both 1.3.6
+ * and 3.3.8 at the same line and `dedupeReviewCandidatesForSingleFile`
+ * Pass 2 folded the cross-finder coincidence into one merged entry.
+ * With subset dedup at the scanner layer, the 1.3.6 candidate is
+ * pruned before any tool consumes the report (so `scan_project`,
+ * `checklist`, `coverage`, `review_candidates` all see the same set)
+ * and Pass 2 has no cross-finder coincidence to fold on this fixture.
  *
  * Both tools route through `tallyManualCriteria{,FromCoverage}` for
  * their headline counts, so the counter parity is mechanical at the
@@ -18,8 +26,10 @@
  * over the JSON-RPC surface and on the canonical password-input
  * fixture, so a regression in either path is caught loudly.
  *
- * The companion list-shape test (Pass 2 of `dedupeReviewCandidates
- * ForSingleFile`) lives in tests/unit/mcp/review-candidate-dedup.test.ts.
+ * The companion list-shape unit tests for the response-assembler dedup
+ * (Pass 2 of `dedupeReviewCandidatesForSingleFile`) live in
+ * tests/unit/mcp/review-candidate-dedup.test.ts; the subset-dedup unit
+ * tests live in tests/unit/review/criterion-subsets.test.ts.
  *
  * Doctrine reference: docs/kb/architecture/ai-first-consumer.md
  * "Cross-surface count invariant."
@@ -150,38 +160,42 @@ describe("MCP invariant: scan_file actionable count agrees with checklist on the
     expect(scanFileBody.plan.actionableManualItems).toBeGreaterThan(0);
   });
 
-  it("scan_file.reviewCandidates folds the 1.3.6 + 3.3.8 cross-finder coincidence into one entry whose `criteria` lists both standards", async () => {
-    // The Pass 2 fold (cross-finder positional dedup) is the response-
-    // shape closure for the same drift the count parity test above
-    // closes at the counter level. Without the fold, the agent saw
-    // 1.3.6 and 3.3.8 as two separate entries on the same `<input
-    // type="password">` line — the same logical unit `checklist`
-    // already presents annotated with `criteria: [...]` per
-    // `annotateSharedCandidates`. With the fold, scan_file ships one
-    // entry whose `criteria` lists every owning standard ID and whose
-    // reason concatenates each finder's framing.
+  it("scan_file.reviewCandidates suppresses 1.3.6 on the password line where forms/autocomplete-missing fires for 1.3.5 (subset dedup), keeping 3.3.8", async () => {
+    // The password input attracts two finders pre-dedup —
+    // `review/identify-purpose` (1.3.6 across wcag22+wcag21) and
+    // `review/password-inputs` (3.3.8). It also triggers the automated
+    // `forms/autocomplete-missing` rule (1.3.5) because
+    // `<input type="password">` lacks `autocomplete=`. SC 1.3.5 is a
+    // subset signal of SC 1.3.6 — the candidate is implied by the
+    // violation at the same line, so the per-line subset dedup wired
+    // into `runScan` (see `src/review/criterion-subsets.ts`) drops the
+    // 1.3.6 candidate. The 3.3.8 candidate survives unchanged because
+    // 3.3.8 is not a subset of any fired violation's criteria.
+    //
+    // Before this dedup, scan_file shipped both 1.3.6 and 3.3.8 on the
+    // same line, then `dedupeReviewCandidatesForSingleFile` Pass 2
+    // folded them into one entry whose `criteria` listed both
+    // standards. With the subset dedup, the 1.3.6 entry is pruned at
+    // the scanner level (visible to every consumer — `scan_project`,
+    // `checklist`, `coverage`, `review_candidates`) and the survivor
+    // ships a clean single-criterion 3.3.8 candidate.
     const { dir: _dir, page } = await makePasswordFormFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: page })]);
     const scanFileBody = body<ScanFileBody>(responses[1]);
     const candidates = scanFileBody.reviewCandidates ?? [];
-    // The password input is the only line that should attract both
-    // finders; locate the entry whose `criteria` carries both 1.3.6
-    // and 3.3.8.
-    const passwordEntry = candidates.find(
-      (c) => c.criteria.includes("wcag22:1.3.6") && c.criteria.includes("wcag22:3.3.8"),
-    );
+    // The 3.3.8 candidate from `review/password-inputs` survives the
+    // subset dedup because no automated violation cites a 3.3.8
+    // subset.
+    const passwordEntry = candidates.find((c) => c.criteria.includes("wcag22:3.3.8"));
     expect(passwordEntry).toBeDefined();
     if (passwordEntry === undefined) return;
-    // Both standards' WCAG-specific framings survive in the reason text
-    // (concatenated via " | "). Either fragment alone would be a
-    // post-fold information loss the agent can't recover without
-    // re-running the scan.
-    expect(passwordEntry.reason).toContain("autocomplete");
+    // The 1.3.6 candidate is suppressed at the same line by the
+    // subset dedup — the agent reads the 1.3.5 violation in the
+    // findings list instead.
+    expect(passwordEntry.criteria).not.toContain("wcag22:1.3.6");
     expect(passwordEntry.reason).toContain("cognitive function test");
-    // The fold is positional, not reason-based — cross-finder
-    // coincidences at the same `(line, column)` produce ONE entry, not
-    // two, on the response surface even when the per-finder reason
-    // texts differ.
+    // Cross-surface invariant: only one candidate entry on the
+    // password line after subset dedup + Pass-1/Pass-2 folds.
     const sameLineEntries = candidates.filter((c) => c.line === passwordEntry.line);
     expect(sameLineEntries).toHaveLength(1);
   });

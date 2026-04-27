@@ -20,6 +20,10 @@
  */
 
 import type { SuppressionDeclaration } from "../config/inline-disables.ts";
+import {
+  buildSubsetClosure,
+  pruneCandidatesCoveredByViolations,
+} from "../review/criterion-subsets.ts";
 import type { Ast } from "../types/ast.ts";
 import type { Process } from "../types/config.ts";
 import type { AttestationRecord, EvidenceLedger } from "../types/evidence.ts";
@@ -193,7 +197,25 @@ export function runScan(inputs: ScanInputs): ScanProducts {
     allViolations.push(v);
   allViolations.sort(compareViolations);
 
-  const allCandidates = collectCandidatesFromFiles(inputs, enabled, standardsRegistry);
+  const rawCandidates = collectCandidatesFromFiles(inputs, enabled, standardsRegistry);
+  // Per-line subset dedup: when an automated violation already covers
+  // a parent-criterion review candidate at the same `(filePath, line)`
+  // (canonical case: `forms/autocomplete-missing` at 1.3.5 implies
+  // `review/identify-purpose` at 1.3.6 on the same input), prune the
+  // candidate so the agent doesn't double-budget against one defect.
+  // Computed once at the scan-graph level so all consumers
+  // (`scan_project`, `checklist`, `coverage`, `review_candidates`)
+  // see the same pruned set per the cross-surface-count invariant in
+  // `docs/kb/architecture/ai-first-consumer.md`. The relation table
+  // lives in `src/review/criterion-subsets.ts`; the closure helper
+  // walks `equivalentTo` so a single declaration covers WCAG 2.2 ↔
+  // WCAG 2.1 ↔ Section 508 ↔ EN 301 549.
+  const subsetClosure = buildSubsetClosure(criteriaRegistry.all());
+  const allCandidates = pruneCandidatesCoveredByViolations(
+    rawCandidates,
+    allViolations,
+    subsetClosure,
+  );
 
   const durationMs = Math.max(0, now() - start);
   const perRuleCoverage = buildPerRuleCoverage(
