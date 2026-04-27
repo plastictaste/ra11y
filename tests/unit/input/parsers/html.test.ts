@@ -382,6 +382,46 @@ describe("parseHtml", () => {
     expect(errors.some((e) => e.message.includes("Elided layout-tail"))).toBe(false);
   });
 
+  it("does not claim layout-tail elision when the file already closes its own root envelope", () => {
+    // A wrapper that delegates root closure to a sibling partial has
+    // exactly one root-envelope closer in its source — the trailing
+    // stray. A file whose tail reads literally `</body>\n</html>` has
+    // two root-envelope closers and is closing its own document
+    // (broken or otherwise). Naming such a tail "Elided layout-tail"
+    // lies to the agent: the parse error is something else (forgotten
+    // opens, hand-completed envelope on a file the partial expects to
+    // leave unclosed). Both stray closers fall through to the
+    // scope-aware default wording.
+    const src = `{% include top.html %}
+<main>content</main>
+</body>
+</html>
+`;
+    const { errors } = parseHtml(src);
+    expect(errors.some((e) => e.message.includes("Elided layout-tail"))).toBe(false);
+    expect(errors.some((e) => e.message === "Stray </body> at top level")).toBe(true);
+    expect(errors.some((e) => e.message === "Stray </html> at top level")).toBe(true);
+  });
+
+  it("does not claim elision when the file pairs a real <body>...</body> with a trailing stray </html>", () => {
+    // The file opens `<body>` itself and closes it cleanly; only
+    // `</html>` is stray. Even with one root closer outside the
+    // pairing (`</html>` itself) the file's source still contains
+    // TWO root-envelope tokens (`</body>` from the in-file pairing
+    // plus `</html>`). The elision rename's "exactly one closer"
+    // guard correctly suppresses the rename — the file is closing
+    // its own body, the trailing `</html>` is honestly stray, not a
+    // delegated root-tag close. The standard "Stray </html> at top
+    // level" wording surfaces the genuine structural mismatch.
+    const src = `{% include top.html %}
+<body>x</body>
+</html>
+`;
+    const { errors } = parseHtml(src);
+    expect(errors.some((e) => e.message.includes("Elided layout-tail"))).toBe(false);
+    expect(errors.some((e) => e.message === "Stray </html> at top level")).toBe(true);
+  });
+
   it("detectLiquidIncludeHead accepts BOM and leading blank lines; rejects non-include heads", () => {
     expect(detectLiquidIncludeHead("{% include top.html %}")).toBe(true);
     expect(detectLiquidIncludeHead("{%- include top.html -%}")).toBe(true);

@@ -403,10 +403,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans: response-token-budget over
 
 Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. Each repo received 5 parallel scout subagents (lenses A=coverage gaps, B=output correctness, C=parser/scanner, D=heuristic-mislabeled meta, E=response-shape drift). Aggregator deduped against existing Q8/V1 items. Net-new items below; Q8 confirmations and doctrine additions captured separately (the latter folded into `docs/kb/architecture/ai-first-consumer.md`).
 
-#### Q8b — accepted (P0 — token-budget honesty / silent-failure)
-
-- [ ] **Q8b-LAYOUT-TAIL-ELISION-FALSE-DIAGNOSIS** Layout-tail elision diagnosis (`reason: "Elided layout-tail </html> — file opens with a {% include %} directive whose sibling partial closes this root tag"`) fires on files whose last lines are literally `</body>\n</html>`. Predicate doesn't re-check for closing tags after the include preamble. Fix: only emit the elision diagnosis when no `</html>` token appears in the file; otherwise the parse error is something else.
-
 #### Q8b — accepted (P0 — heuristic-mislabeled meta sub-fields)
 
 - [ ] **Q8b-MINIFIED-LABEL-NEEDS-DISCRIMINATOR-AXIS** `scannedBuildArtifacts[].reason: "minified"` is a single composite token over multiple independent signals (single-long-line, hashed-filename, sourcemap-sibling, `.min.` token, license-header-only). On any one false-positive (hand-authored shim, glyph-font SVG, debug-build with banner), the agent can't tell which sub-signal fired. Fix: emit the discriminator that fired (`reason: "single-long-line-no-min-token"` / `"sourcemap-sibling-present"` / `"hashed-filename"`); stop synthesizing `"minified"` as a deterministic label. Builds on Q8-SCANNED-BUILD-ARTIFACTS-MINIFIED-SVG-LABEL — that is the SVG-extension carve-out; this is the structural axis covering all extensions.

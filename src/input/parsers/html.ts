@@ -67,7 +67,11 @@ import {
   peekClosingTagName,
   peekOpeningTagName,
 } from "./html-implicit-close.ts";
-import { detectLiquidIncludeHead, strayClosingTagMessage } from "./html-layout-tail.ts";
+import {
+  countLayoutTailClosers,
+  detectLiquidIncludeHead,
+  strayClosingTagMessage,
+} from "./html-layout-tail.ts";
 import {
   matchesTemplateEndTag,
   OPAQUE_BLOCK_DIRECTIVES,
@@ -140,6 +144,17 @@ class HtmlParser {
    * `undefined` until first query; the detector runs at most once.
    */
   #liquidIncludeHead: boolean | undefined;
+  /**
+   * Lazily-computed count of root-envelope closing tags
+   * (`</html>` / `</body>` / `</head>`, case-insensitive) in the
+   * source. The layout-tail elision rename requires exactly one such
+   * closer — a wrapper that delegates root closure to a sibling
+   * partial has only the diagnosed stray; a file whose tail reads
+   * `</body>\n</html>` has two and is closing its own root document.
+   * Cached so repeated stray-close events on one file don't rescan
+   * the source.
+   */
+  #layoutTailCloserCount: number | undefined;
   /**
    * Stack of currently-open element names (lowercased), in
    * outer-to-inner order. Pushed on entry to `#consumeChildren`,
@@ -410,9 +425,14 @@ class HtmlParser {
    *
    *   1. The Liquid root-layout shape (top-level `</html>` /
    *      `</body>` / `</head>` on a file whose first non-whitespace
-   *      content is `{% include %}` / `{% render %}`) — renamed so
-   *      an agent routes to include-chain composition instead of
-   *      treating it as a parser failure.
+   *      content is `{% include %}` / `{% render %}` AND whose
+   *      source contains exactly one root-envelope closer — the
+   *      diagnosed stray itself) — renamed so an agent routes to
+   *      include-chain composition instead of treating it as a
+   *      parser failure. A file whose tail is literally
+   *      `</body>\n</html>` (two root-envelope closers) is closing
+   *      its own document and falls through to the standard
+   *      stray-close wording, not the elision rename.
    *   2. A nested stray (inside an open ancestor) — the message
    *      names the offending tag and the immediate enclosing scope
    *      so the agent reads "inside <div>" rather than the historic
@@ -452,6 +472,7 @@ class HtmlParser {
         startPos.line,
         enclosingTag,
         this.#hasLiquidIncludeHead(),
+        this.#getLayoutTailCloserCount(),
       ),
       position: startPos,
       recoverable: true,
@@ -674,6 +695,20 @@ class HtmlParser {
   #hasLiquidIncludeHead(): boolean {
     this.#liquidIncludeHead ??= detectLiquidIncludeHead(this.#source);
     return this.#liquidIncludeHead;
+  }
+
+  /**
+   * Count of root-envelope closing tags
+   * (`</html>` / `</body>` / `</head>`, case-insensitive) in the
+   * source. Cached on first call so repeated stray-close events on
+   * one document don't rescan the source. See
+   * {@link countLayoutTailClosers} for the shared scanner (kept
+   * module-level so it is unit-testable without instantiating the
+   * parser).
+   */
+  #getLayoutTailCloserCount(): number {
+    this.#layoutTailCloserCount ??= countLayoutTailClosers(this.#source);
+    return this.#layoutTailCloserCount;
   }
 
   // -------------------------------------------------------------------------

@@ -48,7 +48,7 @@ const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"
  *
  * Branch order:
  *
- *   1. The Liquid layout-tail rename fires only when ALL three
+ *   1. The Liquid layout-tail rename fires only when ALL FOUR
  *      gates hold:
  *
  *      - `depth === 0` — the closer is tailing the whole document,
@@ -62,6 +62,17 @@ const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"
  *      - First non-whitespace content in the source is a Liquid
  *        `{% include %}` / `{% render %}` directive — the partial
  *        that contributes the opening root tag.
+ *      - The file contains EXACTLY ONE root-envelope closer
+ *        (`</html>` / `</body>` / `</head>` combined; case-
+ *        insensitive). A wrapper that delegates root-tag closure
+ *        to a sibling partial has only one such closer — the
+ *        diagnosed stray itself. A file whose tail reads
+ *        `</body>\n</html>` has two; that file is closing its OWN
+ *        root document (broken or otherwise), not eliding root
+ *        closure. Naming such a tail "Elided layout-tail" lies to
+ *        the agent — the parse error is something else (forgotten
+ *        opens, mis-paired structure, hand-completed envelope on a
+ *        file the partial expects to leave unclosed).
  *
  *   2. Nested stray (`depth > 0`, an enclosing ancestor is still
  *      open) — name the offending tag and the immediate enclosing
@@ -92,6 +103,12 @@ const LAYOUT_TAIL_CLOSERS: ReadonlySet<string> = new Set(["html", "body", "head"
  * @param hasLiquidIncludeHead — pre-computed Liquid-head detector
  *   result; passed in rather than re-derived so the parser caches
  *   the detection across multiple stray-close events on one file.
+ * @param layoutTailCloserCount — pre-computed count of root-envelope
+ *   closers (`</html>` / `</body>` / `</head>`, case-insensitive)
+ *   in the file. Cached at the parser so repeated stray-close
+ *   events on one document don't rescan the source. The elision
+ *   rename requires exactly one such closer total — see branch 1
+ *   for the rationale.
  */
 export function strayClosingTagMessage(
   closerName: string,
@@ -99,15 +116,48 @@ export function strayClosingTagMessage(
   line: number,
   enclosingTag: string | undefined,
   hasLiquidIncludeHead: boolean,
+  layoutTailCloserCount: number,
 ): string {
   const lower = closerName.toLowerCase();
-  if (depth === 0 && LAYOUT_TAIL_CLOSERS.has(lower) && hasLiquidIncludeHead) {
+  if (
+    depth === 0 &&
+    LAYOUT_TAIL_CLOSERS.has(lower) &&
+    hasLiquidIncludeHead &&
+    layoutTailCloserCount === 1
+  ) {
     return `Elided layout-tail </${lower}> — file opens with a Liquid {% include %} directive whose sibling partial closes this root tag`;
   }
   if (depth > 0 && enclosingTag !== undefined) {
     return `Mismatched </${closerName}> close at line ${line} (inside <${enclosingTag}>)`;
   }
   return `Stray </${closerName}> at top level`;
+}
+
+/**
+ * Count occurrences of root-envelope closing tags
+ * (`</html>` / `</body>` / `</head>`, case-insensitive) in the
+ * source. Used by {@link strayClosingTagMessage} branch 1 to
+ * gate the layout-tail elision rename: a wrapper that delegates
+ * root-tag closure to a sibling partial has exactly one such
+ * closer in its source (the trailing stray); a file whose tail
+ * reads `</body>\n</html>` has two and is closing its own
+ * document.
+ *
+ * Exported for unit testing so the count's acceptance surface is
+ * visible as a pure function. Implemented as a single regex sweep
+ * for the closed three-element set; widening the set without a
+ * matching fixture would re-introduce the silent-miss failure
+ * mode on every template shape we haven't verified.
+ */
+export function countLayoutTailClosers(source: string): number {
+  // Match `</tag>` for tag in {html, body, head}, case-insensitive.
+  // Trailing `[\s>]` accepts both bare `</html>` and `</html >` so a
+  // stray spelled with an inner space (rare but legal in recovery
+  // paths) still counts. The leading boundary is the literal `</`
+  // sequence, which cannot appear inside attribute values or text
+  // entities — no false positives from `&lt;/html&gt;` or similar.
+  const matches = source.match(/<\/(?:html|body|head)[\s>]/gi);
+  return matches ? matches.length : 0;
 }
 
 /**
