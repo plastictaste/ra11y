@@ -43,6 +43,7 @@ import {
   detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
+  partitionParseStateFiles,
 } from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
@@ -763,7 +764,17 @@ export async function runScanAndFormat(
   // the agent needs to triage with rides on the `couldBeWrongBecause`
   // axis. No-op fast path when no rule is degraded.
   const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
-  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(fileEntries, perRuleLimitations);
+  // File-scoped gate: the substrate codes `file_parse_error` and
+  // `partial_parse` only attach to findings whose file is in the
+  // corresponding parse-state set — the same partitioning that fed
+  // `applyParseErrorAdjustment` above, so per-rule and per-finding
+  // layers stay honest about the same file.
+  const parseStateFiles = partitionParseStateFiles(files, violationFilePaths);
+  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(
+    fileEntries,
+    perRuleLimitations,
+    parseStateFiles,
+  );
   // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
   // splits the 0-findings rules into "trust the clean tally" vs "scan

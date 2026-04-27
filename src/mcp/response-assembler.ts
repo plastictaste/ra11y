@@ -90,6 +90,7 @@ import {
   detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
+  partitionParseStateFiles,
 } from "./scan-assembly.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
@@ -496,7 +497,19 @@ export function assembleScanFamilyResponse(
   // `couldBeWrongBecause` axis. No-op fast path when no rule is
   // degraded (object identity stable on the common case).
   const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
-  fileEntries = enrichFindingsWithPerRuleLimitations(fileEntries, perRuleLimitations);
+  // File-scoped gate: the substrate codes `file_parse_error` and
+  // `partial_parse` describe a per-file parse failure, not a corpus-
+  // level evidence limitation. The propagation helper attaches them
+  // only to findings whose file is in the corresponding parse-state
+  // set. The same partitioning fed `applyParseErrorAdjustment` above —
+  // sharing the predicate keeps the per-rule and per-finding layers
+  // honest about the same file.
+  const parseStateFiles = partitionParseStateFiles(parsedFiles, violationFilePaths);
+  fileEntries = enrichFindingsWithPerRuleLimitations(
+    fileEntries,
+    perRuleLimitations,
+    parseStateFiles,
+  );
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     files: parsedFiles,

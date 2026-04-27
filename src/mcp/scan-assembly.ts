@@ -476,32 +476,57 @@ export function applyParseErrorAdjustment(
   activeRules: readonly Rule[],
   findingFilePaths: ReadonlySet<string> | undefined,
 ): readonly PerRuleCoverage[] {
-  // Build-artifact files routinely produce phantom parse errors (the
-  // TSX parser reading minified `r.length<b.length` as an unclosed
-  // `<r.length>` JSX element is the canonical case). Those phantoms
-  // are suppressed from `meta.analysisCoverage.parseErrorFiles[]` —
-  // see `accumulateCoverageForFile` — so the per-rule `coverageConfidence`
-  // downgrade must skip them too, otherwise an agent reading
-  // `coverageConfidenceReason: "file-parse-error"` would chase a parse
-  // error that doesn't appear in any file list. Keeps the cross-surface
-  // story honest: build-artifact files are classified by the artifact
-  // labeller; the parse-error lane stays for genuine parser failures
-  // on authored content.
-  const erroredFiles = files.filter(
-    (f) => f.ast.errors.length > 0 && !isBuildArtifact(f.filePath, f.source),
-  );
-  if (erroredFiles.length === 0) return rows;
-  const parseErrorFiles: ParsedFile[] = [];
-  const partialParseFiles: ParsedFile[] = [];
-  for (const f of erroredFiles) {
-    if (findingFilePaths?.has(f.filePath)) partialParseFiles.push(f);
-    else parseErrorFiles.push(f);
-  }
+  const partition = partitionParseStateFiles(files, findingFilePaths);
+  if (partition.parseError.size === 0 && partition.partialParse.size === 0) return rows;
+  // Re-bind to ParsedFile arrays for the per-row matcher, which gates
+  // on `appliesTo.fileExtensions`.
+  const parseErrorFiles = files.filter((f) => partition.parseError.has(f.filePath));
+  const partialParseFiles = files.filter((f) => partition.partialParse.has(f.filePath));
   const ruleById = new Map<string, Rule>();
   for (const r of activeRules) ruleById.set(r.id, r);
   return rows.map((row) =>
     adjustRowForParseErrors(row, ruleById.get(row.ruleId), parseErrorFiles, partialParseFiles),
   );
+}
+
+/**
+ * Partitions the scan's parsed files into the two parse-state buckets
+ * the per-rule confidence adjuster and the per-finding propagation
+ * helper both need:
+ *
+ *   - `parseError` — files where the parser errored AND no rule / finder
+ *     emitted any output. These contribute to the `file-parse-error`
+ *     reason on the per-rule coverage row.
+ *   - `partialParse` — files where the parser errored AND at least one
+ *     rule / finder emitted output (the recovered AST was usable).
+ *     These contribute to the `partial-parse` reason.
+ *
+ * Build-artifact files are excluded from both buckets — their phantom
+ * parse errors are suppressed from `meta.analysisCoverage.parseErrorFiles[]`
+ * elsewhere, so any per-rule / per-finding confidence downgrade keyed
+ * off the same predicate must agree.
+ *
+ * Exported so the per-finding propagation helper can gate
+ * `file_parse_error` / `partial_parse` codes on file membership: a
+ * substrate code attached to a finding whose file is NOT in either
+ * bucket reads as "the file's parser failed" when the finding's file
+ * actually parsed cleanly — the silent-miss failure mode the doctrine
+ * "Per-finding confidence must reflect per-rule coverage limitations"
+ * names at the per-finding layer.
+ */
+export function partitionParseStateFiles(
+  files: readonly ParsedFile[],
+  findingFilePaths: ReadonlySet<string> | undefined,
+): { readonly parseError: ReadonlySet<string>; readonly partialParse: ReadonlySet<string> } {
+  const parseError = new Set<string>();
+  const partialParse = new Set<string>();
+  for (const f of files) {
+    if (f.ast.errors.length === 0) continue;
+    if (isBuildArtifact(f.filePath, f.source)) continue;
+    if (findingFilePaths?.has(f.filePath)) partialParse.add(f.filePath);
+    else parseError.add(f.filePath);
+  }
+  return { parseError, partialParse };
 }
 
 /**

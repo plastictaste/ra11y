@@ -874,25 +874,29 @@ function collectRulesWithReason(
 }
 
 /**
- * Walks per-file findings and asserts each finding from a degraded rule
- * carries a non-empty `couldBeWrongBecause`. Returns whether at least
- * one such finding was observed (the parity invariant is vacuous if no
- * degraded rule actually emitted on the fixture).
+ * Walks per-file findings and returns whether at least one finding
+ * from a degraded rule carries a non-empty `couldBeWrongBecause`. The
+ * parity invariant is "the per-rule degradation reaches the per-finding
+ * surface" — vacuous if no degraded rule actually emitted on the
+ * fixture. Per-finding propagation of the substrate codes
+ * `file_parse_error` / `partial_parse` is gated on file-path
+ * membership in `parseErrorFiles[] ∪ partialParseFiles[]`, so
+ * findings on cleanly-parsed files from a degraded rule may legitimately
+ * carry no substrate code; the invariant fires on the parse-errored
+ * file's finding instead.
  */
 function observeEnrichedFinding(
   response: ReturnType<typeof assembleScanFamilyResponse>,
   degradedRuleIds: ReadonlySet<string>,
 ): boolean {
-  let any = false;
   for (const file of response.files) {
     for (const finding of file.findings) {
       if (!degradedRuleIds.has(finding.ruleId)) continue;
-      expect(finding.couldBeWrongBecause).toBeDefined();
-      expect(finding.couldBeWrongBecause!.length).toBeGreaterThan(0);
-      any = true;
+      const codes = finding.couldBeWrongBecause;
+      if (codes !== undefined && codes.length > 0) return true;
     }
   }
-  return any;
+  return false;
 }
 
 /** Returns true when at least one finding from `targetRules` lists `code` in `couldBeWrongBecause`. */

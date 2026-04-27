@@ -130,6 +130,47 @@ function snakeCase(code: string): string {
 }
 
 /**
+ * File-scoped substrate codes whose propagation must gate on the
+ * finding's own file-path membership in the corresponding parse-state
+ * set. Other reason codes (rule-family `cross_file_*_limited_on_this_input`
+ * variants, `scss_unresolved_variables`, `fragment_input_no_document_envelope`)
+ * describe a corpus-level limitation on the rule's evidence model and
+ * propagate to every finding the rule emitted on this scan; these two
+ * describe a per-file parse failure and only apply to findings on the
+ * specific file that failed to parse.
+ *
+ * Doctrine source: docs/kb/architecture/ai-first-consumer.md
+ *   "Per-finding confidence must reflect per-rule coverage limitations."
+ *
+ * Without the gate, a rule whose gate matched both a clean file and a
+ * parse-errored file (and emitted findings on both) would attach the
+ * substrate code to every finding from the rule, including the one on
+ * the cleanly-parsed file — corpus-wide rather than file-scoped. The
+ * clean-file finding would then read as "low-confidence because the
+ * parser failed" when the parser actually cleared on its file.
+ */
+const FILE_SCOPED_PARSE_STATE_CODES = new Set<string>(["file_parse_error", "partial_parse"]);
+
+/**
+ * Optional file-path sets the propagation helper consults to gate the
+ * `file_parse_error` / `partial_parse` substrate codes on file
+ * membership. Both sets are populated by
+ * {@link import("./scan-assembly.ts").partitionParseStateFiles} so the
+ * per-rule adjuster and the per-finding propagation share the same
+ * predicate.
+ *
+ * Caller passes `undefined` (or omits the argument) to keep the
+ * pre-gate behavior — the helper then propagates every code corpus-
+ * wide, matching the legacy shape. Used by call sites that don't have
+ * the parsed-file inputs in scope (no current production caller, but
+ * the optional shape keeps the seam additive for tests / fixtures).
+ */
+export interface ParseStateFiles {
+  readonly parseError: ReadonlySet<string>;
+  readonly partialParse: ReadonlySet<string>;
+}
+
+/**
  * Walks per-file findings and propagates per-rule degradation reason
  * codes into each finding's `couldBeWrongBecause` array. Returns the
  * input array reference unchanged when no rule is degraded
@@ -141,20 +182,36 @@ function snakeCase(code: string): string {
  * the propagated code, the finding is returned unchanged — duplicate
  * codes would force the agent to dedupe on read.
  *
+ * File-scoped gate: when the propagated code is in
+ * {@link FILE_SCOPED_PARSE_STATE_CODES} AND `parseStateFiles` is
+ * supplied, the helper attaches the code only to findings whose file
+ * path is in `parseError ∪ partialParse`. Other codes (rule-family
+ * cross-file limitations, scss-unresolved-variables, fragment-input)
+ * describe a corpus-level evidence limitation and propagate to every
+ * finding the rule emitted, regardless of file.
+ *
  * Returns a fresh top-level array when any finding was rewritten;
  * unchanged buckets ride the original reference.
  */
 export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
   fileEntries: readonly T[],
   perRuleLimitations: ReadonlyMap<string, string>,
+  parseStateFiles?: ParseStateFiles,
 ): readonly T[] {
   if (perRuleLimitations.size === 0) return fileEntries;
   let mutatedAny = false;
   const out = fileEntries.map((file) => {
+    const fileScopedParseStateCodeAllowed = isFileInParseStateSets(file.path, parseStateFiles);
     let bucketMutated = false;
     const findings = file.findings.map((finding) => {
       const code = perRuleLimitations.get(finding.ruleId);
       if (code === undefined) return finding;
+      // File-scoped gate: parse-state codes only attach to findings on
+      // files in `parseError ∪ partialParse`. Other codes (corpus-level
+      // evidence limitations) propagate unconditionally.
+      if (FILE_SCOPED_PARSE_STATE_CODES.has(code) && !fileScopedParseStateCodeAllowed) {
+        return finding;
+      }
       const existing = finding.couldBeWrongBecause;
       if (existing?.includes(code)) return finding;
       bucketMutated = true;
@@ -170,4 +227,19 @@ export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
     return { ...file, findings };
   });
   return mutatedAny ? out : fileEntries;
+}
+
+/**
+ * Returns whether the given file path is in either parse-state set.
+ * When the caller didn't supply `parseStateFiles` (legacy / fixture
+ * test paths that don't thread the parsed-file partition through),
+ * returns `true` so the helper falls back to the pre-gate corpus-wide
+ * propagation — additive over the existing call shape.
+ */
+function isFileInParseStateSets(
+  path: string,
+  parseStateFiles: ParseStateFiles | undefined,
+): boolean {
+  if (parseStateFiles === undefined) return true;
+  return parseStateFiles.parseError.has(path) || parseStateFiles.partialParse.has(path);
 }
