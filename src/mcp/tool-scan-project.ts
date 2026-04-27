@@ -959,7 +959,7 @@ function resolveProcessesForScan(
 }
 
 /**
- * One-hop AST probe (P1-F): when autoDetect is on, split detected
+ * One-hop AST probe: when autoDetect is on, split detected
  * names into `confirmed` (defining file's JSX root is a native
  * interactive element) vs `assumed` (can't confirm). Only confirmed
  * names reach the effective native-wrapper allowlist and silence

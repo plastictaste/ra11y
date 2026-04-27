@@ -361,7 +361,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(opaqueHint?.detail?.["opaqueCount"]).toBe(20);
     });
 
-    // P2-P: when the opaque inventory is small enough to inline (≤50
+    // when the opaque inventory is small enough to inline (≤50
     // names), the full names list ships on every response — no
     // verboseMeta round-trip. Above the threshold, names stay behind
     // verboseMeta so the default response stays bounded for monorepos.

@@ -1,6 +1,6 @@
 /**
  * Integration test for the top-level `warnings: string[]` surfaced on
- * `scan_project` and `scan` responses (/ P0-E).
+ * `scan_project` and `scan` responses.
  *
  * Closes the silent-success ambiguity documented in CLAUDE.md §1
  * "Zero-output success is ambiguous failure" — an agent calling
@@ -87,7 +87,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 describe("scan_project emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires when the scan root exists but contains zero parseable files", async () => {
     // Malformed-input paths (nonexistent cwd) now hard-error with the
-    // `cwd-not-found` envelope under P0-F — that case is guarded by
+    // `cwd-not-found` envelope — that case is guarded by
     // `mcp-scan-errors.test.ts`. The warnings-path still needs to cover
     // "valid directory, nothing to parse," which is the empty-but-real
     // case below. Create a real temp dir with no parseable files so
@@ -248,7 +248,7 @@ describe("review_candidates emits top-level `warnings` for silent-failure modes"
 describe("scan emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires when the paths exist but resolve to zero parseable files", async () => {
     // Nonexistent-path inputs now hard-error with `scan-paths-not-found`
-    // under P0-F — that case lives in `mcp-scan-errors.test.ts`. Here we
+    // — that case lives in `mcp-scan-errors.test.ts`. Here we
     // cover the real-but-empty directory case: a valid dir with no
     // parseable files produces a successful response with the
     // `scanned_zero_files` soft signal.

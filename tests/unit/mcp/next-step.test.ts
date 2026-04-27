@@ -1,7 +1,7 @@
 /**
  * Unit tests for `src/mcp/next-step.ts`.
  *
- * The helper emits two views of the same recommendation (P1-K):
+ * The helper emits two views of the same recommendation:
  *   - `prose` — English summary; kept for humans and weaker LLMs.
  *   - `structured` — `{ tool, args }` machine hint; omitted when the
  *     prose degrades to generic multi-option advice (CLAUDE.md §1
@@ -68,7 +68,7 @@ describe("buildNextStep", () => {
 
     // Prose names the tool and the concrete file:line the agent should
     // open. Structured form names the same tool with canonical args
-    // (`file`, not `filePath`, per P2-R).
+    // (`file`, not `filePath`,).
     expect(result.prose).toContain("suggest_fix");
     expect(result.prose).toContain("DemoComposer.tsx:21");
     expect(result.prose).toContain("aria/hidden-focus");
@@ -154,7 +154,7 @@ describe("buildNextStep", () => {
     // carries an inline mechanical fix (primary + alternatives +
     // context), re-nudging the agent to call suggest_fix is a
     // redundant round-trip. Both prose and structured must be
-    // trimmed consistently (P1-K paired emission) — a one-sided trim
+    // trimmed consistently — a one-sided trim
     // would re-create the exact drift we ship both forms to prevent.
     const result = buildNextStep(
       formatted({
@@ -362,7 +362,7 @@ describe("buildNextStep", () => {
     // Invariant check: iterate the branches that emit structured
     // output and confirm the tool name in `structured.tool` appears
     // in the prose text. Drift between the two is exactly the bug
-    // P1-K's "both fields describe the same call" rule exists to
+    // The paired-emission "both fields describe the same call" rule exists to
     // prevent.
     const cases: readonly ScanFormatted[] = [
       formatted({

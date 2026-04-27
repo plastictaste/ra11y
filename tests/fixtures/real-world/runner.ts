@@ -346,7 +346,7 @@ export async function loadAndScanFixture(
   const session = new McpSession();
   // Mirror the autoDetectWrappers logic from scan_project: run the
   // detector on the already-parsed files, classify via the one-hop
-  // AST probe (P1-F), and pass results as a
+  // AST probe, and pass results as a
   // `{ confirmed, assumed }` split so the session-override audit
   // (sessionOverridesNote + `source: "session"` entries in the
   // unified `activeNativeWrappers` tagged list) is not mis-attributed

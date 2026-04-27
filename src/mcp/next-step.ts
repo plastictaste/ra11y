@@ -5,12 +5,12 @@
  * names the canonical next tool call for the agent — `suggest_fix` on a
  * concrete file:line when violations exist, `checklist` when the
  * automated half is clean but manual items remain, etc. Centralizing
- * the logic here keeps the two tools in exact lockstep (the whole
- * point of's parity fixes); a heuristic that diverges between
- * tools re-creates the shape-drift bug was opened to fix.
+ * the logic here keeps the two tools in exact lockstep; a heuristic
+ * that diverges between tools re-creates the cross-surface drift
+ * agents pay for in extra round trips.
  *
  * The builder returns BOTH a prose `string` and a machine-readable
- * `structured` form `{ tool, args }` (P1-K). Agents that prefer
+ * `structured` form `{ tool, args }`. Agents that prefer
  * parse-free branching key off `structured`; weaker LLMs and human
  * log readers keep the prose. The two always describe the same call —
  * producing both from one pass guarantees they agree.
@@ -75,7 +75,7 @@ export interface NextStepOptions {
  * Machine-parseable next-call hint. `tool` is the canonical MCP tool
  * name (exactly what appears on `tools/list`); `args` uses the
  * canonical parameter names those tools accept — `file` not
- * `filePath` (per P2-R), `ruleId`, `line`. Never emit `args: {}` as a
+ * `filePath`, `ruleId`, `line`. Never emit `args: {}` as a
  * sentinel for "missing args"; a tool that legitimately takes no
  * args (like `checklist` at its default paths) gets an empty object
  * honestly. Absence of a structured hint is signaled by omitting the
@@ -251,8 +251,8 @@ function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextSte
     // alternatives + source context). Re-nudging the agent to call
     // `suggest_fix` costs ~600 tokens per finding on tight fix loops
     // for no new signal. Trim both the prose and the structured hint
-    // consistently — the pair is load-bearing (P1-K), so a
-    // one-sided trim would re-create the exact drift P1-K closed.
+    // consistently — the pair is load-bearing, so a one-sided trim
+    // would re-create the cross-surface drift the paired emission closes.
     // The verify-after-fix surface is a separate
     // emission and stays. Mixed lanes (any non-mechanical violation)
     // keep the `suggest_fix` nudge — it's still useful for guidance /

@@ -19,7 +19,7 @@ import { matchesWrapperPattern, wrapperPatternToTagRegexSource } from "./wrapper
 
 /**
  * Auto-detected wrapper candidates split by the one-hop AST probe
- * from {@link classifyWrapperCandidates} (P1-F). `confirmed` wrappers
+ * from {@link classifyWrapperCandidates}. `confirmed` wrappers
  * flow into the effective allowlist and silently silence findings;
  * `assumed` wrappers stay opaque (rules fire as if the name were NOT
  * in the wrapper list) but are still surfaced in the response so the
@@ -225,16 +225,16 @@ export function resolveWrapperSources(
 export type WrapperSource = "config" | "autoDetect" | "session";
 
 /**
- * One entry in the unified `activeNativeWrappers` tagged list (Q2R2-
- * WRAPPER-SOURCES). Replaces the former trio of `activeNativeWrappers:
- * string[]` + `activeNativeWrappersBySource: { fromConfig, fromSession,
+ * One entry in the unified `activeNativeWrappers` tagged list. Replaces
+ * the former trio of `activeNativeWrappers: string[]` +
+ * `activeNativeWrappersBySource: { fromConfig, fromSession,
  * fromAutoDetect }` + `sessionNativeWrappers: string[]` with one shape
  * the agent can iterate without cross-referencing three fields.
  *
- * `confirmed` is populated ONLY for `source: "autoDetect"` entries
- * (P1-F): `true` when the one-hop AST probe found a native interactive
- * root in the defining file, `false` when the probe could not confirm
- * and the name stays opaque (rules still fire on it). Omitted for
+ * `confirmed` is populated ONLY for `source: "autoDetect"` entries:
+ * `true` when the one-hop AST probe found a native interactive root in
+ * the defining file, `false` when the probe could not confirm and the
+ * name stays opaque (rules still fire on it). Omitted for
  * `"config"` and `"session"` — those are author-supplied, so the
  * confirmed-vs-assumed distinction does not apply. Conditional-spread
  * at the assembly site per CLAUDE.md §1 "Ambiguous field shapes are
@@ -321,8 +321,8 @@ export function wrappersMetaBlock(args: {
  * `autoDetect`, confirmed entries come before assumed so the agent
  * reads the trusted subset first.
  *
- * `confirmed` rides along only for `autoDetect` entries (P1-F — the
- * probe is the only channel that can produce this flag). Config and
+ * `confirmed` rides along only for `autoDetect` entries — the probe is
+ * the only channel that can produce this flag. Config and
  * session entries omit the field entirely per CLAUDE.md §1 "Ambiguous
  * field shapes are dishonest": `confirmed` on an author-supplied name
  * would be noise at best and a silent lie at worst.

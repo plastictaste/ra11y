@@ -151,7 +151,7 @@ export const listSuppressionsTool: McpTool = {
 /**
  * Builds the tagged-entry list for `list_suppressions`. Config entries
  * come first (alphabetical), then session entries (alphabetical). No
- * `confirmed` field on either — the flag is auto-detect only (P1-F),
+ * `confirmed` field on either — the flag is auto-detect only,
  * and this tool never auto-detects. Per CLAUDE.md §1 "Ambiguous field
  * shapes are dishonest," `confirmed` is omitted entirely for
  * author-supplied sources.

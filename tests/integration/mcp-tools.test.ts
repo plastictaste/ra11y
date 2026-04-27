@@ -678,7 +678,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("scan emits limitations on every response, including ones with findings", async () => {
-    // P2-N: previously limitations was gated to clean scans only.
+    // previously limitations was gated to clean scans only.
     // That let agents overclaim conformance on mixed-result responses
     // — "we found a few things but it's otherwise clean" implied the
     // static scan covered the whole picture. Now every response
@@ -711,11 +711,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // Agents branching on the machine form should not have to parse
     // English — `nextStepStructured.tool` names the same call the
     // prose recommends, and `args` uses canonical parameter names
-    // (`file`, `ruleId`, `line`) per P2-R. carves
+    // (`file`, `ruleId`, `line`). carves
     // out the all-mechanical case: when every violation already
     // carries an inline mechanical fix, both `nextStep` and
     // `nextStepStructured` drop the `suggest_fix` nudge (pair is
-    // load-bearing — a one-sided trim would re-introduce P1-K
+    // load-bearing — a one-sided trim would re-introduce the cross-surface drift
     // drift). The test accepts either the structured-present parity
     // case or the paired-trim case, and asserts the pair stays in
     // lockstep.
@@ -1847,7 +1847,7 @@ describe("MCP tools/call: missing-required-param error envelopes", () => {
   });
 });
 
-// ─── P1-M + P1-H: split composite plan counters ─────────────────────────────
+// ─── split composite plan counters ─────────────────────────────
 //
 // Regression suite for the "composite headline counts are dishonest" fix.
 // The old `plan.manualReviewRequired` summed grounded candidates with bare-
@@ -1884,7 +1884,7 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     // Manual split: both counters are top-level integers, present even
     // when one is zero. Zero on actionable is the honest reading of
     // "the finders didn't ground anything" — omitting the field would
-    // re-introduce the ambiguity P1-M fixed.
+    // re-introduce the ambiguity the composite-counter split closed.
     expect(typeof body.plan.actionableManualItems).toBe("number");
     expect(typeof body.plan.untargetedCriteria).toBe("number");
     expect(body.plan.actionableManualItems).toBeGreaterThanOrEqual(0);

@@ -1,6 +1,6 @@
 /**
  * The suggest_fix MCP tool. Lives in its own file so src/mcp/tools.ts
- * stays under the 500-line file budget after the P0-D unique-anchor
+ * stays under the 500-line file budget after the unique-anchor
  * wiring landed.
  */
 

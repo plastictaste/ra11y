@@ -703,7 +703,7 @@ function buildNextStepStructured(args: {
   // candidates on the detect leg's subset — non-empty means the
   // scanner found PascalCase+onClick components the agent hasn't
   // yet folded into `nativeWrappers` config. A stronger
-  // "still-assumed-not-confirmed" signal (per P1-F wrapper-source
+  // "still-assumed-not-confirmed" signal (per wrapper-source
   // telemetry on `scan_project`) isn't cheaply reachable from the
   // composed-legs result here without re-threading the scan meta,
   // so we use the candidate-list proxy and accept it may over-route

@@ -19,7 +19,7 @@
  * violation.
  *
  * The {@link classifyWrapperCandidates} function adds a one-hop AST
- * probe for the `autoDetectWrappers: true` path (P1-F). See that
+ * probe for the `autoDetectWrappers: true` path. See that
  * function's docstring for the exact heuristic + why it's deliberately
  * narrow.
  */
@@ -226,7 +226,7 @@ function looksLikeWrapper(el: JsxElement): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// One-hop AST probe (P1-F)
+// One-hop AST probe
 // ---------------------------------------------------------------------------
 
 /**

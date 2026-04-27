@@ -178,7 +178,7 @@ describe("classifyWrapperCandidates: mixed + deterministic shape", () => {
   });
 
   it("handles a realistic split — one confirmed, one assumed", () => {
-    // The canonical P1-F scenario: a scan finds two auto-detect
+    // The canonical probe scenario: a scan finds two auto-detect
     // candidates; the real <button> wrapper confirms, the
     // <div role='slider'> wrapper stays assumed and its findings
     // remain live.
@@ -266,7 +266,7 @@ describe("collectWrapperCandidates: definitionFile", () => {
     // an import resolver this scanner deliberately does not ship. The
     // probe matches basename `Button.tsx` against component name
     // `Button` directly — no hop through the barrel. This mirrors the
-    // P1-F classifier's narrow-by-design discipline.
+    // classifier's narrow-by-design discipline.
     const files: ParsedFile[] = [
       fileOf(
         "src/app.tsx",

@@ -636,7 +636,7 @@ function assembleFragmentFilesBlock(
 
 /**
  * Populates the opaque-components sub-block of analysisCoverage: count,
- * ranked top list, and — when the inventory is small (P2-P) — the full
+ * ranked top list, and — when the inventory is small — the full
  * names array. Extracted from {@link buildAnalysisCoverage} so the
  * enclosing function stays under the cognitive-complexity cap.
  */
@@ -679,7 +679,7 @@ function assembleOpaqueComponentBlock(
   // Names field: inlined on every response when the inventory is
   // small enough to fit (≤ OPAQUE_COMPONENT_INLINE_NAMES_MAX), so the
   // agent doesn't need a verboseMeta round-trip for small codebases
-  // (P2-P). Above the threshold we only ship the names under
+  //. Above the threshold we only ship the names under
   // verboseMeta to keep default responses bounded; agents that want
   // the full list on a large codebase opt in explicitly. Omitted
   // entirely when neither condition applies — never shipped as a

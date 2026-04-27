@@ -1,7 +1,7 @@
 /**
  * Integration tests for the hard-error envelope on nonexistent scan
- * targets (/ P0-F). The soft-signal `warnings: [...]` path
- * (/ P0-E) covers valid-but-empty scan targets; this test
+ * targets. The soft-signal `warnings: [...]` path
+ * covers valid-but-empty scan targets; this test
  * covers the discriminator — "does the path even exist?" — and asserts
  * each scan tool emits the structured `errorResult` envelope for
  * malformed input instead of a successful empty response.
@@ -171,7 +171,7 @@ describe("scan hard-errors when every path is missing", () => {
   it("does NOT error when at least one path exists — the existing scan flow runs", async () => {
     // Mix one missing path with one real file. The existing `scan` flow
     // should proceed and skip the missing one silently (discovery already
-    // swallows bad paths). P0-F's envelope only fires when EVERY path
+    // swallows bad paths). The cwd-not-found envelope only fires when EVERY path
     // is bad — a partial-miss is a soft signal, not malformed input.
     const responses = await mcpSession([
       initMsg(1),

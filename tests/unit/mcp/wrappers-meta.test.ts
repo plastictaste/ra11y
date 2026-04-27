@@ -5,7 +5,7 @@
  *
  * Invariants under test:
  *   - auto-detect `confirmed` names flow into the effective allowlist;
- *     `assumed` names do NOT (P1-F)
+ *     `assumed` names do NOT
  *   - the unified `activeNativeWrappers` list is tagged per entry with
  *     `{ name, source, confirmed? }`
  *   - `confirmed` is populated ONLY for `source: "autoDetect"` entries
@@ -30,7 +30,7 @@ import {
 
 describe("resolveWrapperSources: auto-detect split", () => {
   it("includes only `confirmed` names in the effective allowlist", () => {
-    // The core P1-F invariant: a wrapper the probe couldn't confirm
+    // The core probe invariant: a wrapper the probe couldn't confirm
     // must NOT end up in the active-wrapper set. If it did, findings
     // on that component would be silenced even though we can't tell
     // whether the wrapper renders a native element underneath.
@@ -157,7 +157,7 @@ describe("wrappersMetaBlock: unified tagged list shape", () => {
   });
 
   it("emits autoDetect assumed entries with source: 'autoDetect', confirmed: false", () => {
-    // Load-bearing P1-F case: the scan found wrappers, none confirmed
+    // Load-bearing probe case: the scan found wrappers, none confirmed
     // — but the agent MUST still see the assumed names so it knows
     // what the scanner considered. Silent omission would defeat the
     // whole probe.

@@ -283,7 +283,7 @@ describe("rule semantics/label-in-name", () => {
   });
 
   describe("editCandidate synthesis (non-contiguous tokens)", () => {
-    // P1-L (2026-04-17 agent-consumer eval): when the
+    // (2026-04-17 agent-consumer eval): when the
     // diagnosis is "visible tokens present in aria-label but non-
     // contiguous", the rule has enough signal to synthesize a concrete
     // rewrite — verbatim visible-text prefix + `": "` + remaining

@@ -404,7 +404,7 @@ function buildScanFileResponse(args: {
       ? {}
       : { warningsDetails: assembled.warningsDetails }),
     // top-level agent direction.
-    // P1-K: structured twin — conditional-spread per CLAUDE.md §1
+    // structured twin — conditional-spread per CLAUDE.md §1
     // "Ambiguous field shapes are dishonest" so the fallback multi-
     // option prose doesn't ship a sentinel machine hint.
     nextStep: nextStep.prose,

@@ -809,7 +809,7 @@ describe("MCP tool: scan_project", () => {
       // and ra11y.config.ts contributes `source: "config"`. The
       // unified tagged list shows all three in one field.
       //
-      // autoDetect names are split by the one-hop AST probe (P1-F).
+      // autoDetect names are split by the one-hop AST probe.
       // This test adds a defining `ActionButton.tsx` whose root is a
       // native <button>, so the detector promotes it to
       // `confirmed: true` — the path that flows into the active
@@ -879,7 +879,7 @@ describe("MCP tool: scan_project", () => {
         "export function Button(p) { return <button {...p} />; }",
       );
       // A PascalCase wrapper whose root is a bare <div> — assumed.
-      // This is the canonical silent-silencing risk P1-F closes: if
+      // This is the canonical silent-silencing risk the probe closes: if
       // this wrapper reached the effective allowlist, findings on it
       // would disappear even though the <div> underneath might be a
       // real keyboard-operability bug.
@@ -920,7 +920,7 @@ describe("MCP tool: scan_project", () => {
     });
 
     it("leaves assumed wrappers opaque — findings on them are NOT silenced", async () => {
-      // Acceptance criterion (v) from the P1-F brief, observed at the
+      // Acceptance criterion (v) from the probe brief, observed at the
       // MCP filter layer: when a wrapper is assumed (confirmed: false),
       // the scanner's wrapper-noise filter must not drop findings
       // carrying that component's name.
@@ -936,7 +936,7 @@ describe("MCP tool: scan_project", () => {
       const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-assumed-opaque-"));
       await writeFile(
         joinPath(dir, "PerceptionSlider.tsx"),
-        // <div role='slider'> is the P1-F motivating example — looks
+        // <div role='slider'> is the canonical motivating example — looks
         // like a native wrapper by name, is a real bug underneath.
         "export function PerceptionSlider(p) { return <div role='slider' {...p} />; }",
       );

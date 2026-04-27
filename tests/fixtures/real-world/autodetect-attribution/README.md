@@ -27,7 +27,7 @@ the `fromAutoDetect` channel inside `NativeWrapperSources`, not through
   something that persists until the MCP server is restarted.
 - Auto-detected names are **scan-scoped**: they apply for one scan only and
   never touch session or project config. They must appear as
-  `source: "autoDetect"` entries with a `confirmed` flag from the P1-F
+  `source: "autoDetect"` entries with a `confirmed` flag from the one-hop AST probe
   AST probe.
 
 If the harness wired auto-detected names through `fromSession` instead of

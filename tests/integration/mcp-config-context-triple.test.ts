@@ -134,7 +134,7 @@ describe("meta.configSearchedFrom is present-when-meaningful", () => {
 
   it("scan_project on a nonexistent cwd does not re-emit the triple either", async () => {
     // Hostile-input case — the original repro shape was a
-    // misconfigured `cwd` triggering all three fields. Under P0-F the
+    // misconfigured `cwd` triggering all three fields. Under the cwd-not-found envelope, the
     // nonexistent cwd hard-errors with `cwd-not-found`, so the body
     // has no meta at all; that's the honest shape and the regression
     // can't reappear here. Guard the structured-error path so a
