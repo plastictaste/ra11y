@@ -297,7 +297,7 @@ function reportMissingH1OnFullPage(
     : " The document has no headings at all; add an <h1> that names the page.";
   const baseMessage = `Page contains no <h1> heading; the document outline lacks a top-level title for screen reader users.${headingHint}`;
   emit({
-    severity: "warning",
+    severity: residueAdjustedSeverity(markdownResidue),
     location: { filePath: "", line, column },
     message: markdownResidue ? `${baseMessage}${MARKDOWN_RESIDUE_NOTE_SUFFIX}` : baseMessage,
     suggestion: first
@@ -319,7 +319,7 @@ function reportMissingH1(
   if (!first) return;
   const baseMessage = `Document has no <h1>. The first heading is <${first.element.tagName}> at line ${first.element.loc.start.line}.`;
   emit({
-    severity: "warning",
+    severity: residueAdjustedSeverity(markdownResidue),
     location: {
       filePath: "",
       line: first.element.loc.start.line,
@@ -349,7 +349,7 @@ function reportSkippedLevels(
       const previousLine = previous.element.loc.start.line;
       const baseMessage = `Heading level skipped: previous was <h${previous.level}> at line ${previousLine}, this is <${current.element.tagName}>. Skipped ${current.level - previous.level - 1} level(s).`;
       emit({
-        severity: "warning",
+        severity: residueAdjustedSeverity(markdownResidue),
         location: {
           filePath: "",
           line: current.element.loc.start.line,
@@ -392,7 +392,7 @@ function reportMultipleH1(
     if (!extra) continue;
     const baseMessage = `Document has ${h1s.length} <h1> elements; expected exactly 1 page-title <h1>. The first <h1> is at line ${firstLine}; this is extra <h1> #${i + 1}. Subsequent h1s likely should be <h2> or sectioned with <section> to scope a new outline.`;
     emit({
-      severity: "warning",
+      severity: residueAdjustedSeverity(markdownResidue),
       location: {
         filePath: "",
         line: extra.element.loc.start.line,
@@ -404,6 +404,33 @@ function reportMultipleH1(
       ...wrongBecause(partialShape, markdownResidue),
     });
   }
+}
+
+/**
+ * Conceded-uncertainty severity for the markdown-residue branch. When
+ * the file is markdown source (`.md` / `.markdown` / `.mkdn`), the
+ * markdown adapter has already stripped ATX (`# …`) and Setext
+ * headings before this rule sees the residue — so the rule's view of
+ * the heading outline is systematically partial. The reason text on
+ * every emit honestly concedes that the rendered outline "may be
+ * well-formed once the ATX headings come back", which means the
+ * predicate the rule claims to violate may not actually fail at
+ * render time.
+ *
+ * Per the AI-first consumer doctrine "Reason text and severity must
+ * agree" (in particular the 2026-04-25 second-pass extension to
+ * conceded uncertainty), a `reason` that hedges with "may not apply"
+ * / "may be well-formed once …" while severity stays `warning` is
+ * the same dishonest shape: the framing concedes the predicate may
+ * not hold, the severity claims it does. The closure for this rule
+ * mirrors `semantics/empty-heading`'s template-directive branch
+ * (commit 0c3c2d5f): downgrade the conceded-uncertainty branch one
+ * step in the attention-budget axis (warning → info) so the agent's
+ * triage matches what the reason text actually says. Plain HTML
+ * branches keep emitting at the rule-level `warning` severity.
+ */
+function residueAdjustedSeverity(markdownResidue: boolean): "warning" | "info" {
+  return markdownResidue ? "info" : "warning";
 }
 
 /**

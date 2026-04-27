@@ -672,6 +672,117 @@ describe("rule semantics/heading-hierarchy", () => {
       expect(missing?.message).not.toContain("Markdown ATX-syntax headings");
       expect(missing?.couldBeWrongBecause ?? []).not.toContain(MARKDOWN_RESIDUE_CODE);
     });
+
+    // Conceded-uncertainty severity downgrade. Per AI-first consumer
+    // doctrine "Reason text and severity must agree" (2026-04-25
+    // second-pass extension to conceded uncertainty), the markdown-
+    // residue branch's reason text concedes "the rendered document
+    // outline may be well-formed once the ATX headings come back" —
+    // the predicate the rule claims to violate may not actually fail at
+    // render time. Mirror `semantics/empty-heading`'s template-directive
+    // closure: emit the residue branch at `info` (one step below the
+    // rule-level `warning`) so the attention-budget signal agrees with
+    // what the reason text actually says. Plain HTML branches keep
+    // emitting at `warning`.
+    it("downgrades the missing-h1-on-full-page variant to info on markdown source", () => {
+      const source =
+        "<html>\n  <body>\n    <header>nav</header>\n" +
+        '    <div class="admonition"><h5>Note</h5></div>\n' +
+        "  </body>\n</html>\n";
+      const v = runRule(rule, source, { filePath: "page.md" });
+      const variant = v.find((x) => x.message.includes("no <h1> heading"));
+      expect(variant).toBeDefined();
+      expect(variant?.severity).toBe("info");
+    });
+
+    it("downgrades the legacy missing-h1 emit to info on markdown source", () => {
+      const source =
+        "<html>\n<body>\n" +
+        '<div class="admonition note"><h5>Note</h5>\nHeads up.</div>\n' +
+        "</body>\n</html>\n";
+      const v = runRule(rule, source, { filePath: "_docs/intro.md" });
+      const missing = v.find((x) => x.message.includes("Document has no <h1>"));
+      expect(missing).toBeDefined();
+      expect(missing?.severity).toBe("info");
+    });
+
+    it("downgrades the skipped-level emit to info on markdown source", () => {
+      const source = "<section><h2>A</h2></section>\n<section><h4>Skipped</h4></section>\n";
+      const v = runRule(rule, source, { filePath: "post.markdown" });
+      const skipped = v.find((x) => x.message.includes("skipped"));
+      expect(skipped).toBeDefined();
+      expect(skipped?.severity).toBe("info");
+    });
+
+    it("downgrades the multiple-h1 emit to info on markdown source", () => {
+      const source = "<h1>Embedded one</h1>\n<h1>Embedded two</h1>\n";
+      const v = runRule(rule, source, { filePath: "README.md" });
+      const multi = v.find((x) => x.message.includes("expected exactly 1 page-title"));
+      expect(multi).toBeDefined();
+      expect(multi?.severity).toBe("info");
+    });
+
+    it("keeps sibling .html emits at warning severity (extension is the gate)", () => {
+      // The downgrade is scoped to markdown-source extensions; an HTML
+      // file whose ATX syntax was never stripped must keep the
+      // rule-level `warning` severity because the reason text doesn't
+      // hedge.
+      const v = runRule(rule, `<html><body><h2>Section</h2></body></html>`, {
+        filePath: "sibling.html",
+      });
+      const missing = v.find((x) => x.message.includes("no <h1>"));
+      expect(missing?.severity).toBe("warning");
+    });
+
+    // Invariant sweep: any finding whose reason concedes the rendered
+    // outline "may be well-formed once the ATX headings come back" must
+    // surface at `info` (the conceded-uncertainty severity for this
+    // rule), not `warning`. Mirrors the template-directive sweep in
+    // `tests/unit/rules/semantics/empty-heading.test.ts` so a future
+    // change to the residue gate cannot silently re-introduce the
+    // dishonest reason-vs-severity pairing.
+    it("never produces a warning-severity finding with the conceded markdown-residue reason text", () => {
+      const samples: Array<{ source: string; filePath: string }> = [
+        // missing-h1-on-full-page variant
+        {
+          source:
+            "<html>\n  <body>\n    <header>nav</header>\n" +
+            '    <div class="admonition"><h5>Note</h5></div>\n' +
+            "  </body>\n</html>\n",
+          filePath: "page.md",
+        },
+        // legacy missing-h1 (envelope + admonition heading)
+        {
+          source:
+            "<html>\n<body>\n" +
+            '<div class="admonition"><h5>Note</h5></div>\n' +
+            "</body>\n</html>\n",
+          filePath: "intro.markdown",
+        },
+        // skipped-level
+        {
+          source: "<section><h2>A</h2></section>\n<section><h4>Skipped</h4></section>\n",
+          filePath: "post.mkdn",
+        },
+        // multiple-h1
+        {
+          source: "<h1>Embedded one</h1>\n<h1>Embedded two</h1>\n",
+          filePath: "README.md",
+        },
+      ];
+      for (const { source, filePath } of samples) {
+        const v = runRule(rule, source, { filePath });
+        for (const finding of v) {
+          const concedes =
+            finding.message.includes("Markdown ATX-syntax headings") ||
+            finding.message.includes("may be well-formed once the ATX headings come back") ||
+            (finding.couldBeWrongBecause ?? []).includes(MARKDOWN_RESIDUE_CODE);
+          if (concedes) {
+            expect(finding.severity).toBe("info");
+          }
+        }
+      }
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
