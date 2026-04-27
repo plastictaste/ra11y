@@ -7,6 +7,6 @@
     "noUncheckedIndexedAccess": false,
     "noPropertyAccessFromIndexSignature": false
   },
-  "include": ["**/*.ts", "../src/**/*.ts"],
+  "include": ["**/*.ts", "../src/**/*.ts", "../.claude/hooks/lib/verify-marker.ts"],
   "exclude": []
 }
