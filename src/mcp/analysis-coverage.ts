@@ -58,7 +58,7 @@
  * parser pair is the actionable signal an agent needs to investigate
  * ("html parser: Unexpected end of input while parsing tag" is a
  * different fix path than "css parser: Unterminated string literal").
- * Wire shape splits on bucket size per V1-COVERAGE-PARSE-ERROR-FILES-
+ * Wire shape splits on bucket size per-
  * UNCAPPED: at small inventories (count ≤ {@link PARSE_ERROR_INLINE_THRESHOLD})
  * or when `verboseMeta: true`, the full per-entry list ships inline;
  * above the threshold at default verbosity, the list is replaced by
@@ -163,7 +163,7 @@ interface CoverageBlock {
   templateInterpolationFound?: readonly { readonly token: string; readonly count: number }[];
   templateDirectiveHandling?: string;
   /**
-   * V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: true when at least one
+   * true when at least one
    * parsed HTML-family file (including markdown routed through the HTML
    * parser per ADR 0025) opened with a YAML frontmatter fence
    * (`^---\n…\n---\n`). Tracked alongside `templateInterpolationFound`
@@ -179,7 +179,7 @@ interface CoverageBlock {
   parseErrorFileCount?: number;
   parseErrorFiles?: readonly ParseErrorEntry[];
   /**
-   * V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: top distinct parse-error
+   * top distinct parse-error
    * reasons across the `parseErrorFiles` bucket, ranked by frequency
    * (desc) with alphabetical tiebreak for determinism. Emitted as the
    * default rollup form whenever `parseErrorFileCount` exceeds
@@ -199,7 +199,7 @@ interface CoverageBlock {
    */
   parseErrorTopReasons?: readonly { readonly reason: string; readonly count: number }[];
   /**
-   * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: per-parser count map for the
+   * per-parser count map for the
    * `parseErrorFiles` bucket — keyed by the in-house parser name
    * (`tsx`, `html`, `css`, `jsx`, `ts`, `js`) and valued by the count
    * of errored files that parser owns. Surfaces dominance ("is every
@@ -213,7 +213,7 @@ interface CoverageBlock {
   partialParseFileCount?: number;
   partialParseFiles?: readonly ParseErrorEntry[];
   /**
-   * V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: rollup mirror of
+   * rollup mirror of
    * {@link parseErrorTopReasons} for the `partialParseFiles` bucket.
    * Same emission gate (count > {@link PARSE_ERROR_INLINE_THRESHOLD},
    * verbose=false) and same shape; ships when the partial-parse
@@ -222,10 +222,10 @@ interface CoverageBlock {
    * Jekyll-class corpora).
    */
   partialParseTopReasons?: readonly { readonly reason: string; readonly count: number }[];
-  /** Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT mirror for `partialParseFiles`. */
+  /** mirror for `partialParseFiles`. */
   partialParseByParser?: Readonly<Record<string, number>>;
   /**
-   * V1-RULES-BY-EXTENSION-LABELING (ADR 0028): for each extension that
+   * (ADR 0028): for each extension that
    * had files in this scan, the list of active rule IDs eligible to
    * evaluate files of that extension — the same set the rule-runner's
    * `applies()` gate would admit per file. Routes through
@@ -252,7 +252,7 @@ interface CoverageBlock {
   parseModeByExtension?: Readonly<Record<string, string>>;
   /**
    * Structured hints, keyed by `code` so agents dispatch without
-   * substring-matching English prose (V1-HINTS-STRUCTURED-CODE). Each
+   * substring-matching English prose. Each
    * entry carries `{ code, text, detail? }` — `code` is the load-bearing
    * branching field, `text` is the human-readable mirror kept populated
    * for humans reading agent output verbatim, and `detail` is
@@ -322,7 +322,7 @@ interface CoverageAccumulator {
    */
   readonly fragmentFiles: string[];
   /**
-   * V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: flipped to true the
+   * flipped to true the
    * first time any parsed HTML-family file opens with a YAML
    * frontmatter fence. A single sighting is sufficient — the fence is
    * not per-file telemetry but a scan-level substrate signal ("at
@@ -439,7 +439,7 @@ export function buildAnalysisCoverage(
   let metaArrayTruncated = false;
   if (acc.opaqueComponents.size > 0) {
     assembleOpaqueComponentBlock(acc.opaqueComponents, verbose, coverage);
-    // P1-ACCT: when autoDetectWrappers: true promotes N PascalCase
+    // when autoDetectWrappers: true promotes N PascalCase
     // components to the scan-scoped wrapper list, those N are
     // subtracted from the opaque count — agents comparing scans
     // with-flag vs without-flag see a mysterious difference (43 vs 51
@@ -460,7 +460,7 @@ export function buildAnalysisCoverage(
     );
   }
   if (acc.hasFrontmatterFence) {
-    // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: surface the
+    // surface the
     // substrate signal alongside `templateInterpolationFound` so the
     // warnings layer can fire `template_files_parsed_as_literal`
     // on Jekyll / Hugo / Eleventy / Astro posts whose header is the
@@ -469,7 +469,7 @@ export function buildAnalysisCoverage(
     coverage.hasFrontmatterFence = true;
   }
   if (acc.parseErrorEntries.length > 0) {
-    // V1-COVERAGE-PARSE-ERROR-FILES-UNCAPPED: this assembler never
+    // this assembler never
     // contributes to `metaArrayTruncated` anymore — the previous
     // {@link META_ARRAY_CAP} truncation on `parseErrorFiles` /
     // `partialParseFiles` was replaced by the inline-vs-rollup gate.
@@ -508,13 +508,13 @@ function populateCoverageTail(
   if (verbose) {
     const byExt = rulesFiredByExtension(files, activeRules);
     if (Object.keys(byExt).length > 0) {
-      // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): canonical name +
+      // (ADR 0028): canonical name +
       // deprecated alias both ship for one minor release. Both fields
       // carry the identical value; the warnings channel emits
       // `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
       // whenever the alias rides so agents can self-migrate without a
       // hidden break. Mirror precedent: `id` → `criterionId` rename in
-      // `tool-coverage.ts` (Q7-CRITERION-ID-FIELD-NAME-DRIFT).
+      // `tool-coverage.ts`.
       coverage.rulesFiredByExtension = byExt;
       coverage.rulesByExtension = byExt;
     }
@@ -535,7 +535,7 @@ function populateCoverageTail(
   if (Object.keys(parseMode).length > 0) coverage.parseModeByExtension = parseMode;
   const hints = buildHints(files, acc);
   if (hints.length > 0) coverage.hints = hints;
-  // V1-DETECT-SILENT-EXT: surface per-extension counts for files the
+  // surface per-extension counts for files the
   // walker considered but rejected purely on the parseable-extension
   // check. Present-when-meaningful: omitted when the map is empty or
   // the caller didn't run discovery (`scan_file` takes explicit paths).
@@ -645,7 +645,7 @@ function assembleOpaqueComponentBlock(
   verbose: boolean,
   coverage: CoverageBlock,
 ): void {
-  // V1-OPAQUE-COMPONENT-NAMES-MINIFIED-TOKEN-LEAK: belt-and-braces
+  // belt-and-braces
   // emission-time filter. `extractComponentIdentifier` is the canonical
   // entry-point predicate — and it already rejects the same noise
   // classes — but a regression upstream that lets a member-access path
@@ -784,7 +784,7 @@ function isMarkdownFile(filePath: string): boolean {
 }
 
 /**
- * V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE: elides the
+ * elides the
  * contents of triple-backtick fenced code blocks and single-backtick
  * inline-code spans from a markdown source so downstream template-
  * directive detection doesn't fire on prose examples that QUOTE
@@ -874,10 +874,10 @@ function describeTemplateDirectiveHandling(tokens: ReadonlyMap<string, number>):
  * while `perRuleCoverage` correctly showed every `.css`-targeted rule
  * with `filesEvaluated: 1` (because the SCSS adapter produces a CSS AST
  * and `applies()` matches via alias). The rename to
- * `rulesFiredByExtension` (ADR 0028, V1-RULES-BY-EXTENSION-LABELING)
+ * `rulesFiredByExtension` (ADR 0028)
  * disambiguates this view from `perRuleCoverage`'s post-runner tally —
  * the two surfaces no longer share a look-alike name with categorically
- * different semantics. Q3-RULES-BY-EXTENSION-UNDERCOUNT is the agreement
+ * different semantics. is the agreement
  * site for the alias expansion.
  */
 /**
@@ -937,7 +937,7 @@ function rulesFiredByExtension(
       // `rulesFiredByExtension` and `perRuleCoverage` in agreement on
       // alias-heavy scans. Literal equality silently dropped every
       // aliased extension (the historical bug,
-      // Q3-RULES-BY-EXTENSION-UNDERCOUNT).
+      //).
       if (extensionMatches(ext, declared)) ids.push(r.id);
     }
     out[ext] = ids.sort();
@@ -955,12 +955,11 @@ function rulesFiredByExtension(
  *      through the HTML parser per ADR 0025, but their prose routinely
  *      QUOTES template directives in fenced code blocks / inline-code
  *      spans; those regions are stripped before classification
- *      (V1-TEMPLATE-CLASSIFIER-MARKDOWN-PROSE-FALSE-POSITIVE).
  *   2. YAML frontmatter fence presence — a top-of-file `---\n…\n---\n`
  *      header is parser-level template substrate the HTML parser sees
  *      as literal text. Flagging presence lets the warnings layer fire
  *      `template_files_parsed_as_literal` on files whose only substrate
- *      is the header (V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER).
+ * is the header.
  *   3. Fragment-vs-document classification — files without `<html>` or
  *      `<body>` are excluded from page-scope rules; the coverage block
  *      surfaces the list so the exclusion is honest.
@@ -1015,7 +1014,7 @@ function accumulateCoverageForFile(
   // for non-JSX-bearing extensions so the inventory reflects real
   // component sightings. See `opaque-tag-filter.ts`.
   if (!isJsxBearingFile(file.filePath)) return;
-  // Belt-and-braces filter (Q6-OPAQUE-COMPONENTS-MINIFIED-JS-REGRESSION).
+  // Belt-and-braces filter.
   // The extension filter above already excludes plain `.ts` / `.js`, but
   // the parser's JSX-mode recovery path still runs on `.tsx` / `.jsx`
   // sources that fail to parse cleanly — when that happens, fake tag

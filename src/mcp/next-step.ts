@@ -6,8 +6,8 @@
  * concrete file:line when violations exist, `checklist` when the
  * automated half is clean but manual items remain, etc. Centralizing
  * the logic here keeps the two tools in exact lockstep (the whole
- * point of Track Q's parity fixes); a heuristic that diverges between
- * tools re-creates the shape-drift bug Track Q was opened to fix.
+ * point of's parity fixes); a heuristic that diverges between
+ * tools re-creates the shape-drift bug was opened to fix.
  *
  * The builder returns BOTH a prose `string` and a machine-readable
  * `structured` form `{ tool, args }` (P1-K). Agents that prefer
@@ -50,8 +50,8 @@ export interface NextStepOptions {
    * verify-loop tail when no fix suggestion is available.
    */
   readonly singleFilePath?: string;
-  /**
-   * Q6-NEXTSTEP-AVOIDS-VENDOR-CSS. Set of `files[].path` values that
+  /**.
+   * Set of `files[].path` values that
    * the classifier labelled as build artifacts (compiled CSS, minified
    * bundles, hashed-filename output) — the same path strings that
    * appear under `meta.scannedBuildArtifacts` on the response. When
@@ -106,8 +106,8 @@ interface NextStepInputs {
   readonly actionableManual: number;
   readonly notes: number;
   readonly first: FirstFinding | null;
-  /**
-   * Q6-NEXTSTEP-AVOIDS-VENDOR-CSS. When `first` has been rerouted from
+  /**.
+   * When `first` has been rerouted from
    * a vendor-code finding to a non-vendor same-`ruleId` sibling, this
    * carries the rerouted-away vendor path so the violation branch can
    * prepend a reason-text note. `undefined` when no reroute happened
@@ -130,7 +130,7 @@ interface NextStepInputs {
    * the rule emitted a mechanical primary rewrite with alternatives
    * and ambient snippet context at scan time. Under that condition,
    * re-nudging the agent to call `suggest_fix` is a redundant
-   * round-trip (Q2R2-FIX-DEDUPE): the inline fix already has what
+   * round-trip: the inline fix already has what
    * `suggest_fix` would return, so the violation branch drops the
    * `suggest_fix` tail from both `prose` and `structured`. Does NOT
    * fire when any violation's `fixClass` is `"guidance"`,
@@ -177,7 +177,7 @@ export function buildNextStep(
   // `fixesByClass` is the honest per-lane source this predicate has
   // always read.
   const firstPick = pickFirstFinding(formatted.files, options.vendorPaths);
-  // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `plan.violations` headline
+  // the flat `plan.violations` headline
   // was deleted because it summed across the four `fixesByClass` lanes
   // under one number. The branching predicate ("are there any
   // violations to point at?") still wants the aggregate count, so we
@@ -233,7 +233,7 @@ function cleanScanNextStep(inputs: NextStepInputs): NextStepResult {
 
 function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextStepResult {
   const vPlural = inputs.violations === 1 ? "" : "s";
-  // Q6-NEXTSTEP-AVOIDS-VENDOR-CSS: when the picker rerouted away from
+  // when the picker rerouted away from
   // a vendor-code finding to a non-vendor same-`ruleId` sibling,
   // prepend a reason-text note so the agent knows why the first-listed
   // vendor finding isn't the first-action target. The finding itself
@@ -245,7 +245,7 @@ function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextSte
       : `note: highest-severity finding in this scan is in vendor code (\`${inputs.reroutedFromVendorPath}\`); next-step points at \`${first.path}\` where a same-family fix is applicable. `;
   if (inputs.fixable > 0) {
     const fPlural = inputs.fixable === 1 ? "" : "s";
-    // Q2R2-FIX-DEDUPE: when EVERY violation already carries
+    // when EVERY violation already carries
     // `fixClass === "mechanical"`, the inline fix on each finding has
     // the same payload `suggest_fix` would return (primary +
     // alternatives + source context). Re-nudging the agent to call
@@ -253,7 +253,7 @@ function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextSte
     // for no new signal. Trim both the prose and the structured hint
     // consistently — the pair is load-bearing (P1-K), so a
     // one-sided trim would re-create the exact drift P1-K closed.
-    // The verify-after-fix surface (Q2-VERIFYCMD) is a separate
+    // The verify-after-fix surface is a separate
     // emission and stays. Mixed lanes (any non-mechanical violation)
     // keep the `suggest_fix` nudge — it's still useful for guidance /
     // verify-in-source / runtime-only findings that need the round-
@@ -318,7 +318,7 @@ function fixesByClassLane(
 /**
  * Sums the four `plan.fixesByClass` lanes into a flat error+warning
  * count — replaces the wire-level `plan.violations` headline that was
- * deleted per Q7-PLAN-VIOLATIONS-COMPOSITE. Used only as an internal
+ * deleted per. Used only as an internal
  * branching predicate ("any violations to point at?") inside this
  * builder; the wire surface stays per-lane. Defensive: a missing or
  * malformed `fixesByClass` parent yields zero, matching the
@@ -338,7 +338,7 @@ function sumFixesByClass(plan: Record<string, unknown>): number {
  * (file, line, ruleId) triple — or `null` when no callable finding
  * exists. `reroutedFromVendorPath` is set only when the scanner picked
  * a non-vendor finding in preference to an earlier vendor-code finding
- * of the same `ruleId` (Q6-NEXTSTEP-AVOIDS-VENDOR-CSS); downstream
+ * of the same `ruleId`; downstream
  * branches use it to prepend a reason-text note naming the vendor
  * file the agent is being steered away from.
  */
@@ -353,7 +353,7 @@ interface FirstFindingPick {
  * answer is the first callable finding in `files[]` order — the
  * response-assembly sort already puts the highest-priority finding
  * first, so that's the one the agent should act on. The reroute
- * (Q6-NEXTSTEP-AVOIDS-VENDOR-CSS) kicks in when `vendorPaths` is
+ * kicks in when `vendorPaths` is
  * non-empty AND the first callable finding sits on a path in that
  * set: we scan forward for a same-`ruleId` finding on a non-vendor
  * path and hand THAT triple back instead, tagging the original
@@ -443,7 +443,7 @@ function readFindingRuleIdAndLine(
 }
 
 /**
- * Predicate for the Q2R2-FIX-DEDUPE trim: returns true when every
+ * Predicate for the trim: returns true when every
  * violation-severity finding (`severity === "error"` or `"warning"` —
  * info-level notes are excluded because they flow through a different
  * nextStep branch and `fixClass` isn't meaningful for them) already
@@ -482,7 +482,7 @@ function allViolationsMechanical(
 }
 
 /**
- * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: counts findings by `ruleId`
+ * counts findings by `ruleId`
  * across the page's pre-trim files list and returns the rule ID with
  * the highest occurrence count. Returns `undefined` on empty input or
  * when the top two rules tie (no clear winner — per the AI-first
@@ -560,7 +560,7 @@ function findUniqueMaxKey(counts: ReadonlyMap<string, number>): string | undefin
 }
 
 /**
- * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: builds the per-rule narrowing
+ * builds the per-rule narrowing
  * `nextStep` reroute for the degenerate-pagination case where the
  * token-density cap clipped the page to ≤ 2 files AND the project
  * carries > 100 files-with-findings. Without this reroute, an agent
@@ -573,7 +573,7 @@ function findUniqueMaxKey(counts: ReadonlyMap<string, number>): string | undefin
  * AI-first doctrine "Don't duplicate capability the agent already has"
  * + "Interrogate the problem before accepting the solution's shape,"
  * the structured hint must name an existing tool with parameters the
- * tool actually accepts. The pairing item V1-TOOL-FINDINGS-BY-RULE
+ * tool actually accepts. The pairing item
  * tracks the future `findings_by_rule` primitive that would route
  * here directly; until that lands, `explain_rule` is the honest first
  * step — the agent reads what the dominant rule does, decides whether
@@ -605,7 +605,7 @@ export function perRuleNarrowingNextStep(args: {
 }
 
 /**
- * Q7-SCAN-ONE-FILE-PER-PAGE-PATHOLOGY: gate predicate for the
+ * gate predicate for the
  * per-rule narrowing reroute. Fires when the density cap clipped the
  * page to ≤ 2 files AND the underlying inventory carries > 100
  * files-with-findings. Both thresholds are encoded here (rather than

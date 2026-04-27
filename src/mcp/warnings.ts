@@ -1,7 +1,7 @@
 // MARKER_Q4_PROBE_001
 // ra11y-limits-exempt: warnings + paired warningsDetails apparatus is one
-// cohesive doctrine surface (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION
-// payload-vs-binary contract). Splitting `ScanWarningDetails` and the
+// cohesive doctrine surface (payload-vs-binary contract).
+// Splitting `ScanWarningDetails` and the
 // `summarize*` helpers into a sibling file scatters the membership-vs-
 // payload invariant across files and breaks the docblock that keeps the
 // contract auditable in one read; keep the apparatus together.
@@ -43,7 +43,7 @@ export type ScanWarningCode =
   // `Story`) were rendered transparent in the opaque-component
   // telemetry. Not an error; a label the agent can branch on.
   | "storybook_preset_active"
-  // V1-DETECT-SILENT-EXT: the walker considered N files that cleared
+  // the walker considered N files that cleared
   // dir-ignore + user-excludes and rejected them purely because their
   // extension isn't in PARSEABLE_EXTENSIONS (.astro, .scss, .vue, etc.).
   // Without this code a mixed-language repo reads as "scanned
@@ -75,7 +75,7 @@ export type ScanWarningCode =
   // corresponding paths with per-entry `{ path, parser, reason }` —
   // the parser + reason pair is the agent's fix pivot, so gating the
   // detail behind verboseMeta would leave the top-level flag a
-  // silent-failure shape (Q4-PARSE-ERROR-DETAIL).
+  // silent-failure shape.
   | "parse_errors_present"
   // ADR 0021 amendment (2026-04-20): the token-density secondary
   // budget dropped trailing file entries from this response to fit
@@ -91,7 +91,7 @@ export type ScanWarningCode =
   // truncation and an agent cannot tell whether raising `limit` will
   // help.
   | "response_token_budget_truncated"
-  // Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: even after the density
+  // even after the density
   // cap (`response_token_budget_truncated`) trimmed trailing files,
   // the assembled response was still over the MCP host token ceiling
   // — most often because a single retained file (the density cap's
@@ -149,7 +149,7 @@ export type ScanWarningCode =
   // can branch on the specific language without re-deriving it
   // from the ext map.
   | "source_language_unsupported"
-  // Q4-ADDITIONALPATHS-REDUNDANT: the caller passed `additionalPaths`,
+  // the caller passed `additionalPaths`,
   // the paths resolved to parseable files, but every one of those files
   // was already in the default-discovered set — the flag was redundant,
   // not ignored. Distinct from the per-path `skipped` reasons on
@@ -161,9 +161,9 @@ export type ScanWarningCode =
   // `filesAdded: 0` can't tell "flag did nothing because paths were
   // ignored" from "flag did nothing because paths were already covered" —
   // the remediation differs (fix the path vs. drop the param). Companion
-  // to `Q3-ADDITIONAL-PATHS-SKIP-REASON`; surface-don't-suppress doctrine.
+  // to the per-path `additional_paths_skipped` warning; surface-don't-suppress doctrine.
   | "redundant_additional_paths"
-  // V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: the caller passed
+  // the caller passed
   // `restrictToPaths` on `scan_project`, the pre-restrict file set was
   // non-empty, AND the intersection emptied the set — i.e. none of the
   // restriction entries matched any discovered file. Without this code,
@@ -197,7 +197,7 @@ export type ScanWarningCode =
   // only when at least one cap actually trimmed (never on a
   // response where every capped array fit under the threshold).
   | "response_meta_truncated"
-  // V1-BOOTSTRAP-BASELINE-NULL-SENTINEL: `bootstrap` ran with
+  // `bootstrap` ran with
   // `writeBaseline: false` (the default), so no `.ra11y-baseline.json`
   // was written. The `baseline` field is omitted from the response
   // (conditional-spread, present-when-meaningful) — without this code,
@@ -209,7 +209,7 @@ export type ScanWarningCode =
   // explicit and lets the failure path stay distinct (it surfaces as
   // `bootstrap_baseline_failed` from the partial-failure pipeline).
   | "baseline_dry_run"
-  // V1-PROPOSED-CONFIG-ALIAS-DEPRECATION-WARN: `bootstrap` is shipping
+  // `bootstrap` is shipping
   // both `suggestedConfig` (canonical) and `proposedConfig` (transition
   // alias) in this release. Without this code, an agent reading the
   // response sees two fields with identical contents and pays the
@@ -222,7 +222,7 @@ export type ScanWarningCode =
   // unchanged; the warning is the additive signal that lets callers
   // self-migrate without a hidden break.
   | "proposed_config_deprecated_use_suggested_config"
-  // V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: at least one scanned `.scss`
+  // at least one scanned `.scss`
   // file declared top-level `$variable: …;` statements but the SCSS
   // preprocessor's substitution pass produced zero literal-color
   // usages downstream — the canonical token-only theme partial /
@@ -243,7 +243,7 @@ export type ScanWarningCode =
   // unaffected; the warning is the additive signal that the
   // contrast scan's substrate had a known-unresolved layer.
   | "scss_unresolved_variables"
-  // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS build artifacts
+  // vendor-CSS build artifacts
   // (bootstrap.css, font-awesome.css, jquery-era bundles) dominate
   // the finding set so heavily that the response's file budget is
   // being consumed by unactionable findings. Canonical repro: a
@@ -269,7 +269,7 @@ export type ScanWarningCode =
   // so the agent branches on the dominance without recounting
   // `files[]` against `meta.scannedBuildArtifacts`.
   | "vendor_css_dominates_findings"
-  // V1-SCANNED-MINIFIED-FILE-WARNING-CODE: at least one file in the scan
+  // at least one file in the scan
   // set was classified by `classifyBuildArtifact` with one of the two
   // minified-shaped classifications (`definite-min-infix` —
   // path-anchored .min. basename — or `likely-minified-by-line-stats` —
@@ -282,7 +282,7 @@ export type ScanWarningCode =
   // confidence-graded split surfaces in the underlying
   // `meta.scannedBuildArtifacts` entries — agents reading
   // `classification: "likely-minified-by-line-stats"` know the verdict
-  // is content-shaped (Q7-SCANNED-BUILD-ARTIFACTS-REASON-MISLABEL).
+  // is content-shaped.
   // Surface-don't-suppress: the
   // findings stay in `files[]`, the warning is the additive label that
   // an agent reads to decide whether to skip per-file investigation.
@@ -291,7 +291,7 @@ export type ScanWarningCode =
   // minified file in the scan so the agent branches on identity, not
   // count alone.
   | "scanned_minified_file"
-  // Q7-CRITERION-ID-FIELD-NAME-DRIFT: `coverage` entries (failingAutomatedCriteria,
+  // `coverage` entries (failingAutomatedCriteria,
   // manualWithCandidates, likelyIrrelevantCriteria, untestableCriteria,
   // untargetedCriteriaList) historically named the criterion field `id` —
   // the same concept `checklist.items[].criterionId` already used. Agents
@@ -307,7 +307,7 @@ export type ScanWarningCode =
   // both fields ship unchanged today; the warning is the additive signal
   // that lets callers self-migrate without a hidden break.
   | "deprecated_field_id_renamed_criterionId"
-  // V1-BULK-CATALOG-SCAN-PERF-12S: a `scan_project` invocation crossed
+  // a `scan_project` invocation crossed
   // both the slow-duration / bulk-files threshold AND the vendor-heavy
   // build-artifact floor — the canonical "vendor-template catalog
   // running 4× over the documented perf budget" shape. Without this
@@ -334,7 +334,7 @@ export type ScanWarningCode =
   // budget regime that the other two presence/dominance signals don't
   // capture.
   | "bulk_catalog_detected"
-  // V1-RULES-BY-EXTENSION-LABELING (ADR 0028):
+  // (ADR 0028):
   // `meta.analysisCoverage.rulesByExtension` was renamed to
   // `rulesFiredByExtension` to disambiguate it from
   // `perRuleCoverage` — both surfaces previously carried look-alike
@@ -348,12 +348,12 @@ export type ScanWarningCode =
   // reads on the next call without paying the double-payload cost. The
   // alias is removed in the next minor release; the `### Deprecated`
   // CHANGELOG entry tracks the removal window. Mirror precedent:
-  // `deprecated_field_id_renamed_criterionId` (Q7-CRITERION-ID-FIELD-NAME-
+  // `deprecated_field_id_renamed_criterionId` (-
   // DRIFT). Surface-don't-suppress: both fields ship unchanged today;
   // the warning is the additive signal that lets callers self-migrate
   // without a hidden break.
   | "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension"
-  // V1-VENDOR-ANIMATION-LIB-GUARD-HINT: a banner-detected vendor
+  // a banner-detected vendor
   // library (typical case: a 3000+ line `animate.css` clone whose
   // first non-blank line matches the curated `animate.css` banner)
   // emitted ≥ {@link ANIMATION_LIB_GUARD_FINDING_FLOOR} findings from
@@ -389,13 +389,13 @@ export type ScanWarningCode =
   // (motion + contrast on the same `animate.css`); the dispatch
   // table emits at most one code per (ruleId, file) pair.
   //
-  // Depends on V1-VENDOR-LIBRARY-BANNER-DETECTION (closed): the
+  // Depends on (closed): the
   // vendor-library detection that supplies the deterministic predicate
   // half. Without that detector, the file-side identification would
   // have to fall back to path or basename heuristics — the canonical
   // mistake the labeled-buckets doctrine warns against.
   | "animation_library_without_reduced_motion_guard"
-  // V1-PARTIAL-PARSE-FILES-WARNING-CODE: at least one file the parser
+  // at least one file the parser
   // emitted errors on still contributed findings to `formatted.files`
   // — the recovered AST was usable but findings below the parse-error
   // point may be missing. Distinct from the broader `parse_errors_present`
@@ -414,7 +414,7 @@ export type ScanWarningCode =
   // payload. Surface-don't-suppress: findings stay in `files[]`
   // unchanged; the warning is additive routing telemetry.
   | "partial_parse_files_present"
-  // Q8-PARSE-ERRORS-PRESENT-SUBCODE: the parser bailed on at least
+  // the parser bailed on at least
   // one file in this scan AND the response carries zero findings
   // overall — the canonical "parser silenced everything" silent-miss
   // shape. Distinct from `parse_errors_present` (which fires on any
@@ -434,7 +434,7 @@ export type ScanWarningCode =
   // the agent decide whether to widen scope, switch parsers, or
   // re-route via `additionalPaths`.
   | "parser_bailed_zero_findings"
-  // V1-MISSING-WARNING-DIST-ONLY-SCAN: every file the scan touched was
+  // every file the scan touched was
   // classified as a build artifact — i.e. `scannedBuildArtifacts` covers
   // 100% of `filesScanned` AND `filesScanned > 0`. The canonical
   // misrooted-into-`dist/` shape: a caller passes `cwd` pointing at a
@@ -455,7 +455,7 @@ export type ScanWarningCode =
   // Binary-presence: the file list lives in `meta.scannedBuildArtifacts`
   // already, so no payload is needed beyond the bare fired bit.
   | "dist_only_scan_detected"
-  // V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: `filesScanned === 0` AND
+  // `filesScanned === 0` AND
   // the config-resolution walk-up landed on a `ra11y.config.*` /
   // `package.json` at a strict ancestor of the resolved scan root —
   // i.e. the parent dir would have produced findings but the caller
@@ -479,7 +479,7 @@ export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
   readonly filesScanned: number;
   /**
-   * Q8-PARSE-ERRORS-PRESENT-SUBCODE: total finding count across every
+   * total finding count across every
    * scanned file. Used by the `parser_bailed_zero_findings` predicate
    * to distinguish "parse errors but findings still surfaced" from
    * "parse errors silenced everything." Pass `0` when the scan
@@ -535,7 +535,7 @@ export interface WarningInputs {
    */
   readonly scannedBuildArtifactsPresent?: boolean;
   /**
-   * V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION: optional summary of
+   * optional summary of
    * the build-artifact tally so `scanned_build_artifacts_present` can
    * carry a quantitative `warningsDetails` payload the agent branches
    * on without descending into `meta.scannedBuildArtifacts`. `count`
@@ -567,7 +567,7 @@ export interface WarningInputs {
    */
   readonly sessionWrappersMismatchCwd?: boolean;
   /**
-   * Q6-BUDGET-UNDER-VENDOR-NOISE inputs. Drive the
+   * inputs. Drive the
    * `vendor_css_dominates_findings` code + its structured payload.
    * The caller computes the cross-reference between
    * `scannedBuildArtifacts` (CSS-extension subset) and
@@ -588,7 +588,7 @@ export interface WarningInputs {
     };
   };
   /**
-   * Q4-ADDITIONALPATHS-REDUNDANT: true when the caller supplied
+   * true when the caller supplied
    * `additionalPaths`, those paths resolved to at least one parseable
    * file, AND every one of those parsed files was already in the
    * default-discovered base set — i.e. the merge pass de-duped every
@@ -603,7 +603,7 @@ export interface WarningInputs {
    */
   readonly additionalPathsRedundant?: boolean;
   /**
-   * V1-ADDITIONAL-PATHS-SCOPE-RESTRICT: true when the caller supplied
+   * true when the caller supplied
    * `restrictToPaths` on `scan_project`, the pre-restrict merged file
    * set had ≥1 entry, AND the intersection with the restriction paths
    * left zero files. Drives the `restrict_to_paths_no_matches` code.
@@ -615,7 +615,7 @@ export interface WarningInputs {
    */
   readonly restrictToPathsEmpty?: boolean;
   /**
-   * Q4-WARNING-DOWNGRADE-NOISE: true when at least one emitted finding's
+   * true when at least one emitted finding's
    * line sits inside a detected template-directive range in the same
    * file — i.e. the literal-template-parse actually polluted a finding
    * an agent will read. When false (or undefined), the scanner detected
@@ -646,7 +646,7 @@ export interface WarningInputs {
    */
   readonly configSearchSawProjectMarker?: boolean;
   /**
-   * V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT: caller-supplied list of
+   * caller-supplied list of
    * `.scss` files in this scan that declare top-level `$variable: …`
    * statements but produced zero literal-color usages downstream after
    * the SCSS preprocessor's substitution pass. Drives the
@@ -669,7 +669,7 @@ export interface WarningInputs {
    */
   readonly scssUnresolvedVariableFiles?: readonly string[];
   /**
-   * V1-SCANNED-MINIFIED-FILE-WARNING-CODE: caller-supplied list of
+   * caller-supplied list of
    * scanned files classified with one of the two minified-shaped
    * `BuildArtifactClassification` variants (`definite-min-infix` —
    * path-anchored — or `likely-minified-by-line-stats` — corroborated
@@ -679,7 +679,7 @@ export interface WarningInputs {
    * agent reading the warning channel can triage findings on those
    * files without re-running the classifier. The detector lives at
    * the build-artifact seam (`collectBuildArtifacts`); the call site
-   * narrows by `classification` (Q7-SCANNED-BUILD-ARTIFACTS-REASON-
+   * narrows by `classification` (-
    * MISLABEL renamed `reason` → `classification` and split `minified`
    * into the two confidence-graded variants the union here recovers)
    * so this module stays pure over its inputs.
@@ -713,7 +713,7 @@ export interface WarningInputs {
    */
   readonly metaArrayTruncatedFields?: readonly string[];
   /**
-   * V1-BULK-CATALOG-SCAN-PERF-12S: caller-supplied detection from
+   * caller-supplied detection from
    * {@link import("./bulk-catalog.ts").detectBulkCatalog}. Drives the
    * `bulk_catalog_detected` code + its paired
    * `warningsDetails.bulk_catalog_detected` payload. The detector
@@ -729,7 +729,7 @@ export interface WarningInputs {
    */
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
   /**
-   * V1-VENDOR-ANIMATION-LIB-GUARD-HINT: caller-supplied list of
+   * caller-supplied list of
    * `(ruleId, file, findingCount, library)` tuples that satisfy both
    * predicate halves: (a) `file` is banner-identified as a vendor
    * library (per `meta.scannedBuildArtifacts.vendorLibraries[]`), AND
@@ -767,7 +767,7 @@ export interface WarningInputs {
     readonly suggestion: string;
   }[];
   /**
-   * V1-MISSING-WARNING-DIST-ONLY-SCAN: caller-signaled "every parsed file
+   * caller-signaled "every parsed file
    * the scan touched was classified as a build artifact." The call site
    * computes the predicate against `buildArtifacts.entries.length` and
    * `meta.filesScanned` so this module stays pure over its inputs —
@@ -779,7 +779,7 @@ export interface WarningInputs {
    */
   readonly scannedBuildArtifactsAllFiles?: boolean;
   /**
-   * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: caller-supplied absolute
+   * caller-supplied absolute
    * path of the nearest strict ancestor of the resolved scan root that
    * contains a `ra11y.config.*` / `package.json` marker. Drives the
    * `cwd_appears_misrooted` code + its `warningsDetails` payload. The
@@ -814,7 +814,7 @@ const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
 const WARNING_DETAILS_TOP_EXTENSIONS = 5;
 
 /**
- * Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER: extensions for binary
+ * extensions for binary
  * assets — images, fonts, audio, video, archives, miscellaneous
  * vendor blobs — that should not surface under
  * `extensions_skipped_no_parser`. The warning code names "text-source
@@ -927,7 +927,7 @@ const UNSUPPORTED_LANGUAGE_EXTENSIONS: Readonly<
   Record<"ruby" | "python" | "go" | "php", readonly string[]>
 > = {
   // `.erb` used to live in this list but moved into
-  // `PARSEABLE_EXTENSIONS` (V1-PARSER-ERB) once the HTML parser's
+  // `PARSEABLE_EXTENSIONS` once the HTML parser's
   // `stripTemplateDirectives` pass was wired as its dispatcher —
   // keeping it here would double-flag a Rails/Jekyll repo where the
   // template layer is now being scanned. `.rb` (pure Ruby), `.haml`,
@@ -1137,7 +1137,7 @@ export interface ScanWarningDetails {
    *
    * Top-contributor triple
    * (`topContributorRule` + `topContributorByteCount` +
-   * `dominantContributor`) is added per Q7-RESPONSE-TOKEN-BUDGET-DETAIL.
+   * `dominantContributor`) is added per.
    * Without it, the bare requested/effective numbers tell the agent
    * "we trimmed N files" but not WHICH finding pushed the response
    * over budget — so the agent can't decide between "retry with a
@@ -1243,7 +1243,7 @@ export interface ScanWarningDetails {
     readonly parseErrorFileCount: number;
     readonly partialParseFileCount: number;
     /**
-     * Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: per-parser breakdown of the
+     * per-parser breakdown of the
      * `parseErrorFiles` count so an agent reading the warning channel
      * can answer "is every .js file failing under tsx?" without paging
      * through a 538-entry list. Keyed by the in-house parser name
@@ -1260,7 +1260,7 @@ export interface ScanWarningDetails {
      * dominance (which parser owns the failure mass?).
      */
     readonly parseErrorsByParser?: Readonly<Record<string, number>>;
-    /** Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT mirror for `partialParseFiles`. */
+    /** mirror for `partialParseFiles`. */
     readonly partialParseByParser?: Readonly<Record<string, number>>;
   };
   /**
@@ -1302,7 +1302,7 @@ export interface ScanWarningDetails {
     readonly files: readonly string[];
   };
   /**
-   * V1-SCANNED-MINIFIED-FILE-WARNING-CODE: payload for
+   * payload for
    * `scanned_minified_file`. Carries the deterministic-sorted list of
    * scanned files classified with one of the two minified-shaped
    * `BuildArtifactClassification` variants (`definite-min-infix` or
@@ -1322,7 +1322,7 @@ export interface ScanWarningDetails {
     readonly files: readonly string[];
   };
   /**
-   * Q8-RESPONSE-TRUNCATED-OVERSIZED-ENVELOPE: payload for
+   * payload for
    * `response_dropped_files_oversize`. Surfaces the byte arithmetic
    * the last-resort envelope-degradation path made — without it, an
    * agent seeing the bare warning code can't tell a marginal overage
@@ -1360,7 +1360,7 @@ export interface ScanWarningDetails {
     readonly droppedFileCount: number;
   };
   /**
-   * V1-BULK-CATALOG-SCAN-PERF-12S: payload for `bulk_catalog_detected`.
+   * payload for `bulk_catalog_detected`.
    * Carries the trigger discriminator (`slow_and_vendor_heavy` vs.
    * `bulk_and_vendor_heavy` — see {@link import("./bulk-catalog.ts").BulkCatalogTrigger})
    * plus the raw inputs that fired the predicate. `suggestedExcludes`
@@ -1389,7 +1389,7 @@ export interface ScanWarningDetails {
     readonly topVendorFile?: string;
   };
   /**
-   * V1-VENDOR-ANIMATION-LIB-GUARD-HINT: payload for
+   * payload for
    * `animation_library_without_reduced_motion_guard`. Names the
    * single densest `(ruleId, file)` pair that earned the code so an
    * agent reading the warning channel has the load-bearing pivot in
@@ -1425,7 +1425,7 @@ export interface ScanWarningDetails {
     }[];
   };
   /**
-   * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: payload for
+   * payload for
    * `cwd_appears_misrooted`. Carries the absolute path of the nearest
    * strict ancestor of the resolved scan root that contains a
    * `ra11y.config.*` / `package.json` marker — the deterministic answer
@@ -1553,9 +1553,8 @@ function contentDistributionCodes(inputs: WarningInputs): readonly ScanWarningCo
  *
  * Order matches the original if-chain in {@link computeScanWarnings}
  * verbatim for this subset so consumers reading `warnings[]` see a
- * stable code sequence: `scanned_minified_file` first (V1-SCANNED-
+ * stable code sequence: `scanned_minified_file` first (-
  * MINIFIED-FILE-WARNING-CODE), then `scss_unresolved_variables`
- * (V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT).
  */
 function fileListDrivenCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
@@ -1577,9 +1576,9 @@ function fileListDrivenCodes(inputs: WarningInputs): readonly ScanWarningCode[] 
  * {@link contentDistributionCodes} and {@link fileListDrivenCodes}).
  * These are the scan_project path-knob signals: `additionalPaths`
  * resolved to files already in the discovered set
- * (`redundant_additional_paths` — Q4-ADDITIONALPATHS-REDUNDANT) and
+ * (`redundant_additional_paths`) and
  * `restrictToPaths` intersected the discovered file set down to zero
- * entries (`restrict_to_paths_no_matches` — V1-ADDITIONAL-PATHS-SCOPE-
+ * entries (`restrict_to_paths_no_matches`
  * RESTRICT). Both are warning-only; the structured signal lives on
  * `meta.additionalPathsScanned` and `meta.restrictToPathsApplied`
  * respectively.
@@ -1612,13 +1611,13 @@ function pathShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
  *      the subcodes; kept as the load-bearing signal so derivative
  *      tools that don't compute the totalFindings axis still get a
  *      bare presence flag.
- *   2. `partial_parse_files_present` — V1-PARTIAL-PARSE-FILES-WARNING-CODE.
+ * 2. `partial_parse_files_present`.
  *      Binary presence bit naming the partial-parse subset
  *      specifically; pairs with the existing
  *      `warningsDetails.parse_errors_present.partialParseFileCount`
  *      payload as the agent's branching surface without descending
  *      into the payload.
- *   3. `parser_bailed_zero_findings` — Q8-PARSE-ERRORS-PRESENT-SUBCODE.
+ * 3. `parser_bailed_zero_findings`.
  *      Names the "parser silenced everything" shape:
  *      `parseErrorFileCount > 0` AND `totalFindings === 0`. Drops
  *      conservatively when `totalFindings` is `undefined` so derivative
@@ -1633,8 +1632,8 @@ function parseErrorCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
 }
 
 /**
- * Scan-shape code family — V1-MISSING-WARNING-DIST-ONLY-SCAN and
- * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED. Extracted from
+ * Scan-shape code family and.
+ * Extracted from
  * {@link computeScanWarnings} so the orchestrator stays under the
  * cognitive-complexity cap (same pattern as
  * {@link contentDistributionCodes} and {@link parseErrorCodes}). Both
@@ -1675,7 +1674,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     out.push("tailwind_detected_css_undercounted");
   }
   if (shouldEmitTemplateFilesLiteral(inputs)) {
-    // Q4-WARNING-DOWNGRADE-NOISE: fire the warning only when the
+    // fire the warning only when the
     // literal-template-parse actually polluted a finding — i.e. at
     // least one emitted finding's line sits inside a detected
     // directive range. Without the overlap gate, every Liquid /
@@ -1689,7 +1688,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // now gated by the evidence that the parse-as-literal actually
     // reached a finding the agent must triage.
     //
-    // V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: frontmatter is a
+    // frontmatter is a
     // parser-level substrate signal, not per-finding pollution — the
     // `---\n…\n---\n` fence at the top of a Jekyll / Hugo / Eleventy
     // / Astro post is read by the HTML parser as literal text that
@@ -1724,7 +1723,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     out.push("storybook_preset_active");
   }
   if (hasSkippedExtensions(inputs.analysisCoverage)) {
-    // V1-DETECT-SILENT-EXT: coverage block carries a non-empty
+    // coverage block carries a non-empty
     // skippedByExtension map — surface the top-level signal so the
     // agent can branch without reading into meta.
     out.push("extensions_skipped_no_parser");
@@ -1744,7 +1743,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // sequence and runs at the original insertion point.
   out.push(...parseErrorCodes(inputs));
   // Scan-shape code family — see `scanShapeCodes`. Two branches
-  // (V1-MISSING-WARNING-DIST-ONLY-SCAN, V1-MISSING-WARNING-CWD-APPEARS-MISROOTED)
+  //
   // extracted into the helper so this function's cognitive complexity
   // stays under the lint cap. Both name regimes where the success
   // shape is ambiguous about whether the scan reached authored source
@@ -1752,14 +1751,14 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // is unchanged.
   out.push(...scanShapeCodes(inputs));
   if (hasDeprecatedRulesByExtensionAlias(inputs.analysisCoverage)) {
-    // V1-RULES-BY-EXTENSION-LABELING (ADR 0028): the legacy
+    // (ADR 0028): the legacy
     // `rulesByExtension` alias rode on `meta.analysisCoverage`
     // alongside the canonical `rulesFiredByExtension`. Surface the
     // deprecation code so callers reading the warnings channel can
     // drop their `rulesByExtension` reads on the next call without
     // the double-payload cost. Presence-only signal — mirrors the
     // `deprecated_field_id_renamed_criterionId` pattern from
-    // Q7-CRITERION-ID-FIELD-NAME-DRIFT.
+    //.
     out.push("deprecated_field_rules_by_extension_renamed_rules_fired_by_extension");
   }
   // Content-distribution codes — see `contentDistributionCodes`. Two
@@ -1798,7 +1797,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // and runs at the original insertion point.
   out.push(...fileListDrivenCodes(inputs));
   if (vendorCssDominates(inputs.vendorCssNoise)) {
-    // Q6-BUDGET-UNDER-VENDOR-NOISE: vendor-CSS bundles
+    // vendor-CSS bundles
     // (bootstrap.css, font-awesome.css, jquery-era distributions)
     // are emitting the bulk of the scan's findings. The
     // `scanned_build_artifacts_present` code already labels their
@@ -1811,7 +1810,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     out.push("vendor_css_dominates_findings");
   }
   if (inputs.bulkCatalogDetection !== undefined) {
-    // V1-BULK-CATALOG-SCAN-PERF-12S: the bulk-catalog detector at
+    // the bulk-catalog detector at
     // `./bulk-catalog.ts` cleared the perf-class threshold AND saw
     // a vendor-heavy build-artifact footprint. Surfaces alongside
     // (not in place of) `scanned_build_artifacts_present` and
@@ -1892,7 +1891,7 @@ function hasParseErrors(coverage: Record<string, unknown> | undefined): boolean 
 }
 
 /**
- * V1-PARTIAL-PARSE-FILES-WARNING-CODE predicate: returns `true` when the
+ * predicate: returns `true` when the
  * coverage block reports `partialParseFileCount > 0` (independent of
  * `parseErrorFileCount`). Pure over its input; the broader
  * `parse_errors_present` code stays union-keyed via {@link hasParseErrors}.
@@ -1904,7 +1903,7 @@ function hasPartialParseFiles(coverage: Record<string, unknown> | undefined): bo
 }
 
 /**
- * Q8-PARSE-ERRORS-PRESENT-SUBCODE predicate: returns `true` when at
+ * predicate: returns `true` when at
  * least one file landed in the total-failure parse-error bucket AND the
  * scan as a whole produced zero findings. The combined predicate names
  * the "parser silenced everything" shape the bare `parse_errors_present`
@@ -1932,7 +1931,7 @@ function parserBailedZeroFindings(inputs: WarningInputs): boolean {
  * release (ADR 0028) — agents reading the warnings channel can drop
  * their `rulesByExtension` reads on the next call once they see this
  * code fire. Mirror precedent: the `id` → `criterionId` rename in
- * `tool-coverage.ts` (Q7-CRITERION-ID-FIELD-NAME-DRIFT) emits the
+ * `tool-coverage.ts` emits the
  * deprecation as a presence-only signal at the response-assembly site;
  * here the alias rides on `meta.analysisCoverage` so the predicate
  * mirrors that one-step lookup.
@@ -1946,7 +1945,7 @@ function hasDeprecatedRulesByExtensionAlias(
 }
 
 function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {
-  // Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER: emission gate fires
+  // emission gate fires
   // only when at least one TEXT-format extension is in the skipped
   // map. A scan that skipped only `.png` / `.woff` / `.mp4` no longer
   // trips the warning — those are binary assets the agent doesn't
@@ -2032,7 +2031,7 @@ function dominantUnsupportedLanguage(
  * True when `coverage.hints[]` carries a `css_coverage_thin` entry
  * whose structured `detail.tailwindDetected` is `true`. Dispatches on
  * the hint `code` discriminator rather than substring-matching English
- * prose (V1-HINTS-STRUCTURED-CODE). Returns `false` defensively on
+ * prose. Returns `false` defensively on
  * malformed shapes so hostile input can't short-circuit the warning.
  */
 function hasTailwindHint(coverage: Record<string, unknown> | undefined): boolean {
@@ -2062,7 +2061,7 @@ function hasTemplateDirectives(coverage: Record<string, unknown> | undefined): b
 }
 
 /**
- * V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER: returns `true` when
+ * returns `true` when
  * the coverage block reports a scan-level YAML frontmatter fence
  * (Jekyll / Hugo / Eleventy / Astro post header). The fence is a
  * parser-level substrate — the HTML parser sees it as literal text —
@@ -2079,12 +2078,12 @@ function hasFrontmatterFence(coverage: Record<string, unknown> | undefined): boo
  * Two independent emission paths:
  *
  *   - `{{ }}` / `{% %}` / `<% %>` directives detected AND at least
- *     one finding's line intersects a directive line (Q4-WARNING-
+ * one finding's line intersects a directive line (-
  *     DOWNGRADE-NOISE — overlap gate keeps the warning off every
  *     template-heavy scan where no finding actually sits on a
  *     directive line).
  *   - YAML frontmatter fence detected at the top of at least one
- *     HTML-family file (V1-FRONTMATTER-AS-TEMPLATE-DIRECTIVE-TRIGGER).
+ * HTML-family file.
  *     Skips the overlap gate because the `---\n…\n---\n` fence is a
  *     file-wide parser-level corruption vector — not a per-finding
  *     line intersection.
@@ -2142,7 +2141,7 @@ function templateDirectiveLines(source: string): ReadonlySet<number> {
 }
 
 /**
- * Q4-WARNING-DOWNGRADE-NOISE predicate: returns `true` when at least
+ * predicate: returns `true` when at least
  * one emitted finding's line sits inside a template-directive line in
  * the same file. Callers (scan-family handlers, derivative tools)
  * supply per-file source text plus `(filePath, line)` pairs for every
@@ -2216,7 +2215,7 @@ type ScanMetaWarningArgs = {
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
   readonly animationLibraryGuardCandidates?: WarningInputs["animationLibraryGuardCandidates"];
   /**
-   * V1-MISSING-WARNING-DIST-ONLY-SCAN: caller-signaled "every parsed
+   * caller-signaled "every parsed
    * file the scan touched was a build artifact." See
    * {@link WarningInputs.scannedBuildArtifactsAllFiles} for the
    * predicate semantics; the call site computes the cross-reference
@@ -2224,7 +2223,7 @@ type ScanMetaWarningArgs = {
    */
   readonly scannedBuildArtifactsAllFiles?: boolean;
   /**
-   * V1-MISSING-WARNING-CWD-APPEARS-MISROOTED: caller-supplied absolute
+   * caller-supplied absolute
    * path of the nearest strict ancestor of the resolved scan root that
    * carries a `ra11y.config.*` / `package.json` marker. See
    * {@link WarningInputs.nearestConfigAncestor} for the resolution
@@ -2233,7 +2232,7 @@ type ScanMetaWarningArgs = {
    */
   readonly nearestConfigAncestor?: string;
   /**
-   * Q8-PARSE-ERRORS-PRESENT-SUBCODE: total finding count across every
+   * total finding count across every
    * scanned file. Threaded explicitly because `formatted.meta` does not
    * (and per the `plan.totalFindings` deletion precedent should not)
    * carry a denormalized total — the call site sums
@@ -2282,7 +2281,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
  * from `args` onto the returned record. Replaces the long conditional-
  * spread chain in {@link buildWarningInputsFromScanMeta} so the
  * orchestrator stays under the cognitive-complexity cap as new optional
- * inputs accrete (V1-MISSING-WARNING-* additions stayed within budget
+ * inputs accrete (-* additions stayed within budget
  * once this helper landed). Pure over its inputs — type-safe pass-
  * through; never copies an `undefined` so the conditional-spread
  * "present-when-meaningful" contract is preserved.
@@ -2334,7 +2333,7 @@ export function computeScanWarningDetails(
   // Code → summarizer dispatch table. Each row pairs a payload-bearing
   // code with the helper that produces its `warningsDetails` entry —
   // rows are checked in declaration order so the resulting record
-  // preserves a stable key ordering across runs (V1-WARNINGS-DETAILS-
+  // preserves a stable key ordering across runs (-
   // CROSS-SURFACE-REGRESSION). The list-driven shape keeps the
   // function's cognitive complexity flat as new payload codes accrete:
   // adding one is +1 row, not +1 conditional branch on the orchestrator.
@@ -2442,7 +2441,7 @@ function summarizeParseErrors(coverage: Record<string, unknown> | undefined):
   const parseErrorFileCount = typeof full === "number" && full > 0 ? full : 0;
   const partialParseFileCount = typeof partial === "number" && partial > 0 ? partial : 0;
   if (parseErrorFileCount === 0 && partialParseFileCount === 0) return undefined;
-  // Q8-PARSE-ERROR-FILES-BY-PARSER-SPLIT: lift the per-parser count
+  // lift the per-parser count
   // maps out of the coverage block (populated by the parse-error
   // assembler from each entry's `parser` tag). Conditional-spread so
   // the payload shape stays present-when-meaningful — absent when the
@@ -2510,7 +2509,7 @@ function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArti
  * Builds the `scss_unresolved_variables` payload from the caller-
  * supplied file list. Returns `undefined` when the list is missing
  * or empty so the dispatch table conditional-spreads the entry away
- * (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION payload-vs-binary
+ * (payload-vs-binary
  * contract). The list is already deterministic-sorted at the
  * detector seam (`detectScssUnresolvedVariableFiles` in
  * `src/mcp/scan-assembly.ts`), so this helper is a pure
@@ -2527,7 +2526,7 @@ function summarizeScssUnresolvedVariables(
  * Builds the `scanned_minified_file` payload from the caller-supplied
  * file list. Returns `undefined` when the list is missing or empty so
  * the dispatch table conditional-spreads the entry away
- * (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION payload-vs-binary
+ * (payload-vs-binary
  * contract). The list is sorted alphabetically here so the wire shape
  * stays deterministic across runs even if the call-site iteration
  * order changes (the build-artifact pipeline emits in discovery order,
@@ -2543,7 +2542,7 @@ function summarizeScannedMinifiedFiles(
 /**
  * Builds the `bulk_catalog_detected` payload from the caller-supplied
  * detection. Returns `undefined` when the detection is absent so the
- * dispatch table conditional-spreads the entry away (V1-WARNINGS-
+ * dispatch table conditional-spreads the entry away (-
  * DETAILS-CROSS-SURFACE-REGRESSION payload-vs-binary contract). Pure
  * shape-builder — every quantity comes from the detector at
  * `./bulk-catalog.ts` directly; no thresholds, no derivation. The
@@ -2574,7 +2573,7 @@ function summarizeBulkCatalog(
  * suggestion text — the headline tuple's suggestion already names
  * the remediation pattern). Returns `undefined` when the list is
  * missing or empty so the dispatch table conditional-spreads the
- * entry away (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION
+ * entry away (
  * payload-vs-binary contract).
  */
 function summarizeAnimationLibraryGuard(
@@ -2606,7 +2605,7 @@ function summarizeAnimationLibraryGuard(
  * Builds the `cwd_appears_misrooted` payload from the caller-supplied
  * `nearestConfigAncestor` path. Returns `undefined` when the input is
  * absent or an empty string so the dispatch table conditional-spreads
- * the entry away (V1-WARNINGS-DETAILS-CROSS-SURFACE-REGRESSION
+ * the entry away (
  * payload-vs-binary contract). Pure shape-builder — the call site
  * already validated the ancestor against the resolved scan root and
  * filtered out the no-ancestor case before threading the value.
@@ -2747,7 +2746,7 @@ function summarizeSkippedExtensions(coverage: Record<string, unknown> | undefine
       count > 0 &&
       typeof ext === "string" &&
       ext.length > 0 &&
-      // Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER: drop binary asset
+      // drop binary asset
       // exts (images, fonts, audio, video, archives) from the payload
       // so the agent reading the warning's `topExtension` and
       // `extensions[]` slice sees text-format candidates only —
@@ -2853,7 +2852,7 @@ export function fillMissingWarningDetails(
  * from the scan-meta warnings channel (object spread wins last-write,
  * which is safe because the two codes never share a key).
  *
- * Q7-RESPONSE-TOKEN-BUDGET-DETAIL: when the call site runs
+ * when the call site runs
  * `analyzeTopContributor` (in `token-budget-contributor.ts`) over the
  * pre-trim files list and gets back an unambiguous winner, it passes
  * `topContributor` through here so the wire payload carries
@@ -2890,7 +2889,7 @@ export function tokenBudgetTruncatedDetailsField(args: {
         // use the same vocabulary on either surface. Q-SHARED-LIMIT-
         // REQUEST-VS-EFFECTIVE.
         reason: "token_density" as const,
-        // Q7-RESPONSE-TOKEN-BUDGET-DETAIL: present-when-meaningful
+        // present-when-meaningful
         // top-contributor triple. Omitted entirely when the analyzer
         // could not pick a single winner (ties, no findings) so the
         // shape never carries empty/zero sentinels.
