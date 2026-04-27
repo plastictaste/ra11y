@@ -352,7 +352,7 @@ describe("review/sensory-characteristics", () => {
     expect(bareLocative.length).toBeGreaterThan(0);
     const a = nounAnchored[0];
     const b = bareLocative[0];
-    if (!a || !b) throw new Error("expected at least one candidate from each source");
+    if (!(a && b)) throw new Error("expected at least one candidate from each source");
     expect(a.confidence).toBe(b.confidence);
   });
 });

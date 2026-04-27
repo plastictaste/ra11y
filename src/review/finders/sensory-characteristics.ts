@@ -129,70 +129,18 @@ const VISUAL_SIGNIFIERS: ReadonlySet<string> = new Set([
 
 /**
  * Common UI nouns whose presence next to a locative ("button above",
- * "form below") names the target by its kind. SC 1.3.3 prohibits
- * sensory-only / position-only references when there is no other
- * identifier; when a UI noun anchors the reference, the position is
- * supplementary, not the sole locator. The candidate still surfaces
- * (per the AI-first "no heuristic suppression" rule) but the reason
- * text is reframed: the question becomes "can a screen-reader user
- * locate '<noun>' by its name," not "is the position word the only
- * cue."
+ * "form below") names the target by its kind. When a UI noun anchors
+ * the reference, the position word is supplementary, not the sole
+ * locator (SC 1.3.3 only prohibits sensory-only references when no
+ * other identifier exists). The candidate still surfaces — only the
+ * reason text is reframed.
  */
-const UI_NOUNS: ReadonlySet<string> = new Set([
-  "button",
-  "buttons",
-  "form",
-  "forms",
-  "menu",
-  "menus",
-  "panel",
-  "panels",
-  "link",
-  "links",
-  "section",
-  "sections",
-  "page",
-  "pages",
-  "screenshot",
-  "screenshots",
-  "table",
-  "tables",
-  "icon",
-  "icons",
-  "image",
-  "images",
-  "list",
-  "lists",
-  "field",
-  "fields",
-  "dialog",
-  "dialogs",
-  "sidebar",
-  "header",
-  "footer",
-  "tab",
-  "tabs",
-  "checkbox",
-  "checkboxes",
-  "input",
-  "inputs",
-  "toolbar",
-  "navigation",
-  "nav",
-  "card",
-  "cards",
-  "banner",
-  "modal",
-  "tooltip",
-  "dropdown",
-  "paragraph",
-  "heading",
-  "headings",
-  "diagram",
-  "chart",
-  "graph",
-  "map",
-]);
+const UI_NOUNS: ReadonlySet<string> = new Set(
+  // singular + plural variants of common UI element names
+  "button buttons form forms menu menus panel panels link links section sections page pages screenshot screenshots table tables icon icons image images list lists field fields dialog dialogs sidebar header footer tab tabs checkbox checkboxes input inputs toolbar navigation nav card cards banner modal tooltip dropdown paragraph heading headings diagram chart graph map".split(
+    " ",
+  ),
+);
 
 /** Window for noun-anchor detection — adjacent or with a small word gap. */
 const NOUN_ANCHOR_WINDOW_TOKENS = 2;
@@ -316,7 +264,9 @@ function matchLocativeWithCooccurrence(text: string): MatchHit | undefined {
     const end = start + m[0].length;
     if (locativeHasCooccurrence(tokens, start, end)) {
       const noun = findNounAnchor(tokens, start, end);
-      return { phrase: m[0], offset: start, nounAnchor: noun };
+      return noun
+        ? { phrase: m[0], offset: start, nounAnchor: noun }
+        : { phrase: m[0], offset: start };
     }
   }
   return undefined;
