@@ -191,3 +191,65 @@ describe("rule navigation/link-target-blank-announcement", () => {
     });
   });
 });
+
+// Registry-integration regression: rule must appear in perRuleCoverage and fire
+// when the scanner is run with level: "AAA". The rule's sole criterion is wcag22:3.2.5
+// (AAA), so it is level-gated at the default AA scan level — this test confirms it
+// is wired correctly in the HTML rule-runner path and fires under explicit AAA.
+describe("engine registry integration — AAA level wiring", () => {
+  it("rule fires through the full scanner pipeline when level is AAA (HTML file)", async () => {
+    const { runScan } = await import("../../../../src/engine/scanner.ts");
+    const { parseHtml } = await import("../../../../src/input/parsers/index.ts");
+    const { BUILTIN_RULES } = await import("../../../../src/rules/index.ts");
+    const { wcag22 } = await import("../../../../src/standards/wcag22/standard.ts");
+    const { wcag21 } = await import("../../../../src/standards/wcag21/standard.ts");
+
+    const source = `<html><body><a href="/docs" target="_blank">Docs</a></body></html>`;
+    const { root, errors } = parseHtml(source);
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22, wcag21],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22", "wcag21"],
+      level: "AAA",
+      files: [{ filePath: "test.html", source, ast: { language: "html", root, errors } }],
+    });
+
+    const ruleViolations = result.violations.filter(
+      (v) => v.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(ruleViolations).toHaveLength(1);
+    expect(ruleViolations[0]?.criteria).toContain("wcag22:3.2.5");
+
+    // Rule must appear in perRuleCoverage with at least 1 eligible file.
+    const coverageRow = perRuleCoverage.find(
+      (r) => r.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(coverageRow).toBeDefined();
+    expect(coverageRow?.filesEligible).toBeGreaterThanOrEqual(1);
+    expect(coverageRow?.findingsEmitted).toBe(1);
+  });
+
+  it("rule is level-gated at AA (excluded from active rule set, NOT in perRuleCoverage findings)", async () => {
+    const { runScan } = await import("../../../../src/engine/scanner.ts");
+    const { parseHtml } = await import("../../../../src/input/parsers/index.ts");
+    const { BUILTIN_RULES } = await import("../../../../src/rules/index.ts");
+    const { wcag22 } = await import("../../../../src/standards/wcag22/standard.ts");
+    const { wcag21 } = await import("../../../../src/standards/wcag21/standard.ts");
+
+    const source = `<html><body><a href="/docs" target="_blank">Docs</a></body></html>`;
+    const { root, errors } = parseHtml(source);
+    const { result } = runScan({
+      standards: [wcag22, wcag21],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22", "wcag21"],
+      level: "AA",
+      files: [{ filePath: "test.html", source, ast: { language: "html", root, errors } }],
+    });
+
+    // At AA the AAA-only rule must not fire — confirms level-gating works.
+    const ruleViolations = result.violations.filter(
+      (v) => v.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(ruleViolations).toHaveLength(0);
+  });
+});
