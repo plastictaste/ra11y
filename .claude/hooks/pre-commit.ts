@@ -37,7 +37,6 @@ const rawCommand = typeof input.tool_input.command === "string" ? input.tool_inp
 // silently gate every command on the commit pipeline.
 if (!/\bgit\s+commit\b/.test(rawCommand)) {
   ok();
-  process.exit(0);
 }
 
 const stagedFiles = getStagedFiles(projectDir);
@@ -107,8 +106,10 @@ if (verify.status !== 0) {
 // message lives in the Bash command (-m / heredoc), not on disk —
 // scripts/verify.ts has no way to reach it.
 if (existsSync(join(projectDir, "scripts", "check-commit.ts"))) {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (commitMessage) env.RA11Y_COMMIT_MESSAGE = commitMessage;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(commitMessage ? { RA11Y_COMMIT_MESSAGE: commitMessage } : {}),
+  };
   const result = spawnSync("bun scripts/check-commit.ts", {
     cwd: projectDir,
     shell: true,
