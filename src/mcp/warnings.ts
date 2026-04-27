@@ -473,7 +473,23 @@ export type ScanWarningCode =
   // evidence is concrete (a real config at a known parent path).
   // Payload-bearing: `warningsDetails.cwd_appears_misrooted: { nearestConfigAncestor }`
   // carries the absolute path so the agent re-scopes in one read.
-  | "cwd_appears_misrooted";
+  | "cwd_appears_misrooted"
+  // at least one  /  file in the scan
+  // contained an `innerHTML`, `outerHTML`, `insertAdjacentHTML`, or
+  // `document.write` assignment whose right-hand side was a template
+  // literal with `${…}` interpolations — meaning the HTML content is
+  // dynamic and the static extractor could not parse it. Without this
+  // code, the agent reads the JS/TS file scan as authoritative when the
+  // injected HTML island was never seen by any rule. Distinct from the
+  // static-fragment case (where the extractor DID parse the literal and
+  // added a synthetic `ParsedFile`): this code fires only when
+  // extraction was DECLINED. Paired routing: the agent should read the
+  // cited JS file and trace the dynamic HTML content through the
+  // insertion point to decide whether the injected element carries an
+  // accessibility concern. Surface-don't-suppress: every rule that runs
+  // against parsed source files already ran; the warning names the
+  // runtime-injection gap the static scan could not close.
+  | "js_innerhtml_template_literal_unparsed";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -795,6 +811,16 @@ export interface WarningInputs {
    * agent re-scopes in one read.
    */
   readonly nearestConfigAncestor?: string;
+  /**
+   * Count of innerHTML/insertAdjacentHTML/document.write patterns in
+   * JS/TS files that were detected but NOT extracted because the template
+   * literal contained ${...} interpolations. Drives the
+   * `js_innerhtml_template_literal_unparsed` warning code. Pass 0 or
+   * omit when no JS/TS files were scanned or no such patterns appeared.
+   * The warning fires only when this count is > 0 — i.e., the extractor
+   * saw dynamic inline-HTML islands it could not statically parse.
+   */
+  readonly jsInnerHtmlDeclinedCount?: number;
 }
 
 // MARKER_PROBE_002
@@ -1494,6 +1520,14 @@ export interface ScanWarningDetails {
   readonly partial_parse_files_present?: BinaryPresenceMarker;
   readonly parser_bailed_zero_findings?: BinaryPresenceMarker;
   readonly dist_only_scan_detected?: BinaryPresenceMarker;
+  /**
+   * Binary-presence marker for the    * warning code — see that code's docblock on \ for the
+   * full emission predicate. No payload needed; the agent's routing
+   * signal is the code's presence in \. The agent should
+   * read the flagged JS/TS files and trace the dynamic HTML content
+   * through the insertion point.
+   */
+  readonly js_innerhtml_template_literal_unparsed?: BinaryPresenceMarker;
 }
 
 /**
@@ -1824,7 +1858,25 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // `warningsDetails.bulk_catalog_detected`.
     out.push("bulk_catalog_detected");
   }
+  // Inline-HTML code family: fires when the extractor declined at
+  // least one dynamic innerHTML/insertAdjacentHTML/document.write
+  // template literal — see `inlineHtmlCodes`.
+  out.push(...inlineHtmlCodes(inputs));
   return out;
+}
+
+/**
+ * Emits `js_innerhtml_template_literal_unparsed` when the caller-
+ * supplied declined count is positive. Extracted from
+ * {@link computeScanWarnings} to keep its cognitive complexity under
+ * the lint cap (same pattern as {@link parseErrorCodes} and
+ * {@link scanShapeCodes}).
+ */
+function inlineHtmlCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  if (typeof inputs.jsInnerHtmlDeclinedCount === "number" && inputs.jsInnerHtmlDeclinedCount > 0) {
+    return ["js_innerhtml_template_literal_unparsed"];
+  }
+  return [];
 }
 
 /**
@@ -2241,6 +2293,7 @@ type ScanMetaWarningArgs = {
    * Drives the `parser_bailed_zero_findings` predicate.
    */
   readonly totalFindings?: number;
+  readonly jsInnerHtmlDeclinedCount?: number;
 };
 
 /**
@@ -2274,6 +2327,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "scannedBuildArtifactsAllFiles",
   "nearestConfigAncestor",
   "totalFindings",
+  "jsInnerHtmlDeclinedCount",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**

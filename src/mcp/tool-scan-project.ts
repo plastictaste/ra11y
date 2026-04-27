@@ -176,12 +176,11 @@ export const scanProjectTool: McpTool = {
     const { roots, mode: actualMode, fallbackReason } = scanScope;
     const t0 = performance.now();
     const storybookPresetActive = projectConfig.preset === "storybook";
-    const { files: baseFiles, diagnostics: discoveryDiagnostics } = await parseFilesWithDiagnostics(
-      roots,
-      session,
-      root,
-      discoverOptionsFor(projectConfig),
-    );
+    const {
+      files: baseFiles,
+      diagnostics: discoveryDiagnostics,
+      jsInnerHtmlDeclinedCount,
+    } = await parseFilesWithDiagnostics(roots, session, root, discoverOptionsFor(projectConfig));
     const additionalPaths = strArrayParam(params, "additionalPaths") ?? [];
     const additionalFiles =
       additionalPaths.length > 0 ? await parseExplicitPaths(additionalPaths, session, root) : [];
@@ -502,6 +501,11 @@ export const scanProjectTool: McpTool = {
             filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
             buildArtifacts: buildArtifacts.entries,
           }),
+          // thread the innerHTML declined count from the parse pass so
+          // the warnings module can fire
+          // `js_innerhtml_template_literal_unparsed` when dynamic
+          // template literals were found but not parsed.
+          jsInnerHtmlDeclinedCount,
         }),
       }),
     );
@@ -619,6 +623,8 @@ function buildBaseWarningsForScanProject(args: {
   readonly configSearchSawProjectMarker: boolean;
   readonly scssUnresolvedVariableFiles: readonly string[];
   readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
+  /** Count of dynamic innerHTML/insertAdjacentHTML template literals declined by the extractor. */
+  readonly jsInnerHtmlDeclinedCount: number;
 }): {
   readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
@@ -636,6 +642,7 @@ function buildBaseWarningsForScanProject(args: {
     configSearchSawProjectMarker,
     scssUnresolvedVariableFiles,
     bulkCatalogDetection,
+    jsInnerHtmlDeclinedCount,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
   // gate the `template_files_parsed_as_literal`
@@ -744,6 +751,10 @@ function buildBaseWarningsForScanProject(args: {
     // detector did not fire.
     ...(bulkCatalogDetection === undefined ? {} : { bulkCatalogDetection }),
     ...(animationLibraryGuardCandidates.length === 0 ? {} : { animationLibraryGuardCandidates }),
+    // thread the innerHTML declined count so the warnings module can
+    // fire `js_innerhtml_template_literal_unparsed` when dynamic
+    // template literals were detected but not parsed.
+    ...(jsInnerHtmlDeclinedCount > 0 ? { jsInnerHtmlDeclinedCount } : {}),
     // thread the total finding count
     // so the warnings module can fire `parser_bailed_zero_findings`
     // on the canonical "parse errors present + zero findings overall"

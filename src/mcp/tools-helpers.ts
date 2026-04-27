@@ -15,6 +15,7 @@ import {
   discoverExplicitPaths,
   discoverFilesWithDiagnostics,
 } from "../input/discover.ts";
+import { extractInlineHtmlFragments } from "../input/parsers/inline-html.ts";
 import {
   type AgentFinding,
   buildAgentFinding,
@@ -284,6 +285,15 @@ export async function parseFilesWithDiagnostics(
 ): Promise<{
   readonly files: readonly ParsedFile[];
   readonly diagnostics: DiscoveryDiagnostics;
+  /**
+   * Count of innerHTML/insertAdjacentHTML/document.write patterns in
+   * JS/TS files that contained ${...} interpolations and could not be
+   * statically extracted. Non-zero drives the
+   * `js_innerhtml_template_literal_unparsed` warning code on the
+   * response. Zero when no JS/TS files were present or no such
+   * patterns were found.
+   */
+  readonly jsInnerHtmlDeclinedCount: number;
 }> {
   const base = cwd ?? process.cwd();
   const absPaths = paths.map((p) => (isAbsolute(p) ? p : resolve(base, p)));
@@ -292,11 +302,22 @@ export async function parseFilesWithDiagnostics(
     ...(options.includeStoryFiles === true ? { includeStoryFiles: true } : {}),
   });
   const parsed: ParsedFile[] = [];
+  let jsInnerHtmlDeclinedCount = 0;
   for (const filePath of discovered) {
     const result = await session.parseFile(filePath, cwd);
-    if (result) parsed.push(result);
+    if (!result) continue;
+    parsed.push(result);
+    // For JS/TS files, extract static innerHTML template literals as
+    // synthetic HTML ParsedFile entries so rules run against injected
+    // markup. Dynamic literals (containing ${...}) are declined — the
+    // extractor returns a count that drives the warning signal.
+    if (result.ast.language === "tsx") {
+      const { fragments, declined } = extractInlineHtmlFragments(result.source, filePath);
+      parsed.push(...fragments);
+      jsInnerHtmlDeclinedCount += declined;
+    }
   }
-  return { files: parsed, diagnostics };
+  return { files: parsed, diagnostics, jsInnerHtmlDeclinedCount };
 }
 
 /**
