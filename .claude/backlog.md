@@ -405,7 +405,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. 
 
 #### Q8b — accepted (P0 — token-budget honesty / silent-failure)
 
-- [ ] **Q8b-HTML-STRAY-TAG-REASON-NAMES-SCOPE** `partialParseFiles[].reason: "Stray closing tag at top level"` fires on documents whose strays are nested inline (well-formed at root). The "top level" claim is the misdiagnosis — agents reading the reason waste a read confirming the file's root closes cleanly. Fix: reformulate as `"Mismatched <tag> close at line N (inside <ancestor>)"` with the actual stray + enclosing scope; reserve `"top level"` for true root strays. Pairs with Q8-HTML-PARSER-STRAY-CLOSING-TAG-PARTIAL-PARSE (the parser-mode fix); this is the reason-text honesty fix.
 - [ ] **Q8b-LAYOUT-TAIL-ELISION-FALSE-DIAGNOSIS** Layout-tail elision diagnosis (`reason: "Elided layout-tail </html> — file opens with a {% include %} directive whose sibling partial closes this root tag"`) fires on files whose last lines are literally `</body>\n</html>`. Predicate doesn't re-check for closing tags after the include preamble. Fix: only emit the elision diagnosis when no `</html>` token appears in the file; otherwise the parse error is something else.
 
 #### Q8b — accepted (P0 — heuristic-mislabeled meta sub-fields)
