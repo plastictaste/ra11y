@@ -312,4 +312,103 @@ describe("warnings + warningsDetails coherence across scan_project / scan_file /
       ).not.toContain(code);
     }
   });
+
+  it("payload-bearing codes never ship a bare `{}` detail entry — fall-through stamps the truncation sentinel instead", async () => {
+    // The fix: when a payload-bearing
+    // code's summarizer returns `undefined` (input not threaded to
+    // this surface, or dropped under truncation), the dispatch falls
+    // through to a `{ truncated: true, reason: "..." }` sentinel —
+    // never the bare `{}` marker — so an agent reading the wire can
+    // distinguish "the payload-bearing slot exists and the input
+    // wasn't here" from "this code is binary by design (`{}` is the
+    // entire signal)."
+    //
+    // Repro shape: scan a project root that fires multiple codes in
+    // one response. Walk every emitted code; for each, classify as
+    // payload-bearing (typed slot accepts more than `{}` on
+    // `ScanWarningDetails`) vs binary (typed as `BinaryPresenceMarker`).
+    // Payload-bearing entries must be EITHER the rich payload OR the
+    // truncation sentinel — never bare `{}`. Binary entries must be
+    // bare `{}` (the wire is the entire signal).
+    //
+    // Cross-surface coverage: scan_project / coverage / checklist all
+    // share the same warnings pipeline; assert on each.
+    const dir = await makeSkippedExtensionFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const envelopes = [
+      { name: "scan_project", env: warningsEnvelope(body<Record<string, unknown>>(responses[1])) },
+      { name: "coverage", env: warningsEnvelope(body<Record<string, unknown>>(responses[2])) },
+      { name: "checklist", env: warningsEnvelope(body<Record<string, unknown>>(responses[3])) },
+    ];
+    for (const { name, env } of envelopes) {
+      assertSentinelOrRichPayloadInvariant(name, env);
+    }
+  });
 });
+
+/**
+ * Codes typed as `BinaryPresenceMarker` on `ScanWarningDetails` —
+ * their `{}` entry IS honest because the schema declares "no
+ * payload by design." Keep in sync with `BINARY_PRESENCE_CODES`
+ * in `src/mcp/warnings.ts`.
+ */
+const BINARY_PRESENCE_CODES_FOR_INVARIANT: ReadonlySet<string> = new Set([
+  "scanned_zero_files",
+  "root_source_defaulted",
+  "tailwind_detected_css_undercounted",
+  "template_files_parsed_as_literal",
+  "no_hunks_in_comparison",
+  "storybook_preset_active",
+  "session_wrappers_configured_for_different_cwd",
+  "redundant_additional_paths",
+  "restrict_to_paths_no_matches",
+  "baseline_dry_run",
+  "proposed_config_deprecated_use_suggested_config",
+  "partial_parse_files_present",
+  "parser_bailed_zero_findings",
+  "dist_only_scan_detected",
+  "js_innerhtml_template_literal_unparsed",
+]);
+
+/**
+ * Walks every fired code on one envelope and asserts the
+ * disambiguation invariant — payload-bearing codes ship the rich
+ * payload OR the truncation sentinel, NEVER bare `{}`.
+ */
+function assertSentinelOrRichPayloadInvariant(name: string, env: WarningsEnvelope): void {
+  const details = env.warningsDetails ?? {};
+  for (const code of env.warnings ?? []) {
+    const entry = (details as Record<string, unknown>)[code];
+    expect(entry, `${name}: warningsDetails.${code} missing`).toBeDefined();
+    if (BINARY_PRESENCE_CODES_FOR_INVARIANT.has(code)) {
+      expect(entry, `${name}: binary code ${code} should ship {}`).toEqual({});
+    } else {
+      assertPayloadBearingEntry(name, code, entry);
+    }
+  }
+}
+
+/**
+ * Per-payload-bearing-code assertion: entry must be either a rich
+ * payload (any keys) or the truncation sentinel
+ * (`{ truncated: true, reason: <string> }`). Bare `{}` would collide
+ * with the binary-presence wire shape and is the anti-pattern.
+ */
+function assertPayloadBearingEntry(name: string, code: string, entry: unknown): void {
+  const obj = entry as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  if (keys.length === 0) {
+    throw new Error(
+      `${name}: payload-bearing code ${code} shipped bare {} — payload-vs-binary disambiguation invariant broken (must be rich payload or { truncated: true, reason: "..." } sentinel)`,
+    );
+  }
+  if ("truncated" in obj) {
+    expect(obj.truncated).toBe(true);
+    expect(typeof obj.reason).toBe("string");
+  }
+}

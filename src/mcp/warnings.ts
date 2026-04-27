@@ -1018,15 +1018,25 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  * Structured sibling to the bare-string `warnings[]` channel — see
  * ADR 0023 (and the schema-discipline amendment shipped under
  * warnings-details schema discipline). Keyed by `ScanWarningCode`;
- * **every** fired code carries a corresponding key on this map. Some
- * keys carry a richer quantitative payload (counts, lists, ratios);
- * others are intentionally empty (`{}`) — the empty object is the
- * deterministic "no further detail by design" marker, not an
- * unavailable-sentinel. When `warnings[]` is non-empty, this map ships
- * alongside it with one entry per fired code, so an agent reading
- * `warningsDetails[code]` always gets a definite answer (either a
- * payload or `{}`) without having to know in advance which codes are
- * payload-bearing.
+ * **every** fired code carries a corresponding key on this map. Each
+ * entry is one of three honest shapes:
+ *
+ *   1. **Rich payload** — the code is payload-bearing and the
+ *      summarizer wired its inputs.
+ *   2. **`{}` (binary-presence marker)** — the code is typed as
+ *      {@link BinaryPresenceMarker} so presence is the entire signal.
+ *   3. **`{ truncated: true, reason: "..." }` (truncation sentinel)** —
+ *      the code is payload-bearing in the schema but the summarizer's
+ *      input was unavailable on this surface (input not threaded, or
+ *      dropped under a truncation pass). The sentinel disambiguates
+ *      "the payload was supposed to be here" from "binary by design"
+ *      so an agent reading `warningsDetails[code] === {}` never has to
+ *      cross-reference the schema to know which case it's in.
+ *
+ * When `warnings[]` is non-empty, this map ships alongside it with one
+ * entry per fired code, so an agent reading `warningsDetails[code]`
+ * always gets a definite answer without prior knowledge of which codes
+ * are payload-bearing.
  *
  * Payload-vs-binary classification (same intent as the original
  * payload-vs-binary contract on this interface — schematized so
@@ -1084,9 +1094,24 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  * `warningsDetails` are EXACTLY the codes in `warnings[]` (no extras,
  * no omissions). The {@link computeScanWarningDetails} helper enforces
  * this by walking the codes list and either invoking the per-code
- * summarizer (payload-bearing) or stamping the `{}` marker
- * (binary-presence). The regression tests in
- * `tests/unit/mcp/warnings.test.ts` lock the contract.
+ * summarizer (payload-bearing) or stamping the binary-presence marker
+ * `{}` (codes typed as {@link BinaryPresenceMarker}) or the
+ * {@link WarningDetailsTruncatedSentinel} (payload-bearing codes
+ * whose summarizer fell through to `undefined`). The regression
+ * tests in `tests/unit/mcp/warnings.test.ts` lock the contract;
+ * `tests/integration/mcp-consistency/warnings-details-cross-surface.test.ts`
+ * pins the per-code disambiguation across the live MCP wire.
+ *
+ * Type vs wire note: each payload-bearing slot below is typed with
+ * its rich shape so callers reading e.g. `extensions_skipped_no_parser?.topExtension`
+ * stay terse on the common path. The runtime wire may carry a
+ * `WarningDetailsTruncatedSentinel` in place of the rich payload when
+ * the summarizer's input was unavailable on this surface — callers
+ * that need to distinguish the two must read through
+ * `Record<string, unknown>` and check for `{ truncated: true }`.
+ * Most call sites don't care because the rich-shape consumers always
+ * supply the summarizer's input on their surface; the disambiguation
+ * matters at the wire-reading boundary (agents reading the JSON).
  */
 export interface ScanWarningDetails {
   /**
@@ -1584,6 +1609,166 @@ export type BinaryPresenceMarker = Record<string, never>;
  * per-code allocation when many binary codes fire at once.
  */
 const BINARY_PRESENCE_MARKER: BinaryPresenceMarker = Object.freeze({});
+
+/**
+ * Disambiguating sentinel for **payload-bearing** codes whose summarizer
+ * fell through to `undefined` — the input the rich payload depends on
+ * was either never wired to this surface, or got dropped under a
+ * truncation pass. Without this sentinel the call site would stamp the
+ * binary-presence `{}` marker, making the entry indistinguishable from
+ * a code that is `BinaryPresenceMarker`-typed by design. An agent
+ * reading `warningsDetails[code] === {}` then cannot tell "this code
+ * has no payload by design" from "the payload was supposed to be here
+ * and is missing." The sentinel closes the ambiguity per
+ * `docs/kb/architecture/ai-first-consumer.md` "Truncated containers
+ * must rename or sentinel, not retain" + "Ambiguous field shapes are
+ * dishonest."
+ *
+ * Wire shape is intentionally tiny — `truncated: true` is the routing
+ * flag (parallel to `truncated: true` on `scan_project` envelopes) and
+ * `reason` is a stable token the agent can branch on. The sentinel
+ * applies to the *entry-level* truncation case (whole payload absent)
+ * — partial-payload trimming (e.g. head-sliced arrays inside a rich
+ * payload) is a separate channel surfaced via
+ * `warningsDetails.response_dropped_files_oversize.slimTruncations`.
+ */
+export interface WarningDetailsTruncatedSentinel {
+  readonly truncated: true;
+  readonly reason: string;
+}
+
+/**
+ * Stable reason token for the entry-level truncation sentinel — the
+ * payload-bearing summarizer fell through to `undefined` because the
+ * inputs the helper depended on were not threaded to this surface (or
+ * were dropped under an earlier truncation pass).
+ *
+ * The token is intentionally narrow: it names the structural cause the
+ * scanner can prove from its own state (the summarizer returned
+ * `undefined`), not a higher-level "why" the agent would have to trust
+ * the scanner about. An agent reading `reason: "summarizer_inputs_unavailable"`
+ * knows: the code fired, the payload-bearing slot exists in the schema,
+ * but the input that would have populated it didn't reach this surface.
+ * Recovery (re-fetch under `verboseMeta: true`, scope down, or call the
+ * tool that does compute the payload) is the agent's choice.
+ */
+export const WARNING_DETAILS_SUMMARIZER_INPUTS_UNAVAILABLE =
+  "summarizer_inputs_unavailable" as const;
+
+/**
+ * Pre-built truncation sentinel — frozen so the dispatch fall-through
+ * can stamp the same instance across every payload-bearing code that
+ * lost its inputs without per-code allocation. Mirrors the
+ * `BINARY_PRESENCE_MARKER` constant pattern.
+ */
+const SUMMARIZER_INPUTS_UNAVAILABLE_SENTINEL: WarningDetailsTruncatedSentinel = Object.freeze({
+  truncated: true,
+  reason: WARNING_DETAILS_SUMMARIZER_INPUTS_UNAVAILABLE,
+});
+
+/**
+ * The codes typed as `BinaryPresenceMarker` on
+ * {@link ScanWarningDetails}. The membership of this set IS the
+ * payload-vs-binary classification at runtime: every code in
+ * {@link ScanWarningCode} that is **not** in this set is payload-bearing
+ * by type (its slot accepts a richer shape than `{}`), and the dispatch
+ * fall-through path stamps the
+ * {@link SUMMARIZER_INPUTS_UNAVAILABLE_SENTINEL} on payload-bearing
+ * codes whose summarizer returned `undefined` rather than the
+ * `BINARY_PRESENCE_MARKER` (which would lie — the agent reads `{}` and
+ * assumes "no payload by design," but the schema says a payload was
+ * supposed to be here).
+ *
+ * Keep this set in lockstep with the `?: BinaryPresenceMarker` slots on
+ * `ScanWarningDetails` — adding a new binary code requires adding the
+ * code here AND on the interface, and graduating a code to
+ * payload-bearing requires removing the entry from this set AND
+ * widening the interface slot. Both ends are checked at the type level
+ * via {@link assertBinaryPresenceCodesMatchTypes} (compile-only).
+ */
+const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningCode>([
+  "scanned_zero_files",
+  "root_source_defaulted",
+  "tailwind_detected_css_undercounted",
+  "template_files_parsed_as_literal",
+  "no_hunks_in_comparison",
+  "storybook_preset_active",
+  "session_wrappers_configured_for_different_cwd",
+  "redundant_additional_paths",
+  "restrict_to_paths_no_matches",
+  "baseline_dry_run",
+  "proposed_config_deprecated_use_suggested_config",
+  "partial_parse_files_present",
+  "parser_bailed_zero_findings",
+  "dist_only_scan_detected",
+  "js_innerhtml_template_literal_unparsed",
+]);
+
+/**
+ * Picks the disambiguating fall-through entry for a fired code that
+ * has no rich payload on this surface. Binary-presence codes get
+ * `{}` (the wire is the entire signal); payload-bearing codes get the
+ * `{ truncated: true, reason }` sentinel so the agent can tell
+ * "the payload was supposed to be here" from "no payload by design."
+ *
+ * Codes outside the {@link ScanWarningCode} union (tool-local strings
+ * like `bootstrap_baseline_failed`, `non_git_repo_signature_omitted`,
+ * `unknown_rule_ids`, `session_allow_write_enabled`) are treated as
+ * binary-presence by default — these surfaces declare their own
+ * payload shape inline at the call site and never route through the
+ * fall-through, so the default applies only when a tool-local code
+ * was added to `warnings[]` without a corresponding inline entry.
+ */
+export function fallThroughDetailEntry(
+  code: string,
+): BinaryPresenceMarker | WarningDetailsTruncatedSentinel {
+  if (BINARY_PRESENCE_CODES.has(code as ScanWarningCode)) return BINARY_PRESENCE_MARKER;
+  // Codes not in the ScanWarningCode union default to binary —
+  // tool-local codes that omit an inline payload entry are saying
+  // "presence is the signal," same as a typed BinaryPresenceMarker
+  // slot.
+  if (!isScanWarningCode(code)) return BINARY_PRESENCE_MARKER;
+  // ScanWarningCode that isn't in the binary set → payload-bearing by
+  // type, summarizer fell through → emit the disambiguating sentinel.
+  return SUMMARIZER_INPUTS_UNAVAILABLE_SENTINEL;
+}
+
+const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
+  "scanned_zero_files",
+  "root_source_defaulted",
+  "no_config_found",
+  "tailwind_detected_css_undercounted",
+  "template_files_parsed_as_literal",
+  "scanned_build_artifacts_present",
+  "no_hunks_in_comparison",
+  "storybook_preset_active",
+  "extensions_skipped_no_parser",
+  "parse_errors_present",
+  "response_token_budget_truncated",
+  "response_dropped_files_oversize",
+  "session_wrappers_configured_for_different_cwd",
+  "content_files_skipped",
+  "source_language_unsupported",
+  "redundant_additional_paths",
+  "restrict_to_paths_no_matches",
+  "response_meta_truncated",
+  "baseline_dry_run",
+  "proposed_config_deprecated_use_suggested_config",
+  "scss_unresolved_variables",
+  "vendor_css_dominates_findings",
+  "scanned_minified_file",
+  "bulk_catalog_detected",
+  "animation_library_without_reduced_motion_guard",
+  "partial_parse_files_present",
+  "parser_bailed_zero_findings",
+  "dist_only_scan_detected",
+  "cwd_appears_misrooted",
+  "js_innerhtml_template_literal_unparsed",
+]);
+
+function isScanWarningCode(code: string): code is ScanWarningCode {
+  return SCAN_WARNING_CODES.has(code);
+}
 
 function rootSourceIsDefaulted(rootSource: WarningInputs["rootSource"]): boolean {
   return rootSource === "git" || rootSource === "spawn-cwd";
@@ -2472,16 +2657,22 @@ export function computeScanWarningDetails(
     const summary = row.summarize();
     if (summary !== undefined) details[row.code] = summary;
   }
-  // warnings-details schema discipline: stamp the empty-object
-  // marker for every fired code that didn't already get a rich entry.
-  // Covers (a) binary-presence codes (no summarizer registered) and
-  // (b) payload-bearing codes whose summarizer fell through to a
-  // degenerate shape — for both paths the wire keeps the membership
-  // invariant ("every code in `warnings[]` has a key in
-  // `warningsDetails`") without leaking a half-built payload.
+  // warnings-details schema discipline: stamp the disambiguating
+  // fall-through marker for every fired code that didn't already get a
+  // rich entry. Covers (a) binary-presence codes (no summarizer
+  // registered → `{}` is the entire signal, schema-typed as
+  // `BinaryPresenceMarker`) and (b) payload-bearing codes whose
+  // summarizer fell through to `undefined` (the `{ truncated: true,
+  // reason: "summarizer_inputs_unavailable" }` sentinel — disambiguates
+  // from "no payload by design" so an agent reading
+  // `warningsDetails[code]` can tell "the payload was supposed to be
+  // here and isn't" from "presence is the entire signal"). The
+  // membership invariant ("every code in `warnings[]` has a key in
+  // `warningsDetails`") still holds — same shape contract, honest
+  // fall-through.
   for (const code of codes) {
     if (details[code] !== undefined) continue;
-    details[code] = BINARY_PRESENCE_MARKER;
+    details[code] = fallThroughDetailEntry(code);
   }
   return details as ScanWarningDetails;
 }
@@ -2926,7 +3117,15 @@ export function fillMissingWarningDetails(
   const out: Record<string, unknown> = { ...(baseDetails ?? {}) };
   for (const code of warnings) {
     if (out[code] !== undefined) continue;
-    out[code] = BINARY_PRESENCE_MARKER;
+    // Same disambiguation as `computeScanWarningDetails`: binary-
+    // presence codes get `{}`; payload-bearing codes whose summarizer
+    // didn't run on this merge site get the
+    // `{ truncated: true, reason: "summarizer_inputs_unavailable" }`
+    // sentinel so the agent can tell "no payload by design" from
+    // "the payload-bearing slot exists but the upstream didn't compute
+    // it on this merge path." Keeps the membership invariant honest
+    // without lying about which kind of entry the agent is looking at.
+    out[code] = fallThroughDetailEntry(code);
   }
   return out as ScanWarningDetails;
 }

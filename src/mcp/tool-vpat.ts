@@ -49,6 +49,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+import { fallThroughDetailEntry } from "./warnings.ts";
 
 const PLACEHOLDER_NAME = "<Product Name>";
 const PLACEHOLDER_VERSION = "<Product Version>";
@@ -248,16 +249,15 @@ export const vpatTool: McpTool = {
  * Builds VPAT's `warningsDetails` block. Pairs the payload-bearing
  * `no_config_found` code with its `searchedFrom: cwd` payload (so an
  * agent has the same canonical answer here it gets on
- * scan_project / coverage / checklist) and stamps the empty-object
- * marker for every other fired code so the warnings-details
- * schema-discipline membership invariant holds.
+ * scan_project / coverage / checklist) and stamps the disambiguating
+ * fall-through marker for every other fired code so the
+ * warnings-details schema-discipline membership invariant holds.
  *
- * Pure shape-builder. The `BinaryPresenceMarker`-shaped marker is the
- * shared frozen constant from `warnings.ts`'s `fillMissingWarningDetails`
- * pathway — re-derived here as `{}` because VPAT's code surface is
- * narrower than the scan-family dispatch table and pulling the
- * constant in just for one local stamp would inflate the import
- * surface.
+ * Pure shape-builder. Routes through {@link fallThroughDetailEntry}
+ * so binary-presence codes get the bare `{}` marker (the wire IS the
+ * entire signal) while payload-bearing codes whose summarizer didn't
+ * run on this surface get the truncation sentinel — closure for
+ * the shape-ambiguity bullet in `ai-first-consumer.md`.
  */
 function buildVpatWarningsDetails(args: {
   readonly codes: readonly string[];
@@ -268,7 +268,7 @@ function buildVpatWarningsDetails(args: {
     if (code === "no_config_found") {
       out[code] = { searchedFrom: args.configSearchedFromForWarning };
     } else {
-      out[code] = {};
+      out[code] = fallThroughDetailEntry(code);
     }
   }
   return out;
