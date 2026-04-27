@@ -942,11 +942,18 @@ describe("buildPerRuleCoverage", () => {
     // always walk the full file set — but the path exists for
     // symmetry so rule authors can trust the flag regardless of
     // where they wire their check).
+    //
+    // The reason suffix here is `_inherent_to_rule` rather than the
+    // extension-gated branch's `_on_this_input` — the project-scoped
+    // branch has no per-input candidate-token signal to gate on, so
+    // the downgrade fires unconditionally on every scan where the
+    // rule ran. Using `_on_this_input` would lie to the agent about
+    // the predicate strength.
     const rules = [mkRule("hypothetical/project-bounded", undefined, { crossFileCapable: false })];
     const entries = buildPerRuleCoverage(tracker({}), rules, passAllFilter, [], 5);
     const [row] = entries;
     expect(row!.coverageConfidence).toBe("medium");
-    expect(row!.reason).toBe("cross_file_evidence_bounded_on_this_input");
+    expect(row!.reason).toBe("cross_file_evidence_bounded_inherent_to_rule");
   });
 });
 
