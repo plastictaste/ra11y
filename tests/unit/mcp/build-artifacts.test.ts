@@ -1139,6 +1139,154 @@ describe("collectBuildArtifacts", () => {
   });
 });
 
+describe("collectBuildArtifacts — minified-shaped classifications route only through the per-file classifier", () => {
+  // Stamp-site discipline invariant: the only classifications that
+  // tell agents "this file is the minified bytes" are the two
+  // minified-shaped tokens — `definite-min-infix` (path-anchored
+  // `.min.` basename) and `likely-minified-by-line-stats` (long-line
+  // content-shape probe). Both originate inside
+  // `classifyBuildArtifactDetailed`. The sibling-set branches in
+  // `collectBuildArtifacts` (`detectSiblingArtifact` →
+  // `findSiblingSourcemap`, `findSiblingMinFile`) intentionally emit
+  // ONLY `definite-sourcemap-paired` / `definite-vendor-distribution`
+  // because the sibling evidence is deterministic for "release
+  // artifact" but not for "the bytes in THIS file are minified."
+  //
+  // Why this guard exists: a previous shape collapsed
+  // vendor-distribution and minified into the same `"minified"` token,
+  // so a readable jQuery source paired with `jquery.min.js` got the
+  // same agent-routing as the actually-minified twin — agents skipped
+  // findings on the file the user could read. The split (turn 1) +
+  // banner detection (turn 9) restored the per-file classifier as the
+  // single stamp site for minified-shaped verdicts. Tests below pin
+  // that invariant against future bypass paths (a new sibling-set
+  // probe, a new path-pattern shortcut, a new banner classifier
+  // mapping the wrong way) re-introducing the regression.
+
+  const MINIFIED_SHAPED: ReadonlySet<BuildArtifactClassification> = new Set([
+    "definite-min-infix",
+    "likely-minified-by-line-stats",
+  ]);
+
+  it("does NOT label an authored HTML file (no min infix, no minification signals) as minified-shaped", () => {
+    // Canonical authored HTML: short lines, no `.min.` infix, no
+    // hashed filename, not under any build-dir marker, no sourcemap
+    // pointer, no vendor banner. `classifyBuildArtifact` must return
+    // `null`; `collectBuildArtifacts` must surface no entry at all
+    // for this file.
+    const source = [
+      "<!doctype html>",
+      '<html lang="en">',
+      "<head>",
+      "  <title>Contact us</title>",
+      "</head>",
+      "<body>",
+      "  <main>",
+      "    <h1>Contact</h1>",
+      "    <p>Reach the team via the form below.</p>",
+      "  </main>",
+      "</body>",
+      "</html>",
+      "",
+    ].join("\n");
+    expect(classifyBuildArtifact("public-pages/contact.html", source)).toBe(null);
+    const labeled = collectBuildArtifacts([{ filePath: "public-pages/contact.html", source }]);
+    expect(labeled).toEqual([]);
+  });
+
+  it("does NOT label an authored HTML file paired with a sibling `.map` as minified-shaped (sibling branch caps at `definite-sourcemap-paired`)", () => {
+    // The sibling-map branch in `detectSiblingArtifact` is the only
+    // bypass path the file-level classifier doesn't gate. It MUST emit
+    // `definite-sourcemap-paired`, never a minified-shaped token —
+    // because pairing a `.map` against its source proves "release
+    // artifact pipeline ran," not "the bytes in this file are
+    // minified."
+    const source = "<!doctype html>\n<html><body><p>Hi</p></body></html>\n";
+    const files = [
+      { filePath: "site/contact.html", source },
+      { filePath: "site/contact.html.map", source: '{"version":3}' },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    const contact = labeled.find((e) => e.path === "site/contact.html");
+    expect(contact?.classification).toBe("definite-sourcemap-paired");
+    expect(MINIFIED_SHAPED.has(contact?.classification ?? "definite-min-infix")).toBe(false);
+  });
+
+  it("does NOT label an authored HTML file paired with a sibling `.min.html` as minified-shaped (sibling branch caps at `definite-vendor-distribution`)", () => {
+    // The sibling-min branch in `detectSiblingArtifact` is the second
+    // bypass path. It MUST emit `definite-vendor-distribution`, never
+    // a minified-shaped token — pairing a `.min.<ext>` sibling proves
+    // "this file is a release artifact distributed alongside its
+    // minified twin," not "the bytes in this file are minified."
+    const files = [
+      {
+        filePath: "site/landing.html",
+        source: "<!doctype html>\n<html><body><h1>Welcome</h1></body></html>\n",
+      },
+      {
+        filePath: "site/landing.min.html",
+        source: "<!doctype html><html><body><h1>Welcome</h1></body></html>",
+      },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    const landing = labeled.find((e) => e.path === "site/landing.html");
+    expect(landing?.classification).toBe("definite-vendor-distribution");
+    expect(MINIFIED_SHAPED.has(landing?.classification ?? "definite-min-infix")).toBe(false);
+  });
+
+  it("every minified-shaped entry from `collectBuildArtifacts` agrees with the per-file classifier on the same input — no bypass stamp site", () => {
+    // Cross-check invariant: for every file in a mixed batch,
+    // `collectBuildArtifacts` must agree with `classifyBuildArtifact`
+    // on whether the classification is minified-shaped. If the
+    // collector ever stamps `definite-min-infix` /
+    // `likely-minified-by-line-stats` on a file the per-file
+    // classifier returns `null` for (or any non-minified-shaped
+    // verdict), a bypass has been re-introduced. The mixed batch
+    // includes:
+    //   - an authored HTML file with no signals (must not appear)
+    //   - a `.min.` HTML twin (must appear, classifier verdict
+    //     matches)
+    //   - the authored sibling of the `.min.` twin (sibling branch
+    //     fires, classification must be vendor-distribution NOT
+    //     minified-shaped)
+    //   - a sourcemap-paired authored file (sibling-map branch fires,
+    //     classification must be sourcemap-paired NOT minified-shaped)
+    //   - a content-shape minified CSS bundle (long-line probe fires,
+    //     classifier verdict matches the collector's verdict)
+    const longLine = "x".repeat(600);
+    const minifiedCss = `${longLine}\n${longLine}\n${longLine}\n${longLine}\n`;
+    const files = [
+      {
+        filePath: "pages/about.html",
+        source: "<!doctype html>\n<html><body><p>About</p></body></html>\n",
+      },
+      { filePath: "site/landing.html", source: "<!doctype html>\n<html><body></body></html>\n" },
+      { filePath: "site/landing.min.html", source: "<!doctype html><html></html>" },
+      { filePath: "site/contact.html", source: "<!doctype html>\n<html></html>\n" },
+      { filePath: "site/contact.html.map", source: '{"version":3}' },
+      { filePath: "vendor/bundle.css", source: minifiedCss },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    for (const entry of labeled) {
+      const file = files.find((f) => f.filePath === entry.path);
+      expect(file).toBeDefined();
+      if (file === undefined) continue;
+      const perFile = classifyBuildArtifact(file.filePath, file.source);
+      const collectorMinifiedShaped = MINIFIED_SHAPED.has(entry.classification);
+      const perFileMinifiedShaped = perFile !== null && MINIFIED_SHAPED.has(perFile);
+      // The invariant: a minified-shaped collector verdict implies the
+      // per-file classifier returned the SAME minified-shaped verdict.
+      // Sibling-branch verdicts (vendor-distribution, sourcemap-paired)
+      // are non-minified-shaped, so they trivially satisfy the
+      // implication.
+      if (collectorMinifiedShaped) {
+        expect(perFileMinifiedShaped).toBe(true);
+        expect(perFile).toBe(entry.classification);
+      }
+    }
+  });
+});
+
 describe("groupBuildArtifactsByBasename — grouped shape", () => {
   it("collapses a ≥3-path same-basename cluster under one group with a paste-ready suggestedGlob", () => {
     // The field-report case: a bootstrap repo emits the same
