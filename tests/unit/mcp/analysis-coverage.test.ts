@@ -1352,6 +1352,62 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["partialParseFileCount"]).toBeUndefined();
     });
 
+    it("propagates parser-emitted triggerToken alongside the structured reason code", () => {
+      // When the parser ships a structured `code`/`triggerToken` pair
+      // (the `.js`-routed-through-tsx case is the canonical one), the
+      // entry must carry `triggerToken` as additive evidence — the
+      // agent reads the code via `reason` and the offending fragment
+      // via `triggerToken`, never as if the fragment were authored
+      // ground truth.
+      const file: ParsedFile = {
+        filePath: "livereload.js",
+        source: "",
+        ast: {
+          language: "tsx",
+          root: {
+            kind: "TsxModule",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            jsxElements: [],
+          },
+          errors: [
+            {
+              message: "tsx_parser_on_non_jsx_input",
+              position: { line: 2, column: 30, offset: 50 },
+              recoverable: true,
+              code: "tsx_parser_on_non_jsx_input",
+              triggerToken: "<b.length>",
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage([file], [], NO_RULES, true);
+      expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
+        {
+          path: "livereload.js",
+          parser: "tsx",
+          reason: "tsx_parser_on_non_jsx_input",
+          triggerToken: "<b.length>",
+        },
+      ]);
+    });
+
+    it("omits triggerToken when the parser does not emit one (present-when-meaningful)", () => {
+      // Conventional prose-reason entries (the html-parser case) must
+      // NOT carry a `triggerToken: ""` sentinel — the field shape is
+      // present-when-meaningful per the AI-first consumer rules.
+      const files = [htmlFileWithErrors("a.html")];
+      const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, true);
+      const entries = analysisCoverage?.["parseErrorFiles"] as
+        | { path: string; parser: string; reason: string; triggerToken?: string }[]
+        | undefined;
+      expect(entries?.[0]?.triggerToken).toBeUndefined();
+      expect(Object.hasOwn(entries?.[0] ?? {}, "triggerToken")).toBe(false);
+    });
+
     it("names the underlying parser honestly even when the extension disguises it (e.g. .mdx parses through the TSX bridge)", () => {
       // `file.ast.language` is the source of truth for `parser`: an
       // `.mdx` path routed through the MDX → TSX bridge emits

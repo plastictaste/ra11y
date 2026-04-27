@@ -39,6 +39,29 @@ export interface ParseError {
   readonly message: string;
   readonly position: SourcePosition;
   readonly recoverable: boolean;
+  /**
+   * Optional snake_case token identifying the *kind* of parse failure
+   * structurally rather than via prose. Populated when the parser knows
+   * the failure category is itself the actionable signal (e.g. routing
+   * rather than authored-source content) — the report layer then
+   * surfaces this as `partialParseFiles[].reason` instead of the
+   * historical prose `message`. Absent when the parser is reporting a
+   * genuine authored-source error and the prose `message` is the
+   * actionable signal. Codes share the structured-warning vocabulary
+   * (snake_case, stable across releases).
+   */
+  readonly code?: string;
+  /**
+   * Optional additive evidence accompanying {@link code}: the source
+   * fragment whose interpretation triggered the error. For the
+   * `tsx_parser_on_non_jsx_input` case this is the literal `<tagName>`
+   * read from the source (e.g. `"<r.length>"` on a minified `.js`
+   * `r.length<b.length` comparison). Surfaced as
+   * `partialParseFiles[].triggerToken` so the agent can grep against
+   * historical reports without the parser pretending the fragment was
+   * an authored JSX element. Present only when {@link code} is.
+   */
+  readonly triggerToken?: string;
 }
 
 // ---------------------------------------------------------------------------

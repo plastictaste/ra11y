@@ -456,16 +456,22 @@ describe("parseTsx", () => {
   // when the parser still emits a
   // structural JSX error on a non-JSX-bearing extension (e.g. a `.js`
   // whose stray `from "react"` mention in a string literal flips
-  // jsxEnabled back on), the reason text rewrites to name the false-JSX
-  // context honestly instead of misleading the agent into "fix the JSX."
+  // jsxEnabled back on), the reason switches from the parser-internal
+  // "Unclosed JSX element <…>" prose to a structured snake_case token
+  // (`tsx_parser_on_non_jsx_input`) with the offending source fragment
+  // surfaced as `triggerToken: "<…>"` — an agent can branch on the
+  // routing-failure code instead of misreading the prose as "the
+  // author left a JSX tag unclosed."
   describe("structural-error reason on non-JSX extensions", () => {
-    it("rewrites Unclosed-element reason on a .js file with a JSX-import signal", () => {
+    it("emits a structured code with triggerToken on a .js file with a JSX-import signal", () => {
       // The leading `import React from 'react'` flips `inferJsxMode` to true
       // for this `.js` file, so the parser enters JSX mode. The unclosed
       // `<r.length>` then trips `#consumeJsxChildren`'s structural error.
-      // Without the rewrite, the reason an agent reads is "Unclosed JSX
-      // element <r.length>" — which is dishonest, since `r.length` is a
-      // member-access in `r.length<b.length`, not authored JSX.
+      // Pre-fix the reason was prose ("Unclosed JSX element <r.length>" /
+      // "Minified or plain-JS <r.length> parsed as JSX element; …") that
+      // read as JSX-element ground truth. Post-fix the reason is a
+      // snake_case routing-failure code and the fragment lives on
+      // `triggerToken` as additive evidence.
       const src =
         "import React from 'react';\n" +
         "!function(r,b){var x=r.length<b.length?r.length:b.length;return x}([1],[2,3]);";
@@ -473,18 +479,19 @@ describe("parseTsx", () => {
       expect(errors.length).toBeGreaterThan(0);
       const first = errors[0];
       expect(first?.recoverable).toBe(true);
-      // Reason must NOT use the parser-internal "Unclosed JSX element"
-      // phrasing — that's the misleading shape this item fixes.
+      // Reason must NOT use the parser-internal prose phrasing — that's
+      // the misleading shape this item fixes.
       expect(first?.message).not.toMatch(/^Unclosed JSX element/);
       expect(first?.message).not.toMatch(/^Unterminated JSX element/);
-      // Reason MUST name the false-JSX context AND preserve the
-      // erroneous fragment for grep against historical reports.
-      expect(first?.message).toContain("Minified or plain-JS");
-      expect(first?.message).toContain("file likely needs a non-JSX parser");
-      expect(first?.message).toContain("<b.length>");
+      expect(first?.message).not.toContain("Minified or plain-JS");
+      // Reason IS the structured code; trigger fragment lives on its
+      // own field.
+      expect(first?.message).toBe("tsx_parser_on_non_jsx_input");
+      expect(first?.code).toBe("tsx_parser_on_non_jsx_input");
+      expect(first?.triggerToken).toBe("<b.length>");
     });
 
-    it("rewrites Unterminated-element reason on a .js file truncated mid-open-tag", () => {
+    it("emits structured code on a .js file truncated mid-open-tag", () => {
       // Source ends inside an open tag — triggers `#consumeOpenTagTerminator`'s
       // EOF branch (the second of the two structural-error sites).
       const src = "import React from 'react';\nvar x = <Button class='";
@@ -492,20 +499,25 @@ describe("parseTsx", () => {
       expect(errors.length).toBeGreaterThan(0);
       const first = errors[0];
       expect(first?.message).not.toMatch(/^Unterminated JSX element/);
-      expect(first?.message).toContain("Minified or plain-JS");
-      expect(first?.message).toContain("<Button>");
+      expect(first?.message).not.toContain("Minified or plain-JS");
+      expect(first?.message).toBe("tsx_parser_on_non_jsx_input");
+      expect(first?.code).toBe("tsx_parser_on_non_jsx_input");
+      expect(first?.triggerToken).toBe("<Button>");
     });
 
     it("preserves the original Unclosed-element reason on .tsx (real authored JSX bug)", () => {
-      // `.tsx` is a JSX-bearing extension — the rewrite must NOT fire.
-      // Authors of broken JSX in a real .tsx file deserve the original
-      // parser-internal phrasing so they can fix the unclosed tag.
+      // `.tsx` is a JSX-bearing extension — the structured-code switch
+      // must NOT fire. Authors of broken JSX in a real .tsx file
+      // deserve the original parser-internal phrasing so they can fix
+      // the unclosed tag, and `code`/`triggerToken` stay absent so
+      // downstream consumers don't mis-classify it as a routing failure.
       const src = "export function App() { return <div><p>oops; }";
       const { errors } = parseTsx(src, { filePath: "App.tsx" });
       expect(errors.length).toBeGreaterThan(0);
       const first = errors[0];
       expect(first?.message).toMatch(/^Unclosed JSX element </);
-      expect(first?.message).not.toContain("Minified or plain-JS");
+      expect(first?.code).toBeUndefined();
+      expect(first?.triggerToken).toBeUndefined();
     });
 
     it("preserves the original Unclosed-element reason on .jsx (real authored JSX bug)", () => {
@@ -513,6 +525,7 @@ describe("parseTsx", () => {
       const { errors } = parseTsx(src, { filePath: "App.jsx" });
       expect(errors.length).toBeGreaterThan(0);
       expect(errors[0]?.message).toMatch(/^Unclosed JSX element </);
+      expect(errors[0]?.code).toBeUndefined();
     });
 
     it("preserves the original Unclosed-element reason when no filePath is supplied", () => {
@@ -526,7 +539,8 @@ describe("parseTsx", () => {
       // the inner-vs-outer order.
       for (const err of errors) {
         expect(err.message).toMatch(/^Unclosed JSX element </);
-        expect(err.message).not.toContain("Minified or plain-JS");
+        expect(err.code).toBeUndefined();
+        expect(err.triggerToken).toBeUndefined();
       }
     });
   });

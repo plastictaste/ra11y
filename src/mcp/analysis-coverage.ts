@@ -991,10 +991,13 @@ function accumulateCoverageForFile(
     // `ts`, `js`) — distinct from the file extension because e.g.
     // `.mdx` routes through the MDX → TSX bridge and emits `tsx`-class
     // diagnostics under a `.mdx` path.
+    const headError = file.ast.errors[0];
+    const triggerToken = headError?.triggerToken;
     acc.parseErrorEntries.push({
       path: file.filePath,
       parser: file.ast.language,
-      reason: truncateParseErrorReason(file.ast.errors[0]?.message ?? ""),
+      reason: truncateParseErrorReason(headError?.message ?? ""),
+      ...(triggerToken === undefined ? {} : { triggerToken }),
     });
   }
   if (file.ast.language === "html") {

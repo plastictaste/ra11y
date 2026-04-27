@@ -125,10 +125,11 @@ class TsxParser {
    * scanner still emits a structural JSX error on such a file — typically
    * a minified `.js` whose `r.length<b.length` parses as `<b.length>` open
    * tag once a stray JSX-import signal flipped `#jsxEnabled` back on — the
-   * reason text rewrites to name the false-JSX context honestly instead of
-   * blaming the author for "Unclosed JSX element <r.length>".
-   * The fragment is preserved verbatim in both shapes so grep against
-   * historical reports still matches.
+   * structural-error builder switches from prose ("Unclosed JSX element
+   * <r.length>") to a structured `code: "tsx_parser_on_non_jsx_input"`
+   * with the fragment surfaced as `triggerToken: "<r.length>"`. That way
+   * the report layer ships a snake_case token an agent can branch on,
+   * not a sentence that reads as if the author left JSX unclosed.
    */
   readonly #nonJsxExtension: boolean;
 
@@ -303,11 +304,7 @@ class TsxParser {
   ): "close" | "self-close" | "attr" {
     const ch = this.#peek();
     if (ch === undefined) {
-      this.#errors.push({
-        message: this.#formatStructuralJsxError("Unterminated", tagName),
-        position: startPos,
-        recoverable: true,
-      });
+      this.#errors.push(this.#buildStructuralJsxError("Unterminated", tagName, startPos));
       return "close";
     }
     if (ch === ">") {
@@ -437,11 +434,7 @@ class TsxParser {
       if (child) children.push(child);
       if (this.#pos === before) this.#advance(1);
     }
-    this.#errors.push({
-      message: this.#formatStructuralJsxError("Unclosed", tagName),
-      position: this.#position(),
-      recoverable: true,
-    });
+    this.#errors.push(this.#buildStructuralJsxError("Unclosed", tagName, this.#position()));
     return children;
   }
 
@@ -506,21 +499,48 @@ class TsxParser {
   // ---------------------------------------------------------------------
 
   /**
-   * Builds the reason string for a structural JSX error (`Unterminated` /
-   * `Unclosed` element). On JSX-bearing extensions (`.tsx`/`.jsx`/`.mdx`/
-   * `.astro`) and callers that supplied no `filePath`, the message stays
-   * the original parser-internal phrasing so the v0.1.x rule and report
-   * tests don't churn. On non-JSX extensions, the message rewrites to
-   * name the false-JSX context honestly: the upstream pipeline routed a
-   * `.js`/`.ts`/`.css`/etc. file to the TSX parser, the parser tripped
-   * on a `<` that was almost certainly a JS comparison operator, and an
-   * agent reading the report should fix the parser routing rather than
-   * "fix the JSX." The original `<tagName>` fragment is preserved so
-   * grep against earlier reports still matches.
+   * Builds a structural JSX `ParseError` (`Unterminated` / `Unclosed`
+   * element). On JSX-bearing extensions (`.tsx`/`.jsx`/`.mdx`/`.astro`)
+   * and callers that supplied no `filePath`, the message stays the
+   * original parser-internal phrasing so the v0.1.x rule and report
+   * tests don't churn (the predicate is "the author left a JSX tag
+   * unclosed" — actionable signal lives in the prose).
+   *
+   * On non-JSX extensions the shape inverts: the predicate is "the
+   * upstream pipeline routed a `.js`/`.ts`/`.css`/etc. file through the
+   * TSX parser, and the parser tripped on a `<` that was almost
+   * certainly a JS comparison operator." The actionable signal is the
+   * routing decision, not the source. The error carries:
+   *   - `message` = the snake_case `code` token, so legacy consumers
+   *     reading just `.message` see the structured signal directly;
+   *   - `code` = `tsx_parser_on_non_jsx_input` for unambiguous
+   *     structured access at the report layer (independent of the
+   *     prose fallback);
+   *   - `triggerToken` = the literal `<tagName>` fragment that
+   *     triggered the misread, so an agent can grep against historical
+   *     reports and confirm the read without the parser echoing the
+   *     fragment as if it were authored JSX ground truth.
    */
-  #formatStructuralJsxError(kind: "Unterminated" | "Unclosed", tagName: string): string {
-    if (!this.#nonJsxExtension) return `${kind} JSX element <${tagName}>`;
-    return `Minified or plain-JS <${tagName}> parsed as JSX element; file likely needs a non-JSX parser.`;
+  #buildStructuralJsxError(
+    kind: "Unterminated" | "Unclosed",
+    tagName: string,
+    position: SourcePosition,
+  ): ParseError {
+    if (!this.#nonJsxExtension) {
+      return {
+        message: `${kind} JSX element <${tagName}>`,
+        position,
+        recoverable: true,
+      };
+    }
+    const code = "tsx_parser_on_non_jsx_input";
+    return {
+      message: code,
+      position,
+      recoverable: true,
+      code,
+      triggerToken: `<${tagName}>`,
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -689,11 +709,12 @@ function hasJsxImportSignal(source: string): boolean {
 
 /**
  * True when `filePath` is supplied AND the extension is NOT one of
- * `.jsx`/`.tsx`/`.mdx`/`.astro`. Drives the
- * `#formatStructuralJsxError` reason rewrite so the
- * `partialParseFiles[].reason` an agent reads on a `.js`/`.ts`/`.css`/
- * etc. file names the false-JSX context honestly instead of pretending
- * the author left a JSX tag unclosed.
+ * `.jsx`/`.tsx`/`.mdx`/`.astro`. Drives the structured-error switch in
+ * `#buildStructuralJsxError` so the `partialParseFiles[].reason` an
+ * agent reads on a `.js`/`.ts`/`.css`/etc. file ships a snake_case
+ * `tsx_parser_on_non_jsx_input` token (with the offending `<tagName>`
+ * fragment as `triggerToken`) instead of "Unclosed JSX element
+ * <tagName>" prose that pretends the author left a JSX tag unclosed.
  *
  * Returns `false` when `filePath` is undefined — back-compat for the
  * many call sites (test helpers, MCP session, apply-fix internals) that
