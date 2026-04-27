@@ -61,6 +61,7 @@ const DIFFSTAT_EXCLUDES: readonly RegExp[] = [
   /^pnpm-lock\.yaml$/,
   /^\.claude\/history\.jsonl$/,
 ];
+const BACKLOG_ID_RE = /^[A-Z][A-Z0-9]*-[A-Z0-9-]+$/;
 
 const message = readCommitMessage();
 const firstLine = message.split("\n")[0] ?? "";
@@ -160,8 +161,6 @@ function countStagedDiffLines(): number | null {
   }
   return total;
 }
-
-const BACKLOG_ID_RE = /^[A-Z][A-Z0-9]*-[A-Z0-9-]+$/;
 
 interface BacklogDiff {
   deleted: Set<string>;
