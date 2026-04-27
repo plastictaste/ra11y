@@ -1128,28 +1128,3 @@ Items surfaced during the /continue orchestrator run that landed the tenth-pass 
 
 ---
 
-## History — Phases 0–17 complete
-
-Historical record; do not modify. The `/continue` skill does not walk this section.
-
-- **Phase 0** — Autonomous Claude Code infrastructure (hooks, agents, skills, settings).
-- **Phase 1** — Guard + generator scripts; `scripts/verify.ts` single entrypoint.
-- **Phase 2** — Core types, registries, scanner skeleton, AST helpers, public API surface.
-- **Phase 3** — WCAG 2.2 standard module; 86 active criteria + historical 4.1.1.
-- **Phase 4** — In-house utilities (logger, assert, fs, path, glob, git, ansi, string-width, wrap, color, contrast, args, index).
-- **Phase 5** — Parsers: tsx, html, css, tailwind + theme resolver + discover; unit + fuzz tests.
-- **Phase 6** — Rule engine + first 5 rules (alt-text-missing, contrast/minimum, link-descriptive-text, focus/outline-visible, parsing/duplicate-id).
-- **Phase 7** — Scanner + terminal/plain/json formatters + theme + snapshot tests.
-- **Phase 8** — CLI: scan, list-rules, list-standards, explain, coverage, checklist, vpat, certification, init, doctor.
-- **Phase 9** — WCAG 2.1 standard module (reuses rules via equivalentTo).
-- **Phase 10** — Section 508 + EN 301 549 standard modules (thin equivalentTo wrappers).
-- **Phase 11** — Remaining rules across contrast, focus, keyboard, aria, semantics, forms, pointer, navigation, layout, tooltip, document domains. 54 rules total.
-- **Phase 12** — Alternative formatters: sarif, junit, markdown, html, agent.
-- **Phase 13** — Reports: coverage, checklist, vpat, certification.
-- **Phase 14** — Config, inline disables, baseline mode (create/check/update), monorepo `projects: []` support.
-- **Phase 15** — Plugin API (`defineRule`, `defineStandard`, `defineFormatter`, `defineConfig`) + three example plugins + CI smoke job.
-- **Phase 16** — Long-form docs: getting-started, CLI, configuration, architecture, KB (architecture + patterns + concepts + gotchas + glossary), certification guides, plugin authoring, MCP docs, ADRs 0001–0005.
-- **Phase 17** — CI workflows (ci.yml, release.yml), issue + PR templates, dependabot.
-- **Phase 18 partial** — README with real output snapshots + multi-standard-scan integration test + mcp-session integration test coverage audit. Remaining demo/tag/publish items live in Track D above.
-- **Phase 19 partial** — In-house JSON-RPC 2.0 MCP server (~200 LoC), session state + AST cache by mtime, 10 live tools, session config for `nativeWrappers`, `.mcp.json` auto-attach, integration tests. Remaining hardening items live in Track M above.
-- **Phase 22 partial** — Review finders shipped: use-of-color, error-identification, headings-and-labels, on-input-body (landed as reason-text tiers on on-input-change per CLAUDE.md §1), `tool-audit` meta-tool. Remaining finder + finder tests live in Track R.
