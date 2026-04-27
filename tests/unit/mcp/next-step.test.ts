@@ -435,7 +435,15 @@ describe("buildNextStep", () => {
       expect(result.prose).toContain("same-family fix");
     });
 
-    it("keeps the vendor target when every same-ruleId finding sits in vendor code", () => {
+    it("routes to scope-down when every callable finding sits in vendor code", () => {
+      // Per the AI-first doctrine "NextStep prioritization on
+      // truncated/bulk responses must avoid first-by-filename
+      // routing": when every callable finding sits on a vendor path,
+      // naming any specific finding wastes the suggest_fix
+      // round-trip — the agent can't edit a vendor stylesheet. The
+      // structured hint reroutes to `scan_project` itself with
+      // `additionalPaths` / `cwd` narrowing as the recovery, mirroring
+      // the slim-envelope nextStep shape.
       const result = buildNextStep(
         formatted({
           plan: {
@@ -450,21 +458,26 @@ describe("buildNextStep", () => {
           vendorPaths: new Set(["vendor/bootstrap.css", "vendor/font-awesome.css"]),
         },
       );
-      // No authored alternative exists — vendor target stays, no
-      // reason-note is prepended.
       expect(result.structured).toEqual({
-        tool: "suggest_fix",
-        args: { ruleId: "contrast/minimum", file: "vendor/bootstrap.css", line: 365 },
+        tool: "scan_project",
+        args: {},
       });
-      expect(result.prose).not.toContain("note:");
-      expect(result.prose).not.toContain("same-family");
+      expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("additionalPaths");
+      // Naming the specific vendor path the picker would have surfaced
+      // is load-bearing context — the agent reads it as evidence of
+      // the corpus shape (compiled-CSS-only paged in this slice).
+      expect(result.prose).toContain("vendor/bootstrap.css");
     });
 
-    it("does not reroute when a non-vendor finding exists but has a different ruleId", () => {
-      // The backlog rule is "same ruleId" — routing to a different
-      // rule-family would hand the agent a finding with a different
-      // fix workflow, defeating the "same-family fix is applicable"
-      // guarantee the reason-note makes.
+    it("falls back to the highest-firing non-vendor rule when no same-ruleId non-vendor sibling exists", () => {
+      // Per the AI-first doctrine, the dominant-rule fallback fires
+      // when the same-ruleId reroute fails: rather than keeping the
+      // vendor target (the prior behavior) or routing to scope-down
+      // (the all-vendor branch), pick the highest-firing non-vendor
+      // rule's first finding. The reroute crosses rule families, so
+      // the prose names the rule-family change explicitly so the
+      // agent doesn't assume a same-family substitution.
       const result = buildNextStep(
         formatted({
           plan: {
@@ -480,14 +493,25 @@ describe("buildNextStep", () => {
         }),
         { vendorPaths: new Set(["vendor/bootstrap.css"]) },
       );
-      // Vendor target stays — different ruleId is not a same-family
-      // substitute.
+      // Reroute lands on the authored file under the dominant
+      // non-vendor rule — different ruleId from the vendor pick.
       expect(result.structured?.args).toEqual({
-        ruleId: "contrast/minimum",
-        file: "vendor/bootstrap.css",
-        line: 365,
+        ruleId: "motion/pause-stop-hide",
+        file: "authored/site.css",
+        line: 42,
       });
-      expect(result.prose).not.toContain("same-family");
+      // Prose names both the rerouted-from vendor path AND the
+      // rule-family change; the "highest-firing non-vendor rule"
+      // framing replaces the "same-family fix is applicable" framing
+      // used by the same-ruleId reroute. The dominant-rule prefix
+      // explicitly states "no same-family non-vendor alternative
+      // exists" so the agent reads why the reroute crossed rule
+      // families.
+      expect(result.prose).toContain("vendor/bootstrap.css");
+      expect(result.prose).toContain("authored/site.css");
+      expect(result.prose).toContain("highest-firing non-vendor rule");
+      expect(result.prose).toContain("no same-family non-vendor alternative");
+      expect(result.prose).not.toContain("same-family fix is applicable");
     });
 
     it("is a no-op when vendorPaths is empty or omitted (behavior unchanged from pre-Q6)", () => {
@@ -576,6 +600,75 @@ describe("buildNextStep", () => {
       expect(result.prose).toContain("vendor/bootstrap.css");
       expect(result.prose).toContain("authored/site.css");
       expect(result.prose).toContain("same-family");
+    });
+
+    it("dominant-rule fallback picks the non-vendor rule with the highest finding count", () => {
+      // When the same-`ruleId` reroute fails, the picker tallies
+      // findings per `ruleId` over non-vendor files only and picks the
+      // top-firing rule. Two non-vendor rule families here; the
+      // higher-count one (`forms/labels-required`, 3 occurrences) wins
+      // over the lower-count one (`motion/pause-stop-hide`, 1
+      // occurrence) regardless of file order on the page.
+      const labelsFinding = (line: number) => ({
+        ruleId: "forms/labels-required",
+        line,
+        column: 1,
+        severity: "error" as const,
+        fixClass: "guidance" as const,
+      });
+      const motionFinding = (line: number) => ({
+        ruleId: "motion/pause-stop-hide",
+        line,
+        column: 1,
+        severity: "error" as const,
+        fixClass: "guidance" as const,
+      });
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+          },
+          files: [
+            { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
+            { path: "authored/animations.css", findings: [motionFinding(10)] },
+            { path: "authored/forms-a.tsx", findings: [labelsFinding(20), labelsFinding(40)] },
+            { path: "authored/forms-b.tsx", findings: [labelsFinding(15)] },
+          ],
+        }),
+        { vendorPaths: new Set(["vendor/bootstrap.css"]) },
+      );
+      // Top non-vendor rule is `forms/labels-required` (3 hits across
+      // two files); its first non-vendor finding sits at
+      // `authored/forms-a.tsx:20`.
+      expect(result.structured?.args).toEqual({
+        ruleId: "forms/labels-required",
+        file: "authored/forms-a.tsx",
+        line: 20,
+      });
+      expect(result.prose).toContain("highest-firing non-vendor rule");
+    });
+
+    it("scope-down branch fires when every callable finding is vendor and there are no fixes", () => {
+      // Structural parity: the all-vendor → scope-down branch fires
+      // regardless of whether the violations carry fix suggestions.
+      // Mixing a runtime-only lane (no `suggest_fix`-actionable fix)
+      // with vendor-only paths must still route to scope-down rather
+      // than into the explain_rule branch on a vendor target.
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 1, verifyInSource: 0 },
+          },
+          files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
+        }),
+        { vendorPaths: new Set(["vendor/bootstrap.css"]) },
+      );
+      expect(result.structured).toEqual({
+        tool: "scan_project",
+        args: {},
+      });
+      expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("additionalPaths");
     });
   });
 });

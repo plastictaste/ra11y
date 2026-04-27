@@ -108,15 +108,38 @@ interface NextStepInputs {
   readonly first: FirstFinding | null;
   /**.
    * When `first` has been rerouted from
-   * a vendor-code finding to a non-vendor same-`ruleId` sibling, this
-   * carries the rerouted-away vendor path so the violation branch can
-   * prepend a reason-text note. `undefined` when no reroute happened
-   * (either no vendor-path set was supplied, the first finding was
-   * already in authored code, or no non-vendor same-family fallback
-   * existed — the vendor target stays per the backlog item's "fall
-   * back to vendor only when every violation is in vendor code" rule).
+   * a vendor-code finding to a non-vendor sibling (same-`ruleId`
+   * preferred; falling back to the highest-firing rule's first
+   * non-vendor finding), this carries the rerouted-away vendor path so
+   * the violation branch can prepend a reason-text note. `undefined`
+   * when no reroute happened (no vendor-path set, first finding
+   * already in authored code, or every finding sits in vendor — see
+   * `allFindingsVendor` for the all-vendor signal).
    */
   readonly reroutedFromVendorPath?: string;
+  /**
+   * True when the first callable finding sits on a vendor path AND no
+   * non-vendor finding exists across the paged response. Triggers the
+   * scope-down branch in {@link buildNextStep}: the structured hint
+   * points at `scan_project` itself with prose recommending
+   * `additionalPaths` / `cwd` narrowing rather than naming a vendor
+   * target the agent can't edit. Per the AI-first doctrine "NextStep
+   * prioritization on truncated/bulk responses must avoid
+   * first-by-filename routing," routing the agent to a vendor
+   * stylesheet wastes the suggest_fix round-trip. Falsy when not
+   * applicable.
+   */
+  readonly allFindingsVendor?: boolean;
+  /**
+   * Set when {@link pickFirstFinding} fell back from "same-ruleId
+   * non-vendor" to "highest-firing non-vendor rule's first finding"
+   * because no same-ruleId non-vendor sibling existed. The violation
+   * branch widens its reason-text note from "same-family fix is
+   * applicable" to "highest-firing non-vendor rule on this scan" so
+   * the agent knows the reroute crossed rule families. `undefined`
+   * when the same-ruleId reroute succeeded or no reroute happened.
+   */
+  readonly dominantRuleReroute?: boolean;
   readonly iterativeTip: string;
   /**
    * Present-when-meaningful per CLAUDE.md §1 — omitted on the project-
@@ -200,9 +223,23 @@ export function buildNextStep(
     ...(firstPick.reroutedFromVendorPath === undefined
       ? {}
       : { reroutedFromVendorPath: firstPick.reroutedFromVendorPath }),
+    ...(firstPick.allFindingsVendor === true ? { allFindingsVendor: true } : {}),
+    ...(firstPick.dominantRuleReroute === true ? { dominantRuleReroute: true } : {}),
     allViolationsMechanical: allViolationsMechanical(formatted.files),
   };
   if (inputs.violations === 0 && inputs.notes === 0) return cleanScanNextStep(inputs);
+  // when the first callable finding
+  // sits on a vendor path AND no non-vendor finding exists anywhere on
+  // the paged response, naming the vendor target wastes a `suggest_fix`
+  // round-trip — the agent can't edit a file in `scannedBuildArtifacts`.
+  // Per the AI-first doctrine "NextStep prioritization on truncated/bulk
+  // responses must avoid first-by-filename routing," route to a
+  // scope-down structured suggestion (`scan_project` with prose naming
+  // `additionalPaths` / `cwd`) so the agent narrows scope and finds
+  // authored work on the next call.
+  if (inputs.violations > 0 && inputs.allFindingsVendor === true) {
+    return scopeDownNextStep(inputs, inputs.first);
+  }
   if (inputs.violations > 0 && inputs.first !== null)
     return violationNextStep(inputs, inputs.first);
   if (inputs.notes > 0 && inputs.first !== null) return notesNextStep(inputs, inputs.first);
@@ -234,15 +271,21 @@ function cleanScanNextStep(inputs: NextStepInputs): NextStepResult {
 function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextStepResult {
   const vPlural = inputs.violations === 1 ? "" : "s";
   // when the picker rerouted away from
-  // a vendor-code finding to a non-vendor same-`ruleId` sibling,
-  // prepend a reason-text note so the agent knows why the first-listed
-  // vendor finding isn't the first-action target. The finding itself
-  // remains in `files[]` (surface-don't-suppress); this only changes
-  // which file the "start here" prose + structured hint name.
-  const reroutePrefix =
-    inputs.reroutedFromVendorPath === undefined
-      ? ""
-      : `note: highest-severity finding in this scan is in vendor code (\`${inputs.reroutedFromVendorPath}\`); next-step points at \`${first.path}\` where a same-family fix is applicable. `;
+  // a vendor-code finding to a non-vendor sibling, prepend a reason-text
+  // note so the agent knows why the first-listed vendor finding isn't
+  // the first-action target. Two reroute flavors share this prefix:
+  //   - same-ruleId reroute: "same-family fix is applicable" (the
+  //     authored target shares the rule family, so the fix workflow is
+  //     identical);
+  //   - dominant-rule reroute (fallback when no same-ruleId non-vendor
+  //     existed): "highest-firing non-vendor rule on this scan" — the
+  //     authored target lives under a different rule family than the
+  //     vendor pick, but has the most non-vendor occurrences, so the
+  //     agent's first action lands on the rule with the broadest
+  //     authored impact. The finding itself remains in `files[]`
+  //     (surface-don't-suppress); this only changes which file the
+  //     "start here" prose + structured hint name.
+  const reroutePrefix = buildReroutePrefix(inputs, first);
   if (inputs.fixable > 0) {
     const fPlural = inputs.fixable === 1 ? "" : "s";
     // when EVERY violation already carries
@@ -282,6 +325,60 @@ function notesNextStep(inputs: NextStepInputs, first: FirstFinding): NextStepRes
   return {
     prose: `No errors/warnings, ${inputs.notes} info-level note${nPlural} (scanner flagged things it can't fully verify). Open \`scan_file ${first.path}\` or read the source to resolve.${manualTail(inputs)}${inputs.iterativeTip}`,
     structured: { tool: "scan_file", args: { path: first.path } },
+  };
+}
+
+/**
+ * Builds the reason-text prefix that precedes the violation-branch
+ * prose when the picker rerouted away from a vendor-code first
+ * finding. Two reroute flavors share this surface:
+ *   - same-ruleId reroute (default): the authored target shares the
+ *     vendor pick's rule family, so the agent's mental model carries —
+ *     "same-family fix is applicable."
+ *   - dominant-rule fallback: no same-ruleId non-vendor sibling existed,
+ *     so the picker chose the highest-firing non-vendor rule's first
+ *     finding instead. Naming the rule-family change in the prefix is
+ *     load-bearing — the agent's first-action target now sits under a
+ *     different rule than the vendor pick, and the prose must say so or
+ *     the agent will assume the same-family substitution.
+ *
+ * Returns an empty string when no reroute happened (clean first pick on
+ * a non-vendor path, or the vendor-aware code path was disabled by an
+ * empty `vendorPaths`).
+ */
+function buildReroutePrefix(inputs: NextStepInputs, first: FirstFinding): string {
+  if (inputs.reroutedFromVendorPath === undefined) return "";
+  if (inputs.dominantRuleReroute === true) {
+    return `note: highest-severity finding in this scan is in vendor code (\`${inputs.reroutedFromVendorPath}\`); no same-family non-vendor alternative exists, so next-step points at \`${first.path}\` (rule \`${first.ruleId}\`) — the highest-firing non-vendor rule on this scan. `;
+  }
+  return `note: highest-severity finding in this scan is in vendor code (\`${inputs.reroutedFromVendorPath}\`); next-step points at \`${first.path}\` where a same-family fix is applicable. `;
+}
+
+/**
+ * Builds the scope-down `nextStep` for the all-vendor branch: every
+ * callable finding sits in vendor code (`scannedBuildArtifacts`), so
+ * naming any specific finding as `suggest_fix` target wastes the
+ * round-trip — the agent can't edit a vendor stylesheet or compiled
+ * bundle. The structured hint points at `scan_project` itself with an
+ * empty `args` object; the prose names `additionalPaths` and `cwd` as
+ * the narrowing knobs (mirrors the slim-envelope nextStep shape so the
+ * agent encounters one consistent recovery vocabulary across the bulk-
+ * corpus failure modes).
+ *
+ * `first` is the vendor pick the picker would have surfaced; we name
+ * its path in the prose so the agent sees what was rerouted away from
+ * (the all-vendor signal is the load-bearing fact — the specific path
+ * just makes the corpus shape concrete). The structured hint's `args`
+ * is empty because the scanner can't guess which subdirectory the
+ * agent's authored code lives in; that's a human decision the agent
+ * makes from its read of the codebase.
+ */
+function scopeDownNextStep(inputs: NextStepInputs, first: FirstFinding | null): NextStepResult {
+  const vPlural = inputs.violations === 1 ? "" : "s";
+  const vendorPathHint = first === null ? "" : ` (e.g. \`${first.path}\`)`;
+  return {
+    prose: `${inputs.violations} violation${vPlural}; every finding sits in vendor code${vendorPathHint} the agent can't edit. Re-call \`scan_project\` with a narrower scope: pass \`additionalPaths\` to target a specific authored subtree, or a tighter \`cwd\` so the response carries authored findings.${manualTail(inputs)}${inputs.iterativeTip}`,
+    structured: { tool: "scan_project", args: {} },
   };
 }
 
@@ -336,15 +433,20 @@ function sumFixesByClass(plan: Record<string, unknown>): number {
 /**
  * Result of {@link pickFirstFinding}. `finding` is the chosen
  * (file, line, ruleId) triple — or `null` when no callable finding
- * exists. `reroutedFromVendorPath` is set only when the scanner picked
- * a non-vendor finding in preference to an earlier vendor-code finding
- * of the same `ruleId`; downstream
- * branches use it to prepend a reason-text note naming the vendor
- * file the agent is being steered away from.
+ * exists. `reroutedFromVendorPath` is set when the picker chose a
+ * non-vendor finding in preference to an earlier vendor-code first
+ * pick (either same-`ruleId` or dominant-rule fallback);
+ * `dominantRuleReroute` discriminates the two flavors so downstream
+ * prose can name the rule-family change. `allFindingsVendor` fires
+ * when every callable finding sits on a vendor path — the violation
+ * branch routes to a scope-down structured suggestion instead of
+ * naming any specific vendor target.
  */
 interface FirstFindingPick {
   readonly finding: FirstFinding | null;
   readonly reroutedFromVendorPath?: string;
+  readonly dominantRuleReroute?: boolean;
+  readonly allFindingsVendor?: boolean;
 }
 
 /**
@@ -353,28 +455,32 @@ interface FirstFindingPick {
  * answer is the first callable finding in `files[]` order — the
  * response-assembly sort already puts the highest-priority finding
  * first, so that's the one the agent should act on. The reroute
- * kicks in when `vendorPaths` is
- * non-empty AND the first callable finding sits on a path in that
- * set: we scan forward for a same-`ruleId` finding on a non-vendor
- * path and hand THAT triple back instead, tagging the original
- * vendor path so the prose can surface the reason.
+ * kicks in when `vendorPaths` is non-empty AND the first callable
+ * finding sits on a path in that set; the picker then walks two
+ * fallback lanes:
  *
- * Why match on `ruleId` rather than broader rule-family/criterion:
- * `ruleId` is the smallest, deterministic, AgentFinding-carried key
- * that identifies "same fix shape." A reroute to a same-`ruleId`
- * finding is a straight substitution — the agent does the same
- * mental move as before, just in authored code. Broader "same
- * criterion" fallbacks would couple next-step into the criteria
- * index and risk routing to a finding with a different fix workflow;
- * the backlog item explicitly notes the ruleId form as sufficient.
+ *   1. Same-`ruleId` non-vendor sibling (default). Keeps the agent's
+ *      fix workflow identical — same rule family means same primary
+ *      edit shape. Returns `{ finding, reroutedFromVendorPath }`.
+ *   2. Highest-firing non-vendor rule's first finding (when no
+ *      same-`ruleId` non-vendor exists). Crosses rule families to
+ *      land on the rule with the broadest authored impact. Returns
+ *      `{ finding, reroutedFromVendorPath, dominantRuleReroute: true }`
+ *      so the prose widens its reason-note from "same-family fix" to
+ *      name the rule-family change.
+ *   3. All-vendor signal. When NEITHER fallback finds a non-vendor
+ *      target — every finding on the paged response sits in
+ *      `scannedBuildArtifacts` — return `{ finding: firstRaw,
+ *      allFindingsVendor: true }`. The caller branches to a scope-down
+ *      structured suggestion (`scan_project` with `additionalPaths` /
+ *      `cwd` narrowing) instead of naming a vendor target the agent
+ *      can't edit. Per the AI-first doctrine "NextStep prioritization
+ *      on truncated/bulk responses must avoid first-by-filename
+ *      routing."
  *
- * When no non-vendor alternative exists (every finding of the
- * first's `ruleId` lives in vendor code), the vendor target stays
- * per the backlog's "fall back to vendor only when every violation
- * is in vendor code" rule — no reroute, no reason-note, shape
- * identical to today. When `vendorPaths` is absent or empty, the
- * whole vendor-aware path short-circuits and the behavior is exactly
- * the pre-change `firstCallableFinding` output.
+ * When `vendorPaths` is absent or empty, the whole vendor-aware path
+ * short-circuits and the behavior is exactly the pre-change
+ * `firstCallableFinding` output.
  */
 function pickFirstFinding(
   files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
@@ -391,8 +497,10 @@ function pickFirstFinding(
   if (!vendorPaths.has(firstRaw.path)) {
     return { finding: firstRaw };
   }
-  // First finding is on a vendor path. Scan forward for a same-`ruleId`
-  // finding on a non-vendor path.
+  // First finding is on a vendor path. Lane 1: scan forward for a
+  // same-`ruleId` finding on a non-vendor path. Same-rule keeps the
+  // agent's fix workflow identical and is preferred over the broader
+  // dominant-rule fallback.
   for (const file of files) {
     if (vendorPaths.has(file.path)) continue;
     for (const raw of file.findings) {
@@ -405,11 +513,80 @@ function pickFirstFinding(
       };
     }
   }
-  // Every same-ruleId finding sits in vendor code. Per the backlog
-  // item's "fall back to vendor only when every violation is in
-  // vendor code" rule, keep the vendor target and emit no reroute
-  // note — the vendor pick is the honest answer.
-  return { finding: firstRaw };
+  // Lane 2: no same-`ruleId` non-vendor sibling exists. Pick the
+  // highest-firing non-vendor rule's first finding instead, so the
+  // agent's first action lands on the rule with the broadest authored
+  // impact. The reroute crosses rule families — the prose surfaces
+  // that explicitly via `dominantRuleReroute: true`.
+  const dominantPick = pickHighestFiringNonVendorFinding(files, vendorPaths);
+  if (dominantPick !== null) {
+    return {
+      finding: dominantPick,
+      reroutedFromVendorPath: firstRaw.path,
+      dominantRuleReroute: true,
+    };
+  }
+  // Lane 3: every callable finding sits on a vendor path. Naming any
+  // specific finding wastes the `suggest_fix` round-trip — the agent
+  // can't edit a vendor stylesheet. Signal the all-vendor case so the
+  // caller branches to a scope-down structured suggestion. We still
+  // return the vendor `firstRaw` so the prose can name what was
+  // rerouted away from for context.
+  return {
+    finding: firstRaw,
+    allFindingsVendor: true,
+  };
+}
+
+/**
+ * Tallies finding counts per `ruleId` over non-vendor files only,
+ * picks the rule with the highest count, then returns that rule's
+ * first non-vendor finding (file, line, ruleId). Used by the dominant-
+ * rule reroute lane in {@link pickFirstFinding} when no same-`ruleId`
+ * non-vendor sibling exists.
+ *
+ * On a clean tie (two rules with equal max count), picks the one whose
+ * first non-vendor finding appears earliest in `files[]` order. The
+ * `pickTopRuleByCount` helper used by the per-rule narrowing reroute
+ * returns `undefined` on ties (honest "we couldn't pick" for the
+ * `explain_rule` reroute), but here a tie-break IS available: file
+ * order is deterministic and the tie-break aligns with the same
+ * "earliest in the page" intuition the default first-callable picker
+ * already uses. Returns `null` only when every finding on every file
+ * sits in `vendorPaths` (the all-vendor signal — caller routes to
+ * scope-down).
+ */
+function pickHighestFiringNonVendorFinding(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+): FirstFinding | null {
+  const counts = new Map<string, number>();
+  for (const file of files) {
+    if (vendorPaths.has(file.path)) continue;
+    for (const raw of file.findings) {
+      const extracted = readFindingRuleIdAndLine(raw);
+      if (extracted === null) continue;
+      counts.set(extracted.ruleId, (counts.get(extracted.ruleId) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) return null;
+  let topCount = 0;
+  for (const c of counts.values()) {
+    if (c > topCount) topCount = c;
+  }
+  // Walk `files` in order, returning the first non-vendor finding whose
+  // ruleId hits `topCount`. File order resolves ties deterministically.
+  for (const file of files) {
+    if (vendorPaths.has(file.path)) continue;
+    for (const raw of file.findings) {
+      const extracted = readFindingRuleIdAndLine(raw);
+      if (extracted === null) continue;
+      if ((counts.get(extracted.ruleId) ?? 0) === topCount) {
+        return { path: file.path, ...extracted };
+      }
+    }
+  }
+  return null;
 }
 
 /**
