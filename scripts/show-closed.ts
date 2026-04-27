@@ -34,7 +34,7 @@ if (!/^[A-Z][A-Z0-9]*-[A-Z0-9-]+$/.test(id)) {
 const pattern = `(Closes|Drops):.*\\b${id}\\b`;
 const result = spawnSync(
   "git",
-  ["log", "--all", "--extended-regexp", `--grep=${pattern}`, "--format=full"],
+  ["log", "--all", "--perl-regexp", `--grep=${pattern}`, "--format=full"],
   { cwd: ROOT, encoding: "utf8" },
 );
 
