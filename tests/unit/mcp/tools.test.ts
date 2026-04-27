@@ -495,14 +495,19 @@ describe("MCP tool: scan", () => {
     const terseCov = terseData.meta.analysisCoverage ?? {};
     expect(terseCov.parseErrorFiles).toBeUndefined();
     expect(terseCov.opaqueCustomComponentNames).toBeUndefined();
-    expect(terseCov.rulesFiredByExtension).toBeUndefined();
+    expect(terseCov.rulesEligibleByExtension).toBeUndefined();
     // ADR 0028: the canonical field rides only under verboseMeta.
-    // The earlier `[Unreleased]` duplicate `rulesByExtension` alias
-    // was dropped before any tagged release per the "Ambiguous field
-    // shapes are dishonest" doctrine in
-    // `docs/kb/architecture/ai-first-consumer.md`, so the alias must
-    // stay absent at every verbosity.
+    // The pre-release shape went through two earlier names — first
+    // `rulesByExtension` (collided with `perRuleCoverage` semantics),
+    // then `rulesFiredByExtension` (the "fired" verb lied because the
+    // values measure eligibility, not actual emission). Both prior
+    // names were dropped before any tagged release per the AI-first
+    // consumer doctrine ("Ambiguous field shapes are dishonest" and
+    // "Heuristic-mislabeled meta sub-fields are dishonest" in
+    // `docs/kb/architecture/ai-first-consumer.md`), so neither must
+    // resurface at any verbosity.
     expect(terseCov.rulesByExtension).toBeUndefined();
+    expect(terseCov.rulesFiredByExtension).toBeUndefined();
 
     const verbose = await tool.handler({ paths: [BAD_ALT], verboseMeta: true }, session);
     const verboseData = JSON.parse(verbose.content[0].text) as {
@@ -510,18 +515,18 @@ describe("MCP tool: scan", () => {
       warnings?: readonly string[];
     };
     const cov = verboseData.meta.analysisCoverage ?? {};
-    // BAD_ALT is a .html fixture — expect rulesFiredByExtension to include .html.
-    expect(cov.rulesFiredByExtension).toBeDefined();
-    const byExt = cov.rulesFiredByExtension as Record<string, string[]>;
+    // BAD_ALT is a .html fixture — expect rulesEligibleByExtension to include .html.
+    expect(cov.rulesEligibleByExtension).toBeDefined();
+    const byExt = cov.rulesEligibleByExtension as Record<string, string[]>;
     expect(Array.isArray(byExt[".html"])).toBe(true);
     expect(byExt[".html"].length).toBeGreaterThan(0);
-    // The canonical field rides alone — the dual-emission shape
-    // (alias + canonical with identical values + a narrating warning
-    // code) was dropped before any tagged release per ADR 0028 and
-    // the AI-first consumer doctrine. The alias must stay absent at
-    // every verbosity, and the deprecation warning code must never
-    // fire.
+    // The canonical field rides alone — both pre-release names
+    // (`rulesByExtension` and `rulesFiredByExtension`) were dropped
+    // before any tagged release per ADR 0028 and the AI-first
+    // consumer doctrine. Both must stay absent at every verbosity,
+    // and the legacy deprecation warning code must never fire.
     expect(cov.rulesByExtension).toBeUndefined();
+    expect(cov.rulesFiredByExtension).toBeUndefined();
     expect(verboseData.warnings ?? []).not.toContain(
       "deprecated_field_rules_by_extension_renamed_rules_fired_by_extension",
     );

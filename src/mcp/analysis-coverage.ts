@@ -73,17 +73,24 @@
  * corpus). The count scalar (`parseErrorFileCount` /
  * `partialParseFileCount`) is the authoritative total at every shape,
  * so the agent never loses sight of the failure-mode size.
- * `opaqueCustomComponentNames` and `rulesFiredByExtension` still hide
+ * `opaqueCustomComponentNames` and `rulesEligibleByExtension` still hide
  * behind `verboseMeta` because they are bounded-but-large inventories
  * whose per-entry value is lower than the top-level count. Fields are
  * omitted when they'd be empty, so clean projects stay terse. The
- * canonical name is `rulesFiredByExtension`; an earlier `[Unreleased]`
- * iteration shipped a duplicate `rulesByExtension` alias alongside it
- * (per ADR 0028) plus a narrating warning code, but both fields
- * carried identical values on every coverage response — the canonical
- * "Ambiguous field shapes are dishonest" failure mode in
- * `docs/kb/architecture/ai-first-consumer.md`. The alias was dropped
- * before any tagged release; consumers read `rulesFiredByExtension`.
+ * canonical name is `rulesEligibleByExtension`; earlier pre-release
+ * iterations shipped this view first as `rulesByExtension` and then
+ * as `rulesFiredByExtension` (per ADR 0028). The values measure
+ * extension-gate eligibility — every active rule whose
+ * `appliesTo.fileExtensions` matches the extension via
+ * {@link extensionMatches}, plus every rule with no extension
+ * constraint — not whether the rule actually emitted on this scan.
+ * The "fired" wording lied to agents triaging single-fragment-file
+ * scans where 96+ rules were credited to `.md` even though zero
+ * `check()` invocations produced output (canonical
+ * "Heuristic-mislabeled meta sub-fields are dishonest" failure mode in
+ * `docs/kb/architecture/ai-first-consumer.md`). The current name
+ * matches what the values measure: rules eligible to fire. The per-
+ * rule actual-fire surface is `meta.perRuleCoverage[].filesEvaluated`.
  */
 
 import { isHtmlFragment, walkJsxElements } from "../engine/ast-helpers.ts";
@@ -241,13 +248,16 @@ interface CoverageBlock {
    * declared CSS/HTML/TSX/JSX rule families honestly. Rules without
    * any `appliesTo.fileExtensions` constraint are unconditionally
    * included. The companion `perRuleCoverage` carries the per-rule
-   * post-runner tally — the rename moves the per-extension view out
-   * of name-collision with `perRuleCoverage`'s look-alike "what ran?"
-   * shape (the historical drift the field-name ambiguity caused —
-   * agents joined the two surfaces and silently disagreed on the
-   * answer).
+   * post-runner actual-fire tally (`filesEvaluated`); this field is
+   * the static eligibility view consulted before evaluation. Field
+   * name explicitly says "eligible" rather than "fired" because the
+   * values measure extension-gate match, not whether the rule
+   * produced output — on a scan with one fragment `.md` README, every
+   * rule whose declared extensions alias-match `.html` (~96 rules)
+   * still appears under `.md`, even if zero rules ultimately emitted
+   * findings.
    */
-  rulesFiredByExtension?: Readonly<Record<string, readonly string[]>>;
+  rulesEligibleByExtension?: Readonly<Record<string, readonly string[]>>;
   parseModeByExtension?: Readonly<Record<string, string>>;
   /**
    * Structured hints, keyed by `code` so agents dispatch without
@@ -526,7 +536,7 @@ export function buildAnalysisCoverage(
 }
 
 /**
- * Populates the non-cap tail of the coverage block — `rulesFiredByExtension`
+ * Populates the non-cap tail of the coverage block — `rulesEligibleByExtension`
  * (verbose-only), `hints`, and `skippedByExtension`. Extracted from
  * {@link buildAnalysisCoverage} so the orchestrator stays under the
  * cognitive-complexity cap as cap-related branches accrete in the early
@@ -541,17 +551,17 @@ function populateCoverageTail(
   discoveryDiagnostics: import("../input/discover.ts").DiscoveryDiagnostics | undefined,
 ): void {
   if (verbose) {
-    const byExt = rulesFiredByExtension(files, activeRules);
+    const byExt = rulesEligibleByExtension(files, activeRules);
     if (Object.keys(byExt).length > 0) {
-      // ADR 0028: canonical name only. An earlier `[Unreleased]` iteration
-      // shipped a duplicate `rulesByExtension` alias alongside this field
-      // plus a `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
-      // narrating warning code, but both fields carried the identical
-      // value on every coverage response — the canonical "Ambiguous field
-      // shapes are dishonest" failure mode in
-      // `docs/kb/architecture/ai-first-consumer.md`. The alias and its
-      // warning code were dropped before any tagged release.
-      coverage.rulesFiredByExtension = byExt;
+      // ADR 0028: canonical name only. The pre-release shape went
+      // through two earlier names — `rulesByExtension` (collided with
+      // `perRuleCoverage`'s look-alike "what ran?" semantics) and
+      // `rulesFiredByExtension` (the deterministic-sounding "fired"
+      // verb lied because the values measure eligibility, not actual
+      // emission). Both prior names were dropped before any tagged
+      // release. The canonical name now matches what the values
+      // measure: rules eligible to fire on this extension.
+      coverage.rulesEligibleByExtension = byExt;
     }
   }
   // Per-extension parse-mode disclosure so the agent can reconcile
@@ -939,7 +949,7 @@ function describeTemplateDirectiveHandling(tokens: ReadonlyMap<string, number>):
  * while `perRuleCoverage` correctly showed every `.css`-targeted rule
  * with `filesEvaluated: 1` (because the SCSS adapter produces a CSS AST
  * and `applies()` matches via alias). The rename to
- * `rulesFiredByExtension` (ADR 0028)
+ * `rulesEligibleByExtension` (ADR 0028)
  * disambiguates this view from `perRuleCoverage`'s post-runner tally —
  * the two surfaces no longer share a look-alike name with categorically
  * different semantics. is the agreement
@@ -1017,7 +1027,7 @@ function parseModeByExtension(files: readonly ParsedFile[]): Record<string, stri
   return Object.fromEntries([...seen.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function rulesFiredByExtension(
+function rulesEligibleByExtension(
   files: readonly ParsedFile[],
   activeRules: readonly Rule[],
 ): Record<string, readonly string[]> {
@@ -1037,7 +1047,7 @@ function rulesFiredByExtension(
       }
       // `extensionMatches` is the same helper rule-runner.ts `applies()`
       // uses for per-file eligibility — routing through it is what keeps
-      // `rulesFiredByExtension` and `perRuleCoverage` in agreement on
+      // `rulesEligibleByExtension` and `perRuleCoverage` in agreement on
       // alias-heavy scans. Literal equality silently dropped every
       // aliased extension (the historical bug,
       //).

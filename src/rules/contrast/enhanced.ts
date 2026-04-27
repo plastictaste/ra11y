@@ -56,7 +56,7 @@ export const rule = defineRule({
   severity: "warning",
   scope: "project",
   fixClass: "guidance",
-  // `.html` / `.htm` are listed alongside `.css` so `rulesFiredByExtension`
+  // `.html` / `.htm` are listed alongside `.css` so `rulesEligibleByExtension`
   // honestly reports HTML inline-style evaluations. Mirrors
   // `contrast/minimum`'s gate — the rule still runs in `afterProject`;
   // the extension list feeds the per-rule coverage tracker, not the

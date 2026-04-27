@@ -1,7 +1,7 @@
-# 0028 — Rename `analysisCoverage.rulesByExtension` to `rulesFiredByExtension`
+# 0028 — Rename `analysisCoverage.rulesByExtension` to `rulesEligibleByExtension`
 
-Status: accepted
-Date: 2026-04-24
+Status: accepted (superseded section below records the second pre-release rename)
+Date: 2026-04-24 (initial); 2026-04-27 (rename to `rulesEligibleByExtension`)
 
 ## Context
 
@@ -95,7 +95,7 @@ both names carry identical values on every entry of every response.
 
 ## Consequences
 
-- The canonical field `rulesFiredByExtension` carries the per-extension
+- The canonical field `rulesEligibleByExtension` carries the per-extension
   eligibility view; it rides alone under `verboseMeta`.
 - The previously-planned `rulesByExtension` alias is not emitted at any
   verbosity. The `deprecated_field_rules_by_extension_renamed_rules_fired_by_extension`
@@ -108,3 +108,39 @@ both names carry identical values on every entry of every response.
 - A unit test pins the canonical-field-rides-alone invariant so the
   dual-emission shape can't silently re-land
   (`tests/unit/mcp/analysis-coverage.test.ts`).
+
+## Postscript — second pre-release rename to `rulesEligibleByExtension`
+
+Field-test sweeps after the first rename observed the `rulesFiredByExtension`
+name itself failing the same doctrine bar this ADR was opened to enforce.
+On a fragment-only `.md` README scan, `rulesFiredByExtension['.md']` listed
+96+ rules — including `media/audio-video-no-controls`, `semantics/landmark-main`,
+`parsing/duplicate-id` — when zero rules actually emitted output. The "fired"
+verb is a deterministic-sounding token that lies: the values measure
+extension-gate eligibility (every rule whose `appliesTo.fileExtensions`
+matches the extension via `extensionMatches`, plus every rule with no
+extension constraint), not whether `check()` produced anything.
+
+This is the canonical "Heuristic-mislabeled meta sub-fields are dishonest"
+failure mode in `docs/kb/architecture/ai-first-consumer.md` — applied at
+the field-name level rather than at a sub-field token. An agent reading
+"96 rules fired on .md" budgets against the wrong number, may pre-suppress
+fixes the rules never proposed, and never gets the actual signal (every
+listed rule was eligible but none had qualifying input on this corpus).
+
+The field is renamed in-place to `rulesEligibleByExtension`. The new name
+matches what the values measure: rules eligible to fire on this extension.
+The per-rule actual-fire surface remains `meta.perRuleCoverage[].filesEvaluated`,
+which is the post-runner tally and answers a different (and still useful)
+question.
+
+Per the precedent in this ADR, no transition alias and no narrating
+deprecation warning ride alongside — the prior `rulesByExtension` alias
+was dropped on the same grounds, and the same dual-emission failure mode
+would recur if `rulesFiredByExtension` shipped as an alias next to
+`rulesEligibleByExtension`. No tagged release ever exposed either pre-release
+name, so the rename is non-breaking. The unit test at
+`tests/unit/mcp/analysis-coverage.test.ts` is extended to assert both prior
+names stay absent at every verbosity.
+
+Closes Q10-RULES-FIRED-BY-EXTENSION-MISLABELS-ELIGIBILITY.

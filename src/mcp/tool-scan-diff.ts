@@ -110,7 +110,7 @@ export const scanDiffTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, the meta block expands its compact summaries into the underlying per-row payloads. Affects: `perRuleCoverage[]` (full per-rule coverage rows — at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) and analysisCoverage's `opaqueCustomComponentNames` + `rulesFiredByExtension`. `parseErrorFiles` (files that errored AND produced zero findings) and `partialParseFiles` (files that errored but still produced findings) always ship when non-empty with `{ path, parser, reason }` entries, regardless of this flag — the per-entry parser + reason is the agent's fix pivot.",
+            "When true, the meta block expands its compact summaries into the underlying per-row payloads. Affects: `perRuleCoverage[]` (full per-rule coverage rows — at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) and analysisCoverage's `opaqueCustomComponentNames` + `rulesEligibleByExtension`. `parseErrorFiles` (files that errored AND produced zero findings) and `partialParseFiles` (files that errored but still produced findings) always ship when non-empty with `{ path, parser, reason }` entries, regardless of this flag — the per-entry parser + reason is the agent's fix pivot.",
         },
         metaMode: metaModeSchema,
         hunksOnly: {
