@@ -658,10 +658,7 @@ function buildLevelGatedEntry(
  * code here (in BOTH suffix maps) so the downstream triage signal
  * stays sharp.
  */
-function crossFileBoundReason(
-  ruleId: string,
-  predicateStrength: "per-input" | "inherent",
-): string {
+function crossFileBoundReason(ruleId: string, predicateStrength: "per-input" | "inherent"): string {
   if (predicateStrength === "per-input") {
     return CROSS_FILE_BOUND_REASONS_PER_INPUT[ruleId] ?? CROSS_FILE_BOUND_REASON_FALLBACK_PER_INPUT;
   }
