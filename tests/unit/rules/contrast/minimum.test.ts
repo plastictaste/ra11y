@@ -550,12 +550,19 @@ describe("rule contrast/minimum", () => {
   });
 
   describe("suggestion quality", () => {
-    it("includes the failing ratio and target threshold in the suggestion", () => {
+    it("includes the failing ratio and target threshold without prescribing a replacement color", () => {
       const v = runRule(rule, `.x { color: #aaa; background: #fff; }`, {
         filePath: "styles.css",
       });
-      expect(v[0]?.suggestion).toContain("WebAIM");
-      expect(v[0]?.suggestion).toContain("4.5");
+      const s = v[0]?.suggestion ?? "";
+      expect(s).toContain("4.5");
+      expect(s).toContain("design-system");
+      // ra11y describes the gap honestly; picking a passing color is a
+      // design decision the consuming agent (or human reviewer) makes.
+      // The suggestion must not invent a "~X% darker" heuristic or
+      // point users at an external color-checker tool.
+      expect(s).not.toMatch(/~\s*\d+\s*%/);
+      expect(s).not.toMatch(/WebAIM/i);
     });
   });
 

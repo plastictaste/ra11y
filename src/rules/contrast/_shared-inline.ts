@@ -415,7 +415,7 @@ export function buildInlineStyleContrastMessage(
 export function buildInlineStyleContrastSuggestion(finding: InlineStyleContrastFinding): string {
   const size = finding.isLarge ? "large text" : "normal text";
   const gap = (finding.minimum / finding.ratio).toFixed(2);
-  return `Adjust the inline \`color: ${finding.fgSource}\` or \`background: ${finding.bgSource}\` on the ${finding.pseudoSelector} element. The current ratio is ${finding.ratio.toFixed(2)}:1; you need ${finding.minimum}:1 for ${size} (${gap}× more contrast). Consider moving the declarations into a CSS class so the project's design-system palette keeps contrast consistent, or pick a darker foreground / lighter background with the WebAIM Contrast Checker.`;
+  return `Adjust the inline \`color: ${finding.fgSource}\` or \`background: ${finding.bgSource}\` on the ${finding.pseudoSelector} element. Current ratio: ${finding.ratio.toFixed(2)}:1; you need ${finding.minimum}:1 for ${size} (${gap}× more contrast). Move the declarations into a CSS class so the project's design-system palette keeps contrast consistent, or pick replacement colors from your design system and verify the pair clears the threshold.`;
 }
 
 /**

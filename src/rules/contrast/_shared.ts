@@ -240,7 +240,7 @@ export function buildContrastMessage(finding: ContrastFinding, scLabel: string):
 export function buildContrastSuggestion(finding: ContrastFinding): string {
   const size = finding.isLarge ? "large text" : "normal text";
   const gap = (finding.minimum / finding.ratio).toFixed(2);
-  const base = `Darken the foreground (\`color: ${finding.fgSource}\`) or lighten the background (\`background: ${finding.bgSource}\`). The current ratio is ${finding.ratio.toFixed(2)}:1; you need ${finding.minimum}:1 for ${size} (${gap}× more contrast). Try a foreground color ~${Math.ceil(((finding.minimum - finding.ratio) / finding.minimum) * 100)}% darker, or use the WebAIM Contrast Checker to tune the pair.`;
+  const base = `Adjust \`color: ${finding.fgSource}\` or \`background: ${finding.bgSource}\` so the pair reaches ${finding.minimum}:1 for ${size}. Current ratio: ${finding.ratio.toFixed(2)}:1 — you need ${gap}× more contrast. Pick a replacement from your project's design-system palette and verify the pair clears the threshold.`;
   if (!finding.cascadeSource) return base;
   const side = finding.cascadeSource.side;
   const ancestor = finding.cascadeSource.ancestorSelector;

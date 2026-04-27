@@ -343,8 +343,7 @@ function buildInlineBoundarySuggestion(
   ratio: number,
 ): string {
   const gap = (WCAG_AA_MIN_NON_TEXT / ratio).toFixed(2);
-  const darkerHint = suggestDarker(fgSource);
-  return `Increase contrast of inline \`${prop}: ${fgSource}\` against \`background: ${bgSource}\` to at least ${WCAG_AA_MIN_NON_TEXT}:1. The current ratio is ${ratio.toFixed(2)}:1 — you need ${gap}× more contrast.${darkerHint ? ` Try \`${prop}: ${darkerHint}\` for a quick fix, or move the declarations into a CSS class so they participate in the project's design-system palette.` : ` Pick a darker boundary color or a lighter background, then verify with the WebAIM Contrast Checker.`}`;
+  return `Increase contrast of inline \`${prop}: ${fgSource}\` against \`background: ${bgSource}\` to at least ${WCAG_AA_MIN_NON_TEXT}:1. Current ratio: ${ratio.toFixed(2)}:1 — you need ${gap}× more contrast. Move the declarations into a CSS class so the project's design-system palette keeps contrast consistent, or adjust the colors directly and verify the pair clears 3:1.`;
 }
 
 function emitUnresolvable(
@@ -523,26 +522,5 @@ function buildMessage(
 
 function buildSuggestion(prop: string, fgSource: string, bgSource: string, ratio: number): string {
   const gap = (WCAG_AA_MIN_NON_TEXT / ratio).toFixed(2);
-  const darkerHint = suggestDarker(fgSource);
-  return `Increase contrast of \`${prop}: ${fgSource}\` against \`background: ${bgSource}\` to at least ${WCAG_AA_MIN_NON_TEXT}:1. The current ratio is ${ratio.toFixed(2)}:1 — you need ${gap}× more contrast.${darkerHint ? ` Try \`${prop}: ${darkerHint}\` for a quick fix, or use the WebAIM Contrast Checker to tune the pair.` : ` Pick a darker boundary color or a lighter background, then verify with the WebAIM Contrast Checker.`}`;
-}
-
-/**
- * Best-effort "darker version" hint for hex inputs only — non-hex values
- * return null and the suggestion falls back to generic guidance. We never
- * promise the suggested color clears 3:1 (that depends on the background);
- * the hint is purely a starting point a developer can paste in and tweak.
- */
-function suggestDarker(source: string): string | null {
-  const rgb = parseColor(source.trim());
-  if (!rgb) return null;
-  const factor = 0.55; // pull each channel ~45% toward black
-  const r = Math.max(0, Math.round(rgb.r * factor));
-  const g = Math.max(0, Math.round(rgb.g * factor));
-  const b = Math.max(0, Math.round(rgb.b * factor));
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
-function toHex(n: number): string {
-  return n.toString(16).padStart(2, "0");
+  return `Increase contrast of \`${prop}: ${fgSource}\` against \`background: ${bgSource}\` to at least ${WCAG_AA_MIN_NON_TEXT}:1. Current ratio: ${ratio.toFixed(2)}:1 — you need ${gap}× more contrast. Adjust the boundary or background color using your project's design-system palette, then verify the pair clears 3:1.`;
 }

@@ -254,14 +254,20 @@ describe("rule contrast/non-text", () => {
   });
 
   describe("suggestion quality", () => {
-    it("includes the failing ratio, target threshold, and a darker hex hint", () => {
+    it("includes the failing ratio and target threshold without prescribing a replacement color", () => {
       const v = runRule(rule, `button { background: #ffffff; border: 1px solid #d0d0d0; }`, {
         filePath: "ui.css",
       });
       const s = v[0]?.suggestion ?? "";
       expect(s).toContain("3:1");
-      expect(s).toMatch(/#[0-9a-f]{6}/i);
-      expect(s).toContain("WebAIM");
+      expect(s).toContain("design-system");
+      // ra11y describes the gap honestly; picking a passing color is a
+      // design decision the consuming agent (or human reviewer) makes.
+      // The suggestion must not prescribe a generated replacement color
+      // (the previous `suggestDarker` helper emitted `Try \`...: #X\``
+      // strings) or point users at an external color-checker tool.
+      expect(s).not.toMatch(/Try `[^`]*#[0-9a-f]{3,8}\b/i);
+      expect(s).not.toMatch(/WebAIM/i);
     });
 
     it("message names the property, the foreground source, and the background source", () => {
