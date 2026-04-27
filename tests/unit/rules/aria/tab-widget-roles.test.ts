@@ -176,6 +176,73 @@ describe("rule aria/tab-widget-roles", () => {
       expect(violations[0]?.message).toContain('data-bs-toggle="Tab"');
     });
 
+    it("treats role=presentation wrapper as transparent (canonical WAI-ARIA APG tabs pattern)", () => {
+      // The APG tabs pattern places <li role="presentation"> between
+      // <ul role="tablist"> and <button role="tab"> as a styling-only
+      // wrapper; the accessibility tree strips presentation roles so
+      // the button's effective parent IS the tablist. The rule must
+      // walk past the presentational <li> when resolving the parent.
+      // https://www.w3.org/WAI/ARIA/apg/patterns/tabs/
+      const violations = runRule(
+        rule,
+        fullPage(`<ul role="tablist">
+  <li role="presentation"><button role="tab" aria-selected="true" aria-controls="panel-1" id="tab-1">Tab 1</button></li>
+  <li role="presentation"><button role="tab" aria-selected="false" aria-controls="panel-2" id="tab-2">Tab 2</button></li>
+</ul>
+<div role="tabpanel" id="panel-1" aria-labelledby="tab-1">Panel 1</div>
+<div role="tabpanel" id="panel-2" aria-labelledby="tab-2">Panel 2</div>`),
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("treats role=none wrapper as transparent (alias of presentation in WAI-ARIA 1.2)", () => {
+      const violations = runRule(
+        rule,
+        fullPage(`<ul role="tablist">
+  <li role="none"><button role="tab" aria-selected="true" aria-controls="panel-1" id="tab-1">Tab 1</button></li>
+</ul>
+<div role="tabpanel" id="panel-1" aria-labelledby="tab-1">Panel 1</div>`),
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("still fires when ancestors are presentational but no role=tablist exists anywhere", () => {
+      // Negative: presentation/none wrappers shouldn't *suppress* the
+      // gap when there's genuinely no tablist ancestor — the walk must
+      // surface the missing tablist on the next non-presentational
+      // ancestor (or the document root).
+      const violations = runRule(
+        rule,
+        fullPage(`<div role="presentation">
+  <span role="none"><button role="tab" aria-selected="true" aria-controls="panel-1" id="tab-1">Tab 1</button></span>
+</div>
+<div role="tabpanel" id="panel-1" aria-labelledby="tab-1">Panel 1</div>`),
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain('parent has no role="tablist"');
+    });
+
+    it("treats role=presentation wrapper as transparent in JSX (canonical APG pattern)", () => {
+      const violations = runRule(
+        rule,
+        `function Tabs() {
+  return (
+    <>
+      <ul role="tablist">
+        <li role="presentation"><button role="tab" aria-selected="true" aria-controls="panel-1" id="tab-1">Tab 1</button></li>
+      </ul>
+      <div role="tabpanel" id="panel-1" aria-labelledby="tab-1">Panel 1</div>
+    </>
+  );
+}`,
+        { filePath: "Tabs.tsx" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
     it("flags every tab member separately (one emit per member, not aggregated)", () => {
       const violations = runRule(
         rule,

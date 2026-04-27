@@ -247,8 +247,12 @@ function diagnoseHtmlMember(
   const gaps: Gap[] = [];
   if (roleOf(getHtmlAttribute(member, "role")) !== "tab") gaps.push("missing-role-tab");
   if (!hasHtmlAttribute(member, "aria-selected")) gaps.push("missing-aria-selected");
-  const parent = parentMap.get(member);
-  if (parent && parent !== "document" && !hasTablistRole(parent)) {
+  const effectiveParent = walkPastPresentationHtml(member, parentMap);
+  if (
+    effectiveParent &&
+    effectiveParent !== "document" &&
+    !hasTablistRole(effectiveParent)
+  ) {
     gaps.push("parent-missing-role-tablist");
   }
   if (htmlPanelTargetMissingRole(member, idIndex)) gaps.push("panel-missing-role-tabpanel");
@@ -257,6 +261,34 @@ function diagnoseHtmlMember(
 
 function hasTablistRole(el: HtmlElement): boolean {
   return roleOf(getHtmlAttribute(el, "role")) === "tablist";
+}
+
+/**
+ * Walk ancestors past any `role="presentation"` / `role="none"` wrapper
+ * when resolving the tab member's *effective* parent. The WAI-ARIA spec
+ * strips presentation/none roles from the accessibility tree, so the
+ * canonical APG tabs pattern (`<ul role="tablist"><li role="presentation">
+ * <button role="tab">`) puts the `<li>` between the tab and the tablist
+ * solely as a styling shim — assistive tech sees the button as a direct
+ * child of the tablist. This rule must do the same so it doesn't flag
+ * the canonical pattern as "parent has no role=tablist".
+ *
+ * Spec: https://www.w3.org/TR/wai-aria-1.2/#presentation
+ */
+function walkPastPresentationHtml(
+  member: HtmlElement,
+  parentMap: Map<HtmlElement, HtmlElement | "document">,
+): HtmlElement | "document" | undefined {
+  let cur: HtmlElement | "document" | undefined = parentMap.get(member);
+  while (cur && cur !== "document" && isPresentationalHtml(cur)) {
+    cur = parentMap.get(cur);
+  }
+  return cur;
+}
+
+function isPresentationalHtml(el: HtmlElement): boolean {
+  const role = roleOfAny(getHtmlAttribute(el, "role"));
+  return role === "presentation" || role === "none";
 }
 
 /**
@@ -432,13 +464,13 @@ function diagnoseJsxMember(
   const gaps: Gap[] = [];
   if (roleOf(getJsxAttributeString(member, "role")) !== "tab") gaps.push("missing-role-tab");
   if (!hasJsxAttribute(member, "aria-selected")) gaps.push("missing-aria-selected");
-  const parent = parentMap.get(member);
-  if (parent && parent !== "module") {
-    if (isComponent(parent.tagName)) {
+  const effectiveParent = walkPastPresentationJsx(member, parentMap);
+  if (effectiveParent && effectiveParent !== "module") {
+    if (isComponent(effectiveParent.tagName)) {
       // Composed parent — can't classify; suppress this gap (the
       // wrapping component might supply role=tablist itself). The
       // remaining gaps still surface.
-    } else if (roleOf(getJsxAttributeString(parent, "role")) !== "tablist") {
+    } else if (roleOf(getJsxAttributeString(effectiveParent, "role")) !== "tablist") {
       gaps.push("parent-missing-role-tablist");
     }
   }
@@ -541,6 +573,31 @@ function isComponent(tagName: string): boolean {
   return first !== undefined && first >= "A" && first <= "Z";
 }
 
+/**
+ * JSX counterpart to `walkPastPresentationHtml`. Skips presentational
+ * (`role="presentation"` / `role="none"`) intrinsic ancestors so the
+ * canonical APG tabs pattern composed in JSX
+ * (`<ul role="tablist"><li role="presentation"><button role="tab">`)
+ * resolves correctly. A composed (Capitalized) ancestor short-circuits
+ * the walk — its role is unknowable from this file, and the existing
+ * "composed parent suppresses parent-tablist gap" branch handles it.
+ */
+function walkPastPresentationJsx(
+  member: JsxElement,
+  parentMap: Map<JsxElement, JsxElement | "module">,
+): JsxElement | "module" | undefined {
+  let cur: JsxElement | "module" | undefined = parentMap.get(member);
+  while (cur && cur !== "module" && !isComponent(cur.tagName) && isPresentationalJsx(cur)) {
+    cur = parentMap.get(cur);
+  }
+  return cur;
+}
+
+function isPresentationalJsx(el: JsxElement): boolean {
+  const role = roleOfAny(getJsxAttributeString(el, "role"));
+  return role === "presentation" || role === "none";
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -559,6 +616,22 @@ function roleOf(raw: string | null): "tab" | "tabpanel" | "tablist" | null {
     if (lower === "tabpanel") return "tabpanel";
     if (lower === "tablist") return "tablist";
     if (lower.length > 0) return null;
+  }
+  return null;
+}
+
+/**
+ * Returns the first whitespace-separated `role` token lowercased,
+ * regardless of which role it names. Used by the presentation-walker
+ * to detect `role="presentation"` / `role="none"` ancestors that the
+ * accessibility tree treats as transparent (WAI-ARIA spec strips these
+ * roles, so the APG tabs pattern uses `<li role="presentation">` as a
+ * styling-only wrapper between `<ul role="tablist">` and the tabs).
+ */
+function roleOfAny(raw: string | null): string | null {
+  if (raw === null) return null;
+  for (const tok of raw.trim().split(/\s+/u)) {
+    if (tok.length > 0) return tok.toLowerCase();
   }
   return null;
 }
