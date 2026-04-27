@@ -16,7 +16,7 @@
  */
 
 import { readFile, stat } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { DEFAULT_IGNORED_DIRS, walkFiles } from "../utils/fs.ts";
 import { compileGlobs, type GlobMatcher } from "../utils/glob.ts";
 import { extension, hasParseableExtension } from "../utils/path.ts";
@@ -126,6 +126,61 @@ export async function discoverExplicitPaths(
 }
 
 /**
+ * Well-known no-extension textual filenames the agent triages as
+ * source-shaped (license boilerplate, build directives, project
+ * metadata). Lumping these under a single `(no-ext)` bucket alongside
+ * binary-but-extensionless oddballs hid the source-vs-non-source
+ * distinction: an agent reading
+ * `warningsDetails.extensions_skipped_no_parser.extensions: ["(no-ext)"]`
+ * could not tell whether the bucket was three LICENSEs or a hash-named
+ * Git LFS pointer. Filenames here are matched case-insensitively
+ * (canonical case preserved on the wire — `LICENSE`, `Makefile`,
+ * `Dockerfile`) and surface inline as their own keys in
+ * `skippedByExtension`. Anything else without an extension still falls
+ * through to `(no-ext)` so binary-without-extension counts stay
+ * distinguishable from named textual files.
+ */
+const WELL_KNOWN_TEXTUAL_NO_EXT_FILENAMES: ReadonlyMap<string, string> = new Map([
+  // License + copyright boilerplate (canonical SPDX / GPL / Apache convention).
+  ["license", "LICENSE"],
+  ["licence", "LICENCE"],
+  ["copying", "COPYING"],
+  ["copyright", "COPYRIGHT"],
+  ["notice", "NOTICE"],
+  ["authors", "AUTHORS"],
+  ["contributors", "CONTRIBUTORS"],
+  // Project metadata commonly committed without an extension.
+  ["readme", "README"],
+  ["changelog", "CHANGELOG"],
+  ["changes", "CHANGES"],
+  ["history", "HISTORY"],
+  ["install", "INSTALL"],
+  ["news", "NEWS"],
+  ["todo", "TODO"],
+  ["version", "VERSION"],
+  // Build + tooling directives — text-source files the agent often
+  // wants to read directly even though ra11y has no parser for them.
+  ["makefile", "Makefile"],
+  ["gnumakefile", "GNUmakefile"],
+  ["dockerfile", "Dockerfile"],
+  ["containerfile", "Containerfile"],
+  ["jenkinsfile", "Jenkinsfile"],
+  ["vagrantfile", "Vagrantfile"],
+  ["rakefile", "Rakefile"],
+  ["gemfile", "Gemfile"],
+  ["procfile", "Procfile"],
+  ["brewfile", "Brewfile"],
+  ["pipfile", "Pipfile"],
+  ["caddyfile", "Caddyfile"],
+  ["berksfile", "Berksfile"],
+  ["podfile", "Podfile"],
+  ["fastfile", "Fastfile"],
+  ["appfile", "Appfile"],
+  ["cartfile", "Cartfile"],
+  ["justfile", "Justfile"],
+]);
+
+/**
  * Diagnostic signals from the discovery pass that are otherwise
  * invisible to downstream consumers. Every field reports a structural
  * gap the scanner chose not to fix but the agent should know about:
@@ -136,8 +191,12 @@ export async function discoverExplicitPaths(
  *     scanning a project with 226 source files but only 125 parseable
  *     reads as "tool covered everything" when the walker dropped
  *     `.astro` / `.scss` / `.vue` at discovery. Map keys are
- *     ext-with-dot (`.astro`); empty-extension files land under
- *     `(no-ext)`. Counters are raw file counts.
+ *     ext-with-dot (`.astro`) for files with a dotted extension; well-
+ *     known textual no-extension filenames (LICENSE, Makefile,
+ *     Dockerfile, etc.) surface inline under their canonical filename
+ *     so an agent triaging coverage can tell source-shaped no-ext
+ *     files apart from the residual `(no-ext)` bucket (binary blobs,
+ *     hash-named pointers). Counters are raw file counts.
  */
 export interface DiscoveryDiagnostics {
   readonly skippedByExtension: Readonly<Record<string, number>>;
@@ -195,12 +254,31 @@ export async function discoverFiles(
 
 /**
  * Increments the skip count for `filePath`'s extension. Empty-extension
- * files land under `(no-ext)` so the map key is always non-empty.
+ * files split two ways: well-known textual filenames (LICENSE, Makefile,
+ * Dockerfile, …) bucket inline under their canonical filename so an
+ * agent reading `warningsDetails.extensions_skipped_no_parser.extensions`
+ * can tell source-shaped no-ext files apart from residual binary or
+ * hash-named oddballs. Anything else without an extension still lands
+ * under `(no-ext)` — the map key is always non-empty.
  */
 function recordExtensionSkip(counts: Map<string, number>, filePath: string): void {
   const ext = extension(filePath);
-  const key = ext === "" ? "(no-ext)" : ext;
+  const key = ext === "" ? noExtensionKey(filePath) : ext;
   counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+/**
+ * Resolves the bucket key for a file with no dotted extension. Returns
+ * the canonical-cased filename when {@link basename} matches a known
+ * textual filename (case-insensitively); otherwise returns the
+ * `(no-ext)` fallback bucket. Centralized so the predicate stays in one
+ * place and the case-folding contract (lowercase lookup, canonical-case
+ * output) doesn't drift.
+ */
+function noExtensionKey(filePath: string): string {
+  const name = basename(filePath);
+  const canonical = WELL_KNOWN_TEXTUAL_NO_EXT_FILENAMES.get(name.toLowerCase());
+  return canonical ?? "(no-ext)";
 }
 
 /**

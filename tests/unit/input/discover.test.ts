@@ -230,11 +230,52 @@ describe("discoverFilesWithDiagnostics", () => {
     const result = await discoverFilesWithDiagnostics([dir]);
     const rel = result.files.map((p) => p.slice(dir.length + 1)).sort();
     expect(rel).toEqual(["page.tsx"]);
+    // README surfaces under its canonical filename rather than lumping
+    // into `(no-ext)` so an agent triaging coverage can tell source-
+    // shaped no-ext files apart from binary-without-extension blobs.
     expect(result.diagnostics.skippedByExtension).toEqual({
-      "(no-ext)": 1,
+      README: 1,
       ".svelte": 2,
       ".vue": 1,
     });
+  });
+
+  it("splits well-known textual no-extension filenames into named buckets", async () => {
+    // Each entry surfaces inline under its canonical filename so the
+    // `(no-ext)` bucket stays reserved for hash-named blobs and other
+    // genuinely unidentifiable extensionless files. Names match case-
+    // insensitively but emit canonical-case keys.
+    write(join(dir, "page.tsx"));
+    write(join(dir, "LICENSE"));
+    write(join(dir, "Makefile"));
+    write(join(dir, "Dockerfile"));
+    write(join(dir, "NOTICE"));
+    write(join(dir, "Rakefile"));
+    write(join(dir, "weird-blob")); // residual no-ext bucket
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    const rel = result.files.map((p) => p.slice(dir.length + 1)).sort();
+    expect(rel).toEqual(["page.tsx"]);
+    expect(result.diagnostics.skippedByExtension).toEqual({
+      "(no-ext)": 1,
+      LICENSE: 1,
+      Makefile: 1,
+      Dockerfile: 1,
+      NOTICE: 1,
+      Rakefile: 1,
+    });
+  });
+
+  it("matches well-known textual no-extension filenames case-insensitively (canonical case on the wire)", async () => {
+    // Lowercase `license` lands in the same bucket as canonical
+    // `LICENSE` — agents reading the wire shape see one stable key
+    // regardless of how the file is committed.
+    const sub = join(dir, "lower");
+    write(join(sub, "license"));
+    write(join(dir, "page.tsx"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.skippedByExtension).toEqual({ LICENSE: 1 });
   });
 
   it("returns an empty skip map for clean all-parseable directories", async () => {

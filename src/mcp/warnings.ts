@@ -1124,7 +1124,12 @@ export interface ScanWarningDetails {
    *
    * `extensions` is sorted by descending count (ties broken
    * alphabetically) and truncated to {@link WARNING_DETAILS_TOP_EXTENSIONS};
-   * the full distribution stays in `meta`.
+   * the full distribution stays in `meta`. Entries are typically
+   * dotted extensions (`.scss`, `.vue`); well-known textual no-
+   * extension filenames (`LICENSE`, `Makefile`, `Dockerfile`) surface
+   * inline under their canonical filename so the agent can tell
+   * source-shaped no-ext skips apart from the residual `(no-ext)`
+   * bucket (binary blobs, hash-named pointers).
    */
   readonly extensions_skipped_no_parser?: {
     readonly extensions: readonly string[];
