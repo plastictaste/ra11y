@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Canonical WAI-ARIA tabs pattern</title>
+  </head>
+  <body>
+    <!--
+      Compliant tabs: role="tablist" sits on the strip wrapping the tab
+      buttons; each button carries role="tab" with aria-selected and
+      aria-controls; the tabpanels live outside the tablist with
+      role="tabpanel" and aria-labelledby pointing back at the tab id.
+    -->
+    <div role="tablist">
+      <button role="tab" aria-selected="true" aria-controls="panel-home" id="tab-home">Home</button>
+      <button role="tab" aria-selected="false" aria-controls="panel-profile" id="tab-profile">Profile</button>
+    </div>
+    <div role="tabpanel" id="panel-home" aria-labelledby="tab-home">Home content</div>
+    <div role="tabpanel" id="panel-profile" aria-labelledby="tab-profile">Profile content</div>
+  </body>
+</html>

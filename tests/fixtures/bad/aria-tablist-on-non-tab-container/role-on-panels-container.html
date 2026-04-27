@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Tablist role landed on the panels container</title>
+  </head>
+  <body>
+    <!--
+      Canonical misuse: role="tablist" applied to the tab-content panels
+      container. The tab strip lives elsewhere (or is missing entirely);
+      assistive tech announces "tab list, 2 tabs" and then exposes the
+      panel bodies as if they were the tabs themselves. This rule fires
+      because the role="tablist" element has zero role="tab" descendants.
+    -->
+    <ul class="nav nav-tabs">
+      <li><a href="#panel-home">Home</a></li>
+      <li><a href="#panel-profile">Profile</a></li>
+    </ul>
+    <div class="tab-content" role="tablist">
+      <div role="tabpanel" id="panel-home">Home content</div>
+      <div role="tabpanel" id="panel-profile">Profile content</div>
+    </div>
+  </body>
+</html>

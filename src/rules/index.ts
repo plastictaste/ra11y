@@ -23,6 +23,7 @@ import { rule as requiredAttrs } from "./aria/required-attrs.ts";
 import { rule as roleFromClassOnly } from "./aria/role-from-class-only.ts";
 import { rule as tabControlsMissing } from "./aria/tab-controls-missing.ts";
 import { rule as tabWidgetRoles } from "./aria/tab-widget-roles.ts";
+import { rule as tablistOnNonTabContainer } from "./aria/tablist-on-non-tab-container.ts";
 import { rule as validAttr } from "./aria/valid-attr.ts";
 import { rule as meaningByColorOnly } from "./color/meaning-by-color-only.ts";
 import { rule as stateClassColorOnly } from "./color/state-class-color-only.ts";
@@ -212,6 +213,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   tableHeaders,
   tableThScopeMissing,
   tabWidgetRoles,
+  tablistOnNonTabContainer,
   targetSize,
   textSpacing,
   tooltipDismissable,
@@ -321,6 +323,7 @@ export {
   tableHeaders,
   tableThScopeMissing,
   tabWidgetRoles,
+  tablistOnNonTabContainer,
   targetSize,
   textSpacing,
   tooltipDismissable,
