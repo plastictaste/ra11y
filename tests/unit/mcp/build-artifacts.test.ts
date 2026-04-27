@@ -996,8 +996,7 @@ describe("classifyBuildArtifact — generic copyright-banner vendor-distribution
   });
 
   it("captures the matched banner opener as the signal `value` for greppability", () => {
-    const source =
-      "/*! my-lib v2 | (c) 2024 Author | Released under MIT */\nfunction lib() {}\n";
+    const source = "/*! my-lib v2 | (c) 2024 Author | Released under MIT */\nfunction lib() {}\n";
     const result = classifyBuildArtifactDetailed("vendor/my-lib.js", source);
     expect(result?.signal.kind).toBe("vendor-copyright-banner");
     if (result?.signal.kind === "vendor-copyright-banner") {

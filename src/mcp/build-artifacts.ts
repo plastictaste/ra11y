@@ -626,7 +626,7 @@ function detectBuildDirMarker(filePath: string): BuildArtifactSignal | null {
  */
 function detectBannerSignal(filePath: string, source: string): BuildArtifactSignal | null {
   const banner = detectVendorLibraryForFile(filePath, source);
-  return banner !== null ? formatVendorBannerSignal(banner) : detectVendorCopyrightBanner(source);
+  return banner === null ? detectVendorCopyrightBanner(source) : formatVendorBannerSignal(banner);
 }
 
 function detectMinInfix(filePath: string): BuildArtifactSignal | null {
