@@ -659,6 +659,49 @@ describe("per-rule coverage end-to-end", () => {
     expect(observeSubstrateCode(response, partialParseRules, "partial_parse")).toBe(true);
   });
 
+  // File-scoped propagation invariant — doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+  // must reflect per-rule coverage limitations." The substrate codes
+  // `file_parse_error` and `partial_parse` describe a file-scoped
+  // limitation: the parser failed (or partially failed) on a specific
+  // file. When the same rule's gate matched both that file AND a
+  // cleanly-parsed file (and emitted findings on both), the propagation
+  // helper used to attach the substrate code to every finding of the
+  // rule, including the one on the clean file — corpus-wide rather than
+  // file-scoped. The clean-file finding then read as "low-confidence
+  // because the parser failed" when the parser cleared on its file. The
+  // gate is membership in `parseErrorFiles[] ∪ partialParseFiles[]`: a
+  // finding emitted on a file the parser handled cleanly must NOT carry
+  // the substrate code in its `couldBeWrongBecause`.
+  it("file-scoped substrate codes (file_parse_error / partial_parse) only attach to findings whose own file is in parseError ∪ partialParse", () => {
+    // Same fixture as the per-rule-parity test above: clean.html parses
+    // cleanly + emits a `keyboard/handler-missing` finding on the
+    // `<div onclick=…>`; broken.html has a truncated tail that lands
+    // it in `partialParseFiles` and also emits a finding on its own
+    // `<div onclick=…>`.
+    const response = assembleParityFixture();
+    // `keyboard/handler-missing` fires on both files — it's the canonical
+    // shared-rule test case here.
+    const ruleId = "keyboard/handler-missing";
+    const cleanPath = "site/clean.html";
+    const brokenPath = "site/broken.html";
+    const cleanFile = response.files.find((f) => f.path === cleanPath);
+    const brokenFile = response.files.find((f) => f.path === brokenPath);
+    expect(cleanFile).toBeDefined();
+    expect(brokenFile).toBeDefined();
+    const cleanFinding = cleanFile!.findings.find((v) => v.ruleId === ruleId);
+    const brokenFinding = brokenFile!.findings.find((v) => v.ruleId === ruleId);
+    expect(cleanFinding).toBeDefined();
+    expect(brokenFinding).toBeDefined();
+    // The clean-file finding's couldBeWrongBecause MUST NOT include the
+    // substrate code — its own file parsed without error.
+    expect(cleanFinding!.couldBeWrongBecause ?? []).not.toContain("partial_parse");
+    expect(cleanFinding!.couldBeWrongBecause ?? []).not.toContain("file_parse_error");
+    // The broken-file finding's couldBeWrongBecause MUST include the
+    // substrate code — its file is in `partialParseFiles[]`.
+    expect(brokenFinding!.couldBeWrongBecause ?? []).toContain("partial_parse");
+  });
+
   // Fragment-input per-rule confidence downgrade — doctrine source:
   // docs/kb/architecture/ai-first-consumer.md "Parser-failure invalidates
   // per-file confidence." A file in `analysisCoverage.fragmentFiles[]`
