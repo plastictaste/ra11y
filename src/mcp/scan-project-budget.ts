@@ -8,6 +8,7 @@
  * their own in-file helpers.
  */
 
+import { posix } from "node:path";
 import { applyMetaCacheMode } from "./meta-cache.ts";
 import {
   type NextStepStructured,
@@ -496,7 +497,10 @@ function buildSlimScanProjectEnvelope(args: {
     plan: formatted.plan,
     files: [],
     nextStep: SLIM_NEXT_STEP_PROSE,
-    nextStepStructured: buildSlimNextStepStructured(params),
+    nextStepStructured: buildSlimNextStepStructured({
+      formatted,
+      fullMeta,
+    }),
     warnings: merged.warnings,
     warningsDetails: merged.warningsDetails,
     meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta: slimMeta, session }),
@@ -594,19 +598,231 @@ const SLIM_NEXT_STEP_PROSE =
 /**
  * Structured nextStep for the slim envelope. Points at `scan_project`
  * itself — the agent's recovery path is the same tool with narrower
- * args. We pre-fill `cwd` from the original params if present so the
- * agent's next call inherits the project root and only needs to add
- * the narrowing knob. The args carry no `restrictToPaths` /
- * `additionalPaths` literal — those are agent-specific scope
- * decisions, not something the tool can guess.
+ * args. The prior shape echoed the caller's `cwd` unchanged, so the
+ * structured next-call was *identical* to the failing call: an agent
+ * following `nextStepStructured.args` verbatim would re-issue the same
+ * over-ceiling scan and oscillate. Per the doctrine's "Zero-output
+ * success is ambiguous failure" rule, the structured next-call must
+ * differ from the failing call when the failure mode is "scope was too
+ * wide."
+ *
+ * The narrowing target is derived from the full pre-drop file list:
+ *
+ *   1. Build a vendor-path set from `fullMeta.scannedBuildArtifacts`
+ *      (`grouped[].pathHint` directory prefixes plus `ungrouped[].path`
+ *      exact matches). These are the paths the build-artifact classifier
+ *      already labelled — surfacing them again as the next-call target
+ *      would just re-run the scan that just over-flowed.
+ *   2. Tally findings per top-level directory across the full
+ *      `formatted.files` list, skipping vendor paths.
+ *   3. The directory with the most non-vendor findings becomes
+ *      `restrictToPaths: [<dir>]` (root-relative POSIX). Drop the
+ *      `cwd` echo — the structured args now point at a strictly
+ *      narrower target than the failing call.
+ *
+ * When no non-vendor target can be derived (every file in the inventory
+ * sits on a vendor path, or the file list is empty), ship `args: {}`.
+ * That signals "the tool can't guess — agent picks." Honestly absent
+ * args beat an args set that re-issues the failing call.
+ *
+ * Prose still names the same three narrowing knobs (`cwd`,
+ * `additionalPaths`, `restrictToPaths`) so the agent keeps full
+ * flexibility; the structured args advance one of them with a
+ * scanner-derived candidate.
  */
-function buildSlimNextStepStructured(params: Record<string, unknown>): {
+function buildSlimNextStepStructured(args: {
+  readonly formatted: ScanFormatted;
+  readonly fullMeta: Record<string, unknown>;
+}): {
   readonly tool: string;
   readonly args: Record<string, unknown>;
 } {
-  const cwd = typeof params["cwd"] === "string" ? params["cwd"] : undefined;
+  const { formatted, fullMeta } = args;
+  const isVendor = buildVendorPredicate(fullMeta);
+  const narrowing = pickNonVendorNarrowingDir(formatted.files, isVendor);
+  if (narrowing !== undefined) {
+    return {
+      tool: "scan_project",
+      args: { restrictToPaths: [narrowing] },
+    };
+  }
+  // No non-vendor narrowing target found — ship empty args rather than
+  // echo the caller's `cwd` (which would re-issue the failing call).
+  // The prose still names the three narrowing knobs; the agent picks.
+  // We deliberately do NOT propagate the caller's `cwd` here: passing
+  // it back as `args.cwd` would re-issue the same scope that just
+  // produced the over-ceiling response, defeating the purpose of the
+  // slim envelope.
   return {
     tool: "scan_project",
-    args: cwd === undefined ? {} : { cwd },
+    args: {},
   };
+}
+
+/**
+ * Walks the response's `files[]` (full pre-drop list) and the vendor-
+ * path set derived from `meta.scannedBuildArtifacts`, returning the
+ * top-level directory with the most non-vendor findings. Returns
+ * `undefined` when no non-vendor file exists or the whole inventory
+ * resolves to a single root directory equal to `.` (no subtree to
+ * narrow into — the agent must pick a different scope dimension).
+ *
+ * "Top-level directory" means the first path segment of the file's
+ * relative POSIX path (e.g. `src` for `src/foo/bar.tsx`). Files that
+ * sit at the root (no slash) are excluded — narrowing to `.` is the
+ * same as no narrowing.
+ *
+ * The directory tally favors breadth (most non-vendor findings under
+ * one top-level), not the *file* with the most findings — narrowing to
+ * a dir captures every authored file in that subtree on the next call,
+ * whereas narrowing to a single file would force the agent into the
+ * pagination loop the slim envelope is trying to escape.
+ */
+function pickNonVendorNarrowingDir(
+  files: readonly ScanFormatted["files"][number][],
+  isVendor: (path: string) => boolean,
+): string | undefined {
+  const dirCounts = new Map<string, number>();
+  for (const file of files) {
+    if (isVendor(file.path)) continue;
+    const topDir = topLevelDir(file.path);
+    if (topDir === undefined) continue;
+    const findingsCount = file.findings.length;
+    // Count one per file even on zero findings — a file with no
+    // findings still indicates the directory carries authored work
+    // worth narrowing into. Falls back to 1 so the tally never under-
+    // weights authored sub-trees on quiet rules.
+    const weight = Math.max(findingsCount, 1);
+    dirCounts.set(topDir, (dirCounts.get(topDir) ?? 0) + weight);
+  }
+  if (dirCounts.size === 0) return undefined;
+  let topDir: string | undefined;
+  let topCount = 0;
+  let tie = false;
+  for (const [dir, count] of dirCounts) {
+    if (count > topCount) {
+      topDir = dir;
+      topCount = count;
+      tie = false;
+    } else if (count === topCount) {
+      tie = true;
+    }
+  }
+  // On a clean tie at the top, fall back to `undefined` per the same
+  // honesty principle as `pickTopRuleByCount` — naming an alphabetical
+  // winner would route to a dir that doesn't actually dominate. The
+  // caller ships empty args and the agent picks.
+  if (tie || topDir === undefined) return undefined;
+  return topDir;
+}
+
+/**
+ * Returns the first path segment of a relative POSIX path (e.g. `src`
+ * for `src/foo/bar.tsx`), or `undefined` when the path has no slash
+ * (root file — narrowing to `.` would be a no-op) or is empty.
+ */
+function topLevelDir(relPath: string): string | undefined {
+  if (relPath.length === 0) return undefined;
+  // Reject absolute paths — `formatted.files[].path` is root-relative
+  // POSIX by convention, but a defensive guard keeps the helper honest
+  // if a future caller threads through an absolute path.
+  if (relPath.startsWith("/")) return undefined;
+  const dir = posix.dirname(relPath);
+  if (dir === "." || dir === "") return undefined;
+  // Take the first segment: `src/foo/bar` → `src`.
+  const slash = dir.indexOf("/");
+  return slash === -1 ? dir : dir.slice(0, slash);
+}
+
+/**
+ * Builds the `(path: string) => boolean` vendor predicate from
+ * `meta.scannedBuildArtifacts`. Combines `ungrouped[].path` exact
+ * matches (sub-threshold artifact entries) with a directory-prefix
+ * match against `grouped[].pathHint` (basename clusters with a shared
+ * parent dir) — a `formatted.files[].path` is considered vendor when
+ * (a) it appears in `ungrouped`, OR (b) some `grouped[].pathHint` is a
+ * directory ancestor of the file, OR (c) it equals a `pathHint`
+ * directory exactly (unlikely on file inputs, kept for defensive
+ * symmetry).
+ *
+ * Returns a predicate that always returns `false` when
+ * `scannedBuildArtifacts` is absent or shaped unexpectedly — defensive
+ * narrowing matches the rest of this module's `Record<string, unknown>`
+ * defensive reads on the `fullMeta` object. The predicate shape (rather
+ * than a `ReadonlySet<string>`) lets the prefix-match arm participate
+ * without enumerating the full vendor file set up-front; the grouped
+ * pathHints are O(rules) and the file list is O(N), so per-file
+ * predicate calls beat a fan-out into a flat set.
+ */
+function buildVendorPredicate(fullMeta: Record<string, unknown>): (path: string) => boolean {
+  const sba = fullMeta["scannedBuildArtifacts"];
+  if (sba === undefined || sba === null || typeof sba !== "object") {
+    return () => false;
+  }
+  const sbaObj = sba as Record<string, unknown>;
+  const exact = collectUngroupedPaths(sbaObj["ungrouped"]);
+  const groupedPrefixes = collectGroupedPathHints(sbaObj["grouped"]);
+  if (exact.size === 0 && groupedPrefixes.length === 0) {
+    return () => false;
+  }
+  return (path: string): boolean => matchesVendorPath(path, exact, groupedPrefixes);
+}
+
+/**
+ * Walks `meta.scannedBuildArtifacts.ungrouped[]` and collects each
+ * entry's `path` into a Set for O(1) exact-match lookups. Skips entries
+ * that aren't object-shaped or whose `path` is missing/empty —
+ * defensive narrowing matches the rest of this module's `Record<string,
+ * unknown>` reads on the fullMeta object.
+ */
+function collectUngroupedPaths(ungrouped: unknown): Set<string> {
+  const exact = new Set<string>();
+  if (!Array.isArray(ungrouped)) return exact;
+  for (const entry of ungrouped) {
+    if (!entry || typeof entry !== "object") continue;
+    const path = (entry as Record<string, unknown>)["path"];
+    if (typeof path === "string" && path.length > 0) {
+      exact.add(path);
+    }
+  }
+  return exact;
+}
+
+/**
+ * Walks `meta.scannedBuildArtifacts.grouped[]` and collects each
+ * group's `pathHint` (normalized with a trailing slash) for prefix-
+ * match lookups. The trailing slash ensures `vendor/bootstrap` matches
+ * `vendor/bootstrap/foo.css` but not `vendor/bootstrap-extras/foo.css`.
+ */
+function collectGroupedPathHints(grouped: unknown): string[] {
+  const prefixes: string[] = [];
+  if (!Array.isArray(grouped)) return prefixes;
+  for (const group of grouped) {
+    if (!group || typeof group !== "object") continue;
+    const pathHint = (group as Record<string, unknown>)["pathHint"];
+    if (typeof pathHint === "string" && pathHint.length > 0) {
+      prefixes.push(pathHint.endsWith("/") ? pathHint : `${pathHint}/`);
+    }
+  }
+  return prefixes;
+}
+
+/**
+ * Tests whether `path` matches the vendor classification: exact match
+ * in `exact`, prefix match against any normalized `groupedPrefixes`
+ * (with trailing slash), OR exact match against a pathHint directory
+ * (the `prefix.slice(0, -1)` form, kept for defensive symmetry on the
+ * unlikely case where a file path equals a pathHint directory).
+ */
+function matchesVendorPath(
+  path: string,
+  exact: ReadonlySet<string>,
+  groupedPrefixes: readonly string[],
+): boolean {
+  if (exact.has(path)) return true;
+  for (const prefix of groupedPrefixes) {
+    if (path.startsWith(prefix)) return true;
+    if (path === prefix.slice(0, -1)) return true;
+  }
+  return false;
 }

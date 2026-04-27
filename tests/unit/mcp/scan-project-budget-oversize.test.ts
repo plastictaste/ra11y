@@ -95,7 +95,13 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       args: Record<string, unknown>;
     };
     expect(structured.tool).toBe("scan_project");
-    expect(structured.args.cwd).toBe("/tmp/example-project");
+    // The structured next-call must NOT echo the caller's cwd unchanged
+    // — that would re-issue the same scope that just over-flowed. The
+    // narrower target is derived from `formatted.files`: the single
+    // authored `src/example.tsx` resolves the top-level dir `src`, so
+    // `restrictToPaths: ["src"]` differs from the failing call's `cwd`.
+    expect(structured.args).toEqual({ restrictToPaths: ["src"] });
+    expect(structured.args.cwd).toBeUndefined();
 
     // Warnings channel carries the structured code + payload.
     const warnings = response.warnings as readonly string[];
@@ -121,6 +127,156 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(meta.tool).toBe("scan_project");
     expect(meta.version).toBe("0.1.0");
     expect(meta.filesScanned).toBe(1);
+  });
+
+  it("derives a non-vendor restrictToPaths target when scannedBuildArtifacts marks vendor paths", () => {
+    // When the slim envelope fires AND the file inventory mixes vendor
+    // (classified) and non-vendor paths, the structured next-call must
+    // point at the non-vendor subtree via `restrictToPaths` rather than
+    // echoing the caller's cwd. The narrowing dir is the top-level dir
+    // with the most non-vendor findings — `src` here, since the vendor
+    // entries are routed through scannedBuildArtifacts.
+    const session = new McpSession();
+    const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
+      plan: {
+        notes: 0,
+        fixesByClass: { mechanical: 2, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        reviewNeeded: 0,
+        manualOnly: 0,
+        estimatedEffort: "small",
+        summary: "2 findings",
+      },
+      files: [
+        { path: "vendor/bootstrap/bootstrap.css", findings: [] },
+        { path: "vendor/bootstrap/bootstrap.min.css", findings: [] },
+        { path: "src/components/button.tsx", findings: [] },
+        { path: "src/components/input.tsx", findings: [] },
+      ],
+      meta: {},
+    };
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: {
+        files: formatted.files,
+        referenceGuide: undefined,
+      },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: formatted.files.length,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: formatted.files.length,
+        durationMs: 5,
+        bloatedField: hugePayload,
+        scannedBuildArtifacts: {
+          grouped: [
+            {
+              basename: "bootstrap.css",
+              count: 2,
+              pathHint: "vendor/bootstrap",
+              classifications: ["likely-bundler-output-dir"],
+              suggestedGlob: "vendor/bootstrap/**",
+            },
+          ],
+          ungrouped: [],
+        },
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    const structured = response.nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(structured.tool).toBe("scan_project");
+    // The structured args target a strictly narrower scope than the
+    // caller's cwd. `restrictToPaths` names the non-vendor top-level
+    // dir derived from the file inventory; `cwd` is dropped (echoing
+    // it would re-issue the failing call).
+    expect(structured.args).toEqual({ restrictToPaths: ["src"] });
+    expect(structured.args.cwd).toBeUndefined();
+  });
+
+  it("ships empty args when every file in the inventory is vendor-classified", () => {
+    // All-vendor edge case: no non-vendor narrowing target exists, so
+    // the args degrade to `{}` rather than echo the caller's cwd. The
+    // agent reads the prose and picks a recovery knob; the structured
+    // form does NOT re-issue the failing call.
+    const session = new McpSession();
+    const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
+      plan: {
+        notes: 0,
+        fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        reviewNeeded: 0,
+        manualOnly: 0,
+        estimatedEffort: "trivial",
+        summary: "1 finding",
+      },
+      files: [
+        { path: "dist/bundle.css", findings: [] },
+        { path: "dist/bundle.min.css", findings: [] },
+      ],
+      meta: {},
+    };
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: {
+        files: formatted.files,
+        referenceGuide: undefined,
+      },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: formatted.files.length,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: formatted.files.length,
+        durationMs: 5,
+        bloatedField: hugePayload,
+        scannedBuildArtifacts: {
+          grouped: [
+            {
+              basename: "bundle.css",
+              count: 2,
+              pathHint: "dist",
+              classifications: ["likely-bundler-output-dir"],
+              suggestedGlob: "dist/**",
+            },
+          ],
+          ungrouped: [],
+        },
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    const structured = response.nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(structured.tool).toBe("scan_project");
+    expect(structured.args).toEqual({});
+    expect(structured.args.cwd).toBeUndefined();
   });
 
   it("passes through unchanged when the response fits under the host ceiling", () => {
