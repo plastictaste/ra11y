@@ -17,8 +17,6 @@ import { dirname, join, relative, resolve } from "node:path";
 const ROOT = join(import.meta.dir ?? process.cwd(), "..");
 const DOCS_DIR = join(ROOT, "docs");
 
-const SKIP_DIRS = new Set(["backlog-history"]);
-
 const violations: string[] = [];
 walk(DOCS_DIR);
 
@@ -41,10 +39,8 @@ function walk(dir: string): void {
   for (const name of entries) {
     const full = join(dir, name);
     const st = statSync(full);
-    if (st.isDirectory()) {
-      if (SKIP_DIRS.has(name)) continue;
-      walk(full);
-    } else if (name.endsWith(".md")) scan(full);
+    if (st.isDirectory()) walk(full);
+    else if (name.endsWith(".md")) scan(full);
   }
 }
 
