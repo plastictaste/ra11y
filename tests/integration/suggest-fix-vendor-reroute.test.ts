@@ -158,7 +158,9 @@ describe("suggest_fix on a vendor-classified file routes to override-redirect gu
       source: BOOTSTRAP_BANNER_CSS,
       ruleId: "contrast/minimum",
     });
-    const vendorContext = payload["vendorContext"] as { signal: { kind: string; library?: string } };
+    const vendorContext = payload["vendorContext"] as {
+      signal: { kind: string; library?: string };
+    };
     expect(vendorContext.signal.kind).toBe("vendor-library");
     expect(vendorContext.signal.library).toBe("bootstrap");
   });
