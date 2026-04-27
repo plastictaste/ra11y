@@ -42,7 +42,18 @@ export const rule = defineRule({
   satisfies: ["wcag21:4.1.1", "wcag22:1.3.1", "wcag21:1.3.1"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The rule has three branches — missing charset, misordered child,
+  // byte-cap exceeded — and none ship a structured `fixPaths.primary.edit`
+  // today: each requires a node-position insert / move / byte-budget
+  // recompute the static evidence alone doesn't pin down. Tagged
+  // `verify-in-source` so `plan.fixesByClass` reflects honest "agent
+  // reads adjacent code to apply the move" rather than the previous
+  // `mechanical` lane that fell through to `kind: "guidance"` in
+  // `suggest_fix`. Agents wanting the apply-now subset sum
+  // `mechanical + verifyInSource` off the structured tally. See
+  // docs/kb/architecture/ai-first-consumer.md "Per-call shape must
+  // agree with per-class plan tally."
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },

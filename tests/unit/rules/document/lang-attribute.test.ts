@@ -239,8 +239,8 @@ describe("rule document/lang-attribute", () => {
     it("does NOT emit fixPaths.edit for bare <html> without any in-page language hint", () => {
       // The fallback ladder still produces prose `suggestion`, but the
       // structured edit lane stays absent because no deterministic tag
-      // exists. suggest_fix will return kind: "guidance" with
-      // `meta.mechanicalInPrinciple: true` (verify-in-source lane).
+      // exists. suggest_fix will return kind: "guidance"; cross-surface
+      // honesty flows through `plan.fixesByClass.verifyInSource`.
       const source = "<html><body></body></html>";
       const v = runRule(rule, source, { filePath: "index.html" });
       expect(v).toHaveLength(1);

@@ -859,12 +859,10 @@ describe("rule aria/expanded-on-disclosure", () => {
       // is opinionated and the runtime toggle wiring needs agent
       // judgment; `missing-controls` requires identifying or inventing
       // an id on the controlled region. Mirrors the alt-text-missing
-      // precedent (commit bd2a67c6) — the rule family stays
-      // mechanical-in-principle (verify-in-source is in
-      // MECHANICAL_IN_PRINCIPLE_LANES) so suggest_fix annotates
-      // guidance responses with `meta.mechanicalInPrinciple: true`,
-      // but the per-finding lane counter no longer overstates
-      // apply-now editability.
+      // precedent — `verify-in-source` keeps `plan.fixesByClass`
+      // honest about which findings can be apply-now edits; agents
+      // wanting that subset sum `mechanical + verifyInSource` off the
+      // structured tally.
       expect(rule.fixClass).toBe("verify-in-source");
     });
   });

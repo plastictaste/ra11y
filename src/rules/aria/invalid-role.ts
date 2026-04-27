@@ -266,9 +266,11 @@ function getRoleAttributeJsx(element: JsxElement): JsxAttribute | null {
  * "typo substitution" the doctrine names as mechanical (see
  * `src/types/rule.ts` `FixClass` definition). When no `nearest` is in
  * range (invented roles like `widget`), we drop the edit and the
- * response falls into the `kind: "guidance"` lane with
- * `meta.mechanicalInPrinciple: true` so cross-surface counts stay
- * honest.
+ * response falls into the `kind: "guidance"` lane. Cross-surface count
+ * honesty flows through `plan.fixesByClass` (mechanical /
+ * verifyInSource counted as separate lanes); per-call shape and plan
+ * tally agree per docs/kb/architecture/ai-first-consumer.md "Per-call
+ * shape must agree with per-class plan tally."
  *
  * Space-separated fallback chains (`role="buton button"`) get the
  * same substitution applied to the first invalid token; downstream

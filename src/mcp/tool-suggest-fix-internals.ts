@@ -44,7 +44,6 @@
  * directly.
  */
 
-import type { FixClass } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
 import {
   deriveApproachFromProse,
@@ -54,49 +53,6 @@ import { nearestFindingSpread } from "./suggest-fix-nearest-finding.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
 import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
 import { buildVendorOverrideOutcome } from "./tool-suggest-fix-vendor.ts";
-
-/**
- * Set of rule `fixClass` lanes that promise a source-edit path in
- * principle — the two lanes whose edits, when present, land in the
- * source file. Mirrors the editable-lane subset
- * (`fixesByClass.mechanical + fixesByClass.verifyInSource`) that the
- * scan plan surfaces; the `countFixes` helper in
- * `src/output/agent-response/build-plan.ts` counts violations in these
- * lanes that also ship a `fixPaths.primary.edit`, but the result is
- * internal to effort math rather than a headline counter (the former
- * composite `safeEditsAvailable` was dropped per
- * Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT).
- *
- * Used by `mechanicalInPrincipleField` to annotate `kind: "guidance"`
- * responses whose rule family supports a mechanical path even though
- * this specific call couldn't produce a concrete `newText`. Closes the
- * cross-surface contradiction where `plan.fixesByClass` advertises a
- * mechanical/verify-in-source lane but `suggest_fix` returns only
- * prose.
- */
-const MECHANICAL_IN_PRINCIPLE_LANES: ReadonlySet<FixClass> = new Set<FixClass>([
-  "mechanical",
-  "verify-in-source",
-]);
-
-/**
- * Conditional-spread wrapper for the `meta.mechanicalInPrinciple`
- * signal. Returns `{ meta: { mechanicalInPrinciple: true } }` when the
- * matched violation's `fixClass` is in {@link MECHANICAL_IN_PRINCIPLE_LANES};
- * returns `{}` otherwise so the field is absent rather than
- * `mechanicalInPrinciple: false` (CLAUDE.md §1 "Ambiguous field shapes
- * are dishonest" — a boolean that silently flips to false looks like
- * data when it's actually "not applicable"). Only meaningful on
- * `kind: "guidance"` responses — the `kind: "edit"` lane has already
- * shipped a concrete edit and doesn't need the in-principle hint.
- */
-function mechanicalInPrincipleField(match: Violation): {
-  readonly meta?: { readonly mechanicalInPrinciple: true };
-} {
-  return MECHANICAL_IN_PRINCIPLE_LANES.has(match.fixClass)
-    ? { meta: { mechanicalInPrinciple: true } }
-    : {};
-}
 
 // Re-export the shared shape so external consumers (tests, the tool
 // handler) continue to import it from this file verbatim — the type
@@ -375,7 +331,6 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
       verify,
       warningsField,
       disambiguationNoteField,
-      mechanicalInPrincipleField: mechanicalInPrincipleField(match),
       // exactOptionalPropertyTypes: conditional-spread the optional
       // boolean so `undefined` doesn't satisfy `boolean | undefined`
       // when the property is required-with-undefined-disallowed.
@@ -396,13 +351,15 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
   // block so the shape matches the tool description's promise. No
   // `alternatives` here — the rule never supplied structured paths.
   //
-  // when the matched
-  // violation's rule lives in a source-edit lane (`mechanical` or
-  // `verify-in-source`) but this specific call couldn't produce a
-  // concrete `newText`, annotate with `meta.mechanicalInPrinciple:
-  // true` so the agent knows the rule family supports a mechanical
-  // path. Closes the cross-surface drift between this tool's `kind:
-  // "guidance"` and scan's `plan.fixesByClass` editable lanes.
+  // The previous `meta.mechanicalInPrinciple` annotation was dropped
+  // (closure path (a) per docs/kb/architecture/ai-first-consumer.md
+  // "Per-call shape must agree with per-class plan tally") — shipping
+  // `meta.mechanicalInPrinciple: true` alongside `kind: "guidance"`
+  // was itself the contradiction the rule warns against. Cross-surface
+  // honesty now flows entirely through `plan.fixesByClass` (mechanical
+  // / verifyInSource / guidance / runtimeOnly counted as separate
+  // lanes); callers wanting the apply-now subset sum
+  // `mechanical + verifyInSource` off that structured tally.
   return {
     kind: "guidance",
     primary: {
@@ -415,6 +372,5 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     ...verify,
     ...warningsField,
     ...disambiguationNoteField,
-    ...mechanicalInPrincipleField(match),
   };
 }

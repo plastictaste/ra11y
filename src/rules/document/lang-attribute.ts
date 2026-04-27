@@ -33,12 +33,14 @@ export const rule = defineRule({
   // rule populates `fixPaths.primary.edit` so `suggest_fix` returns
   // `kind: "edit"`; for the broad case (no in-page hint, or only a
   // legacy charset to reason from), the response is honestly `kind:
-  // "guidance"` with `meta.mechanicalInPrinciple: true` (verify-in-source
-  // is in MECHANICAL_IN_PRINCIPLE_LANES). Re-tagging from `mechanical`
-  // to `verify-in-source` keeps `plan.fixesByClass` honest about which
-  // findings can be apply-now edits vs. which need agent judgment. See
-  // ADR 0007 + docs/kb/architecture/ai-first-consumer.md "Composite
-  // headline counts are dishonest."
+  // "guidance"` (the agent reads the surrounding page to pick a tag).
+  // Tagging the rule `verify-in-source` (rather than `mechanical`)
+  // keeps `plan.fixesByClass` honest about which findings can be
+  // apply-now edits vs. which need agent judgment — agents wanting
+  // the apply-now subset sum `fixesByClass.mechanical +
+  // fixesByClass.verifyInSource`. See ADR 0007 + docs/kb/architecture/
+  // ai-first-consumer.md "Composite headline counts are dishonest"
+  // and "Per-call shape must agree with per-class plan tally."
   fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],

@@ -28,7 +28,17 @@ export const rule = defineRule({
   satisfies: ["wcag22:2.4.2", "wcag21:2.4.2"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The page title must describe topic or purpose — that prose is
+  // never a deterministic source transform from the static evidence
+  // alone. Tagged `verify-in-source` so `plan.fixesByClass` reflects
+  // honest "agent reads adjacent code to author title" expectation
+  // rather than the previous `mechanical` lane that always fell
+  // through to `kind: "guidance"` in `suggest_fix`. Agents wanting
+  // the apply-now subset sum `fixesByClass.mechanical +
+  // fixesByClass.verifyInSource` off the structured tally. See ADR
+  // 0007 + docs/kb/architecture/ai-first-consumer.md "Per-call shape
+  // must agree with per-class plan tally."
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },

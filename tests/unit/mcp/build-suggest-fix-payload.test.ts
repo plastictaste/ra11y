@@ -668,30 +668,20 @@ describe("buildSuggestFixPayload — template-directive poisoning of newText", (
   });
 });
 
-describe("buildSuggestFixPayload — meta.mechanicalInPrinciple", () => {
-  // Doctrine (CLAUDE.md §1 "Composite headline counts are dishonest" +
-  // "Ambiguous field shapes are dishonest"): the scan's
-  // `plan.fixesByClass.mechanical` counts rules with
-  // `fixClass: "mechanical"`; `plan.fixesByClass.verifyInSource`
-  // counts rules in the verify-in-source lane (the former
-  // `safeEditsAvailable` composite summing the two editable lanes was
-  // dropped per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT). But
-  // `suggest_fix` on a specific finding may return `kind: "guidance"`
-  // because the rule didn't emit `fixPaths` for that finding's
-  // context. The two surfaces appear to contradict unless the
-  // guidance response signals "the rule family supports a mechanical
-  // path in principle." That signal is `meta.mechanicalInPrinciple:
-  // true`, present-when-true only (conditional-spread).
-  //
-  // Concrete case that motivated this: `navigation/href-javascript-scheme`
-  // is `fixClass: "verify-in-source"` and ships no `fixPaths`, so
-  // `suggest_fix` falls into the prose-only guidance branch. The rule
-  // lives in a source-edit lane in principle; agents need that signal
-  // so they don't read "guidance" as "nothing mechanical is possible."
+describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted", () => {
+  // Doctrine: docs/kb/architecture/ai-first-consumer.md "Per-call shape
+  // must agree with per-class plan tally." A `kind: "guidance"`
+  // response that ships `meta.mechanicalInPrinciple: true` is itself
+  // the contradiction — two sibling fields under the same response
+  // answer "is a mechanical edit available" with opposite values, and
+  // the agent that reads the plan tally first budgets against a
+  // fixable count the per-call surface won't honor. Closure path (a)
+  // applied: drop the field entirely. Cross-surface honesty flows
+  // through `plan.fixesByClass` (mechanical / verifyInSource counted
+  // as separate lanes); callers wanting the apply-now subset sum
+  // `mechanical + verifyInSource` off the structured tally.
 
-  it("no-fixPaths guidance: emits meta.mechanicalInPrinciple when match.fixClass is 'verify-in-source'", () => {
-    // Concrete navigation/href-javascript-scheme case — prose-only
-    // suggestion, rule lane is verify-in-source.
+  it("no-fixPaths guidance with verify-in-source fixClass: omits the meta field", () => {
     const match = violationGuidanceOnly({
       ruleId: "navigation/href-javascript-scheme",
       fixClass: "verify-in-source",
@@ -700,40 +690,31 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple", () => {
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
-    expect(payload["meta"]).toEqual({ mechanicalInPrinciple: true });
+    expect(payload).not.toHaveProperty("meta");
   });
 
-  it("no-fixPaths guidance: emits meta.mechanicalInPrinciple when match.fixClass is 'mechanical'", () => {
-    // A mechanical-class rule that for some reason didn't ship
-    // fixPaths (e.g. a context the rule declined to synthesize for).
-    // The cross-surface consistency signal still fires.
+  it("no-fixPaths guidance with mechanical fixClass: omits the meta field", () => {
     const match = violationGuidanceOnly({ fixClass: "mechanical" });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
-    expect(payload["meta"]).toEqual({ mechanicalInPrinciple: true });
+    expect(payload).not.toHaveProperty("meta");
   });
 
-  it("no-fixPaths guidance: OMITS the meta field when match.fixClass is 'guidance'", () => {
-    // `fixClass: "guidance"` is honestly guidance — nothing in
-    // principle lives in a source-edit lane. The field is absent,
-    // never `mechanicalInPrinciple: false`, per the present-when-
-    // meaningful rule.
+  it("no-fixPaths guidance with guidance fixClass: omits the meta field", () => {
     const match = violationGuidanceOnly({ fixClass: "guidance" });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("no-fixPaths guidance: OMITS the meta field when match.fixClass is 'runtime-only'", () => {
+  it("no-fixPaths guidance with runtime-only fixClass: omits the meta field", () => {
     const match = violationGuidanceOnly({ fixClass: "runtime-only" });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("fixPaths-guidance (no mechanical edit): emits meta.mechanicalInPrinciple when fixClass is 'verify-in-source'", () => {
-    // fixPaths present but no primary.edit → falls into the fixPaths
-    // branch's guidance lane. Same in-principle signal applies.
+  it("fixPaths-guidance (no mechanical edit) with verify-in-source: omits the meta field", () => {
     const match = violationWithFixPaths({
       fixClass: "verify-in-source",
       fixPaths: {
@@ -743,10 +724,10 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple", () => {
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
-    expect(payload["meta"]).toEqual({ mechanicalInPrinciple: true });
+    expect(payload).not.toHaveProperty("meta");
   });
 
-  it("fixPaths-guidance (no mechanical edit): OMITS meta when fixClass is 'guidance'", () => {
+  it("fixPaths-guidance (no mechanical edit) with guidance fixClass: omits the meta field", () => {
     const match = violationWithFixPaths({
       fixClass: "guidance",
       fixPaths: {
@@ -759,26 +740,19 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple", () => {
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("kind: 'edit' with mechanical fixClass: OMITS the meta field (the edit is concrete)", () => {
-    // The `kind: "edit"` lane has already shipped a concrete
-    // newText; the in-principle hint would be noise there. The
-    // signal is scoped to the guidance lane.
+  it("kind: 'edit' with mechanical fixClass: omits the meta field", () => {
     const payload = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
     expect(payload["kind"]).toBe("edit");
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("kind: 'none': OMITS the meta field (no match to classify)", () => {
+  it("kind: 'none': omits the meta field", () => {
     const payload = buildSuggestFixPayload(baseArgs(undefined));
     expect(payload["kind"]).toBe("none");
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("poisoned-newText downgrade: emits meta.mechanicalInPrinciple when fixClass is 'mechanical'", () => {
-    // A mechanical-class rule whose fixPaths shipped a poisoned
-    // primary.edit drops into the fixpaths-branch guidance lane via
-    // the template-directive sanitizer. The rule family still lives
-    // in the mechanical lane — the signal fires.
+  it("poisoned-newText downgrade with mechanical fixClass: omits the meta field", () => {
     const match = violationWithFixPaths({
       fixClass: "mechanical",
       fixPaths: {
@@ -794,13 +768,12 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple", () => {
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
-    expect(payload["meta"]).toEqual({ mechanicalInPrinciple: true });
+    expect(payload).not.toHaveProperty("meta");
   });
 
-  it("meta is a sibling of primary/verifyCommand — never nested under primary", () => {
+  it("primary block never carries a mechanicalInPrinciple field", () => {
     const match = violationGuidanceOnly({ fixClass: "mechanical" });
     const payload = buildSuggestFixPayload(baseArgs(match));
-    expect(payload["meta"]).toEqual({ mechanicalInPrinciple: true });
     const primary = payload["primary"] as Record<string, unknown>;
     expect(primary).not.toHaveProperty("meta");
     expect(primary).not.toHaveProperty("mechanicalInPrinciple");

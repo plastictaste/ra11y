@@ -128,11 +128,17 @@ describe("rule document/charset-first-1024-bytes", () => {
   });
 
   describe("rule metadata", () => {
-    it("declares parsing / info-and-relationships criteria + mechanical fix", () => {
+    it("declares parsing / info-and-relationships criteria + verify-in-source fix lane", () => {
+      // Re-tagged from `mechanical` to `verify-in-source` — none of
+      // the rule's branches (missing / misordered / byte-cap) ship a
+      // deterministic `fixPaths.primary.edit`, so a `mechanical` lane
+      // would advertise an apply-now edit `suggest_fix` could not
+      // honor. See docs/kb/architecture/ai-first-consumer.md
+      // "Per-call shape must agree with per-class plan tally."
       expect(rule.satisfies).toContain("wcag21:4.1.1");
       expect(rule.satisfies).toContain("wcag22:1.3.1");
       expect(rule.satisfies).toContain("wcag21:1.3.1");
-      expect(rule.fixClass).toBe("mechanical");
+      expect(rule.fixClass).toBe("verify-in-source");
     });
   });
 });

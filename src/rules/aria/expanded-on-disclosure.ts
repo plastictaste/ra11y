@@ -337,12 +337,10 @@ export const rule = defineRule({
   // Re-tagging keeps `plan.fixesByClass.mechanical` honest about which
   // findings can be apply-now edits (per the doctrine that composite
   // headline counts must match what `suggest_fix` can actually produce
-  // — docs/kb/architecture/ai-first-consumer.md). The rule still carries
-  // `meta.mechanicalInPrinciple: true` on `kind: "guidance"` responses
-  // because `verify-in-source` is in MECHANICAL_IN_PRINCIPLE_LANES — the
-  // family supports a source-edit path even though this lane doesn't
-  // ship one. Mirrors the alt-text-missing precedent in commit
-  // bd2a67c6.
+  // — docs/kb/architecture/ai-first-consumer.md "Per-call shape must
+  // agree with per-class plan tally"). Agents wanting the apply-now
+  // subset sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
+  // off the structured tally. Mirrors the alt-text-missing precedent.
   fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],

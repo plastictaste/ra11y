@@ -49,19 +49,6 @@ export interface BuildFixPathsOutcomeInputs {
    */
   readonly disambiguationNoteField: { readonly disambiguationNote?: string };
   /**
-   * Pre-built `{ meta: { mechanicalInPrinciple: true } }` spread (or
-   * `{}` when not applicable) computed by the caller from the matched
-   * violation's `fixClass`. Forwarded verbatim onto the guidance lane
-   * so agents reading a `kind: "guidance"` response learn that the rule
-   * family supports a mechanical path in principle — even though the
-   * specific context made the replacement ambiguous. See-
-   * FIX-MECHANICAL-VS-GUIDANCE-DRIFT. Not emitted on the `kind: "edit"`
-   * lane (the edit is concrete; the in-principle hint would be noise).
-   */
-  readonly mechanicalInPrincipleField: {
-    readonly meta?: { readonly mechanicalInPrinciple: true };
-  };
-  /**
    * forwarded verbatim from the
    * caller (`buildSuggestFixPayload`). `false` / `undefined` triggers
    * the strip of the rule-emitted Tailwind escape-hatch sentence from
@@ -102,7 +89,6 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
     verify,
     warningsField,
     disambiguationNoteField,
-    mechanicalInPrincipleField,
     tailwindDetected,
   } = inputs;
   const fixPaths = match.fixPaths;
@@ -185,6 +171,13 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
   // advertised shape. `alternatives` is conditional-spread — omitted
   // when there are no sibling paths (present-when-meaningful per
   // CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+  //
+  // The previous `meta.mechanicalInPrinciple` annotation was dropped
+  // (closure path (a) per docs/kb/architecture/ai-first-consumer.md
+  // "Per-call shape must agree with per-class plan tally") — shipping
+  // `meta.mechanicalInPrinciple: true` alongside `kind: "guidance"`
+  // was itself the contradiction the rule warns against. Cross-surface
+  // honesty now flows entirely through `plan.fixesByClass`.
   const guidanceAlternatives = buildGuidanceAlternatives(alternatives);
   return {
     kind: "guidance",
@@ -200,6 +193,5 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
     ...verify,
     ...warningsField,
     ...disambiguationNoteField,
-    ...mechanicalInPrincipleField,
   };
 }

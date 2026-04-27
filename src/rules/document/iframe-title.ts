@@ -45,7 +45,16 @@ export const rule = defineRule({
   satisfies: ["wcag22:4.1.2", "wcag21:4.1.2", "wcag22:2.4.1", "wcag21:2.4.1"],
   severity: "error",
   scope: "node",
-  fixClass: "mechanical",
+  // The iframe title must describe what the embedded frame contains —
+  // that prose is never a deterministic source transform. Tagged
+  // `verify-in-source` so `plan.fixesByClass` reflects honest "agent
+  // reads adjacent code (or the embedded URL) to author the title"
+  // rather than the previous `mechanical` lane that fell through to
+  // `kind: "guidance"` in `suggest_fix`. Agents wanting the apply-now
+  // subset sum `mechanical + verifyInSource` off the structured tally.
+  // See docs/kb/architecture/ai-first-consumer.md "Per-call shape must
+  // agree with per-class plan tally."
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx", ".vue", ".svelte"],
   },
