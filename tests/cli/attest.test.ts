@@ -50,7 +50,7 @@ describe("ra11y attest", () => {
       "--evidence-source",
       "runtime_tool",
       "--tool-name",
-      "axe-core 4.8.2",
+      "pa11y 8.0.0",
       "--verdict",
       "na",
       "--by",
@@ -62,7 +62,7 @@ describe("ra11y attest", () => {
     expect(r.stdout).toContain("appended attestation for wcag22:1.1.1");
     expect(r.stdout).toContain("verdict=n/a");
     expect(r.stdout).toContain("evidenceSource: runtime_tool");
-    expect(r.stdout).toContain("toolName: axe-core 4.8.2");
+    expect(r.stdout).toContain("toolName: pa11y 8.0.0");
     const records = await readStore(dir);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
@@ -70,7 +70,7 @@ describe("ra11y attest", () => {
       by: "ci-bot",
       reason: "runtime harness 2026-04-19 confirms no img elements",
       evidenceSource: "runtime_tool",
-      toolName: "axe-core 4.8.2",
+      toolName: "pa11y 8.0.0",
       verdict: "n/a",
     });
   });

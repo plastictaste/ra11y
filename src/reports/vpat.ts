@@ -582,8 +582,9 @@ function buildViolationRemarks(
  * static scan. When an attestation also backs the criterion, the
  * remark names the provenance axis (`runtime_tool` / `manual_review`
  * / `human_study` / `declaration`) plus `toolName` if supplied — an
- * auditor reading the VPAT sees at a glance that an axe-core run or
- * manual-review pass backed the verdict, not just the static scanner.
+ * auditor reading the VPAT sees at a glance that a runtime-harness
+ * run or manual-review pass backed the verdict, not just the static
+ * scanner.
  */
 function buildAutomatedPassRemarks(
   criterion: Criterion,
@@ -599,8 +600,8 @@ function buildAutomatedPassRemarks(
 
 /**
  * Appends a short evidence citation to a remark: `Evidence:
- * runtime_tool (axe-core 4.8.2)`. Named fields surface verbatim so the
- * auditor can cross-reference the attestation against their CI /
+ * runtime_tool (lighthouse 11.4.0)`. Named fields surface verbatim so
+ * the auditor can cross-reference the attestation against their CI /
  * review log. Omits the parenthetical when no `toolName` is present.
  */
 function buildAttestationCitation(attestation: AttestationRecord): string {

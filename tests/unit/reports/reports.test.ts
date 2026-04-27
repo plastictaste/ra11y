@@ -436,7 +436,7 @@ describe("buildVpatReport + renderVpatMarkdown", () => {
   });
 
   it("cites evidenceSource + toolName in the VPAT remarks cell for attested criteria", () => {
-    // A VPAT reader distinguishing "axe-core verified this" from
+    // A VPAT reader distinguishing "runtime tool verified this" from
     // "author declared this" reads the remarks cell. The remark must
     // name the evidenceSource (required) and toolName (present-when-
     // meaningful) so the auditor doesn't have to cross-reference a

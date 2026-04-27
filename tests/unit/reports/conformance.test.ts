@@ -437,7 +437,7 @@ describe("renderConformanceMarkdown", () => {
   });
 
   it("renders an '## Evidence sources' block with bySource counts when signing inputs carry attestations", () => {
-    // A claim that stood on axe-core + manual-review backing reads
+    // A claim that stood on a runtime-tool + manual-review backing reads
     // differently from one that stood on self-declaration alone. The
     // markdown renderer must surface that distinction explicitly —
     // otherwise an auditor reading the claim has to cross-reference
@@ -448,10 +448,10 @@ describe("renderConformanceMarkdown", () => {
       {
         criterionId: "wcag22:1.4.3",
         by: "ci-bot",
-        reason: "axe-core 4.8.2 clean on /checkout page",
+        reason: "pa11y 8.0.0 clean on /checkout page",
         attestedAt: FIXED_TIMESTAMP,
         evidenceSource: "runtime_tool",
-        toolName: "axe-core 4.8.2",
+        toolName: "pa11y 8.0.0",
         verdict: "pass",
       },
       {

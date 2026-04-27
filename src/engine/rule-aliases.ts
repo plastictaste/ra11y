@@ -11,7 +11,7 @@
  * aliasing — the warning is the contract.
  *
  * Matches the shape every mainstream linter settled on (ESLint, Biome,
- * Stylelint, axe-core) — a tiny frozen table of `{ from, to,
+ * Stylelint) — a tiny frozen table of `{ from, to,
  * deprecatedSince, removeIn }` records. The table grew with-
  * NAVIGATION-HREF-VOID-RENAME (the original umbrella rename) and then
  * (the umbrella split into two rules).

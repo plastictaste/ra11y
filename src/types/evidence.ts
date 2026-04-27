@@ -109,7 +109,7 @@ export type EvidenceSource =
       readonly evidenceSource: AttestationEvidenceSource;
       /**
        * Optional tool identifier when `evidenceSource === "runtime_tool"`
-       * — e.g. `"axe-core 4.8.2"`, `"lighthouse 11"`, `"pa11y"`. Surfaces
+       * — e.g. `"lighthouse 11"`, `"pa11y 8.0.0"`, `"wave"`. Surfaces
        * verbatim in downstream reports so VPAT / conformance-markdown
        * readers see which harness produced the verdict. Omitted when
        * not supplied (present-when-meaningful).
@@ -218,8 +218,8 @@ export interface AttestationRecord {
    * from *what the reason text claims*. Required on every record a
    * producer emits. Four values:
    *
-   *   - `"runtime_tool"` — output from a runtime scanner (axe-core,
-   *     Lighthouse, Pa11y, WAVE, …) read and interpreted by the agent
+   *   - `"runtime_tool"` — output from a runtime scanner (Lighthouse,
+   *     Pa11y, WAVE, …) read and interpreted by the agent
    *     in CI. Pairs with optional `toolName` / `runUrl` / `observedAt`.
    *   - `"manual_review"` — a human or agent's inspection pass over the
    *     source or rendered product, including inline `ra11y-disable`
@@ -241,8 +241,8 @@ export interface AttestationRecord {
   readonly evidenceSource: AttestationEvidenceSource;
   /**
    * Tool identifier when `evidenceSource === "runtime_tool"`. Typical
-   * values: `"axe-core 4.8.2"`, `"lighthouse 11.4.0"`, `"pa11y"`,
-   * `"wave"`. Surfaces verbatim in downstream reports so auditors see
+   * values: `"lighthouse 11.4.0"`, `"pa11y 8.0.0"`, `"wave"`. Surfaces
+   * verbatim in downstream reports so auditors see
    * which harness produced the result. Omitted when not supplied or
    * when `evidenceSource !== "runtime_tool"`.
    */

@@ -76,12 +76,12 @@ export const attestTool: McpTool = {
           type: "string",
           enum: [...ATTESTATION_EVIDENCE_SOURCES],
           description:
-            "REQUIRED provenance classifier. Tells downstream consumers (conformance_statement, vpat, list_attestations) *how* the evidence was produced, not just *what* the reason text claims. `runtime_tool` — a runtime scanner (axe-core, Lighthouse, Pa11y, …) produced the verdict; pair with `toolName` / `runUrl` / `observedAt` so auditors can trace the run. `manual_review` — a human or agent inspected the source or rendered product (covers `ra11y-disable` pragmas with a reason, component-level keyboard checks, design reviews). `human_study` — a formal accessibility study with human subjects (usability testing with assistive-tech users). `declaration` — author self-declaration without external evidence (e.g. 'this app has no `<audio>` elements'). Required because a conformance statement reader asks 'how was this verified?' and a VPAT reader needs to distinguish a runtime-harness pass from an unverified declaration.",
+            "REQUIRED provenance classifier. Tells downstream consumers (conformance_statement, vpat, list_attestations) *how* the evidence was produced, not just *what* the reason text claims. `runtime_tool` — a runtime scanner (Lighthouse, Pa11y, WAVE, …) produced the verdict; pair with `toolName` / `runUrl` / `observedAt` so auditors can trace the run. `manual_review` — a human or agent inspected the source or rendered product (covers `ra11y-disable` pragmas with a reason, component-level keyboard checks, design reviews). `human_study` — a formal accessibility study with human subjects (usability testing with assistive-tech users). `declaration` — author self-declaration without external evidence (e.g. 'this app has no `<audio>` elements'). Required because a conformance statement reader asks 'how was this verified?' and a VPAT reader needs to distinguish a runtime-harness pass from an unverified declaration.",
         },
         toolName: {
           type: "string",
           description:
-            "OPTIONAL tool identifier when `evidenceSource = 'runtime_tool'`. Typical values: `axe-core 4.8.2`, `lighthouse 11.4.0`, `pa11y`, `wave`. Surfaces verbatim in VPAT remarks + conformance summaries. Ignored when present on a non-`runtime_tool` attestation.",
+            "OPTIONAL tool identifier when `evidenceSource = 'runtime_tool'`. Typical values: `lighthouse 11.4.0`, `pa11y 8.0.0`, `wave`. Surfaces verbatim in VPAT remarks + conformance summaries. Ignored when present on a non-`runtime_tool` attestation.",
         },
         runUrl: {
           type: "string",

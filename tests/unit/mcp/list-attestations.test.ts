@@ -153,7 +153,7 @@ describe("list_attestations: fresh attestation", () => {
         reason: "runtime harness 2026-04-18 reported pass for focus-visible",
         attestedAt: T1,
         evidenceSource: "runtime_tool",
-        toolName: "axe-core 4.8.2",
+        toolName: "pa11y 8.0.0",
         verdict: "pass",
         scope: "project",
       });
@@ -170,7 +170,7 @@ describe("list_attestations: fresh attestation", () => {
       // present (the response-shape invariant); `toolName` rides along
       // present-when-meaningful.
       expect(entry.evidenceSource).toBe("runtime_tool");
-      expect(entry.toolName).toBe("axe-core 4.8.2");
+      expect(entry.toolName).toBe("pa11y 8.0.0");
       // `stale` must be absent entirely — key presence, not truthiness.
       expect("stale" in entry).toBe(false);
       expect(body.meta.totalCount).toBe(1);
@@ -246,7 +246,7 @@ describe("list_attestations: probe unavailable", () => {
         reason: "runtime harness reported pass for focus-visible",
         attestedAt: "2026-04-18T00:00:00.000Z",
         evidenceSource: "runtime_tool",
-        toolName: "axe-core 4.8.2",
+        toolName: "pa11y 8.0.0",
         verdict: "pass",
         scope: "project",
       });
