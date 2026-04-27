@@ -426,7 +426,7 @@ describe("parseTsx", () => {
       // pre-transform that fed pure JSX-equivalent residue) must keep
       // the v0.1.x behaviour so existing rule tests and live scans
       // don't regress. The MCP session, apply-fix re-parse path, and
-      // every CLI command pass filePath through (Q8-PARSER-ROUTING-JS-AS-TSX).
+      // every CLI command pass filePath through.
       const src = "const App = () => <div className='x'>hi</div>;";
       const { errors, root } = parseTsx(src);
       expect(errors).toEqual([]);
@@ -434,7 +434,7 @@ describe("parseTsx", () => {
     });
 
     it("does not emit fake JSX parse errors on a `.js` file with `<Identifier` member-access comparisons", () => {
-      // The dispatch's specified case for Q8-PARSER-ROUTING-JS-AS-TSX:
+      // The dispatch's specified case for:
       // an `index.js` file with `if (a < b && b > c)` plus member-access
       // shapes — `<g.top>`, `<r.length>`, `<b.length>` — that the field
       // report observed in 538-entry `parseErrorFiles[]` floods. The
@@ -453,7 +453,7 @@ describe("parseTsx", () => {
     });
   });
 
-  // V1-JS-PARSE-ERROR-REASON-MISLEADING — when the parser still emits a
+  // when the parser still emits a
   // structural JSX error on a non-JSX-bearing extension (e.g. a `.js`
   // whose stray `from "react"` mention in a string literal flips
   // jsxEnabled back on), the reason text rewrites to name the false-JSX

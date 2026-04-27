@@ -361,7 +361,7 @@ describe("parseScss — CSS feature passthrough", () => {
 
 describe("parseScss — contrast-rule wiring (end-to-end shape)", () => {
   it("yields a CSS stylesheet whose declarations carry the substituted colour", () => {
-    // This is the bootstrap-style motivation from V1-PARSER-SCSS: an
+    // This is the bootstrap-style motivation from: an
     // authored palette in $primary + a button rule consuming it must
     // emerge as concrete hex declarations so contrast rules can see them.
     const src = `
@@ -406,7 +406,7 @@ describe("parseScss — error recovery", () => {
   });
 });
 
-// V1-SCSS-CONTRAST-VARIABLES-ZERO-OUTPUT — detector for the
+// detector for the
 // token-only-partial shape (variables declared, zero literal-color
 // usages downstream). Drives the per-rule
 // `coverageConfidenceReason: "scss-unresolved-variables"` downgrade

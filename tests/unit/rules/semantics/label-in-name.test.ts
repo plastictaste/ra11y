@@ -178,7 +178,7 @@ describe("rule semantics/label-in-name", () => {
   });
 
   describe("template directives are stripped before compare and echo", () => {
-    // Q4-LABEL-IN-NAME-LIQUID-STRIP-MISSING: attribute values are never
+    // attribute values are never
     // stripped at parse time, and the parser's text-node path breaks on
     // `<` — a Liquid tag like `{% if foo < 5 %}` leaks raw tokens into
     // the HtmlText. Neither failure mode should produce a finding whose
@@ -283,7 +283,7 @@ describe("rule semantics/label-in-name", () => {
   });
 
   describe("editCandidate synthesis (non-contiguous tokens)", () => {
-    // P1-L (Track Q, 2026-04-17 agent-consumer eval): when the
+    // P1-L (2026-04-17 agent-consumer eval): when the
     // diagnosis is "visible tokens present in aria-label but non-
     // contiguous", the rule has enough signal to synthesize a concrete
     // rewrite — verbatim visible-text prefix + `": "` + remaining
@@ -360,7 +360,7 @@ describe("rule semantics/label-in-name", () => {
   });
 
   describe("user-authored echo is size-capped", () => {
-    // Regression invariant for V1-SIZE-LABEL-ECHO-CAP: Bootstrap's
+    // Regression invariant for: Bootstrap's
     // floating-label.html had a 1.5 KB lorem-ipsum label that got
     // echoed verbatim twice per finding, inflating a single-file scan
     // response by tens of KB. The rule now caps user-authored visible

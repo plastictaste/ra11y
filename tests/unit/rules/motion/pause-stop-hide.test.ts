@@ -445,7 +445,7 @@ describe("rule motion/pause-stop-hide", () => {
 
     // Spec gate: a one-shot 0.2s animation cannot exceed 5s of total
     // runtime — the canonical real-world false-positive shape that
-    // triggered V1-RULE-MOTION-PAUSE-STOP-HIDE-IGNORES-ITERATION-COUNT.
+    // triggered.
     it("one-shot short inline animation (default iteration-count = 1) does NOT fire", () => {
       const v = runRule(rule, `<div style="animation: hide 0.2s ease-out"></div>`, {
         filePath: "index.html",
@@ -816,7 +816,7 @@ describe("rule motion/pause-stop-hide", () => {
     });
   });
 
-  describe("selector/declaration line split (Q7-MOTION-FINDING-SELECTOR-LINE)", () => {
+  describe("selector/declaration line split", () => {
     // The structural anchor for a selector-scoped CSS finding is the
     // selector at the rule's opening line — the agent reading the file
     // there sees what the rule applies to (key for the 2.2.2 vs 2.3.3
@@ -885,7 +885,7 @@ describe("rule motion/pause-stop-hide", () => {
     });
   });
 
-  describe("real-world false-positive regressions (V1-RULE-MOTION-PAUSE-STOP-HIDE-IGNORES-ITERATION-COUNT)", () => {
+  describe("real-world false-positive regressions (iteration-count gating)", () => {
     // Encodes the failure modes from the corpus report: a one-shot
     // 0.2s `animation: hide` and a `forwards` fill-mode animation on
     // animated-countdown / good-cheap-fast each fired pre-gate. The

@@ -14,7 +14,7 @@
  * findings collide on the same token (same ruleId, same filePath, same
  * line-context window) — silently breaking the agent's dedup + suppress
  * flows, which treat `findingId` as a primary key. See
- * Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE for the original field
+ * for the original field
  * report. The fix threads a `variantKey` through
  * {@link import("../../../src/utils/finding-id.ts").computeFindingId}
  * (see `src/utils/finding-id.ts`) and opts-in rules that need it.
@@ -46,7 +46,7 @@ describe("Violation.findingId — sub-variant uniqueness invariant", () => {
     // input excluded the sub-variant discriminator. The agent's
     // suppress + dedup flows, which treat `findingId` as a primary key,
     // silently merged the two distinct findings into one — exactly the
-    // failure mode Q6-FINDINGID-COLLISION-SAMEFILE-SAMELINE reported.
+    // failure mode reported.
     //
     // Invariant under test: at each line, the "generic-phrase" finding
     // and the "duplicate-name" finding have distinct `findingId`s.

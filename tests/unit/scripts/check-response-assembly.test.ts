@@ -8,7 +8,7 @@
  * analyzer (`findResponseAssemblyViolations`) so the invariants are
  * checked independently of the current source tree.
  *
- * The `plan-violations-composite` pattern (Q7-PLAN-VIOLATIONS-COMPOSITE)
+ * The `plan-violations-composite` pattern
  * is the third pattern the analyzer enforces, alongside
  * `newText-empty-with-edit-kind` and `plan-total-findings`.
  */
@@ -21,7 +21,7 @@ const NO_ALLOWLIST: readonly AllowlistEntry[] = [];
 
 describe("findResponseAssemblyViolations: plan-violations-composite pattern", () => {
   test("flags `plan: { violations: <numeric literal> }` inside textResult", () => {
-    // Q7-PLAN-VIOLATIONS-COMPOSITE: the flat `plan.violations`
+    // the flat `plan.violations`
     // headline was deleted because it summed across the four
     // `fixesByClass` lanes. Re-introducing it inside a `textResult`
     // call is the regression this guard catches.
@@ -160,7 +160,7 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
 
 describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite pattern", () => {
   test("flags `automatedCoverage: { … automatedCriteriaPassRate }` inside textResult", () => {
-    // Q7-CHECKLIST-PASS-RATE-COMPOSITE: the lone scalar bundled
+    // the lone scalar bundled
     // `clean` / `untestable` / `withFindings` into one ratio. The
     // singular shape is the canonical checklist envelope on a
     // single-standard call.

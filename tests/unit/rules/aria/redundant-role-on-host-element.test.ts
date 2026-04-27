@@ -198,7 +198,7 @@ describe("rule aria/redundant-role-on-host-element", () => {
     });
   });
 
-  describe("Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: fixPaths.primary.edit", () => {
+  describe("fixPaths.primary.edit", () => {
     // Doctrine: a `fixClass: "mechanical"` rule must populate
     // `fixPaths.primary.edit` so `suggest_fix` returns `kind: "edit"`
     // with a concrete oldText/newText pair. This rule's fix is a pure

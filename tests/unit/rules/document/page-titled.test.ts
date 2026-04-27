@@ -107,7 +107,7 @@ describe("rule document/page-titled", () => {
     expect(v[0]?.suggestion).toContain("Product Catalog");
   });
 
-  // Fragment-shape enrichment (Q4-PARTIAL-PAGE-TITLED). Head-partials
+  // Fragment-shape enrichment. Head-partials
   // open <html> + <head> but leave <body> to the parent layout, and
   // often inject <title> via a template directive — surface, don't
   // suppress, per docs/kb/architecture/ai-first-consumer.md.
@@ -144,7 +144,7 @@ describe("rule document/page-titled", () => {
     expect(v[0]?.couldBeWrongBecause).toBeUndefined();
   });
 
-  // Template-interpolated title branch (Q4-DOCUMENT-PAGE-TITLED-LIQUID-STRIP).
+  // Template-interpolated title branch.
   // `<title>{{ page.title }}</title>` — the parser strips the directive span
   // so the in-memory text is empty, but the rendered value is whatever the
   // template evaluates to. The original empty-title error would be a confident

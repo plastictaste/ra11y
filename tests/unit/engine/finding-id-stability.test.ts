@@ -1,5 +1,5 @@
 /**
- * V1-FINDING-ID-STABILITY: `findingId` must stay stable across scans
+ * `findingId` must stay stable across scans
  * of the same source, and must stay stable for an unchanged finding
  * even when an UNRELATED line in the same file was edited between the
  * two scans.

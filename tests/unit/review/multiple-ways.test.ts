@@ -107,7 +107,7 @@ describe("review/multiple-ways", () => {
     expect(out).toEqual([]);
   });
 
-  describe("reason-text enrichment (V1-FP-MULTIPLE-WAYS-CITE-COUNTS)", () => {
+  describe("reason-text enrichment", () => {
     // Per AI-first doctrine the finder must surface the counted
     // signals so the agent can dismiss a test-harness or empty shell
     // without reopening the file. Counts are additive context, not a
@@ -421,7 +421,7 @@ describe("review/multiple-ways", () => {
     });
   });
 
-  describe("body+link/nav predicate gate (V1-FINDER-2.4.5-MULTIPLE-WAYS-REQUIRE-BODY)", () => {
+  describe("body+link/nav predicate gate", () => {
     // The finder previously fired on every HTML root (including
     // `<head>`-only template partials and standalone CSS-trick
     // demos). The new predicate gates emission on BOTH a `<body>`
@@ -608,7 +608,7 @@ describe("review/multiple-ways", () => {
     });
   });
 
-  describe("fragment-path reason hint (V1-FINDER-2.4.5-MULTIPLE-WAYS-REQUIRE-BODY)", () => {
+  describe("fragment-path reason hint", () => {
     // Per AI-first doctrine the candidate still surfaces — the
     // path-derived hint is additive context redirecting the agent's
     // review to the composing parent file rather than auto-suppressing.

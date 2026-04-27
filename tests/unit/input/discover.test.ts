@@ -1,6 +1,6 @@
 /**
  * File-discovery tests, focused on `.gitignore` walk-up semantics
- * introduced for P1-IGN. The invariants these guard:
+ * introduced for. The invariants these guard:
  *
  *   - Subpath scans honor ancestor `.gitignore` files (walked up to
  *     the git root), so `scan_project({ cwd: repo })` and
@@ -48,7 +48,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("subpath scan honors root .gitignore (the P1-IGN regression)", async () => {
+  it("subpath scan honors root .gitignore", async () => {
     // Repo layout:
     //   repo/.gitignore            -> "dist/"
     //   repo/src/app/page.tsx      (kept)

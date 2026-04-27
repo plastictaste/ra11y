@@ -126,7 +126,7 @@ describe("rule aria/invalid-role", () => {
     });
   });
 
-  describe("Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE: fixPaths.primary.edit", () => {
+  describe("fixPaths.primary.edit", () => {
     // Doctrine: a `fixClass: "mechanical"` rule must populate
     // `fixPaths.primary.edit` so `suggest_fix` returns `kind: "edit"`.
     // For typos within 2 edits of a real role, the replacement is

@@ -463,7 +463,7 @@ describe("parseInlineDisables", () => {
     });
   });
 
-  // Q7-NAVIGATION-HREF-RULE-RENAME wiring: pragmas using the deprecated
+  // wiring: pragmas using the deprecated
   // rule IDs `navigation/href-javascript-void` (the original umbrella
   // name) and `navigation/href-placeholder` (the intermediate umbrella
   // rename) both rewrite to the canonical split-target ID
@@ -496,7 +496,7 @@ describe("parseInlineDisables", () => {
 
     it("the intermediate umbrella ID `href-placeholder` also rewrites to the canonical split-target", () => {
       // Q7 split: the older `href-javascript-void` rename hop
-      // (V1-RULE-NAVIGATION-HREF-VOID-RENAME) was an intermediate
+      // was an intermediate
       // umbrella; both legacy IDs (the original `href-javascript-void`
       // and the intermediate `href-placeholder`) now fold to
       // `href-javascript-scheme`. Pragmas under either legacy spelling

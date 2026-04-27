@@ -16,11 +16,11 @@
  *     `filesScanned` count — `high` when any files were scanned,
  *     `low` with a "nothing to evaluate" reason when zero were. The
  *     invariant `perRuleCoverage.length === rulesEvaluated` now holds
- *     for every scan shape (V1-META-RULES-EVALUATED-COVERAGE-DRIFT);
+ * for every scan shape;
  *     agents reading both surfaces cannot hit silent absences for
  *     project-scoped rules.
  *
- * `findingsEmitted` (V1-SHAPE-RULECOV-COUNT) is a schema-required
+ * `findingsEmitted` is a schema-required
  * counter on every entry — zero means "rule ran and found nothing,"
  * which paired with `coverageConfidence` is the load-bearing signal
  * agents use to distinguish "confidently clean" from "didn't exercise
@@ -167,7 +167,7 @@ describe("buildPerRuleCoverage", () => {
     expect(row!.remediation).toBeUndefined();
   });
 
-  // V1-META-RULES-EVALUATED-COVERAGE-DRIFT: rules without an
+  // rules without an
   // extension gate (project-scoped, `afterProject` only) used to be
   // silently omitted from `perRuleCoverage`, leaving the invariant
   // `perRuleCoverage.length === rulesEvaluated` broken. Now they get
@@ -232,7 +232,7 @@ describe("buildPerRuleCoverage", () => {
     expect(entries.length).toBe(0);
   });
 
-  // Q7-AAA-RULE-LOADER-SILENT-NORUN. A rule that the active conformance
+  //. A rule that the active conformance
   // level filtered out (canonical: an AAA-only rule under default `AA`)
   // used to disappear from `perRuleCoverage` — the agent reading the
   // response could not distinguish "rule isn't loaded" from "rule loaded
@@ -309,7 +309,7 @@ describe("buildPerRuleCoverage", () => {
     expect(byId.get("nav/skip-link")!.remediation).toContain("JSX/TSX");
   });
 
-  // V1-SHAPE-RULECOV-COUNT: findingsEmitted is schema-required and zero
+  // findingsEmitted is schema-required and zero
   // is meaningful — these tests pin the invariant so consumers (Bootstrap
   // and other MCP scan responses) can budget against the counter without
   // re-deriving it from `files[].findings[]`.
@@ -387,7 +387,7 @@ describe("buildPerRuleCoverage", () => {
     expect(row!.coverageConfidence).toBe("low");
   });
 
-  // V1-NOISE-RULE-PER-FILE-ROLLUP: per-file concentration hint.
+  // per-file concentration hint.
   // Thresholds: > 10 total findings AND > 50% share on the densest
   // file. Optional field — omitted via conditional spread (never null,
   // never empty-object) when thresholds don't clear. Findings
@@ -950,7 +950,7 @@ describe("buildPerRuleCoverage", () => {
   });
 });
 
-// Q7-PERRULECOVERAGE-EMPTY-ELIGIBLE-COLLAPSE: extension-gated rows that
+// extension-gated rows that
 // scanned zero eligible files of the rule's extension type used to ship
 // ~200 chars of identical "no files matching .css were scanned"
 // remediation prose, ~30 of ~70 entries on an HTML-only Tailwind scan.
@@ -1035,7 +1035,7 @@ describe("partitionPerRuleCoverage", () => {
   });
 
   it("retains level-gated rows verbatim (skipReason carries actionable remediation a counter cannot)", () => {
-    // Q7-AAA-RULE-LOADER-SILENT-NORUN. A level-gated row carries
+    //. A level-gated row carries
     // `skipReason: "gated_by_level"` plus `requiredLevel` /
     // `requestedLevel` so the agent has the exact remediation
     // ("re-run with `level: 'AAA'`"). Folding it into the

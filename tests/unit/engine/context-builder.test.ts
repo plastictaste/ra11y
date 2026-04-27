@@ -1,5 +1,5 @@
 /**
- * Context-builder unit tests — focused on the Q2-WRAPMAP-RULES
+ * Context-builder unit tests — focused on the
  * `wrappersForElement` resolution. The rest of RuleContext is exercised
  * end-to-end by every rule test; here we assert the slice that's new:
  *   - no opt-in  → empty set

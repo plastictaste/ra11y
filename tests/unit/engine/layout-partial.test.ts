@@ -12,7 +12,7 @@ describe("isFragmentFile", () => {
   // Fragment classification is the shared "is this file a fragment?"
   // predicate consumed by document-shape rules
   // (`semantics/heading-hierarchy`'s no-<h1> branch and, per
-  // Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION, `semantics/landmark-main`).
+  //, `semantics/landmark-main`).
   // Keeping the tests next to the helper rather than duplicating across
   // every rule's unit test pins the predicate's behavior in one place.
 

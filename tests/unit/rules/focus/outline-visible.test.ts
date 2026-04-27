@@ -319,7 +319,7 @@ describe("rule focus/outline-visible", () => {
   // upgrade from `info` to `error`: the evidence the class lands on
   // a focusable element is concrete, and `info` would silently
   // mis-triage what is a 2.4.7 violation
-  // (Q5-FOCUS-OUTLINE-VISIBLE-BUTTON-SEVERITY).
+  //.
   describe("interactive-element severity upgrade", () => {
     const css = `.magic:focus { outline: none; }`;
 

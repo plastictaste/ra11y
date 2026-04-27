@@ -196,7 +196,7 @@ describe("rule document/lang-attribute", () => {
     expect(suggestion).toContain('lang="en"');
   });
 
-  // ── V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE: fixPaths.edit ─
+  // ──: fixPaths.edit ─
   // The rule is `fixClass: "verify-in-source"` because the language tag
   // requires inference. On the high-signal lanes — author has already
   // declared a `<meta http-equiv="Content-Language">` or `<meta
@@ -205,7 +205,7 @@ describe("rule document/lang-attribute", () => {
   // `suggest_fix` returns `kind: "edit"`. The bare `<html>` (no in-page
   // hint) and charset-only branches stay guidance-only.
 
-  describe("fixPaths.edit (V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE)", () => {
+  describe("fixPaths.edit", () => {
     it("emits primary.edit inserting lang from <meta http-equiv='Content-Language'>", () => {
       const source =
         '<html><head><meta http-equiv="Content-Language" content="fr"></head><body></body></html>';

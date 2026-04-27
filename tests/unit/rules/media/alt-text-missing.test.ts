@@ -327,7 +327,7 @@ describe("rule media/alt-text-missing", () => {
     });
   });
 
-  describe("nativeWrapperElements mapping (Q2-WRAPMAP-RULES)", () => {
+  describe("nativeWrapperElements mapping", () => {
     it("opts in to the native `img` tag so mapped wrappers fire", () => {
       expect(rule.wrapperTreatsAsElement).toBe("img");
     });
@@ -359,7 +359,7 @@ describe("rule media/alt-text-missing", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("fires on a dotted compound wrapper name (Q2R2-COMPOUND) mapped to img", () => {
+    it("fires on a dotted compound wrapper name mapped to img", () => {
       // Flattened form of `{ Media: { Avatar: "img" } }` from the config
       // loader — the dotted key drives findJsxElementsByTag via
       // ctx.wrappersForElement, matching the <Media.Avatar> tag name.
@@ -620,7 +620,7 @@ describe("rule media/alt-text-missing", () => {
     });
   });
 
-  describe("polymorphic as/asChild resolution (Q2R2-POLYMORPHIC)", () => {
+  describe("polymorphic as/asChild resolution", () => {
     it('fires on <Box as="img" src=... /> with no alt', () => {
       const violations = runRule(rule, `const X = <Box as="img" src="u.png" />;`);
       expect(violations).toHaveLength(1);

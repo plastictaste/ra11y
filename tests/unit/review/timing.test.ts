@@ -381,7 +381,7 @@ describe("review/timing", () => {
     // "guess from the verbatim slice." Per ai-first-consumer.md the
     // hint is additive — confidence stays "medium," candidate stays
     // in the primary list, no severity change.
-    // V1-FINDER-2.2.1-SETTIMEOUT-VENDOR-FILE-GATE.
+    //.2.1-SETTIMEOUT-VENDOR-FILE-GATE.
 
     it("flags member-access durations (this._config.delay)", () => {
       const src = `
@@ -494,9 +494,9 @@ describe("review/timing", () => {
     // potential session timeout." Per ai-first-consumer.md the
     // candidate is NEVER suppressed on filename signal — annotation,
     // not silencing. The dedicated content-level vendor-banner
-    // detector (V1-VENDOR-LIBRARY-BANNER-DETECTION) is not yet
+    // detector is not yet
     // shipped; this filename probe is a narrow stand-in until then.
-    // V1-FINDER-2.2.1-SETTIMEOUT-VENDOR-FILE-GATE.
+    //.2.1-SETTIMEOUT-VENDOR-FILE-GATE.
 
     it("annotates `bootstrap.js` with a vendor-bundle hint", () => {
       const out = runFinder(finder, `setTimeout(function(){},2000);`, {
@@ -734,7 +734,7 @@ describe("review/timing", () => {
     // and echoes a ~80-char context window so the agent can locate
     // the specific call without guessing. Reason-text enrichment per
     // ai-first-consumer.md — no severity change, candidate stays in
-    // the primary list. Q6-MINIFIED-FILE-SNIPPET-COLUMN-ENRICHMENT.
+    // the primary list..
 
     it("enriches reason when the basename carries a `.min.` infix", () => {
       // Short source (single-line but under the 1000-char threshold) —

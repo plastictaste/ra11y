@@ -43,7 +43,7 @@
  * The invariant therefore already holds by construction; these tests
  * lock it down against refactor drift.
  *
- * History — V1-FIX-SAFETY-CONSTANT-FIELD: before the fix, every
+ * History: before the fix, every
  * emitted `AgentFix` carried a constant `safety: "safe"` sibling,
  * regardless of `fixClass`. A field that never varies conveys no
  * signal, and claiming "safe" on a runtime-only fix was arguably
@@ -52,7 +52,7 @@
  * distinguishes the remediation lane. Tests that previously asserted
  * `fix.safety === "safe"` were updated to assert its absence.
  *
- * V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+ * the
  * description-hoist pointer used to ride as a SIBLING field
  * (`fixDescriptionRef`) on the finding, while the inline prose lived
  * at `fix.description`. Two locations for the same prose meant
@@ -83,11 +83,11 @@ import { withFindingId } from "../../../helpers/make-violation.ts";
  * covered by the file-level `groupFixDescriptionRefs` — the
  * Q-SHARED-FIXDESCREF-SAME-GROUP-INLINE-DEDUPE lift branch).
  *
- * Post V1-FIX-SAFETY-CONSTANT-FIELD: `safety` no longer rides on the
+ * Post: `safety` no longer rides on the
  * fix object, so an empty `fix: {}` is now the canonical dishonest
  * shape the invariant must catch.
  *
- * Post V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+ * Post: the
  * hoist pointer is nested at `fix.descriptionRef`, not a sibling field
  * on the finding.
  */
@@ -195,7 +195,7 @@ describe("AgentFix shape invariant — never empty payload", () => {
 
 describe("AgentFix shape invariant — honest after the fix-description hoist", () => {
   it("after hoist, stripped description is replaced by a nested fix.descriptionRef on the finding", () => {
-    // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT: the
+    // the
     // pointer rides INSIDE `fix` (not as a sibling on the finding).
     // Pre-hoist shape:
     //   fix: { description }
@@ -238,7 +238,7 @@ describe("AgentFix shape invariant — honest after the fix-description hoist", 
     const rewrittenFindings = result.files[0]?.findings ?? [];
     expect(rewrittenFindings.length).toBe(2);
     for (const f of rewrittenFindings) {
-      // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT:
+      //:
       // pointer is nested under `fix`, not on the finding directly.
       expect(f.fix).toBeDefined();
       expect(f.fix?.description).toBeUndefined();
@@ -298,13 +298,13 @@ describe("AgentFix shape invariant — honest after the fix-description hoist", 
     for (const f of result.files[0]?.findings ?? []) {
       expect(f.fix?.oldText).toBe("<div>");
       expect(f.fix?.newText).toBe("<button>");
-      // V1-FIX-SAFETY-CONSTANT-FIELD: the constant `safety: "safe"`
+      // the constant `safety: "safe"`
       // field was dropped. `fixClass` on the parent finding carries the
       // remediation-lane signal; a constant sibling on every fix was
       // noise. Assert the field never reaches the wire.
       expect((f.fix as Record<string, unknown>)?.safety).toBeUndefined();
       expect(f.fix?.description).toBeUndefined();
-      // V1-FIX-DESCRIPTION-INLINE-VS-REF-PER-FINDING-SHAPE-DRIFT:
+      //:
       // pointer is nested under `fix`, not on the finding.
       expect(f.fix?.descriptionRef?.hash).toBe(hash);
       expect((f as unknown as Record<string, unknown>).fixDescriptionRef).toBeUndefined();
@@ -380,7 +380,7 @@ describe("AgentFix shape invariant — direct-construction corner case", () => {
     // Belt-and-braces: if a future caller ever constructs an
     // AgentFinding literal directly (bypassing buildFix) with an
     // empty-payload fix and no nested descriptionRef, the helper
-    // catches it. Post V1-FIX-SAFETY-CONSTANT-FIELD this is the
+    // catches it. Post this is the
     // canonical dishonest shape — previously the same corner case
     // carried a constant `safety: "safe"` sibling that conveyed no
     // signal.
@@ -439,7 +439,7 @@ describe("AgentFix shape invariant — direct-construction corner case", () => {
   });
 });
 
-describe("V1-FIX-SAFETY-CONSTANT-FIELD — safety field is dropped", () => {
+describe("safety field is dropped from fix shape", () => {
   it("does not emit `safety` on mechanical-edit fixes", () => {
     const v = violation({
       location: { filePath: "a.tsx", line: 1, column: 1 },
@@ -492,7 +492,7 @@ describe("V1-FIX-SAFETY-CONSTANT-FIELD — safety field is dropped", () => {
 });
 
 describe("buildAgentFinding — fix.oldText widens to a unique anchor when source is provided", () => {
-  // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT.
+  //.
   //
   // Cross-tool contract: `scan_project` (this builder) and `suggest_fix`
   // both consume the same `widenToUniqueAnchor` ladder so an agent
@@ -661,7 +661,7 @@ describe("buildAgentFinding — fix.oldText widens to a unique anchor when sourc
   });
 
   it("cross-tool contract: scan_project fix.oldText matches suggest_fix primary.edit.oldText for the same violation", () => {
-    // V1-FIX-OLDTEXT-AMBIGUITY-LABEL-ADJACENT: the explicit invariant
+    // the explicit invariant
     // the backlog item asks for. `scan_project` (per-finding `fix`)
     // and `suggest_fix` (`primary.edit`) consume the same widen helper,
     // so the same violation + the same source should produce

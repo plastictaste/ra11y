@@ -202,7 +202,7 @@ describe("parseHtml", () => {
     expect(() => parseHtml(garbage)).not.toThrow();
   });
 
-  // ─── template-directive stripping (Q4-LIQUID-TEXT-LITERAL) ─────────────
+  // ─── template-directive stripping ─────────────
   //
   // Structural invariants the fixture harness also guards via
   // jekyll-liquid-text-literal; these assert at the parser surface so a

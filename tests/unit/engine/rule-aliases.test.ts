@@ -28,8 +28,8 @@ import {
  *
  * An in-memory synthetic table drives the resolution-behavior tests so
  * they stay valid when the shipped `RULE_ALIASES` is empty (current
- * state, per V1-INFRA-RULE-ID-ALIAS-TABLE's empty-initial guidance)
- * and when V1-RULE-NAVIGATION-HREF-VOID-RENAME populates the first
+ * state, per's empty-initial guidance)
+ * and when populates the first
  * entry.
  */
 
@@ -120,7 +120,7 @@ describe("findAliasByFrom", () => {
   });
 
   it("returns the same record `resolveRuleId` would attach for a live alias", () => {
-    // Spot-check one live alias (if any) — covers the V1-RULE-
+    // Spot-check one live alias (if any) — covers the-
     // NAVIGATION-HREF-VOID-RENAME commit when it populates the table.
     for (const alias of RULE_ALIASES) {
       const resolution = resolveRuleId(alias.from);

@@ -120,7 +120,7 @@ describe("rule contrast/minimum", () => {
     });
   });
 
-  // V1-CSS-CONTRAST-VAR-ROOT-RESOLUTION: same-file `:root` custom-
+  // same-file `:root` custom-
   // property resolution. Design-system CSS routinely declares tokens
   // once on `:root` and consumes them via `var(--name)` on descendants
   // — before this resolver landed, the pair path silently skipped
@@ -269,7 +269,7 @@ describe("rule contrast/minimum", () => {
     });
   });
 
-  // V1-CSS-CONTRAST-CASCADE-INHERITED: cross-selector cascade fallback
+  // cross-selector cascade fallback
   // for document defaults. Real-world CSS routinely declares one half
   // of the contrast pair on `body` / `html` / `:root` and overrides the
   // other half on descendants — before the fallback landed, the pair

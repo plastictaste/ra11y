@@ -1,5 +1,5 @@
 /**
- * Tests for the inherited-findings synthesizer (Q2R2-INHERITED).
+ * Tests for the inherited-findings synthesizer.
  *
  * Mixes unit tests over the pure `synthesizeInheritedFindings` function
  * (deterministic behaviour, skip rules, chain prevention) with

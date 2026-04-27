@@ -447,7 +447,7 @@ describe("rule tooltip/dismissable", () => {
   // suggestion would be self-defeating. Suppress on this branch and
   // keep the supplementary-title flagging on the cases where another
   // name source is present and the dismissability failure is the only
-  // 1.4.13 issue. Per the backlog Q7-RULE-TOOLTIP-DISMISSABLE-TITLE-IS-ACCNAME
+  // 1.4.13 issue. Per the backlog
   // gate contract; deterministic from attributes + descendant text
   // alone (no guessed composition), so the gate is honest per
   // docs/kb/architecture/ai-first-consumer.md "the test before adding

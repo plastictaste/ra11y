@@ -324,7 +324,7 @@ describe("rule keyboard/handler-missing", () => {
       expect(v[0]?.suggestion).toContain("data-bs-toggle");
     });
 
-    // Cross-check from V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER: a real
+    // Cross-check from: a real
     // disclosure trigger that ALSO carries `data-bs-target` (the
     // canonical Bootstrap modal-open shape) must still fire on a bare
     // <div>. Locks in that the FP fix did not also disable the true
@@ -395,7 +395,7 @@ describe("rule keyboard/handler-missing", () => {
       expect(v).toHaveLength(0);
     });
 
-    // V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER: `data-bs-toggle="buttons"`
+    // `data-bs-toggle="buttons"`
     // is a *container* value — Bootstrap wires toggle behavior on the
     // child <input> controls, not on the host. Flagging the container
     // would push the agent toward <button> wrappers that nest interactive
@@ -412,7 +412,7 @@ describe("rule keyboard/handler-missing", () => {
       expect(v).toHaveLength(0);
     });
 
-    // V1-FP-KEYBOARD-HANDLER-DATA-BS-CONTAINER: `data-bs-ride` is an
+    // `data-bs-ride` is an
     // auto-init signal to Bootstrap's JS, not a click trigger. The host
     // <div class="carousel"> never receives focus; the keyboard
     // controls are child <button class="carousel-control-*"> elements.

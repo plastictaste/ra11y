@@ -359,7 +359,7 @@ describe("parseLess — CSS feature passthrough", () => {
 describe("parseLess — contrast-rule wiring (end-to-end shape)", () => {
   it("yields a CSS stylesheet whose declarations carry the substituted colour", () => {
     // Bootstrap 3-era Less (the startbootstrap-* corpus that motivated
-    // V1-PARSER-LESS): authored palette in @brand-primary + button
+    //): authored palette in @brand-primary + button
     // rule consuming it must emerge as concrete hex declarations so
     // contrast rules can see them.
     const src = `

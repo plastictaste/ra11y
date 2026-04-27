@@ -222,7 +222,7 @@ describe("createStandardFilter", () => {
     expect(filter.citedCriteria(mixedRule)).toEqual(["delta:1.1", "delta:9.9"]);
   });
 
-  // Q7-AAA-RULE-LOADER-SILENT-NORUN. The per-rule-coverage builder
+  //. The per-rule-coverage builder
   // needs to distinguish "rule inactive because no enabled standard
   // reaches it" from "rule inactive because the active level filtered
   // it out." Only the second deserves a `skipReason: "gated_by_level"`

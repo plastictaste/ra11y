@@ -852,7 +852,7 @@ describe("rule aria/expanded-on-disclosure", () => {
       expect(rule.docs.references.some((r) => r.includes("WCAG22"))).toBe(true);
     });
 
-    it("is a verify-in-source fix class (V1-SUGGEST-FIX-MECHANICAL-LANE-EMIT-EDIT)", () => {
+    it("is a verify-in-source fix class", () => {
       // Re-tagged from `mechanical` because neither finding lane is a
       // deterministic single attribute insertion the scanner can ship as
       // `fixPaths.primary.edit`. The `missing-expanded` value (`"false"`)

@@ -406,7 +406,7 @@ describe("rule semantics/landmark-main", () => {
       // confidence — `couldBeWrongBecause` must be absent so the agent
       // doesn't mis-route the finding as "probably fine, composed
       // elsewhere." The backlog expectation explicitly preserves this
-      // coverage (Q4-CROSS-INCLUDE-LANDMARK-COMPOSITION).
+      // coverage.
       const v = runRule(
         rule,
         [
@@ -445,7 +445,7 @@ describe("rule semantics/landmark-main", () => {
     it("does NOT fire on a page with `---` front-matter (fragment-file gate)", () => {
       // Front-matter at the top of the file is conclusive evidence the
       // file is content composed into a parent layout — the parent
-      // supplies the <main> landmark. Per Q8-HEADING-HIERARCHY-FRAGMENT-
+      // supplies the <main> landmark. Per-
       // EMISSION, the fragment-file gate suppresses the missing-<main>
       // emit on these files outright (the previous "enriched fire"
       // shape over-surfaced — the agent had to re-read each cited file
@@ -507,7 +507,7 @@ describe("rule semantics/landmark-main", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Branch E — empty-structural-shell (V1-RULE-LANDMARK-MAIN-AND-HEADING-
+  // Branch E — empty-structural-shell (-
   // HIERARCHY-DEFER-ON-EMPTY-PAGE).
   //
   // Pre-fix, a body composed entirely of decorative `<div>` / `<img>` with
@@ -569,7 +569,7 @@ describe("rule semantics/landmark-main", () => {
     it("does NOT fire on a body holding only a <script> (script-only shape routes elsewhere)", () => {
       // A body containing nothing but a <script> is a vanilla-JS demo
       // whose DOM is generated at runtime — a different case tracked by
-      // V1-EMPTY-ROOT-DIV-SCRIPT-ONLY-WARNING. Branch E's visible-
+      //. Branch E's visible-
       // descendant tally excludes <script> (and <style>/<noscript>/
       // <template>) so this body has 0 visible descendants and stays
       // below the ≥3 threshold.
@@ -613,7 +613,7 @@ describe("rule semantics/landmark-main", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Body-shape descriptor (Q7-LANDMARK-MAIN-REASON-IDENTICAL).
+  // Body-shape descriptor.
   //
   // The pre-fix message was identical across every fire on a single scan
   // (18 fires, one identical sentence) — a fixed boilerplate sentence
@@ -829,7 +829,7 @@ describe("rule semantics/landmark-main", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Fragment-file gate (Q8-HEADING-HIERARCHY-FRAGMENT-EMISSION).
+  // Fragment-file gate.
   //
   // Component-fragment files (no root <html>/<body>/<head>), content-
   // fragment files (`---` front-matter), and partials under conventional
@@ -844,7 +844,7 @@ describe("rule semantics/landmark-main", () => {
   // honest because fragment classification is structural evidence
   // (root-tag absence, front-matter delimiter, fragment-path segment) —
   // not a heuristic guess about composition. Mirrors the matching gate
-  // on `semantics/heading-hierarchy` (Q7-FRAGMENT-FILE-HEADING-
+  // on `semantics/heading-hierarchy` (-
   // HIERARCHY); the shared `isFragmentFile` helper in
   // `src/engine/layout-partial.ts` is the single source of truth.
   // ─────────────────────────────────────────────────────────────────────────

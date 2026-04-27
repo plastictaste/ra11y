@@ -199,7 +199,7 @@ describe("rule forms/labels-required", () => {
     });
   });
 
-  describe("nativeWrapperElements mapping (Q2-WRAPMAP-RULES)", () => {
+  describe("nativeWrapperElements mapping", () => {
     it("opts in to the native `input` tag so mapped wrappers fire", () => {
       expect(rule.wrapperTreatsAsElement).toBe("input");
     });
@@ -239,7 +239,7 @@ describe("rule forms/labels-required", () => {
     });
   });
 
-  describe("HTML: contenteditable hosts (V1-DETECT-LABELS-CONTENTEDITABLE)", () => {
+  describe("HTML: contenteditable hosts", () => {
     it('fires on <div contenteditable="true"> with no label', () => {
       const v = runRule(rule, `<div contenteditable="true"></div>`, { filePath: "index.html" });
       expect(v).toHaveLength(1);
@@ -325,7 +325,7 @@ describe("rule forms/labels-required", () => {
     });
   });
 
-  describe("JSX: contenteditable hosts (V1-DETECT-LABELS-CONTENTEDITABLE)", () => {
+  describe("JSX: contenteditable hosts", () => {
     it('fires on <div contentEditable="true"> with no label', () => {
       const v = runRule(rule, `const X = <div contentEditable="true" />;`);
       expect(v).toHaveLength(1);
@@ -413,7 +413,7 @@ describe("rule forms/labels-required", () => {
     });
   });
 
-  describe("placeholder enrichment (Q6-PLACEHOLDER-IN-FIX-SUGGESTION)", () => {
+  describe("placeholder enrichment", () => {
     it("surfaces the placeholder verbatim in the HTML suggestion when present", () => {
       const v = runRule(rule, `<input type="email" placeholder="Enter email">`, {
         filePath: "index.html",
@@ -530,7 +530,7 @@ describe("rule forms/labels-required", () => {
     });
   });
 
-  describe("polymorphic as/asChild resolution (Q2R2-POLYMORPHIC)", () => {
+  describe("polymorphic as/asChild resolution", () => {
     it('fires on <Field as="input" /> with no label', () => {
       const v = runRule(rule, `const X = <Field as="input" />;`);
       expect(v.length).toBeGreaterThan(0);
@@ -565,14 +565,14 @@ describe("rule forms/labels-required", () => {
     });
   });
 
-  // Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE — when ≥3 direct-child input
+  // when ≥3 direct-child input
   // siblings under one parent share the same `(tagName, type,
   // attributes-modulo-id)` fingerprint and all fail the label check,
   // collapse the N near-identical findings into ONE canonical finding
   // carrying `siblingInstances`. Surface-don't-suppress: the consolidated
   // finding still surfaces, with the full per-sibling line/id trail on
   // `siblingInstances` so an agent reads one row instead of N.
-  describe("HTML: sibling collapse (Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE)", () => {
+  describe("HTML: sibling collapse", () => {
     it("collapses 6 OTP-shaped <input> siblings into one finding with siblingInstances", () => {
       // The canonical OTP cluster pattern — six identical inputs under
       // one parent, each missing a label and each carrying a unique
@@ -663,7 +663,7 @@ describe("rule forms/labels-required", () => {
     });
   });
 
-  describe("JSX: sibling collapse (Q7-DUPLICATE-INPUT-SIBLING-COLLAPSE)", () => {
+  describe("JSX: sibling collapse", () => {
     it("collapses 4 OTP-shaped JSX <input> siblings into one finding", () => {
       const source = `const X = (
         <form>

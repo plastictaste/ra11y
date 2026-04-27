@@ -13,20 +13,20 @@
  *      file extensions — the agent reads library JS directly when
  *      investigating.
  *
- *   2. Iframe non-emission (V1-LIKELY-IRRELEVANT-INCONSISTENT): the
+ * 2. Iframe non-emission: the
  *      `likelyIrrelevant` bucket in `src/mcp/manual-applicability.ts`
  *      decides relevance from `<video>` / `<audio>` presence. The
  *      finder's emission predicate must agree, otherwise the same
  *      criterion ends up `likelyIrrelevant: true` (because the bucket
  *      sees no `<video>`/`<audio>`) yet has iframe-grounded candidates
  *      attached — the contradiction reported as
- *      `V1-LIKELY-IRRELEVANT-INCONSISTENT`. Iframes therefore emit zero
+ * ``. Iframes therefore emit zero
  *      candidates regardless of `src` host. Captions for iframe-
  *      embedded media (1.2.2) remain surfaced as a deterministic
  *      warning by the `media/video-captions-missing` rule, which lives
  *      at the violations layer and is unaffected by this contract.
  *
- *   3. Audio criterion fan scope (Q7-CHECKLIST-AUDIO-VS-VIDEO-CRITERION-FAN):
+ * 3. Audio criterion fan scope:
  *      WCAG 1.2.3 (Audio Description or Media Alternative) and 1.2.5
  *      (Audio Description) are normatively scoped to *synchronized media*
  *      only — content that has both a video track and an audio track.
@@ -99,8 +99,8 @@ describe("review/media-alternatives — DOM-origin extension gate", () => {
   });
 });
 
-describe("review/media-alternatives — iframe non-emission (V1-LIKELY-IRRELEVANT-INCONSISTENT)", () => {
-  // V1-LIKELY-IRRELEVANT-INCONSISTENT: the bucket predicate in
+describe("review/media-alternatives — iframe non-emission", () => {
+  // The bucket predicate in
   // `src/mcp/manual-applicability.ts` decides 1.2.x relevance from
   // `<video>` / `<audio>` presence. If the finder emitted candidates
   // for iframes, the same scan would carry `likelyIrrelevant: true`
@@ -181,7 +181,7 @@ describe("review/media-alternatives — iframe non-emission (V1-LIKELY-IRRELEVAN
   });
 });
 
-describe("review/media-alternatives — audio criterion fan scope (Q7-CHECKLIST-AUDIO-VS-VIDEO-CRITERION-FAN)", () => {
+describe("review/media-alternatives — audio criterion fan scope", () => {
   // WCAG 1.2.3 and 1.2.5 are scoped to synchronized media (content
   // with both a video track and an audio track). A bare <audio>
   // element is audio-only content. Emitting 1.2.3 or 1.2.5 candidates

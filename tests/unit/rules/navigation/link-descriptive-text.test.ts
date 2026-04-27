@@ -33,7 +33,7 @@ describe("rule navigation/link-descriptive-text", () => {
     });
   });
 
-  describe("HTML: fires on generic-pronoun shapes (V1-RULE-LINK-DESCRIPTIVE-TEXT-MISSES-GENERIC-PRONOUNS)", () => {
+  describe("HTML: fires on generic-pronoun shapes", () => {
     // Real-world repro: Bootstrap-tooltip pattern from a field report —
     // two adjacent `<a href="#" data-bs-toggle="tooltip">` inline links
     // labelled "This link" and "that link" stayed silent because the
@@ -395,7 +395,7 @@ describe("rule navigation/link-descriptive-text", () => {
   });
 
   describe("HTML duplicate-name-different-href detection", () => {
-    // V1-LINK-DESCRIPTIVE-TEXT-SAME-NAME-SAME-HREF: WCAG 2.4.4 only
+    // WCAG 2.4.4 only
     // forbids same accessible name pointing at *different* destinations.
     // Two links to the same destination are explicitly permitted by the
     // spec rationale (AT announces visited state on re-encounter).
@@ -462,7 +462,7 @@ describe("rule navigation/link-descriptive-text", () => {
     });
 
     it("does NOT fire on same-name-same-href (spec rationale permits)", () => {
-      // V1-LINK-DESCRIPTIVE-TEXT-SAME-NAME-SAME-HREF — the canonical
+      // the canonical
       // false positive. SSG docs trees commonly link the same anchor or
       // the same external URL multiple times under one repeated label;
       // this is fine — both pointers lead to the same destination, and
@@ -840,7 +840,7 @@ describe("rule navigation/link-descriptive-text", () => {
     });
   });
 
-  describe("nativeWrapperElements mapping (Q2-WRAPMAP-RULES)", () => {
+  describe("nativeWrapperElements mapping", () => {
     it("opts in to the native `a` tag so mapped wrappers fire", () => {
       expect(rule.wrapperTreatsAsElement).toBe("a");
     });

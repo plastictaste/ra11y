@@ -4,7 +4,6 @@
  * module boundary, separately from the finder-level integration
  * tests in `tests/unit/review/timing.test.ts`.
  *
- * Q6-MINIFIED-FILE-SNIPPET-COLUMN-ENRICHMENT.
  */
 
 import { describe, expect, it } from "bun:test";

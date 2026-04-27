@@ -84,7 +84,7 @@ describe("rule semantics/button-name", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("button with SVG <title> child is accessibly named (V1-DETECT-BUTTON-NAME-SVG)", () => {
+    it("button with SVG <title> child is accessibly named", () => {
       const v = runRule(rule, `<button><svg><title>Close dialog</title></svg></button>`, {
         filePath: "index.html",
       });
@@ -122,7 +122,7 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  describe('HTML: <input type="image"> (V1-DETECT-BUTTON-NAME-IMAGE-INPUT)', () => {
+  describe('HTML: <input type="image">', () => {
     it("fires when image input has no accessible name", () => {
       const v = runRule(rule, `<input type="image" src="submit.png">`, {
         filePath: "index.html",
@@ -207,7 +207,7 @@ describe("rule semantics/button-name", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("button has SVG <title> descendant (V1-DETECT-BUTTON-NAME-SVG)", () => {
+    it("button has SVG <title> descendant", () => {
       const v = runRule(rule, `const X = <button><svg><title>Close</title></svg></button>;`);
       expect(v).toHaveLength(0);
     });
@@ -218,7 +218,7 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  describe('JSX: <input type="image"> (V1-DETECT-BUTTON-NAME-IMAGE-INPUT)', () => {
+  describe('JSX: <input type="image">', () => {
     it("fires when image input has no accessible name", () => {
       const v = runRule(rule, `const X = <input type="image" src="s.png" />;`);
       expect(v).toHaveLength(1);
@@ -272,7 +272,7 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  describe("fix suggestions are context-aware (V1-FIX-BUTTON-NAME)", () => {
+  describe("fix suggestions are context-aware", () => {
     it("button wrapping <svg> (no title) names <title> + aria-label fixes by shell kind", () => {
       const v = runRule(rule, `<button><svg><circle /></svg></button>`, {
         filePath: "index.html",
@@ -368,7 +368,7 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  describe("Font Awesome glyph-derived fix text (Q5-BUTTON-NAME-ICON-GLYPH-MAP)", () => {
+  describe("Font Awesome glyph-derived fix text", () => {
     it('button wrapping <i class="fa-bars"> suggests aria-label="Menu" as primary', () => {
       const v = runRule(rule, `<button><i class="fa-bars"></i></button>`, {
         filePath: "index.html",
@@ -462,7 +462,7 @@ describe("rule semantics/button-name", () => {
       expect(v[0]?.suggestion).toContain('aria-hidden="true"');
     });
 
-    // V1-RULE-BUTTON-NAME-FA-ICON-ONLY-STATIC: the JSX detector previously
+    // the JSX detector previously
     // treated ANY <JsxElement> child as evidence of a name — the field
     // report (faq-collapse, 5 `<button class="faq-toggle">` with two
     // `<i class="fa-…">` glyphs apiece) flagged the gap. The cases below
@@ -529,7 +529,7 @@ describe("rule semantics/button-name", () => {
     });
 
     it('JSX: button wrapping <i className="fa-bars"> fires with glyph-derived fix', () => {
-      // V1-RULE-BUTTON-NAME-FA-ICON-ONLY-STATIC: previously the JSX
+      // previously the JSX
       // path's blanket "any JsxElement child = has-content" heuristic
       // suppressed icon-only buttons. Now the JSX detector mirrors the
       // HTML detector — a presentational `<i class="fa-…">` child
@@ -543,12 +543,12 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  // V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT: when the unnamed button
+  // when the unnamed button
   // wraps a known FA glyph the rule already names a deterministic
   // aria-label in prose ("Primary fix: aria-label=\"Close\""); the
   // mechanical-edit lane ships the matching `fixPaths.primary.edit` so
   // `suggest_fix` returns `kind: "edit"` instead of `kind: "guidance"`.
-  describe("FA-icon mechanical edit (V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT)", () => {
+  describe("FA-icon mechanical edit", () => {
     it("HTML: <button><i class='fa-bars'> ships fixPaths.primary.edit inserting aria-label", () => {
       const source = `<button><i class="fa-bars"></i></button>`;
       const v = runRule(rule, source, { filePath: "index.html" });
@@ -582,7 +582,7 @@ describe("rule semantics/button-name", () => {
       expect(edit?.newText).toBe(`<div role="button" tabindex="0" aria-label="Menu">`);
     });
 
-    it("HTML: fa-play (added in V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT) maps to Play with edit", () => {
+    it("HTML: fa-play maps to Play with edit", () => {
       // Closes the simple-timer field-report gap: previously
       // <button><i class="fa fa-play" /></button> fell through to the
       // generic "<button>Close</button>" placeholder.
@@ -593,7 +593,7 @@ describe("rule semantics/button-name", () => {
       expect(edit?.newText).toBe(`<button aria-label="Play">`);
     });
 
-    it("HTML: fa-clipboard (added in V1-BUTTON-NAME-ICON-FONT-MECHANICAL-EDIT) maps to Copy with edit", () => {
+    it("HTML: fa-clipboard maps to Copy with edit", () => {
       // Closes the password-generator field-report gap.
       const source = `<button><i class="fas fa-clipboard"></i></button>`;
       const v = runRule(rule, source, { filePath: "password.html" });
@@ -638,7 +638,7 @@ describe("rule semantics/button-name", () => {
       // Doctrine: when the map doesn't speak for the glyph, no
       // mechanical edit ships. The agent reads the surrounding code
       // and decides. This pins the conservative boundary so
-      // V1-FA-GLYPH-ARIA-LABEL-DERIVATION-UNIFY (Turn 9) can extend
+      // (Turn 9) can extend
       // the derivation honestly later.
       const source = `<button><i class="fa fa-flux-capacitor"></i></button>`;
       const v = runRule(rule, source, { filePath: "index.html" });
@@ -665,7 +665,7 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  // V1-LIQUID-TEMPLATE-EXPRESSION-AS-SOLE-CHILD-REASON-ENRICHMENT:
+  //:
   // a `<button>{{ t.submit }}</button>` has its only child stripped by
   // the HTML parser — static analysis sees "no accessible name," but
   // the rendered output is whatever the Liquid expression evaluates
@@ -695,7 +695,7 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  describe("nativeWrapperElements mapping (Q2-WRAPMAP-RULES)", () => {
+  describe("nativeWrapperElements mapping", () => {
     it("opts in to the native `button` tag so mapped wrappers fire", () => {
       expect(rule.wrapperTreatsAsElement).toBe("button");
     });
@@ -721,7 +721,7 @@ describe("rule semantics/button-name", () => {
     });
   });
 
-  describe("polymorphic as/asChild resolution (Q2R2-POLYMORPHIC)", () => {
+  describe("polymorphic as/asChild resolution", () => {
     it('fires on <Box as="button" /> with no accessible name', () => {
       const v = runRule(rule, `const X = <Box as="button" />;`);
       expect(v).toHaveLength(1);

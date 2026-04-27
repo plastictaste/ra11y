@@ -30,7 +30,8 @@ describe("chooseFilesToUnlink — generator-owned unlink decisions", () => {
   });
 
   test("preserves hand-authored fix-suggestion-audit.md across the rules-dir sweep", () => {
-    // The regression V1-TOOL-KB-GEN-PRESERVE-HANDWRITTEN exists to prevent.
+    // The regression: the rules-dir sweep used to delete all .md files
+    // not in the expected list, including hand-authored audit files.
     const present = ["fix-suggestion-audit.md", "aria__valid-attr.md", "aria__stale.md"];
     const expected = ["aria__valid-attr"];
     const result = chooseFilesToUnlink(present, expected);

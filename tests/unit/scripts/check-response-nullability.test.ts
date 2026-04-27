@@ -116,7 +116,7 @@ describe("findResponseSentinelViolations", () => {
     expect(violations).toHaveLength(0);
   });
 
-  test("respects allowlist — Q2-WRAPPATH entry suppresses `definitionFile: ... ?? null`", () => {
+  test("respects allowlist — wrapper-definition-file entry suppresses `definitionFile: ... ?? null`", () => {
     const src = `
       import { textResult } from "./helpers";
       export function handler() {
@@ -138,7 +138,7 @@ describe("findResponseSentinelViolations", () => {
       {
         file: "src/mcp/detect-wrappers-core.ts",
         property: "definitionFile",
-        reason: "Q2-WRAPPATH",
+        reason: "definitionFile null sentinel is intentional",
       },
     ];
     const listed = findResponseSentinelViolations(
@@ -162,7 +162,7 @@ describe("findResponseSentinelViolations", () => {
       {
         file: "src/mcp/detect-wrappers-core.ts",
         property: "definitionFile",
-        reason: "Q2-WRAPPATH",
+        reason: "definitionFile null sentinel is intentional",
       },
     ];
     const violations = findResponseSentinelViolations(src, "src/mcp/other-tool.ts", allowlist);

@@ -553,7 +553,7 @@ describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {
     expect(statement.scope.configSnapshot).toBeUndefined();
     // `filesCount` is load-bearing (always present, including 0); `files`
     // is present-when-meaningful and omitted when the caller supplies no
-    // manifest, per the scope-files-cap shape (V1-CONFORMANCE-SCOPE-FILES-CAP).
+    // manifest, per the scope-files-cap shape.
     expect(statement.scope.filesCount).toBe(0);
     expect(statement.scope.files).toBeUndefined();
   });
@@ -572,7 +572,7 @@ describe("buildConformanceStatement: WCAG §5.3.1 required fields", () => {
   });
 
   it("forwards skippedFiles + skippedFilesCount into scope when caller supplies them", () => {
-    // V1-CONFORMANCE-SCOPE-FILES-MINIFIED-LEAK: builder-level
+    // builder-level
     // contract — when the tool layer hands the builder a non-empty
     // `skippedFiles` list, the scope mirrors it verbatim with the
     // paired count. Both fields are present-when-meaningful — the

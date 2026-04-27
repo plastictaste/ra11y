@@ -115,7 +115,7 @@ describe("rule semantics/heading-hierarchy", () => {
   });
 
   describe("missing-h1-on-full-page variant", () => {
-    // Q3-HEADING-HIERARCHY-MISSING-H1-VARIANT. Bootstrap visual-test
+    //. Bootstrap visual-test
     // pages, 50projects50days demos, and similar hand-authored hobby
     // pages routinely ship with full-page DOCTYPE + <html> + <body>
     // shape but zero <h1> — neither the level-skip check nor the
@@ -216,7 +216,7 @@ describe("rule semantics/heading-hierarchy", () => {
     it("does NOT fire on a bare component fragment (no body, doesn't look like a page)", () => {
       // A fragment without <html>/<body>/<head> with only an <h2>:
       // neither the variant NOR the legacy first-heading emit fires.
-      // The fragment-file gate (Q7-FRAGMENT-FILE-HEADING-HIERARCHY)
+      // The fragment-file gate
       // suppresses both no-h1 branches because the composed parent
       // layout supplies <h1>. Skipped-level emits would still fire on
       // such a file if a level skip were present.
@@ -297,7 +297,7 @@ describe("rule semantics/heading-hierarchy", () => {
   });
 
   describe("partial / layout enrichment", () => {
-    // Q4-HEADING-HIERARCHY-PARTIAL-ENRICH-REASON. Files whose composed
+    //. Files whose composed
     // `<h1>` is supplied by the parent layout's `page.title`
     // front-matter or a sibling include. Enrichment fires only on files
     // that are partials BUT NOT fragments — fragment-shaped files
@@ -396,7 +396,7 @@ describe("rule semantics/heading-hierarchy", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Fragment-file gate (Q7-FRAGMENT-FILE-HEADING-HIERARCHY).
+  // Fragment-file gate.
   //
   // Component-fragment files (no root <html>/<body>/<head>), content-
   // fragment files (`---` front-matter), and partials under conventional
@@ -560,7 +560,7 @@ describe("rule semantics/heading-hierarchy", () => {
     });
   });
 
-  // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT — `parseMarkdown`
+  // `parseMarkdown`
   // strips ATX (`# …`) and Setext headings before the residue reaches
   // `parseHtml`, so the rule sees only whatever HTML headings survived
   // in embedded blocks (admonition divs, callout widgets). The residue
@@ -594,7 +594,7 @@ describe("rule semantics/heading-hierarchy", () => {
     });
 
     it("enriches the legacy first-heading missing-h1 emit on a _docs/*.md file with envelope", () => {
-      // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT closure: ATX
+      // closure: ATX
       // headings carry the real outline, and a single admonition `<h5>`
       // is the only HTML heading that survives the markdown strip. The
       // pre-fix behaviour skipped outright; the new behaviour fires
@@ -667,7 +667,7 @@ describe("rule semantics/heading-hierarchy", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Branch E — empty-structural-shell (V1-RULE-LANDMARK-MAIN-AND-HEADING-
+  // Branch E — empty-structural-shell (-
   // HIERARCHY-DEFER-ON-EMPTY-PAGE).
   //
   // Pre-fix, a body composed entirely of decorative `<div>` / `<img>` with
@@ -776,7 +776,7 @@ describe("rule semantics/heading-hierarchy", () => {
     });
 
     it("fires on `.md` files with embedded duplicate <h1>s and enriches with residue note", () => {
-      // V1-HEADING-HIERARCHY-MARKDOWN-FIRES-DESPITE-HINT closure: the
+      // closure: the
       // markdown adapter strips ATX headings, but two embedded HTML
       // <h1> tags really do compose into two top-level headings in the
       // rendered output. The multiple-h1 emit fires (correct), and the
@@ -842,7 +842,7 @@ describe("rule semantics/heading-hierarchy", () => {
     it("does NOT fire on a body holding only a <script> (script-only shape routes elsewhere)", () => {
       // Pairs with the equivalent landmark-main test — a body of only a
       // <script> stays silent because branch E's visible-descendant tally
-      // excludes <script>; the script-only shape is V1-EMPTY-ROOT-DIV-
+      // excludes <script>; the script-only shape is-
       // SCRIPT-ONLY-WARNING's responsibility, not this rule's.
       const v = runRule(rule, '<html><body><script src="app.js"></script></body></html>', {
         filePath: "spa.html",

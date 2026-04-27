@@ -181,7 +181,7 @@ describe("buildAgentPlan: dropped safeEditsAvailable composite", () => {
   });
 });
 
-describe("buildAgentPlan: dropped violations composite (Q7-PLAN-VIOLATIONS-COMPOSITE)", () => {
+describe("buildAgentPlan: dropped violations composite", () => {
   // The former `plan.violations` summed across the four `fixesByClass`
   // lanes (mechanical + verify-in-source + guidance + runtimeOnly)
   // under one top-level integer. Agents budgeted against it as if
@@ -237,7 +237,7 @@ describe("buildAgentPlan: summary string", () => {
   it("emits the per-lane breakdown without a composite 'N findings' headline", () => {
     const files: AgentFile[] = [];
     const plan = buildAgentPlan(makeViolations(), files);
-    // Per Q7-PLAN-VIOLATIONS-COMPOSITE the prose drops the leading
+    // Per the prose drops the leading
     // composite total that summed across the four lanes. The lane
     // fragments still ride in the same stable order:
     // mechanical → guidance → runtime-only → verify-in-source.
@@ -246,7 +246,7 @@ describe("buildAgentPlan: summary string", () => {
     expect(plan.summary).toContain("1 runtime-only");
     expect(plan.summary).toContain("1 verify-in-source");
     // The former "N findings (...)" composite no longer appears —
-    // see Q7-PLAN-VIOLATIONS-COMPOSITE for rationale (same shape as
+    // see for rationale (same shape as
     // the deleted `plan.totalFindings` and `plan.safeEditsAvailable`
     // precedents).
     expect(plan.summary).not.toMatch(/\b4\s+(findings?|violations?)\b/);

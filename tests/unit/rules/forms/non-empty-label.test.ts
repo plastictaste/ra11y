@@ -292,7 +292,7 @@ describe("rule forms/non-empty-label", () => {
     expect(rule.satisfies).toContain("wcag21:3.3.2");
   });
 
-  // V1-LIQUID-TEMPLATE-EXPRESSION-AS-SOLE-CHILD-REASON-ENRICHMENT:
+  //:
   // `<label>{{ form.email }}</label>` has its only child stripped by
   // the HTML parser — rendered text depends on runtime interpolation.
   // Surface-don't-suppress: finding still emits at `error`; reason
