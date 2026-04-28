@@ -457,5 +457,80 @@ describe("MCP invariant: parseErrorFiles ∩ scannedBuildArtifacts is empty", ()
   });
 });
 
+// Cross-surface count invariant — `meta.countsBySurface` doctrine pin
+// at the wire shape. The unit-level guards in
+// `tests/unit/mcp/response-assembler.test.ts` and
+// `tests/unit/mcp/scan-assembly.test.ts` cover the assembler functions
+// in isolation, but the field-report regressions that motivated the
+// removal observed the field on real MCP responses — three disagreeing
+// finding totals (`{plan, perRuleCoverage, filesSurface}`) within ONE
+// response. This block re-asserts the absence at the wire level on the
+// same project-rooted tools the doctrine names (scan_project,
+// coverage, checklist), so a future refactor that pipes a new
+// "convenience" headline back into the meta block fails here, not in
+// the next field-test sweep. Doctrine: see
+// `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+// invariant" — a field whose name implies cross-surface reconciliation
+// must actually reconcile, not multiply.
+async function makeMixedFindingFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-counts-by-surface-"));
+  // Multiple files + multiple rule fires — historically the shape that
+  // surfaced 3-way drift between the plan tally, the perRuleCoverage
+  // sum, and the per-file findings rollup. Even if the current
+  // assembler keeps them in lockstep, the test pins the absence of the
+  // composite headline that previously framed the disagreement.
+  await writeFile(
+    join(dir, "page.html"),
+    `<html><body>
+      <button class="btn-danger">Submit</button>
+      <img src="logo.png">
+      <video src="x.mp4"></video>
+    </body></html>`,
+  );
+  await writeFile(join(dir, "other.html"), `<html><body><img src="hero.png"></body></html>`);
+  return dir;
+}
+
+interface MetaShape {
+  readonly meta?: Record<string, unknown>;
+}
+
+describe("MCP invariant: meta.countsBySurface is absent on every project-rooted tool", () => {
+  it("scan_project, coverage, and checklist all omit meta.countsBySurface on a mixed-finding fixture", async () => {
+    const dir = await makeMixedFindingFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const scanBody = body<MetaShape>(responses[1]);
+    const coverageBody = body<MetaShape>(responses[2]);
+    const checklistBody = body<MetaShape>(responses[3]);
+    // The composite field is the dishonest shape the doctrine names —
+    // a 3- or 4-way internal spread of finding totals framed as
+    // cross-surface reconciliation. Each response must answer "no" via
+    // omission; an empty-object sentinel would be the same bug in
+    // another shape.
+    expect(scanBody.meta?.["countsBySurface"]).toBeUndefined();
+    expect(coverageBody.meta?.["countsBySurface"]).toBeUndefined();
+    expect(checklistBody.meta?.["countsBySurface"]).toBeUndefined();
+  });
+
+  it("scan_project still omits meta.countsBySurface under verboseMeta:true", async () => {
+    // Verbose mode expands compact summaries into per-row payloads —
+    // historically the regression surface where speculative
+    // "cross-surface convenience" fields could be tucked alongside
+    // expanded perRuleCoverage rows.
+    const dir = await makeMixedFindingFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+    ]);
+    const scanBody = body<MetaShape>(responses[1]);
+    expect(scanBody.meta?.["countsBySurface"]).toBeUndefined();
+  });
+});
+
 // Silence the unused warning on the helper used implicitly above.
 void mkdir;
