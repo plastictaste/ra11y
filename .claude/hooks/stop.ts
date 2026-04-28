@@ -38,22 +38,23 @@ if (skip.skip) {
 
 const failures: string[] = [];
 
-const tsc = spawnSync("bunx tsc --noEmit", {
+const SPAWN_OPTS = {
   cwd: projectDir,
   shell: true,
-  encoding: "utf8",
-});
+  encoding: "utf8" as const,
+  maxBuffer: 64 * 1024 * 1024,
+};
+
+const tsc = spawnSync("bunx tsc --noEmit", SPAWN_OPTS);
 if (tsc.status !== 0) {
-  failures.push(`tsc --noEmit failed:\n${(tsc.stdout ?? "").trim()}`);
+  const out = `${(tsc.stdout ?? "").trim()}\n${(tsc.stderr ?? "").trim()}`.trim();
+  failures.push(`tsc --noEmit failed:\n${out}`);
 }
 
-const test = spawnSync("bun test --bail", {
-  cwd: projectDir,
-  shell: true,
-  encoding: "utf8",
-});
+const test = spawnSync("bun test --bail", SPAWN_OPTS);
 if (test.status !== 0) {
-  failures.push(`bun test failed:\n${(test.stdout ?? "").trim()}`);
+  const out = `${(test.stdout ?? "").trim()}\n${(test.stderr ?? "").trim()}`.trim();
+  failures.push(`bun test failed:\n${out}`);
 }
 
 if (failures.length > 0) {
