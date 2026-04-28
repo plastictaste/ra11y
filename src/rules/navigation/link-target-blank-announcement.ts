@@ -68,6 +68,14 @@ export const rule = defineRule({
   // announcement is the same failure as a bare `<a target="_blank">`.
   wrapperTreatsAsElement: "a",
   appliesTo: {
+    // Canonical-parser extensions only. The engine's `extensionMatches`
+    // (src/utils/path.ts) aliases every other extension that routes through
+    // the same parser into this list at filter time — so `.erb`, `.md`,
+    // `.markdown`, `.mkdn`, `.xhtml`, `.svg`, `.astro` all match `.html`/`.htm`,
+    // and `.mdx` matches `.tsx`/`.jsx`. Extending this list to spell out
+    // every alias would be redundant; updating the alias table is the
+    // single point of truth when a new extension joins the html or jsx
+    // family.
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },
   docs: {

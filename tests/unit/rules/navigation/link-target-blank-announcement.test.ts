@@ -253,3 +253,96 @@ describe("engine registry integration — AAA level wiring", () => {
     expect(ruleViolations).toHaveLength(0);
   });
 });
+
+// Extension-alias coverage: pins the rule fires through the full scanner
+// pipeline on every extension that aliases into the html / jsx parser
+// families via `extensionMatches` (src/utils/path.ts). The rule's
+// `appliesTo.fileExtensions` lists only canonical extensions
+// (`.html`/`.htm`/`.tsx`/`.jsx`); extensions like `.erb`, `.md`,
+// `.markdown`, `.mkdn`, `.xhtml`, `.svg`, `.astro`, `.mdx` are routed
+// through the alias table and must reach the rule. Without these tests,
+// a future change to the alias table could silently drop the rule on
+// these inputs — symmetric to the AI-first doctrine "Routing skips that
+// drop content."
+describe("engine registry integration — extension alias coverage", () => {
+  const aliasedHtmlCases: ReadonlyArray<{ filePath: string; parserKey: string }> = [
+    { filePath: "view.html.erb", parserKey: "erb" },
+    { filePath: "page.md", parserKey: "markdown" },
+    { filePath: "page.markdown", parserKey: "markdown" },
+    { filePath: "page.mkdn", parserKey: "markdown" },
+    { filePath: "page.xhtml", parserKey: "html" },
+    { filePath: "icon.svg", parserKey: "html" },
+    { filePath: "page.astro", parserKey: "astro" },
+  ];
+
+  for (const { filePath, parserKey } of aliasedHtmlCases) {
+    it(`fires on ${filePath} (alias → html parser family)`, async () => {
+      const { runScan } = await import("../../../../src/engine/scanner.ts");
+      const { parseHtml, parseMarkdown, parseAstro } = await import(
+        "../../../../src/input/parsers/index.ts"
+      );
+      const { BUILTIN_RULES } = await import("../../../../src/rules/index.ts");
+      const { wcag22 } = await import("../../../../src/standards/wcag22/standard.ts");
+
+      const source = `<a href="/docs" target="_blank">Docs</a>`;
+      const parsed =
+        parserKey === "markdown"
+          ? parseMarkdown(source)
+          : parserKey === "astro"
+            ? parseAstro(source)
+            : parseHtml(source);
+      const { result, perRuleCoverage } = runScan({
+        standards: [wcag22],
+        rules: BUILTIN_RULES,
+        enabled: ["wcag22"],
+        level: "AAA",
+        files: [
+          {
+            filePath,
+            source,
+            ast: { language: "html", root: parsed.root, errors: parsed.errors },
+          },
+        ],
+      });
+      const fired = result.violations.filter(
+        (v) => v.ruleId === "navigation/link-target-blank-announcement",
+      );
+      expect(fired).toHaveLength(1);
+      const coverageRow = perRuleCoverage.find(
+        (r) => r.ruleId === "navigation/link-target-blank-announcement",
+      );
+      expect(coverageRow?.filesEligible).toBeGreaterThanOrEqual(1);
+    });
+  }
+
+  it("fires on .mdx (alias → tsx parser family)", async () => {
+    const { runScan } = await import("../../../../src/engine/scanner.ts");
+    const { parseMdx } = await import("../../../../src/input/parsers/index.ts");
+    const { BUILTIN_RULES } = await import("../../../../src/rules/index.ts");
+    const { wcag22 } = await import("../../../../src/standards/wcag22/standard.ts");
+
+    const source = `# Docs\n\n<a href="/docs" target="_blank">Docs</a>\n`;
+    const parsed = parseMdx(source);
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      level: "AAA",
+      files: [
+        {
+          filePath: "page.mdx",
+          source,
+          ast: { language: "tsx", root: parsed.root, errors: parsed.errors },
+        },
+      ],
+    });
+    const fired = result.violations.filter(
+      (v) => v.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(fired).toHaveLength(1);
+    const coverageRow = perRuleCoverage.find(
+      (r) => r.ruleId === "navigation/link-target-blank-announcement",
+    );
+    expect(coverageRow?.filesEligible).toBeGreaterThanOrEqual(1);
+  });
+});
