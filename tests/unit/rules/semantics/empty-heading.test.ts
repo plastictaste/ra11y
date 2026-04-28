@@ -261,6 +261,154 @@ describe("rule semantics/empty-heading", () => {
     });
   });
 
+  // Conceded-uncertainty branch: when the file's sibling JS performs
+  // a DOM-text mutation (`.innerHTML = …`, `.textContent = …`,
+  // `.insertAdjacentHTML(…)`, etc.) AND references the empty heading
+  // by id/class, the heading is most likely a skeleton-loader / SPA
+  // placeholder filled at runtime. Per AI-first consumer doctrine
+  // ("Reason text and severity must agree" + "Heuristic emission is
+  // the symmetric twin of heuristic suppression"), the rule surfaces
+  // (don't suppress) but at `warning` (not `error`) with a structured
+  // `couldBeWrongBecause: ["runtime_innerhtml_population"]` code so
+  // the agent reads the cited file and decides whether the runtime-
+  // fill path always assigns non-empty text.
+  describe("HTML: sibling-JS runtime-population content surfaces at conceded uncertainty", () => {
+    it("surfaces at warning when sibling JS uses getElementById + .innerHTML on the heading id", () => {
+      const source = `<h3 id="header"></h3>
+<script>
+  setTimeout(() => {
+    document.getElementById("header").innerHTML = "Loaded title";
+  }, 1000);
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("skeleton-loader");
+      expect(v[0]?.message).toContain('id="header"');
+      expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_innerhtml_population"]);
+    });
+
+    it("surfaces at warning when sibling JS uses querySelector + .textContent on the heading class", () => {
+      const source = `<h2 class="skeleton-title"></h2>
+<script>
+  fetch("/api/title").then(r => r.text()).then(t => {
+    document.querySelector(".skeleton-title").textContent = t;
+  });
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("skeleton-loader");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_innerhtml_population"]);
+    });
+
+    it("surfaces at warning when sibling JS uses bare-id global access (header.innerHTML)", () => {
+      // Legacy HTML pattern: any element with an `id` is exposed as
+      // a global var on `window`, so `header.innerHTML = …` is valid
+      // sibling-JS evidence even without an explicit getElementById.
+      const source = `<h1 id="header"></h1>
+<script>
+  setTimeout(() => { header.innerHTML = "Welcome"; }, 500);
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_innerhtml_population"]);
+    });
+
+    it("surfaces at warning when sibling JS uses insertAdjacentHTML on the heading", () => {
+      const source = `<h2 id="status"></h2>
+<script>
+  document.getElementById("status").insertAdjacentHTML("beforeend", "<span>OK</span>");
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_innerhtml_population"]);
+    });
+
+    it("still fires at error when no sibling JS mutation pattern is present", () => {
+      // The element has an `id` but the file has no DOM-text mutation
+      // anywhere — the document-level gate fails, so the per-heading
+      // check is never reached and the plainly-empty error path runs.
+      const source = `<h1 id="header"></h1>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("still fires at error when sibling JS mutates a different element", () => {
+      // Mutation pattern present, but the heading's id ("header") is
+      // never referenced by the sibling JS (which targets "footer").
+      // Per-heading gate fails — the runtime-population branch must not
+      // fire on heading evidence that doesn't exist in this file.
+      const source = `<h1 id="header"></h1>
+<script>
+  document.getElementById("footer").innerHTML = "bye";
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("still fires at error when the heading has no id/class to reference", () => {
+      // Mutation site present, but the heading carries neither an id
+      // nor a class — sibling JS cannot reach this specific element,
+      // so the runtime-population gate fails and the plainly-empty
+      // path emits at error.
+      const source = `<h1></h1>
+<script>
+  document.getElementById("other").innerHTML = "x";
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("template-directive branch wins when both conditions match (template directive checked first)", () => {
+      // A heading whose only content is a Liquid expression AND whose
+      // id is referenced by sibling JS innerHTML — both conceded-
+      // uncertainty branches apply. The template-directive branch is
+      // checked first (it's the lower-cost, narrower predicate); the
+      // emit must be the template-directive shape, not the runtime-
+      // population shape, so the agent gets the most specific axis.
+      const source = `<h1 id="title">{{ page.title }}</h1>
+<script>
+  document.getElementById("title").innerHTML = "fallback";
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["template_directive_interpolation_unresolved"]);
+    });
+
+    it("does not fire when the heading is non-empty even with a runtime-mutation site present", () => {
+      // The mutation site exists in the file, but the heading already
+      // has visible text content — `hasAccessibleContentHtml` passes
+      // and the rule never reaches either conceded-uncertainty branch.
+      const source = `<h1 id="header">Hello</h1>
+<script>
+  document.getElementById("header").innerHTML = "Updated";
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("matches when the heading's class is one of several class tokens", () => {
+      const source = `<h2 class="placeholder skeleton-title hidden"></h2>
+<script>
+  document.querySelector(".skeleton-title").textContent = "Title";
+</script>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["runtime_innerhtml_population"]);
+    });
+  });
+
   describe("context-aware fix: preceding heading", () => {
     it("empty h3 after h2 inlines the h2's text and level", () => {
       const source = `<h2>Contact Information</h2>\n<h3></h3>`;

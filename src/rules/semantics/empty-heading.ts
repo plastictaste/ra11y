@@ -58,7 +58,7 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      checkHtml(ctx.ast as HtmlDocument, ctx.source, (v) => ctx.emit(v));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
@@ -69,6 +69,24 @@ export const rule = defineRule({
     }
   },
 });
+
+/**
+ * Stable `couldBeWrongBecause` code emitted when an empty heading's
+ * id/class is referenced by sibling JS that performs a DOM-text
+ * mutation (`.innerHTML =`, `.textContent =`, `.innerText =`,
+ * `.insertAdjacentHTML(…)`, `.insertAdjacentText(…)`) — the canonical
+ * skeleton-loader / SPA-loading shape where the heading is intentionally
+ * empty at first paint and filled at runtime. The agent reads the
+ * cited file once, confirms the runtime population path, and dismisses
+ * with a `<!-- ra11y-disable semantics/empty-heading -->` pragma when
+ * the binding is trusted to always produce non-empty text.
+ *
+ * Companion to the V1 live-region runtime-mutation finder (4.1.3 axis):
+ * that finder asks "is the mutation announced to AT?"; this code asks
+ * "is the heading's emptiness a render-time blip rather than a
+ * structural defect?". Same evidence shape, different criterion.
+ */
+export const RUNTIME_INNERHTML_POPULATION = "runtime_innerhtml_population";
 
 type Emit = (v: {
   severity: "error" | "warning" | "info";
@@ -92,8 +110,14 @@ interface HeadingEntry {
   readonly text: string;
 }
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
+function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
   const headings = collectHtmlHeadings(doc);
+  // Pre-compute once per document: does the source contain any
+  // DOM-text-mutation pattern (.innerHTML =, .textContent =, etc.)?
+  // The per-heading branch only needs to confirm an id/class reference
+  // when this gate has fired, so the regex cost is paid once even when
+  // a document has many empty headings.
+  const hasMutationSite = sourceContainsDomTextMutation(source);
   for (let i = 0; i < headings.length; i++) {
     const heading = headings[i];
     if (heading === undefined) continue;
@@ -117,15 +141,37 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
       emitTemplateDirectiveViolation(heading, emit);
       continue;
     }
-    // Past the conceded-uncertainty branch: every remaining
+    // Conceded-uncertainty branch: when sibling JS in the same file
+    // performs a DOM-text mutation (`.innerHTML = …`, `.textContent
+    // = …`, `.insertAdjacentHTML(…)`, etc.) AND references this
+    // heading by `id` or `class` (via `getElementById`,
+    // `querySelector`, or bare-id global access), the heading is
+    // most likely a skeleton-loader / SPA placeholder filled at
+    // runtime. Static analysis can't observe the runtime population
+    // path; per AI-first doctrine "Reason text and severity must
+    // agree" the rule surfaces at `warning` with a structured
+    // `couldBeWrongBecause: ["runtime_innerhtml_population"]` code
+    // and reason text framing the runtime-fill question. The
+    // sibling-JS shape gates this branch deterministically — the
+    // mutation pattern + id/class reference are both literally
+    // present in the file's source, so the predicate is provable
+    // (not heuristic). The agent reads the cited file, confirms the
+    // wiring, and dismisses with `<!-- ra11y-disable -->` when
+    // appropriate.
+    if (hasMutationSite && htmlElementReferencedByRuntimeMutation(el, source)) {
+      emitRuntimePopulationViolation(heading, el, emit);
+      continue;
+    }
+    // Past the conceded-uncertainty branches: every remaining
     // would-be-empty heading either has no template directive at all,
-    // or has one alongside literal visible text (in which case
-    // `hasAccessibleContentHtml` already passed and we never got
-    // here). The plainly-empty path emits at `error` with the
-    // context-aware fix; concession-text reason suffixes are
-    // intentionally NOT layered on top of `error` here — per AI-first
-    // doctrine "Reason text and severity must agree," conceded-
-    // uncertainty framing belongs only on the `warning` branch above.
+    // no sibling-JS runtime population, or has one alongside literal
+    // visible text (in which case `hasAccessibleContentHtml` already
+    // passed and we never got here). The plainly-empty path emits at
+    // `error` with the context-aware fix; concession-text reason
+    // suffixes are intentionally NOT layered on top of `error` here —
+    // per AI-first doctrine "Reason text and severity must agree,"
+    // conceded-uncertainty framing belongs only on the `warning`
+    // branches above.
     const preceding = findPrecedingNonEmpty(headings, i);
     emitViolation(heading, preceding, emit);
   }
@@ -341,6 +387,155 @@ function emitTemplateDirectiveViolation(entry: HeadingEntry, emit: Emit): void {
       "dismissal durable across re-runs.",
     couldBeWrongBecause: [TEMPLATE_DIRECTIVE_INTERPOLATION_UNRESOLVED],
   });
+}
+
+/**
+ * Conceded-uncertainty emit: heading is referenced by sibling JS that
+ * performs a DOM-text mutation, so the empty-at-parse-time state may be
+ * a render-time blip rather than a structural defect. Same shape as
+ * {@link emitTemplateDirectiveViolation} on a different evidence axis —
+ * surfaces at `warning` (not `error`) with the structured
+ * {@link RUNTIME_INNERHTML_POPULATION} code so the agent can dismiss in
+ * one read after confirming the runtime-fill path.
+ */
+function emitRuntimePopulationViolation(
+  entry: HeadingEntry,
+  element: HtmlElement,
+  emit: Emit,
+): void {
+  const tag = `<${entry.tagName}>`;
+  const ref = describeRuntimeReference(element);
+  emit({
+    severity: "warning",
+    location: { filePath: "", line: entry.line, column: entry.column },
+    message:
+      `${tag} is empty at parse time but ${ref} is referenced by sibling JS that ` +
+      "performs a DOM-text mutation (.innerHTML / .textContent / " +
+      ".innerText / .insertAdjacentHTML). This looks like a skeleton-" +
+      "loader or SPA placeholder filled at runtime; the heading's " +
+      "accessible name is knowable only after the runtime mutation runs. " +
+      "SC 2.4.6 requires headings describe topic or purpose; a mutation " +
+      "that doesn't run, or runs to an empty string, would silently " +
+      "violate the criterion.",
+    suggestion:
+      `Confirm the runtime-fill path always assigns non-empty text to ${ref} before AT can announce ${tag} ` +
+      "(or supply a fallback `aria-label` so the heading carries an " +
+      "accessible name even before the mutation runs). If the wiring is " +
+      "trusted, suppress at source with `<!-- ra11y-disable " +
+      "semantics/empty-heading -->` to make the dismissal durable across " +
+      "re-runs.",
+    couldBeWrongBecause: [RUNTIME_INNERHTML_POPULATION],
+  });
+}
+
+/**
+ * Picks the most informative selector to echo in the runtime-population
+ * reason text — `id` first (canonical `getElementById` target), then
+ * the first class token. Falls back to the bare tag when neither is
+ * present (the gate predicate already required a referenced selector,
+ * so this fallback is defensive only).
+ */
+function describeRuntimeReference(element: HtmlElement): string {
+  const id = getHtmlAttribute(element, "id");
+  if (id !== null && id.trim().length > 0) return `id="${id.trim()}"`;
+  const cls = getHtmlAttribute(element, "class");
+  if (cls !== null) {
+    const first = cls.trim().split(/\s+/)[0];
+    if (first !== undefined && first.length > 0) return `class=".${first}"`;
+  }
+  return `<${element.tagName.toLowerCase()}>`;
+}
+
+/**
+ * Document-level gate: returns true when `source` contains any
+ * DOM-text-mutation pattern that could populate visible text at runtime.
+ * Mirrors the pattern set the V1 live-region runtime-mutation finder
+ * uses (`.innerHTML =`, `.textContent =`, `.innerText =`,
+ * `.insertAdjacentHTML(`, `.insertAdjacentText(`) so the two surfaces
+ * agree on what counts as evidence of runtime DOM-text writing.
+ *
+ * Also recognizes the same patterns nested in template-literal HTML
+ * islands (`<script>` body, `{onclick: "header.innerHTML = …"}`),
+ * since the regex is shape-only and operates on raw source.
+ */
+function sourceContainsDomTextMutation(source: string): boolean {
+  return DOM_TEXT_MUTATION_RE.test(source);
+}
+
+const DOM_TEXT_MUTATION_RE =
+  /\.(?:innerHTML|outerHTML|textContent|innerText)\s*(?:=(?!=)|\+=)|\.insertAdjacent(?:HTML|Text)\s*\(/;
+
+/**
+ * Per-heading gate: returns true when at least one of the heading's
+ * `id` or `class` tokens is referenced in `source` via a shape that
+ * sibling JS uses to grab the element — `getElementById("X")`,
+ * `querySelector("#X")`, `querySelector(".X")`, `querySelectorAll`, or
+ * a bare-id property access (`X.innerHTML`, the legacy global-id
+ * pattern). The check is intentionally not asserting that the
+ * mutation site is wired to *this* element — that's the agent's job
+ * with one Read; the predicate's job is to point at evidence the
+ * heading is the kind of element runtime-population code reaches for.
+ *
+ * Conservative: an empty `id="X"` or `class=""` produces no tokens, so
+ * the predicate fails closed and the rule falls through to the
+ * plainly-empty `error` branch. The id/class string is also escaped
+ * for regex literal use so values like `header[0]` don't smuggle a
+ * character class into the pattern.
+ */
+function htmlElementReferencedByRuntimeMutation(element: HtmlElement, source: string): boolean {
+  const tokens = collectIdAndClassTokens(element);
+  if (tokens.length === 0) return false;
+  for (const raw of tokens) {
+    if (sourceReferencesToken(source, raw)) return true;
+  }
+  return false;
+}
+
+/**
+ * Collects every id-or-class token on an element, trimming whitespace
+ * and dropping empty entries. The empty-token guard matters because
+ * `<h1 id="">` and `<h2 class="">` both produce one-element splits
+ * whose only entry is the empty string — those would silently match
+ * any source via the regex.
+ */
+function collectIdAndClassTokens(element: HtmlElement): readonly string[] {
+  const tokens: string[] = [];
+  const id = getHtmlAttribute(element, "id");
+  if (id !== null) {
+    const trimmed = id.trim();
+    if (trimmed.length > 0) tokens.push(trimmed);
+  }
+  const cls = getHtmlAttribute(element, "class");
+  if (cls !== null) {
+    for (const token of cls.trim().split(/\s+/)) {
+      if (token.length > 0) tokens.push(token);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Returns true when `source` contains any of the three sibling-JS
+ * lookup shapes that target this token: explicit `getElementById`,
+ * `querySelector(All)?` with a `#id` / `.class` fragment, or a bare-id
+ * global access. The bare-id branch is gated on an identifier-shaped
+ * regex so class names that aren't valid JS idents don't silently
+ * match the global-access pattern.
+ */
+function sourceReferencesToken(source: string, raw: string): boolean {
+  const escaped = escapeRegex(raw);
+  if (new RegExp(`getElementById\\s*\\(\\s*["'\`]${escaped}["'\`]`).test(source)) return true;
+  if (new RegExp(`querySelector(?:All)?\\s*\\(\\s*["'\`][^"'\`]*[#.]${escaped}\\b`).test(source)) {
+    return true;
+  }
+  if (!/^[A-Za-z_$][\w$]*$/.test(raw)) return false;
+  return new RegExp(
+    `\\b${escaped}\\s*\\.\\s*(?:innerHTML|outerHTML|textContent|innerText|insertAdjacent(?:HTML|Text))\\b`,
+  ).test(source);
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
