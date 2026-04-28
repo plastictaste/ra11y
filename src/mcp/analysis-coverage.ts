@@ -108,9 +108,15 @@ import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile, naturalParserFor } from "../utils/path.ts";
 import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
 import { assembleParseErrorBlocks } from "./analysis-coverage-parse-errors.ts";
-import type { ParseErrorEntry } from "./analysis-coverage-types.ts";
+import type { FragmentFileEntry, ParseErrorEntry } from "./analysis-coverage-types.ts";
 import { isBuildArtifact } from "./build-artifacts.ts";
+import { hasFrontmatterFence } from "./frontmatter-classifier.ts";
 import type { Hint } from "./hint-codes.ts";
+import {
+  classifyFragmentKind,
+  isMarkdownFile,
+  parseModeByExtension,
+} from "./markdown-classifier.ts";
 import { stripMarkdownCodeRegions } from "./markdown-code-strip.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import {
@@ -118,6 +124,10 @@ import {
   filterEmittedComponentNames,
   isJsxBearingFile,
 } from "./opaque-tag-filter.ts";
+
+// Re-exported so historical importers keep resolving the shape from
+// this module's surface even after the shared-type extraction.
+export type { FragmentFileEntry } from "./analysis-coverage-types.ts";
 
 /**
  * Storybook primitives that should render transparent under
@@ -298,76 +308,6 @@ interface CoverageBlock {
   fragmentFiles?: readonly FragmentFileEntry[];
   fragmentFilesTruncated?: MetaArrayTruncationSummary;
 }
-
-/**
- * Categorical shape of a fragment file. The flat
- * `analysisCoverage.fragmentFiles[]` list previously surfaced only the
- * path, but observed members fall into three categorically-different
- * shapes that warrant different downstream rule-skipping decisions:
- *
- *   - `html_partial` — Jekyll `_includes/`, Hugo `partials/`, Astro /
- *     Handlebars layouts: HTML markup intended to be composed into a
- *     parent layout at render time. Document-shaped rules
- *     (`landmark-main`, `heading-hierarchy`, `page-titled`,
- *     `lang-attribute`) are out of scope because the parent layout
- *     supplies the envelope.
- *   - `markdown_residue` — `.md` / `.markdown` files routed through
- *     the HTML parser per ADR 0025. The parsed AST is the literal-
- *     text residue after the markdown body, so a missing `<html>`
- *     root reflects the source format rather than a partial. Rules
- *     deciding whether to skip should consult the kind, not the path.
- *   - `svg_standalone` — `.svg` files routed through `parseHtml` per
- *     `src/input/parsers/svg.ts`. A standalone icon / brand-mark SVG
- *     has no `<html>` or `<body>` because it isn't a document.
- *     Page-level rules should skip these unconditionally.
- *
- * Per the AI-first consumer model "Heuristic-mislabeled meta sub-
- * fields are dishonest" rule: the kind is provable from the file
- * extension (no path-pattern guessing), so the discriminator clears
- * the "100% correct from the evidence" bar.
- *
- * Document-shaped rules will read the discriminator before deciding
- * eligibility — that wiring is a follow-up; this type ships the field
- * so downstream consumers can branch on it now.
- */
-export interface FragmentFileEntry {
-  readonly path: string;
-  readonly kind: "html_partial" | "markdown_residue" | "svg_standalone";
-  /**
-   * Structural signals captured by the shared
-   * {@link classifyFragment} predicate when this file was classified
-   * as a fragment — `hasHtmlOpener`, `hasLayoutDirective`, `inLayoutsDir`.
-   * All three are `false` for entries that reach this list (the
-   * predicate stamps fragment only when ALL three signals are absent),
-   * but surfaced explicitly so an agent auditing a classification can
-   * read the raw evidence without re-deriving it. Pairs with the
-   * "Heuristic-mislabeled meta sub-fields are dishonest" rule per
-   * `docs/kb/architecture/ai-first-consumer.md`: every signal here is
-   * provable from the file alone (path / AST / source regex) so the
-   * sub-field labels clear the "100% correct from the evidence" bar.
-   */
-  readonly fragmentClassificationSignals: FragmentClassificationSignals;
-}
-
-/**
- * Matches a YAML frontmatter fence at the very start of a file:
- * `---\n` opener, any content (including empty), a closing `---` on
- * its own line, and optionally a trailing newline. Supports CRLF as
- * well as LF line endings so Windows-authored static sites classify
- * the same way as Unix-authored ones. The regex is anchored at
- * offset 0 (`^`) so a stray `---` horizontal rule partway through a
- * document does NOT trip the detector — only the top-of-file fence
- * that Jekyll / Hugo / Eleventy / Astro use as their post header.
- *
- * Not keyed by extension because the same substrate shape appears in
- * `.md`, `.markdown`, `.html`, and `.htm` across ecosystems (Jekyll
- * `test/source/properties.html` is the canonical repro). Files whose
- * content happens to start with three dashes followed by a newline
- * but no closing fence are NOT matched — the closing fence is what
- * distinguishes structured frontmatter from a document that opens
- * with a horizontal rule.
- */
-const FRONTMATTER_FENCE_RE = /^---\r?\n[\s\S]*?\r?\n---\r?(?:\n|$)/;
 
 interface CoverageAccumulator {
   /**
@@ -737,31 +677,6 @@ function assembleFragmentFilesBlock(
 }
 
 /**
- * Categorizes a fragment file by extension. The detection is
- * extension-only on purpose — per AI-first consumer doctrine
- * "Heuristic-mislabeled meta sub-fields are dishonest," the
- * discriminator must be provable from the evidence the scanner has
- * (the file path), not a guess on path patterns or contents.
- *
- *   - `.svg` / `.svgz` → `"svg_standalone"`. Routed through
- *     `parseHtml` by `src/input/parsers/svg.ts` and naturally lacks
- *     `<html>` / `<body>`.
- *   - `.md` / `.markdown` → `"markdown_residue"`. Routed through
- *     the HTML parser per ADR 0025; the resulting AST is the literal-
- *     text residue, which never carries a `<html>` envelope.
- *   - everything else (`.html`, `.htm`, `.xhtml`, `.astro`, etc.) →
- *     `"html_partial"`. The catch-all bucket: the file parses as HTML
- *     but lacks the document envelope, indicating a partial / include
- *     intended for composition into a parent layout.
- */
-function classifyFragmentKind(filePath: string): FragmentFileEntry["kind"] {
-  const lower = filePath.toLowerCase();
-  if (lower.endsWith(".svg") || lower.endsWith(".svgz")) return "svg_standalone";
-  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown_residue";
-  return "html_partial";
-}
-
-/**
  * Populates the opaque-components sub-block of analysisCoverage: count,
  * ranked top list, and — when the inventory is small — the full
  * names array. Extracted from {@link buildAnalysisCoverage} so the
@@ -902,16 +817,6 @@ function buildOpaqueComponentsHint(
 }
 
 /**
- * True when `filePath` is a markdown source file (`.md`, `.markdown`,
- * or `.mkdn`). Kept in sync with the PARSEABLE_EXTENSIONS entry and
- * the parser dispatch in `src/mcp/session.ts`.
- */
-function isMarkdownFile(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mkdn");
-}
-
-/**
  * Explains what the HTML parser does with the template-interpolation
  * tokens we detected. The parser treats `{% ... %}`, `{{ ... }}`, and
  * `<% ... %>` as literal text, so attribute values and text content
@@ -966,78 +871,6 @@ function describeTemplateDirectiveHandling(tokens: ReadonlyMap<string, number>):
  * different semantics. is the agreement
  * site for the alias expansion.
  */
-/**
- * Per-extension disclosure of which parser / AST-language each file
- * routed through. Mirrors `parseForExtension` in `src/mcp/session.ts`
- * and the EXTENSION_ALIASES table in `src/utils/path.ts`. Values are
- * one of:
- *   - `"native"` — extension name equals AST language (no alias to
- *     explain).
- *   - `"css"` / `"html"` / `"tsx"` — alias-routed extension whose
- *     source IS source of that AST language (`.scss → "css"`,
- *     `.less → "css"`, `.mdx → "tsx"`, `.astro → "html"`,
- *     `.erb → "html"`, `.js`/`.ts → "tsx"`).
- *   - `"markdown-html-residue"` — Markdown source (`.md`/`.markdown`)
- *     processed through the HTML parser as an HTML-residue projection
- *     per ADR 0025 Option B. Distinct from a bare `"html"` value
- *     because the source is NOT HTML: ATX/Setext headings, link text,
- *     and prose readability are stripped or out-of-scope; only
- *     embedded HTML (tables, iframes, admonition divs) and image
- *     alt-text reach rules. Agents cross-referencing
- *     `parseErrorFiles[].parser` (which still tags `"html"` for these
- *     files, since the AST language tag tracks the running parser)
- *     should treat `markdown-html-residue` as the disclosure axis
- *     orthogonal to AST language: same parser, narrower evidence.
- *     Native pairs (extension equals AST language): `.css`, `.html`,
- *     `.htm`, `.tsx`, `.jsx`. Values are deterministic tokens chosen
- *     so the agent can dispatch on equality without substring
- *     matching. Derived from the ParsedFile list (no re-dispatch):
- *     every file carries `ast.language` and the extension comes off
- *     the path. `parseForExtension` dispatches purely on suffix, so
- *     two files with the same extension always produce the same
- *     language — safe to stop at the first sighting. Sorted for
- *     deterministic wire output.
- */
-const NATIVE_EXT_LANG: Readonly<Record<string, string>> = { htm: "html", jsx: "tsx" };
-
-/**
- * Token for `.md` / `.markdown` files routed through the HTML parser.
- * Distinct from the bare `"html"` AST-language tag: the source is
- * Markdown processed for HTML residue per ADR 0025, not native HTML.
- * Surfaced on `parseModeByExtension` so an agent reading the field
- * can tell native HTML routing apart from the markdown-residue
- * downgrade (the bare `"html"` value would silently conflate the two,
- * mis-cuing the agent into expecting heading-hierarchy / link-purpose
- * coverage that the residue projection intentionally omits).
- */
-const MARKDOWN_HTML_RESIDUE_MODE = "markdown-html-residue";
-
-function parseModeByExtension(files: readonly ParsedFile[]): Record<string, string> {
-  const seen = new Map<string, string>();
-  for (const f of files) {
-    const dot = f.filePath.lastIndexOf(".");
-    const ext = dot === -1 ? "" : f.filePath.slice(dot).toLowerCase();
-    if (ext.length === 0 || seen.has(ext)) continue;
-    const lang = f.ast.language;
-    const isNative = ext.slice(1) === lang || NATIVE_EXT_LANG[ext.slice(1)] === lang;
-    if (isNative) {
-      seen.set(ext, "native");
-      continue;
-    }
-    // `.md` / `.markdown` route through the HTML parser per ADR 0025
-    // Option B but the source is not HTML — emit a distinct token so
-    // the disclosure label honestly distinguishes Markdown-residue
-    // from native HTML routing instead of relying on the bare AST
-    // language tag.
-    if (lang === "html" && (ext === ".md" || ext === ".markdown")) {
-      seen.set(ext, MARKDOWN_HTML_RESIDUE_MODE);
-      continue;
-    }
-    seen.set(ext, lang);
-  }
-  return Object.fromEntries([...seen.entries()].sort(([a], [b]) => a.localeCompare(b)));
-}
-
 function rulesEligibleByExtension(
   files: readonly ParsedFile[],
   activeRules: readonly Rule[],
@@ -1091,7 +924,7 @@ function rulesEligibleByExtension(
 function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulator): void {
   const src = isMarkdownFile(file.filePath) ? stripMarkdownCodeRegions(file.source) : file.source;
   detectTemplateInterpolation(src, acc.templateInterpolation);
-  acc.hasFrontmatterFence ||= FRONTMATTER_FENCE_RE.test(file.source);
+  acc.hasFrontmatterFence ||= hasFrontmatterFence(file.source);
   const { isFragment, signals } = classifyFragment(
     file.ast.root as HtmlDocument,
     file.source,

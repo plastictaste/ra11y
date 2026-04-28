@@ -1,11 +1,13 @@
 /**
  * Shared types co-owned by `analysis-coverage.ts` and its sibling
- * sub-assemblers (currently `analysis-coverage-parse-errors.ts`). Kept
- * in a thin types-only module so neither consumer creates an
- * import-back-edge to the parent — the parent file owns the
- * orchestration and the sub-assemblers own the per-section logic, and
- * the shared shape they both touch lives here.
+ * sub-assemblers (`analysis-coverage-parse-errors.ts`,
+ * `markdown-classifier.ts`). Kept in a thin types-only module so
+ * neither consumer creates an import-back-edge to the parent — the
+ * parent file owns the orchestration and the sub-assemblers own the
+ * per-section logic, and the shared shapes they both touch live here.
  */
+
+import type { FragmentClassificationSignals } from "../engine/layout-partial.ts";
 
 /**
  * A file whose parser emitted errors. The `reason` is the first parse
@@ -68,4 +70,55 @@ export interface ParseErrorEntry {
   readonly reason: string;
   readonly triggerToken?: string;
   readonly parsedThroughLine?: number;
+}
+
+/**
+ * Categorical shape of a fragment file. The flat
+ * `analysisCoverage.fragmentFiles[]` list previously surfaced only the
+ * path, but observed members fall into three categorically-different
+ * shapes that warrant different downstream rule-skipping decisions:
+ *
+ *   - `html_partial` — Jekyll `_includes/`, Hugo `partials/`, Astro /
+ *     Handlebars layouts: HTML markup intended to be composed into a
+ *     parent layout at render time. Document-shaped rules
+ *     (`landmark-main`, `heading-hierarchy`, `page-titled`,
+ *     `lang-attribute`) are out of scope because the parent layout
+ *     supplies the envelope.
+ *   - `markdown_residue` — `.md` / `.markdown` files routed through
+ *     the HTML parser per ADR 0025. The parsed AST is the literal-
+ *     text residue after the markdown body, so a missing `<html>`
+ *     root reflects the source format rather than a partial. Rules
+ *     deciding whether to skip should consult the kind, not the path.
+ *   - `svg_standalone` — `.svg` files routed through `parseHtml` per
+ *     `src/input/parsers/svg.ts`. A standalone icon / brand-mark SVG
+ *     has no `<html>` or `<body>` because it isn't a document.
+ *     Page-level rules should skip these unconditionally.
+ *
+ * Per the AI-first consumer model "Heuristic-mislabeled meta sub-
+ * fields are dishonest" rule: the kind is provable from the file
+ * extension (no path-pattern guessing), so the discriminator clears
+ * the "100% correct from the evidence" bar.
+ *
+ * Document-shaped rules will read the discriminator before deciding
+ * eligibility — that wiring is a follow-up; this type ships the field
+ * so downstream consumers can branch on it now.
+ */
+export interface FragmentFileEntry {
+  readonly path: string;
+  readonly kind: "html_partial" | "markdown_residue" | "svg_standalone";
+  /**
+   * Structural signals captured by the shared
+   * {@link import("../engine/layout-partial.ts").classifyFragment}
+   * predicate when this file was classified as a fragment —
+   * `hasHtmlOpener`, `hasLayoutDirective`, `inLayoutsDir`. All three
+   * are `false` for entries that reach this list (the predicate
+   * stamps fragment only when ALL three signals are absent), but
+   * surfaced explicitly so an agent auditing a classification can
+   * read the raw evidence without re-deriving it. Pairs with the
+   * "Heuristic-mislabeled meta sub-fields are dishonest" rule per
+   * `docs/kb/architecture/ai-first-consumer.md`: every signal here is
+   * provable from the file alone (path / AST / source regex) so the
+   * sub-field labels clear the "100% correct from the evidence" bar.
+   */
+  readonly fragmentClassificationSignals: FragmentClassificationSignals;
 }
