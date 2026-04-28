@@ -98,41 +98,40 @@ function buildReviewCandidates(
       if (fp !== 0) return fp;
       return a.location.line - b.location.line;
     })
-    .map((c) => {
-      const prompt = EVALUATION_PROMPTS.get(c.criterionId);
-      return {
-        criterionId: c.criterionId,
-        ...(prompt !== undefined && { tier: prompt.tier }),
-        path: c.location.filePath,
-        line: c.location.line,
-        reason: c.reason,
-        ...(c.snippet !== undefined && { snippet: c.snippet }),
-        ...(prompt !== undefined && { question: prompt.question }),
-        ...(prompt !== undefined && { passCriteria: prompt.passCriteria }),
-        ...(prompt?.failExample !== undefined && { failExample: prompt.failExample }),
-        ...(prompt?.passExample !== undefined && { passExample: prompt.passExample }),
-        ...(prompt !== undefined && { suggestedFix: prompt.suggestedFix }),
-        // Surface siblingOccurrences when a finder aggregated ≥2
-        // same-shape siblings (or deduped same-stem candidates) —
-        // present-when-meaningful per AI-first doctrine; never `[]`
-        // for singleton candidates.
-        ...(c.siblingOccurrences !== undefined &&
-          c.siblingOccurrences.length > 0 && { siblingOccurrences: c.siblingOccurrences }),
-        // Structured additive evidence — vendor-path-shape boolean
-        // and duration literal/non-literal sentinel — surfaced
-        // present-when-meaningful so the agent-format consumer
-        // (CLI `--format agent`) reads the same dismissal fields
-        // an MCP review_candidates caller does.
-        ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
-        ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
-        ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
-        ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
-        // sourceCount mirrors siblingOccurrences for stem-deduped
-        // candidates (count of source occurrences). Omitted on
-        // singletons.
-        ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
-      };
-    });
+    .map(buildAgentReviewCandidate);
+}
+
+/**
+ * Maps one engine-emitted {@link ReviewCandidate} onto the agent-format
+ * `AgentReviewCandidate` shape. Extracted from `buildReviewCandidates`
+ * so the per-candidate present-when-meaningful spreads (prompt fields,
+ * siblingOccurrences, vendorPathHint, vendorContext, duration
+ * literal/expression, sourceCount) live in one place rather than
+ * inflating the parent function's cognitive complexity above the
+ * linter's cap. All optional fields conditional-spread per CLAUDE.md §1.
+ */
+function buildAgentReviewCandidate(c: ReviewCandidate): AgentReviewCandidate {
+  const prompt = EVALUATION_PROMPTS.get(c.criterionId);
+  return {
+    criterionId: c.criterionId,
+    ...(prompt !== undefined && { tier: prompt.tier }),
+    path: c.location.filePath,
+    line: c.location.line,
+    reason: c.reason,
+    ...(c.snippet !== undefined && { snippet: c.snippet }),
+    ...(prompt !== undefined && { question: prompt.question }),
+    ...(prompt !== undefined && { passCriteria: prompt.passCriteria }),
+    ...(prompt?.failExample !== undefined && { failExample: prompt.failExample }),
+    ...(prompt?.passExample !== undefined && { passExample: prompt.passExample }),
+    ...(prompt !== undefined && { suggestedFix: prompt.suggestedFix }),
+    ...(c.siblingOccurrences !== undefined &&
+      c.siblingOccurrences.length > 0 && { siblingOccurrences: c.siblingOccurrences }),
+    ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+    ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
+    ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+    ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
+    ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
+  };
 }
 
 function buildMeta(result: ScanResult): AgentMeta {

@@ -23,7 +23,8 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
-import type { CandidateFinder } from "../types/review.ts";
+import type { CandidateFinder, ReviewCandidate } from "../types/review.ts";
+import type { Standard } from "../types/standard.ts";
 import { resolveActiveRules } from "./rules-evaluated.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import {
@@ -164,60 +165,7 @@ export const reviewCandidatesTool: McpTool = {
       // Per CLAUDE.md §1, conditional-spread at the assembly site.
       ...(hasPrompts ? { prompts } : {}),
       ...reviewNextStep,
-      candidates: candidates.map((c) => {
-        const standardId = c.criterionId.split(":")[0] ?? "";
-        const criterionKey = c.criterionId;
-        const standard = standardsById.get(standardId);
-        const criterion = standard?.criteria.find((ck) => ck.id === criterionKey);
-        const snippet = candidateSnippet(c, sources);
-        // `confidence` is required on every grounded candidate —
-        // finders set it based on what their static signal can claim
-        // (deterministic match -> "high", structural-with-context
-        // ambiguity -> "medium", narrow-heuristic -> "low"). Passed
-        // through verbatim so an agent's threshold/filter logic reads
-        // the same across automated findings and review candidates.
-        // `title` / `level` come from the standard's criterion record;
-        // they're populated when the candidate's criterionId resolves
-        // to a loaded criterion and omitted otherwise (per CLAUDE.md §1
-        // "Ambiguous field shapes are dishonest" — don't emit `null` as
-        // "unknown," conditional-spread so the field is absent when no
-        // value is available).
-        return {
-          criterionId: c.criterionId,
-          ...(criterion?.title ? { title: criterion.title } : {}),
-          ...(criterion?.level ? { level: criterion.level } : {}),
-          location: c.location,
-          reason: c.reason,
-          confidence: c.confidence,
-          ...(snippet === undefined ? {} : { snippet }),
-          // Pass through aggregated siblingOccurrences when the finder
-          // collapsed ≥2 same-shape siblings (or deduped ≥2 same-stem
-          // candidates) — present-when-meaningful per CLAUDE.md §1
-          // ("Ambiguous field shapes are dishonest").
-          ...(c.siblingOccurrences !== undefined &&
-            c.siblingOccurrences.length > 0 && {
-              siblingOccurrences: c.siblingOccurrences,
-            }),
-          // Structured additive evidence — vendor-path-shape boolean
-          // and duration literal/non-literal sentinel. Both are set
-          // by the finder when its predicates fire and surfaced
-          // verbatim so an agent can read the dismissal evidence as
-          // typed fields instead of parsing free-form reason text.
-          // Per ai-first-consumer.md "Numeric-threshold heuristics
-          // are suppression" — these never gate suppression or
-          // adjust confidence; the candidate stays present at the
-          // same confidence regardless of the values.
-          ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
-          ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
-          ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
-          ...(c.durationExpression === undefined
-            ? {}
-            : { durationExpression: c.durationExpression }),
-          // sourceCount counts the source occurrences for a stem-deduped
-          // candidate. Omitted on singletons (present-when-meaningful).
-          ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
-        };
-      }),
+      candidates: candidates.map((c) => mapCandidateOut(c, standardsById, sources)),
       ...warningsField({
         filesScanned: files.length,
         rootSource: null,
@@ -228,6 +176,46 @@ export const reviewCandidatesTool: McpTool = {
     });
   },
 };
+
+/**
+ * Maps one engine-emitted {@link ReviewCandidate} onto the
+ * `review_candidates` wire shape. Extracted from the tool's main
+ * handler so the per-candidate present-when-meaningful spreads
+ * (siblingOccurrences, vendorPathHint, vendorContext, durationLiteralMs,
+ * durationExpression, sourceCount) live in one place rather than
+ * inflating the handler's cognitive complexity above the linter's
+ * cap. `confidence` is required on every grounded candidate;
+ * `title` / `level` come from the standard's criterion record and
+ * conditional-spread when the resolution succeeds.
+ */
+function mapCandidateOut(
+  c: ReviewCandidate,
+  standardsById: ReadonlyMap<string, Standard>,
+  sources: ReadonlyMap<string, SourceEntry>,
+): Record<string, unknown> {
+  const standardId = c.criterionId.split(":")[0] ?? "";
+  const standard = standardsById.get(standardId);
+  const criterion = standard?.criteria.find((ck) => ck.id === c.criterionId);
+  const snippet = candidateSnippet(c, sources);
+  return {
+    criterionId: c.criterionId,
+    ...(criterion?.title ? { title: criterion.title } : {}),
+    ...(criterion?.level ? { level: criterion.level } : {}),
+    location: c.location,
+    reason: c.reason,
+    confidence: c.confidence,
+    ...(snippet === undefined ? {} : { snippet }),
+    ...(c.siblingOccurrences !== undefined &&
+      c.siblingOccurrences.length > 0 && {
+        siblingOccurrences: c.siblingOccurrences,
+      }),
+    ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+    ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
+    ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+    ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
+    ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
+  };
+}
 
 /**
  * Produces the `snippet` field for a single candidate: prefers the

@@ -29,7 +29,20 @@
  * before the real shape is settled. See ai-first-consumer.md on
  * "encode the duration/size/count in the reason text as additive
  * context" and "no heuristic suppression."
+ *
+ * Also exposes {@link buildVendorContext}, the structured-payload
+ * companion to the reason-text clause: when the cited file matches
+ * either the vendor-bundle-basename predicate above or the minified-
+ * shape predicate in `timing-minified.ts`, the helper returns a
+ * `ReviewCandidateVendorContext` carrying `redirectTo:
+ * "consumer-override"`. The checklist surface uses the field to
+ * downgrade item priority when every grounded candidate ships it,
+ * matching the doctrine line "Reason / priority / fix-description
+ * must agree across all three channels."
  */
+
+import type { ReviewCandidateVendorContext } from "../../types/review.ts";
+import { isMinifiedForEnrichment } from "./timing-minified.ts";
 
 /**
  * Canonical vendor library bundle filenames that frequently appear in
@@ -172,4 +185,43 @@ function vendorBasenameOf(filePath: string): string {
   const normalized = filePath.replace(/\\/g, "/");
   const slash = normalized.lastIndexOf("/");
   return slash === -1 ? normalized : normalized.slice(slash + 1);
+}
+
+/**
+ * Build the structured vendor-context payload for a candidate when
+ * the cited file matches one of the finder's vendor-path-shape
+ * predicates. Returns `null` for ordinary authored-source paths so the
+ * caller conditional-spreads the field away (present-when-meaningful).
+ *
+ * Preference order when both predicates fire (a vendored
+ * `bootstrap.min.js` matches both): `vendor-bundle-basename` wins —
+ * naming the library is more actionable than naming the underlying
+ * minification predicate, mirroring `detectVendorContext` in
+ * `src/mcp/suggest-fix-vendor-context.ts` so the same precedence holds
+ * across surfaces. The two predicates are duplicated locally in
+ * `timing-vendor.ts` and `timing-minified.ts` rather than imported
+ * from `src/mcp/build-artifacts.ts` so the finder layer stays
+ * decoupled from the MCP layer (`src/review/` is a content layer).
+ *
+ * Always pairs with `redirectTo: "consumer-override"` — the only
+ * dismissal direction this signal supports. Future redirects (e.g.
+ * `"upstream-bug-report"`) would extend the wire enum.
+ */
+export function buildVendorContext(
+  filePath: string,
+  source: string,
+): ReviewCandidateVendorContext | null {
+  if (isVendorBundleBasename(filePath)) {
+    return {
+      signal: { kind: "vendor-bundle-basename" },
+      redirectTo: "consumer-override",
+    };
+  }
+  if (isMinifiedForEnrichment(filePath, source)) {
+    return {
+      signal: { kind: "minified-shape" },
+      redirectTo: "consumer-override",
+    };
+  }
+  return null;
 }

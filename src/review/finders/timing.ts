@@ -59,7 +59,7 @@ import type {
   SourcePosition,
   TsxModule,
 } from "../../types/ast.ts";
-import type { ReviewCandidate, ReviewCandidateVendorContext } from "../../types/review.ts";
+import type { ReviewCandidate } from "../../types/review.ts";
 import type { RuleContext } from "../../types/rule.ts";
 import {
   callbackMutatesDom,
@@ -69,6 +69,7 @@ import {
 } from "./timing-dom-mutation.ts";
 import { isMinifiedForEnrichment, minifiedLocatorClause } from "./timing-minified.ts";
 import {
+  buildVendorContext,
   durationClassClause,
   isVendorBundleBasename,
   vendorBundleClause,
@@ -327,42 +328,6 @@ function buildDurationFields(duration: string | null): {
   const literalMs = parseDurationLiteralMs(duration);
   if (literalMs !== undefined) return { durationLiteralMs: literalMs };
   return { durationExpression: duration };
-}
-
-/**
- * Build the structured vendor-context payload for a candidate when
- * the cited file matches one of the finder's vendor-path-shape
- * predicates. Returns `null` for ordinary authored-source paths so the
- * caller conditional-spreads the field away (present-when-meaningful).
- *
- * Preference order when both predicates fire (a vendored
- * `bootstrap.min.js` matches both): `vendor-bundle-basename` wins —
- * naming the library is more actionable than naming the underlying
- * minification predicate, mirroring `detectVendorContext` in
- * `src/mcp/suggest-fix-vendor-context.ts` so the same precedence holds
- * across surfaces. The two predicates are duplicated locally in
- * `timing-vendor.ts` and `timing-minified.ts` rather than imported
- * from `src/mcp/build-artifacts.ts` so the finder layer stays
- * decoupled from the MCP layer (`src/review/` is a content layer).
- *
- * Always pairs with `redirectTo: "consumer-override"` — the only
- * dismissal direction this signal supports. Future redirects (e.g.
- * `"upstream-bug-report"`) would extend the wire enum.
- */
-function buildVendorContext(filePath: string, source: string): ReviewCandidateVendorContext | null {
-  if (isVendorBundleBasename(filePath)) {
-    return {
-      signal: { kind: "vendor-bundle-basename" },
-      redirectTo: "consumer-override",
-    };
-  }
-  if (isMinifiedForEnrichment(filePath, source)) {
-    return {
-      signal: { kind: "minified-shape" },
-      redirectTo: "consumer-override",
-    };
-  }
-  return null;
 }
 
 /**
