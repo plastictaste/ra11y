@@ -98,6 +98,10 @@ interface WarningsEnvelope {
   readonly warnings?: readonly string[];
   readonly warningsDetails?: {
     readonly text_source_skipped?: ExtensionsSkippedPayload;
+    readonly sourcemap_files_excluded?: {
+      readonly count: number;
+      readonly topPaths: readonly string[];
+    };
     readonly content_files_skipped?: { readonly count: number };
     readonly source_language_unsupported?: { readonly language: string };
     readonly vendor_css_dominates_findings?: { readonly vendorFindingsCount: number };
@@ -130,6 +134,27 @@ async function makeSkippedExtensionFixture(): Promise<string> {
 }
 
 /**
+ * Fixture seeding `sourcemap_files_excluded` — drops two `.map`
+ * sourcemap files alongside one parseable HTML file. The discovery
+ * walker routes the `.map` files into the dedicated
+ * `analysisCoverage.sourcemapFiles` bucket so the warning declares
+ * the conventional sourcemap exclusion explicitly. Mirrors the
+ * canonical CSS-framework corpus shape (sibling `.css.map` /
+ * `.js.map` to authored output) at the smallest size that fires the
+ * predicate on every project-rooted tool.
+ */
+async function makeSourcemapFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-srcmap-"));
+  await writeFile(
+    join(dir, "page.html"),
+    `<html><body><img src="a.png" alt="alt"><p>hi</p></body></html>`,
+  );
+  await writeFile(join(dir, "app.css.map"), `{"version":3,"sources":[]}`);
+  await writeFile(join(dir, "vendor.js.map"), `{"version":3,"sources":[]}`);
+  return dir;
+}
+
+/**
  * Projects a surface's response body down to the shared warnings
  * envelope. Every surface in scope must satisfy this shape; fields are
  * optional because "omit when no code fires" is the correct honest
@@ -155,6 +180,7 @@ function warningsEnvelope(raw: Record<string, unknown>): WarningsEnvelope {
 const DISCOVERY_DEPENDENT_CODES: readonly string[] = [
   "text_source_skipped",
   "binary_assets_skipped",
+  "sourcemap_files_excluded",
   "content_files_skipped",
   "source_language_unsupported",
   "tailwind_detected_css_undercounted",
@@ -162,6 +188,45 @@ const DISCOVERY_DEPENDENT_CODES: readonly string[] = [
 ] as const;
 
 describe("warnings + warningsDetails coherence across scan_project / scan_file / coverage / checklist", () => {
+  it("scan_project, coverage, and checklist emit the same sourcemap_files_excluded payload on the same scan root", async () => {
+    const dir = await makeSourcemapFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const scanProj = warningsEnvelope(body<Record<string, unknown>>(responses[1]));
+    const coverage = warningsEnvelope(body<Record<string, unknown>>(responses[2]));
+    const checklist = warningsEnvelope(body<Record<string, unknown>>(responses[3]));
+
+    // Sanity: predicate fires on scan_project, otherwise the cross-
+    // surface invariant below is vacuously true.
+    expect(scanProj.warnings ?? []).toContain("sourcemap_files_excluded");
+
+    const scanProjPayload = scanProj.warningsDetails?.sourcemap_files_excluded;
+    const coveragePayload = coverage.warningsDetails?.sourcemap_files_excluded;
+    const checklistPayload = checklist.warningsDetails?.sourcemap_files_excluded;
+
+    expect(scanProjPayload).toBeDefined();
+    expect(coveragePayload).toBeDefined();
+    expect(checklistPayload).toBeDefined();
+
+    // Same fixture → identical payload across all three surfaces.
+    // Cross-surface drift (one tool counts 2 sourcemaps while another
+    // counts 1) would silently mislead an agent budgeting against the
+    // first tool's headline before calling the second.
+    expect(coveragePayload).toEqual(scanProjPayload);
+    expect(checklistPayload).toEqual(scanProjPayload);
+
+    // Payload shape sanity — count is 2 (.css.map + .js.map),
+    // topPaths are sorted ascending.
+    expect(scanProjPayload?.count).toBe(2);
+    expect(scanProjPayload?.topPaths.length).toBe(2);
+    expect(scanProjPayload?.topPaths[0]).toMatch(/app\.css\.map$/);
+    expect(scanProjPayload?.topPaths[1]).toMatch(/vendor\.js\.map$/);
+  });
+
   it("scan_project, coverage, and checklist emit the same text_source_skipped payload on the same scan root", async () => {
     const dir = await makeSkippedExtensionFixture();
     const responses = await mcpSession([

@@ -305,4 +305,51 @@ describe("discoverFilesWithDiagnostics", () => {
     const result = await discoverFilesWithDiagnostics([dir]);
     expect(result.diagnostics.skippedByExtension).toEqual({ ".svelte": 1 });
   });
+
+  it("routes `.map` sourcemap files into a dedicated bucket rather than skippedByExtension", async () => {
+    // Sourcemap exclusion is conventionally correct (generator output,
+    // not authored a11y source) but a silent skip is indistinguishable
+    // from "tool never saw the file." Discovery routes `.map` files
+    // into `sourcemapFiles` so the `sourcemap_files_excluded` warning
+    // can declare the exclusion explicitly. The skip map carries no
+    // `.map` key — that channel is reserved for parser-routable
+    // skips.
+    write(join(dir, "page.tsx"));
+    write(join(dir, "assets/app.css.map"));
+    write(join(dir, "assets/vendor.js.map"));
+    write(join(dir, "Card.svelte"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.skippedByExtension).toEqual({ ".svelte": 1 });
+    expect(result.diagnostics.sourcemapFiles).toEqual([
+      join(dir, "assets/app.css.map"),
+      join(dir, "assets/vendor.js.map"),
+    ]);
+  });
+
+  it("returns sourcemapFiles ascending lexically so the wire shape is deterministic", async () => {
+    // Walker iteration order varies across filesystems; the discovery
+    // helper sorts the field before returning so consumers
+    // (warningsDetails.sourcemap_files_excluded.topPaths) get a stable
+    // head slice run-to-run.
+    write(join(dir, "page.tsx"));
+    write(join(dir, "z.css.map"));
+    write(join(dir, "a.css.map"));
+    write(join(dir, "m.css.map"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.sourcemapFiles).toEqual([
+      join(dir, "a.css.map"),
+      join(dir, "m.css.map"),
+      join(dir, "z.css.map"),
+    ]);
+  });
+
+  it("returns an empty sourcemapFiles list when the discovery walk encounters none", async () => {
+    write(join(dir, "page.tsx"));
+    write(join(dir, "styles.css"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.sourcemapFiles).toEqual([]);
+  });
 });

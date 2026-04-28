@@ -88,6 +88,28 @@ export type ScanWarningCode =
   // surface uniformly. The two warnings fire independently and can
   // co-exist on a heterogeneous corpus.
   | "binary_assets_skipped"
+  // The discovery walker encountered N `.map` sourcemap files (cleared
+  // dir-ignore + user-excludes, failed the parseable-extension check).
+  // Sourcemap exclusion is conventionally correct — the `.map` payload
+  // is generator-output, not authored a11y source — but a silent skip
+  // is indistinguishable from "tool never saw the file" from the
+  // agent's seat. Surfaced as a dedicated code (rather than folded
+  // into `text_source_skipped` or `binary_assets_skipped`) so the
+  // semantic — "we saw these and excluded them by convention" — is
+  // honest. Same predicate-strength bar as the other split-skip
+  // warnings: `.map` extension is a deterministic classification, not
+  // a heuristic. Paired meta:
+  // `analysisCoverage.sourcemapFiles` carries the full sorted-ascending
+  // path list. Structured payload under
+  // `warningsDetails.sourcemap_files_excluded` carries
+  // `{ count, topPaths }` (topPaths capped at
+  // {@link SOURCEMAP_TOP_PATHS_CAP} entries) so an agent reading the
+  // code can answer "how many, and which ones first?" without
+  // descending into `meta`. Symmetric to the
+  // "Routing skips that drop content are the symmetric twin of
+  // suppression" doctrine — the exclusion is declared explicitly so
+  // the agent can audit rather than accept a silent miss.
+  | "sourcemap_files_excluded"
   // Parser produced errors on at least one file: either the AST was
   // unusable (file effectively invisible to rules, tallied under
   // `parseErrorFileCount`) OR the recovered partial AST still let at
@@ -869,6 +891,23 @@ const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
 const WARNING_DETAILS_TOP_EXTENSIONS = 5;
 
 /**
+ * Max number of `.map` paths to inline under
+ * `warningsDetails.sourcemap_files_excluded.topPaths`. The full sorted-
+ * ascending list still lives under
+ * `meta.analysisCoverage.sourcemapFiles`; the cap keeps the wire
+ * payload bounded on bulk-vendor corpora (one CSS-framework corpus
+ * surfaced 48 entries — more than enough for the agent to recognize
+ * the exclusion shape, but the cap keeps a future
+ * 500-entry minified-asset directory under control without
+ * re-shaping the payload). Ten is a heuristic choice — generous
+ * enough that an agent can spot whether sourcemaps cluster by build
+ * pipeline (every entry under `dist/`) vs. by directory (mixed under
+ * `public/`, `static/`), but tight enough to stay sub-1KB on a
+ * realistic corpus.
+ */
+const SOURCEMAP_TOP_PATHS_CAP = 10;
+
+/**
  * Extensions for binary assets — images, fonts, audio, video,
  * archives, miscellaneous vendor blobs — that surface under the
  * dedicated `binary_assets_skipped` warning rather than
@@ -1216,6 +1255,22 @@ export interface ScanWarningDetails {
     readonly topExtension: string;
     readonly topCount: number;
     readonly totalSkipped: number;
+  };
+  /**
+   * Payload for `sourcemap_files_excluded`. Carries the count of
+   * `.map` sourcemap files the discovery walk encountered + a head-
+   * sliced subset of the absolute paths (capped at
+   * {@link SOURCEMAP_TOP_PATHS_CAP}) so an agent reading the warning
+   * channel can answer "how many sourcemaps, and which ones first?"
+   * without descending into `meta.analysisCoverage.sourcemapFiles`.
+   * The full sorted-ascending list still lives under that meta key
+   * for callers that want every entry. `topPaths` is sorted-ascending
+   * (lexical) so the wire shape stays deterministic across runs and
+   * a future paginating consumer doesn't have to re-sort.
+   */
+  readonly sourcemap_files_excluded?: {
+    readonly count: number;
+    readonly topPaths: readonly string[];
   };
   /**
    * Density-cap settlement for the `response_token_budget_truncated`
@@ -1856,6 +1911,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "storybook_preset_active",
   "text_source_skipped",
   "binary_assets_skipped",
+  "sourcemap_files_excluded",
   "parse_errors_present",
   "response_token_budget_truncated",
   "response_dropped_files_oversize",
@@ -2109,6 +2165,16 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // signal the agent should not have to re-derive from `meta`.
     out.push("binary_assets_skipped");
   }
+  if (hasSourcemapFilesExcluded(inputs.analysisCoverage)) {
+    // coverage block carries at least one `.map` sourcemap path the
+    // discovery walk encountered. The exclusion is conventionally
+    // correct — `.map` payloads are generator-output, not authored
+    // source — but a silent skip is indistinguishable from "tool
+    // never saw the file" from the agent's seat. Declared explicitly
+    // per "Routing skips that drop content are the symmetric twin
+    // of suppression."
+    out.push("sourcemap_files_excluded");
+  }
   if (inputs.sessionWrappersMismatchCwd === true) {
     // Connection-wide session state carried wrappers configured for a
     // different project root into this scan. The wrappers still
@@ -2351,6 +2417,37 @@ function hasBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined): 
     if (isBinaryAssetExtension(ext)) return true;
   }
   return false;
+}
+
+/**
+ * `sourcemap_files_excluded` predicate: at least one `.map` path
+ * appears under `analysisCoverage.sourcemapFiles`. The discovery
+ * walker routes `.map` files into a dedicated bucket rather than
+ * `skippedByExtension` so this predicate keys directly off the list
+ * field — same fail-soft contract as {@link readSkippedMap} (any
+ * shape mismatch returns `false`; never throws).
+ */
+function hasSourcemapFilesExcluded(coverage: Record<string, unknown> | undefined): boolean {
+  return readSourcemapFiles(coverage).length > 0;
+}
+
+/**
+ * Reads `sourcemapFiles` off the coverage block as a typed string
+ * array. Returns an empty array on any of "no coverage block", "no
+ * sourcemapFiles field", or "wrong shape" so callers can operate
+ * uniformly without re-checking shape invariants. Filters non-string
+ * entries defensively — same hostile-input defense as
+ * {@link readSkippedMap}.
+ */
+function readSourcemapFiles(coverage: Record<string, unknown> | undefined): readonly string[] {
+  if (coverage === undefined) return [];
+  const raw = coverage["sourcemapFiles"];
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.length > 0) out.push(entry);
+  }
+  return out;
 }
 
 /**
@@ -2764,6 +2861,10 @@ export function computeScanWarningDetails(
     {
       code: "binary_assets_skipped",
       summarize: () => summarizeBinaryAssetsSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "sourcemap_files_excluded",
+      summarize: () => summarizeSourcemapFilesExcluded(inputs.analysisCoverage),
     },
     {
       code: "content_files_skipped",
@@ -3261,6 +3362,30 @@ function summarizeBinaryAssetsSkipped(coverage: Record<string, unknown> | undefi
     }
   | undefined {
   return summarizeSkippedSubset(coverage, (ext) => isBinaryAssetExtension(ext));
+}
+
+/**
+ * Builds the `sourcemap_files_excluded` payload from the coverage
+ * block's `sourcemapFiles` list. Returns `undefined` when the field is
+ * absent, malformed, or empty so the dispatch table conditional-
+ * spreads the entry away (payload-vs-binary contract). The full count
+ * comes from the list length; `topPaths` is a head slice capped at
+ * {@link SOURCEMAP_TOP_PATHS_CAP} entries — the discovery walker
+ * already sorts the field ascending lexically, so the head is
+ * deterministic across runs without a re-sort here.
+ */
+function summarizeSourcemapFilesExcluded(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly count: number;
+      readonly topPaths: readonly string[];
+    }
+  | undefined {
+  const files = readSourcemapFiles(coverage);
+  if (files.length === 0) return undefined;
+  return {
+    count: files.length,
+    topPaths: files.slice(0, SOURCEMAP_TOP_PATHS_CAP),
+  };
 }
 
 /**

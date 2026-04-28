@@ -417,6 +417,43 @@ describe("computeScanWarnings", () => {
     expect(codes).toContain("binary_assets_skipped");
   });
 
+  it("fires `sourcemap_files_excluded` when discovery records `.map` paths in the coverage block", () => {
+    // The discovery walker routes `.map` files into a dedicated bucket
+    // (`analysisCoverage.sourcemapFiles`) so the sourcemap-exclusion
+    // signal is declared explicitly rather than buried under
+    // `text_source_skipped` / `binary_assets_skipped`. Predicate fires
+    // off list-presence — a non-empty list is sufficient evidence.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        sourcemapFiles: ["/proj/assets/app.css.map", "/proj/assets/vendor.js.map"],
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("sourcemap_files_excluded");
+  });
+
+  it("does NOT fire `sourcemap_files_excluded` when the sourcemapFiles list is empty or absent", () => {
+    const empty = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { sourcemapFiles: [] },
+      filesByExtension: { ".tsx": 50 },
+    });
+    const absent = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(empty).not.toContain("sourcemap_files_excluded");
+    expect(absent).not.toContain("sourcemap_files_excluded");
+  });
+
   it("does NOT fire `binary_assets_skipped` when the map is text-source only", () => {
     // Symmetric to the binary-only case: a pure text-source skip map
     // (Vue / Astro / SCSS components) trips `text_source_skipped`
@@ -1380,6 +1417,51 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.binary_assets_skipped?.topExtension).toBe(".png");
     expect(details.binary_assets_skipped?.extensions).toEqual([".png", ".woff2"]);
     expect(details.binary_assets_skipped?.totalSkipped).toBe(230);
+  });
+
+  it("emits a `sourcemap_files_excluded` payload with count + head-sliced topPaths", () => {
+    const codes = ["sourcemap_files_excluded"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        sourcemapFiles: [
+          "/proj/assets/a.css.map",
+          "/proj/assets/b.css.map",
+          "/proj/assets/c.css.map",
+        ],
+      },
+      filesByExtension: { ".tsx": 12 },
+    });
+    expect(details.sourcemap_files_excluded?.count).toBe(3);
+    expect(details.sourcemap_files_excluded?.topPaths).toEqual([
+      "/proj/assets/a.css.map",
+      "/proj/assets/b.css.map",
+      "/proj/assets/c.css.map",
+    ]);
+  });
+
+  it("caps `sourcemap_files_excluded.topPaths` at 10 entries on a bulk corpus, preserves count", () => {
+    // Mirrors the canonical 48-sourcemap CSS-framework corpus shape:
+    // the count carries the full signal so the agent can spot bulk-
+    // sourcemap directories without reading every path; topPaths is
+    // a head slice large enough to recognize the directory pattern.
+    const fullList = Array.from({ length: 48 }, (_, i) =>
+      `/proj/dist/asset${String(i).padStart(2, "0")}.css.map`,
+    );
+    const details = computeScanWarningDetails(["sourcemap_files_excluded"], {
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { sourcemapFiles: fullList },
+      filesByExtension: { ".tsx": 12 },
+    });
+    expect(details.sourcemap_files_excluded?.count).toBe(48);
+    expect(details.sourcemap_files_excluded?.topPaths.length).toBe(10);
+    // First 10 entries — list is sorted ascending at the discovery
+    // seam, so the head slice is deterministic across runs.
+    expect(details.sourcemap_files_excluded?.topPaths).toEqual(fullList.slice(0, 10));
   });
 
   it("emits both payloads with disjoint extension sets when both codes fire on a heterogeneous corpus", () => {

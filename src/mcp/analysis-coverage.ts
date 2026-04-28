@@ -277,6 +277,22 @@ interface CoverageBlock {
    */
   hints?: readonly Hint[];
   skippedByExtension?: Readonly<Record<string, number>>;
+  /**
+   * Absolute paths of `.map` sourcemap files the discovery walk
+   * encountered and rejected (cleared dir-ignore + user-excludes,
+   * failed the parseable-extension check). Routed into a dedicated
+   * field rather than `skippedByExtension` so the conventional
+   * sourcemap exclusion is declared explicitly per the AI-first
+   * "Routing skips that drop content are the symmetric twin of
+   * suppression" rule. Drives the `sourcemap_files_excluded` warning
+   * code + its `warningsDetails.sourcemap_files_excluded` payload —
+   * the count + capped-to-10 `topPaths` shape lets an agent audit the
+   * exclusion without descending into a long list. Sorted-ascending
+   * paths so the wire shape is deterministic; present-when-meaningful
+   * (omitted entirely when the discovery walk encountered no `.map`
+   * files).
+   */
+  sourcemapFiles?: readonly string[];
   fragmentFileCount?: number;
   fragmentFiles?: readonly FragmentFileEntry[];
   fragmentFilesTruncated?: MetaArrayTruncationSummary;
@@ -596,6 +612,13 @@ function populateCoverageTail(
     Object.keys(discoveryDiagnostics.skippedByExtension).length > 0
   ) {
     coverage.skippedByExtension = discoveryDiagnostics.skippedByExtension;
+  }
+  // Sourcemap files: separate field rather than a `skippedByExtension`
+  // entry so the conventional `.map` exclusion is declared explicitly
+  // (drives the `sourcemap_files_excluded` warning). Present-when-
+  // meaningful — omitted when the walk encountered none.
+  if (discoveryDiagnostics !== undefined && discoveryDiagnostics.sourcemapFiles.length > 0) {
+    coverage.sourcemapFiles = discoveryDiagnostics.sourcemapFiles;
   }
 }
 

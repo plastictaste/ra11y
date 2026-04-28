@@ -56,6 +56,7 @@ describe("detectApplicability", () => {
   it("ignores non-content extensions in skippedByExtension", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".scss": 50, ".astro": 10, ".vue": 5 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(applicability.skippedContentExtensions).toEqual({});
@@ -64,6 +65,7 @@ describe("detectApplicability", () => {
   it("picks up content extensions with non-zero counts", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 307, ".scss": 50, ".rst": 2 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(applicability.skippedContentExtensions).toEqual({ ".md": 307, ".rst": 2 });
@@ -72,6 +74,7 @@ describe("detectApplicability", () => {
   it("skips content extensions with zero counts", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 0, ".markdown": 4 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(applicability.skippedContentExtensions).toEqual({ ".markdown": 4 });
@@ -87,6 +90,7 @@ describe("detectApplicability", () => {
         ".adoc": 1,
         ".asciidoc": 1,
       },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(Object.keys(applicability.skippedContentExtensions ?? {}).sort()).toEqual([
@@ -125,6 +129,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("appends a parse-coverage caveat when content extensions were skipped", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 307 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     const reason = irrelevanceReason("wcag22:1.2.1", applicability);
@@ -136,6 +141,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("lists multiple skipped content extensions in sorted order", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".rst": 2, ".md": 10, ".markdown": 5 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     const reason = irrelevanceReason("wcag22:1.2.2", applicability);
@@ -146,6 +152,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("uses singular 'file' when exactly one content file was skipped", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 1 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     const reason = irrelevanceReason("wcag22:1.2.1", applicability);
@@ -156,6 +163,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("covers every MEDIA_ONLY criterion with the caveat", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 42 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     // Sampling across the WCAG 2.2 and 2.1 prefixes to prove the caveat
@@ -172,6 +180,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("does not append a caveat when the applicability's skipped map is empty", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".scss": 100 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     // .scss doesn't embed inline media tags — no caveat should fire.
@@ -188,6 +197,7 @@ describe("isLikelyIrrelevant stays stable across caveat rollout", () => {
     // enrichment rather than a bucket demotion.
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 300 },
+      sourcemapFiles: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(isLikelyIrrelevant("wcag22:1.2.1", applicability)).toBe(true);

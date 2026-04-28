@@ -197,9 +197,23 @@ const WELL_KNOWN_TEXTUAL_NO_EXT_FILENAMES: ReadonlyMap<string, string> = new Map
  *     so an agent triaging coverage can tell source-shaped no-ext
  *     files apart from the residual `(no-ext)` bucket (binary blobs,
  *     hash-named pointers). Counters are raw file counts.
+ *   - `sourcemapFiles`: absolute paths of `.map` sourcemap files the
+ *     walker considered (cleared dir-ignore + user-excludes) and
+ *     rejected on the parseable-extension check. Routed into a
+ *     dedicated bucket rather than `skippedByExtension` so the
+ *     conventional sourcemap-exclusion is declared explicitly per
+ *     `docs/kb/architecture/ai-first-consumer.md` "Routing skips that
+ *     drop content are the symmetric twin of suppression" — the
+ *     exclusion is conventionally correct (sourcemaps aren't authored
+ *     a11y source), but a silent skip is indistinguishable from "tool
+ *     never saw the file" from the agent's seat. Surfaced via the
+ *     `sourcemap_files_excluded` warning code with `count` + `topPaths`
+ *     so an agent can audit the exclusion. Sorted-ascending paths so
+ *     the wire shape is deterministic across runs.
  */
 export interface DiscoveryDiagnostics {
   readonly skippedByExtension: Readonly<Record<string, number>>;
+  readonly sourcemapFiles: readonly string[];
 }
 
 /**
@@ -226,10 +240,17 @@ export async function discoverFilesWithDiagnostics(
   const userMatcher = compileGlobs([...userExcludes, ...gitignore]);
   const out = new Set<string>();
   const skippedByExtension = new Map<string, number>();
+  const sourcemapFiles = new Set<string>();
 
   for (const raw of roots) {
     const absRoot = resolve(raw);
-    const found = await discoverOne(absRoot, userMatcher, dirMatcher, skippedByExtension);
+    const found = await discoverOne(
+      absRoot,
+      userMatcher,
+      dirMatcher,
+      skippedByExtension,
+      sourcemapFiles,
+    );
     for (const f of found) out.add(f);
   }
 
@@ -239,6 +260,7 @@ export async function discoverFilesWithDiagnostics(
       skippedByExtension: Object.fromEntries(
         [...skippedByExtension.entries()].sort(([a], [b]) => a.localeCompare(b)),
       ),
+      sourcemapFiles: [...sourcemapFiles].sort(),
     },
   };
 }
@@ -253,19 +275,42 @@ export async function discoverFiles(
 }
 
 /**
- * Increments the skip count for `filePath`'s extension. Empty-extension
- * files split two ways: well-known textual filenames (LICENSE, Makefile,
- * Dockerfile, …) bucket inline under their canonical filename so an
- * agent reading `warningsDetails.text_source_skipped.extensions`
- * can tell source-shaped no-ext files apart from residual binary or
- * hash-named oddballs. Anything else without an extension still lands
- * under `(no-ext)` — the map key is always non-empty.
+ * Routes a discovery-rejected file into the appropriate diagnostic
+ * bucket. `.map` sourcemap files land in the dedicated `sourcemapFiles`
+ * collector rather than `skippedByExtension` so the
+ * `sourcemap_files_excluded` warning declares the conventional
+ * sourcemap exclusion explicitly (per `docs/kb/architecture/ai-first-consumer.md`
+ * "Routing skips that drop content are the symmetric twin of
+ * suppression"). All other rejections increment {@link counts}: empty-
+ * extension files split two ways — well-known textual filenames
+ * (LICENSE, Makefile, Dockerfile, …) bucket inline under their
+ * canonical filename so an agent reading
+ * `warningsDetails.text_source_skipped.extensions` can tell source-
+ * shaped no-ext files apart from residual binary or hash-named
+ * oddballs; anything else without an extension still lands under
+ * `(no-ext)` so the map key is always non-empty.
  */
-function recordExtensionSkip(counts: Map<string, number>, filePath: string): void {
+function recordExtensionSkip(
+  counts: Map<string, number>,
+  sourcemapFiles: Set<string>,
+  filePath: string,
+): void {
   const ext = extension(filePath);
+  if (ext === SOURCEMAP_EXTENSION) {
+    sourcemapFiles.add(filePath);
+    return;
+  }
   const key = ext === "" ? noExtensionKey(filePath) : ext;
   counts.set(key, (counts.get(key) ?? 0) + 1);
 }
+
+/**
+ * Sourcemap file extension — `.map` per the canonical sourcemap-v3
+ * convention (`<name>.css.map`, `<name>.js.map`, `<name>.map`).
+ * Lower-cased so a `.MAP` from a Windows-authored repo classifies the
+ * same way; matches the lower-cased output of {@link extension}.
+ */
+const SOURCEMAP_EXTENSION = ".map";
 
 /**
  * Resolves the bucket key for a file with no dotted extension. Returns
@@ -554,6 +599,7 @@ async function discoverOne(
   userMatcher: GlobMatcher,
   dirMatcher: GlobMatcher,
   skippedByExtension: Map<string, number>,
+  sourcemapFiles: Set<string>,
 ): Promise<readonly string[]> {
   let info: Awaited<ReturnType<typeof stat>>;
   try {
@@ -566,7 +612,7 @@ async function discoverOne(
     // honor the user's own excludes.
     if (userMatcher.matches(toRel(abs, abs))) return [];
     if (hasParseableExtension(abs)) return [abs];
-    recordExtensionSkip(skippedByExtension, abs);
+    recordExtensionSkip(skippedByExtension, sourcemapFiles, abs);
     return [];
   }
   if (info.isDirectory()) {
@@ -581,7 +627,7 @@ async function discoverOne(
         // gap, not user-intentional exclusions, so re-check here.
         onRejected: (filePath) => {
           if (dirMatcher.matches(toRel(filePath, abs))) return;
-          recordExtensionSkip(skippedByExtension, filePath);
+          recordExtensionSkip(skippedByExtension, sourcemapFiles, filePath);
         },
       },
     );
