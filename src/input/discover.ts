@@ -181,6 +181,33 @@ const WELL_KNOWN_TEXTUAL_NO_EXT_FILENAMES: ReadonlyMap<string, string> = new Map
 ]);
 
 /**
+ * Set of canonical-cased textual no-extension filenames the discovery
+ * walker emits as `skippedByExtension` keys (e.g. `LICENSE`, `Makefile`,
+ * `Dockerfile`, `README`, `CHANGELOG`). Derived from
+ * {@link WELL_KNOWN_TEXTUAL_NO_EXT_FILENAMES} at module-init so the
+ * predicate stays in lock-step with the lookup map.
+ */
+const WELL_KNOWN_TEXTUAL_NO_EXT_CANONICAL: ReadonlySet<string> = new Set(
+  WELL_KNOWN_TEXTUAL_NO_EXT_FILENAMES.values(),
+);
+
+/**
+ * True when {@link token} is a canonical-cased well-known textual
+ * no-extension filename (e.g. `LICENSE`, `Makefile`, `Dockerfile`).
+ *
+ * The discovery walker buckets these inline under their canonical
+ * filename rather than the residual `(no-ext)` token so downstream
+ * `warningsDetails.text_source_skipped` consumers can route them into
+ * the type-honest `noExtensionFiles` slot (separate from the dotted-
+ * extension `extensions` slot). This predicate is the one place the
+ * partition rule is encoded — both the discovery emitter and the
+ * warning summarizer call through it.
+ */
+export function isWellKnownTextualNoExtFilename(token: string): boolean {
+  return WELL_KNOWN_TEXTUAL_NO_EXT_CANONICAL.has(token);
+}
+
+/**
  * Diagnostic signals from the discovery pass that are otherwise
  * invisible to downstream consumers. Every field reports a structural
  * gap the scanner chose not to fix but the agent should know about:

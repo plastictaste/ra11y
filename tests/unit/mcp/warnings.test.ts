@@ -1181,7 +1181,12 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.text_source_skipped?.topExtension).toBe(".astro");
   });
 
-  it("truncates the `extensions` array to the top 5 but still sums the full distribution into `totalSkipped`", () => {
+  it("enumerates EVERY skipped extension in the `extensions` array (no top-N truncation)", () => {
+    // Per AI-first doctrine "Routing skips that drop content are the
+    // symmetric twin of suppression": the dense summary mirrors the
+    // full predicate-fired distribution, not a top-5 head-slice. The
+    // legacy cap silently hid the long tail — an agent on a bulk
+    // corpus skipping 8+ distinct extension classes would only see 5.
     const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 1,
@@ -1200,9 +1205,17 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       },
       filesByExtension: { ".tsx": 1 },
     });
-    expect(details.text_source_skipped?.extensions).toHaveLength(5);
-    expect(details.text_source_skipped?.extensions).toEqual([".a", ".b", ".c", ".d", ".e"]);
-    // Full distribution still sums — the dense summary doesn't hide the long tail from `totalSkipped`.
+    // All 7 entries surface — sorted by descending count.
+    expect(details.text_source_skipped?.extensions).toHaveLength(7);
+    expect(details.text_source_skipped?.extensions).toEqual([
+      ".a",
+      ".b",
+      ".c",
+      ".d",
+      ".e",
+      ".f",
+      ".g",
+    ]);
     expect(details.text_source_skipped?.totalSkipped).toBe(100 + 90 + 80 + 70 + 60 + 50 + 40);
   });
 
@@ -1491,6 +1504,102 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     const textExts = new Set(details.text_source_skipped?.extensions ?? []);
     const binaryExts = new Set(details.binary_assets_skipped?.extensions ?? []);
     for (const ext of textExts) expect(binaryExts.has(ext)).toBe(false);
+  });
+
+  it("splits well-known textual no-extension filenames into a `noExtensionFiles` slot — `extensions` stays dotted-only", () => {
+    // Per AI-first doctrine "Ambiguous field shapes are dishonest":
+    // mixing dotted extensions with the parenthesized `(no-ext)`
+    // sentinel and canonical filenames in one array forced the agent
+    // to disambiguate three categorically different things from one
+    // sorted list. The split keeps `extensions[]` type-honest (dotted
+    // tokens only) and surfaces well-known textual filenames inline
+    // under their canonical-cased name in `noExtensionFiles[]`.
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".php": 12,
+          ".coffee": 4,
+          LICENSE: 3,
+          Makefile: 2,
+          Dockerfile: 1,
+        },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    // Dotted extensions only in `extensions[]` — no LICENSE / Makefile mixed in.
+    expect(details.text_source_skipped?.extensions).toEqual([".php", ".coffee"]);
+    // Well-known textual filenames inline under their canonical-cased names.
+    expect(details.text_source_skipped?.noExtensionFiles).toEqual([
+      "LICENSE",
+      "Makefile",
+      "Dockerfile",
+    ]);
+    // Total covers both slices (predicate-fired union).
+    expect(details.text_source_skipped?.totalSkipped).toBe(12 + 4 + 3 + 2 + 1);
+  });
+
+  it("omits `noExtensionFiles` when no well-known textual filename contributed (present-when-meaningful)", () => {
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".php": 12, ".coffee": 4 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    expect(details.text_source_skipped?.extensions).toEqual([".php", ".coffee"]);
+    // Field is omitted entirely (not `noExtensionFiles: []`) per the
+    // present-when-meaningful contract — an agent can branch on
+    // presence without having to re-disambiguate empty-vs-absent.
+    expect(
+      Object.hasOwn(details.text_source_skipped as Record<string, unknown>, "noExtensionFiles"),
+    ).toBe(false);
+  });
+
+  it("excludes the residual `(no-ext)` token from both payloads (binary-shaped despite passing the binary-extension filter)", () => {
+    // `(no-ext)` is the discovery walker's residual bucket for
+    // binary-without-extension files (hash-named blobs, Git LFS
+    // pointers). It satisfies !isBinaryAssetExtension but is not
+    // text-source-shaped — keeping it in either payload would lie
+    // about the predicate. The full `(no-ext)` count still lives in
+    // `meta.analysisCoverage.skippedByExtension` for callers that
+    // want the entire tail.
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".php": 5, "(no-ext)": 99 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    expect(details.text_source_skipped?.extensions).toEqual([".php"]);
+    // `(no-ext)` does not appear under either slot.
+    expect(details.text_source_skipped?.noExtensionFiles).toBeUndefined();
+    // `totalSkipped` excludes the residual bucket.
+    expect(details.text_source_skipped?.totalSkipped).toBe(5);
+  });
+
+  it("does NOT fire `text_source_skipped` when the skipped map carries only the residual `(no-ext)` token (predicate aligned with summarizer)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { skippedByExtension: { "(no-ext)": 7 } },
+      filesByExtension: { ".html": 50 },
+    });
+    // No text-source extension and no well-known textual filename →
+    // predicate must NOT fire (otherwise the warning would fall
+    // through to the truncation sentinel).
+    expect(codes).not.toContain("text_source_skipped");
+    expect(codes).not.toContain("binary_assets_skipped");
   });
 
   it("returns no `source_language_unsupported` entry when the code did NOT fire", () => {

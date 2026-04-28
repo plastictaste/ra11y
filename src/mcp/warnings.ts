@@ -22,6 +22,7 @@
  * which the warning implicitly points at.
  */
 
+import { isWellKnownTextualNoExtFilename } from "../input/discover.ts";
 import { shouldEmitNoConfigFound } from "./config-search-marker.ts";
 
 export type ScanWarningCode =
@@ -878,17 +879,16 @@ export interface WarningInputs {
 /** Threshold below which a Tailwind-detected codebase is considered CSS-undercounted. */
 const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
 
-/**
- * Max number of extensions to inline under the dense per-extension
- * summary on `warningsDetails.text_source_skipped.extensions` and
- * `warningsDetails.binary_assets_skipped.extensions`. The field is a
- * dense summary for branching ("how bad, and in what kind of code?");
- * the full per-extension distribution stays under
- * `meta.analysisCoverage.skippedByExtension` for callers that want the
- * long tail. Five is enough to cover every mixed-language repo profile
- * we've seen (bootstrap: 3 distinct extensions; typical monorepo: ≤5).
- */
-const WARNING_DETAILS_TOP_EXTENSIONS = 5;
+// Per AI-first doctrine "Routing skips that drop content are the
+// symmetric twin of suppression," the dense summary surfaces every
+// extension and well-known textual filename the predicate fires on —
+// no top-N truncation. The previous top-5 cap silently hid the tail
+// (an agent reading the warning saw the dominant 5 dialects but not
+// the others, even though the predicate fired on them). The full
+// distribution still lives in `meta.analysisCoverage.skippedByExtension`
+// for callers wanting raw counts; the dense summary now mirrors that
+// distribution at the wire-summary layer in the same predicate-fired
+// shape.
 
 /**
  * Max number of `.map` paths to inline under
@@ -1223,19 +1223,38 @@ export interface ScanWarningDetails {
    * compressed form so an agent branching on the warning can answer
    * "how bad, and in what dialects?" without cross-referencing `meta`.
    *
-   * `extensions` is sorted by descending count (ties broken
-   * alphabetically) and truncated to {@link WARNING_DETAILS_TOP_EXTENSIONS};
-   * the full distribution stays in `meta`. Entries are typically
-   * dotted extensions (`.php`, `.vue`); well-known textual no-
-   * extension filenames (`LICENSE`, `Makefile`, `Dockerfile`) surface
-   * inline under their canonical filename so the agent can tell
-   * source-shaped no-ext skips apart from the residual `(no-ext)`
-   * bucket (binary blobs, hash-named pointers). Counts here cover
-   * only text-source extensions; binary assets are tallied separately
-   * under `binary_assets_skipped`.
+   * `extensions` is the dotted-token slice (`.php`, `.vue`,
+   * `.coffee`), sorted by descending count with alphabetical tie-
+   * break. No top-N cap — the agent reads in milliseconds and prefers
+   * the full signal per the AI-first "Routing skips that drop content
+   * are the symmetric twin of suppression" rule.
+   *
+   * `noExtensionFiles` carries well-known textual no-extension
+   * filenames (`LICENSE`, `Makefile`, `Dockerfile`, `README`,
+   * `CHANGELOG`, etc.) inline under their canonical-cased filename,
+   * also sorted by descending count. Splitting the dotted-vs-named
+   * tokens keeps the `extensions` array type-honest (dotted tokens
+   * only — no `LICENSE` / `(no-ext)` mixed in) and lets the agent
+   * branch on the actionable text-source dialects without filtering
+   * the no-extension oddballs out of the same array. Present-when-
+   * meaningful: omitted when no well-known textual filename
+   * contributed to the predicate firing.
+   *
+   * The residual `(no-ext)` bucket (binary blobs, hash-named pointers
+   * without an extension) is excluded from this payload — those
+   * entries aren't text-source-shaped despite passing the binary-
+   * extension filter. The full `(no-ext)` count stays under
+   * `meta.analysisCoverage.skippedByExtension` for callers that want
+   * the entire tail.
+   *
+   * `topExtension` / `topCount` describe the dominant entry across
+   * the union of `extensions` + `noExtensionFiles`; on a corpus where
+   * only well-known filenames fired the warning, `topExtension`
+   * names the dominant filename (e.g. `LICENSE`).
    */
   readonly text_source_skipped?: {
     readonly extensions: readonly string[];
+    readonly noExtensionFiles?: readonly string[];
     readonly topExtension: string;
     readonly topCount: number;
     readonly totalSkipped: number;
@@ -1248,10 +1267,17 @@ export interface ScanWarningDetails {
    * agents reading either channel use one mental model. Entries cover
    * the binary tail filtered out of `text_source_skipped` (images,
    * fonts, audio, video, archives, binary docs); the full ext map
-   * still lives in `meta.analysisCoverage.skippedByExtension`.
+   * still lives in `meta.analysisCoverage.skippedByExtension`. No
+   * top-N cap — symmetric to {@link text_source_skipped}.
+   *
+   * `noExtensionFiles` is declared for shape parity with
+   * {@link text_source_skipped} but is never populated in practice —
+   * well-known textual filenames are text-source by construction, not
+   * binary assets — so the field is omitted on every realistic corpus.
    */
   readonly binary_assets_skipped?: {
     readonly extensions: readonly string[];
+    readonly noExtensionFiles?: readonly string[];
     readonly topExtension: string;
     readonly topCount: number;
     readonly totalSkipped: number;
@@ -2396,17 +2422,26 @@ function parserBailedZeroFindings(inputs: WarningInputs): boolean {
 
 /**
  * `text_source_skipped` predicate: at least one entry in the skipped
- * map is a text-source extension (i.e. NOT in
- * {@link BINARY_ASSET_EXTENSIONS}). This is the actionable subset an
- * agent might re-route via additional parser support or
- * `additionalPaths`. Symmetric to {@link hasBinaryAssetsSkipped}; the
- * two predicates are independent so a heterogeneous corpus can fire
- * both warnings at once.
+ * map is text-source-shaped — either a dotted extension that is NOT
+ * in {@link BINARY_ASSET_EXTENSIONS}, or a well-known textual no-
+ * extension filename ({@link isWellKnownTextualNoExtFilename}). This
+ * is the actionable subset an agent might re-route via additional
+ * parser support or `additionalPaths`. Symmetric to
+ * {@link hasBinaryAssetsSkipped}; the two predicates are independent
+ * so a heterogeneous corpus can fire both warnings at once.
+ *
+ * The residual `(no-ext)` token (binary blobs, hash-named pointers)
+ * is intentionally excluded — those entries aren't text-source-shaped
+ * despite passing the binary-extension filter. Keeping the predicate
+ * aligned with the summarizer's filter prevents a fall-through
+ * sentinel landing on `warningsDetails.text_source_skipped` when the
+ * skipped map carries only `(no-ext)` entries.
  */
 function hasTextSourceSkipped(coverage: Record<string, unknown> | undefined): boolean {
   const skipped = readSkippedMap(coverage);
-  for (const ext of skipped.keys()) {
-    if (!isBinaryAssetExtension(ext)) return true;
+  for (const token of skipped.keys()) {
+    if (token.startsWith(".") && !isBinaryAssetExtension(token)) return true;
+    if (isWellKnownTextualNoExtFilename(token)) return true;
   }
   return false;
 }
@@ -3340,18 +3375,30 @@ function summarizeDominantLanguage(coverage: Record<string, unknown> | undefined
  * Collapses the text-source subset of `skippedByExtension` into the
  * dense summary the `text_source_skipped` warning ships under
  * `warningsDetails`. Returns `undefined` when no text-source
- * extension survives the binary filter so the caller can
- * conditional-spread without emitting a degenerate entry.
+ * extension or well-known textual filename survives the binary
+ * filter so the caller can conditional-spread without emitting a
+ * degenerate entry. The residual `(no-ext)` bucket (binary blobs
+ * without an extension) is excluded — those entries aren't text-
+ * source-shaped despite passing the binary-extension filter.
  */
 function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefined):
   | {
       readonly extensions: readonly string[];
+      readonly noExtensionFiles?: readonly string[];
       readonly topExtension: string;
       readonly topCount: number;
       readonly totalSkipped: number;
     }
   | undefined {
-  return summarizeSkippedSubset(coverage, (ext) => !isBinaryAssetExtension(ext));
+  return summarizeSkippedSubset(
+    coverage,
+    (token) =>
+      // Text-source dotted extensions OR well-known textual no-ext
+      // filenames; residual `(no-ext)` is excluded (it is binary-
+      // shaped despite not being in BINARY_ASSET_EXTENSIONS).
+      (token.startsWith(".") && !isBinaryAssetExtension(token)) ||
+      isWellKnownTextualNoExtFilename(token),
+  );
 }
 
 /**
@@ -3359,17 +3406,18 @@ function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefine
  * dense summary the `binary_assets_skipped` warning ships under
  * `warningsDetails`. Same shape contract as
  * {@link summarizeTextSourceSkipped}; the only difference is the
- * extension filter.
+ * extension filter — binary-asset dotted extensions only.
  */
 function summarizeBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined):
   | {
       readonly extensions: readonly string[];
+      readonly noExtensionFiles?: readonly string[];
       readonly topExtension: string;
       readonly topCount: number;
       readonly totalSkipped: number;
     }
   | undefined {
-  return summarizeSkippedSubset(coverage, (ext) => isBinaryAssetExtension(ext));
+  return summarizeSkippedSubset(coverage, (token) => isBinaryAssetExtension(token));
 }
 
 /**
@@ -3398,9 +3446,17 @@ function summarizeSourcemapFilesExcluded(coverage: Record<string, unknown> | und
 
 /**
  * Shared core for the two skipped-extension summarizers. Walks the
- * `skippedByExtension` map, applies the caller's extension filter,
- * and emits the dense summary shape (descending count, alphabetical
- * tie-break, head-sliced to {@link WARNING_DETAILS_TOP_EXTENSIONS}).
+ * `skippedByExtension` map, applies the caller's token filter, and
+ * emits the dense summary shape (descending count, alphabetical
+ * tie-break, no truncation). Splits surviving tokens into two slots
+ * by shape: dotted extensions land in `extensions[]`; well-known
+ * textual no-extension filenames (`LICENSE`, `Makefile`, etc.) land
+ * in `noExtensionFiles[]`. The split keeps the `extensions` array
+ * type-honest (dotted tokens only) per AI-first "Ambiguous field
+ * shapes are dishonest" — an agent reading
+ * `extensions: [".php", "LICENSE", "(no-ext)"]` couldn't disambiguate
+ * dialect from canonical filename from residual binary bucket.
+ *
  * Centralizing the body keeps the text-source and binary-asset
  * summarizers identical except for which subset they describe — so
  * the wire shape stays stable across both warnings and a future
@@ -3409,10 +3465,11 @@ function summarizeSourcemapFilesExcluded(coverage: Record<string, unknown> | und
  */
 function summarizeSkippedSubset(
   coverage: Record<string, unknown> | undefined,
-  include: (ext: string) => boolean,
+  include: (token: string) => boolean,
 ):
   | {
       readonly extensions: readonly string[];
+      readonly noExtensionFiles?: readonly string[];
       readonly topExtension: string;
       readonly topCount: number;
       readonly totalSkipped: number;
@@ -3422,26 +3479,41 @@ function summarizeSkippedSubset(
   const skipped = coverage["skippedByExtension"];
   if (skipped === null || typeof skipped !== "object") return undefined;
   const entries: Array<[string, number]> = [];
-  for (const [ext, count] of Object.entries(skipped as Record<string, unknown>)) {
+  for (const [token, count] of Object.entries(skipped as Record<string, unknown>)) {
     if (
       typeof count === "number" &&
       count > 0 &&
-      typeof ext === "string" &&
-      ext.length > 0 &&
-      include(ext)
+      typeof token === "string" &&
+      token.length > 0 &&
+      include(token)
     ) {
-      entries.push([ext, count]);
+      entries.push([token, count]);
     }
   }
   // Descending by count; alphabetical tie-break for determinism.
   entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const top = entries[0];
   if (top === undefined) return undefined;
-  const truncated = entries.slice(0, WARNING_DETAILS_TOP_EXTENSIONS);
+  // Partition into dotted extensions vs. well-known textual filenames.
+  // Order within each slice preserves the descending-count + alpha
+  // sort already established above.
+  const extensions: string[] = [];
+  const noExtensionFiles: string[] = [];
   let totalSkipped = 0;
-  for (const [, count] of entries) totalSkipped += count;
+  for (const [token, count] of entries) {
+    totalSkipped += count;
+    if (token.startsWith(".")) {
+      extensions.push(token);
+    } else if (isWellKnownTextualNoExtFilename(token)) {
+      noExtensionFiles.push(token);
+    }
+    // else: residual `(no-ext)` would land here; the include() filter
+    // already excludes it from text/binary summarizers, so this branch
+    // is unreachable on the predicate-fired path.
+  }
   return {
-    extensions: truncated.map(([ext]) => ext),
+    extensions,
+    ...(noExtensionFiles.length > 0 ? { noExtensionFiles } : {}),
     topExtension: top[0],
     topCount: top[1],
     totalSkipped,
