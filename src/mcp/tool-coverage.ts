@@ -482,10 +482,7 @@ function buildCoverageMetaField(args: {
     cwd: args.cwd,
     filesScanned: args.filesScanned,
     filesWithAnyRuleEvaluated: args.filesWithAnyRuleEvaluated,
-    filesWithZeroRuleEvaluation: Math.max(
-      0,
-      args.filesScanned - args.filesWithAnyRuleEvaluated,
-    ),
+    filesWithZeroRuleEvaluation: Math.max(0, args.filesScanned - args.filesWithAnyRuleEvaluated),
     scanned: args.scannedEnvelope,
     configSource: args.configSource,
     // the shared helper omits

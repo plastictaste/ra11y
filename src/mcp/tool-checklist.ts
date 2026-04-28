@@ -1113,10 +1113,7 @@ function buildChecklistMetaField(args: {
     cwd: args.cwd,
     filesScanned: args.filesScanned,
     filesWithAnyRuleEvaluated: args.filesWithAnyRuleEvaluated,
-    filesWithZeroRuleEvaluation: Math.max(
-      0,
-      args.filesScanned - args.filesWithAnyRuleEvaluated,
-    ),
+    filesWithZeroRuleEvaluation: Math.max(0, args.filesScanned - args.filesWithAnyRuleEvaluated),
     scanned: args.scanned,
     configSource: args.configSource,
     rulesEvaluated: args.rulesEvaluated,
