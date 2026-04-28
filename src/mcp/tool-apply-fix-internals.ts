@@ -26,6 +26,7 @@ import {
   parseLess,
   parseMarkdown,
   parseMdx,
+  parsePhp,
   parseScss,
   parseSvg,
   parseTsx,
@@ -54,7 +55,8 @@ export type Ext =
   | "astro"
   | "markdown"
   | "svg"
-  | "erb";
+  | "erb"
+  | "php";
 
 export interface SingleFileScan {
   readonly violations: readonly Violation[];
@@ -516,6 +518,7 @@ function extensionOf(filePath: string): Ext | null {
   }
   if (lower.endsWith(".svg")) return "svg";
   if (lower.endsWith(".erb")) return "erb";
+  if (lower.endsWith(".php") || lower.endsWith(".phtml")) return "php";
   return null;
 }
 
@@ -557,6 +560,13 @@ export function parseFor(ext: Ext, source: string, filePath?: string): Ast {
     // stripTemplateDirectives pass strips `<%= … %>` / `<% … %>` /
     // `<%# … %>` from text nodes.
     const r = parseHtml(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (ext === "php") {
+    // PHP server pages route through {@link parsePhp}, which blanks
+    // `<?php … ?>` / `<?= … ?>` / `<? … ?>` islands (preserving
+    // line/col) and feeds the HTML residue to parseHtml.
+    const r = parsePhp(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   // Forward `filePath` so `parseTsx`'s `inferJsxMode` can disable

@@ -335,6 +335,42 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
+  // Parser-level signal that `.php` / `.phtml` files ran through the
+  // {@link parsePhp} adapter's island-stripping pass. Analogous to
+  // `hasFrontmatterFence` — fires on the boolean alone, no per-finding
+  // overlap gate, so an agent reading the response sees the parser-
+  // level evidence regardless of whether any rule emitted on the
+  // affected files.
+  it("fires `php_islands_stripped` when analysisCoverage.phpIslandsStripped is true", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { phpIslandsStripped: true },
+      filesByExtension: { ".php": 3 },
+    });
+    expect(codes).toContain("php_islands_stripped");
+  });
+
+  it("does NOT fire `php_islands_stripped` when analysisCoverage.phpIslandsStripped is false or absent", () => {
+    const noFlag = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".php": 3 },
+    });
+    expect(noFlag).not.toContain("php_islands_stripped");
+    const explicitFalse = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { phpIslandsStripped: false },
+      filesByExtension: { ".php": 3 },
+    });
+    expect(explicitFalse).not.toContain("php_islands_stripped");
+  });
+
   it("fires `text_source_skipped` when the coverage block reports a non-empty skippedByExtension map", () => {
     const codes = computeScanWarnings({
       filesScanned: 125,
@@ -722,14 +758,16 @@ describe("computeScanWarnings", () => {
   // Dominant-ecosystem signal — both
   // absolute (>50 files) AND share (>30% of total skipped) must hold
   // so the code points at template-layer-dominant repos (Rails,
-  // Django, Go html/template, Laravel) rather than incidentally-
+  // Django, Go html/template) rather than incidentally-
   // present scripts.
   it("fires `source_language_unsupported` with language=ruby on a Rails-shaped repo (.rb + .haml dominance)", () => {
     // `.erb` used to count toward this signal but is now parseable
     // — the HTML parser routes `.erb` via the
     // `stripTemplateDirectives` pass, so an ERB-heavy repo no longer
     // surfaces in `skippedByExtension`. `.rb` (pure Ruby) + `.haml`
-    // (Ruby template) remain ecosystem-foreign.
+    // (Ruby template) remain ecosystem-foreign. PHP `.php` / `.phtml`
+    // followed `.erb` out of the unsupported-language bucket once
+    // `parsePhp` wired island stripping + HTML routing.
     const codes = computeScanWarnings({
       filesScanned: 12,
       rootSource: "explicit",

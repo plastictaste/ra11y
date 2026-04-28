@@ -112,6 +112,8 @@ function buildSuppressPragma(filePath: string, ruleId: string): string {
     lower.endsWith(".astro") ||
     lower.endsWith(".svg") ||
     lower.endsWith(".erb") ||
+    lower.endsWith(".php") ||
+    lower.endsWith(".phtml") ||
     lower.endsWith(".md") ||
     lower.endsWith(".markdown") ||
     lower.endsWith(".mkdn")
@@ -158,7 +160,9 @@ function buildSuppressPlacement(filePath: string): string {
     lower.endsWith(".xhtml") ||
     lower.endsWith(".astro") ||
     lower.endsWith(".svg") ||
-    lower.endsWith(".erb")
+    lower.endsWith(".erb") ||
+    lower.endsWith(".php") ||
+    lower.endsWith(".phtml")
   ) {
     return "Place on the line immediately above the opening tag of the flagged element.";
   }

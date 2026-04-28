@@ -11,6 +11,8 @@ export { parseHtml } from "./html.ts";
 export { parseLess } from "./less.ts";
 export { parseMarkdown } from "./markdown.ts";
 export { parseMdx } from "./mdx.ts";
+export type { PhpParseResult } from "./php.ts";
+export { parsePhp } from "./php.ts";
 export { parseScss } from "./scss.ts";
 export { parseSvg } from "./svg.ts";
 export type { TailwindToken } from "./tailwind.ts";

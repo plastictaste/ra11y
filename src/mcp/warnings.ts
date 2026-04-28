@@ -31,6 +31,24 @@ export type ScanWarningCode =
   | "no_config_found"
   | "tailwind_detected_css_undercounted"
   | "template_files_parsed_as_literal"
+  // at least one scanned `.php` / `.phtml` file ran through the
+  // {@link parsePhp} adapter's island-stripping pass and contained at
+  // least one PHP block (`<?php … ?>`, `<?= … ?>`, or `<? … ?>`).
+  // Surfaced as a parser-level scan-confidence label (analogous to
+  // `template_files_parsed_as_literal` for Liquid/Jinja/ERB
+  // substrate) so an agent reading the response can tell the parser
+  // saw and stripped PHP residue rather than dropping the file at
+  // discovery (the historical behavior before `.php` joined
+  // PARSEABLE_EXTENSIONS). Distinct from
+  // `template_files_parsed_as_literal`: that code names the case
+  // where Liquid/Jinja/ERB tokens flowed through the HTML parser as
+  // literal text and at least one finding's line intersects a
+  // directive line; this code names the parser-level evidence that
+  // PHP residue was successfully blanked before the HTML parser
+  // saw it. Paired meta:
+  // `meta.analysisCoverage.phpIslandsStripped` carries the boolean;
+  // no rich payload — the wire is the entire signal.
+  | "php_islands_stripped"
   | "scanned_build_artifacts_present"
   // scan_diff hunksOnly mode: the comparison ref resolved but produced
   // no hunks (e.g. clean working tree against HEAD). Zero findings in
@@ -195,8 +213,8 @@ export type ScanWarningCode =
   | "content_files_skipped"
   // The dominant language in `skippedByExtension` is an ecosystem
   // ra11y doesn't scan
-  // (Ruby / Python / Go / PHP — typical template layers for Rails,
-  // Django, Go html/template, Laravel). The code fires only when
+  // (Ruby / Python / Go — typical template layers for Rails,
+  // Django, Go html/template). The code fires only when
   // the language crosses both an absolute threshold (>50 files)
   // AND a share threshold (>30% of total skipped) so an
   // incidentally-present `.py` script in a JSX repo doesn't trip
@@ -204,7 +222,10 @@ export type ScanWarningCode =
   // `warningsDetails.source_language_unsupported` carries
   // `{ language, fileCount, percentageOfSkipped }` so the agent
   // can branch on the specific language without re-deriving it
-  // from the ext map.
+  // from the ext map. PHP `.php` / `.phtml` files moved out of this
+  // bucket once the {@link parsePhp} adapter wired island stripping
+  // + HTML routing — those files now flow through `php_islands_stripped`
+  // (parser-level evidence) rather than the unsupported-language signal.
   | "source_language_unsupported"
   // the caller passed `additionalPaths`,
   // the paths resolved to parseable files, but every one of those files
@@ -1069,11 +1090,10 @@ const CONTENT_FILES_SKIPPED_THRESHOLD = 50;
  * an honest ecosystem-foreign-dominance signal rather than a generic
  * "some stuff got skipped" rebroadcast of `text_source_skipped`.
  * Each entry names a template-layer ecosystem ra11y doesn't parse:
- * Ruby (Rails/Jekyll), Python (Django/Flask/Sphinx), Go (html/template),
- * PHP (Laravel/Symfony/WordPress).
+ * Ruby (Rails/Jekyll), Python (Django/Flask/Sphinx), Go (html/template).
  */
 const UNSUPPORTED_LANGUAGE_EXTENSIONS: Readonly<
-  Record<"ruby" | "python" | "go" | "php", readonly string[]>
+  Record<"ruby" | "python" | "go", readonly string[]>
 > = {
   // `.erb` used to live in this list but moved into
   // `PARSEABLE_EXTENSIONS` once the HTML parser's
@@ -1084,7 +1104,11 @@ const UNSUPPORTED_LANGUAGE_EXTENSIONS: Readonly<
   ruby: [".rb", ".haml", ".slim"],
   python: [".py"],
   go: [".go", ".tmpl", ".gohtml"],
-  php: [".php", ".phtml"],
+  // `.php` / `.phtml` followed `.erb` into `PARSEABLE_EXTENSIONS` once
+  // the {@link parsePhp} adapter (PHP-island stripping + HTML-residue
+  // routing) was wired — keeping them here would double-flag a
+  // Laravel / Symfony / WordPress repo where the template layer is
+  // now being scanned.
 };
 
 /**
@@ -1446,15 +1470,21 @@ export interface ScanWarningDetails {
   };
   /**
    * Payload for `source_language_unsupported`. Carries the dominant
-   * language key (one of `ruby` / `python` / `go` / `php`), the
+   * language key (one of `ruby` / `python` / `go`), the
    * aggregate file count that earned the label, and the share of
    * total skipped files the language represents. `percentageOfSkipped`
    * is a number in `[0, 100]` rounded to one decimal place so the
    * wire shape stays deterministic across runs — the predicate
    * threshold lives in code, not in the payload.
+   *
+   * `php` was previously part of this union but moved out once the
+   * {@link parsePhp} adapter routed `.php` / `.phtml` through
+   * `parseHtml`; PHP server pages now contribute to
+   * `php_islands_stripped` / `text_source_skipped` rather than
+   * `source_language_unsupported`.
    */
   readonly source_language_unsupported?: {
-    readonly language: "ruby" | "python" | "go" | "php";
+    readonly language: "ruby" | "python" | "go";
     readonly fileCount: number;
     readonly percentageOfSkipped: number;
   };
@@ -1771,6 +1801,7 @@ export interface ScanWarningDetails {
   };
   readonly tailwind_detected_css_undercounted?: BinaryPresenceMarker;
   readonly template_files_parsed_as_literal?: BinaryPresenceMarker;
+  readonly php_islands_stripped?: BinaryPresenceMarker;
   readonly no_hunks_in_comparison?: BinaryPresenceMarker;
   readonly storybook_preset_active?: BinaryPresenceMarker;
   readonly session_wrappers_configured_for_different_cwd?: BinaryPresenceMarker;
@@ -1963,6 +1994,7 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "root_source_defaulted",
   "tailwind_detected_css_undercounted",
   "template_files_parsed_as_literal",
+  "php_islands_stripped",
   "no_hunks_in_comparison",
   "storybook_preset_active",
   "session_wrappers_configured_for_different_cwd",
@@ -2010,6 +2042,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "no_config_found",
   "tailwind_detected_css_undercounted",
   "template_files_parsed_as_literal",
+  "php_islands_stripped",
   "scanned_build_artifacts_present",
   "no_hunks_in_comparison",
   "storybook_preset_active",
@@ -2256,6 +2289,19 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // where a 1-line-body post returned `warnings: ["no_config_found"]`
     // only.
     out.push("template_files_parsed_as_literal");
+  }
+  if (hasPhpIslandsStripped(inputs.analysisCoverage)) {
+    // fires whenever the {@link parsePhp} adapter blanked at least
+    // one PHP island in a scanned file. Distinct from
+    // `template_files_parsed_as_literal`: that code names
+    // Liquid/Jinja/ERB tokens flowing through the HTML parser as
+    // literal text plus a per-finding overlap gate; this code names
+    // the parser-level evidence that PHP residue was successfully
+    // stripped before the HTML parser saw it. No overlap gate — the
+    // parser-level transformation is a scan-confidence label
+    // analogous to `storybook_preset_active` / `scanned_build_artifacts_present`,
+    // not per-finding noise.
+    out.push("php_islands_stripped");
   }
   if (inputs.scannedBuildArtifactsPresent === true) {
     // The detector uses deterministic signals (escape-bracket Tailwind
@@ -2646,16 +2692,16 @@ function computeContentFileCount(coverage: Record<string, unknown> | undefined):
  */
 function dominantUnsupportedLanguage(
   coverage: Record<string, unknown> | undefined,
-): "ruby" | "python" | "go" | "php" | undefined {
+): "ruby" | "python" | "go" | undefined {
   const skipped = readSkippedMap(coverage);
   if (skipped.size === 0) return undefined;
   let totalSkipped = 0;
   for (const count of skipped.values()) totalSkipped += count;
   if (totalSkipped === 0) return undefined;
-  let winner: "ruby" | "python" | "go" | "php" | undefined;
+  let winner: "ruby" | "python" | "go" | undefined;
   let winnerCount = 0;
   for (const [language, exts] of Object.entries(UNSUPPORTED_LANGUAGE_EXTENSIONS) as Array<
-    ["ruby" | "python" | "go" | "php", readonly string[]]
+    ["ruby" | "python" | "go", readonly string[]]
   >) {
     let count = 0;
     for (const ext of exts) count += skipped.get(ext) ?? 0;
@@ -2714,6 +2760,19 @@ function hasTemplateDirectives(coverage: Record<string, unknown> | undefined): b
 function hasFrontmatterFence(coverage: Record<string, unknown> | undefined): boolean {
   if (coverage === undefined) return false;
   return coverage["hasFrontmatterFence"] === true;
+}
+
+/**
+ * returns `true` when
+ * the coverage block reports at least one scanned `.php` / `.phtml`
+ * file ran through the {@link parsePhp} adapter's island-stripping
+ * pass. The signal is parser-level (analogous to `hasFrontmatterFence`)
+ * and fires whenever the boolean is set; no overlap gate — see the
+ * `php_islands_stripped` warning code for the rationale.
+ */
+function hasPhpIslandsStripped(coverage: Record<string, unknown> | undefined): boolean {
+  if (coverage === undefined) return false;
+  return coverage["phpIslandsStripped"] === true;
 }
 
 /**
@@ -3502,7 +3561,7 @@ function summarizeContentFiles(coverage: Record<string, unknown> | undefined):
  */
 function summarizeDominantLanguage(coverage: Record<string, unknown> | undefined):
   | {
-      readonly language: "ruby" | "python" | "go" | "php";
+      readonly language: "ruby" | "python" | "go";
       readonly fileCount: number;
       readonly percentageOfSkipped: number;
     }

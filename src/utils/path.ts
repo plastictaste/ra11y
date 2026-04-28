@@ -44,6 +44,8 @@ export const PARSEABLE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".mkdn",
   ".svg",
   ".erb",
+  ".php",
+  ".phtml",
 ]);
 
 /**
@@ -112,6 +114,14 @@ const STORY_BASENAME_RE = /^[^.]+\.(?:stories|story)\.(?:tsx|jsx|ts|js)$/;
  *     already removes `<%= … %>` / `<% … %>` / `<%# … %>` spans from
  *     text nodes, so rules see the rendered-text shape. Every
  *     `.html`/`.htm`-scoped rule applies.
+ *   - `.php` / `.phtml` alias into HTML-family: PHP server pages
+ *     (Laravel views, WordPress themes, hand-rolled `.phtml`
+ *     scaffolds) carry the same a11y-relevant HTML surface as a
+ *     plain `.html` file outside their PHP islands. The
+ *     {@link parsePhp} adapter blanks `<?php … ?>` / `<?= … ?>` /
+ *     `<? … ?>` blocks (preserving line/column) and routes the HTML
+ *     residue through parseHtml, so every `.html`/`.htm`-scoped rule
+ *     applies.
  */
 const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly string[] }[] = [
   { from: ".js", to: [".jsx"] },
@@ -126,6 +136,8 @@ const EXTENSION_ALIASES: readonly { readonly from: string; readonly to: readonly
   { from: ".xhtml", to: [".html", ".htm"] },
   { from: ".svg", to: [".html", ".htm"] },
   { from: ".erb", to: [".html", ".htm"] },
+  { from: ".php", to: [".html", ".htm"] },
+  { from: ".phtml", to: [".html", ".htm"] },
 ];
 
 /**
@@ -165,7 +177,8 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
  * the extension would suggest from the agent's seat. They diverge for
  * routing aliases (`.js` / `.ts` → `tsx`-attempted but `js` / `ts` natural;
  * `.scss` / `.less` → `css`-attempted but `scss` / `less` natural;
- * `.svg` / `.md` / `.markdown` / `.mkdn` / `.erb` / `.astro` / `.xhtml` →
+ * `.svg` / `.md` / `.markdown` / `.mkdn` / `.erb` / `.php` / `.phtml` /
+ * `.astro` / `.xhtml` →
  * `html`-attempted but their own natural label; `.mdx` → `tsx`-attempted
  * but `mdx` natural). For files where extension and parser agree
  * (`.tsx`/`.jsx`/`.html`/`.htm`/`.css`), the natural-parser equals the
@@ -208,6 +221,8 @@ const NATURAL_PARSER_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
   [".md", "md"],
   [".mdx", "mdx"],
   [".mkdn", "mkdn"],
+  [".php", "php"],
+  [".phtml", "php"],
   [".scss", "scss"],
   [".svg", "svg"],
   [".ts", "ts"],
@@ -236,7 +251,7 @@ const NATURAL_PARSER_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
  * JS-API wrapper, or anything else where the substring isn't
  * a real DOM element. JSX-bearing extensions (`.jsx`, `.tsx`, `.mdx`,
  * `.astro`) and HTML-family extensions (`.html`, `.htm`, `.xhtml`, `.svg`, `.md`,
- * `.markdown`, `.mkdn`, `.erb`, `.vue`, `.svelte`) are trusted as DOM-origin.
+ * `.markdown`, `.mkdn`, `.erb`, `.php`, `.phtml`, `.vue`, `.svelte`) are trusted as DOM-origin.
  *
  * `.vue` and `.svelte` are listed for forward compatibility — the parser
  * registry doesn't dispatch dedicated SFC parsers today, but when it does
@@ -256,6 +271,8 @@ const DOM_ORIGIN_EXTENSIONS: ReadonlySet<string> = new Set([
   ".markdown",
   ".mkdn",
   ".erb",
+  ".php",
+  ".phtml",
   ".vue",
   ".svelte",
 ]);

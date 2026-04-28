@@ -112,6 +112,8 @@ export function pragmaFormForExtension(filePath: string, criterionId: string): s
     lower.endsWith(".vue") ||
     lower.endsWith(".svelte") ||
     lower.endsWith(".erb") ||
+    lower.endsWith(".php") ||
+    lower.endsWith(".phtml") ||
     lower.endsWith(".liquid")
   ) {
     return `<!-- ra11y-disable ${criterionId} -->`;

@@ -20,6 +20,7 @@ import {
   parseLess,
   parseMarkdown,
   parseMdx,
+  parsePhp,
   parseScss,
   parseSvg,
   parseTsx,
@@ -495,6 +496,19 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     // every `.html`-scoped rule that inspects `<svg>` / `<title>` /
     // `role="img"` / `aria-label` / `aria-hidden` applies.
     const r = parseSvg(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".php") || filePath.endsWith(".phtml")) {
+    // PHP server pages (Laravel views, WordPress themes, hand-rolled
+    // `.phtml` scaffolds). The {@link parsePhp} adapter blanks
+    // `<?php … ?>` / `<?= … ?>` / `<? … ?>` islands (preserving
+    // line/col) and routes the HTML residue through parseHtml so
+    // every `.html`-scoped rule applies. The `phpIslandsStripped`
+    // signal is recovered from the source itself in
+    // `analysis-coverage.ts::accumulateHtmlCoverageForFile`, so the
+    // dispatch shape can match the other HTML-family adapters
+    // (return only `{ language, root, errors }`).
+    const r = parsePhp(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   // `.md` / `.markdown` / `.mkdn` — ADR 0025 Option B. Strip markdown

@@ -44,6 +44,7 @@ import {
   parseHtml,
   parseLess,
   parseMdx,
+  parsePhp,
   parseScss,
   parseSvg,
   parseTsx,
@@ -413,6 +414,13 @@ function parseFor(filePath: string, source: string): Ast | null {
   }
   if (filePath.endsWith(".svg")) {
     const r = parseSvg(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (filePath.endsWith(".php") || filePath.endsWith(".phtml")) {
+    // PHP server pages route through {@link parsePhp}, which blanks
+    // `<?php … ?>` / `<?= … ?>` / `<? … ?>` islands (preserving
+    // line/col) and feeds the HTML residue to parseHtml.
+    const r = parsePhp(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   if (

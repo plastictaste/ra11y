@@ -80,6 +80,22 @@ describe("extensionMatches", () => {
     expect(extensionMatches(".mkdn", [".css"])).toBe(false);
     expect(extensionMatches(".mkdn", [".tsx", ".jsx"])).toBe(false);
   });
+
+  test(".php / .phtml alias into .html/.htm — PHP server pages route through parsePhp", () => {
+    // The {@link parsePhp} adapter blanks `<?php … ?>` / `<?= … ?>` /
+    // `<? … ?>` islands and feeds the HTML residue to parseHtml, so
+    // every HTML-scoped rule applies. Mirrors the `.erb → .html/.htm`
+    // alias row.
+    expect(extensionMatches(".php", [".html", ".htm"])).toBe(true);
+    expect(extensionMatches(".php", [".html"])).toBe(true);
+    expect(extensionMatches(".phtml", [".html", ".htm"])).toBe(true);
+    expect(extensionMatches(".phtml", [".htm"])).toBe(true);
+    // `.php` does NOT alias into CSS or TSX — rules scoped to those
+    // extensions must not mis-fire on PHP server pages.
+    expect(extensionMatches(".php", [".css"])).toBe(false);
+    expect(extensionMatches(".php", [".tsx", ".jsx"])).toBe(false);
+    expect(extensionMatches(".phtml", [".css"])).toBe(false);
+  });
 });
 
 describe("hasParseableExtension", () => {
@@ -107,6 +123,15 @@ describe("hasParseableExtension", () => {
     // input shapes. See `src/utils/path.ts::EXTENSION_ALIASES`.
     expect(hasParseableExtension("page.xhtml")).toBe(true);
     expect(hasParseableExtension("docs/index.xhtml")).toBe(true);
+  });
+
+  test(".php / .phtml are parseable — PHP server pages route through parsePhp", () => {
+    // PHP server pages (Laravel views, WordPress themes, hand-rolled
+    // `.phtml` scaffolds) carry HTML markup outside their PHP islands.
+    // Rejecting them while accepting `.html` silently drops valid input.
+    expect(hasParseableExtension("resources/views/welcome.blade.php")).toBe(true);
+    expect(hasParseableExtension("templates/header.phtml")).toBe(true);
+    expect(hasParseableExtension("index.php")).toBe(true);
   });
 
   test(".mkdn is parseable — alternate Markdown extension routes through parseMarkdown", () => {

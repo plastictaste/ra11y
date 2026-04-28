@@ -195,6 +195,21 @@ interface CoverageBlock {
   templateDirectiveHandling?: string;
   /**
    * true when at least one
+   * scanned `.php` / `.phtml` file ran through the {@link parsePhp}
+   * adapter's island-stripping pass and contained at least one PHP
+   * block (`<?php … ?>`, `<?= … ?>`, or `<? … ?>`). Tracked alongside
+   * `templateInterpolationFound` because PHP islands are a parser-level
+   * template substrate the HTML parser would otherwise see as literal
+   * text. The warnings layer fires `php_islands_stripped` off this
+   * flag so an agent reading the response sees the parser-level
+   * evidence that PHP residue was processed (rather than the file
+   * being dropped at discovery — the historical behavior before
+   * `.php` joined PARSEABLE_EXTENSIONS). Present-when-meaningful:
+   * omitted when no scanned file ran PHP-island stripping.
+   */
+  phpIslandsStripped?: boolean;
+  /**
+   * true when at least one
    * parsed HTML-family file (including markdown routed through the HTML
    * parser per ADR 0025) opened with a YAML frontmatter fence
    * (`^---\n…\n---\n`). Tracked alongside `templateInterpolationFound`
@@ -309,6 +324,21 @@ interface CoverageBlock {
   fragmentFilesTruncated?: MetaArrayTruncationSummary;
 }
 
+/**
+ * Matches a PHP island opener: `<?php` (case-insensitive — PHP itself
+ * accepts `<?PHP` / `<?Php`), `<?=` (short echo), or `<?` short tag.
+ * Excludes `<?xml` (the XHTML prologue) by negative lookahead. Used to
+ * record the `phpIslandsStripped` scan-level boolean alongside
+ * `hasFrontmatterFence` so the warnings layer can fire
+ * `php_islands_stripped` whenever at least one parsed file ran through
+ * {@link parsePhp}'s island-stripping pass. Flag-set membership is
+ * sufficient — the scanner's per-file extension check (only `.php` /
+ * `.phtml` route through `parsePhp`) keeps stray `<?` text in non-PHP
+ * files (e.g. an `.html` page documenting the syntax) from tripping the
+ * signal.
+ */
+const PHP_ISLAND_OPENER_RE = /<\?(?:php(?![A-Za-z_])|=|(?!xml))/i;
+
 interface CoverageAccumulator {
   /**
    * Map of PascalCase tag name → call-site count + interactive flag.
@@ -358,6 +388,16 @@ interface CoverageAccumulator {
    * rather than a path list.
    */
   hasFrontmatterFence: boolean;
+  /**
+   * flipped to true the
+   * first time any scanned `.php` / `.phtml` file's source contains a
+   * PHP island opener. Single-sighting is sufficient — like
+   * `hasFrontmatterFence`, the signal is scan-level ("at least one
+   * file in this scan ran through the PHP island-stripping pass"),
+   * not per-file telemetry, so the accumulator stays a boolean
+   * rather than a path list.
+   */
+  phpIslandsStripped: boolean;
 }
 
 /**
@@ -454,6 +494,7 @@ export function buildAnalysisCoverage(
     parseErrorEntries: [],
     fragmentFiles: [],
     hasFrontmatterFence: false,
+    phpIslandsStripped: false,
   };
   const wrapperSet = new Set(wrappers);
   for (const file of files) accumulateCoverageForFile(file, wrapperSet, acc, preset);
@@ -494,6 +535,13 @@ export function buildAnalysisCoverage(
     // only template evidence. Present-when-meaningful — omitted when
     // no file in this scan opened with a fence.
     coverage.hasFrontmatterFence = true;
+  }
+  if (acc.phpIslandsStripped) {
+    // surface the parser-level evidence that at least one `.php` /
+    // `.phtml` file ran through the {@link parsePhp} island-stripping
+    // pass. Present-when-meaningful — omitted when no scanned file
+    // contained a PHP island.
+    coverage.phpIslandsStripped = true;
   }
   if (acc.parseErrorEntries.length > 0) {
     // this assembler never
@@ -925,12 +973,33 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
   const src = isMarkdownFile(file.filePath) ? stripMarkdownCodeRegions(file.source) : file.source;
   detectTemplateInterpolation(src, acc.templateInterpolation);
   acc.hasFrontmatterFence ||= hasFrontmatterFence(file.source);
+  if (!acc.phpIslandsStripped && isPhpFile(file.filePath)) {
+    // Detect PHP island openers in the original source. The
+    // {@link parsePhp} adapter blanks the islands before the AST is
+    // built, so the AST itself carries no PHP residue; scanning the
+    // original `file.source` recovers the parser-level signal without
+    // re-routing through the adapter. Extension gate keeps stray `<?`
+    // text in non-PHP files (e.g. an `.html` page documenting the
+    // syntax) from tripping the flag.
+    if (PHP_ISLAND_OPENER_RE.test(file.source)) acc.phpIslandsStripped = true;
+  }
   const { isFragment, signals } = classifyFragment(
     file.ast.root as HtmlDocument,
     file.source,
     file.filePath,
   );
   if (isFragment) acc.fragmentFiles.push({ path: file.filePath, signals });
+}
+
+/**
+ * True when the file is a `.php` or `.phtml` PHP server-page input
+ * routed through the {@link parsePhp} adapter. Mirrors
+ * {@link isMarkdownFile} — a thin extension predicate kept local to
+ * this file so the island-detection branch stays self-contained.
+ */
+function isPhpFile(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return lower.endsWith(".php") || lower.endsWith(".phtml");
 }
 
 /**

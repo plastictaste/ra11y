@@ -1080,6 +1080,68 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
+  // Parser-level signal that `.php` / `.phtml` files ran through the
+  // {@link parsePhp} adapter's island-stripping pass. Mirrors the
+  // frontmatter-fence shape — a single sighting flips the scan-level
+  // boolean so the warnings layer can fire `php_islands_stripped`
+  // off the coverage block. The detector reads the original source
+  // (the AST has already been blanked by the adapter) and gates on
+  // the file extension to keep stray `<?` text in non-PHP files
+  // (e.g. an `.html` page documenting the syntax) from tripping it.
+  describe("php-islands detection", () => {
+    it("flags phpIslandsStripped when a .php file's source contains `<?php …?>`", () => {
+      const phpPage = htmlFile(
+        "index.php",
+        "<?php $x = 1; ?>\n<!DOCTYPE html>\n<html><body><p>hi</p></body></html>\n",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([phpPage], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBe(true);
+    });
+
+    it("flags phpIslandsStripped on a .phtml file with `<?= … ?>` short-echo", () => {
+      const phtmlPage = htmlFile(
+        "templates/header.phtml",
+        "<title><?= $title ?></title>\n<p>body</p>\n",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([phtmlPage], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBe(true);
+    });
+
+    it("does NOT flag phpIslandsStripped when a .php file is pure HTML with no PHP residue", () => {
+      // A `.php` file that happens to ship without any embedded PHP.
+      // The signal must stay off (the adapter wouldn't have stripped
+      // anything either).
+      const purePhp = htmlFile("static.php", "<!DOCTYPE html>\n<html><body>hi</body></html>\n");
+      const { analysisCoverage } = buildAnalysisCoverage([purePhp], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBeUndefined();
+    });
+
+    it("does NOT flag phpIslandsStripped on a .html file documenting the syntax (extension gate keeps stray `<?` text out of the signal)", () => {
+      // Without the extension gate, an `.html` page showing PHP
+      // syntax in `<code>` blocks would falsely trip the boolean.
+      // The gate keeps the parser-level signal honest about what the
+      // adapter actually ran on.
+      const docsPage = htmlFile(
+        "docs/php-syntax.html",
+        "<p>Use <code>&lt;?php echo $x; ?&gt;</code> to echo a value.</p>\n",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([docsPage], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBeUndefined();
+    });
+
+    it("does NOT trip on a .xhtml file's `<?xml … ?>` prologue", () => {
+      // The XHTML prologue uses `<?xml`, which the PHP detector must
+      // exclude (otherwise the existing `.xhtml` alias double-flags
+      // every XHTML document).
+      const xhtmlPage = htmlFile(
+        "page.xhtml",
+        '<?xml version="1.0" encoding="UTF-8"?>\n<html><body>hi</body></html>\n',
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([xhtmlPage], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBeUndefined();
+    });
+  });
+
   // Prose in `.md` / `.markdown` files routinely QUOTES template
   // tokens inside fenced code blocks and inline-code spans. A Jekyll
   // docs page that shows `<%= Time.now %>` as an ERB usage example
