@@ -162,7 +162,7 @@ describe("checklist emits top-level `warnings` for silent-failure modes", () => 
  * that shipped no scan-confidence warnings (or no `meta` block at all)
  * on bulk-template sites where `scan_project` on the same corpus
  * surfaced `template_files_parsed_as_literal`, `parse_errors_present`,
- * `extensions_skipped_no_parser`, etc. The cross-surface drift forced
+ * `text_source_skipped`, etc. The cross-surface drift forced
  * agents to call `scan_project` a second time to confirm what
  * `checklist` already knew but didn't emit. Doctrine: "verbose meta
  * is signal, not clutter" — the parity subset (configSource,

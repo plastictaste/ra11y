@@ -465,9 +465,9 @@ describe("buildDerivativeScanWarnings (ADR 0024 stage 4 — derivative-tool seam
       analysisCoverage: { skippedByExtension: { ".scss": 5, ".vue": 2 } },
       filesByExtension: undefined,
     });
-    expect(out.warnings).toContain("extensions_skipped_no_parser");
-    expect(out.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
-    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".scss");
-    expect(out.warningsDetails?.extensions_skipped_no_parser?.totalSkipped).toBe(7);
+    expect(out.warnings).toContain("text_source_skipped");
+    expect(out.warningsDetails?.text_source_skipped).toBeDefined();
+    expect(out.warningsDetails?.text_source_skipped?.topExtension).toBe(".scss");
+    expect(out.warningsDetails?.text_source_skipped?.totalSkipped).toBe(7);
   });
 });

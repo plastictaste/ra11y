@@ -419,8 +419,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans this round: minified/build-
 
 #### Q8c — accepted (P0 — token-budget honesty / silent-failure)
 
-- [ ] **Q8c-EXTENSION-SKIP-BINARY-VS-TEXT-SPLIT** `warningsDetails.extensions_skipped_no_parser` lumps binary-asset extensions (`.png`, `.jpg`, `.eot`, `.ttf`, `.woff`, `.mp3`, `.psd`, `.ico`) with text-source extensions the scanner could plausibly support (`.php`, `.coffee`, `.htc`, `.xhtml`, `.mkdn`, `.rmd`, `.erb`, `.hbs`). On a bulk catalog the `topExtension: ".jpg"` (1835) buries 30 `.php` files under `totalSkipped: 5341`; the agent reads the top extension and concludes "binary noise" while real text-bearing source goes silently unscanned. Fix: split `extensions_skipped_no_parser` into `binary_assets_skipped` (image/font/audio/video/archive) + `text_source_skipped` (scanner could plausibly route — split out so agent sees the actionable subset). Pairs with Q8-EXTENSIONS-SKIPPED-NO-PARSER-IMAGE-FILTER (filter axis) — this is the symmetric split that surfaces actionable subset rather than dropping it.
-
 #### Q8c — accepted (P0 — heuristic-mislabeled meta sub-fields)
 
 - [ ] **Q8c-PERRULECOVERAGE-PARSER-FIELD-NAME-AMBIGUOUS** `parseErrorFiles[].parser: "tsx"` reads as a content classification ("this file IS tsx") but is actually a routing decision (".js was sent to the tsx parser"). Agent reading a `.js` file with `parser: "tsx"` may infer "this codebase uses TSX" and re-route fix suggestions accordingly. Fix: rename to `parserAttempted` or `routedTo`; OR add a sibling `naturalParser` (per-extension default) so the agent can see the routing mismatch in one read. Pairs with Q8b-PARSE-ERROR-REASON-NAMES-WRONG-CULPRIT (reason text on parse error) — this is the field-naming axis on the meta record.

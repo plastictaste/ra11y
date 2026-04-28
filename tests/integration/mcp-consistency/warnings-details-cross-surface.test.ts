@@ -15,7 +15,7 @@
  *     "unavailable" from "genuinely empty."
  *   - `ai-first-consumer.md` §"Zero-output success is ambiguous failure":
  *     the response-level analogue of the per-field rule — if `scan_project`
- *     emits `extensions_skipped_no_parser` + `warningsDetails` but
+ *     emits `text_source_skipped` + `warningsDetails` but
  *     `checklist` emits `warnings: ["no_config_found"]` alone on the
  *     same scan, the agent has no way to discover the skipped-extension
  *     signal without a second `scan_project` round trip.
@@ -24,11 +24,11 @@
  *   - `scan_project`: full discovery + project root → emits the full
  *     warning battery including discovery-dependent codes.
  *   - `coverage`: full discovery → same discovery-dependent codes as
- *     scan_project (`extensions_skipped_no_parser`, etc.).
+ *     scan_project (`text_source_skipped`, etc.).
  *   - `checklist`: full discovery → MUST match coverage on shared
  *     discovery codes (this is what this test was written to enforce).
  *   - `scan_file`: single-file, no discovery → cannot compute
- *     discovery-only codes like `extensions_skipped_no_parser`; omits
+ *     discovery-only codes like `text_source_skipped`; omits
  *     them entirely per the "present-when-meaningful" rule.
  */
 
@@ -97,7 +97,7 @@ interface ExtensionsSkippedPayload {
 interface WarningsEnvelope {
   readonly warnings?: readonly string[];
   readonly warningsDetails?: {
-    readonly extensions_skipped_no_parser?: ExtensionsSkippedPayload;
+    readonly text_source_skipped?: ExtensionsSkippedPayload;
     readonly content_files_skipped?: { readonly count: number };
     readonly source_language_unsupported?: { readonly language: string };
     readonly vendor_css_dominates_findings?: { readonly vendorFindingsCount: number };
@@ -107,7 +107,7 @@ interface WarningsEnvelope {
 
 /**
  * Makes a fixture that drops at least one `.vue` file into the scan
- * root so discovery records an `extensions_skipped_no_parser` signal.
+ * root so discovery records an `text_source_skipped` signal.
  * We also seed one real HTML file so the scan has findings to report —
  * otherwise the response is dominated by `scanned_zero_files` and the
  * payload-bearing codes never fire. `.vue` is chosen over `.scss` /
@@ -153,7 +153,8 @@ function warningsEnvelope(raw: Record<string, unknown>): WarningsEnvelope {
  * task doctrine.
  */
 const DISCOVERY_DEPENDENT_CODES: readonly string[] = [
-  "extensions_skipped_no_parser",
+  "text_source_skipped",
+  "binary_assets_skipped",
   "content_files_skipped",
   "source_language_unsupported",
   "tailwind_detected_css_undercounted",
@@ -161,7 +162,7 @@ const DISCOVERY_DEPENDENT_CODES: readonly string[] = [
 ] as const;
 
 describe("warnings + warningsDetails coherence across scan_project / scan_file / coverage / checklist", () => {
-  it("scan_project, coverage, and checklist emit the same extensions_skipped_no_parser payload on the same scan root", async () => {
+  it("scan_project, coverage, and checklist emit the same text_source_skipped payload on the same scan root", async () => {
     const dir = await makeSkippedExtensionFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -175,16 +176,16 @@ describe("warnings + warningsDetails coherence across scan_project / scan_file /
 
     // Sanity: the fixture does trigger the code on scan_project —
     // otherwise the invariant below is vacuously true.
-    expect(scanProj.warnings ?? []).toContain("extensions_skipped_no_parser");
+    expect(scanProj.warnings ?? []).toContain("text_source_skipped");
 
     // Cross-surface rule: any surface that runs full discovery and
-    // emits `extensions_skipped_no_parser` must carry the same
+    // emits `text_source_skipped` must carry the same
     // structured payload. Deep-equal the payload so field shape drift
     // (e.g., a surface dropping `topCount` while another keeps it) is
     // caught.
-    const scanProjPayload = scanProj.warningsDetails?.extensions_skipped_no_parser;
-    const coveragePayload = coverage.warningsDetails?.extensions_skipped_no_parser;
-    const checklistPayload = checklist.warningsDetails?.extensions_skipped_no_parser;
+    const scanProjPayload = scanProj.warningsDetails?.text_source_skipped;
+    const coveragePayload = coverage.warningsDetails?.text_source_skipped;
+    const checklistPayload = checklist.warningsDetails?.text_source_skipped;
 
     expect(scanProjPayload).toBeDefined();
     expect(coveragePayload).toBeDefined();
@@ -290,11 +291,11 @@ describe("warnings + warningsDetails coherence across scan_project / scan_file /
   it("scan_file omits discovery-dependent warning codes entirely (single-file surface has no discovery phase)", async () => {
     // Doctrine (task notes): "If a surface can emit a warning code
     // but CANNOT compute the details that another surface provides
-    // (e.g. scan_file is single-file so `extensions_skipped_no_parser`
+    // (e.g. scan_file is single-file so `text_source_skipped`
     // doesn't apply), OMIT the code entirely from that surface."
     //
     // Dropped `.scss` alongside the HTML file. `scan_project` /
-    // `coverage` / `checklist` surface `extensions_skipped_no_parser`
+    // `coverage` / `checklist` surface `text_source_skipped`
     // because they walk the directory; `scan_file` takes a single file
     // path and must not surface the discovery-only codes at all —
     // doing so without the paired payload would be the "bare code

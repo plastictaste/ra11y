@@ -519,7 +519,8 @@ export async function runScanAndFormat(
   // Discovery diagnostics from `parseFilesWithDiagnostics`. When
   // present with a non-empty `skippedByExtension` map, the counts are
   // surfaced in `meta.analysisCoverage.skippedByExtension` and the
-  // response-level `extensions_skipped_no_parser` warning fires. Omit
+  // response-level `text_source_skipped` / `binary_assets_skipped`
+  // warnings fire. Omit
   // (or pass an empty map) on scan surfaces that don't run discovery
   // — the scan_file tool takes explicit paths and has no silent-miss
   // axis to report on.

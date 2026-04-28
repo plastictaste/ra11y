@@ -274,7 +274,8 @@ export const scanProjectTool: McpTool = {
       resolveProcessesForScan(projectConfig.processes, projectConfig.sourcePath, root),
       // surface per-extension skip counts from the
       // discovery pass into `meta.analysisCoverage.skippedByExtension`
-      // + the response-level `extensions_skipped_no_parser` warning.
+      // + the response-level `text_source_skipped` /
+      // `binary_assets_skipped` warnings.
       discoveryDiagnostics,
     );
     logger.debug(

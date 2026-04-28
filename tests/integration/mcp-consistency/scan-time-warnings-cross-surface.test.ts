@@ -16,7 +16,7 @@
  *     produced by the shared `buildScanTimeWarnings` helper. Must be
  *     IDENTICAL across the three project-rooted tools on identical
  *     cwd. Examples: `scanned_build_artifacts_present`, `no_config_found`,
- *     `extensions_skipped_no_parser`, `parse_errors_present`,
+ *     `text_source_skipped`, `parse_errors_present`,
  *     `template_files_parsed_as_literal`, `scanned_minified_file`,
  *     `bulk_catalog_detected`, `scss_unresolved_variables`.
  *
@@ -119,7 +119,7 @@ interface WarningEnvelope {
 
 /**
  * Fixture seeding `scanned_build_artifacts_present` and
- * `extensions_skipped_no_parser` and `scanned_minified_file` —
+ * `text_source_skipped` and `scanned_minified_file` —
  * scan-time codes that historically fired on `scan_project` only and
  * silently dropped on `checklist` / `coverage` on identical cwd. A
  * `.min.css` plus a `.vue` file plus a real `.html` file is enough
@@ -179,11 +179,11 @@ describe("scan-time warning code parity across scan_project / checklist / covera
     // Sanity: at least one canonical scan-time code must fire on
     // scan_project, otherwise the parity assertion below is vacuous.
     // The fixture is shaped so `scanned_build_artifacts_present` and
-    // `extensions_skipped_no_parser` and `scanned_minified_file` all
+    // `text_source_skipped` and `scanned_minified_file` all
     // fire on a tool that runs the build-artifact + skipped-ext
     // detectors.
     expect(sp.has("scanned_build_artifacts_present")).toBe(true);
-    expect(sp.has("extensions_skipped_no_parser")).toBe(true);
+    expect(sp.has("text_source_skipped")).toBe(true);
     expect(sp.has("scanned_minified_file")).toBe(true);
 
     expect([...cv].sort()).toEqual([...sp].sort());

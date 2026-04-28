@@ -335,7 +335,7 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
-  it("fires `extensions_skipped_no_parser` when the coverage block reports a non-empty skippedByExtension map", () => {
+  it("fires `text_source_skipped` when the coverage block reports a non-empty skippedByExtension map", () => {
     const codes = computeScanWarnings({
       filesScanned: 125,
       rootSource: "explicit",
@@ -345,10 +345,10 @@ describe("computeScanWarnings", () => {
       },
       filesByExtension: { ".tsx": 120, ".css": 5 },
     });
-    expect(codes).toContain("extensions_skipped_no_parser");
+    expect(codes).toContain("text_source_skipped");
   });
 
-  it("does NOT fire `extensions_skipped_no_parser` when the map is empty or absent", () => {
+  it("does NOT fire `text_source_skipped` when the map is empty or absent", () => {
     const empty = computeScanWarnings({
       filesScanned: 125,
       rootSource: "explicit",
@@ -363,15 +363,18 @@ describe("computeScanWarnings", () => {
       analysisCoverage: {},
       filesByExtension: { ".tsx": 125 },
     });
-    expect(empty).not.toContain("extensions_skipped_no_parser");
-    expect(absent).not.toContain("extensions_skipped_no_parser");
+    expect(empty).not.toContain("text_source_skipped");
+    expect(absent).not.toContain("text_source_skipped");
   });
 
-  it("does NOT fire `extensions_skipped_no_parser` when the skipped map is binary assets only", () => {
+  it("does NOT fire `text_source_skipped` when the skipped map is binary assets only — fires `binary_assets_skipped` instead", () => {
     // A scan whose only "skipped" extensions are images / fonts / media
-    // is not a parser-coverage gap an agent needs to triage. Filter
-    // them out so the warning channel stays focused on text-source
-    // candidates the agent might re-route via additionalPaths.
+    // is not a text-source-parser-coverage gap an agent could re-route
+    // via additionalPaths — but the corpus shape signal still matters,
+    // so the binary subset surfaces under its own warning rather than
+    // being silently filtered out (Routing skips that drop content are
+    // the symmetric twin of suppression — surface honestly via a
+    // labeled channel).
     const codes = computeScanWarnings({
       filesScanned: 50,
       rootSource: "explicit",
@@ -387,10 +390,16 @@ describe("computeScanWarnings", () => {
       },
       filesByExtension: { ".tsx": 50 },
     });
-    expect(codes).not.toContain("extensions_skipped_no_parser");
+    expect(codes).not.toContain("text_source_skipped");
+    expect(codes).toContain("binary_assets_skipped");
   });
 
-  it("fires `extensions_skipped_no_parser` when at least one TEXT-format extension is in the map alongside binary assets (filter passes the text exts through)", () => {
+  it("fires both `text_source_skipped` and `binary_assets_skipped` when the map mixes text and binary extensions (independent predicates)", () => {
+    // Heterogeneous corpus: text-source skips coexist with binary
+    // assets. Both warnings fire so the agent sees the actionable
+    // text subset AND the residual asset bucket without one burying
+    // the other (the pre-split shape lumped both under one warning,
+    // letting `.jpg: 1835` hide `.php: 30`).
     const codes = computeScanWarnings({
       filesScanned: 50,
       rootSource: "explicit",
@@ -398,13 +407,32 @@ describe("computeScanWarnings", () => {
       analysisCoverage: {
         skippedByExtension: {
           ".vue": 12,
-          ".png": 200, // dwarfs the text exts — must NOT silence the code
+          ".png": 200, // dominant by count but routed to its own channel
           ".woff2": 30,
         },
       },
       filesByExtension: { ".tsx": 50 },
     });
-    expect(codes).toContain("extensions_skipped_no_parser");
+    expect(codes).toContain("text_source_skipped");
+    expect(codes).toContain("binary_assets_skipped");
+  });
+
+  it("does NOT fire `binary_assets_skipped` when the map is text-source only", () => {
+    // Symmetric to the binary-only case: a pure text-source skip map
+    // (Vue / Astro / SCSS components) trips `text_source_skipped`
+    // alone — the binary channel stays absent because no asset
+    // extension is in the map.
+    const codes = computeScanWarnings({
+      filesScanned: 125,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".astro": 104, ".scss": 122 },
+      },
+      filesByExtension: { ".tsx": 120, ".css": 5 },
+    });
+    expect(codes).toContain("text_source_skipped");
+    expect(codes).not.toContain("binary_assets_skipped");
   });
 
   it("fires `parse_errors_present` when parseErrorFileCount is non-zero (partial AST, findings undercounted on those files)", () => {
@@ -1081,8 +1109,8 @@ describe("warningsFromScanMeta", () => {
 });
 
 describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)", () => {
-  it("emits an `extensions_skipped_no_parser` payload when the code fired and skippedByExtension is populated", () => {
-    const codes = ["extensions_skipped_no_parser"] as const;
+  it("emits an `text_source_skipped` payload when the code fired and skippedByExtension is populated", () => {
+    const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 125,
       rootSource: "explicit",
@@ -1092,16 +1120,16 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       },
       filesByExtension: { ".tsx": 125 },
     });
-    expect(details.extensions_skipped_no_parser).toBeDefined();
+    expect(details.text_source_skipped).toBeDefined();
     // Sorted by descending count, ties broken alphabetically.
-    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".scss", ".mdx", ".astro"]);
-    expect(details.extensions_skipped_no_parser?.topExtension).toBe(".scss");
-    expect(details.extensions_skipped_no_parser?.topCount).toBe(114);
-    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(328);
+    expect(details.text_source_skipped?.extensions).toEqual([".scss", ".mdx", ".astro"]);
+    expect(details.text_source_skipped?.topExtension).toBe(".scss");
+    expect(details.text_source_skipped?.topCount).toBe(114);
+    expect(details.text_source_skipped?.totalSkipped).toBe(328);
   });
 
   it("breaks count ties alphabetically (determinism the sort depends on)", () => {
-    const codes = ["extensions_skipped_no_parser"] as const;
+    const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 10,
       rootSource: "explicit",
@@ -1112,12 +1140,12 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       },
       filesByExtension: { ".tsx": 10 },
     });
-    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".astro", ".svelte", ".vue"]);
-    expect(details.extensions_skipped_no_parser?.topExtension).toBe(".astro");
+    expect(details.text_source_skipped?.extensions).toEqual([".astro", ".svelte", ".vue"]);
+    expect(details.text_source_skipped?.topExtension).toBe(".astro");
   });
 
   it("truncates the `extensions` array to the top 5 but still sums the full distribution into `totalSkipped`", () => {
-    const codes = ["extensions_skipped_no_parser"] as const;
+    const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 1,
       rootSource: "explicit",
@@ -1135,21 +1163,13 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       },
       filesByExtension: { ".tsx": 1 },
     });
-    expect(details.extensions_skipped_no_parser?.extensions).toHaveLength(5);
-    expect(details.extensions_skipped_no_parser?.extensions).toEqual([
-      ".a",
-      ".b",
-      ".c",
-      ".d",
-      ".e",
-    ]);
+    expect(details.text_source_skipped?.extensions).toHaveLength(5);
+    expect(details.text_source_skipped?.extensions).toEqual([".a", ".b", ".c", ".d", ".e"]);
     // Full distribution still sums — the dense summary doesn't hide the long tail from `totalSkipped`.
-    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(
-      100 + 90 + 80 + 70 + 60 + 50 + 40,
-    );
+    expect(details.text_source_skipped?.totalSkipped).toBe(100 + 90 + 80 + 70 + 60 + 50 + 40);
   });
 
-  it("returns an empty object when the `extensions_skipped_no_parser` code did NOT fire (no entry for a missing code)", () => {
+  it("returns an empty object when the `text_source_skipped` code did NOT fire (no entry for a missing code)", () => {
     const details = computeScanWarningDetails([], {
       filesScanned: 125,
       rootSource: "explicit",
@@ -1163,7 +1183,7 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       },
       filesByExtension: { ".tsx": 125 },
     });
-    expect(details.extensions_skipped_no_parser).toBeUndefined();
+    expect(details.text_source_skipped).toBeUndefined();
     expect(Object.keys(details)).toHaveLength(0);
   });
 
@@ -1180,7 +1200,7 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     // The membership invariant still holds — every fired code in
     // `codes` carries a key — but the fall-through entry is now
     // honestly typed.
-    const codes = ["extensions_skipped_no_parser"] as const;
+    const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 125,
       rootSource: "explicit",
@@ -1191,14 +1211,14 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     // Read through `Record<string, unknown>` so the assertion
     // accepts either the rich payload OR the truncation sentinel.
     const detailsMap = details as Record<string, unknown>;
-    expect(detailsMap.extensions_skipped_no_parser).toEqual({
+    expect(detailsMap.text_source_skipped).toEqual({
       truncated: true,
       reason: "summarizer_inputs_unavailable",
     });
   });
 
   it("drops entries whose count is zero or non-numeric (hostile-input defense)", () => {
-    const codes = ["extensions_skipped_no_parser"] as const;
+    const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 1,
       rootSource: "explicit",
@@ -1208,8 +1228,8 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       },
       filesByExtension: { ".tsx": 1 },
     });
-    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".astro"]);
-    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(10);
+    expect(details.text_source_skipped?.extensions).toEqual([".astro"]);
+    expect(details.text_source_skipped?.totalSkipped).toBe(10);
   });
 
   it("emits a `content_files_skipped` payload with per-extension breakdown (all three keys present, zero-filled for missing)", () => {
@@ -1314,8 +1334,8 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.parse_errors_present?.parseErrorsByParser).toBeUndefined();
   });
 
-  it("filters binary-asset extensions out of the `extensions_skipped_no_parser` payload", () => {
-    const codes = ["extensions_skipped_no_parser"] as const;
+  it("filters binary-asset extensions out of the `text_source_skipped` payload", () => {
+    const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 50,
       rootSource: "explicit",
@@ -1332,12 +1352,62 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     });
     // `.png` would be the dominant entry but must be filtered out;
     // text-format `.vue` becomes the new top.
-    expect(details.extensions_skipped_no_parser?.topExtension).toBe(".vue");
-    expect(details.extensions_skipped_no_parser?.extensions).toEqual([".vue", ".scss"]);
+    expect(details.text_source_skipped?.topExtension).toBe(".vue");
+    expect(details.text_source_skipped?.extensions).toEqual([".vue", ".scss"]);
     // `totalSkipped` only counts the surviving text-format entries —
     // mixing in binary counts would inflate the agent's triage signal
     // and re-introduce the noise the filter exists to remove.
-    expect(details.extensions_skipped_no_parser?.totalSkipped).toBe(20);
+    expect(details.text_source_skipped?.totalSkipped).toBe(20);
+  });
+
+  it("emits a `binary_assets_skipped` payload describing the binary subset (mirror shape of text_source_skipped)", () => {
+    const codes = ["binary_assets_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".vue": 12, // text — must NOT appear under binary
+          ".png": 200,
+          ".woff2": 30,
+          ".scss": 8, // text — must NOT appear under binary
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // Binary subset only — the text-source filter inverts.
+    expect(details.binary_assets_skipped?.topExtension).toBe(".png");
+    expect(details.binary_assets_skipped?.extensions).toEqual([".png", ".woff2"]);
+    expect(details.binary_assets_skipped?.totalSkipped).toBe(230);
+  });
+
+  it("emits both payloads with disjoint extension sets when both codes fire on a heterogeneous corpus", () => {
+    const codes = ["text_source_skipped", "binary_assets_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".php": 30,
+          ".jpg": 1835, // canonical bulk-catalog vendor-asset volume
+          ".coffee": 5,
+          ".eot": 12,
+        },
+      },
+      filesByExtension: { ".html": 50 },
+    });
+    // Text payload sees the actionable subset only.
+    expect(details.text_source_skipped?.extensions).toEqual([".php", ".coffee"]);
+    expect(details.text_source_skipped?.totalSkipped).toBe(35);
+    // Binary payload sees the asset subset only.
+    expect(details.binary_assets_skipped?.extensions).toEqual([".jpg", ".eot"]);
+    expect(details.binary_assets_skipped?.totalSkipped).toBe(1847);
+    // Disjoint by construction — no extension can appear in both.
+    const textExts = new Set(details.text_source_skipped?.extensions ?? []);
+    const binaryExts = new Set(details.binary_assets_skipped?.extensions ?? []);
+    for (const ext of textExts) expect(binaryExts.has(ext)).toBe(false);
   });
 
   it("returns no `source_language_unsupported` entry when the code did NOT fire", () => {
@@ -1365,9 +1435,9 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       },
       filesByExtension: { ".tsx": 125 },
     });
-    expect(out.warnings).toEqual(["extensions_skipped_no_parser"]);
-    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".astro");
-    expect(out.warningsDetails?.extensions_skipped_no_parser?.totalSkipped).toBe(104);
+    expect(out.warnings).toEqual(["text_source_skipped"]);
+    expect(out.warningsDetails?.text_source_skipped?.topExtension).toBe(".astro");
+    expect(out.warningsDetails?.text_source_skipped?.totalSkipped).toBe(104);
   });
 
   it("emits `warningsDetails` with the truncation sentinel when a payload-bearing code fires without its summarizer inputs (warnings-details schema discipline)", () => {
@@ -1425,12 +1495,9 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
     });
-    expect(out.warnings).toContain("extensions_skipped_no_parser");
-    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".scss");
-    expect(out.warningsDetails?.extensions_skipped_no_parser?.extensions).toEqual([
-      ".scss",
-      ".astro",
-    ]);
+    expect(out.warnings).toContain("text_source_skipped");
+    expect(out.warningsDetails?.text_source_skipped?.topExtension).toBe(".scss");
+    expect(out.warningsDetails?.text_source_skipped?.extensions).toEqual([".scss", ".astro"]);
   });
 
   it("emits a `response_token_budget_truncated` payload via the dedicated helper when the density cap trims files", () => {
@@ -1507,14 +1574,14 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       configSource: null, // fires no_config_found (payload-bearing, no input here)
       configSearchSawProjectMarker: true,
       analysisCoverage: {
-        skippedByExtension: { ".scss": 5 }, // fires extensions_skipped_no_parser (rich)
+        skippedByExtension: { ".scss": 5 }, // fires text_source_skipped (rich)
       },
       filesByExtension: undefined,
     });
     // Rich payload retained for the payload-bearing code that DID
     // get its summarizer input.
-    expect(out.warnings).toContain("extensions_skipped_no_parser");
-    const extensionsEntry = out.warningsDetails?.extensions_skipped_no_parser as
+    expect(out.warnings).toContain("text_source_skipped");
+    const extensionsEntry = out.warningsDetails?.text_source_skipped as
       | { readonly topExtension: string }
       | undefined;
     expect(extensionsEntry?.topExtension).toBe(".scss");
@@ -1536,7 +1603,7 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
     expect(detailKeys).toEqual([...codes].sort());
   });
 
-  it("Jekyll scan emits content_files_skipped + extensions_skipped_no_parser together with matching payloads", () => {
+  it("Jekyll scan emits content_files_skipped + text_source_skipped together with matching payloads", () => {
     // Canonical Jekyll repro: 307 .md files + 20 html files parsed.
     const out = warningsField({
       filesScanned: 20,
@@ -1548,9 +1615,9 @@ describe("warningsField (ADR 0023 composite warnings + warningsDetails shape)", 
       filesByExtension: { ".html": 20 },
     });
     expect(out.warnings).toContain("content_files_skipped");
-    expect(out.warnings).toContain("extensions_skipped_no_parser");
+    expect(out.warnings).toContain("text_source_skipped");
     expect(out.warningsDetails?.content_files_skipped?.count).toBe(307);
-    expect(out.warningsDetails?.extensions_skipped_no_parser?.topExtension).toBe(".md");
+    expect(out.warningsDetails?.text_source_skipped?.topExtension).toBe(".md");
   });
 });
 
@@ -1810,7 +1877,7 @@ describe("computeScanWarnings — response_meta_truncated", () => {
 // This block exercises the contract on the full set of codes flagged
 // in the originating field report (`response_token_budget_truncated`,
 // `no_config_found`, `scanned_build_artifacts_present`,
-// `extensions_skipped_no_parser`, `parse_errors_present`,
+// `text_source_skipped`, `parse_errors_present`,
 // `source_language_unsupported`, `template_files_parsed_as_literal`)
 // — half the report's claim was that only one of seven carried a
 // payload; the contract now is "three carry quantitative payloads
@@ -1977,14 +2044,14 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     // All seven codes from the regression item are in `warnings[]`.
     const codes = out.warnings ?? [];
     expect(codes).toContain("no_config_found");
-    expect(codes).toContain("extensions_skipped_no_parser");
+    expect(codes).toContain("text_source_skipped");
     expect(codes).toContain("parse_errors_present");
     expect(codes).toContain("source_language_unsupported");
     expect(codes).toContain("scanned_build_artifacts_present");
     expect(codes).toContain("template_files_parsed_as_literal");
     // Payload-bearing slots populated for every fired code that has
     // a rich slot.
-    expect(out.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
+    expect(out.warningsDetails?.text_source_skipped).toBeDefined();
     expect(out.warningsDetails?.parse_errors_present).toBeDefined();
     expect(out.warningsDetails?.source_language_unsupported).toBeDefined();
     expect(out.warningsDetails?.scanned_build_artifacts_present).toBeDefined();
@@ -2061,7 +2128,7 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
         // template directives + finding overlap fire
         // template_files_parsed_as_literal (presence)
         templateInterpolationFound: [{ token: "{%x%}", count: 1 }],
-        // skippedByExtension fires extensions_skipped_no_parser (rich)
+        // skippedByExtension fires text_source_skipped (rich)
         skippedByExtension: { ".astro": 80, ".rb": 120 },
       },
       filesByExtension: { ".tsx": 250 },
@@ -2079,7 +2146,7 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     expect(codes).toContain("no_config_found");
     expect(codes).toContain("template_files_parsed_as_literal");
     expect(codes).toContain("scanned_build_artifacts_present");
-    expect(codes).toContain("extensions_skipped_no_parser");
+    expect(codes).toContain("text_source_skipped");
     expect(codes).toContain("parse_errors_present");
     // Membership invariant — keys on `warningsDetails` exactly
     // match the codes in `warnings[]`. The integration test in

@@ -17,7 +17,8 @@
  *   - **scan-time warnings** — predicate is a function of the scan
  *     basis (parsed files, findings, config-resolution state). The set
  *     produced by this helper. Identical across every project-rooted
- *     tool consuming the same cwd: `extensions_skipped_no_parser`,
+ *     tool consuming the same cwd: `text_source_skipped`,
+ *     `binary_assets_skipped`,
  *     `parse_errors_present`, `template_files_parsed_as_literal`,
  *     `scanned_build_artifacts_present`, `no_config_found`,
  *     `scanned_minified_file`, `bulk_catalog_detected`,

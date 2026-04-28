@@ -131,7 +131,7 @@ export async function discoverExplicitPaths(
  * metadata). Lumping these under a single `(no-ext)` bucket alongside
  * binary-but-extensionless oddballs hid the source-vs-non-source
  * distinction: an agent reading
- * `warningsDetails.extensions_skipped_no_parser.extensions: ["(no-ext)"]`
+ * `warningsDetails.text_source_skipped.extensions: ["(no-ext)"]`
  * could not tell whether the bucket was three LICENSEs or a hash-named
  * Git LFS pointer. Filenames here are matched case-insensitively
  * (canonical case preserved on the wire — `LICENSE`, `Makefile`,
@@ -256,7 +256,7 @@ export async function discoverFiles(
  * Increments the skip count for `filePath`'s extension. Empty-extension
  * files split two ways: well-known textual filenames (LICENSE, Makefile,
  * Dockerfile, …) bucket inline under their canonical filename so an
- * agent reading `warningsDetails.extensions_skipped_no_parser.extensions`
+ * agent reading `warningsDetails.text_source_skipped.extensions`
  * can tell source-shaped no-ext files apart from residual binary or
  * hash-named oddballs. Anything else without an extension still lands
  * under `(no-ext)` — the map key is always non-empty.

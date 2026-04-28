@@ -155,7 +155,7 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
     // the field-report
     // canonical case had `scan_project` firing `no_config_found` and
     // `scanned_build_artifacts_present` while `coverage` emitted only
-    // `extensions_skipped_no_parser` + `parse_errors_present`. Same
+    // `text_source_skipped` + `parse_errors_present`. Same
     // scanner state, different warning subsets — silent drift the
     // agent only catches by chance. Pin parity for the two codes
     // coverage was missing.

@@ -43,18 +43,51 @@ export type ScanWarningCode =
   // `Story`) were rendered transparent in the opaque-component
   // telemetry. Not an error; a label the agent can branch on.
   | "storybook_preset_active"
-  // the walker considered N files that cleared
+  // the walker considered N text-source files that cleared
   // dir-ignore + user-excludes and rejected them purely because their
-  // extension isn't in PARSEABLE_EXTENSIONS (.astro, .scss, .vue, etc.).
+  // extension isn't in PARSEABLE_EXTENSIONS (.php, .coffee, .xhtml,
+  // .erb, .hbs, etc.) — extensions whose contents are plausibly
+  // routable through one of ra11y's parsers if support were added.
   // Without this code a mixed-language repo reads as "scanned
-  // everything" when the scanner dropped the majority of source files
-  // at discovery. Paired meta: `analysisCoverage.skippedByExtension`
-  // carries the ext↦count map the warning points at. Structured
-  // payload under `warningsDetails.extensions_skipped_no_parser`
-  // carries a dense summary (top extension + total) so an agent
-  // branching on the code can answer "how bad?" without descending
-  // into `meta` — see ADR 0023.
-  | "extensions_skipped_no_parser"
+  // everything" when the scanner dropped a routable subset of source
+  // files at discovery. Paired meta:
+  // `analysisCoverage.skippedByExtension` carries the full ext↦count
+  // map (text + binary). Structured payload under
+  // `warningsDetails.text_source_skipped` carries a dense summary
+  // (top extension + total) of the text-source subset so an agent
+  // branching on the code can answer "how bad, and which dialects?"
+  // without descending into `meta`.
+  //
+  // Split-from-binary rationale: an earlier
+  // `extensions_skipped_no_parser` code lumped binary assets
+  // (.png/.jpg/.eot/.woff/.mp3/.psd/.ico) with text-source skips,
+  // which under the symmetric "Routing skips that drop content are
+  // the symmetric twin of suppression" doctrine produced a top-level
+  // signal an agent could not honestly act on (`.jpg` at 1835 burying
+  // `.php` at 30). Splitting the predicate into two warnings — this
+  // one for the actionable subset, `binary_assets_skipped` for the
+  // residual asset bucket — surfaces both honestly so the agent can
+  // route on the text subset without rereading the full ext map. The
+  // two warnings can fire simultaneously on heterogeneous corpora.
+  | "text_source_skipped"
+  // the walker considered N binary-asset
+  // files (image/font/audio/video/archive/binary-doc) that cleared
+  // dir-ignore + user-excludes and rejected them on the parseable-
+  // extension check. Surfaced honestly (rather than silently dropped)
+  // per the AI-first "Surface, don't suppress" rule — even though the
+  // agent cannot route a `.png` through a parser, the bare presence
+  // signal lets the agent verify the corpus shape it expected matches
+  // what the walker saw. Without this code, a corpus of 1835 `.jpg`
+  // assets reads as identical to a clean scan from the warnings
+  // channel; with it, the agent can branch on the asset density and
+  // refuse to over-interpret a low-finding scan as "clean codebase."
+  // Paired meta: `analysisCoverage.skippedByExtension` carries the
+  // full ext↦count map (binary + text). Structured payload under
+  // `warningsDetails.binary_assets_skipped` carries the same dense
+  // summary shape as `text_source_skipped` so agents can read either
+  // surface uniformly. The two warnings fire independently and can
+  // co-exist on a heterogeneous corpus.
+  | "binary_assets_skipped"
   // Parser produced errors on at least one file: either the AST was
   // unusable (file effectively invisible to rules, tallied under
   // `parseErrorFileCount`) OR the recovered partial AST still let at
@@ -62,7 +95,7 @@ export type ScanWarningCode =
   // parse-error point may be missing — tallied under
   // `partialParseFileCount`). Without this code a scan where a file
   // fails to parse reads as a clean result on that file — a silent-miss
-  // failure mode that mirrors `extensions_skipped_no_parser` one layer
+  // failure mode that mirrors `text_source_skipped` one layer
   // deeper in the pipeline (discovery accepted the file, parsing
   // choked). The two counts are split because collapsing them hides
   // whether the listed paths are invisible or partially reported; the
@@ -128,7 +161,7 @@ export type ScanWarningCode =
   // (Jekyll, Hugo, Sphinx, MkDocs) reads as "20 findings, clean
   // enough" when the content layer never reached the scanner — the
   // canonical "zero-output success is ambiguous failure" case one
-  // layer deeper than `extensions_skipped_no_parser` (which is a
+  // layer deeper than `text_source_skipped` (which is a
   // generic signal; this code names the specific ecosystem gap so
   // the agent can branch without decoding the ext map). Paired
   // payload: `warningsDetails.content_files_skipped` carries
@@ -823,10 +856,11 @@ export interface WarningInputs {
 const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
 
 /**
- * Max number of extensions to inline under
- * `warningsDetails.extensions_skipped_no_parser.extensions`. The field
- * is a dense summary for branching ("how bad, and in what kind of
- * code?"); the full per-extension distribution stays under
+ * Max number of extensions to inline under the dense per-extension
+ * summary on `warningsDetails.text_source_skipped.extensions` and
+ * `warningsDetails.binary_assets_skipped.extensions`. The field is a
+ * dense summary for branching ("how bad, and in what kind of code?");
+ * the full per-extension distribution stays under
  * `meta.analysisCoverage.skippedByExtension` for callers that want the
  * long tail. Five is enough to cover every mixed-language repo profile
  * we've seen (bootstrap: 3 distinct extensions; typical monorepo: ≤5).
@@ -834,20 +868,20 @@ const TAILWIND_CSS_UNDERCOUNT_THRESHOLD = 3;
 const WARNING_DETAILS_TOP_EXTENSIONS = 5;
 
 /**
- * extensions for binary
- * assets — images, fonts, audio, video, archives, miscellaneous
- * vendor blobs — that should not surface under
- * `extensions_skipped_no_parser`. The warning code names "text-source
- * files the walker considered but rejected on the parseable-extension
- * check"; binary assets cleared the same dir-ignore filters but
- * carry no parseable-source-text signal and inflating the warning
- * payload with `.png` / `.woff2` / `.mp4` clouds the actually-
- * actionable subset (e.g. `.vue`, `.svelte`, `.md`). The full ext
- * distribution still lives in `meta.analysisCoverage.skippedByExtension`
- * for callers that want the long tail (the doctrine surface for
- * `verbose` meta is signal); only the `extensions_skipped_no_parser`
- * predicate + payload narrow to text-format extensions. Doctrine pivot:
- * surface signal the agent will act on, not raw bytes-on-disk telemetry.
+ * Extensions for binary assets — images, fonts, audio, video,
+ * archives, miscellaneous vendor blobs — that surface under the
+ * dedicated `binary_assets_skipped` warning rather than
+ * `text_source_skipped`. Splitting the two channels lets an agent
+ * branch on the actionable text-source subset (e.g. `.php`, `.vue`,
+ * `.svelte`, `.coffee`) without the binary tail burying the signal —
+ * the AI-first "Routing skips that drop content are the symmetric
+ * twin of suppression" rule applies symmetrically: under-parsing a
+ * text source is a silent miss; folding binary assets into the
+ * text-source warning is a heuristic-mislabeled-meta-sub-field shape
+ * that hides the actionable subset. Both predicates use this set; the
+ * full ext distribution still lives in
+ * `meta.analysisCoverage.skippedByExtension` for callers that want
+ * the entire tail.
  */
 const BINARY_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
   // Raster + vector images. `.svg` is intentionally excluded — SVG is
@@ -899,6 +933,16 @@ const BINARY_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
   ".pdf",
   ".bin",
   ".dat",
+  // Design / source-asset binaries common in design-system /
+  // brand-asset directories. Photoshop / Illustrator / Sketch /
+  // Figma / XD all ship as binary container formats; lumping them
+  // with the binary-asset bucket keeps `text_source_skipped`
+  // focused on parser-routable extensions.
+  ".psd",
+  ".ai",
+  ".sketch",
+  ".fig",
+  ".xd",
 ]);
 
 /**
@@ -938,7 +982,7 @@ const CONTENT_FILES_SKIPPED_THRESHOLD = 50;
  * the extension(s) that count toward each language's file tally. Keeping
  * the mapping explicit (rather than "any skipped ext") keeps the code
  * an honest ecosystem-foreign-dominance signal rather than a generic
- * "some stuff got skipped" rebroadcast of `extensions_skipped_no_parser`.
+ * "some stuff got skipped" rebroadcast of `text_source_skipped`.
  * Each entry names a template-layer ecosystem ra11y doesn't parse:
  * Ruby (Rails/Jekyll), Python (Django/Flask/Sphinx), Go (html/template),
  * PHP (Laravel/Symfony/WordPress).
@@ -973,7 +1017,7 @@ const SOURCE_LANGUAGE_FILE_THRESHOLD = 50;
  * rest being `.astro` / `.svelte` / `.vue`) is a JSX-first project
  * with ambient scripts, not a Django app. 30% marks the language as
  * the clear plurality; below that threshold the ecosystem-foreign
- * framing is misleading and the generic `extensions_skipped_no_parser`
+ * framing is misleading and the generic `text_source_skipped`
  * code already says everything the agent needs to know.
  */
 const SOURCE_LANGUAGE_SHARE_THRESHOLD = 0.3;
@@ -1064,7 +1108,7 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     enriched by a count, list, ratio, language enum, or other
  *     quantity the agent reads to branch on severity / kind / scope
  *     without descending into `meta`. The current set is
- *     `extensions_skipped_no_parser`, `response_token_budget_truncated`,
+ *     `text_source_skipped`, `response_token_budget_truncated`,
  *     `content_files_skipped`, `source_language_unsupported`,
  *     `vendor_css_dominates_findings`, `parse_errors_present`,
  *     `scanned_build_artifacts_present`, `scanned_minified_file`,
@@ -1121,7 +1165,7 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  * pins the per-code disambiguation across the live MCP wire.
  *
  * Type vs wire note: each payload-bearing slot below is typed with
- * its rich shape so callers reading e.g. `extensions_skipped_no_parser?.topExtension`
+ * its rich shape so callers reading e.g. `text_source_skipped?.topExtension`
  * stay terse on the common path. The runtime wire may carry a
  * `WarningDetailsTruncatedSentinel` in place of the rich payload when
  * the summarizer's input was unavailable on this surface — callers
@@ -1133,22 +1177,40 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  */
 export interface ScanWarningDetails {
   /**
-   * Dense summary of the per-extension skip distribution behind the
-   * `extensions_skipped_no_parser` code. Mirrors
-   * `meta.analysisCoverage.skippedByExtension` in compressed form so
-   * an agent branching on the warning can answer "how bad, and in
-   * what kind of code" without cross-referencing `meta`.
+   * Dense summary of the text-source per-extension skip distribution
+   * behind the `text_source_skipped` code. Mirrors the text-source
+   * subset of `meta.analysisCoverage.skippedByExtension` in
+   * compressed form so an agent branching on the warning can answer
+   * "how bad, and in what dialects?" without cross-referencing `meta`.
    *
    * `extensions` is sorted by descending count (ties broken
    * alphabetically) and truncated to {@link WARNING_DETAILS_TOP_EXTENSIONS};
    * the full distribution stays in `meta`. Entries are typically
-   * dotted extensions (`.scss`, `.vue`); well-known textual no-
+   * dotted extensions (`.php`, `.vue`); well-known textual no-
    * extension filenames (`LICENSE`, `Makefile`, `Dockerfile`) surface
    * inline under their canonical filename so the agent can tell
    * source-shaped no-ext skips apart from the residual `(no-ext)`
-   * bucket (binary blobs, hash-named pointers).
+   * bucket (binary blobs, hash-named pointers). Counts here cover
+   * only text-source extensions; binary assets are tallied separately
+   * under `binary_assets_skipped`.
    */
-  readonly extensions_skipped_no_parser?: {
+  readonly text_source_skipped?: {
+    readonly extensions: readonly string[];
+    readonly topExtension: string;
+    readonly topCount: number;
+    readonly totalSkipped: number;
+  };
+  /**
+   * Dense summary of the binary-asset per-extension skip distribution
+   * behind the `binary_assets_skipped` code. Same shape as
+   * {@link text_source_skipped} (extensions / topExtension / topCount /
+   * totalSkipped); the split is by predicate, not by payload shape, so
+   * agents reading either channel use one mental model. Entries cover
+   * the binary tail filtered out of `text_source_skipped` (images,
+   * fonts, audio, video, archives, binary docs); the full ext map
+   * still lives in `meta.analysisCoverage.skippedByExtension`.
+   */
+  readonly binary_assets_skipped?: {
     readonly extensions: readonly string[];
     readonly topExtension: string;
     readonly topCount: number;
@@ -1791,7 +1853,8 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "scanned_build_artifacts_present",
   "no_hunks_in_comparison",
   "storybook_preset_active",
-  "extensions_skipped_no_parser",
+  "text_source_skipped",
+  "binary_assets_skipped",
   "parse_errors_present",
   "response_token_budget_truncated",
   "response_dropped_files_oversize",
@@ -2026,11 +2089,24 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // block.
     out.push("storybook_preset_active");
   }
-  if (hasSkippedExtensions(inputs.analysisCoverage)) {
-    // coverage block carries a non-empty
-    // skippedByExtension map — surface the top-level signal so the
-    // agent can branch without reading into meta.
-    out.push("extensions_skipped_no_parser");
+  if (hasTextSourceSkipped(inputs.analysisCoverage)) {
+    // coverage block carries at least one
+    // text-source extension in skippedByExtension — surface the
+    // top-level signal so the agent can branch on the actionable
+    // subset without reading into meta. Pairs with
+    // `binary_assets_skipped` (the residual asset bucket); the two
+    // codes fire independently and can co-exist.
+    out.push("text_source_skipped");
+  }
+  if (hasBinaryAssetsSkipped(inputs.analysisCoverage)) {
+    // coverage block carries at least one
+    // binary-asset extension in skippedByExtension. Surface honestly
+    // (rather than silently filter) so the agent can verify the
+    // corpus shape it expected matches what the walker saw — even
+    // though `.png` / `.woff` / `.mp4` are not parser-routable, a
+    // mass of binary skips alongside zero findings is a corpus-shape
+    // signal the agent should not have to re-derive from `meta`.
+    out.push("binary_assets_skipped");
   }
   if (inputs.sessionWrappersMismatchCwd === true) {
     // Connection-wide session state carried wrappers configured for a
@@ -2243,18 +2319,35 @@ function parserBailedZeroFindings(inputs: WarningInputs): boolean {
   return typeof full === "number" && full > 0;
 }
 
-function hasSkippedExtensions(coverage: Record<string, unknown> | undefined): boolean {
-  // emission gate fires
-  // only when at least one TEXT-format extension is in the skipped
-  // map. A scan that skipped only `.png` / `.woff` / `.mp4` no longer
-  // trips the warning — those are binary assets the agent doesn't
-  // need to triage as a parser-coverage gap. The full
-  // skippedByExtension distribution still lives on
-  // `meta.analysisCoverage.skippedByExtension` for any caller that
-  // wants the binary tail.
+/**
+ * `text_source_skipped` predicate: at least one entry in the skipped
+ * map is a text-source extension (i.e. NOT in
+ * {@link BINARY_ASSET_EXTENSIONS}). This is the actionable subset an
+ * agent might re-route via additional parser support or
+ * `additionalPaths`. Symmetric to {@link hasBinaryAssetsSkipped}; the
+ * two predicates are independent so a heterogeneous corpus can fire
+ * both warnings at once.
+ */
+function hasTextSourceSkipped(coverage: Record<string, unknown> | undefined): boolean {
   const skipped = readSkippedMap(coverage);
   for (const ext of skipped.keys()) {
     if (!isBinaryAssetExtension(ext)) return true;
+  }
+  return false;
+}
+
+/**
+ * `binary_assets_skipped` predicate: at least one entry in the
+ * skipped map is a binary-asset extension (image/font/audio/video/
+ * archive/binary-doc per {@link BINARY_ASSET_EXTENSIONS}). Surfaced
+ * honestly per the AI-first "Surface, don't suppress" rule — the
+ * agent reads the corpus-shape signal even when no asset is
+ * routable. Symmetric to {@link hasTextSourceSkipped}.
+ */
+function hasBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined): boolean {
+  const skipped = readSkippedMap(coverage);
+  for (const ext of skipped.keys()) {
+    if (isBinaryAssetExtension(ext)) return true;
   }
   return false;
 }
@@ -2664,8 +2757,12 @@ export function computeScanWarningDetails(
     readonly summarize: () => unknown;
   }> = [
     {
-      code: "extensions_skipped_no_parser",
-      summarize: () => summarizeSkippedExtensions(inputs.analysisCoverage),
+      code: "text_source_skipped",
+      summarize: () => summarizeTextSourceSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "binary_assets_skipped",
+      summarize: () => summarizeBinaryAssetsSkipped(inputs.analysisCoverage),
     },
     {
       code: "content_files_skipped",
@@ -3130,13 +3227,56 @@ function summarizeDominantLanguage(coverage: Record<string, unknown> | undefined
 }
 
 /**
- * Collapses the `skippedByExtension` ext↦count map into the dense
- * summary ADR 0023 defines for the top-level
- * `warningsDetails.extensions_skipped_no_parser` payload. Returns
- * `undefined` when the map is missing or empty so the caller can
+ * Collapses the text-source subset of `skippedByExtension` into the
+ * dense summary the `text_source_skipped` warning ships under
+ * `warningsDetails`. Returns `undefined` when no text-source
+ * extension survives the binary filter so the caller can
  * conditional-spread without emitting a degenerate entry.
  */
-function summarizeSkippedExtensions(coverage: Record<string, unknown> | undefined):
+function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly topExtension: string;
+      readonly topCount: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  return summarizeSkippedSubset(coverage, (ext) => !isBinaryAssetExtension(ext));
+}
+
+/**
+ * Collapses the binary-asset subset of `skippedByExtension` into the
+ * dense summary the `binary_assets_skipped` warning ships under
+ * `warningsDetails`. Same shape contract as
+ * {@link summarizeTextSourceSkipped}; the only difference is the
+ * extension filter.
+ */
+function summarizeBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly topExtension: string;
+      readonly topCount: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  return summarizeSkippedSubset(coverage, (ext) => isBinaryAssetExtension(ext));
+}
+
+/**
+ * Shared core for the two skipped-extension summarizers. Walks the
+ * `skippedByExtension` map, applies the caller's extension filter,
+ * and emits the dense summary shape (descending count, alphabetical
+ * tie-break, head-sliced to {@link WARNING_DETAILS_TOP_EXTENSIONS}).
+ * Centralizing the body keeps the text-source and binary-asset
+ * summarizers identical except for which subset they describe — so
+ * the wire shape stays stable across both warnings and a future
+ * caller adding a third subset (e.g. document formats) only needs
+ * a new predicate.
+ */
+function summarizeSkippedSubset(
+  coverage: Record<string, unknown> | undefined,
+  include: (ext: string) => boolean,
+):
   | {
       readonly extensions: readonly string[];
       readonly topExtension: string;
@@ -3154,13 +3294,7 @@ function summarizeSkippedExtensions(coverage: Record<string, unknown> | undefine
       count > 0 &&
       typeof ext === "string" &&
       ext.length > 0 &&
-      // drop binary asset
-      // exts (images, fonts, audio, video, archives) from the payload
-      // so the agent reading the warning's `topExtension` and
-      // `extensions[]` slice sees text-format candidates only —
-      // matches the predicate gate above so emission and payload don't
-      // disagree on what counts as a meaningful skip.
-      !isBinaryAssetExtension(ext)
+      include(ext)
     ) {
       entries.push([ext, count]);
     }

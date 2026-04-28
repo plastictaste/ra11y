@@ -212,13 +212,16 @@ export function buildScanMeta(args: {
   /**
    * Discovery diagnostics. When the `skippedByExtension` map is
    * non-empty, it surfaces in `analysisCoverage.skippedByExtension`
-   * AND the response-level `extensions_skipped_no_parser` warning
-   * code fires, plus a dense summary payload lands under
-   * `warningsDetails.extensions_skipped_no_parser` per ADR 0023
+   * AND the response-level warning channel fires either
+   * `text_source_skipped` (text-source extensions present) or
+   * `binary_assets_skipped` (binary extensions present) — the two
+   * codes fire independently and can co-exist. Each ships a dense
+   * summary payload under
+   * `warningsDetails.text_source_skipped` / `warningsDetails.binary_assets_skipped`
    * (`topExtension`, `topCount`, `totalSkipped`, top-N `extensions`)
    * so an agent branching on the bare-string `warnings[]` channel can
-   * answer "how bad, and in what kind of code?" without cross-
-   * referencing `meta`. Omitted = the caller didn't run discovery
+   * answer "how bad, and in what kind of code?" per kind without
+   * cross-referencing `meta`. Omitted = the caller didn't run discovery
    * (e.g. `scan_file` takes explicit paths) or no files were skipped
    * by the extension check.
    */

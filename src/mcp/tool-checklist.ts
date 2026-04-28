@@ -557,8 +557,9 @@ export const checklistTool: McpTool = {
     // `skippedByExtension` map `coverage` feeds into its warnings
     // channel is available here too. Without this, `checklist` and
     // `coverage` run on identical inputs but emit different warning
-    // shapes (coverage surfaces `extensions_skipped_no_parser` +
-    // paired `warningsDetails`, checklist silently drops both) —
+    // shapes (coverage surfaces `text_source_skipped` /
+    // `binary_assets_skipped` + paired `warningsDetails`, checklist
+    // silently drops both) —
     // the canonical cross-surface drift the AI-first doctrine flags
     // in `ai-first-consumer.md` §"One tool call should answer 'what
     // next?'". Details are computed downstream from `analysisCoverage`.
@@ -824,8 +825,9 @@ export const checklistTool: McpTool = {
     // cross-surface consumers see the same warning codes + paired
     // `warningsDetails` shapes on identical inputs. Without the flow
     // here, `scan_project`/`coverage` would surface
-    // `extensions_skipped_no_parser` + its structured payload while
-    // `checklist` silently dropped both — the AI-first doctrine's
+    // `text_source_skipped` / `binary_assets_skipped` + their
+    // structured payloads while `checklist` silently dropped both —
+    // the AI-first doctrine's
     // "cross-surface drift forces wasted round trips" footgun.
     //
     // `meta` is opt-in per metaMode — legacy callers (no metaMode)
@@ -1074,7 +1076,7 @@ function countFilesByExtension(files: readonly ParsedFile[]): Record<string, num
  * field reports showed bulk-template sites where `checklist` shipped
  * no `meta` block at all while `scan_project` on the same corpus
  * surfaced `template_files_parsed_as_literal`, `parse_errors_present`,
- * `extensions_skipped_no_parser`, `source_language_unsupported` —
+ * `text_source_skipped`, `source_language_unsupported` —
  * cross-surface drift the AI-first doctrine names under "one tool call
  * should answer 'what next?'" (verbose meta is scan-confidence signal,
  * not clutter).

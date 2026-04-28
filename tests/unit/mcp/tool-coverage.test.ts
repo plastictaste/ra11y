@@ -48,7 +48,13 @@ interface CoverageEnvelope {
   readonly analysisCoverage?: Record<string, unknown>;
   readonly warnings?: readonly string[];
   readonly warningsDetails?: {
-    readonly extensions_skipped_no_parser?: {
+    readonly text_source_skipped?: {
+      readonly extensions: readonly string[];
+      readonly topExtension: string;
+      readonly topCount: number;
+      readonly totalSkipped: number;
+    };
+    readonly binary_assets_skipped?: {
       readonly extensions: readonly string[];
       readonly topExtension: string;
       readonly topCount: number;
@@ -76,7 +82,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("surfaces `extensions_skipped_no_parser` when discovery rejects files on the parseable-extension check", async () => {
+  it("surfaces `text_source_skipped` when discovery rejects files on the parseable-extension check", async () => {
     // Mixed-language repo — one parseable TSX plus three extensions
     // the walker clears past dir-ignore + user-excludes and then drops
     // purely because PARSEABLE_EXTENSIONS doesn't cover them (`.svelte`,
@@ -94,7 +100,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
 
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
-    expect(data.warnings).toContain("extensions_skipped_no_parser");
+    expect(data.warnings).toContain("text_source_skipped");
     // Paired meta — the warning is a label pointing at this map, so
     // the count-per-extension must be readable in the same response.
     expect(data.analysisCoverage).toBeDefined();
@@ -110,8 +116,8 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // dense summary so an agent branching on the bare-string warning
     // channel can answer "how bad" without descending into `meta`.
     // Set-membership invariant: the code appears in both surfaces.
-    expect(data.warningsDetails?.extensions_skipped_no_parser).toBeDefined();
-    const summary = data.warningsDetails?.extensions_skipped_no_parser;
+    expect(data.warningsDetails?.text_source_skipped).toBeDefined();
+    const summary = data.warningsDetails?.text_source_skipped;
     expect(summary?.totalSkipped).toBe(3);
     // Three-way count tie breaks alphabetically — .py then .svelte then .vue.
     expect(summary?.extensions).toEqual([".py", ".svelte", ".vue"]);
@@ -254,11 +260,11 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     const scanSkipped = scan.meta?.analysisCoverage?.["skippedByExtension"];
     expect(coverageSkipped).toEqual(scanSkipped);
 
-    // Both surfaces must agree on the `extensions_skipped_no_parser`
+    // Both surfaces must agree on the `text_source_skipped`
     // label — an agent branching on the warning gets the same answer
     // regardless of which tool it called.
-    const coverageFires = (coverage.warnings ?? []).includes("extensions_skipped_no_parser");
-    const scanFires = (scan.warnings ?? []).includes("extensions_skipped_no_parser");
+    const coverageFires = (coverage.warnings ?? []).includes("text_source_skipped");
+    const scanFires = (scan.warnings ?? []).includes("text_source_skipped");
     expect(coverageFires).toBe(scanFires);
     expect(coverageFires).toBe(true);
   });

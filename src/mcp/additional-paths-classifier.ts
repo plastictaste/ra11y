@@ -14,7 +14,8 @@
  * prior versions fell
  * through without a skip entry when the directory held only
  * non-parseable files, leaning on the response-level
- * `extensions_skipped_no_parser` warning. That was dishonest — the
+ * `text_source_skipped` / `binary_assets_skipped` warnings. That was
+ * dishonest — the
  * aggregated warning doesn't tell the caller which `additionalPaths`
  * entry was the one that contributed nothing, so `filesAdded: 0` on a
  * `{additionalPaths: ["rake/"]}` call on a Ruby-only directory read
