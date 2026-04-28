@@ -580,7 +580,7 @@ export const checklistTool: McpTool = {
     // runs zero rules, so the field would lie; see
     //.)
     const activeRules = resolveActiveRules(session, projectConfig);
-    const { result, report, perRuleCoverage } = runScan({
+    const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan({
       standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
@@ -884,6 +884,7 @@ export const checklistTool: McpTool = {
       params,
       session,
       filesScanned: files.length,
+      filesWithAnyRuleEvaluated,
       rulesEvaluated: buildRulesEvaluated({
         loadedCount: activeRules.length,
         perRuleCoverage,
@@ -1090,6 +1091,16 @@ function buildChecklistMetaField(args: {
   readonly params: Record<string, unknown>;
   readonly session: import("./session.ts").McpSession;
   readonly filesScanned: number;
+  /**
+   * Threaded from {@link import("../engine/scanner.ts").ScanProducts.filesWithAnyRuleEvaluated}
+   * so the file-reach split (`filesWithAnyRuleEvaluated` +
+   * `filesWithZeroRuleEvaluation`) ships alongside `filesScanned` on
+   * every project-rooted tool — `scan_project`, `coverage`,
+   * `checklist` — for the cross-surface count invariant. See
+   * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+   * invariant" + "Composite headline counts are dishonest."
+   */
+  readonly filesWithAnyRuleEvaluated: number;
   readonly rulesEvaluated: RulesEvaluated;
   readonly enabledStandards: readonly string[];
   readonly level: "A" | "AA" | "AAA";
@@ -1101,6 +1112,11 @@ function buildChecklistMetaField(args: {
   const fullMeta: Record<string, unknown> = {
     cwd: args.cwd,
     filesScanned: args.filesScanned,
+    filesWithAnyRuleEvaluated: args.filesWithAnyRuleEvaluated,
+    filesWithZeroRuleEvaluation: Math.max(
+      0,
+      args.filesScanned - args.filesWithAnyRuleEvaluated,
+    ),
     scanned: args.scanned,
     configSource: args.configSource,
     rulesEvaluated: args.rulesEvaluated,

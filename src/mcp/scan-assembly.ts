@@ -196,6 +196,22 @@ export function outputFilePathSet(
  */
 export function buildScanMeta(args: {
   readonly filesScanned: number;
+  /**
+   * Count of scanned files where at least one per-file rule was
+   * evaluated (extension gate matched, or the rule had no extension
+   * constraint). Threaded from {@link import("../engine/scanner.ts").ScanProducts.filesWithAnyRuleEvaluated}.
+   * Pairs with `filesScanned` to produce the honest split:
+   * `filesScanned` (corpus size) >= `filesWithAnyRuleEvaluated` (rule
+   * reach) >= `filesWithZeroRuleEvaluation` (`filesScanned − filesWithAnyRuleEvaluated`,
+   * derived here). Per `docs/kb/architecture/ai-first-consumer.md`
+   * "Composite headline counts are dishonest": the headline
+   * `filesScanned` stays; the new fields split the kind, not replace
+   * it. Optional so the legacy single-call sites in tests / fixtures
+   * that build meta directly stay landable; production code
+   * (`scan_project`, `scan_file`, `coverage`, `checklist`) always
+   * threads it from the scanner output.
+   */
+  readonly filesWithAnyRuleEvaluated?: number;
   readonly files: readonly ParsedFile[];
   readonly activeRules: readonly Rule[];
   readonly durationMs: number;
@@ -245,6 +261,7 @@ export function buildScanMeta(args: {
 }): Record<string, unknown> {
   const {
     filesScanned,
+    filesWithAnyRuleEvaluated,
     files,
     activeRules,
     durationMs,
@@ -261,6 +278,25 @@ export function buildScanMeta(args: {
     discoveryDiagnostics,
     findingFilePaths,
   } = args;
+  // File-reach split. The headline `filesScanned` stays — what the
+  // scan consumed as input. `filesWithAnyRuleEvaluated` tells the
+  // agent how many of those files at least one per-file rule
+  // actually evaluated; `filesWithZeroRuleEvaluation` is the
+  // complement (the file-shapes the active rule set could not
+  // address — canonical case: `.scss` + plain `.js` in a corpus
+  // where the active rules target HTML/TSX). Both ride only when
+  // the producer threaded `filesWithAnyRuleEvaluated`; legacy
+  // call sites that don't (e.g. fixture meta-builders) stay
+  // unchanged. Per `docs/kb/architecture/ai-first-consumer.md`
+  // "Composite headline counts are dishonest": each top-level
+  // counter names exactly one kind of thing.
+  const fileReachSpread =
+    typeof filesWithAnyRuleEvaluated === "number"
+      ? {
+          filesWithAnyRuleEvaluated,
+          filesWithZeroRuleEvaluation: Math.max(0, filesScanned - filesWithAnyRuleEvaluated),
+        }
+      : {};
   // Q-SHARED-META-ARRAY-BUDGET-CAP: `buildAnalysisCoverage` returns
   // `{ analysisCoverage?, metaArrayTruncated? }` — we spread only the
   // coverage block onto the wire (the per-array `*Truncated` siblings
@@ -281,6 +317,12 @@ export function buildScanMeta(args: {
   );
   return {
     filesScanned,
+    // Honest-shape file-reach telemetry. Surfaces alongside the
+    // headline so the agent reads in one pass how much of the
+    // corpus was a no-op. Omitted when the producer didn't thread
+    // `filesWithAnyRuleEvaluated` (older call sites). See the
+    // comment on the destructured local for the doctrine link.
+    ...fileReachSpread,
     // Per-extension counts build confidence that the scan actually saw
     // the file types agents expect (e.g., "0 .css scanned" is a red
     // flag if the repo has CSS). Cheap to compute, sorted for

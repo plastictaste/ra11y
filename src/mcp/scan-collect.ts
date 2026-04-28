@@ -72,6 +72,13 @@ export interface ScanCollected {
   readonly filesScanned: number;
   readonly enabledStandards: readonly string[];
   readonly perRuleCoverage: readonly PerRuleCoverage[];
+  /**
+   * Threaded from {@link import("../engine/scanner.ts").ScanProducts.filesWithAnyRuleEvaluated}
+   * so `assembleScanFamilyResponse` can split `meta.filesScanned` into
+   * the file-reach pair (`filesWithAnyRuleEvaluated` +
+   * `filesWithZeroRuleEvaluation`). See the field on {@link import("../engine/scanner.ts").ScanProducts}.
+   */
+  readonly filesWithAnyRuleEvaluated: number;
   readonly reviewCandidates: readonly ReviewCandidate[];
   readonly wrappers: ResolvedWrapperSources;
   readonly unusedWrappers: readonly string[];
@@ -127,7 +134,7 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
   const activeRules = applyRuleSettings(session.registry.rules, effective);
   const attestations = await loadDurableAttestations(cwd ?? process.cwd());
   const resolvedWrappers = resolveWrapperSources(wrapperSources, session);
-  const { result, report, perRuleCoverage } = runScan(
+  const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(
     buildRunScanOptions({
       activeRules,
       enabled,
@@ -178,6 +185,7 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
     filesScanned: result.filesScanned,
     enabledStandards: result.enabledStandards,
     perRuleCoverage,
+    filesWithAnyRuleEvaluated,
     reviewCandidates: rawCandidates,
     wrappers: resolvedWrappers,
     unusedWrappers,

@@ -127,6 +127,14 @@ export interface ScanFamilyResponseInput {
   readonly durationMs: number;
   readonly enabledStandards: readonly string[];
   readonly perRuleCoverage: readonly PerRuleCoverage[];
+  /**
+   * Threaded from {@link import("../engine/scanner.ts").ScanProducts.filesWithAnyRuleEvaluated}.
+   * Surfaces alongside `meta.filesScanned` so an agent reads the file-
+   * reach split (corpus size vs. how many of those files at least one
+   * per-file rule evaluated) in one pass. Omit on legacy / fixture
+   * call sites that don't have access to the scanner output.
+   */
+  readonly filesWithAnyRuleEvaluated?: number;
   readonly reviewCandidates: readonly ReviewCandidate[];
   readonly wrappers: ResolvedWrapperSources;
   readonly unusedWrappers: readonly string[];
@@ -379,6 +387,7 @@ export function assembleScanFamilyResponse(
     durationMs,
     enabledStandards,
     perRuleCoverage,
+    filesWithAnyRuleEvaluated,
     reviewCandidates,
     wrappers,
     unusedWrappers,
@@ -539,6 +548,7 @@ export function assembleScanFamilyResponse(
   );
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
+    ...(typeof filesWithAnyRuleEvaluated === "number" ? { filesWithAnyRuleEvaluated } : {}),
     files: parsedFiles,
     activeRules,
     durationMs,

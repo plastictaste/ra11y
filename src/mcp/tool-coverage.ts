@@ -62,7 +62,7 @@ export const coverageTool: McpTool = {
         verboseMeta: {
           type: "boolean",
           description:
-            "When true, the meta block expands its compact summaries into the underlying per-row payloads. Affects: `perRuleCoverage[]` (full per-rule coverage rows — at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) and `analysisCoverage.parseErrorFiles` / `partialParseFiles` (full per-entry `{ path, parserAttempted, naturalParser?, reason }` arrays uncapped — at default verbosity, counts ≤ 20 still ship inline; above 20 the response surfaces the `parseErrorTopReasons` / `partialParseTopReasons` rollup of top distinct reasons by frequency). `parserAttempted` is the parser the dispatcher actually invoked (routing decision); `naturalParser` is present-when-meaningful, only surfaced when the dispatcher routed the file through a non-natural parser (`.js` → tsx, `.svg` → html). The count scalar (`parseErrorFileCount` / `partialParseFileCount`) and the scan-confidence telemetry (`rulesEvaluated`, `rulesNotEvaluatedDueToInputType`) stay inline at every verbosity. Off by default to keep responses bounded on bulk-template scans; flip when triaging which specific files failed to parse or auditing per-rule confidence.",
+            "When true, the meta block expands its compact summaries into the underlying per-row payloads. Affects: `perRuleCoverage[]` (full per-rule coverage rows — at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) and `analysisCoverage.parseErrorFiles` / `partialParseFiles` (full per-entry `{ path, parserAttempted, naturalParser?, reason }` arrays uncapped — at default verbosity, counts ≤ 20 still ship inline; above 20 the response surfaces the `parseErrorTopReasons` / `partialParseTopReasons` rollup of top distinct reasons by frequency). `parserAttempted` is the parser the dispatcher actually invoked (routing decision); `naturalParser` is present-when-meaningful, only surfaced when the dispatcher routed the file through a non-natural parser (`.js` → tsx, `.svg` → html). The count scalar (`parseErrorFileCount` / `partialParseFileCount`) and the scan-confidence telemetry (`rulesEvaluated`, `filesWithAnyRuleEvaluated` / `filesWithZeroRuleEvaluation`, `rulesNotEvaluatedDueToInputType`) stay inline at every verbosity. Off by default to keep responses bounded on bulk-template scans; flip when triaging which specific files failed to parse or auditing per-rule confidence.",
         },
         metaMode: metaModeSchema,
       },
@@ -102,7 +102,7 @@ export const coverageTool: McpTool = {
     // runs zero rules, so the field would lie; see
     //.)
     const activeRules = resolveActiveRules(session, projectConfig);
-    const { result, report, perRuleCoverage } = runScan({
+    const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan({
       standards: session.registry.standards,
       rules: activeRules,
       enabled: standards,
@@ -363,6 +363,7 @@ export const coverageTool: McpTool = {
       params,
       session,
       filesScanned: files.length,
+      filesWithAnyRuleEvaluated,
       configSource: projectConfig.sourcePath,
       scannedEnvelope,
       rulesEvaluated: buildRulesEvaluated({
@@ -458,6 +459,16 @@ function buildCoverageMetaField(args: {
   readonly params: Record<string, unknown>;
   readonly session: McpSession;
   readonly filesScanned: number;
+  /**
+   * Threaded from {@link import("../engine/scanner.ts").ScanProducts.filesWithAnyRuleEvaluated}
+   * so the file-reach split (`filesWithAnyRuleEvaluated` +
+   * `filesWithZeroRuleEvaluation`) ships alongside `filesScanned` on
+   * every project-rooted tool — `scan_project`, `coverage`,
+   * `checklist` — for the cross-surface count invariant. See
+   * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+   * invariant" + "Composite headline counts are dishonest."
+   */
+  readonly filesWithAnyRuleEvaluated: number;
   readonly configSource: string | null;
   readonly scannedEnvelope: ScannedEnvelope;
   readonly rulesEvaluated: RulesEvaluated;
@@ -470,6 +481,11 @@ function buildCoverageMetaField(args: {
   const fullMeta: Record<string, unknown> = {
     cwd: args.cwd,
     filesScanned: args.filesScanned,
+    filesWithAnyRuleEvaluated: args.filesWithAnyRuleEvaluated,
+    filesWithZeroRuleEvaluation: Math.max(
+      0,
+      args.filesScanned - args.filesWithAnyRuleEvaluated,
+    ),
     scanned: args.scannedEnvelope,
     configSource: args.configSource,
     // the shared helper omits

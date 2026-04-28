@@ -132,6 +132,28 @@ export interface ScanProducts {
    */
   readonly perRuleCoverage: readonly PerRuleCoverage[];
   /**
+   * Count of scanned files where at least one per-file rule was
+   * evaluated (extension gate matched, or the rule had no extension
+   * constraint). Surfaces alongside `result.filesScanned` in the MCP
+   * `meta` block so an agent can read in one pass how much of the
+   * input was a no-op:
+   *   - `filesWithAnyRuleEvaluated` — this counter
+   *   - `filesScanned` — the corpus size (existing field)
+   *   - `filesWithZeroRuleEvaluation` — `filesScanned − filesWithAnyRuleEvaluated`,
+   *     derived at the response-assembly layer
+   *
+   * Bumped by the rule runner via {@link RuleEvaluationTracker.evaluatedFilePaths}
+   * (Set semantics so repeat adds during the inner per-rule loop are
+   * no-ops). Project-scoped rules (those with only `afterProject`)
+   * don't contribute — they evaluate the project once, not per-file —
+   * which is the honest signal: the headline asks "did per-file rule
+   * evidence reach this file's contents?", not "did any rule consider
+   * the project as a whole?". See `docs/kb/architecture/ai-first-consumer.md`
+   * "Composite headline counts are dishonest" — the headline
+   * `filesScanned` stays; the new fields split the kind, not replace it.
+   */
+  readonly filesWithAnyRuleEvaluated: number;
+  /**
    * Per-criterion evidence aggregate for this scan. Static findings
    * and review candidates from this run are joined into a single
    * shape that later phases extend with attestations, runtime
@@ -168,7 +190,10 @@ export function runScan(inputs: ScanInputs): ScanProducts {
   const filter = createStandardFilter(enabled, criteriaRegistry, inputs.level);
 
   const allViolations: Violation[] = [];
-  const tracker: RuleEvaluationTracker = { counts: new Map() };
+  const tracker: RuleEvaluationTracker = {
+    counts: new Map(),
+    evaluatedFilePaths: new Set(),
+  };
   for (const file of inputs.files) {
     const perFile = runRulesForFile({
       filePath: file.filePath,
@@ -287,7 +312,13 @@ export function runScan(inputs: ScanInputs): ScanProducts {
     generatedAt: ledgerGeneratedAt,
   });
 
-  return { result, report, perRuleCoverage, ledger };
+  return {
+    result,
+    report,
+    perRuleCoverage,
+    filesWithAnyRuleEvaluated: tracker.evaluatedFilePaths.size,
+    ledger,
+  };
 }
 
 /**

@@ -87,7 +87,13 @@ function tracker(
       crossFileCandidates: v.crossFileCandidates ?? 0,
     });
   }
-  return { counts };
+  // The `evaluatedFilePaths` set powers the file-reach split surfaced
+  // on `meta.filesScanned` / `filesWithAnyRuleEvaluated` /
+  // `filesWithZeroRuleEvaluation`. Per-rule-coverage tests don't read
+  // it (they construct the tracker directly to exercise the row
+  // builder), so an empty set keeps the fixture honest without
+  // affecting the assertions.
+  return { counts, evaluatedFilePaths: new Set() };
 }
 
 function mkViolation(ruleId: string): Violation {

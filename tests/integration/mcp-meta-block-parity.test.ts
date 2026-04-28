@@ -75,6 +75,8 @@ function body<T>(resp: JsonRpcResponse): T {
 
 interface MetaBlock {
   readonly filesScanned?: number;
+  readonly filesWithAnyRuleEvaluated?: number;
+  readonly filesWithZeroRuleEvaluation?: number;
   readonly configSource?: string | null;
   readonly rulesEvaluated?: { readonly loaded: number };
 }
@@ -146,6 +148,35 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
       // through the same `resolveActiveRules` seam — the canonical
       // source for `Q-SHARED-RULES-EVALUATED-SSOT` parity.
       expect(coverage.meta?.rulesEvaluated?.loaded).toBe(scan.meta?.rulesEvaluated?.loaded);
+
+      // File-reach split (`filesWithAnyRuleEvaluated` /
+      // `filesWithZeroRuleEvaluation`): the same scanner state on the
+      // same cwd produces the same per-file rule-evaluation tally.
+      // Cross-surface drift here would mean one tool's headline split
+      // disagrees with another's on identical input — the silent-miss
+      // failure mode `docs/kb/architecture/ai-first-consumer.md`
+      // "Cross-surface count invariant" warns against. The two
+      // counters are derived together from one shared scanner output,
+      // so this pin serves as a defense-in-depth check that future
+      // refactors don't recompute one surface's split independently.
+      expect(coverage.meta?.filesWithAnyRuleEvaluated).toBe(
+        scan.meta?.filesWithAnyRuleEvaluated,
+      );
+      expect(coverage.meta?.filesWithZeroRuleEvaluation).toBe(
+        scan.meta?.filesWithZeroRuleEvaluation,
+      );
+      // Internal arithmetic must hold on every tool: the two split
+      // counters sum to `filesScanned` (Math.max-floored at 0 by the
+      // builder, but in practice never negative because the runner
+      // can't bump more files than were scanned).
+      expect(
+        (scan.meta?.filesWithAnyRuleEvaluated ?? 0) +
+          (scan.meta?.filesWithZeroRuleEvaluation ?? 0),
+      ).toBe(scan.meta?.filesScanned ?? 0);
+      expect(
+        (coverage.meta?.filesWithAnyRuleEvaluated ?? 0) +
+          (coverage.meta?.filesWithZeroRuleEvaluation ?? 0),
+      ).toBe(coverage.meta?.filesScanned ?? 0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

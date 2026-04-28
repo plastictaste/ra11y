@@ -52,6 +52,23 @@ export interface RuleEvaluationTracker {
     string,
     { eligible: number; evaluated: number; crossFileCandidates: number }
   >;
+  /**
+   * Union of file paths where AT LEAST ONE per-file rule was evaluated
+   * (extension gate matched, or the rule had no extension constraint).
+   * Lets the response-assembly layer split `filesScanned` into honest
+   * sub-counters: `filesWithAnyRuleEvaluated` (this set's size) and
+   * `filesWithZeroRuleEvaluation` (`filesScanned` − that). The headline
+   * `filesScanned` overstates rule reach when extension gates exclude
+   * many of the scanned files (canonical case: HTML-shape rules over a
+   * mixed-tree of `.scss` + plain `.js` — the JS/SCSS files contribute
+   * to `filesScanned` but no rule evaluated them). Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+   * counts are dishonest": the headline stays, the split surfaces the
+   * kinds it was hiding. Bumped from {@link runRulesForFile} on every
+   * eligible per-rule pass; project-scoped rules don't touch it (they
+   * evaluate the whole project once, not per-file). Mutated in place.
+   */
+  readonly evaluatedFilePaths: Set<string>;
 }
 
 /** Per-file input to the rule runner. */
@@ -76,7 +93,27 @@ export function runRulesForFile(input: RuleRunnerInput): readonly Violation[] {
   for (const rule of input.rules) {
     if (!input.filter.isRuleActive(rule)) continue;
     const eligible = applies(rule, fileExt, language);
-    if (input.tracker) bumpTracker(input.tracker, rule.id, eligible);
+    if (input.tracker) {
+      bumpTracker(input.tracker, rule.id, eligible);
+      // Path-set bump for the file-reach split. Add the path the first
+      // time an active rule with a per-file lifecycle is eligible on
+      // this file; Set semantics make repeat adds no-ops. Project-
+      // scoped rules (no `check` / `beforeFile` / `afterFile` —
+      // `afterProject` only, e.g. `focus/outline-visible`,
+      // `wrapper/drift`) are excluded from the bump because they
+      // evaluate the project as a whole, not the file's contents —
+      // counting them as per-file reach would inflate the headline
+      // for every scanned file regardless of substrate. The honest
+      // signal the agent reads is "did per-file rule evidence reach
+      // this file?". See {@link RuleEvaluationTracker.evaluatedFilePaths}.
+      const hasPerFileLifecycle =
+        rule.check !== undefined ||
+        rule.beforeFile !== undefined ||
+        rule.afterFile !== undefined;
+      if (eligible && hasPerFileLifecycle) {
+        input.tracker.evaluatedFilePaths.add(input.filePath);
+      }
+    }
     if (!eligible) continue;
     runOneRule(rule, input, out);
   }

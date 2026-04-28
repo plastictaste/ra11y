@@ -560,7 +560,7 @@ export async function runScanAndFormat(
     bySource: wrapperProvenance,
     elements: wrapperElements,
   } = resolveWrapperSources(wrapperSources, session);
-  const { result, report, perRuleCoverage } = runScan(
+  const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(
     buildRunScanOptions({
       activeRules,
       enabled,
@@ -799,6 +799,7 @@ export async function runScanAndFormat(
   const ruleCoverageDerivative = buildRuleCoverageDerivative(adjustedPerRuleCoverage, filtered);
   const scanMeta = buildScanMeta({
     filesScanned: result.filesScanned,
+    filesWithAnyRuleEvaluated,
     files,
     activeRules,
     durationMs: result.durationMs,
