@@ -14,7 +14,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { type ParsedFile, runScan } from "../../src/engine/scanner.ts";
-import { parseCss, parseHtml, parseTsx } from "../../src/input/parsers/index.ts";
+import { parseCss, parseHtml, parseScss, parseTsx } from "../../src/input/parsers/index.ts";
 import { assembleScanFamilyResponse } from "../../src/mcp/response-assembler.ts";
 import { buildRuleCoverageDerivative } from "../../src/mcp/rule-coverage-derivative.ts";
 import { buildScanMeta } from "../../src/mcp/scan-assembly.ts";
@@ -38,6 +38,12 @@ function cssFile(path: string, source: string): ParsedFile {
 function htmlFile(path: string, source: string): ParsedFile {
   const parsed = parseHtml(source);
   const ast: Ast = { language: "html", root: parsed.root, errors: parsed.errors };
+  return { filePath: path, source, ast };
+}
+
+function scssFile(path: string, source: string): ParsedFile {
+  const parsed = parseScss(source);
+  const ast: Ast = { language: "css", root: parsed.root, errors: [...parsed.errors] };
   return { filePath: path, source, ast };
 }
 
@@ -822,6 +828,115 @@ describe("per-rule coverage end-to-end", () => {
     // valid markup; the document satisfies the gates), so the per-finding
     // path is exercised by the partial-parse test above — here we only
     // pin the per-rule shape and the snake-case key derivation.
+  });
+
+  // SCSS-unresolved-variables per-rule confidence downgrade — doctrine
+  // source: docs/kb/architecture/ai-first-consumer.md "Parser-failure
+  // invalidates per-file confidence" (the same shape applied to
+  // value-resolution failure rather than parse failure). When a `.scss`
+  // file declares top-level `$variable: …` statements but produced zero
+  // literal-color usages downstream after the SCSS preprocessor's
+  // substitution pass — the canonical token-only theme partial like
+  // `_variables.scss` — color-token-driven rules whose extension gate
+  // includes `.scss` (or who are project-scoped and walk every file)
+  // must NOT report `coverageConfidence: "high"` on that substrate.
+  // Reporting `"high"` would say "the rule observed full evidence" when
+  // the truth is the SCSS substitution layer was bounded — `var(--token)`
+  // references, mixin bodies, `@function`, cross-file `@use`, and
+  // interpolation all stay unresolved. The rule must downgrade to
+  // `coverageConfidence: "medium"` with `coverageConfidenceReason:
+  // "scss-unresolved-variables"` so the agent reading per-rule
+  // coverage as scan-confidence telemetry knows to scan the compiled
+  // CSS output for full coverage rather than trusting a clean tally.
+  it("downgrades color-token-driven rules to medium with scss-unresolved-variables reason when token-only .scss files are scanned", () => {
+    // Fixture: one token-only `_variables.scss` partial (declares
+    // `$primary` / `$secondary` but never uses them in literal-color
+    // contexts — the canonical Bootstrap-style design-token shape) plus
+    // one HTML page so the scan has a non-SCSS substrate too. The
+    // SCSS file lands in `scss_unresolved_variables.files[]`; the HTML
+    // file is unaffected.
+    const variablesScss = "$primary: #0d6efd;\n$secondary: #6c757d;\n";
+    const indexHtml = `<!doctype html><html lang="en"><head><title>p</title></head><body><main><h1>p</h1></main></body></html>`;
+    const files = [
+      scssFile("theme/_variables.scss", variablesScss),
+      htmlFile("site/index.html", indexHtml),
+    ];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const response = assembleScanFamilyResponse({
+      violations: result.violations,
+      rawViolations: result.violations,
+      parsedFiles: files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      perRuleCoverage,
+      reviewCandidates: [],
+      wrappers: {
+        wrappers: [],
+        sessionOnly: [],
+        bySource: {
+          fromConfig: [],
+          fromSession: [],
+          fromAutoDetect: { confirmed: [], assumed: [] },
+        },
+        elements: {},
+      },
+      unusedWrappers: [],
+      suppressions: [],
+      verboseMeta: true,
+      preset: undefined,
+      actionableManual: 0,
+      untargetedCriteria: 0,
+      configSource: null,
+      rootSource: "explicit",
+    });
+
+    const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
+    // Color-token-driven rules whose extension gate includes `.scss` (or
+    // whose alias chain `.scss → .css` matches their `.css` gate, e.g.
+    // `contrast/enhanced`). Must downgrade because the substitution layer
+    // that would expose the literal color pair was bounded on this
+    // substrate.
+    const colorTokenRuleIds = ["contrast/minimum", "contrast/enhanced"] as const;
+    for (const ruleId of colorTokenRuleIds) {
+      const row = adjustedRows.find((r) => r.ruleId === ruleId);
+      expect(row).toBeDefined();
+      expect(row!.coverageConfidence).toBe("medium");
+      expect(row!.coverageConfidenceReason).toBe("scss-unresolved-variables");
+      // `reason` is non-empty so the agent reading meta gets a prose
+      // pointer alongside the structured code.
+      expect(row!.reason).toBeDefined();
+      expect(row!.reason!.length).toBeGreaterThan(0);
+    }
+
+    // Project-scoped focus-token-driven rule (`focus/outline-visible` is
+    // `afterProject` with no `appliesTo.fileExtensions` — it walks every
+    // CSS-language file). When at least one `.scss` file in the corpus
+    // is unresolved, the project-scoped rule's evidence horizon is
+    // bounded the same way: the focus-token resolution it would observe
+    // through `var(--focus-color)` references stays unresolved through
+    // the SCSS variable layer. The downgrade reaches it via the
+    // project-scoped branch in `applyScssUnresolvedVariablesAdjustment`
+    // (project-scoped rules match every file in the unresolved pool).
+    const focusRow = adjustedRows.find((r) => r.ruleId === "focus/outline-visible");
+    expect(focusRow).toBeDefined();
+    expect(focusRow!.coverageConfidence).toBe("medium");
+    expect(focusRow!.coverageConfidenceReason).toBe("scss-unresolved-variables");
+
+    // Counter-axis: rules whose extension gate excludes both `.css` and
+    // `.scss` (e.g. `media/alt-text-missing` is HTML-only) MUST NOT
+    // carry the SCSS reason. The adjuster's match gate on
+    // `appliesTo.fileExtensions` is the load-bearing invariant: only
+    // rules whose substrate the SCSS file is part of get downgraded.
+    const altTextRow = adjustedRows.find((r) => r.ruleId === "media/alt-text-missing");
+    expect(altTextRow).toBeDefined();
+    expect(altTextRow!.coverageConfidenceReason).not.toBe("scss-unresolved-variables");
   });
 });
 
