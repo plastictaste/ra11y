@@ -508,6 +508,40 @@ export type ViolationEvidence =
       readonly tag: string;
       readonly line: number;
       readonly id?: string;
+    }
+  /**
+   * `semantics/section-accessible-name-missing` — emitted when an
+   * unnamed `<section>` qualifies for the rule (body-direct-child or
+   * landmark-sibling) and the rule found a nearby visible heading the
+   * author could wire as the section's accessible name. The structured
+   * fields let the agent compose the fix mechanically without reading
+   * the source — when `id` is populated, the fix is
+   * `aria-labelledby="<id>"`; when absent, the agent (or an edit) mints
+   * an id on the heading first.
+   *
+   * Search recipe (mirrors the rule's `findNearestVisibleHeading`):
+   *   - Preceding-sibling chain of the section's parent — the last
+   *     `<h1>`–`<h6>` element appearing before the section in document
+   *     order under the same parent.
+   *   - Then the parent's preceding-sibling chain — same scan walked
+   *     one level up, so a heading inside `<header>` or above the
+   *     wrapping `<div>` is reachable.
+   *
+   * Pre-fix, every fire on a body-direct-child or landmark-sibling
+   * section carried a generic `aria-labelledby="<id-of-existing-
+   * heading>"` suggestion with no per-finding hint at *which* heading
+   * — leaving the agent to read the file. Post-fix, the structured
+   * evidence names the heading's tag, text, and line, so the agent
+   * can compose the fix from the response alone. Same shape polarity
+   * as the other variants: the prose `suggestion` is enriched with
+   * the same data; `evidence` is the additive machine-routable echo.
+   */
+  | {
+      readonly kind: "section-nearest-visible-heading";
+      readonly tag: string;
+      readonly text: string;
+      readonly line: number;
+      readonly id?: string;
     };
 
 /**

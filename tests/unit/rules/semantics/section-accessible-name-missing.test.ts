@@ -206,4 +206,133 @@ describe("rule semantics/section-accessible-name-missing", () => {
       expect(violations).toHaveLength(0);
     });
   });
+
+  describe("nearest visible heading enrichment", () => {
+    it("captures a preceding-sibling heading with id and recommends aria-labelledby", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <main>content</main>",
+        "    <h2 id='author-bio'>Author bio</h2>",
+        "    <section>",
+        "      <p>About the author.</p>",
+        "    </section>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.evidence?.kind).toBe("section-nearest-visible-heading");
+      if (v?.evidence?.kind === "section-nearest-visible-heading") {
+        expect(v.evidence.tag).toBe("h2");
+        expect(v.evidence.text).toBe("Author bio");
+        expect(v.evidence.line).toBe(4);
+        expect(v.evidence.id).toBe("author-bio");
+      }
+      expect(v?.suggestion).toContain("Author bio");
+      expect(v?.suggestion).toContain('aria-labelledby="author-bio"');
+    });
+
+    it("captures a preceding-sibling heading without id and recommends minting one", () => {
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <main>content</main>",
+        "    <h2>Featured stories</h2>",
+        "    <section>",
+        "      <p>The week in review.</p>",
+        "    </section>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.evidence?.kind).toBe("section-nearest-visible-heading");
+      if (v?.evidence?.kind === "section-nearest-visible-heading") {
+        expect(v.evidence.tag).toBe("h2");
+        expect(v.evidence.text).toBe("Featured stories");
+        // The id field is omitted when absent (present-when-meaningful).
+        expect(v.evidence.id).toBeUndefined();
+      }
+      expect(v?.suggestion).toContain("Featured stories");
+      expect(v?.suggestion).toContain('id="<slug>"');
+    });
+
+    it("falls back to grandparent's preceding-sibling chain when the wrap-div has no preceding heading", () => {
+      // Common shape: heading sits above the wrapping <div>; the
+      // section is buried inside the div alongside <main>. Without
+      // the grandparent walk, the rule would miss the heading.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <h2 id='related'>Related items</h2>",
+        "    <div class='layout'>",
+        "      <main>primary</main>",
+        "      <section>",
+        "        <p>links</p>",
+        "      </section>",
+        "    </div>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.evidence?.kind).toBe("section-nearest-visible-heading");
+      if (v?.evidence?.kind === "section-nearest-visible-heading") {
+        expect(v.evidence.id).toBe("related");
+        expect(v.evidence.text).toBe("Related items");
+      }
+    });
+
+    it("omits evidence entirely when no nearby heading is found", () => {
+      // No preceding heading on either chain — the rule still emits
+      // (the section qualifies) but evidence stays absent so the
+      // agent isn't lied to about the file's shape.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <main>content</main>",
+        "    <section>",
+        "      <p>orphan section, no heading anywhere above it</p>",
+        "    </section>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      expect(v?.evidence).toBeUndefined();
+      // Suggestion still recommends aria-labelledby generically — no
+      // file-specific heading to anchor on.
+      expect(v?.suggestion).not.toContain("nearest visible heading");
+    });
+
+    it("picks the LAST heading in document order when multiple precede the section", () => {
+      // The author's typical pattern is: heading immediately above
+      // names the region. Earlier headings on the page name earlier
+      // regions. The rule picks the closest one preceding.
+      const source = [
+        "<html>",
+        "  <body>",
+        "    <h1 id='page'>Page title</h1>",
+        "    <h2 id='related'>Related</h2>",
+        "    <section>",
+        "      <p>related items</p>",
+        "    </section>",
+        "    <aside>sidebar</aside>",
+        "  </body>",
+        "</html>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "page.html" });
+      expect(violations).toHaveLength(1);
+      const v = violations[0];
+      if (v?.evidence?.kind === "section-nearest-visible-heading") {
+        expect(v.evidence.id).toBe("related");
+        expect(v.evidence.text).toBe("Related");
+      }
+    });
+  });
 });

@@ -373,8 +373,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans: response-token-budget over
 
 ### v0.2.0 — accepted (P2 — finder fix-suggestion polish)
 
-- [ ] **Q8-SECTION-ACCESSIBLE-NAME-NEAREST-HEADING** `semantics/section-accessible-name-missing` reason text doesn't surface the nearest visible heading. The fix is mechanical when the heading is included in reason ("section sits below `<h2>Author bio</h2>`; consider `aria-labelledby` pointing at that heading's id"). Fix: enrich reason with `nearestVisibleHeading?: { text, line, idIfPresent? }` so the agent composes the fix without reading the file. Pairs with V1-RULE-SECTION-ACCESSIBLE-NAME-NEAREST-HEADING-PROPOSE (open) — same gap, this item locks the reason-enrichment shape.
-
 ### v0.2.0 — accepted (Q8b — 2nd-pass field test, 2026-04-25)
 
 Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. Each repo received 5 parallel scout subagents (lenses A=coverage gaps, B=output correctness, C=parser/scanner, D=heuristic-mislabeled meta, E=response-shape drift). Aggregator deduped against existing Q8/V1 items. Net-new items below; Q8 confirmations and doctrine additions captured separately (the latter folded into `docs/kb/architecture/ai-first-consumer.md`).

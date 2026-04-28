@@ -58,10 +58,12 @@ import { defineRule } from "../../api/plugin.ts";
 import {
   findHtmlElementsByTag,
   getHtmlAttribute,
+  htmlTextContent,
   isHtmlFragment,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, HtmlNode } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
+import type { ViolationEvidence } from "../../types/violation.ts";
 
 /**
  * Landmark tag names whose presence as a sibling promotes a `<section>`
@@ -152,6 +154,7 @@ function checkSections(ctx: FileContext, doc: HtmlDocument): void {
     if (trigger === "not-applicable") continue;
     if (hasAccessibleName(section)) continue;
 
+    const heading = findNearestVisibleHeading(section, parentMap);
     ctx.emit({
       severity: "warning",
       location: {
@@ -160,9 +163,104 @@ function checkSections(ctx: FileContext, doc: HtmlDocument): void {
         column: section.loc.start.column,
       },
       message: buildMessage(trigger),
-      suggestion: buildSuggestion(section, trigger),
+      suggestion: buildSuggestion(section, trigger, heading),
+      ...(heading ? { evidence: nearestHeadingEvidence(heading) } : {}),
     });
   }
+}
+
+/**
+ * Captured nearby-heading record. `tag` is the heading's element name
+ * (`h1`-`h6`), `text` is the trimmed visible text content (truncated
+ * for echo), `line` is 1-based. `id` is populated only when the
+ * heading already carries a non-empty `id="…"` attribute — its
+ * absence is itself signal (the agent or a mechanical edit must mint
+ * an id before wiring `aria-labelledby`).
+ */
+interface NearestHeading {
+  readonly tag: string;
+  readonly text: string;
+  readonly line: number;
+  readonly id?: string;
+}
+
+/**
+ * Walks the section's preceding-sibling chain, then the parent's
+ * preceding-sibling chain, looking for the closest `<h1>`-`<h6>`. The
+ * "closest" picked is the LAST heading appearing before the section
+ * in document order — sectioning conventions place the heading that
+ * names a region as the heading immediately above it, not the
+ * earliest heading on the page.
+ *
+ * Scoping:
+ *   - Same-parent preceding-sibling chain takes precedence (the most
+ *     common shape: `<main>…</main><h2>Related</h2><section>…</section>`).
+ *   - If no same-parent heading is found, the search walks one level
+ *     up to the parent's preceding siblings (the wrapping-`<div>`
+ *     shape: `<h2>Related</h2><div class="layout"><main>…</main><section>…</section></div>`).
+ *
+ * The walk does NOT cross into deeper descendants' content (a heading
+ * inside an unrelated `<aside>` two siblings up is not the section's
+ * accessible name candidate). Pure single-pass, no AST mutation.
+ */
+function findNearestVisibleHeading(
+  section: HtmlElement,
+  parentMap: Map<HtmlElement, HtmlElement | "document">,
+): NearestHeading | null {
+  const parent = parentMap.get(section);
+  if (!parent || parent === "document") return null;
+
+  const sameParentMatch = scanPrecedingSiblings(parent.children, section);
+  if (sameParentMatch) return sameParentMatch;
+
+  // Fall back one level: the section's grandparent's children, scanned
+  // up to but not including the parent itself.
+  const grandparent = parentMap.get(parent);
+  if (!grandparent || grandparent === "document") return null;
+  return scanPrecedingSiblings(grandparent.children, parent);
+}
+
+/**
+ * Scans `siblings` in document order, stops at `stopAt`, returns the
+ * last heading element seen before that anchor. Returns null if no
+ * heading was seen (or if the anchor wasn't in the list — defensive).
+ */
+function scanPrecedingSiblings(
+  siblings: readonly HtmlNode[],
+  stopAt: HtmlElement,
+): NearestHeading | null {
+  let lastHeading: HtmlElement | null = null;
+  for (const sibling of siblings) {
+    if (sibling === stopAt) {
+      return lastHeading ? captureHeading(lastHeading) : null;
+    }
+    if (sibling.kind !== "HtmlElement") continue;
+    if (HEADING_TAGS.has(sibling.tagName.toLowerCase())) {
+      lastHeading = sibling;
+    }
+  }
+  return null;
+}
+
+function captureHeading(heading: HtmlElement): NearestHeading {
+  const id = getHtmlAttribute(heading, "id");
+  const text = htmlTextContent(heading);
+  return {
+    tag: heading.tagName.toLowerCase(),
+    text,
+    line: heading.loc.start.line,
+    ...(id !== null && id.length > 0 ? { id } : {}),
+  };
+}
+
+function nearestHeadingEvidence(heading: NearestHeading): ViolationEvidence {
+  return {
+    kind: "section-nearest-visible-heading",
+    tag: heading.tag,
+    text: heading.text,
+    line: heading.line,
+    ...(heading.id === undefined ? {} : { id: heading.id }),
+  };
 }
 
 /** Builds a child→parent map from a single document-order walk. */
@@ -235,13 +333,49 @@ function buildMessage(trigger: Trigger): string {
   return "<section> sits alongside other landmarks but has no accessible name (aria-label / aria-labelledby / direct-child heading) — it will not appear in the screen-reader landmark list.";
 }
 
-function buildSuggestion(section: HtmlElement, trigger: Trigger): string {
+function buildSuggestion(
+  section: HtmlElement,
+  trigger: Trigger,
+  heading: NearestHeading | null,
+): string {
   const idHint = describeIdentity(section);
   const placement =
     trigger === "body-direct-child"
       ? "This <section> is a direct child of <body>"
       : "This <section> sits alongside explicit landmarks (<main>/<nav>/<aside>/<header>/<footer>/<form>)";
-  return `${placement}${idHint}. Pick one of: (a) add aria-label="<purpose>" naming the region (e.g. "Related articles", "Featured", "Search results"); (b) add a direct-child <h2> (or any heading) whose text names the region — the HTML5 sectioning algorithm accepts it as the accessible name; (c) add aria-labelledby="<id-of-existing-heading>" pointing at a heading already on the page. If the region doesn't merit a landmark, change <section> to <div> — an unnamed <section> is semantically equivalent to <div> but misleads readers of the markup.`;
+  const headingHint = heading ? ` ${describeNearestHeading(heading)}` : "";
+  return `${placement}${idHint}.${headingHint} Pick one of: (a) add aria-label="<purpose>" naming the region (e.g. "Related articles", "Featured", "Search results"); (b) add a direct-child <h2> (or any heading) whose text names the region — the HTML5 sectioning algorithm accepts it as the accessible name; (c) add aria-labelledby="<id-of-existing-heading>" pointing at a heading already on the page. If the region doesn't merit a landmark, change <section> to <div> — an unnamed <section> is semantically equivalent to <div> but misleads readers of the markup.`;
+}
+
+/**
+ * Builds the inline heading-context phrase appended to the suggestion
+ * when {@link findNearestVisibleHeading} found a candidate. Two
+ * shapes:
+ *
+ *   - heading already has `id="…"` → the agent can wire
+ *     `aria-labelledby="<id>"` directly without minting an id.
+ *   - heading has no `id` → the agent (or a mechanical edit) needs to
+ *     mint an id on the heading first, then wire `aria-labelledby`.
+ *
+ * The text is truncated to 80 chars in echo so a long heading body
+ * doesn't dominate the suggestion line. Spec-accurate quoting style:
+ * single-line phrase, no backticks (suggestion strings are
+ * agent-facing prose, not code).
+ */
+function describeNearestHeading(heading: NearestHeading): string {
+  const echo = truncateForSuggestion(heading.text);
+  const anchor = `nearest visible heading: <${heading.tag}>"${echo}" at line ${heading.line}`;
+  if (heading.id !== undefined) {
+    return `${anchor} (consider aria-labelledby="${heading.id}").`;
+  }
+  return `${anchor} (consider adding id="<slug>" to the heading and aria-labelledby="<slug>" on the section).`;
+}
+
+/** Cap heading-text echo length so the suggestion stays one-line-ish. */
+function truncateForSuggestion(text: string): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= 80) return collapsed;
+  return `${collapsed.slice(0, 80)}…`;
 }
 
 /**
