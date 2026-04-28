@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sample Site</title>
+</head>
+<body>
+
+<!--
+  Icon-prefix-with-label anchor pattern. The canonical labeled icon-link
+  shape across icon-font libraries: a presentational icon followed by a
+  visible text node. The link has an accessible name (the text); the
+  rule MUST stay silent on every anchor below.
+
+  Expected outcomes per WCAG 2.4.4 + 4.1.2 + WAI accname-1.1:
+    - Font Awesome glyph + text: text IS the name → must NOT fire.
+    - Same with aria-hidden on the icon: still text-named → must NOT fire.
+    - Material Symbols ligature span + text: text IS the name → must NOT fire.
+    - Bootstrap Icons span + text: text IS the name → must NOT fire.
+    - Decorative <svg aria-hidden> + text: text IS the name → must NOT fire.
+-->
+
+<header>
+  <nav>
+
+    <!-- Case 1: Font Awesome glyph followed by text -->
+    <a href="/profile"><i class="fa fa-user"></i> User Profile</a>
+
+    <!-- Case 2: same as Case 1 with aria-hidden on the icon (best practice) -->
+    <a href="/messages"><i class="fa fa-envelope" aria-hidden="true"></i> Messages</a>
+
+    <!-- Case 3: Material Symbols ligature span (text inside the span is
+         a glyph ligature, not announced) followed by visible text -->
+    <a href="/settings"><span class="material-symbols-rounded">settings</span> Account Settings</a>
+
+    <!-- Case 4: Bootstrap Icons span followed by text -->
+    <a href="/search"><i class="bi bi-search"></i> Search</a>
+
+    <!-- Case 5: aria-hidden SVG followed by text -->
+    <a href="/help"><svg aria-hidden="true" focusable="false"><path d="M0 0"/></svg> Help Center</a>
+
+  </nav>
+</header>
+
+<main>
+  <h1>Welcome</h1>
+  <p>Page content.</p>
+</main>
+
+</body>
+</html>
