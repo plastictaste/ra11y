@@ -59,7 +59,12 @@ The orchestrator still enforces the fanout rules at dispatch: if you emit 4 pick
      - `docs/kb/**` → `spec-researcher` or `/fix-drift`
      - anything else → `main-session` with a `classificationNote`
 
-3. **Flag cross-cutting picks.** Before pairing picks into turns, mark each pick's `crossCutting: true` when ANY of these signals fire:
+3. **Stale-check pass.** Before pairing picks into turns, for each candidate item run a fast grep against recent git history to detect already-shipped fixes. The 2026-04-27 /continue run burned ~25-30% of specialist budget on stale items because the planner classified picks without checking whether the predicate had already landed. For each pick, run:
+   - `git log --oneline --all --grep="<keyword>"` against 2-3 distinctive keywords from the item's title (the predicate name, the affected rule/file, the structured warning code).
+   - `git log --oneline --all -- <inferredFile>` against the primary inferred file when present.
+   The signal: a recent (≤2 weeks) `feat(…)` / `fix(…)` commit whose subject names the same predicate the item describes. Three canonical examples from the 2026-04-27 sweep — Q8-FINDER-2.3.1-ITERATION-COUNT-PREDICATE shipped Apr 24 in 83b6f6e4; Q8c-TEMPLATE-DIRECTIVE-CODE-FENCE-FALSE-POSITIVE shipped Apr 23 in f9bd1769; Q9-TEMPLATE-DIRECTIVES-LIQUID-AS-HANDLEBARS shipped Apr 26 in 6dbba12b. When a candidate matches, move it to `deferred` with `reason: "stale_already_landed: <sha>: <subject>"` instead of dispatching. Be conservative — only flag stale when the SHA + subject clearly cover the ask; if the closure is partial (e.g. covers HTML but not addEventListener), leave the item open. False negatives here cost a turn; false positives drop real work, so when in doubt leave open.
+
+4. **Flag cross-cutting picks.** Before pairing picks into turns, mark each pick's `crossCutting: true` when ANY of these signals fire:
    - `inferredFiles.length >= 8` — mechanical cascades (type-shape rename, interface widening, field-addition across a producer-consumer graph) almost always blow the 400-LOC soft cap, and splitting them leaves some commits verify-red in the middle of the range.
    - The backlog text contains "cross-cutting", "type-shape change", "interface widening", "cascade", "rename across", or similar phrasing.
    - The pick targets `src/types/**` plus at least 3 non-test files elsewhere — type-shape changes are the canonical cross-cutting cascade.
@@ -67,18 +72,18 @@ The orchestrator still enforces the fanout rules at dispatch: if you emit 4 pick
 
    Emit `crossCutting: true` when any signal fires; omit the field otherwise (treat missing as `false`). The heuristic exists so specialists dispatched on a crossCutting pick have explicit permission to exceed the 400-LOC soft cap when splitting would leave verify red. Future planners should extend the signal list as new classes of cross-cutting change surface in the field.
 
-4. **Audit file-set overlap inside each prospective turn.** Two picks in the same turn cannot touch the same file, and two picks in the same *track* cannot share a turn (SKILL.md step 3 fanout rules). When pairing picks into turns:
+5. **Audit file-set overlap inside each prospective turn.** Two picks in the same turn cannot touch the same file, and two picks in the same *track* cannot share a turn (SKILL.md step 3 fanout rules). When pairing picks into turns:
    - Never pair two picks that resolve to the same specialist-AND-track (e.g. two Track R rule-implementer items).
    - Never pair two picks whose inferable file sets intersect. Infer file sets from the item text — a rule item targets `src/rules/<domain>/<ruleId>.ts` + `tests/rules/<domain>/<ruleId>.test.ts`; a parser item targets `src/input/parsers/<name>.ts`. If the inference is uncertain, err on the side of not pairing them.
    - A turn carrying a `main-session` pick cannot also carry a worktree-isolated pick (SKILL.md step 3 — shared tree vs worktree semantics).
 
-5. **Cross-turn collision annotation.** Run `git log --oneline -30` on the main branch. For each turn-N pick, inspect its inferred file set — if any file was touched by a commit on `main` newer than the `/continue` loop started (approximate: last ~30 commits), add:
+6. **Cross-turn collision annotation.** Run `git log --oneline -30` on the main branch. For each turn-N pick, inspect its inferred file set — if any file was touched by a commit on `main` newer than the `/continue` loop started (approximate: last ~30 commits), add:
    ```
    "collisionWith": "<commit sha>: <one-line subject>"
    ```
    The orchestrator surfaces this in the dispatch prompt so the specialist combines edits rather than overwriting. Intra-plan collisions (turn-K pick changes a file that turn-(K+1) pick also targets) also populate `collisionWith` with `"turn-<K>/<item>"`.
 
-6. **Budget to `maxTurns × picksPerTurn`** (or `maxTurns × 4` when you expect multiple qualifying turns). Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. Remaining items go in `deferred`. For each turn, evaluate the pure-V-track-4 conditions above and set the turn's `picksPerTurn` to 4 or 3 accordingly.
+7. **Budget to `maxTurns × picksPerTurn`** (or `maxTurns × 4` when you expect multiple qualifying turns). Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. Remaining items go in `deferred`. For each turn, evaluate the pure-V-track-4 conditions above and set the turn's `picksPerTurn` to 4 or 3 accordingly.
 
 # Return shape
 
