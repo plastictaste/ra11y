@@ -188,6 +188,7 @@
  * without re-running our classifier.
  */
 
+import { isAuthoredSvgFont, isSvgPath } from "./build-artifacts-svg-font.ts";
 import {
   detectSourcemapPointerToMin,
   detectVendorCopyrightBanner,
@@ -517,6 +518,10 @@ export function classifyBuildArtifactDetailed(
   // classification is attached to the *source* file in
   // `collectBuildArtifacts`; the map itself stays out.
   if (filePath.replace(/\\/g, "/").endsWith(".map")) return null;
+  // Authored-SVG-font carve-out runs first so it pre-empts every
+  // path/content predicate below. Rationale + predicate detail in
+  // {@link build-artifacts-svg-font.ts}.
+  if (isAuthoredSvgFont(filePath, source)) return null;
   const minSignal = detectMinInfix(filePath);
   if (minSignal !== null) {
     return { classification: "definite-min-infix", signal: minSignal };
@@ -664,29 +669,6 @@ function isCssPath(filePath: string): boolean {
   // three identically.
   const lower = filePath.toLowerCase();
   return lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less");
-}
-
-/**
- * True when `filePath` ends in `.svg` (case-insensitive). Used by
- * {@link classifyBuildArtifactDetailed} to gate the content-shape
- * `likely-minified-by-line-stats` predicate off SVG sources entirely.
- *
- * Single-line is the canonical SVG authoring shape — a hand-authored
- * brand SVG is one well-formed `<svg ...>...</svg>` element, often
- * exported from a design tool with no inter-tag whitespace. Under the
- * shared long-line probe that body is one line over the 500-char
- * threshold, totalLines = 1, and medianLineLength equals the whole
- * content's length, so the median-line-length corroborator fires
- * trivially. The verdict ("minified bundle") contradicts the source
- * shape ("authored brand asset"); the only honest fix is to skip the
- * probe on `.svg` and let the path predicates carry whatever evidence
- * survives. SVGs that genuinely are build-pipeline output (sprite
- * sheets in `dist/icons/`, `.min.svg`, hashed-filename outputs,
- * `.svg` files paired with sourcemap siblings) still classify on the
- * path-anchored predicates, which is the doctrine bar.
- */
-function isSvgPath(filePath: string): boolean {
-  return filePath.toLowerCase().endsWith(".svg");
 }
 
 /**

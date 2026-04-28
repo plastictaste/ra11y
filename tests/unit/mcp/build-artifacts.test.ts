@@ -540,6 +540,117 @@ describe("classifyBuildArtifact — SVG single-line authoring norm (regression g
   });
 });
 
+describe("classifyBuildArtifact — authored SVG fonts (FontAwesome-shape carve-out)", () => {
+  // Authored SVG fonts (FontAwesome / Lucide / Phosphor) ship as `.svg`
+  // sources whose body is `<font>` + `<glyph>` element runs, frequently
+  // with a `.min.` infix in the basename or under `dist/icons/` because
+  // they're distributed alongside the icon webfont. Without this gate
+  // the path predicates (min-infix, hashed-filename, build-dir marker)
+  // mis-label these hand-authored vector glyph paths as minified output,
+  // routing the agent's triage away from a file the user did author.
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+  // meta sub-fields are dishonest" — the source body proves the file is
+  // authored vector content, so the path's "minified" verdict
+  // contradicts the source shape.
+  it("does NOT classify a `.svg` whose body contains `<font>` element markers", () => {
+    // FontAwesome-style: SVG-font wrapper with glyph children. The
+    // `<font>` element opener is the canonical SVG-font marker; minified
+    // bytes never contain literal element-name tokens.
+    const source = `<svg xmlns="http://www.w3.org/2000/svg"><defs><font id="fa" horiz-adv-x="512"><font-face font-family="FontAwesome" units-per-em="512"/><missing-glyph horiz-adv-x="0"/><glyph unicode="&#xf000;" d="M0 0L10 10Z"/><glyph unicode="&#xf001;" d="M10 10L20 20Z"/></font></defs></svg>`;
+    expect(classifyBuildArtifact("dist/icons/fontawesome.svg", source)).toBe(null);
+  });
+
+  it("does NOT classify a `.min.svg` whose body contains `<font>` element markers (path verdict overridden)", () => {
+    // Even with the `.min.` path infix that would otherwise earn
+    // `definite-min-infix`, the source body proves the file is an
+    // authored SVG font. The carve-out runs first and pre-empts the
+    // path-anchored verdict.
+    const source = `<svg xmlns="http://www.w3.org/2000/svg"><defs><font id="lucide"><font-face font-family="Lucide"/><glyph unicode="A" d="M0,0Z"/></font></defs></svg>`;
+    expect(classifyBuildArtifact("public/lucide.min.svg", source)).toBe(null);
+  });
+
+  it("does NOT classify a `.svg` under `dist/` whose body contains `<glyph>` element markers", () => {
+    // `<glyph>` element opener is the sibling marker; SVG-font glyph
+    // children never appear in minified output.
+    const source = `<svg xmlns="http://www.w3.org/2000/svg"><glyph unicode="A" d="M10,10L20,20Z"/><glyph unicode="B" d="M0,0L5,5Z"/></svg>`;
+    expect(classifyBuildArtifact("dist/icons/glyphs.svg", source)).toBe(null);
+  });
+
+  it("does NOT classify a pretty-printed `.svg` (>100 lines) with an authored copyright comment", () => {
+    // FontAwesome / Lucide / Phosphor distributions open with an SVG
+    // comment block citing the project + license. Without `<font>` /
+    // `<glyph>` markers the conjunctive predicate (line-count + license
+    // header) credits the file as authored.
+    const lines: string[] = [
+      `<!-- Font Awesome Free 6.4.0 by @fontawesome - https://fontawesome.com -->`,
+      `<!-- License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) -->`,
+      `<!-- Copyright 2024 Fonticons, Inc. -->`,
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">`,
+    ];
+    for (let i = 0; i < 200; i++) {
+      lines.push(`  <path d="M${i},${i}L${i + 1},${i + 1}Z"/>`);
+    }
+    lines.push(`</svg>`);
+    const source = lines.join("\n");
+    expect(classifyBuildArtifact("dist/icons/fa-solid.svg", source)).toBe(null);
+  });
+
+  it("does NOT classify a pretty-printed `.svg` with an SPDX-License-Identifier comment", () => {
+    // Recent FontAwesome / Phosphor releases use the SPDX preamble
+    // form. The license-token regex includes `SPDX-License-Identifier`
+    // so the SPDX-only comment shape credits.
+    const lines: string[] = [
+      `<!-- SPDX-License-Identifier: MIT -->`,
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">`,
+    ];
+    for (let i = 0; i < 150; i++) {
+      lines.push(`  <path d="M${i},0L${i + 1},1Z"/>`);
+    }
+    lines.push(`</svg>`);
+    const source = lines.join("\n");
+    expect(classifyBuildArtifact("dist/phosphor/phosphor.svg", source)).toBe(null);
+  });
+
+  it("DOES still classify a single-long-line `.min.svg` with no authored markers (real minified bundle)", () => {
+    // Symmetric guard: the carve-out is conservative — it must NOT
+    // skip a real minified SVG bundle. No `<font>`, no `<glyph>`, no
+    // multi-line + license-header conjunction. The path predicate
+    // still fires per the existing `.min.svg` regression guard.
+    const source = `<svg xmlns="http://www.w3.org/2000/svg"><path d="M0,0L1,1Z"/></svg>`;
+    expect(classifyBuildArtifact("public/logo.min.svg", source)).toBe("definite-min-infix");
+  });
+
+  it("DOES still classify a pretty-printed `.svg` with no license header (line-count alone is not enough)", () => {
+    // Symmetric guard: the comment-conjunctive branch requires BOTH a
+    // line-count exceedance AND a license header. A 200-line authored
+    // SVG with no license comment is still authored content, but
+    // because the carve-out doesn't credit it, the path predicate is
+    // free to run. Under `dist/` the verdict is the path-anchored
+    // `likely-bundler-output-dir` (the existing single-line behavior
+    // at `dist/icons/sprite.svg`).
+    const lines: string[] = [`<svg xmlns="http://www.w3.org/2000/svg">`];
+    for (let i = 0; i < 200; i++) {
+      lines.push(`  <path d="M${i},${i}Z"/>`);
+    }
+    lines.push(`</svg>`);
+    const source = lines.join("\n");
+    expect(classifyBuildArtifact("dist/icons/sprite.svg", source)).toBe(
+      "likely-bundler-output-dir",
+    );
+  });
+
+  it("DOES still classify a single-line `.svg` with `MIT` inside a text node (no comment opener required)", () => {
+    // Symmetric guard: the comment-opener requirement (`<!--` must be
+    // in the head window) prevents an attribute / text-node literal
+    // from accidentally crediting. A single-line SVG with `MIT` in a
+    // `<text>` node and no multi-line shape stays unclassified by the
+    // carve-out; behavior reverts to the existing single-line SVG
+    // norm (also unclassified — the long-line probe is gated off).
+    const source = `<svg xmlns="http://www.w3.org/2000/svg"><text>MIT</text></svg>`;
+    expect(classifyBuildArtifact("assets/license-icon.svg", source)).toBe(null);
+  });
+});
+
 describe("classifyBuildArtifact — `likely-compiled-tailwind` classification", () => {
   it("classifies a CSS file containing a `.w-\\[400px\\]` utility selector (pixel width)", () => {
     const source = ".w-\\[400px\\] { width: 400px; }\n";
