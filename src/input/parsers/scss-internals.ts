@@ -265,7 +265,7 @@ export function resolveSelector(
       const combined = combineSelectors(parent, piece);
       if (combined === null) {
         errors.push({
-          message: `SCSS nested selector "${piece}" under "${parent}" is too complex to flatten`,
+          message: `SCSS nested selector "${sanitizeSelectorForMessage(piece)}" under "${sanitizeSelectorForMessage(parent)}" is too complex to flatten`,
           position: { line: 1, column: 1, offset },
           recoverable: true,
         });
@@ -276,6 +276,29 @@ export function resolveSelector(
   }
   return [out.join(", ")];
 }
+
+/**
+ * Strips newlines, collapses internal whitespace, and truncates a
+ * selector token to a single readable line for inclusion in parse-error
+ * messages.
+ *
+ * Without this, `head` slices that span multiple lines or run past the
+ * usual selector length leak raw multi-line file content into the
+ * `ParseError.message`. Downstream consumers (the agent-response
+ * formatter, MCP error-detail surfaces, IDE diagnostics) embed the
+ * message verbatim, so the leakage breaks line-oriented displays and
+ * confuses the consuming agent — `reason` text reads as "this is the
+ * selector" but is actually a chunk of source code.
+ */
+export function sanitizeSelectorForMessage(selector: string): string {
+  // Replace any run of whitespace (including newlines) with one space,
+  // so the message stays single-line.
+  const collapsed = selector.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= MAX_SELECTOR_MESSAGE_LENGTH) return collapsed;
+  return `${collapsed.slice(0, MAX_SELECTOR_MESSAGE_LENGTH)}…`;
+}
+
+const MAX_SELECTOR_MESSAGE_LENGTH = 80;
 
 /** Splits a selector list on top-level commas. */
 export function splitSelectors(selector: string): string[] {

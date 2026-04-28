@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { parseScss } from "../../../../src/input/parsers/scss.ts";
 import {
   hasTopLevelScssVariableDeclaration,
+  sanitizeSelectorForMessage,
   scssVariableDeclarationsLikelyUnresolved,
 } from "../../../../src/input/parsers/scss-internals.ts";
 import type { CssAtRule, CssDeclaration, CssRule } from "../../../../src/types/ast.ts";
@@ -454,5 +455,59 @@ describe("hasTopLevelScssVariableDeclaration", () => {
   });
   it("does not match plain CSS without variables", () => {
     expect(hasTopLevelScssVariableDeclaration(".btn { color: red; }")).toBe(false);
+  });
+});
+
+describe("sanitizeSelectorForMessage", () => {
+  it("collapses internal newlines into a single space", () => {
+    const sanitized = sanitizeSelectorForMessage("&\n  .a\n  .b\n  .c");
+    expect(sanitized).toBe("& .a .b .c");
+    expect(sanitized.includes("\n")).toBe(false);
+  });
+
+  it("collapses runs of whitespace and trims edges", () => {
+    expect(sanitizeSelectorForMessage("   .a   \n\t  .b   ")).toBe(".a .b");
+  });
+
+  it("truncates over-long selectors with an ellipsis at 80 chars", () => {
+    const long = `&.${"a".repeat(200)}`;
+    const sanitized = sanitizeSelectorForMessage(long);
+    expect(sanitized.length).toBeLessThanOrEqual(81); // 80 + ellipsis char
+    expect(sanitized.endsWith("…")).toBe(true);
+    expect(sanitized.includes("\n")).toBe(false);
+  });
+
+  it("leaves short selectors unchanged", () => {
+    expect(sanitizeSelectorForMessage("&.foo")).toBe("&.foo");
+  });
+});
+
+describe("parseScss — error-message sanitization", () => {
+  it("error messages are single-line and capped to 80 chars", () => {
+    // Multi-line top-level `&` selector trips the "too complex to
+    // flatten" path; without sanitization, the raw multi-line piece
+    // would land in `error.message`.
+    const source = `&\n  .${"x".repeat(200)} {\n  color: red;\n}\n`;
+    const { errors } = parseScss(source);
+    expect(errors.length).toBeGreaterThan(0);
+    for (const err of errors) {
+      expect(err.message.includes("\n")).toBe(false);
+      // Extract the selector token from `nested selector "..."` so we
+      // assert on the interpolated content, not the wrapper prose.
+      const match = /nested selector "([^"]*)"/.exec(err.message);
+      if (match) {
+        const token = match[1] ?? "";
+        expect(token.length).toBeLessThanOrEqual(81);
+      }
+    }
+  });
+
+  it("error message is single-line on a multi-piece comma-separated child", () => {
+    const source = `&.alpha,\n&.beta,\n&.gamma\n{\n  color: red;\n}\n`;
+    const { errors } = parseScss(source);
+    expect(errors.length).toBeGreaterThan(0);
+    for (const err of errors) {
+      expect(err.message.includes("\n")).toBe(false);
+    }
   });
 });

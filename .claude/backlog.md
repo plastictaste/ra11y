@@ -441,7 +441,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans this round: minified/build-
 
 #### Q8c — accepted (P2 — finder fix-suggestion polish)
 
-- [ ] **Q8c-PARSE-ERROR-REASON-LEAKS-FILE-CONTENT** SCSS parse-error reason text leaks raw multi-line file content as the "selector" token: `"SCSS nested selector \"/* Icon rotations & flippi*/\\n/* -----------------------*/\\n\\n.#\" under \"\" is too complex to flatten"`. The reason includes a comment block + newlines; agent reading the reason gets corrupted error context. Fix: sanitize selector tokens in error messages (strip newlines, truncate to ≤80 chars with `…` ellipsis). Pairs with V1-SIZE-LABEL-ECHO-CAP (closed, generic truncation helper) — this is the parse-error reason-text application of the same helper.
 - [ ] **Q8c-EXTENSIONS-SKIPPED-NO-EXT-SCHEMA-SPLIT** `warningsDetails.extensions_skipped_no_parser.extensions: [..., "(no-ext)"]` mixes real extensions with the parenthesized sentinel for "no extension" files (LICENSE, COPYING, Makefile). Agent parsing the array as a glob/extension filter has to special-case the parenthesized form. Fix: split into `extensions: string[]` (dotted tokens only) + `noExtensionFiles: string[]` (well-known textual filenames inline: LICENSE / Makefile / Dockerfile) so the array stays type-honest. Pairs with Q8b-EXTENSIONS-SKIPPED-NO-EXT-BUCKET-NAMES-PATHS (bucket-naming axis) — this is the schema-shape axis on the same field.
 
 ---
