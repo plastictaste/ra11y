@@ -2056,6 +2056,34 @@ function parseErrorCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
 }
 
 /**
+ * Discovery-skip code family — sub-chain extracted from
+ * {@link computeScanWarnings} to keep its cognitive complexity under
+ * the lint cap as new skip-classification codes accrete (same pattern
+ * as {@link contentDistributionCodes} / {@link pathShapeCodes}). Each
+ * code names a deterministic-classification subset of the discovery
+ * walker's rejected-files list:
+ *
+ *   - `text_source_skipped` — the actionable subset (parser-routable
+ *     extensions the walker dropped).
+ *   - `binary_assets_skipped` — the residual asset bucket
+ *     (image/font/audio/video/archive); surfaced honestly so the
+ *     corpus-shape signal isn't silently filtered.
+ *   - `sourcemap_files_excluded` — the conventional-exclusion subset
+ *     (`.map` sourcemap files); declared explicitly per "Routing
+ *     skips that drop content are the symmetric twin of suppression."
+ *
+ * Order matches declaration order on `ScanWarningCode` for stable
+ * `warnings[]` sequencing across runs.
+ */
+function discoverySkipCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (hasTextSourceSkipped(inputs.analysisCoverage)) out.push("text_source_skipped");
+  if (hasBinaryAssetsSkipped(inputs.analysisCoverage)) out.push("binary_assets_skipped");
+  if (hasSourcemapFilesExcluded(inputs.analysisCoverage)) out.push("sourcemap_files_excluded");
+  return out;
+}
+
+/**
  * Scan-shape code family and.
  * Extracted from
  * {@link computeScanWarnings} so the orchestrator stays under the
@@ -2146,35 +2174,15 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // block.
     out.push("storybook_preset_active");
   }
-  if (hasTextSourceSkipped(inputs.analysisCoverage)) {
-    // coverage block carries at least one
-    // text-source extension in skippedByExtension — surface the
-    // top-level signal so the agent can branch on the actionable
-    // subset without reading into meta. Pairs with
-    // `binary_assets_skipped` (the residual asset bucket); the two
-    // codes fire independently and can co-exist.
-    out.push("text_source_skipped");
-  }
-  if (hasBinaryAssetsSkipped(inputs.analysisCoverage)) {
-    // coverage block carries at least one
-    // binary-asset extension in skippedByExtension. Surface honestly
-    // (rather than silently filter) so the agent can verify the
-    // corpus shape it expected matches what the walker saw — even
-    // though `.png` / `.woff` / `.mp4` are not parser-routable, a
-    // mass of binary skips alongside zero findings is a corpus-shape
-    // signal the agent should not have to re-derive from `meta`.
-    out.push("binary_assets_skipped");
-  }
-  if (hasSourcemapFilesExcluded(inputs.analysisCoverage)) {
-    // coverage block carries at least one `.map` sourcemap path the
-    // discovery walk encountered. The exclusion is conventionally
-    // correct — `.map` payloads are generator-output, not authored
-    // source — but a silent skip is indistinguishable from "tool
-    // never saw the file" from the agent's seat. Declared explicitly
-    // per "Routing skips that drop content are the symmetric twin
-    // of suppression."
-    out.push("sourcemap_files_excluded");
-  }
+  // Discovery-skip code family — see `discoverySkipCodes`. Three
+  // branches extracted into the helper so this function's cognitive
+  // complexity stays under the lint cap as new skip-classification
+  // codes accrete (same pattern as `contentDistributionCodes` /
+  // `pathShapeCodes`). Emitted order unchanged: text-source first
+  // (the actionable subset), binary assets second (residual asset
+  // bucket), sourcemap exclusion third (declared-by-convention
+  // subset).
+  out.push(...discoverySkipCodes(inputs));
   if (inputs.sessionWrappersMismatchCwd === true) {
     // Connection-wide session state carried wrappers configured for a
     // different project root into this scan. The wrappers still
