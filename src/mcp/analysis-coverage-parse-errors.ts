@@ -23,8 +23,9 @@ import type { ParseErrorEntry } from "./analysis-coverage-types.ts";
  * list" to "rollup": `{ parseErrorFileCount, parseErrorTopReasons }`.
  * The full path list remains opt-in via the `verboseMeta: true` input
  * flag. Picked at 20 by working backward from the canonical wire-size
- * budget: at the observed ~250 chars per `{ path, parser, reason }`
- * entry, 20 entries cost ~5KB inline — small enough to ride alongside
+ * budget: at the observed ~250 chars per
+ * `{ path, parserAttempted, naturalParser?, reason }` entry,
+ * 20 entries cost ~5KB inline — small enough to ride alongside
  * the rest of the coverage block at default verbosity, large enough
  * that small / mid codebases (the long tail of scans) still see the
  * full per-entry detail without flipping `verboseMeta`. The rollup
@@ -117,15 +118,17 @@ function rollupTopReasons(
  * Splits the accumulated parse-error entries into the two honest
  * buckets and assigns them to the coverage block.
  *
- * - `parseErrorFiles` (array of `{ path, parser, reason }`): files
- *   whose parser emitted errors AND produced zero findings. These are
- *   invisible to rules; an agent reading the list treats them as
- *   "could contain a11y violations the scanner never saw."
- * - `partialParseFiles` (array of `{ path, parser, reason }`): files
- *   whose parser emitted errors but for which at least one rule fired
- *   on the recovered slice. Findings on these paths are present in
- *   the response with live line numbers; the entry is a calibration
- *   warning, not a blanket "invisible" signal.
+ * - `parseErrorFiles` (array of `{ path, parserAttempted,
+ *   naturalParser?, reason }`): files whose parser emitted errors AND
+ *   produced zero findings. These are invisible to rules; an agent
+ *   reading the list treats them as "could contain a11y violations
+ *   the scanner never saw."
+ * - `partialParseFiles` (array of `{ path, parserAttempted,
+ *   naturalParser?, reason }`): files whose parser emitted errors but
+ *   for which at least one rule fired on the recovered slice. Findings
+ *   on these paths are present in the response with live line numbers;
+ *   the entry is a calibration warning, not a blanket "invisible"
+ *   signal.
  *
  * Default-mode (verbose=false) wire shape:
  * - count ≤ {@link PARSE_ERROR_INLINE_THRESHOLD}: inline the full
@@ -185,7 +188,7 @@ export function assembleParseErrorBlocks(
 function countByParser(entries: readonly ParseErrorEntry[]): Readonly<Record<string, number>> {
   const counts = new Map<string, number>();
   for (const entry of entries) {
-    counts.set(entry.parser, (counts.get(entry.parser) ?? 0) + 1);
+    counts.set(entry.parserAttempted, (counts.get(entry.parserAttempted) ?? 0) + 1);
   }
   return Object.fromEntries(
     [...counts.entries()].sort(([aParser], [bParser]) => aParser.localeCompare(bParser)),

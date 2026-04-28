@@ -1314,11 +1314,16 @@ describe("buildAnalysisCoverage — hints", () => {
       };
     }
 
-    it("routes errored files with no findings into parseErrorFiles (invisible-to-rules bucket) with per-entry parser + reason", () => {
+    it("routes errored files with no findings into parseErrorFiles (invisible-to-rules bucket) with per-entry parserAttempted + reason", () => {
       // Errored file, empty finding set -> lands in the invisible bucket.
-      // The `{ path, parser, reason }` shape is the actionable fix pivot:
-      // without the parser + reason the top-level `parse_errors_present`
-      // flag is a silent-failure shape.
+      // The `{ path, parserAttempted, naturalParser?, reason }` shape is
+      // the actionable fix pivot: without the parser + reason the
+      // top-level `parse_errors_present` flag is a silent-failure shape.
+      // `naturalParser` is present-when-meaningful: the synthetic
+      // helper here forces `language: "html"` on a `.mdx` path, which
+      // looks (to `naturalParserFor`) like a routing mismatch — `.mdx`
+      // would naturally suggest `mdx`, the dispatcher attempted `html`,
+      // so the routing-mismatch signal lands.
       const files = [htmlFileWithErrors("modal.mdx")];
       const { analysisCoverage } = buildAnalysisCoverage(
         files,
@@ -1334,7 +1339,8 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
         {
           path: "modal.mdx",
-          parser: "html",
+          parserAttempted: "html",
+          naturalParser: "mdx",
           reason: "Unexpected end of input while parsing tag",
           parsedThroughLine: 1,
         },
@@ -1343,7 +1349,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["partialParseFiles"]).toBeUndefined();
     });
 
-    it("routes errored files WITH findings into partialParseFiles (parser + reason carried per entry)", () => {
+    it("routes errored files WITH findings into partialParseFiles (parserAttempted + reason carried per entry)", () => {
       // Same errored file, but the violations set includes its path —
       // rules fired on the recovered slice. Must land in the partial
       // bucket, not `parseErrorFiles`, so the agent doesn't discard
@@ -1365,7 +1371,8 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["partialParseFiles"]).toEqual([
         {
           path: "modal.mdx",
-          parser: "html",
+          parserAttempted: "html",
+          naturalParser: "mdx",
           reason: "Unexpected end of input while parsing tag",
           parsedThroughLine: 1,
         },
@@ -1376,7 +1383,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // Mixed scan: one errored file that rules saw (partial bucket),
       // one errored file they couldn't (invisible bucket). Two
       // separate counts, two separate lists — both carry the full
-      // `{ path, parser, reason }` triple.
+      // `{ path, parserAttempted, naturalParser?, reason }` triple.
       const files = [htmlFileWithErrors("a.html"), htmlFileWithErrors("b.html")];
       const { analysisCoverage } = buildAnalysisCoverage(
         files,
@@ -1390,16 +1397,20 @@ describe("buildAnalysisCoverage — hints", () => {
       );
       expect(analysisCoverage?.["parseErrorFileCount"]).toBe(1);
       const invisible = analysisCoverage?.["parseErrorFiles"] as
-        | { path: string; parser: string; reason: string }[]
+        | { path: string; parserAttempted: string; naturalParser?: string; reason: string }[]
         | undefined;
       expect(invisible?.map((e) => e.path)).toEqual(["b.html"]);
-      expect(invisible?.[0]?.parser).toBe("html");
+      expect(invisible?.[0]?.parserAttempted).toBe("html");
+      // `.html` extension's natural parser is `html` — no routing
+      // mismatch, naturalParser stays absent.
+      expect(Object.hasOwn(invisible?.[0] ?? {}, "naturalParser")).toBe(false);
       expect(analysisCoverage?.["partialParseFileCount"]).toBe(1);
       const partial = analysisCoverage?.["partialParseFiles"] as
-        | { path: string; parser: string; reason: string }[]
+        | { path: string; parserAttempted: string; naturalParser?: string; reason: string }[]
         | undefined;
       expect(partial?.map((e) => e.path)).toEqual(["a.html"]);
-      expect(partial?.[0]?.parser).toBe("html");
+      expect(partial?.[0]?.parserAttempted).toBe("html");
+      expect(Object.hasOwn(partial?.[0] ?? {}, "naturalParser")).toBe(false);
     });
 
     it("ships both parse-error buckets with detail regardless of verbose flag (parser + reason is the signal, not a dumpable list)", () => {
@@ -1409,8 +1420,8 @@ describe("buildAnalysisCoverage — hints", () => {
       // flag unactionable when verboseMeta: false — the agent knew one
       // file didn't parse but couldn't see which one or why. Per
       //, both buckets now always ship the full
-      // `{ path, parser, reason }` triple so the fix pivot is present
-      // on every response.
+      // `{ path, parserAttempted, naturalParser?, reason }` triple so
+      // the fix pivot is present on every response.
       const files = [htmlFileWithErrors("modal.mdx"), htmlFileWithErrors("broken.html")];
       const { analysisCoverage } = buildAnalysisCoverage(
         files,
@@ -1425,7 +1436,8 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["partialParseFiles"]).toEqual([
         {
           path: "modal.mdx",
-          parser: "html",
+          parserAttempted: "html",
+          naturalParser: "mdx",
           reason: "Unexpected end of input while parsing tag",
           parsedThroughLine: 1,
         },
@@ -1433,7 +1445,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
         {
           path: "broken.html",
-          parser: "html",
+          parserAttempted: "html",
           reason: "Unexpected end of input while parsing tag",
           parsedThroughLine: 1,
         },
@@ -1452,7 +1464,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
         {
           path: "a.html",
-          parser: "html",
+          parserAttempted: "html",
           reason: "Unexpected end of input while parsing tag",
           parsedThroughLine: 1,
         },
@@ -1496,7 +1508,13 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["parseErrorFiles"]).toEqual([
         {
           path: "livereload.js",
-          parser: "tsx",
+          parserAttempted: "tsx",
+          // The canonical routing-mismatch case: `.js` extension's
+          // natural parser is `js`, the dispatcher attempted `tsx`.
+          // The two-field shape lets the agent see in one read that
+          // this isn't "the codebase uses TSX" but "the dispatcher
+          // routed plain-JS through the TSX parser."
+          naturalParser: "js",
           reason: "tsx_parser_on_non_jsx_input",
           triggerToken: "<b.length>",
           parsedThroughLine: 2,
@@ -1511,7 +1529,13 @@ describe("buildAnalysisCoverage — hints", () => {
       const files = [htmlFileWithErrors("a.html")];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, true);
       const entries = analysisCoverage?.["parseErrorFiles"] as
-        | { path: string; parser: string; reason: string; triggerToken?: string }[]
+        | {
+            path: string;
+            parserAttempted: string;
+            naturalParser?: string;
+            reason: string;
+            triggerToken?: string;
+          }[]
         | undefined;
       expect(entries?.[0]?.triggerToken).toBeUndefined();
       expect(Object.hasOwn(entries?.[0] ?? {}, "triggerToken")).toBe(false);
@@ -1557,9 +1581,14 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set<string>(),
       );
       const invisible = analysisCoverage?.["parseErrorFiles"] as
-        | { path: string; parser: string; reason: string }[]
+        | { path: string; parserAttempted: string; naturalParser?: string; reason: string }[]
         | undefined;
-      expect(invisible?.[0]?.parser).toBe("tsx");
+      expect(invisible?.[0]?.parserAttempted).toBe("tsx");
+      // `.mdx` natural parser is `mdx`; dispatcher attempted `tsx`.
+      // The companion field exposes the routing-disguise the test
+      // header calls out — the agent reads parserAttempted=tsx and
+      // naturalParser=mdx in one read.
+      expect(invisible?.[0]?.naturalParser).toBe("mdx");
     });
 
     it("truncates very long parse-error reasons so response size stays bounded", () => {
@@ -1602,7 +1631,7 @@ describe("buildAnalysisCoverage — hints", () => {
         new Set(["hostile.html"]),
       );
       const partial = analysisCoverage?.["partialParseFiles"] as
-        | { path: string; parser: string; reason: string }[]
+        | { path: string; parserAttempted: string; naturalParser?: string; reason: string }[]
         | undefined;
       expect(partial?.[0]?.reason.length).toBeLessThan(longMessage.length);
       // Head of the message survives — the actionable kind-of-error
@@ -2663,7 +2692,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // bucket because findingFilePaths is empty) so the per-parser
       // count map carries `{ html: N }` — agent reading the warning
       // payload sees parser-attribution dominance without descending
-      // into per-entry `parseErrorFiles[].parser`.
+      // into per-entry `parseErrorFiles[].parserAttempted`.
       const paths = Array.from({ length: 25 }, (_, i) => `f${String(i).padStart(3, "0")}.html`);
       const files = paths.map(htmlFileWithErrorsAt);
       const result = buildAnalysisCoverage(

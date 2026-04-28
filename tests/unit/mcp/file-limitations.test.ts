@@ -49,7 +49,11 @@ describe("buildFileLimitation", () => {
     expect(result).not.toBeNull();
     expect(result?.reason).toBe("parse_error");
     expect(result?.file).toBe("/tmp/broken.html");
-    expect(result?.parser).toBe("html");
+    expect(result?.parserAttempted).toBe("html");
+    // `.html` extension's natural parser is also `html` — no routing
+    // mismatch to disclose, so `naturalParser` stays absent
+    // (present-when-meaningful per AI-first consumer model).
+    expect(Object.hasOwn(result ?? {}, "naturalParser")).toBe(false);
     expect(result?.detail).toBe("Unexpected end of input");
   });
 
@@ -77,6 +81,41 @@ describe("buildFileLimitation", () => {
     // 199 chars + ellipsis = 200 visible glyphs (ellipsis is one codepoint).
     expect(result?.detail?.endsWith("…")).toBe(true);
     expect(result?.detail?.length).toBe(200);
+  });
+
+  it("surfaces naturalParser when the dispatcher routed through a non-natural parser", () => {
+    // A `.js` file whose AST recorded `language: "tsx"` because the
+    // dispatcher in session.ts routes plain-JS sources through
+    // parseTsx. The wire shape must disambiguate "the parser invoked
+    // (tsx)" from "the natural parser the extension implies (js)" so
+    // an agent doesn't mis-infer "this codebase uses TSX" from the
+    // attempt label.
+    const tsxRoutedJs: ParsedFile = {
+      filePath: "/tmp/widget.js",
+      source: "var x = a < b;",
+      ast: {
+        language: "tsx",
+        root: {
+          kind: "TsxModule",
+          range: { start: 0, end: 0 },
+          loc: {
+            start: { line: 1, column: 1, offset: 0 },
+            end: { line: 1, column: 1, offset: 0 },
+          },
+          jsxElements: [],
+        },
+        errors: [
+          {
+            message: "Unexpected token `<`",
+            position: { line: 1, column: 11, offset: 10 },
+            recoverable: true,
+          },
+        ],
+      },
+    };
+    const result = buildFileLimitation(tsxRoutedJs, false);
+    expect(result?.parserAttempted).toBe("tsx");
+    expect(result?.naturalParser).toBe("js");
   });
 });
 

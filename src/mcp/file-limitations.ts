@@ -24,15 +24,22 @@
  * having to pick up the separate `analysisCoverage.parseErrorFiles`
  * bucket.
  *
- * `parser` names which in-house parser owned the failure (`html`,
- * `css`, `tsx`, `jsx`, `ts`, `js`). Distinct from the file extension
- * because alias routes (`.mdx → tsx`, `.astro → html`, `.scss → css`)
- * route a file through a foreign parser whose diagnostics the agent
- * would otherwise have to cross-reference against the parser registry.
+ * `parserAttempted` names which in-house parser owned the failure
+ * (`html`, `css`, `tsx`, `jsx`, `ts`, `js`) — i.e. the routing
+ * decision the dispatcher took. Companion `naturalParser` is
+ * present-when-meaningful: the per-extension default an agent would
+ * expect (`.js` → `js`, `.svg` → `svg`). Surfaced only when it
+ * differs from `parserAttempted` so the routing-mismatch signal
+ * (e.g. `.js` routed through the TSX parser, `.svg` routed through
+ * HTML) lands in one read; for matching extension/parser pairs the
+ * field is omitted because there is no routing mismatch to disclose
+ * (per AI-first consumer model "Ambiguous field shapes are
+ * dishonest").
  */
 
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { FileLimitation } from "../output/agent-response/types.ts";
+import { naturalParserFor } from "../utils/path.ts";
 import { isBuildArtifact } from "./build-artifacts.ts";
 
 export type { FileLimitation };
@@ -85,10 +92,19 @@ export function buildFileLimitation(
   if (isBuildArtifact(file.filePath, file.source)) return null;
   const firstMessage = file.ast.errors[0]?.message ?? "";
   const detail = firstMessage.length > 0 ? truncateDetail(firstMessage) : undefined;
+  const parserAttempted = file.ast.language;
+  // Companion natural-parser label, surfaced only when the dispatcher
+  // routed the file through a non-natural parser (e.g. `.js` → tsx).
+  // For matching extension/parser pairs the field is omitted to avoid
+  // echoing the same string twice — present-when-meaningful per
+  // AI-first consumer model.
+  const natural = naturalParserFor(file.filePath);
+  const naturalParser = natural !== null && natural !== parserAttempted ? natural : undefined;
   return {
     reason: fileHasFindings ? "partial_parse" : "parse_error",
     file: file.filePath,
-    parser: file.ast.language,
+    parserAttempted,
+    ...(naturalParser === undefined ? {} : { naturalParser }),
     ...(detail === undefined ? {} : { detail }),
   };
 }

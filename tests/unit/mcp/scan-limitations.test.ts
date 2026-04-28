@@ -55,7 +55,8 @@ describe("scan_file: parse-error limitations", () => {
       limitations?: readonly {
         reason: string;
         file: string;
-        parser: string;
+        parserAttempted: string;
+        naturalParser?: string;
         detail?: string;
       }[];
       warnings?: readonly string[];
@@ -72,7 +73,10 @@ describe("scan_file: parse-error limitations", () => {
     const expectedReason = data.findings.length === 0 ? "parse_error" : "partial_parse";
     expect(limitation?.reason).toBe(expectedReason);
     expect(limitation?.file).toBe(layoutPath);
-    expect(limitation?.parser).toBe("html");
+    expect(limitation?.parserAttempted).toBe("html");
+    // `.html` extension's natural parser is `html` — no routing
+    // mismatch, so naturalParser stays absent (present-when-meaningful).
+    expect(Object.hasOwn(limitation ?? {}, "naturalParser")).toBe(false);
     // detail is present-when-meaningful — every in-house parser error
     // emits a non-empty message, so on this fixture detail lands.
     expect(typeof limitation?.detail).toBe("string");
@@ -123,7 +127,8 @@ describe("scan_project: per-file limitations on mixed scans", () => {
         limitations?: readonly {
           reason: string;
           file: string;
-          parser: string;
+          parserAttempted: string;
+          naturalParser?: string;
         }[];
       }[];
     };
@@ -142,7 +147,7 @@ describe("scan_project: per-file limitations on mixed scans", () => {
     expect(brokenEntry?.limitations).toBeDefined();
     expect(brokenEntry?.limitations).toHaveLength(1);
     expect(brokenEntry?.limitations?.[0]?.reason).toBe("partial_parse");
-    expect(brokenEntry?.limitations?.[0]?.parser).toBe("html");
+    expect(brokenEntry?.limitations?.[0]?.parserAttempted).toBe("html");
     expect(brokenEntry?.limitations?.[0]?.file).toBe(brokenEntry?.path);
   });
 

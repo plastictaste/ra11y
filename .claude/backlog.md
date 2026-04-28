@@ -421,8 +421,6 @@ Cross-cutting themes seen across ≥2 of the 4 scans this round: minified/build-
 
 #### Q8c — accepted (P0 — heuristic-mislabeled meta sub-fields)
 
-- [ ] **Q8c-PERRULECOVERAGE-PARSER-FIELD-NAME-AMBIGUOUS** `parseErrorFiles[].parser: "tsx"` reads as a content classification ("this file IS tsx") but is actually a routing decision (".js was sent to the tsx parser"). Agent reading a `.js` file with `parser: "tsx"` may infer "this codebase uses TSX" and re-route fix suggestions accordingly. Fix: rename to `parserAttempted` or `routedTo`; OR add a sibling `naturalParser` (per-extension default) so the agent can see the routing mismatch in one read. Pairs with Q8b-PARSE-ERROR-REASON-NAMES-WRONG-CULPRIT (reason text on parse error) — this is the field-naming axis on the meta record.
-
 #### Q8c — accepted (P0 — heuristic-emission / reason-severity disagreement)
 
 #### Q8c — accepted (P0 — cross-surface drift)

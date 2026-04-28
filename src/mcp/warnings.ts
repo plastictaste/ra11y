@@ -105,10 +105,11 @@ export type ScanWarningCode =
   // `analysisCoverage.partialParseFileCount` carry the counts;
   // `analysisCoverage.parseErrorFiles` and
   // `analysisCoverage.partialParseFiles` both always list the
-  // corresponding paths with per-entry `{ path, parser, reason }` —
-  // the parser + reason pair is the agent's fix pivot, so gating the
-  // detail behind verboseMeta would leave the top-level flag a
-  // silent-failure shape.
+  // corresponding paths with per-entry
+  // `{ path, parserAttempted, naturalParser?, reason }` — the parser
+  // + reason pair is the agent's fix pivot, so gating the detail
+  // behind verboseMeta would leave the top-level flag a silent-
+  // failure shape.
   | "parse_errors_present"
   // ADR 0021 amendment (2026-04-20): the token-density secondary
   // budget dropped trailing file entries from this response to fit

@@ -57,11 +57,17 @@
  *     in scan path" when CSS coverage is thin vs HTML/JSX. Each hint
  *     is a single sentence an agent can act on in one tool call.
  *
- * `parseErrorFiles` and `partialParseFiles` both ship `{ path, parser,
- * reason }` entries when their bucket has entries — the reason +
- * parser pair is the actionable signal an agent needs to investigate
- * ("html parser: Unexpected end of input while parsing tag" is a
- * different fix path than "css parser: Unterminated string literal").
+ * `parseErrorFiles` and `partialParseFiles` both ship `{ path,
+ * parserAttempted, naturalParser?, reason }` entries when their bucket
+ * has entries — the reason + parser pair is the actionable signal an
+ * agent needs to investigate ("html parser: Unexpected end of input
+ * while parsing tag" is a different fix path than "css parser:
+ * Unterminated string literal"). `naturalParser` is
+ * present-when-meaningful: surfaced only when the dispatcher routed
+ * the file through a non-natural parser (e.g. `.js` routed through
+ * tsx, `.svg` routed through html) so the routing-mismatch signal is
+ * visible in one read without echoing the same string twice for files
+ * where extension and parser agree.
  * Wire shape splits on bucket size per-
  * UNCAPPED: at small inventories (count ≤ {@link PARSE_ERROR_INLINE_THRESHOLD})
  * or when `verboseMeta: true`, the full per-entry list ships inline;
@@ -98,7 +104,7 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
-import { extensionMatches, isStorybookStoryFile } from "../utils/path.ts";
+import { extensionMatches, isStorybookStoryFile, naturalParserFor } from "../utils/path.ts";
 import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
 import { assembleParseErrorBlocks } from "./analysis-coverage-parse-errors.ts";
 import type { ParseErrorEntry } from "./analysis-coverage-types.ts";
@@ -1044,9 +1050,10 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
 }
 
 /**
- * Pushes a `{ path, parser, reason, triggerToken? }` record onto
- * `acc.parseErrorEntries` when the file emitted parse errors AND is
- * not a classified build artifact. Extracted from
+ * Pushes a `{ path, parserAttempted, naturalParser?, reason,
+ * triggerToken? }` record onto `acc.parseErrorEntries` when the file
+ * emitted parse errors AND is not a classified build artifact.
+ * Extracted from
  * {@link accumulateCoverageForFile} to keep that function under the
  * cognitive-complexity budget and to centralize the build-artifact
  * gate.
@@ -1097,9 +1104,21 @@ function recordParseErrorEntry(file: ParsedFile, acc: CoverageAccumulator): void
   // sentinels for "unknown" because the agent cannot distinguish them
   // from a genuinely-line-1 error.
   const parsedThroughLine = headError?.position.line;
+  const parserAttempted = file.ast.language;
+  // Per-extension default the agent would expect from looking at the
+  // file extension alone. Surface only when it differs from the
+  // parser actually invoked (the routing dispatcher in
+  // `src/mcp/session.ts` aliases e.g. `.js` → tsx); for matching
+  // extension/parser pairs the field stays absent so the wire shape
+  // is "present-when-meaningful" rather than echoing the same string
+  // twice (per AI-first consumer model "Ambiguous field shapes are
+  // dishonest").
+  const natural = naturalParserFor(file.filePath);
+  const naturalParser = natural !== null && natural !== parserAttempted ? natural : undefined;
   acc.parseErrorEntries.push({
     path: file.filePath,
-    parser: file.ast.language,
+    parserAttempted,
+    ...(naturalParser === undefined ? {} : { naturalParser }),
     reason: truncateParseErrorReason(headError?.message ?? ""),
     ...(triggerToken === undefined ? {} : { triggerToken }),
     ...(parsedThroughLine && parsedThroughLine > 0 ? { parsedThroughLine } : {}),

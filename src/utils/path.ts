@@ -145,6 +145,77 @@ export function extensionMatches(fileExt: string, allowList: readonly string[]):
 }
 
 /**
+ * Per-extension natural parser name — the parser an agent reading just
+ * the file extension would expect to see invoked. Used by parse-error
+ * telemetry (`parseErrorFiles[].naturalParser`,
+ * `partialParseFiles[].naturalParser`, per-file `limitations.naturalParser`)
+ * paired with `parserAttempted` so an agent can spot routing decisions
+ * (e.g. `.js` routed through the TSX parser, `.svg` routed through HTML)
+ * in one read instead of inferring the routing from the extension.
+ *
+ * Returns `null` for extensions outside the parseable allow-list (or
+ * empty string), so call sites can treat absence as "no natural parser
+ * inference" rather than a meaningless sentinel. The dotted extension
+ * (e.g. `.js`) is sufficient — the function lower-cases via
+ * {@link extension} so callers don't need to normalize first.
+ *
+ * The mapping is the inverse of the parser-dispatch in
+ * `src/mcp/session.ts` `parseSourceForFile`: the route table decides
+ * which in-house parser owns the extension; this function names what
+ * the extension would suggest from the agent's seat. They diverge for
+ * routing aliases (`.js` / `.ts` → `tsx`-attempted but `js` / `ts` natural;
+ * `.scss` / `.less` → `css`-attempted but `scss` / `less` natural;
+ * `.svg` / `.md` / `.markdown` / `.mkdn` / `.erb` / `.astro` / `.xhtml` →
+ * `html`-attempted but their own natural label; `.mdx` → `tsx`-attempted
+ * but `mdx` natural). For files where extension and parser agree
+ * (`.tsx`/`.jsx`/`.html`/`.htm`/`.css`), the natural-parser equals the
+ * attempted parser; call sites are responsible for omitting the field
+ * when the two match (per AI-first consumer model "present-when-meaningful").
+ */
+export function naturalParserFor(filePath: string): string | null {
+  const ext = extension(filePath);
+  if (ext === "") return null;
+  // Strip leading dot — the natural-parser label is the bare extension
+  // name without the dot, matching the in-house parser-name convention
+  // (`tsx`, `html`, `css`) that the routed-parser side uses.
+  const bare = ext.slice(1);
+  return NATURAL_PARSER_BY_EXTENSION.get(ext) ?? bare;
+}
+
+/**
+ * Per-extension natural-parser table. Most entries are identity
+ * (extension `.tsx` → natural `tsx`); the explicit map exists so
+ * routing aliases name the *source* extension's identity rather than
+ * its attempted parser. Extensions absent from this map fall through
+ * to the bare-extension identity in {@link naturalParserFor}.
+ *
+ * Listed alphabetically for review. Cross-references the
+ * extension-to-parser dispatch in `src/mcp/session.ts`
+ * `parseSourceForFile`; whenever that dispatcher gains a new
+ * extension, this map must gain the corresponding natural-parser
+ * label so the routing-mismatch signal stays honest.
+ */
+const NATURAL_PARSER_BY_EXTENSION: ReadonlyMap<string, string> = new Map([
+  [".astro", "astro"],
+  [".css", "css"],
+  [".erb", "erb"],
+  [".htm", "html"],
+  [".html", "html"],
+  [".js", "js"],
+  [".jsx", "jsx"],
+  [".less", "less"],
+  [".markdown", "markdown"],
+  [".md", "md"],
+  [".mdx", "mdx"],
+  [".mkdn", "mkdn"],
+  [".scss", "scss"],
+  [".svg", "svg"],
+  [".ts", "ts"],
+  [".tsx", "tsx"],
+  [".xhtml", "xhtml"],
+]);
+
+/**
  * Extensions whose source represents rendered DOM — HTML markup or
  * JSX-bearing component files where the elements the parser surfaces
  * correspond to the runtime element tree. HTML-shape rules

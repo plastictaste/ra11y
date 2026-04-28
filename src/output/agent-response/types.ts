@@ -298,12 +298,13 @@ export interface AgentFile {
    * per-file entry, `findings: []` on a parse-errored file reads as
    * "rules ran clean on this file" when the honest reading is "rules
    * couldn't see the file." Each entry carries
-   * `{ reason: "parse_error" | "partial_parse", file, parser,
-   * detail? }`; the file/parser/detail fields match the per-entry
-   * shape of `meta.analysisCoverage.parseErrorFiles` so the two
-   * surfaces stay in lockstep (same source data, different
-   * presentation lane). Present-when-meaningful: omitted when the
-   * file parsed cleanly (never `[]`).
+   * `{ reason: "parse_error" | "partial_parse", file, parserAttempted,
+   * naturalParser?, detail? }`; the file / parserAttempted /
+   * naturalParser / detail fields match the per-entry shape of
+   * `meta.analysisCoverage.parseErrorFiles` so the two surfaces stay
+   * in lockstep (same source data, different presentation lane).
+   * Present-when-meaningful: omitted when the file parsed cleanly
+   * (never `[]`).
    */
   readonly limitations?: readonly FileLimitation[];
   /**
@@ -346,11 +347,23 @@ export interface AgentFile {
  * authoritative constructor lives in `src/mcp/file-limitations.ts`;
  * the shape is declared here so {@link AgentFile} can carry it without
  * the output layer importing from the MCP layer.
+ *
+ * `parserAttempted` names which in-house parser actually ran on the
+ * file — the routing decision the dispatcher took, not a content
+ * classification. `naturalParser` is present-when-meaningful: the
+ * per-extension default an agent would expect from looking at the
+ * extension alone (`.js` → `js`, `.svg` → `svg`). Surfaced only when
+ * it differs from `parserAttempted` so the routing-mismatch signal
+ * (e.g. `.js` routed through the TSX parser) is visible in one read
+ * without echoing the same string twice for files where extension
+ * and parser agree (per AI-first consumer model "Ambiguous field
+ * shapes are dishonest").
  */
 export interface FileLimitation {
   readonly reason: "parse_error" | "partial_parse";
   readonly file: string;
-  readonly parser: string;
+  readonly parserAttempted: string;
+  readonly naturalParser?: string;
   readonly detail?: string;
 }
 
