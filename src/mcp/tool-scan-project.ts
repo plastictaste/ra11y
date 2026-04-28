@@ -194,6 +194,7 @@ export const scanProjectTool: McpTool = {
       files: baseFiles,
       diagnostics: discoveryDiagnostics,
       jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
     } = await parseFilesWithDiagnostics(roots, session, root, discoverOptionsFor(projectConfig));
     const additionalPaths = strArrayParam(params, "additionalPaths") ?? [];
     const additionalFiles =
@@ -564,6 +565,11 @@ export const scanProjectTool: McpTool = {
           // `js_innerhtml_template_literal_unparsed` when dynamic
           // template literals were found but not parsed.
           jsInnerHtmlDeclinedCount,
+          // thread the per-file pattern detector samples so the warning
+          // payload's `fileSamples[]` carries `{ path, line, pattern }`
+          // for files where the routed parser produced zero findings —
+          // the routing-skip failure mode the AI-first doctrine names.
+          jsInnerHtmlPatternSamples,
         }),
       }),
     );
@@ -582,6 +588,40 @@ export const scanProjectTool: McpTool = {
 function readMetaNumber(meta: Record<string, unknown>, key: string): number {
   const v = meta[key];
   return typeof v === "number" ? v : 0;
+}
+
+/**
+ * Cross-references the per-file inline-HTML pattern detector map with
+ * the post-scan finding-bearing path set, returning one representative
+ * `{ path, line, pattern }` sample per file the routed parser produced
+ * zero findings on. Mirrors `collectInlineHtmlFileSamples` in
+ * `scan-time-warnings.ts` so `scan_project` emits the same warning
+ * payload as `checklist` / `coverage` on identical input — the cross-
+ * surface invariant the doctrine names. Empty list when the map is
+ * absent or every detector-matching file produced findings.
+ */
+function computeInlineHtmlFileSamples(
+  perFileSamples:
+    | ReadonlyMap<
+        string,
+        readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
+      >
+    | undefined,
+  formattedFiles: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+): readonly { readonly path: string; readonly line: number; readonly pattern: string }[] {
+  if (perFileSamples === undefined || perFileSamples.size === 0) return [];
+  const findingBearingPaths = new Set<string>();
+  for (const f of formattedFiles) {
+    if (f.findings.length > 0) findingBearingPaths.add(f.path);
+  }
+  const out: { readonly path: string; readonly line: number; readonly pattern: string }[] = [];
+  for (const [path, samples] of perFileSamples) {
+    if (findingBearingPaths.has(path)) continue;
+    const head = samples[0];
+    if (head === undefined) continue;
+    out.push(head);
+  }
+  return out;
 }
 
 /**
@@ -690,6 +730,16 @@ function buildBaseWarningsForScanProject(args: {
   readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
   /** Count of dynamic innerHTML/insertAdjacentHTML template literals declined by the extractor. */
   readonly jsInnerHtmlDeclinedCount: number;
+  /**
+   * Per-file inline-HTML pattern detector samples. Cross-referenced
+   * here against finding-bearing paths from `formatted.files` so the
+   * warning payload's `fileSamples[]` only carries paths the routed
+   * parser produced zero findings on.
+   */
+  readonly jsInnerHtmlPatternSamples?: ReadonlyMap<
+    string,
+    readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
+  >;
 }): {
   readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
@@ -709,6 +759,7 @@ function buildBaseWarningsForScanProject(args: {
     scssUnresolvedVariableFiles,
     bulkCatalogDetection,
     jsInnerHtmlDeclinedCount,
+    jsInnerHtmlPatternSamples,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
   // gate the `template_files_parsed_as_literal`
@@ -778,6 +829,10 @@ function buildBaseWarningsForScanProject(args: {
   const filesScannedFromMeta = readMetaNumber(formatted.meta, "filesScanned");
   const scannedBuildArtifactsAllFiles =
     filesScannedFromMeta > 0 && buildArtifacts.entries.length === filesScannedFromMeta;
+  const jsInnerHtmlFileSamplesForPayload = computeInlineHtmlFileSamples(
+    jsInnerHtmlPatternSamples,
+    formatted.files,
+  );
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -824,6 +879,16 @@ function buildBaseWarningsForScanProject(args: {
     // fire `js_innerhtml_template_literal_unparsed` when dynamic
     // template literals were detected but not parsed.
     ...(jsInnerHtmlDeclinedCount > 0 ? { jsInnerHtmlDeclinedCount } : {}),
+    // cross-reference the per-file pattern detector samples with the
+    // finding-bearing path set so the warning's `fileSamples` payload
+    // names only paths the routed parser produced zero findings on
+    // (the routing-skip failure mode the doctrine names). Per-file
+    // detector emits up to N samples; we keep one representative per
+    // file so the wire payload scales with file count rather than raw
+    // pattern instances. Empty list resolves to no payload.
+    ...(jsInnerHtmlFileSamplesForPayload.length === 0
+      ? {}
+      : { jsInnerHtmlFileSamples: jsInnerHtmlFileSamplesForPayload }),
     // thread the total finding count
     // so the warnings module can fire `parser_bailed_zero_findings`
     // on the canonical "parse errors present + zero findings overall"

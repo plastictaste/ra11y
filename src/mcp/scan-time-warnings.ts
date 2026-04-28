@@ -101,6 +101,20 @@ export interface ScanTimeWarningInputs {
   /** Count of innerHTML/insertAdjacentHTML template-literal patterns declined. */
   readonly jsInnerHtmlDeclinedCount?: number;
   /**
+   * Per-file inline-HTML pattern samples produced by
+   * {@link import("../input/parsers/inline-html.ts").detectInlineHtmlPatternSamples}.
+   * Cross-referenced post-scan against finding-bearing file paths so
+   * only files where the routed parser produced zero findings surface
+   * on `warningsDetails.js_innerhtml_template_literal_unparsed.fileSamples`.
+   * Pass `undefined` when the tool did not run the detector (e.g.
+   * scan-shape tools that only have a pre-resolved violation list with
+   * no source files in hand).
+   */
+  readonly jsInnerHtmlPatternSamples?: ReadonlyMap<
+    string,
+    readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
+  >;
+  /**
    * Per-tool latency. Drives `bulk_catalog_detected`'s slow path; the
    * deterministic bulk path (`filesScanned > BULK_FILES_SCANNED_FLOOR`)
    * stays cross-surface. Pass `undefined` when the tool does not
@@ -190,6 +204,11 @@ interface DerivedBuildArtifactSignals {
   readonly templateDirectivesOverlap: boolean;
   readonly filesScanned: number;
   readonly totalFindings: number;
+  readonly jsInnerHtmlFileSamples: readonly {
+    readonly path: string;
+    readonly line: number;
+    readonly pattern: string;
+  }[];
 }
 
 function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuildArtifactSignals {
@@ -249,6 +268,18 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     sourcesByPath: new Map(inputs.parsedFiles.map((f) => [f.filePath, f.source])),
   });
 
+  // Per-file inline-HTML pattern samples are surfaced only for files
+  // where the routed parser produced zero findings — the routing-skip
+  // failure mode the doctrine names. Cross-reference once at the
+  // aggregator seam; the per-tool call site already populated the
+  // detector map at parse time.
+  const findingBearingPaths = new Set<string>();
+  for (const f of perFileFindings) findingBearingPaths.add(f.path);
+  const jsInnerHtmlFileSamples = collectInlineHtmlFileSamples(
+    inputs.jsInnerHtmlPatternSamples,
+    findingBearingPaths,
+  );
+
   return {
     buildArtifactEntries,
     buildArtifactsMetaField,
@@ -263,7 +294,39 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     templateDirectivesOverlap,
     filesScanned,
     totalFindings,
+    jsInnerHtmlFileSamples,
   };
+}
+
+/**
+ * Cross-references the per-file inline-HTML pattern map with the post-
+ * scan finding-bearing path set, returning up to one sample per file
+ * for paths NOT in the finding-bearing set. Caller's detector already
+ * capped per-file entries at {@link import("../input/parsers/inline-html.ts").INLINE_HTML_PATTERN_SAMPLE_CAP};
+ * we keep one representative per file (the lowest-line, first-pattern
+ * entry) so the wire payload scales with file count rather than total
+ * pattern instances. Per CLAUDE.md §1 "Surface, don't suppress" — each
+ * file's first sample is enough for the agent to grep + investigate;
+ * the rest are reachable via `Grep` on the cited patterns.
+ */
+function collectInlineHtmlFileSamples(
+  perFileSamples:
+    | ReadonlyMap<
+        string,
+        readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
+      >
+    | undefined,
+  findingBearingPaths: ReadonlySet<string>,
+): readonly { readonly path: string; readonly line: number; readonly pattern: string }[] {
+  if (perFileSamples === undefined || perFileSamples.size === 0) return [];
+  const out: { readonly path: string; readonly line: number; readonly pattern: string }[] = [];
+  for (const [path, samples] of perFileSamples) {
+    if (findingBearingPaths.has(path)) continue;
+    const head = samples[0];
+    if (head === undefined) continue;
+    out.push(head);
+  }
+  return out;
 }
 
 /**
@@ -312,13 +375,36 @@ function buildWarningsFieldInputs(
     ...(derived.animationLibraryGuardCandidates.length === 0
       ? {}
       : { animationLibraryGuardCandidates: derived.animationLibraryGuardCandidates }),
-    ...(inputs.jsInnerHtmlDeclinedCount !== undefined && inputs.jsInnerHtmlDeclinedCount > 0
-      ? { jsInnerHtmlDeclinedCount: inputs.jsInnerHtmlDeclinedCount }
-      : {}),
+    ...inlineHtmlInputs(inputs.jsInnerHtmlDeclinedCount, derived.jsInnerHtmlFileSamples),
     ...(inputs.nearestConfigAncestor === undefined
       ? {}
       : { nearestConfigAncestor: inputs.nearestConfigAncestor }),
   };
+}
+
+/**
+ * Builds the spreadable inline-HTML axis subset of {@link WarningInputs}.
+ * Both fields are conditional-spread per the
+ * present-when-meaningful contract: declined > 0 → carry the count;
+ * samples non-empty → carry the array. Either axis (or both) drives
+ * `js_innerhtml_template_literal_unparsed`. Extracted from
+ * {@link buildWarningsFieldInputs} so the orchestrator stays under
+ * the cognitive-complexity cap as new evidence axes accrete.
+ */
+function inlineHtmlInputs(
+  declinedCount: number | undefined,
+  fileSamples: readonly {
+    readonly path: string;
+    readonly line: number;
+    readonly pattern: string;
+  }[],
+): Partial<WarningInputs> {
+  const decl =
+    typeof declinedCount === "number" && declinedCount > 0
+      ? { jsInnerHtmlDeclinedCount: declinedCount }
+      : {};
+  const sam = fileSamples.length === 0 ? {} : { jsInnerHtmlFileSamples: fileSamples };
+  return { ...decl, ...sam };
 }
 
 /**

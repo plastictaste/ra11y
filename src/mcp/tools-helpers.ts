@@ -15,7 +15,10 @@ import {
   discoverExplicitPaths,
   discoverFilesWithDiagnostics,
 } from "../input/discover.ts";
-import { extractInlineHtmlFragments } from "../input/parsers/inline-html.ts";
+import {
+  accumulateInlineHtml,
+  type InlineHtmlPatternSample,
+} from "../input/parsers/inline-html.ts";
 import {
   type AgentFinding,
   buildAgentFinding,
@@ -278,6 +281,18 @@ export async function parseFiles(
  * use this to surface the silent-miss case
  * where a mixed-language repo contributes hundreds of `.astro` /
  * `.scss` / `.vue` files that the scanner never looked at.
+ *
+ * Side-channel scan-confidence telemetry on the result —
+ * `jsInnerHtmlDeclinedCount` (count of dynamic `${…}` template
+ * literals the extractor refused to parse) and
+ * `jsInnerHtmlPatternSamples` (per-file `{ path, line, pattern }`
+ * matches the detector found) — drives the
+ * `js_innerhtml_template_literal_unparsed` warning code. Cross-
+ * referenced post-scan against finding-bearing paths so the warning's
+ * `fileSamples[]` payload only names files where the routed parser
+ * produced zero findings — the routing-skip failure mode per the
+ * AI-first doctrine "Routing skips that drop content are the
+ * symmetric twin of suppression."
  */
 export async function parseFilesWithDiagnostics(
   paths: readonly string[],
@@ -287,15 +302,8 @@ export async function parseFilesWithDiagnostics(
 ): Promise<{
   readonly files: readonly ParsedFile[];
   readonly diagnostics: DiscoveryDiagnostics;
-  /**
-   * Count of innerHTML/insertAdjacentHTML/document.write patterns in
-   * JS/TS files that contained ${...} interpolations and could not be
-   * statically extracted. Non-zero drives the
-   * `js_innerhtml_template_literal_unparsed` warning code on the
-   * response. Zero when no JS/TS files were present or no such
-   * patterns were found.
-   */
   readonly jsInnerHtmlDeclinedCount: number;
+  readonly jsInnerHtmlPatternSamples: ReadonlyMap<string, readonly InlineHtmlPatternSample[]>;
 }> {
   const base = cwd ?? process.cwd();
   const absPaths = paths.map((p) => (isAbsolute(p) ? p : resolve(base, p)));
@@ -305,21 +313,16 @@ export async function parseFilesWithDiagnostics(
   });
   const parsed: ParsedFile[] = [];
   let jsInnerHtmlDeclinedCount = 0;
+  const jsInnerHtmlPatternSamples = new Map<string, readonly InlineHtmlPatternSample[]>();
   for (const filePath of discovered) {
     const result = await session.parseFile(filePath, cwd);
     if (!result) continue;
     parsed.push(result);
-    // For JS/TS files, extract static innerHTML template literals as
-    // synthetic HTML ParsedFile entries so rules run against injected
-    // markup. Dynamic literals (containing ${...}) are declined — the
-    // extractor returns a count that drives the warning signal.
     if (result.ast.language === "tsx") {
-      const { fragments, declined } = extractInlineHtmlFragments(result.source, filePath);
-      parsed.push(...fragments);
-      jsInnerHtmlDeclinedCount += declined;
+      jsInnerHtmlDeclinedCount += accumulateInlineHtml(result, parsed, jsInnerHtmlPatternSamples);
     }
   }
-  return { files: parsed, diagnostics, jsInnerHtmlDeclinedCount };
+  return { files: parsed, diagnostics, jsInnerHtmlDeclinedCount, jsInnerHtmlPatternSamples };
 }
 
 /**
@@ -1007,11 +1010,8 @@ export function groupViolationsByFile(violations: readonly Violation[]): Map<str
   const map = new Map<string, Violation[]>();
   for (const v of violations) {
     const list = map.get(v.location.filePath);
-    if (list) {
-      list.push(v);
-    } else {
-      map.set(v.location.filePath, [v]);
-    }
+    if (list) list.push(v);
+    else map.set(v.location.filePath, [v]);
   }
   return map;
 }

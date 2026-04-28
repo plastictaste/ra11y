@@ -566,6 +566,7 @@ export const checklistTool: McpTool = {
       files,
       diagnostics: discoveryDiagnostics,
       jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
     } = await parseFilesWithDiagnostics(paths, session, cwd);
     const attestations = await loadDurableAttestations(cwd);
 
@@ -902,6 +903,7 @@ export const checklistTool: McpTool = {
       configSearchSawProjectMarker,
       cwd,
       jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
       ...(perCriterionClamp ? { perCriterionClamp } : {}),
     });
     return textResult({
@@ -966,6 +968,16 @@ function buildChecklistWarnings(args: {
    * checklist when scan_project's call on the same cwd would.
    */
   readonly jsInnerHtmlDeclinedCount: number;
+  /**
+   * Per-file inline-HTML pattern detector samples. Cross-referenced
+   * against the post-scan finding-bearing path set inside
+   * `buildScanTimeWarnings` so the warning's `fileSamples[]` payload
+   * names only paths the routed parser produced zero findings on.
+   */
+  readonly jsInnerHtmlPatternSamples: ReadonlyMap<
+    string,
+    readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
+  >;
   readonly perCriterionClamp?: { readonly requested: number; readonly applied: number };
 }): { readonly warnings?: readonly string[]; readonly warningsDetails?: unknown } {
   const scanTime = buildScanTimeWarnings({
@@ -978,6 +990,7 @@ function buildChecklistWarnings(args: {
     analysisCoverage: args.analysisCoverageField.analysisCoverage,
     filesByExtension: args.filesByExtension,
     jsInnerHtmlDeclinedCount: args.jsInnerHtmlDeclinedCount,
+    jsInnerHtmlPatternSamples: args.jsInnerHtmlPatternSamples,
     // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate the coverage helper's
     // truncation bit so `response_meta_truncated` fires AND the paired
     // `warningsDetails.response_meta_truncated.fields` payload names

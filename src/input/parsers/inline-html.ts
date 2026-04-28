@@ -12,6 +12,16 @@
  * the signal for emitting `js_innerhtml_template_literal_unparsed` on
  * the scan response so an agent knows static analysis missed the islands.
  *
+ * The companion {@link detectInlineHtmlPatternSamples} runs a broader
+ * pattern probe (including jQuery-style `.html(\`…\`)` calls) and returns
+ * `{ path, line, pattern }` samples regardless of static/dynamic split.
+ * When the routed parser produced zero findings on a file that contained
+ * one of these patterns, the samples surface on
+ * `warningsDetails.js_innerhtml_template_literal_unparsed.fileSamples[]`
+ * so the agent has file:line pointers to investigate the dropped islands.
+ * Per the AI-first doctrine "Routing skips that drop content are the
+ * symmetric twin of suppression."
+ *
  * Design note: the extractor is deliberately conservative. Only backtick
  * template literals are targeted — string-literal concatenations, `+`
  * expressions, and variable references are not resolved. The agent's own
@@ -88,6 +98,130 @@ export function extractInlineHtmlFragments(
   }
 
   return { fragments, declined };
+}
+
+/**
+ * One inline-HTML pattern occurrence in a JS/TS source file. The
+ * `pattern` field names which API was used so the agent can route the
+ * investigation (e.g. `innerHTML` rewrites are typically static
+ * widget-mount calls; `document.write` is usually a legacy shim).
+ */
+export interface InlineHtmlPatternSample {
+  readonly path: string;
+  readonly line: number;
+  readonly pattern: InlineHtmlPattern;
+}
+
+/**
+ * Pattern names surfaced on {@link InlineHtmlPatternSample.pattern}. The
+ * deterministic-token surface keeps the wire shape stable; agents
+ * branch on identity, never on free-form prose.
+ */
+export type InlineHtmlPattern =
+  | "innerHTML"
+  | "outerHTML"
+  | "insertAdjacentHTML"
+  | "document.write"
+  | "jquery.html";
+
+// Each entry pairs an InlineHtmlPattern with its detection regex. The
+// jQuery `.html(\`…\`)` form is matched conservatively — it only fires
+// when the argument is a backtick template literal, mirroring the
+// extractor's static/dynamic gating. Order is the iteration order of
+// the detector; ties break on first-match so a single source position
+// is attributed to one pattern.
+const PATTERN_DETECTORS: ReadonlyArray<{
+  readonly pattern: InlineHtmlPattern;
+  readonly regex: RegExp;
+}> = [
+  { pattern: "innerHTML", regex: /\.innerHTML\s*=\s*`/g },
+  { pattern: "outerHTML", regex: /\.outerHTML\s*=\s*`/g },
+  { pattern: "insertAdjacentHTML", regex: /\binsertAdjacentHTML\s*\(/g },
+  { pattern: "document.write", regex: /\bdocument\.write(?:ln)?\s*\(/g },
+  // jQuery `.html(\`…\`)` — backtick-literal only, mirroring the
+  // extractor's static-content predicate. We also accept single/double-
+  // quote string args here because the doctrine names jQuery's
+  // `.html('…')` shape explicitly; the agent reading the cited line
+  // decides whether the content is real HTML or a sentinel string.
+  { pattern: "jquery.html", regex: /\.html\s*\(\s*[`'"]/g },
+];
+
+/**
+ * Hard cap on the number of samples surfaced on
+ * `warningsDetails.js_innerhtml_template_literal_unparsed.fileSamples[]`.
+ * Five is enough to ground the agent's investigation across the most
+ * common shapes; the full set of files is reachable via Grep on the
+ * cited patterns.
+ */
+export const INLINE_HTML_PATTERN_SAMPLE_CAP = 5;
+
+/**
+ * Scan a JS/TS source for inline-HTML construction patterns and return
+ * up to {@link INLINE_HTML_PATTERN_SAMPLE_CAP} `{ path, line, pattern }`
+ * samples. Independent of {@link extractInlineHtmlFragments} — the
+ * extractor only handles backtick template literals and gates on
+ * static/dynamic; this detector catches the broader pattern surface
+ * (including jQuery `.html(...)` and string-literal `.write(...)`)
+ * regardless. Callers cross-reference the per-file sample list against
+ * the post-scan finding-bearing file set: files with detector matches
+ * AND zero findings indicate the routing skip the doctrine names.
+ *
+ * @param source - Full source text of the JS/TS file.
+ * @param filePath - The file's path, used as the `path` field on samples.
+ * @returns Up to N samples in source-position order.
+ */
+export function detectInlineHtmlPatternSamples(
+  source: string,
+  filePath: string,
+): readonly InlineHtmlPatternSample[] {
+  const samples: InlineHtmlPatternSample[] = [];
+  const seen = new Set<number>();
+  for (const { pattern, regex } of PATTERN_DETECTORS) {
+    const re = new RegExp(regex.source, "g");
+    let match = re.exec(source);
+    while (match !== null) {
+      const offset = match.index;
+      // Dedupe by source offset so a single position isn't attributed
+      // to two overlapping patterns (e.g. `.html(\`…\`)` could in
+      // principle match ahead of a future pattern at the same offset).
+      if (!seen.has(offset)) {
+        seen.add(offset);
+        const line = countNewlines(source, 0, offset) + 1;
+        samples.push({ path: filePath, line, pattern });
+      }
+      match = re.exec(source);
+    }
+  }
+  // Sort by line so the wire shape is deterministic across runs even
+  // when two patterns match at distinct offsets on the same line.
+  samples.sort((a, b) => a.line - b.line || a.pattern.localeCompare(b.pattern));
+  return samples.slice(0, INLINE_HTML_PATTERN_SAMPLE_CAP);
+}
+
+/**
+ * Per-JS/TS-file inline-HTML pass used by the MCP parse helpers:
+ * extracts static template literals as synthetic `ParsedFile`
+ * fragments (so rules run against the injected markup), records
+ * dynamic-literal declines for the warning-channel signal, and stamps
+ * the broader detector's per-file sample list onto `samplesByPath`.
+ * Returns the file's declined count for the caller to accumulate.
+ *
+ * Extracted from `tools-helpers.ts`'s parse loop so the orchestrator
+ * there stays under the per-file budget as new evidence axes accrete
+ * — the inline-HTML pipeline is a single concept with two outputs
+ * (synthetic fragments + warning telemetry) and belongs alongside its
+ * sibling extractors in this module.
+ */
+export function accumulateInlineHtml(
+  result: ParsedFile,
+  parsed: ParsedFile[],
+  samplesByPath: Map<string, readonly InlineHtmlPatternSample[]>,
+): number {
+  const { fragments, declined } = extractInlineHtmlFragments(result.source, result.filePath);
+  parsed.push(...fragments);
+  const samples = detectInlineHtmlPatternSamples(result.source, result.filePath);
+  if (samples.length > 0) samplesByPath.set(result.filePath, samples);
+  return declined;
 }
 
 // ---------------------------------------------------------------------------

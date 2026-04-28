@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { extractInlineHtmlFragments } from "../../../../src/input/parsers/inline-html.ts";
+import {
+  detectInlineHtmlPatternSamples,
+  extractInlineHtmlFragments,
+} from "../../../../src/input/parsers/inline-html.ts";
 
 // ---------------------------------------------------------------------------
 // extractInlineHtmlFragments — unit tests
@@ -138,5 +141,87 @@ el2.innerHTML = \`<p>${"$"}{dynamic}</p>\`;
       expect(fragments).toHaveLength(1);
       expect(fragments[0]?.ast.language).toBe("html");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectInlineHtmlPatternSamples — invariants
+// ---------------------------------------------------------------------------
+// These tests pin the broader pattern detector that drives the
+// `js_innerhtml_template_literal_unparsed` warning's `fileSamples`
+// payload. Distinct from the static-extractor tests above:
+//   (a) detection covers both backtick-template-literal and
+//       string-literal forms (the doctrine names jQuery `.html('…')`
+//       explicitly).
+//   (b) the detector is lossy on purpose — it points at a file:line
+//       and lets the agent investigate; it never tries to parse the
+//       payload itself.
+
+describe("detectInlineHtmlPatternSamples", () => {
+  it("detects an innerHTML template-literal assignment", () => {
+    const samples = detectInlineHtmlPatternSamples(
+      `el.innerHTML = \`<button>Click</button>\`;`,
+      "src/widget.js",
+    );
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples[0]?.path).toBe("src/widget.js");
+    expect(samples[0]?.pattern).toBe("innerHTML");
+  });
+
+  it("detects insertAdjacentHTML calls", () => {
+    const samples = detectInlineHtmlPatternSamples(
+      `el.insertAdjacentHTML('beforeend', \`<span>x</span>\`);`,
+      "src/modal.js",
+    );
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples[0]?.pattern).toBe("insertAdjacentHTML");
+  });
+
+  it("detects document.write calls", () => {
+    const samples = detectInlineHtmlPatternSamples(`document.write(\`<p>hi</p>\`);`, "legacy.js");
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples[0]?.pattern).toBe("document.write");
+  });
+
+  it("detects jQuery .html(`…`) backtick form", () => {
+    const samples = detectInlineHtmlPatternSamples(`$('#x').html(\`<div>jq</div>\`);`, "src/jq.js");
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples[0]?.pattern).toBe("jquery.html");
+  });
+
+  it("detects jQuery .html('…') string-literal form", () => {
+    // Per the AI-first doctrine the detector is broader than the
+    // extractor's static path — string-literal arguments are detected
+    // and surfaced as samples even though the extractor declines them.
+    const samples = detectInlineHtmlPatternSamples(`$('#x').html('<div>jq</div>');`, "src/jq2.js");
+    expect(samples.length).toBeGreaterThan(0);
+    expect(samples[0]?.pattern).toBe("jquery.html");
+  });
+
+  it("returns no samples for a JS file with no inline-HTML patterns", () => {
+    const samples = detectInlineHtmlPatternSamples(
+      `const x = 42; function add(a, b) { return a + b; }`,
+      "plain.js",
+    );
+    expect(samples).toEqual([]);
+  });
+
+  it("caps samples per file at the documented hard limit", () => {
+    // String-concat the dollar-brace token so the test source can carry
+    // a literal `${...}` without itself being flagged by Biome's
+    // template-string heuristic. We just want many distinct innerHTML
+    // pattern hits across one file.
+    const lines: string[] = [];
+    for (let i = 0; i < 10; i++) lines.push(`el${i}.innerHTML = \`<p>${i}</p>\`;`);
+    const samples = detectInlineHtmlPatternSamples(lines.join("\n"), "many.js");
+    // Detector cap is 5 per file; the agent reads a sample per file
+    // and grep + investigates from there.
+    expect(samples.length).toBeLessThanOrEqual(5);
+  });
+
+  it("encodes the source line on each sample", () => {
+    const source = `\n\n\n\nel.innerHTML = \`<a href="#">x</a>\`;`;
+    const samples = detectInlineHtmlPatternSamples(source, "linecheck.js");
+    expect(samples[0]?.line).toBe(5);
   });
 });

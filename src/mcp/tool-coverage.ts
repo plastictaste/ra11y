@@ -91,6 +91,7 @@ export const coverageTool: McpTool = {
       files,
       diagnostics: discoveryDiagnostics,
       jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
     } = await parseFilesWithDiagnostics(paths, session, cwd);
     const attestations = await loadDurableAttestations(cwd);
 
@@ -329,6 +330,7 @@ export const coverageTool: McpTool = {
       analysisCoverage: analysisCoverageField.analysisCoverage,
       filesByExtension,
       jsInnerHtmlDeclinedCount,
+      ...(jsInnerHtmlPatternSamples.size === 0 ? {} : { jsInnerHtmlPatternSamples }),
       // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate truncation so the
       // response-level `response_meta_truncated` code fires AND its
       // `warningsDetails.response_meta_truncated.fields` payload names

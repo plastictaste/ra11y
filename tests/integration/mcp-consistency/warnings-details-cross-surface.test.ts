@@ -372,7 +372,6 @@ const BINARY_PRESENCE_CODES_FOR_INVARIANT: ReadonlySet<string> = new Set([
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
   "dist_only_scan_detected",
-  "js_innerhtml_template_literal_unparsed",
 ]);
 
 /**

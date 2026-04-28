@@ -797,6 +797,24 @@ export interface WarningInputs {
    * saw dynamic inline-HTML islands it could not statically parse.
    */
   readonly jsInnerHtmlDeclinedCount?: number;
+  /**
+   * Per-file inline-HTML pattern samples — populated from
+   * {@link InlineHtmlPatternSample} entries on JS/TS source files where
+   * the routed parser produced zero findings. Drives the
+   * `warningsDetails.js_innerhtml_template_literal_unparsed.fileSamples`
+   * payload. Independent of {@link jsInnerHtmlDeclinedCount} — the
+   * count axis names dynamic-template literals the extractor declined,
+   * the samples axis names files where the parser ran but emitted no
+   * findings despite the source containing inline-HTML construction
+   * patterns. Either axis triggers the warning code; the payload
+   * carries whichever the caller threaded (typically both, since the
+   * detector is broader than the extractor's static path).
+   */
+  readonly jsInnerHtmlFileSamples?: readonly {
+    readonly path: string;
+    readonly line: number;
+    readonly pattern: string;
+  }[];
 }
 
 // MARKER_PROBE_002
@@ -1599,13 +1617,28 @@ export interface ScanWarningDetails {
   readonly parser_bailed_zero_findings?: BinaryPresenceMarker;
   readonly dist_only_scan_detected?: BinaryPresenceMarker;
   /**
-   * Binary-presence marker for the    * warning code — see that code's docblock on \ for the
-   * full emission predicate. No payload needed; the agent's routing
-   * signal is the code's presence in \. The agent should
-   * read the flagged JS/TS files and trace the dynamic HTML content
-   * through the insertion point.
+   * Payload for `js_innerhtml_template_literal_unparsed`. Carries up to
+   * five `{ path, line, pattern }` samples drawn from JS/TS source
+   * files where the detector saw an inline-HTML construction pattern
+   * (`innerHTML = \`…\``, `insertAdjacentHTML(…)`, `document.write(…)`,
+   * jQuery `.html(…)`) AND the routed parser produced zero findings on
+   * that path. The split between `declinedCount` (dynamic literals the
+   * extractor refused to parse) and `fileSamples` (paths the parser
+   * silently dropped) lets the agent route on each axis independently
+   * — the static-scan basis names which JS/TS files to grep through
+   * the insertion point, and the count names how much dynamic content
+   * the extractor's static path could not see. Per the AI-first
+   * doctrine "Routing skips that drop content are the symmetric twin
+   * of suppression."
    */
-  readonly js_innerhtml_template_literal_unparsed?: BinaryPresenceMarker;
+  readonly js_innerhtml_template_literal_unparsed?: {
+    readonly declinedCount?: number;
+    readonly fileSamples?: readonly {
+      readonly path: string;
+      readonly line: number;
+      readonly pattern: string;
+    }[];
+  };
 }
 
 /**
@@ -1718,7 +1751,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
   "dist_only_scan_detected",
-  "js_innerhtml_template_literal_unparsed",
 ]);
 
 /**
@@ -2093,16 +2125,25 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
 }
 
 /**
- * Emits `js_innerhtml_template_literal_unparsed` when the caller-
- * supplied declined count is positive. Extracted from
- * {@link computeScanWarnings} to keep its cognitive complexity under
- * the lint cap (same pattern as {@link parseErrorCodes} and
- * {@link scanShapeCodes}).
+ * Emits `js_innerhtml_template_literal_unparsed` when EITHER (a) the
+ * caller-supplied declined count is positive (the extractor saw a
+ * dynamic `${…}` template literal it could not statically parse) OR
+ * (b) the caller-supplied per-file pattern samples are non-empty (a
+ * JS/TS source contained an inline-HTML construction pattern AND the
+ * routed parser produced zero findings on that file). Both axes name
+ * the same routing-skip failure mode the AI-first doctrine calls out
+ * as "the symmetric twin of suppression"; the warning code is the
+ * single agent signal, the payload carries whichever evidence the
+ * caller threaded. Extracted from {@link computeScanWarnings} to keep
+ * its cognitive complexity under the lint cap (same pattern as
+ * {@link parseErrorCodes} and {@link scanShapeCodes}).
  */
 function inlineHtmlCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
-  if (typeof inputs.jsInnerHtmlDeclinedCount === "number" && inputs.jsInnerHtmlDeclinedCount > 0) {
-    return ["js_innerhtml_template_literal_unparsed"];
-  }
+  const declined =
+    typeof inputs.jsInnerHtmlDeclinedCount === "number" && inputs.jsInnerHtmlDeclinedCount > 0;
+  const samples =
+    inputs.jsInnerHtmlFileSamples !== undefined && inputs.jsInnerHtmlFileSamples.length > 0;
+  if (declined || samples) return ["js_innerhtml_template_literal_unparsed"];
   return [];
 }
 
@@ -2506,6 +2547,18 @@ type ScanMetaWarningArgs = {
    */
   readonly totalFindings?: number;
   readonly jsInnerHtmlDeclinedCount?: number;
+  /**
+   * Per-file inline-HTML pattern samples (path / line / pattern) where
+   * the routed parser produced zero findings on a file containing an
+   * inline-HTML construction pattern. Threaded directly to
+   * {@link WarningInputs.jsInnerHtmlFileSamples}; see that field's
+   * docblock for the cross-reference contract.
+   */
+  readonly jsInnerHtmlFileSamples?: readonly {
+    readonly path: string;
+    readonly line: number;
+    readonly pattern: string;
+  }[];
 };
 
 /**
@@ -2541,6 +2594,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "nearestConfigAncestor",
   "totalFindings",
   "jsInnerHtmlDeclinedCount",
+  "jsInnerHtmlFileSamples",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**
@@ -2660,6 +2714,14 @@ export function computeScanWarningDetails(
     {
       code: "response_meta_truncated",
       summarize: () => summarizeResponseMetaTruncated(inputs.metaArrayTruncatedFields),
+    },
+    {
+      code: "js_innerhtml_template_literal_unparsed",
+      summarize: () =>
+        summarizeJsInnerHtmlTemplateLiteralUnparsed(
+          inputs.jsInnerHtmlDeclinedCount,
+          inputs.jsInnerHtmlFileSamples,
+        ),
     },
   ];
   // warnings-details schema discipline: index payload helpers by
@@ -2939,6 +3001,52 @@ function summarizeResponseMetaTruncated(
   if (fields === undefined || fields.length === 0) return undefined;
   return { fields: [...fields] };
 }
+
+/**
+ * Builds the `js_innerhtml_template_literal_unparsed` payload from the
+ * caller-supplied declined count and per-file pattern samples. Returns
+ * `undefined` when both axes are empty so the dispatch table conditional-
+ * spreads the entry away (payload-vs-binary contract). When only one
+ * axis carries evidence the corresponding sub-field is omitted via
+ * conditional spread per CLAUDE.md §1 "Ambiguous field shapes are
+ * dishonest" — an absent sub-field means "no signal of this kind,"
+ * a present one means "this many declines / these specific paths."
+ *
+ * Sample list is sorted by path then line for deterministic wire
+ * shape across runs; the call site already capped per-file entries
+ * at {@link INLINE_HTML_PATTERN_SAMPLE_CAP} via the detector, but the
+ * helper applies the same cap defensively in case multiple files
+ * each contributed a sample.
+ */
+function summarizeJsInnerHtmlTemplateLiteralUnparsed(
+  declinedCount: WarningInputs["jsInnerHtmlDeclinedCount"],
+  samples: WarningInputs["jsInnerHtmlFileSamples"],
+): NonNullable<ScanWarningDetails["js_innerhtml_template_literal_unparsed"]> | undefined {
+  const declined = typeof declinedCount === "number" && declinedCount > 0 ? declinedCount : 0;
+  const samplesPresent = samples !== undefined && samples.length > 0;
+  if (declined === 0 && !samplesPresent) return undefined;
+  const sortedSamples = samplesPresent
+    ? [...samples]
+        .sort(
+          (a, b) =>
+            a.path.localeCompare(b.path) || a.line - b.line || a.pattern.localeCompare(b.pattern),
+        )
+        .slice(0, INLINE_HTML_FILE_SAMPLES_CAP)
+    : undefined;
+  return {
+    ...(declined > 0 ? { declinedCount: declined } : {}),
+    ...(sortedSamples === undefined ? {} : { fileSamples: sortedSamples }),
+  };
+}
+
+/**
+ * Hard cap on the number of `{ path, line, pattern }` entries surfaced
+ * on `warningsDetails.js_innerhtml_template_literal_unparsed.fileSamples`.
+ * Five mirrors the per-file detector cap (see
+ * {@link import("../input/parsers/inline-html.ts").INLINE_HTML_PATTERN_SAMPLE_CAP})
+ * so the wire payload stays bounded even when many files contributed.
+ */
+const INLINE_HTML_FILE_SAMPLES_CAP = 5;
 
 /**
  * Builds the `vendor_css_dominates_findings` payload from the

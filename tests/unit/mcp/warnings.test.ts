@@ -2501,3 +2501,99 @@ describe("computeScanWarnings — animation_library_without_reduced_motion_guard
     expect(out.warningsDetails?.cwd_appears_misrooted).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// js_innerhtml_template_literal_unparsed — emission predicate + payload
+// ---------------------------------------------------------------------------
+// The warning code names a routing-skip failure mode the doctrine flags:
+// inline-HTML islands inside JS/TS source whose payload the static path
+// either declined (dynamic `${…}` literals) OR couldn't see through the
+// router's coverage (file produced zero findings). Both axes drive the
+// same code; the payload carries whichever evidence the caller threaded.
+
+describe("computeScanWarnings — js_innerhtml_template_literal_unparsed", () => {
+  it("fires when a dynamic template literal was declined (declinedCount > 0)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".js": 5 },
+      jsInnerHtmlDeclinedCount: 1,
+    });
+    expect(codes).toContain("js_innerhtml_template_literal_unparsed");
+  });
+
+  it("fires when fileSamples is non-empty even with declinedCount = 0", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".js": 5 },
+      jsInnerHtmlFileSamples: [{ path: "src/widget.js", line: 12, pattern: "innerHTML" }],
+    });
+    expect(codes).toContain("js_innerhtml_template_literal_unparsed");
+  });
+
+  it("does NOT fire when both axes are empty / undefined", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".js": 5 },
+    });
+    expect(codes ?? []).not.toContain("js_innerhtml_template_literal_unparsed");
+  });
+
+  it("payload carries declinedCount + fileSamples on the warningsDetails channel", () => {
+    const out = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 5 },
+      jsInnerHtmlDeclinedCount: 2,
+      jsInnerHtmlFileSamples: [
+        { path: "src/widget.js", line: 12, pattern: "innerHTML" },
+        { path: "src/modal.js", line: 7, pattern: "insertAdjacentHTML" },
+      ],
+    });
+    expect(out.warnings).toContain("js_innerhtml_template_literal_unparsed");
+    const detail = out.warningsDetails?.js_innerhtml_template_literal_unparsed;
+    expect(detail).toBeDefined();
+    expect(detail?.declinedCount).toBe(2);
+    expect(detail?.fileSamples?.length).toBe(2);
+  });
+
+  it("payload omits declinedCount sub-field when declined was zero (present-when-meaningful)", () => {
+    const out = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 5 },
+      jsInnerHtmlFileSamples: [{ path: "src/x.js", line: 1, pattern: "jquery.html" }],
+    });
+    const detail = out.warningsDetails?.js_innerhtml_template_literal_unparsed;
+    expect(detail).toBeDefined();
+    expect(detail?.declinedCount).toBeUndefined();
+    expect(detail?.fileSamples?.length).toBe(1);
+  });
+
+  it("payload omits fileSamples sub-field when no samples were threaded (present-when-meaningful)", () => {
+    const out = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 5 },
+      jsInnerHtmlDeclinedCount: 3,
+    });
+    const detail = out.warningsDetails?.js_innerhtml_template_literal_unparsed;
+    expect(detail).toBeDefined();
+    expect(detail?.declinedCount).toBe(3);
+    expect(detail?.fileSamples).toBeUndefined();
+  });
+});
