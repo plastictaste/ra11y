@@ -511,7 +511,32 @@ export type ScanWarningCode =
   // accessibility concern. Surface-don't-suppress: every rule that runs
   // against parsed source files already ran; the warning names the
   // runtime-injection gap the static scan could not close.
-  | "js_innerhtml_template_literal_unparsed";
+  | "js_innerhtml_template_literal_unparsed"
+  // at least one scanned HTML file
+  // declared a `<link rel="stylesheet" href="…">` reference whose target
+  // the contrast-rule resolution did not consult — the static rule
+  // operates on the parsed CSS / SCSS files in isolation and does not
+  // follow link references from HTML into linked stylesheets, so any
+  // tokens / color usages the linked sheet would have provided stay
+  // outside the rule's evidence horizon. Without this code, an HTML
+  // scan against a multi-page site that links a single bundled
+  // stylesheet (e.g. `bootstrap.min.css`) reads as `findings: []` with
+  // `coverageConfidence: "high"` despite the contrast scan having no
+  // visibility into the linked color tokens — the canonical
+  // "Routing skips that drop content are the symmetric twin of
+  // suppression" failure mode one layer deeper than the parse-time
+  // skip warnings. Per the framing "deferring full resolution is
+  // acceptable, silent omission is not": the detector does not attempt
+  // to resolve the linked sheet inline (full resolution is out of scope
+  // for this surface) — it just names the unresolved hrefs so the agent
+  // can scope a follow-up via `additionalPaths` (point the linked path
+  // at the scan), `propose_config` (add the on-disk equivalent), or a
+  // separate `scan` against the linked CSS file. Paired payload:
+  // `warningsDetails.linked_stylesheet_not_resolved_for_contrast`
+  // carries `{ count, htmlFiles, topUnresolvedHrefs }` so the agent
+  // branches on identity (which pages, which hrefs?) without re-walking
+  // the per-file AST.
+  | "linked_stylesheet_not_resolved_for_contrast";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -872,6 +897,26 @@ export interface WarningInputs {
     readonly line: number;
     readonly pattern: string;
   }[];
+  /**
+   * caller-supplied detection from
+   * {@link import("./scan-assembly.ts").detectLinkedStylesheetsNotResolvedForContrast}.
+   * Names the HTML files that declared a `<link rel="stylesheet"
+   * href="…">` reference whose target the contrast rule did not consult
+   * during resolution. Drives the
+   * `linked_stylesheet_not_resolved_for_contrast` code + its paired
+   * `warningsDetails` payload. The detector lives at the assembly seam
+   * so this module stays pure over its inputs — the predicate walks
+   * parsed HTML ASTs and returns the deterministic
+   * `{ count, htmlFiles, topUnresolvedHrefs }` shape directly.
+   *
+   * Pass `undefined` when the caller did not run the detector (e.g.
+   * `scan` against arbitrary paths where the parsed-file list is not
+   * threaded through the scan-time-warnings aggregator). The code
+   * drops conservatively when this field is absent or its `count` is
+   * zero. Empty `htmlFiles` (with `count: 0`) is treated identically
+   * to `undefined`.
+   */
+  readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
 }
 
 // MARKER_PROBE_002
@@ -1783,6 +1828,39 @@ export interface ScanWarningDetails {
       readonly pattern: string;
     }[];
   };
+  /**
+   * Payload for `linked_stylesheet_not_resolved_for_contrast`. Carries
+   * the unresolved-link tally so an agent reading the warning channel
+   * can scope a follow-up without re-walking the per-file AST.
+   *
+   * - `count` — total number of `(htmlFile, href)` pairs the detector
+   *   saw across the scan (pre-cap on the href list). Distinct from
+   *   `topUnresolvedHrefs.length` because one href can repeat across
+   *   pages and one page can carry multiple links.
+   * - `htmlFiles` — sorted-ascending list of HTML files that declared
+   *   at least one unresolved `<link rel="stylesheet" href="…">`.
+   * - `topUnresolvedHrefs` — sorted-ascending, de-duplicated href
+   *   slice capped at the implementation's top-paths limit (see
+   *   {@link import("./scan-assembly.ts").detectLinkedStylesheetsNotResolvedForContrast}).
+   *   Same pattern as `sourcemap_files_excluded.topPaths`: the cap
+   *   keeps the wire payload bounded on bulk-vendor corpora while
+   *   preserving the dominant-href shape an agent reads to decide
+   *   whether the unresolved set is one shared bundle or a
+   *   heterogeneous fan-out.
+   *
+   * Per "deferring full resolution is acceptable, silent omission is
+   * not" — the payload is additive routing telemetry. The contrast
+   * rule's findings stay unchanged; the warning tells the agent which
+   * pages and which hrefs to either scope into the scan via
+   * `additionalPaths` (when the linked sheet is in the corpus) or
+   * audit separately (when the link resolves to a remote CDN URL the
+   * scanner cannot consult).
+   */
+  readonly linked_stylesheet_not_resolved_for_contrast?: {
+    readonly count: number;
+    readonly htmlFiles: readonly string[];
+    readonly topUnresolvedHrefs: readonly string[];
+  };
 }
 
 /**
@@ -1959,6 +2037,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "dist_only_scan_detected",
   "cwd_appears_misrooted",
   "js_innerhtml_template_literal_unparsed",
+  "linked_stylesheet_not_resolved_for_contrast",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -2298,6 +2377,20 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // least one dynamic innerHTML/insertAdjacentHTML/document.write
   // template literal — see `inlineHtmlCodes`.
   out.push(...inlineHtmlCodes(inputs));
+  if (hasLinkedStylesheetsUnresolvedForContrast(inputs.linkedStylesheetsUnresolvedForContrast)) {
+    // at least one scanned HTML file declared
+    // a `<link rel="stylesheet" href="…">` whose target the contrast
+    // rule did not consult during resolution. Per the AI-first
+    // "Routing skips that drop content are the symmetric twin of
+    // suppression" doctrine, the silent omission is exactly the
+    // failure mode the warning channel exists to surface — the
+    // detector lives at the assembly seam (`scan-assembly.ts`) so
+    // this module stays pure over its inputs. Findings are unchanged;
+    // the warning is additive routing telemetry the agent reads to
+    // decide whether to scope a follow-up via `additionalPaths`,
+    // `propose_config`, or a separate `scan` against the linked CSS.
+    out.push("linked_stylesheet_not_resolved_for_contrast");
+  }
   return out;
 }
 
@@ -2322,6 +2415,23 @@ function inlineHtmlCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
     inputs.jsInnerHtmlFileSamples !== undefined && inputs.jsInnerHtmlFileSamples.length > 0;
   if (declined || samples) return ["js_innerhtml_template_literal_unparsed"];
   return [];
+}
+
+/**
+ * Predicate for `linked_stylesheet_not_resolved_for_contrast`. Returns
+ * `true` when the caller-supplied detection carries a non-zero pair
+ * count AND a non-empty file list. Pure over its input; the cross-
+ * reference between HTML AST and `<link rel="stylesheet">` references
+ * lives at the call site (`detectLinkedStylesheetsNotResolvedForContrast`
+ * in `./scan-assembly.ts`) so this module stays decoupled from the
+ * parser-AST traversal.
+ */
+function hasLinkedStylesheetsUnresolvedForContrast(
+  detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
+): boolean {
+  if (detection === undefined) return false;
+  if (detection.count <= 0) return false;
+  return detection.htmlFiles.length > 0;
 }
 
 /**
@@ -2793,6 +2903,14 @@ type ScanMetaWarningArgs = {
     readonly line: number;
     readonly pattern: string;
   }[];
+  /**
+   * Pass-through for the linked-stylesheet detection. See
+   * {@link WarningInputs.linkedStylesheetsUnresolvedForContrast} — same
+   * shape, threaded directly so the warnings module stays pure over its
+   * inputs and the detector at the assembly seam remains the sole
+   * source for the predicate.
+   */
+  readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
 };
 
 /**
@@ -2829,6 +2947,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "totalFindings",
   "jsInnerHtmlDeclinedCount",
   "jsInnerHtmlFileSamples",
+  "linkedStylesheetsUnresolvedForContrast",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**
@@ -2963,6 +3082,13 @@ export function computeScanWarningDetails(
         summarizeJsInnerHtmlTemplateLiteralUnparsed(
           inputs.jsInnerHtmlDeclinedCount,
           inputs.jsInnerHtmlFileSamples,
+        ),
+    },
+    {
+      code: "linked_stylesheet_not_resolved_for_contrast",
+      summarize: () =>
+        summarizeLinkedStylesheetsUnresolvedForContrast(
+          inputs.linkedStylesheetsUnresolvedForContrast,
         ),
     },
   ];
@@ -3289,6 +3415,30 @@ function summarizeJsInnerHtmlTemplateLiteralUnparsed(
  * so the wire payload stays bounded even when many files contributed.
  */
 const INLINE_HTML_FILE_SAMPLES_CAP = 5;
+
+/**
+ * Builds the `linked_stylesheet_not_resolved_for_contrast` payload from
+ * the caller-supplied detection. Returns `undefined` when the detection
+ * is absent, when the count is zero, or when the file list is empty —
+ * any of those indicate the predicate did not honestly fire and
+ * surfacing a degenerate payload would lie about the evidence. Pure
+ * shape-builder; the detector at the call site
+ * (`detectLinkedStylesheetsNotResolvedForContrast` in `./scan-assembly.ts`)
+ * already sorts the lists deterministically, so this helper passes
+ * them through verbatim.
+ */
+function summarizeLinkedStylesheetsUnresolvedForContrast(
+  detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
+): NonNullable<ScanWarningDetails["linked_stylesheet_not_resolved_for_contrast"]> | undefined {
+  if (detection === undefined) return undefined;
+  if (detection.count <= 0) return undefined;
+  if (detection.htmlFiles.length === 0) return undefined;
+  return {
+    count: detection.count,
+    htmlFiles: detection.htmlFiles,
+    topUnresolvedHrefs: detection.topUnresolvedHrefs,
+  };
+}
 
 /**
  * Builds the `vendor_css_dominates_findings` payload from the

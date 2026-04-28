@@ -143,6 +143,23 @@ async function makeBuildArtifactFixture(): Promise<string> {
 }
 
 /**
+ * Fixture seeding `linked_stylesheet_not_resolved_for_contrast` —
+ * an HTML page that declares `<link rel="stylesheet" href="…">`
+ * referencing a stylesheet the contrast rule does not consult during
+ * resolution. Cross-surface invariant: the warning must fire identically
+ * on every project-rooted tool reading the same cwd, not just on
+ * scan_project.
+ */
+async function makeLinkedStylesheetFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-warns-linkstyle-"));
+  await writeFile(
+    join(dir, "page.html"),
+    `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"></head><body><main><p>hi</p></main></body></html>`,
+  );
+  return dir;
+}
+
+/**
  * Smaller clean fixture used for the negative case: every project-
  * rooted tool produces the same (possibly empty) scan-time code set.
  * Verifies the invariant holds even when the only fired code is
@@ -186,6 +203,28 @@ describe("scan-time warning code parity across scan_project / checklist / covera
     expect(sp.has("text_source_skipped")).toBe(true);
     expect(sp.has("scanned_minified_file")).toBe(true);
 
+    expect([...cv].sort()).toEqual([...sp].sort());
+    expect([...cl].sort()).toEqual([...sp].sort());
+  });
+
+  it("emits `linked_stylesheet_not_resolved_for_contrast` identically across scan_project / coverage / checklist", async () => {
+    const dir = await makeLinkedStylesheetFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const sp = scanTimeCodeSet(body<WarningEnvelope>(responses[1]));
+    const cv = scanTimeCodeSet(body<WarningEnvelope>(responses[2]));
+    const cl = scanTimeCodeSet(body<WarningEnvelope>(responses[3]));
+
+    // Sanity: scan_project fires the linked-stylesheet code on the
+    // fixture (one HTML page declaring an unresolved
+    // `<link rel="stylesheet">`).
+    expect(sp.has("linked_stylesheet_not_resolved_for_contrast")).toBe(true);
+    expect(cv.has("linked_stylesheet_not_resolved_for_contrast")).toBe(true);
+    expect(cl.has("linked_stylesheet_not_resolved_for_contrast")).toBe(true);
     expect([...cv].sort()).toEqual([...sp].sort());
     expect([...cl].sort()).toEqual([...sp].sort());
   });

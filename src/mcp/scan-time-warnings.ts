@@ -53,7 +53,11 @@ import {
   type ScannedBuildArtifact,
 } from "./build-artifacts.ts";
 import { type BulkCatalogDetection, detectBulkCatalog } from "./bulk-catalog.ts";
-import { detectScssUnresolvedVariableFiles } from "./scan-assembly.ts";
+import {
+  detectLinkedStylesheetsNotResolvedForContrast,
+  detectScssUnresolvedVariableFiles,
+  type LinkedStylesheetsUnresolvedForContrast,
+} from "./scan-assembly.ts";
 import {
   ANIMATION_LIB_GUARD_FINDING_FLOOR,
   computeTemplateDirectiveOverlap,
@@ -210,6 +214,7 @@ interface DerivedBuildArtifactSignals {
     readonly line: number;
     readonly pattern: string;
   }[];
+  readonly linkedStylesheetsUnresolvedForContrast: LinkedStylesheetsUnresolvedForContrast;
 }
 
 function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuildArtifactSignals {
@@ -281,6 +286,18 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     findingBearingPaths,
   );
 
+  // Cross-reference parsed HTML inputs against
+  // `<link rel="stylesheet" href="…">` references the contrast rule
+  // does not consult during resolution. The detector is pure over the
+  // parsed-file list; the predicate fires when at least one HTML page
+  // declares an unresolved link, which is enough evidence for the
+  // warning channel to surface the silent omission per the AI-first
+  // "Routing skips that drop content are the symmetric twin of
+  // suppression" doctrine.
+  const linkedStylesheetsUnresolvedForContrast = detectLinkedStylesheetsNotResolvedForContrast(
+    inputs.parsedFiles,
+  );
+
   return {
     buildArtifactEntries,
     buildArtifactsMetaField,
@@ -296,6 +313,7 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     filesScanned,
     totalFindings,
     jsInnerHtmlFileSamples,
+    linkedStylesheetsUnresolvedForContrast,
   };
 }
 
@@ -380,6 +398,11 @@ function buildWarningsFieldInputs(
     ...(inputs.nearestConfigAncestor === undefined
       ? {}
       : { nearestConfigAncestor: inputs.nearestConfigAncestor }),
+    ...(derived.linkedStylesheetsUnresolvedForContrast.count === 0
+      ? {}
+      : {
+          linkedStylesheetsUnresolvedForContrast: derived.linkedStylesheetsUnresolvedForContrast,
+        }),
   };
 }
 

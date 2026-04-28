@@ -2856,3 +2856,80 @@ describe("computeScanWarnings — js_innerhtml_template_literal_unparsed", () =>
     expect(detail?.fileSamples).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// linked_stylesheet_not_resolved_for_contrast — emission predicate + payload
+// ---------------------------------------------------------------------------
+// Scanning HTML files that link to external stylesheets does not pull
+// the linked sheets into contrast-rule resolution. Without this code,
+// a multi-page site whose `<link rel="stylesheet" href="bootstrap.min.css">`
+// pages return `findings: []` reads as a clean scan when the reality is
+// that the entire color substrate was outside the rule's evidence
+// horizon. Surface-don't-suppress: deferring full resolution is
+// acceptable; silent omission is not.
+
+describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", () => {
+  it("fires when at least one HTML file declared an unresolved link-stylesheet href", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        count: 14,
+        htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
+        topUnresolvedHrefs: ["css/bootstrap.min.css"],
+      },
+    });
+    expect(codes).toContain("linked_stylesheet_not_resolved_for_contrast");
+  });
+
+  it("does NOT fire when the detection is absent (caller did not run the detector)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 14 },
+    });
+    expect(codes ?? []).not.toContain("linked_stylesheet_not_resolved_for_contrast");
+  });
+
+  it("does NOT fire when the detection is empty (zero count, no html files)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        count: 0,
+        htmlFiles: [],
+        topUnresolvedHrefs: [],
+      },
+    });
+    expect(codes ?? []).not.toContain("linked_stylesheet_not_resolved_for_contrast");
+  });
+
+  it("payload carries count, htmlFiles, and topUnresolvedHrefs on the warningsDetails channel", () => {
+    const out = warningsField({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        count: 28,
+        htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
+        topUnresolvedHrefs: ["css/bootstrap.min.css", "css/theme.css"],
+      },
+    });
+    expect(out.warnings).toContain("linked_stylesheet_not_resolved_for_contrast");
+    const detail = out.warningsDetails?.linked_stylesheet_not_resolved_for_contrast;
+    expect(detail).toBeDefined();
+    expect(detail?.count).toBe(28);
+    expect(detail?.htmlFiles?.length).toBe(2);
+    expect(detail?.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
+  });
+});

@@ -40,7 +40,11 @@ import {
 } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
-import { withTopRules, withViolationsByScanKind } from "./scan-assembly.ts";
+import {
+  detectLinkedStylesheetsNotResolvedForContrast,
+  withTopRules,
+  withViolationsByScanKind,
+} from "./scan-assembly.ts";
 import { GROUP_BY_VALUES, readGroupByParam, withByGroup } from "./scan-group-by.ts";
 import { assembleScanProjectResponse } from "./scan-project-budget.ts";
 import {
@@ -834,6 +838,14 @@ function buildBaseWarningsForScanProject(args: {
     jsInnerHtmlPatternSamples,
     formatted.files,
   );
+  // Cross-reference parsed HTML inputs against
+  // `<link rel="stylesheet" href="…">` references the contrast rule
+  // does not consult during resolution. The detector is pure over the
+  // parsed-file list; the warning channel surfaces the silent omission
+  // per the AI-first "Routing skips that drop content are the symmetric
+  // twin of suppression" doctrine.
+  const linkedStylesheetsUnresolvedForContrast =
+    detectLinkedStylesheetsNotResolvedForContrast(parsedFiles);
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -890,6 +902,12 @@ function buildBaseWarningsForScanProject(args: {
     ...(jsInnerHtmlFileSamplesForPayload.length === 0
       ? {}
       : { jsInnerHtmlFileSamples: jsInnerHtmlFileSamplesForPayload }),
+    // detector ran upstream on the
+    // parsed-file list; conditional-spread keeps the input absent when
+    // no HTML file declared an unresolved `<link rel="stylesheet">`.
+    ...(linkedStylesheetsUnresolvedForContrast.count === 0
+      ? {}
+      : { linkedStylesheetsUnresolvedForContrast }),
     // thread the total finding count
     // so the warnings module can fire `parser_bailed_zero_findings`
     // on the canonical "parse errors present + zero findings overall"

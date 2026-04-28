@@ -89,6 +89,7 @@ import {
   buildScanMeta,
   buildScanPlan,
   detectFragmentFiles,
+  detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
   partitionParseStateFiles,
@@ -315,6 +316,7 @@ function buildAssemblerWarningsField(args: {
   readonly configSearchSawProjectMarker: boolean | undefined;
   readonly configSearchedFromForWarning: string | undefined;
   readonly scssUnresolvedVariableFiles?: readonly string[];
+  readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
 }): {
   readonly warnings?: readonly ScanWarningCode[];
   readonly warningsDetails?: ScanWarningDetails;
@@ -368,6 +370,12 @@ function buildAssemblerWarningsField(args: {
     args.scssUnresolvedVariableFiles.length === 0
       ? {}
       : { scssUnresolvedVariableFiles: args.scssUnresolvedVariableFiles }),
+    ...(args.linkedStylesheetsUnresolvedForContrast === undefined ||
+    args.linkedStylesheetsUnresolvedForContrast.count === 0
+      ? {}
+      : {
+          linkedStylesheetsUnresolvedForContrast: args.linkedStylesheetsUnresolvedForContrast,
+        }),
   });
 }
 
@@ -592,6 +600,13 @@ export function assembleScanFamilyResponse(
 
   // (8) Warnings channel — extracted to keep this orchestrator's
   // cognitive complexity inside the lint cap as new signals accrete.
+  // Cross-reference parsed HTML inputs against
+  // `<link rel="stylesheet" href="…">` references the contrast rule
+  // does not consult during resolution, surfaced via the warning
+  // channel per the AI-first "Routing skips that drop content are
+  // the symmetric twin of suppression" doctrine.
+  const linkedStylesheetsUnresolvedForContrast =
+    detectLinkedStylesheetsNotResolvedForContrast(parsedFiles);
   const warnFields = buildAssemblerWarningsField({
     meta,
     violations,
@@ -604,6 +619,9 @@ export function assembleScanFamilyResponse(
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
+    ...(linkedStylesheetsUnresolvedForContrast.count === 0
+      ? {}
+      : { linkedStylesheetsUnresolvedForContrast }),
   });
 
   // The three-totals `meta.countsBySurface` tripwire was dropped per

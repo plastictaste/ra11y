@@ -29,6 +29,18 @@ import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 import { wrappersMetaBlock } from "./wrappers-meta.ts";
 
+// Re-export the linked-stylesheet detector + its result shape so call
+// sites that already import from `scan-assembly.ts` (response-assembler,
+// scan-time-warnings, tool-scan-project) keep one canonical entry
+// point for "things assembled at the scan-meta seam." The detector
+// lives in `./linked-stylesheets.ts` to keep this orchestrator under
+// the file-size budget — same split pattern as the analysis-coverage
+// helpers extracted into `./analysis-coverage-*.ts`.
+export {
+  detectLinkedStylesheetsNotResolvedForContrast,
+  type LinkedStylesheetsUnresolvedForContrast,
+} from "./linked-stylesheets.ts";
+
 /**
  * Packs the `plan` block for `ScanFormatted`. Downstream tool handlers
  * consume the result verbatim — the `limitations` prose, the

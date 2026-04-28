@@ -26,6 +26,7 @@ import {
   applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   computeTopRules,
+  detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
   splitViolationsByScanKind,
   sumFindingsAcrossFiles,
@@ -549,7 +550,7 @@ describe("detectScssUnresolvedVariableFiles", () => {
   });
 
   it("ignores non-.scss files (CSS / HTML / TSX) regardless of source content", () => {
-    function htmlFile(path: string, source: string): ParsedFile {
+    function htmlFileLocal(path: string, source: string): ParsedFile {
       const parsed = parseHtml(source);
       return {
         filePath: path,
@@ -557,8 +558,82 @@ describe("detectScssUnresolvedVariableFiles", () => {
         ast: { language: "html", root: parsed.root, errors: parsed.errors },
       };
     }
-    const html = htmlFile("/a.html", "<html><body>$primary:</body></html>");
+    const html = htmlFileLocal("/a.html", "<html><body>$primary:</body></html>");
     expect(detectScssUnresolvedVariableFiles([html])).toEqual([]);
+  });
+});
+
+describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
+  it('returns the unresolved-link tally when an HTML page declares `<link rel="stylesheet">`', () => {
+    const html = htmlFile(
+      "/proj/page.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"></head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.count).toBe(1);
+    expect(result.htmlFiles).toEqual(["/proj/page.html"]);
+    expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
+  });
+
+  it("returns empty tally when no HTML file declared a stylesheet link", () => {
+    const html = htmlFile(
+      "/proj/page.html",
+      `<!DOCTYPE html><html lang="en"><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.count).toBe(0);
+    expect(result.htmlFiles).toEqual([]);
+    expect(result.topUnresolvedHrefs).toEqual([]);
+  });
+
+  it('ignores `rel="alternate stylesheet"` and preload-shaped variants (different resolution paths)', () => {
+    const html = htmlFile(
+      "/proj/page.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="alternate stylesheet" href="alt.css"><link rel="preload" as="style" href="hot.css"></head><body><p>hi</p></body></html>`,
+    );
+    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).count).toBe(0);
+  });
+
+  it("ignores fragment HTML (no `<html>`/`<body>`) — partials don't establish a link-resolution context", () => {
+    const html = htmlFile(
+      "/proj/_partials/header.html",
+      `<link rel="stylesheet" href="bootstrap.min.css"><nav>hi</nav>`,
+    );
+    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).count).toBe(0);
+  });
+
+  it("ignores `<link>` elements without a non-empty href", () => {
+    const html = htmlFile(
+      "/proj/page.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet"><link rel="stylesheet" href=""></head><body><p>hi</p></body></html>`,
+    );
+    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).count).toBe(0);
+  });
+
+  it("de-duplicates hrefs across pages and returns sorted-ascending lists deterministically", () => {
+    const a = htmlFile(
+      "/proj/page-z.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/theme.css"></head><body><p>hi</p></body></html>`,
+    );
+    const b = htmlFile(
+      "/proj/page-a.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"><link rel="stylesheet" href="css/theme.css"></head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([a, b]);
+    expect(result.count).toBe(3);
+    expect(result.htmlFiles).toEqual(["/proj/page-a.html", "/proj/page-z.html"]);
+    expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
+  });
+
+  it("ignores non-HTML files (SCSS / TSX) regardless of source content", () => {
+    const source = `.btn { color: red; }\n`;
+    const parsed = parseScss(source);
+    const scss: ParsedFile = {
+      filePath: "/proj/style.scss",
+      source,
+      ast: { language: "css", root: parsed.root, errors: [...parsed.errors] },
+    };
+    expect(detectLinkedStylesheetsNotResolvedForContrast([scss]).count).toBe(0);
   });
 });
 
