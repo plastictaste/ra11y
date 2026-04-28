@@ -435,27 +435,37 @@ describe("rule semantics/heading-hierarchy", () => {
         expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
       });
 
-      it("does NOT suppress no-h1 when only <head> is present (head-only is not a fragment)", () => {
-        // Branch (a) requires ALL of <html>/<body>/<head> absent. A
-        // file with only <head> doesn't qualify — the legacy emit fires
-        // (because there's at least one heading other than h1 and the
-        // file isn't classified as a fragment by branch (a)).
+      it("suppresses no-h1 when only <head> is present (no <html> opener)", () => {
+        // The shared classifier's `hasHtmlOpener` signal fires on
+        // `<html>` / `<body>` (AST or source token) — `<head>` alone
+        // does NOT positively declare page intent. A `<head>`-only
+        // partial (e.g. a Jekyll `_includes/head.html` injected into
+        // a parent layout's `<head>`) classifies as a fragment, and
+        // document-shape rules suppress because the parent layout
+        // supplies the envelope.
         const v = runRule(rule, "<head><title>X</title></head><h2>Sec</h2>", {
           filePath: "page.html",
         });
-        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
       });
     });
 
-    describe("branch (b) — `---` front-matter delimiter", () => {
-      it("suppresses no-h1 on a file beginning with `---` front-matter", () => {
+    describe("hasHtmlOpener veto — front-matter alone does NOT suppress", () => {
+      it("DOES emit no-h1 on a file with `---` front-matter AND <html>", () => {
+        // Q10 closure: a front-matter Jekyll page with `<html>` in
+        // source IS a self-contained page. The prior OR-branch
+        // predicate over-suppressed via the front-matter delimiter; the
+        // tightened AND-conjunction respects the `<html>` opener.
         const source = "---\ntitle: Intro\n---\n<html><body><h2>Section</h2></body></html>";
         const v = runRule(rule, source, { filePath: "page.html" });
-        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
       });
 
-      it("suppresses no-h1 on a front-matter file with bare heading body", () => {
-        // Front-matter alone is conclusive — even with no envelope.
+      it("suppresses no-h1 on a front-matter file with bare heading body (no <html>)", () => {
+        // The realistic Jekyll content shape: front-matter declaring
+        // `layout: post`, then the body the parent layout will wrap.
+        // No `<html>` opener, no layout-shape composition directive,
+        // not in a layouts dir → fragment per the shared classifier.
         const source = "---\ntitle: Foo\nlayout: post\n---\n<h3>Body heading</h3>";
         const v = runRule(rule, source, { filePath: "post.html" });
         expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
@@ -478,53 +488,76 @@ describe("rule semantics/heading-hierarchy", () => {
       });
     });
 
-    describe("branch (c) — fragment-convention path", () => {
-      it("suppresses no-h1 on `_includes/` path", () => {
-        const v = runRule(rule, "<html><body><h3>Header text</h3></body></html>", {
+    describe("inLayoutsDir veto — `_layouts/` and `layouts/` only", () => {
+      // The shared classifier scopes "layouts dir" narrowly to
+      // `_layouts/` and `layouts/`. Partial dirs (`_includes/`,
+      // `_partials/`, `partials/`, `components/`) are NOT layouts dirs
+      // — files there remain eligible for fragment classification when
+      // their structural / source evidence holds (no `<html>` opener,
+      // no layout directive). A partial that DOES ship `<html>` in
+      // source is treated as a self-contained page and the rule emits.
+
+      it("suppresses no-h1 on `_includes/` partial without an <html> opener", () => {
+        // Realistic Jekyll partial: just the body the parent layout
+        // composes around.
+        const v = runRule(rule, "<h3>Header text</h3>", {
           filePath: "site/_includes/header.html",
         });
         expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
       });
 
-      it("suppresses no-h1 on `_layouts/` path", () => {
+      it("DOES emit no-h1 on `_includes/` path when the file has an <html> opener", () => {
+        // The path alone does not veto fragment — the `<html>` opener
+        // does. A self-contained page placed in `_includes/` (rare but
+        // observable) is treated as a page.
+        const v = runRule(rule, "<html><body><h3>Header text</h3></body></html>", {
+          filePath: "site/_includes/header.html",
+        });
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      });
+
+      it("DOES emit no-h1 on `_layouts/` path when the file has an <html> opener", () => {
+        // Q10 closure: a `_layouts/default.html` shipping `<html>` IS
+        // the page envelope and should emit. The prior OR-branch
+        // predicate over-suppressed via the path branch.
         const v = runRule(rule, "<html><body><h2>Layout</h2></body></html>", {
           filePath: "_layouts/default.html",
         });
-        expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
       });
 
-      it("suppresses no-h1 on `_partials/` path", () => {
-        const v = runRule(rule, "<html><body><h2>Partial</h2></body></html>", {
+      it("suppresses no-h1 on `_partials/` partial without an <html> opener", () => {
+        const v = runRule(rule, "<h2>Partial</h2>", {
           filePath: "src/_partials/sidebar.html",
         });
         expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
       });
 
-      it("suppresses no-h1 on `partials/` path (no leading underscore)", () => {
-        const v = runRule(rule, "<html><body><h2>Partial</h2></body></html>", {
+      it("suppresses no-h1 on `partials/` partial (no leading underscore, no <html>)", () => {
+        const v = runRule(rule, "<h2>Partial</h2>", {
           filePath: "templates/partials/header.html",
         });
         expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
       });
 
-      it("suppresses no-h1 on `components/` path", () => {
-        const v = runRule(rule, "<html><body><h2>Card</h2></body></html>", {
+      it("suppresses no-h1 on `components/` fragment without an <html> opener", () => {
+        const v = runRule(rule, "<h2>Card</h2>", {
           filePath: "src/components/card.html",
         });
         expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
       });
 
-      it("requires segment-flanked match — `mycomponents/` does NOT trigger", () => {
+      it("requires segment-flanked match — `mycomponents/` does NOT veto fragment", () => {
         const v = runRule(rule, "<html><body><h2>Section</h2></body></html>", {
           filePath: "src/mycomponents/page.html",
         });
         expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
       });
 
-      it("does NOT classify `_docs/` as a fragment path (still a partial path)", () => {
-        // `_docs/` is in PARTIAL_PATH_SEGMENTS but NOT
-        // FRAGMENT_PATH_SEGMENTS — the file emits with partial
-        // enrichment rather than being suppressed.
+      it("does NOT classify `_docs/` as a layouts dir (still a partial path)", () => {
+        // `_docs/` is in PARTIAL_PATH_SEGMENTS but NOT a layouts dir —
+        // the file emits with partial enrichment rather than being
+        // suppressed.
         const v = runRule(rule, "<html><body><h5>Subsection</h5></body></html>", {
           filePath: "_docs/intro.html",
         });

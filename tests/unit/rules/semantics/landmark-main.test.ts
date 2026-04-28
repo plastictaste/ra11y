@@ -442,21 +442,50 @@ describe("rule semantics/landmark-main", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("does NOT fire on a page with `---` front-matter (fragment-file gate)", () => {
-      // Front-matter at the top of the file is conclusive evidence the
-      // file is content composed into a parent layout — the parent
-      // supplies the <main> landmark. Per-
-      // EMISSION, the fragment-file gate suppresses the missing-<main>
-      // emit on these files outright (the previous "enriched fire"
-      // shape over-surfaced — the agent had to re-read each cited file
-      // to learn the composition was intentional). The dedicated
-      // fragment-file gate block below covers the three branches of
-      // `isFragmentFile` exhaustively.
+    it("does NOT fire on a fragment page with `---` front-matter and no <html>", () => {
+      // A typical Jekyll content page: front-matter + body content, no
+      // `<html>` opener (the parent layout supplies the envelope at
+      // render time). Under the shared fragment classifier this is a
+      // fragment (no html, no layout-shape directive, not in a layouts
+      // dir) and the rule suppresses outright. The realistic shape:
+      // authors who declare `layout: default` in front-matter do NOT
+      // also write `<html>` in the same file — that produces nested
+      // envelopes after rendering. Pages that DO ship `<html>` in
+      // source are self-contained and the rule emits honestly (the Q10
+      // fix: a full-page layout file mis-tagged as a fragment used to
+      // silently suppress missing-<main> emits the page actually
+      // owned).
       const v = runRule(
         rule,
         [
           "---",
           "layout: default",
+          "title: About",
+          "---",
+          "<header>About</header>",
+          "<h1>About</h1>",
+          "<p>Some prose.</p>",
+          "<p>More prose.</p>",
+          "<p>Even more prose.</p>",
+          "<p>Yet more prose.</p>",
+        ].join("\n"),
+        { filePath: "about.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("DOES fire on a self-contained page with `---` front-matter AND <html>", () => {
+      // The Q10 closure: a full-page layout file whose source carries
+      // `<html>...</html>` is the page envelope, even when front-matter
+      // is also present. The previous OR-branch predicate over-stamped
+      // the fragment label on the frontmatter delimiter and silently
+      // suppressed missing-<main> emits the page genuinely owned. The
+      // new AND-conjunction respects the `<html>` opener as a positive
+      // "I am the page" signal that vetoes fragment classification.
+      const v = runRule(
+        rule,
+        [
+          "---",
           "title: About",
           "---",
           "<html>",
@@ -471,7 +500,8 @@ describe("rule semantics/landmark-main", () => {
         ].join("\n"),
         { filePath: "about.html" },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("no <main>");
     });
 
     it("does NOT count <head> children toward body descendants", () => {
@@ -889,8 +919,15 @@ describe("rule semantics/landmark-main", () => {
       });
     });
 
-    describe("branch (b) — `---` front-matter delimiter", () => {
-      it("suppresses missing-<main> on a file beginning with `---` front-matter", () => {
+    describe("hasHtmlOpener veto — front-matter alone does NOT suppress", () => {
+      it("DOES emit on a file with `---` front-matter AND <html> opener", () => {
+        // Q10 closure: the prior OR-branch fragment predicate stamped
+        // fragment when ANY of (no envelope, frontmatter delimiter,
+        // fragment-path) fired. A self-contained Jekyll page like this
+        // — front-matter PLUS `<html>` source — was over-suppressed:
+        // the page genuinely owns the missing `<main>` and the rule
+        // should emit. The new AND-conjunction respects the `<html>`
+        // opener as a positive page signal that vetoes fragment.
         const source = [
           "---",
           "title: Foo",
@@ -906,7 +943,8 @@ describe("rule semantics/landmark-main", () => {
           "</html>",
         ].join("\n");
         const v = runRule(rule, source, { filePath: "post.html" });
-        expect(v).toHaveLength(0);
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("no <main>");
       });
 
       it("does NOT classify a file with stray `---` mid-source as a fragment", () => {
@@ -933,7 +971,17 @@ describe("rule semantics/landmark-main", () => {
       });
     });
 
-    describe("branch (c) — fragment-convention path", () => {
+    describe("inLayoutsDir veto — `_layouts/` and `layouts/` only", () => {
+      // The shared classifier scopes "layouts dir" narrowly to
+      // `_layouts/` and `layouts/` (places where files render as full
+      // page envelopes). Partial dirs (`_includes/`, `_partials/`,
+      // `partials/`, `components/`) are NOT layouts dirs — files there
+      // remain eligible for the fragment label when their structural /
+      // source evidence holds (no `<html>` opener, no layout
+      // directive). Suppression behavior on partials thus depends on
+      // whether the file ALSO ships an `<html>` opener — partials with
+      // `<html>` are self-contained pages the rule should evaluate.
+
       const envelopedSource = [
         "<html>",
         "  <body>",
@@ -946,46 +994,62 @@ describe("rule semantics/landmark-main", () => {
         "</html>",
       ].join("\n");
 
-      it("suppresses missing-<main> on `_includes/` path", () => {
+      const bareFragmentSource = [
+        "<header>h</header>",
+        "<h1>Title</h1>",
+        "<p>Some content.</p>",
+        "<p>More content.</p>",
+        "<p>Even more content.</p>",
+      ].join("\n");
+
+      it("DOES fire on `_includes/` path when the file has an <html> opener", () => {
+        // Realistic shape: an include partial that's actually a self-
+        // contained page (rare, but the file owns the envelope and
+        // should be evaluated). The path alone is not enough to
+        // suppress — the `<html>` opener vetoes fragment.
         const v = runRule(rule, envelopedSource, { filePath: "site/_includes/header.html" });
-        expect(v).toHaveLength(0);
-      });
-
-      it("suppresses missing-<main> on `_layouts/` path", () => {
-        const v = runRule(rule, envelopedSource, { filePath: "_layouts/default.html" });
-        expect(v).toHaveLength(0);
-      });
-
-      it("suppresses missing-<main> on `_partials/` path", () => {
-        const v = runRule(rule, envelopedSource, { filePath: "src/_partials/sidebar.html" });
-        expect(v).toHaveLength(0);
-      });
-
-      it("suppresses missing-<main> on `partials/` path (no leading underscore)", () => {
-        const v = runRule(rule, envelopedSource, { filePath: "templates/partials/header.html" });
-        expect(v).toHaveLength(0);
-      });
-
-      it("suppresses missing-<main> on `components/` path", () => {
-        const v = runRule(rule, envelopedSource, { filePath: "src/components/card.html" });
-        expect(v).toHaveLength(0);
-      });
-
-      it("requires segment-flanked match — `mycomponents/` does NOT trigger", () => {
-        const v = runRule(rule, envelopedSource, { filePath: "src/mycomponents/page.html" });
         expect(v).toHaveLength(1);
         expect(v[0]?.message).toContain("no <main>");
       });
 
+      it("DOES fire on `_layouts/` path when the file has an <html> opener", () => {
+        // Q10 closure: a `_layouts/default.html` with `<html>` in source
+        // IS the page envelope and should emit missing-<main>. The
+        // prior OR-branch predicate over-suppressed via the path
+        // branch.
+        const v = runRule(rule, envelopedSource, { filePath: "_layouts/default.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("no <main>");
+      });
+
+      it("requires segment-flanked match — `my_layouts_extras/` does NOT veto fragment", () => {
+        // Path-segment matching for the layouts-dir veto: an outer
+        // directory containing the substring `_layouts` does NOT
+        // classify as a layouts dir. Combined with an `<html>` opener
+        // in source the file still resolves to a non-fragment (the
+        // `<html>` opener vetoes), so the rule emits.
+        const v = runRule(rule, envelopedSource, { filePath: "src/my_layouts_extras/page.html" });
+        expect(v).toHaveLength(1);
+        expect(v[0]?.message).toContain("no <main>");
+      });
+
+      it("suppresses missing-<main> on a `_includes/` partial with no <html> opener", () => {
+        // The canonical fragment shape — a Jekyll partial whose body
+        // gets composed into a parent layout. No `<html>`, no layout
+        // directive, NOT in `_layouts/` (the partial dir doesn't veto
+        // fragment classification). The rule's `bodies.length === 0`
+        // branch suppresses outright.
+        const v = runRule(rule, bareFragmentSource, {
+          filePath: "site/_includes/header.html",
+        });
+        expect(v).toHaveLength(0);
+      });
+
       it("does NOT classify `_docs/` as a fragment path (still emits)", () => {
-        // `_docs/` is in PARTIAL_PATH_SEGMENTS but NOT
-        // FRAGMENT_PATH_SEGMENTS — the file is not gated as a fragment
-        // and still surfaces the missing-<main> finding. (Unlike
-        // `semantics/heading-hierarchy`, this rule's layout-partial
-        // enrichment predicate is `isHtmlLayoutOrPartial` — composition
-        // directives or asymmetric root tags or `layout:` front-matter
-        // — and does not include the `_docs/` path-only branch, so
-        // `_docs/` files emit at full confidence here.)
+        // `_docs/` is in PARTIAL_PATH_SEGMENTS for the layout-or-partial
+        // enrichment predicate but is NOT a layouts dir for fragment
+        // classification — the file is not gated as a fragment and
+        // still surfaces the missing-<main> finding.
         const v = runRule(rule, envelopedSource, { filePath: "_docs/intro.html" });
         expect(v).toHaveLength(1);
         expect(v[0]?.message).toContain("no <main>");

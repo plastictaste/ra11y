@@ -99,7 +99,8 @@
  * rule actual-fire surface is `meta.perRuleCoverage[].filesEvaluated`.
  */
 
-import { isHtmlFragment, walkJsxElements } from "../engine/ast-helpers.ts";
+import { walkJsxElements } from "../engine/ast-helpers.ts";
+import { classifyFragment, type FragmentClassificationSignals } from "../engine/layout-partial.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
@@ -332,6 +333,20 @@ interface CoverageBlock {
 export interface FragmentFileEntry {
   readonly path: string;
   readonly kind: "html_partial" | "markdown_residue" | "svg_standalone";
+  /**
+   * Structural signals captured by the shared
+   * {@link classifyFragment} predicate when this file was classified
+   * as a fragment — `hasHtmlOpener`, `hasLayoutDirective`, `inLayoutsDir`.
+   * All three are `false` for entries that reach this list (the
+   * predicate stamps fragment only when ALL three signals are absent),
+   * but surfaced explicitly so an agent auditing a classification can
+   * read the raw evidence without re-deriving it. Pairs with the
+   * "Heuristic-mislabeled meta sub-fields are dishonest" rule per
+   * `docs/kb/architecture/ai-first-consumer.md`: every signal here is
+   * provable from the file alone (path / AST / source regex) so the
+   * sub-field labels clear the "100% correct from the evidence" bar.
+   */
+  readonly fragmentClassificationSignals: FragmentClassificationSignals;
 }
 
 /**
@@ -379,16 +394,20 @@ interface CoverageAccumulator {
   readonly templateInterpolation: Map<string, number>;
   readonly parseErrorEntries: ParseErrorEntry[];
   /**
-   * Paths of HTML files that parsed as fragments — no `<html>` root
-   * and no `<body>` descendant. Populated via
-   * {@link isHtmlFragment} for every `.html` / `.htm` file that
-   * successfully parsed. Surfaced on the response as
-   * `analysisCoverage.fragmentFiles` so agents see which files were
-   * skipped for page-level rules (skip-link primary-nav gating,
-   * landmark-main) — scan-confidence telemetry paralleling
-   * `parseErrorFiles` / `partialParseFiles`.
+   * HTML-family files that parsed as fragments per the shared
+   * {@link classifyFragment} predicate. Each entry carries the file's
+   * path plus the three structural signals
+   * ({@link FragmentClassificationSignals}) the predicate consumed —
+   * `hasHtmlOpener`, `hasLayoutDirective`, `inLayoutsDir` — so an agent
+   * auditing a classification can read the raw evidence without re-
+   * deriving it. Surfaced on the response as
+   * `analysisCoverage.fragmentFiles[]` (with the signals attached as
+   * `fragmentClassificationSignals` per entry) so the meta-side list
+   * and the rule-suppression set agree on the same predicate; scan-
+   * confidence telemetry paralleling `parseErrorFiles` /
+   * `partialParseFiles`.
    */
-  readonly fragmentFiles: string[];
+  readonly fragmentFiles: { path: string; signals: FragmentClassificationSignals }[];
   /**
    * flipped to true the
    * first time any parsed HTML-family file opens with a YAML
@@ -697,14 +716,18 @@ function truncateParseErrorReason(message: string): string {
  * head-sliced.
  */
 function assembleFragmentFilesBlock(
-  fragmentFiles: readonly string[],
+  fragmentFiles: readonly {
+    readonly path: string;
+    readonly signals: FragmentClassificationSignals;
+  }[],
   coverage: CoverageBlock,
 ): boolean {
   coverage.fragmentFileCount = fragmentFiles.length;
-  const sorted = [...fragmentFiles].sort((a, b) => a.localeCompare(b));
-  const entries: FragmentFileEntry[] = sorted.map((path) => ({
+  const sorted = [...fragmentFiles].sort((a, b) => a.path.localeCompare(b.path));
+  const entries: FragmentFileEntry[] = sorted.map(({ path, signals }) => ({
     path,
     kind: classifyFragmentKind(path),
+    fragmentClassificationSignals: signals,
   }));
   const capped = capMetaArray(entries);
   coverage.fragmentFiles = capped.values;
@@ -1069,7 +1092,12 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
   const src = isMarkdownFile(file.filePath) ? stripMarkdownCodeRegions(file.source) : file.source;
   detectTemplateInterpolation(src, acc.templateInterpolation);
   acc.hasFrontmatterFence ||= FRONTMATTER_FENCE_RE.test(file.source);
-  if (isHtmlFragment(file.ast.root as HtmlDocument)) acc.fragmentFiles.push(file.filePath);
+  const { isFragment, signals } = classifyFragment(
+    file.ast.root as HtmlDocument,
+    file.source,
+    file.filePath,
+  );
+  if (isFragment) acc.fragmentFiles.push({ path: file.filePath, signals });
 }
 
 /**

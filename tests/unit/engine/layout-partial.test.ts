@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isFragmentFile } from "../../../src/engine/layout-partial.ts";
+import { classifyFragment, isFragmentFile } from "../../../src/engine/layout-partial.ts";
 import { parseHtml } from "../../../src/input/parsers/index.ts";
 import type { HtmlDocument } from "../../../src/types/ast.ts";
 
@@ -8,139 +8,239 @@ function parse(source: string): HtmlDocument {
   return result.root;
 }
 
-describe("isFragmentFile", () => {
-  // Fragment classification is the shared "is this file a fragment?"
-  // predicate consumed by document-shape rules
-  // (`semantics/heading-hierarchy`'s no-<h1> branch and, per
-  //, `semantics/landmark-main`).
-  // Keeping the tests next to the helper rather than duplicating across
-  // every rule's unit test pins the predicate's behavior in one place.
+describe("classifyFragment / isFragmentFile", () => {
+  // The shared fragment classifier is the single source of truth for
+  // BOTH the rule-side suppression gate (`isFragmentFile`) AND the
+  // meta-side `analysisCoverage.fragmentFiles[]` populator (called by
+  // `detectFragmentFiles` in `src/mcp/scan-assembly.ts`). Per the
+  // AI-first consumer "Cross-surface count invariant" rule: same input
+  // must yield the same fragment label on every consumer.
+  //
+  // Predicate: a fragment is stamped only when ALL THREE structural
+  // signals are absent — `hasHtmlOpener`, `hasLayoutDirective`,
+  // `inLayoutsDir`. Any one signal vetoes the fragment label and
+  // surfaces the offending evidence so an agent reads the WHY.
 
-  describe("branch (a) — no envelope tags anywhere", () => {
-    it("returns true on a bare <h2> snippet with no envelope", () => {
-      const doc = parse("<h2>Section</h2>");
-      expect(isFragmentFile(doc, "<h2>Section</h2>", "fragment.html")).toBe(true);
-    });
-
-    it("returns true on a bare <div>-only component snippet", () => {
-      const source = '<div class="card"><p>Body</p></div>';
-      expect(isFragmentFile(parse(source), source, "card.html")).toBe(true);
-    });
-
-    it("returns false when <html> is present", () => {
+  describe("hasHtmlOpener veto — files declaring page envelope", () => {
+    it("returns NOT a fragment when <html> is present in the AST", () => {
       const source = "<html><body><h2>X</h2></body></html>";
-      expect(isFragmentFile(parse(source), source, "page.html")).toBe(false);
+      const result = classifyFragment(parse(source), source, "page.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasHtmlOpener).toBe(true);
     });
 
-    it("returns false when only <body> is present (parser-tolerant input)", () => {
+    it("returns NOT a fragment when only <body> is present", () => {
+      // A `<body>`-only document (no `<html>` wrapper) still positively
+      // declares page intent — the parser-tolerant input is treated as
+      // a page, not a fragment.
       const source = "<body><h2>X</h2></body>";
-      expect(isFragmentFile(parse(source), source, "page.html")).toBe(false);
+      const result = classifyFragment(parse(source), source, "page.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasHtmlOpener).toBe(true);
     });
 
-    it("returns false when only <head> is present", () => {
-      // Stricter than `isHtmlFragment`: a <head>-only file (e.g. a
-      // Jekyll `_includes/head.html` injected into the parent layout's
-      // <head>) is NOT classified by branch (a) — the typical paths
-      // such files live on are covered by branch (c) instead.
+    it("returns NOT a fragment when source has a `<html` token even if AST recovery dropped it", () => {
+      // Parser-recovery edge case: malformed `<html` opener that the
+      // parser dropped from the tree. The source-level fallback in the
+      // `hasHtmlOpener` signal still picks up the page intent.
+      const source = "<html lang=en\n<body><h2>X</h2></body>";
+      const result = classifyFragment(parse(source), source, "page.html");
+      expect(result.signals.hasHtmlOpener).toBe(true);
+    });
+
+    it("returns IS a fragment when only <head> is present", () => {
+      // <head>-only files (e.g. a Jekyll `_includes/head.html` injected
+      // into a parent layout's `<head>`) lack the `<html>` opener AND
+      // any layout-shape composition directive. The fragment label is
+      // honest: document-shape rules should suppress because the parent
+      // layout supplies the envelope.
       const source = "<head><title>X</title></head>";
-      expect(isFragmentFile(parse(source), source, "head.html")).toBe(false);
+      const result = classifyFragment(parse(source), source, "_includes/head.html");
+      expect(result.isFragment).toBe(true);
+      expect(result.signals.hasHtmlOpener).toBe(false);
     });
   });
 
-  describe("branch (b) — `---` front-matter delimiter", () => {
-    it("returns true on a file with `---` front-matter at the top", () => {
-      const source = "---\ntitle: Foo\n---\n<html><body><h2>X</h2></body></html>";
-      expect(isFragmentFile(parse(source), source, "post.html")).toBe(true);
+  describe("hasLayoutDirective veto — files composing child content", () => {
+    // A file declaring a layout-shape composition directive
+    // (`{{ content }}`, `<%= yield %>`, `@RenderBody`, `{% extends`,
+    // `<slot>`, `{outlet}`, `<router-view>`) IS the page envelope —
+    // it composes a child page's content into its markup at render
+    // time. Not a fragment regardless of structural / path signals.
+
+    it("returns NOT a fragment for `{{ content }}` (Liquid / Hugo)", () => {
+      const source = "<article>{{ content }}</article>";
+      const result = classifyFragment(parse(source), source, "wrapper.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
     });
 
-    it("returns true on `---` with a `layout:` key (matches narrower predicate too)", () => {
-      const source = "---\nlayout: post\ntitle: Foo\n---\n<html><body><h2>X</h2></body></html>";
-      expect(isFragmentFile(parse(source), source, "post.html")).toBe(true);
+    it("returns NOT a fragment for `<%= yield %>` (Rails ERB)", () => {
+      const source = "<div class='page'><%= yield %></div>";
+      const result = classifyFragment(parse(source), source, "views/wrapper.html.erb");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
     });
 
-    it("returns true even with a UTF-8 BOM before the `---`", () => {
-      const source = "﻿---\ntitle: Foo\n---\n<html><body><h2>X</h2></body></html>";
-      expect(isFragmentFile(parse(source), source, "post.html")).toBe(true);
+    it("returns NOT a fragment for `@RenderBody()` (Razor)", () => {
+      const source = "<div>@RenderBody()</div>";
+      const result = classifyFragment(parse(source), source, "_Layout.cshtml.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
     });
 
-    it("returns false when `---` appears mid-source rather than at the top", () => {
-      const source = "<html><body><h2>X</h2>\n---\n</body></html>";
-      expect(isFragmentFile(parse(source), source, "page.html")).toBe(false);
+    it("returns NOT a fragment for `{% extends %}` (Twig / Jinja)", () => {
+      const source = '{% extends "base.html" %}<block>x</block>';
+      const result = classifyFragment(parse(source), source, "child.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
     });
 
-    it("returns false when the `---` opener has no closing `---` line", () => {
-      const source = "---\nthis is not closed\n<html><body><h2>X</h2></body></html>";
-      expect(isFragmentFile(parse(source), source, "page.html")).toBe(false);
-    });
-  });
-
-  describe("branch (c) — fragment-convention path segments", () => {
-    const envelopedSource = "<html><body><h2>X</h2></body></html>";
-
-    it("returns true for `_includes/` path", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "site/_includes/header.html")).toBe(true);
+    it("returns NOT a fragment for `<slot />` (Astro / Web Components)", () => {
+      const source = "<div><slot /></div>";
+      const result = classifyFragment(parse(source), source, "wrapper.astro.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
     });
 
-    it("returns true for `_layouts/` path", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "_layouts/default.html")).toBe(true);
+    it("returns NOT a fragment for `{outlet}` (Astro layouts)", () => {
+      const source = "<div>{outlet}</div>";
+      const result = classifyFragment(parse(source), source, "wrapper.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
     });
 
-    it("returns true for `_partials/` path", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "src/_partials/sidebar.html")).toBe(true);
+    it("returns NOT a fragment for `<router-view />` (Vue Router)", () => {
+      const source = "<div><router-view /></div>";
+      const result = classifyFragment(parse(source), source, "App.vue.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
     });
 
-    it("returns true for `partials/` path (no leading underscore)", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "templates/partials/header.html")).toBe(true);
-    });
-
-    it("returns true for `components/` path", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "src/components/card.html")).toBe(true);
-    });
-
-    it("requires segment-flanked match — `my_partials_extras/` does NOT match", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "src/my_partials_extras/page.html")).toBe(false);
-    });
-
-    it("requires segment-flanked match — `mycomponents/` does NOT match", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "src/mycomponents/page.html")).toBe(false);
-    });
-
-    it("does NOT classify `_docs/` as a fragment path", () => {
-      // `_docs/` is a partial path (content composed into a page chrome)
-      // but not a fragment path — files there get partial enrichment
-      // rather than outright suppression.
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "_docs/intro.html")).toBe(false);
-    });
-
-    it("does NOT classify `_posts/` as a fragment path", () => {
-      const doc = parse(envelopedSource);
-      expect(isFragmentFile(doc, envelopedSource, "_posts/2026-04-25-hello.html")).toBe(false);
+    it("does NOT veto on plain `{% include %}` — partials including partials are still fragments", () => {
+      // `{% include %}` is a partial pulling another partial; the
+      // including file may itself still be a fragment (no envelope,
+      // not in layouts dir). Narrower than the prior
+      // `hasCompositionDirective` predicate, which over-vetoed.
+      const source = "<header>{% include 'logo.html' %}</header>";
+      const result = classifyFragment(parse(source), source, "_includes/header.html");
+      expect(result.isFragment).toBe(true);
+      expect(result.signals.hasLayoutDirective).toBe(false);
     });
   });
 
-  describe("non-fragment cases", () => {
-    it("returns false for a self-contained full-page document", () => {
+  describe("inLayoutsDir veto — files in `_layouts/` or `layouts/`", () => {
+    // Layout dirs hold files that render as the final page envelope
+    // via parent-layout composition. NOT a fragment regardless of
+    // structural signals, so document-shape rules can still evaluate
+    // (the layout file IS the page once rendered, even if its source
+    // lacks `<html>` because a parent layout supplies it).
+
+    it("returns NOT a fragment for files in `_layouts/`", () => {
+      const source = "<article>{{ content }}</article>";
+      const result = classifyFragment(parse(source), source, "_layouts/section.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.inLayoutsDir).toBe(true);
+    });
+
+    it("returns NOT a fragment for files in `layouts/` (no leading underscore)", () => {
+      // Hugo / Eleventy / Astro idiom — `layouts/` without the leading
+      // underscore. Same semantic as Jekyll `_layouts/`.
+      const source = "<article>{{ content }}</article>";
+      const result = classifyFragment(parse(source), source, "src/layouts/default.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.inLayoutsDir).toBe(true);
+    });
+
+    it("does NOT veto on `_includes/` (partial dir, not a layouts dir)", () => {
+      // The shared classifier scopes "layouts dir" narrowly to
+      // `_layouts/` and `layouts/` — places where a file renders as a
+      // final page. Partial dirs (`_includes/`, `_partials/`,
+      // `partials/`, `components/`) hold true fragments whose document-
+      // shape rules should suppress, so they remain eligible for the
+      // fragment label when their structural / source evidence holds.
+      const source = "<nav><a href='/'>Home</a></nav>";
+      const result = classifyFragment(parse(source), source, "_includes/header.html");
+      expect(result.isFragment).toBe(true);
+      expect(result.signals.inLayoutsDir).toBe(false);
+    });
+
+    it("requires segment-flanked match — `my_layouts_extras/` does NOT match", () => {
+      const source = "<h2>X</h2>";
+      const result = classifyFragment(parse(source), source, "src/my_layouts_extras/page.html");
+      expect(result.isFragment).toBe(true);
+      expect(result.signals.inLayoutsDir).toBe(false);
+    });
+  });
+
+  describe("AND-conjunction — all three signals must be absent for fragment", () => {
+    it("returns IS a fragment when ALL THREE signals are absent", () => {
+      const source = "<h2>Section</h2>";
+      const result = classifyFragment(parse(source), source, "fragment.html");
+      expect(result.isFragment).toBe(true);
+      expect(result.signals).toEqual({
+        hasHtmlOpener: false,
+        hasLayoutDirective: false,
+        inLayoutsDir: false,
+      });
+    });
+
+    it("returns NOT a fragment for a self-contained full-page document", () => {
+      // Full page: `<html>` AST present + `<html>` source token both
+      // fire the hasHtmlOpener veto.
       const source =
         "<html><head><title>Page</title></head><body><h1>X</h1><p>Body</p></body></html>";
-      expect(isFragmentFile(parse(source), source, "src/pages/index.html")).toBe(false);
+      const result = classifyFragment(parse(source), source, "src/pages/index.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasHtmlOpener).toBe(true);
     });
 
-    it("returns false for a normal page with an HTML comment header", () => {
-      const source = "<!-- generated by build -->\n<html><body><h2>Section</h2></body></html>";
-      expect(isFragmentFile(parse(source), source, "page.html")).toBe(false);
+    it("returns NOT a fragment for a Jekyll layout with frontmatter + <html>", () => {
+      // The canonical Q10 case: a `_layouts/default.html` whose source
+      // opens `---\n---\n<!DOCTYPE html><html>...{{ content }}...`.
+      // Under the prior OR-branch predicate this would have stamped
+      // fragment via the frontmatter delimiter or the path branch; the
+      // tightened AND-conjunction stamps NOT a fragment because the
+      // `<html>` opener and the layout directive both veto.
+      const source =
+        "---\n---\n<!DOCTYPE html><html><head><title>p</title></head><body><main>{{ content }}</main></body></html>";
+      const result = classifyFragment(parse(source), source, "_layouts/default.html");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasHtmlOpener).toBe(true);
+      expect(result.signals.hasLayoutDirective).toBe(true);
+      expect(result.signals.inLayoutsDir).toBe(true);
     });
 
-    it("returns false on an empty file path with no fragment evidence", () => {
+    it("returns IS a fragment for a Jekyll post with frontmatter but no envelope or directive", () => {
+      // `posts/welcome.md` shape: `---\nlayout: post\n---\n# Hello`.
+      // No `<html>` opener, no layout directive, not in layouts dir →
+      // fragment per the tightened predicate. Document-shape rules
+      // suppress because the parent `_layouts/post.html` supplies the
+      // envelope at render time, and the per-rule confidence downgrade
+      // stays honest.
+      const source = "---\nlayout: post\ntitle: Hi\n---\n# Hello\n\nWorld\n";
+      const result = classifyFragment(parse(source), source, "posts/welcome.md");
+      expect(result.isFragment).toBe(true);
+      expect(result.signals).toEqual({
+        hasHtmlOpener: false,
+        hasLayoutDirective: false,
+        inLayoutsDir: false,
+      });
+    });
+
+    it("isFragmentFile thin wrapper agrees with classifyFragment.isFragment", () => {
+      const source = "<header>©</header>";
+      const filePath = "_includes/footer.html";
+      const doc = parse(source);
+      expect(isFragmentFile(doc, source, filePath)).toBe(
+        classifyFragment(doc, source, filePath).isFragment,
+      );
+    });
+
+    it("returns NOT a fragment on an empty file path when source has <html>", () => {
       const source = "<html><body><p>Body</p></body></html>";
-      expect(isFragmentFile(parse(source), source, "")).toBe(false);
+      const result = classifyFragment(parse(source), source, "");
+      expect(result.isFragment).toBe(false);
     });
   });
 });

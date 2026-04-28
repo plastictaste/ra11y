@@ -42,18 +42,22 @@
  *      bucket must still flag it so the agent knows parsing degraded).
  *   2. The first parse-error reason names the layout-tail shape — the
  *      substring an agent routes on lives at the head of the message.
- *   3. `semantics/landmark-main` does not fire on the recovered file.
- * Pre-the rule emitted a
- *      `partial_or_layout_file_requires_composed_check`-enriched
- *      "missing <main>" finding via the bodyless-partial branch — the
- *      composition directive `{% include top.html %}` qualified the
- *      file as a layout/partial. After Q8 the file has none of
- *      `<html>` / `<body>` / `<head>` (the parser only recovered the
- *      `<main>` subtree and the trailing stray `</html>`), so the
- *      shared `isFragmentFile` predicate's branch (a) classifies it as
- *      a fragment whose composed parent supplies the landmark, and the
- *      gate suppresses the missing-<main> emit outright. The fixture
- *      asserts the absence to lock in the suppression contract.
+ *   3. `semantics/landmark-main` fires on the recovered file with the
+ *      `partial_or_layout_file_requires_composed_check` enrichment.
+ *      The shared fragment classifier identifies the file as a LAYOUT
+ *      (its source ships `{{ content }}` — a layout-shape composition
+ *      directive whose presence vetoes fragment classification per the
+ *      AND-conjunction predicate). With `bodies.length === 0` and
+ *      `fragment === false` AND `layoutOrPartial === true`, the
+ *      bodyless branch of `landmark-main` emits at `warning` severity
+ *      with the enrichment message ("This file looks like a layout
+ *      wrapper or template partial…") so an agent reading the finding
+ *      verifies the composed parent supplies `<main>` rather than
+ *      acting on the call site. Per docs/kb/architecture/ai-first-
+ *      consumer.md "Surface, don't suppress" — surfacing with
+ *      enrichment is more honest than the prior outright-suppression
+ *      behavior, which silently hid the composition site from the
+ *      agent's triage budget.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
@@ -95,20 +99,27 @@ export const assertions: FixtureAssertions = {
       predicate: { contains: "Elided layout-tail" },
     },
 
-    // the file has none of
-    // <html>/<body>/<head> (only the recovered <main> subtree and the
-    // trailing stray </html>). The shared `isFragmentFile` predicate's
-    // branch (a) classifies it as a fragment whose composed parent
-    // supplies the landmark, so the gate suppresses the missing-<main>
-    // emit outright. The duplicate-<main> emit (the other observable
-    // bug landmark-main checks) is not relevant here — the recovered
-    // subtree carries exactly one <main>. Source-level disable pragmas
-    // remain the deterministic escape hatch for any consumer that
-    // disagrees with the suppression. Parser-recovery telemetry stays
-    // visible via the meta-field assertion above.
+    // The file ships a `{{ content }}` layout-shape composition
+    // directive — under the shared fragment classifier this signals
+    // the file IS a layout that composes child content (a layout is
+    // not a fragment; its rendered page envelope is composed at this
+    // file's level). With the bodyless branch in landmark-main:
+    // `bodies.length === 0` AND `fragment === false` AND
+    // `layoutOrPartial === true` → emit `bodylessPartial` with the
+    // `partial_or_layout_file_requires_composed_check` enrichment so
+    // an agent reading the finding follows the include chain rather
+    // than acting on the missing-body at the call site. This is the
+    // honest framing per docs/kb/architecture/ai-first-consumer.md
+    // "Surface, don't suppress" — the file is a layout-shape
+    // composition site whose body lives in `_includes/top.html`, and
+    // surfacing the finding lets the agent verify the composed parent
+    // chain rather than suppressing silently. The deterministic escape
+    // hatch remains the source-level disable pragma for consumers who
+    // disagree.
     {
-      kind: "no-violation",
+      kind: "violation-present",
       ruleId: "semantics/landmark-main",
+      reasonIncludes: "layout wrapper or template partial",
     },
   ],
 };

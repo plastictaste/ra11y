@@ -1765,7 +1765,11 @@ describe("buildAnalysisCoverage — hints", () => {
 
     it("lists HTML files with no <html> root and no <body>", () => {
       // Jekyll `_includes/header.html` shape: a plain chunk of markup
-      // meant to be composed into a parent layout at render time.
+      // meant to be composed into a parent layout at render time. Note
+      // `_includes/` is NOT a "layouts dir" under the shared classifier
+      // (only `_layouts/` and `layouts/` are), so a partial here still
+      // classifies as a fragment when its source has no `<html>` opener
+      // and no layout-shape composition directive.
       const fragment = parsedHtml(
         "_includes/header.html",
         '<nav><a href="/">Home</a><a href="/about">About</a></nav>',
@@ -1773,7 +1777,15 @@ describe("buildAnalysisCoverage — hints", () => {
       const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        { path: "_includes/header.html", kind: "html_partial" },
+        {
+          path: "_includes/header.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
       ]);
     });
 
@@ -1791,7 +1803,15 @@ describe("buildAnalysisCoverage — hints", () => {
       const fragment = parsedHtml("_includes/footer.html", "<footer>©</footer>");
       const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        { path: "_includes/footer.html", kind: "html_partial" },
+        {
+          path: "_includes/footer.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
       ]);
     });
 
@@ -1807,8 +1827,24 @@ describe("buildAnalysisCoverage — hints", () => {
       // Wire-side ordering is alphabetical-by-path (deterministic
       // across runs); both entries share kind: "markdown_residue".
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        { path: "docs/getting-started.markdown", kind: "markdown_residue" },
-        { path: "README.md", kind: "markdown_residue" },
+        {
+          path: "docs/getting-started.markdown",
+          kind: "markdown_residue",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+        {
+          path: "README.md",
+          kind: "markdown_residue",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
       ]);
     });
 
@@ -1823,7 +1859,15 @@ describe("buildAnalysisCoverage — hints", () => {
       );
       const { analysisCoverage } = buildAnalysisCoverage([icon], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        { path: "icons/logo.svg", kind: "svg_standalone" },
+        {
+          path: "icons/logo.svg",
+          kind: "svg_standalone",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
       ]);
     });
 
@@ -1847,9 +1891,33 @@ describe("buildAnalysisCoverage — hints", () => {
       );
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(3);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        { path: "_includes/nav.html", kind: "html_partial" },
-        { path: "assets/brand.svg", kind: "svg_standalone" },
-        { path: "README.md", kind: "markdown_residue" },
+        {
+          path: "_includes/nav.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+        {
+          path: "assets/brand.svg",
+          kind: "svg_standalone",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+        {
+          path: "README.md",
+          kind: "markdown_residue",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
       ]);
     });
 
@@ -1872,10 +1940,27 @@ describe("buildAnalysisCoverage — hints", () => {
         parsedHtml("_includes/m-middle.html", "<div>m</div>"),
       ];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
+      const noSignals = {
+        hasHtmlOpener: false,
+        hasLayoutDirective: false,
+        inLayoutsDir: false,
+      } as const;
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        { path: "_includes/a-first.html", kind: "html_partial" },
-        { path: "_includes/m-middle.html", kind: "html_partial" },
-        { path: "_includes/z-last.html", kind: "html_partial" },
+        {
+          path: "_includes/a-first.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: noSignals,
+        },
+        {
+          path: "_includes/m-middle.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: noSignals,
+        },
+        {
+          path: "_includes/z-last.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: noSignals,
+        },
       ]);
     });
 
@@ -1890,7 +1975,15 @@ describe("buildAnalysisCoverage — hints", () => {
       const { analysisCoverage } = buildAnalysisCoverage([bodyOnly, fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
-        { path: "_includes/nav.html", kind: "html_partial" },
+        {
+          path: "_includes/nav.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
       ]);
     });
 
@@ -1903,12 +1996,66 @@ describe("buildAnalysisCoverage — hints", () => {
       const fragment = parsedHtml("_includes/footer.html", "<footer>©</footer>");
       const terse = buildAnalysisCoverage([fragment], [], NO_RULES, false).analysisCoverage;
       const verbose = buildAnalysisCoverage([fragment], [], NO_RULES, true).analysisCoverage;
-      expect(terse?.["fragmentFiles"]).toEqual([
-        { path: "_includes/footer.html", kind: "html_partial" },
-      ]);
-      expect(verbose?.["fragmentFiles"]).toEqual([
-        { path: "_includes/footer.html", kind: "html_partial" },
-      ]);
+      const expected = [
+        {
+          path: "_includes/footer.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+      ];
+      expect(terse?.["fragmentFiles"]).toEqual(expected);
+      expect(verbose?.["fragmentFiles"]).toEqual(expected);
+    });
+
+    // Q10 closure: full-page layout files whose source opens with
+    // frontmatter-only-then-markup must NOT be tagged as fragments
+    // even though their AST lacks `<html>`. The shared classifier reads
+    // the raw `<html` opener token in source AND/OR the layouts-dir
+    // path AND/OR the layout-shape composition directive — any one of
+    // these vetoes the fragment label, so a `_layouts/default.html`
+    // declaring `<html>...{{ content }}...</html>` does not silently
+    // suppress document-shaped rule downgrades for the whole scan.
+    it("does NOT tag full-page layouts with <html> opener as fragments", () => {
+      const layout = parsedHtml(
+        "_layouts/default.html",
+        "<!DOCTYPE html><html><head><title>p</title></head><body><main>{{ content }}</main></body></html>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([layout], [], NO_RULES, false);
+      // `<html>` opener is the strongest "I am the page" signal — the
+      // layout file is a page envelope, not a fragment.
+      expect(analysisCoverage?.["fragmentFileCount"]).toBeUndefined();
+      expect(analysisCoverage?.["fragmentFiles"]).toBeUndefined();
+    });
+
+    it("does NOT tag layouts-dir files (no <html>) as fragments", () => {
+      // A wrapper layout that itself extends a parent layout — no
+      // `<html>` opener, but lives in `_layouts/` AND ships a layout-
+      // shape composition directive (`{{ content }}`). Both the path
+      // and directive signals veto the fragment label per the shared
+      // classifier.
+      const wrapper = parsedHtml(
+        "_layouts/section.html",
+        "---\nlayout: default\n---\n<article>{{ content }}</article>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([wrapper], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFileCount"]).toBeUndefined();
+      expect(analysisCoverage?.["fragmentFiles"]).toBeUndefined();
+    });
+
+    it("does NOT tag files with a layout-shape composition directive as fragments", () => {
+      // A file that composes child content via `<%= yield %>` (Rails
+      // ERB) is a layout / page envelope, not a fragment — even when
+      // it lives outside a layouts dir and lacks `<html>` (parser
+      // recovery may have stripped a malformed opener). The directive
+      // alone vetoes fragment classification.
+      const layout = parsedHtml("views/wrapper.html.erb", "<div class='page'><%= yield %></div>");
+      const { analysisCoverage } = buildAnalysisCoverage([layout], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFileCount"]).toBeUndefined();
+      expect(analysisCoverage?.["fragmentFiles"]).toBeUndefined();
     });
   });
 

@@ -53,42 +53,40 @@ const PARTIAL_PATH_SEGMENTS: readonly string[] = [
 ];
 
 /**
- * Path segments under which a file is conventionally a fragment whose
- * rendered output is composed into a parent template / layout / page —
- * Jekyll / Eleventy include trees (`_includes/`, `_layouts/`,
- * `_partials/`), Hugo / Astro / framework partial trees (`partials/`),
- * and component fragments (`components/`) whose composed page supplies
- * the document envelope (`<html>`, `<body>`, `<h1>`, `<title>`).
+ * Path segments where files render *as full pages* via parent-layout
+ * composition: `_layouts/`, `layouts/`. A file living here cannot be a
+ * "fragment" in the rule-suppression sense — it IS the page envelope
+ * once rendered (or it composes one via `{{ content }}` / `<%= yield %>`).
  *
- * Distinct from {@link PARTIAL_PATH_SEGMENTS}: that list is the
- * partial-or-layout signal used for *enrichment* (annotating an
- * already-emitted finding with a "could be wrong because composed
- * elsewhere" hint). This list is the fragment signal used by
- * {@link isFragmentFile} to *suppress* document-shape emits — the
- * fragment classification is structural evidence that the rule's
- * "this file IS the page" premise does not hold.
+ * Used by {@link classifyFragment} as the `inLayoutsDir` signal that
+ * vetoes fragment classification. Distinct from
+ * {@link PARTIAL_PATH_SEGMENTS} (which marks layout / partial enrichment
+ * targets for already-emitted findings) — files in a layouts dir are
+ * NOT fragments because the rendered page envelope is composed at this
+ * file's level, not somewhere else.
  *
  * Detected as substrings flanked by `/` (or boundary) so a top-level
- * `partials/` matches but `my_partials_dir/` does not.
+ * `_layouts/` matches but `my_layouts_dir/` does not. Narrow to two
+ * canonical layout dirs — Jekyll's `_layouts/` and the framework-
+ * agnostic `layouts/` Hugo / Eleventy / Astro use — so partial dirs
+ * (`_includes/`, `_partials/`, `partials/`, `components/`) still
+ * classify as fragments when their structural / source evidence holds
+ * (no `<html>`, no layout directive). The fragment-input downgrade for
+ * document-shaped rules thus stays honest on the canonical Jekyll
+ * `_includes/header.html` shape.
  */
-const FRAGMENT_PATH_SEGMENTS: readonly string[] = [
-  "_includes",
-  "_layouts",
-  "_partials",
-  "partials",
-  "components",
-];
+const LAYOUTS_DIR_SEGMENTS: readonly string[] = ["_layouts", "layouts"];
 
 /**
- * True when `filePath` lives under a fragment-convention directory
- * segment ({@link FRAGMENT_PATH_SEGMENTS}). Pure path inspection — no
- * AST or source content read. Used as one OR-branch of
- * {@link isFragmentFile}.
+ * True when `filePath` lives under a known layouts directory segment
+ * ({@link LAYOUTS_DIR_SEGMENTS}). Pure path inspection — no AST or
+ * source content read. Surfaced via {@link classifyFragment}'s `signals`
+ * so an agent auditing the classification has the raw input visible.
  */
-function looksLikeFragmentPath(filePath: string): boolean {
+function looksLikeLayoutsPath(filePath: string): boolean {
   if (filePath.length === 0) return false;
   const normalized = filePath.replace(/\\/g, "/");
-  for (const segment of FRAGMENT_PATH_SEGMENTS) {
+  for (const segment of LAYOUTS_DIR_SEGMENTS) {
     if (normalized.startsWith(`${segment}/`)) return true;
     if (normalized.includes(`/${segment}/`)) return true;
   }
@@ -96,34 +94,182 @@ function looksLikeFragmentPath(filePath: string): boolean {
 }
 
 /**
- * True when `source` begins with a `---`-delimited front-matter block
- * (Jekyll, Eleventy, Hugo, Astro, MDX). The opener `---` must sit at
- * the very top of the file (after an optional UTF-8 BOM and blank
- * lines) on its own line, AND a closing `---` line must follow — a
- * stray `---` without a closer is not a front-matter block.
+ * True when the raw source contains a *layout-shape* composition
+ * directive — the file declares "I compose a child template's content
+ * into my markup at render time" (and therefore IS the page envelope,
+ * not a fragment). Narrower than {@link hasCompositionDirective}: that
+ * predicate also fires on `{% include %}` / `{% render %}`, which mark
+ * a file pulling another partial — that file may itself still be a
+ * fragment (a partial that composes deeper partials). The layout-
+ * directive predicate fires only on the *child-content placeholder*
+ * shape — the slot a parent layout opens for a child page's output.
  *
- * Distinct from {@link hasJekyllLayoutFrontMatter}, which additionally
- * requires the YAML body to declare a `layout:` key. The fragment-
- * detection use case wants the broader signal: ANY `---` front-matter
- * block at the top of a file is evidence the file is content composed
- * into a parent layout (the front-matter gets stripped by the SSG
- * before the residue reaches a browser, which itself implies the file
- * is not the rendered page).
+ * Examples per `docs/kb/architecture/ai-first-consumer.md` (the
+ * "heuristic-mislabeled meta sub-fields" rule for fragment classification):
+ *   - Liquid / Hugo: `{{ content }}`, `{{ body }}`
+ *   - ERB / Rails: `<%= yield %>`, `<% yield %>`
+ *   - Razor / ASP.NET: `@RenderBody()`, `@RenderSection("name")`
+ *   - Twig / Jinja: `{% extends "..." %}`
+ *   - Astro / Web Components: `<slot />`, `{outlet}`
+ *   - SPA frameworks: `<router-view />`
+ *
+ * Used by {@link classifyFragment} as the `hasLayoutDirective` signal
+ * that vetoes fragment classification: a file that declares itself a
+ * composer of child content is not a fragment whose rules should
+ * suppress.
  */
-function hasFrontMatterDelimiter(source: string): boolean {
-  let i = 0;
-  // Skip UTF-8 BOM.
-  if (source.charCodeAt(0) === 0xfeff) i = 1;
-  // Skip leading blank lines.
-  while (i < source.length && (source[i] === "\n" || source[i] === "\r")) i += 1;
-  // Require `---` opener on its own line.
-  if (!source.startsWith("---", i)) return false;
-  const afterOpener = i + 3;
-  if (afterOpener >= source.length) return false;
-  const nextChar = source[afterOpener];
-  if (nextChar !== "\n" && nextChar !== "\r") return false;
-  // Require a matching `---` closer on its own line later in the file.
-  return source.indexOf("\n---", afterOpener) !== -1;
+function hasLayoutDirective(source: string): boolean {
+  // Liquid / Hugo child-content interpolation.
+  if (/\{\{-?\s*(?:content|body)\s*(?:\||-?\}\})/.test(source)) return true;
+  // ERB layouts — `<%= yield %>` (and `<% yield %>` for block forms).
+  if (/<%=?\s*yield\b/.test(source)) return true;
+  // Razor / ASP.NET — `@RenderBody()` / `@RenderSection("name")`.
+  if (/@Render(?:Body|Section)\b/.test(source)) return true;
+  // Twig / Jinja `{% extends "..." %}` — declares this file inherits
+  // from a parent template, so the rendered page is composed across
+  // both. Same shape as `<%= yield %>` viewed from the child side.
+  if (/\{%-?\s*extends\b/.test(source)) return true;
+  // Astro / Web Components `<slot />` — child-content placeholder.
+  if (/<slot[\s/>]/i.test(source)) return true;
+  // Astro `{outlet}` — alternative child-content placeholder.
+  if (/\{outlet\}/i.test(source)) return true;
+  // SPA frameworks — `<router-view>` (Vue Router) and similar route
+  // outlets. The element name is router-view exactly (case-insensitive).
+  if (/<router-view\b/i.test(source)) return true;
+  return false;
+}
+
+/**
+ * True when the source's first envelope-bearing tag is `<html>` —
+ * either the AST surfaced an `<html>` / `<body>` element or the raw
+ * source contains a `<html` opener token (covers cases where parser
+ * recovery dropped the element from the AST but the author intent is
+ * unambiguous in source).
+ *
+ * Used by {@link classifyFragment} as the `hasHtmlOpener` signal that
+ * vetoes fragment classification: a file declaring `<html>` IS a page,
+ * not a fragment. Pairs with {@link hasLayoutDirective}: presence of
+ * EITHER signal vetoes the fragment label.
+ */
+function hasHtmlOpener(doc: HtmlDocument, source: string): boolean {
+  const hasHtmlTag = findHtmlElementsByTag(doc, "html").length > 0;
+  const hasBodyTag = findHtmlElementsByTag(doc, "body").length > 0;
+  if (hasHtmlTag || hasBodyTag) return true;
+  // Source-level fallback: a malformed `<html` opener that the parser
+  // dropped during recovery still signals page intent. Word-boundary
+  // after `<html` (whitespace, `>`, `/`) keeps `<html5shim>` etc. from
+  // matching.
+  return /<html[\s>/]/i.test(source);
+}
+
+/**
+ * Categorical signals captured during fragment classification. Surfaced
+ * on `meta.analysisCoverage.fragmentFiles[]` per-entry as
+ * `fragmentClassificationSignals` so an agent auditing a fragment
+ * classification can read the raw evidence (path / structure / source
+ * directive) the predicate consumed without re-deriving it. Each signal
+ * is provable from the file alone — no cross-file resolution and no
+ * fuzzy heuristics — so the labels clear the AI-first consumer "no
+ * heuristic-mislabeled meta sub-fields" bar.
+ *
+ * A fragment is stamped only when ALL THREE signals are absent (the
+ * AND-conjunction) — `hasHtmlOpener: false`, `hasLayoutDirective:
+ * false`, `inLayoutsDir: false`. Any one signal being true vetoes the
+ * fragment label and surfaces the offending evidence so the agent
+ * reads why.
+ */
+export interface FragmentClassificationSignals {
+  /**
+   * The parsed AST surfaced an `<html>` / `<body>` element OR the raw
+   * source contains a `<html` opener token. A file with this signal IS
+   * the page envelope, not a fragment.
+   */
+  readonly hasHtmlOpener: boolean;
+  /**
+   * The raw source contains a layout-shape composition directive
+   * (`{{ content }}`, `<%= yield %>`, `@RenderBody`, `{% extends`,
+   * `<slot>`, `{outlet}`, `<router-view>`). A file with this signal IS
+   * a layout that composes child content, not a fragment.
+   */
+  readonly hasLayoutDirective: boolean;
+  /**
+   * The file path lives under a known layouts directory segment
+   * ({@link LAYOUTS_DIR_SEGMENTS}: `_layouts/`, `layouts/`). Files here
+   * render as the final page envelope via parent-layout composition.
+   */
+  readonly inLayoutsDir: boolean;
+}
+
+/**
+ * Result of {@link classifyFragment}: the boolean fragment label plus
+ * the three structural signals the predicate consumed. Both surfaces
+ * (the rule-side suppression gate `isFragmentFile` and the meta-side
+ * `analysisCoverage.fragmentFiles[]` populator `detectFragmentFiles`)
+ * call this function so cross-surface drift between the two consumers
+ * is structurally impossible — same input, same shared classifier,
+ * same answer (per Q9 closure).
+ */
+export interface FragmentClassification {
+  readonly isFragment: boolean;
+  readonly signals: FragmentClassificationSignals;
+}
+
+/**
+ * Single source-of-truth fragment classifier consumed by both the rule-
+ * side suppression gate (`isFragmentFile`) and the meta-side population
+ * of `analysisCoverage.fragmentFiles[]` (`detectFragmentFiles`).
+ *
+ * Predicate:
+ *
+ *   isFragment = !hasHtmlOpener AND !hasLayoutDirective AND !inLayoutsDir
+ *
+ * All three signals must be ABSENT to stamp the fragment label — any
+ * one of (`<html>` opener present, layout-directive present, file in
+ * layouts dir) vetoes fragment classification because the file's
+ * structure / source / path positively declares it is *the* page
+ * envelope or composes one.
+ *
+ * Why three AND-conjuncts not the prior OR-branches: the prior
+ * `isFragmentFile` had three OR-branches (no envelope, frontmatter
+ * delimiter, fragment-path segment) and over-classified full-page
+ * layouts as fragments. Specifically, a Jekyll `_layouts/default.html`
+ * with `<html>...{{ content }}...</html>` would (a) not match the
+ * envelope-absence branch, BUT would (b) match the frontmatter-
+ * delimiter branch (its source opens `---\n...---\n`) AND (c) match
+ * the fragment-path branch (`_layouts/` was in the list). The
+ * frontmatter / path branches over-stamped the fragment label on files
+ * whose `<html>` opener said "I am the page." The new AND-conjunction
+ * inverts that: positive evidence of "I am the page" ALWAYS wins.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md`:
+ *   - "Heuristic-mislabeled meta sub-fields are dishonest" — every
+ *     signal here is provable from the file alone (path / AST / source
+ *     regex). No guessing.
+ *   - "Cross-surface count invariant" — both surfaces call this same
+ *     classifier; no opportunity for drift between the meta list and
+ *     the rule-suppression set.
+ *
+ * Pure function over the parsed document + raw source + file path.
+ * Cheap to call: structural lookups are O(n) over the AST (which the
+ * caller already walked), source regexes are bounded by document size.
+ *
+ * @param doc parsed HTML document
+ * @param source original file source text
+ * @param filePath the file's path (relative or absolute; both are
+ *   normalized for path-segment matching)
+ */
+export function classifyFragment(
+  doc: HtmlDocument,
+  source: string,
+  filePath: string,
+): FragmentClassification {
+  const signals: FragmentClassificationSignals = {
+    hasHtmlOpener: hasHtmlOpener(doc, source),
+    hasLayoutDirective: hasLayoutDirective(source),
+    inLayoutsDir: looksLikeLayoutsPath(filePath),
+  };
+  const isFragment = !(signals.hasHtmlOpener || signals.hasLayoutDirective || signals.inLayoutsDir);
+  return { isFragment, signals };
 }
 
 /**
@@ -137,54 +283,18 @@ function hasFrontMatterDelimiter(source: string): boolean {
  * supplied at composition time and a confident emit would be a false
  * positive.
  *
- * Three OR-branches, layered cheapest-first:
- *
- *   (a) The parsed document carries NONE of `<html>`, `<body>`, or
- *       `<head>` at any depth — a true bare fragment (component
- *       template, content partial, include snippet) with no envelope
- *       evidence at all.
- *   (b) The raw source begins with a `---`-delimited front-matter
- *       block (Jekyll / Eleventy / Hugo / Astro / MDX). The opener at
- *       the top of the file is conclusive evidence the file is content
- *       composed into a parent layout.
- *   (c) The file path lives under a fragment-convention directory
- *       segment — `_includes/`, `_layouts/`, `_partials/`, `partials/`,
- *       `components/` ({@link FRAGMENT_PATH_SEGMENTS}).
- *
- * Per `docs/kb/architecture/ai-first-consumer.md` — fragment-
- * classification is structural evidence the parser actually has, not a
- * heuristic guess about composition or rendering. The "no heuristic
- * suppression" doctrine applies to predicates over weaker evidence
- * (logo / process-page / essential-presentation guesses); fragment
- * detection is a deterministic structural classification, the same
- * confidence level as `isHtmlFragment` already used to gate
- * page-level rules. Suppression is honest here.
- *
- * Pure function over the parsed document + raw source + file path.
- * Returns false for self-contained HTML pages with no front-matter
- * block and no fragment-path segment.
+ * Thin convenience wrapper over {@link classifyFragment}: returns the
+ * `isFragment` boolean for callers that don't need the structural
+ * signals. Same predicate, same evidence — no drift between rules
+ * suppressing on this answer and the meta-side `fragmentFiles[]` list
+ * populated from the same classifier.
  *
  * @param doc parsed HTML document
- * @param source original file source text — required for branches
- *   (a)'s `<head>` check via the AST and (b)'s front-matter probe
- * @param filePath the file's path — required for branch (c)
+ * @param source original file source text
+ * @param filePath the file's path
  */
 export function isFragmentFile(doc: HtmlDocument, source: string, filePath: string): boolean {
-  // Branch (a): no envelope tags anywhere in the document. Stricter
-  // than `isHtmlFragment` (which checks only `<html>` / `<body>`):
-  // a `<head>`-only partial (e.g. a Jekyll `_includes/head.html`
-  // injected into a parent layout's `<head>`) carries `<head>` and
-  // is therefore NOT classified by branch (a) — but branches (b) and
-  // (c) cover the typical paths such files live on.
-  const hasHtml = findHtmlElementsByTag(doc, "html").length > 0;
-  const hasBody = findHtmlElementsByTag(doc, "body").length > 0;
-  const hasHead = findHtmlElementsByTag(doc, "head").length > 0;
-  if (!(hasHtml || hasBody || hasHead)) return true;
-  // Branch (b): front-matter delimiter at the top of the source.
-  if (hasFrontMatterDelimiter(source)) return true;
-  // Branch (c): conventional fragment / partial / component path.
-  if (looksLikeFragmentPath(filePath)) return true;
-  return false;
+  return classifyFragment(doc, source, filePath).isFragment;
 }
 
 /**

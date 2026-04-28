@@ -7,7 +7,7 @@
  * `limitations` prose) live next to the shape they describe.
  */
 
-import { isHtmlFragment } from "../engine/ast-helpers.ts";
+import { classifyFragment } from "../engine/layout-partial.ts";
 import {
   partitionPerRuleCoverage,
   type RulesNotEvaluatedDueToInputType,
@@ -664,14 +664,16 @@ export function detectScssUnresolvedVariableFiles(files: readonly ParsedFile[]):
 }
 
 /**
- * returns the subset
- * of scanned HTML-family files whose parsed root is a fragment — no
- * `<html>` ancestor, no `<body>` descendant. Mirrors the predicate
+ * Returns the subset of scanned HTML-family files whose parsed root
+ * classifies as a fragment per the shared
+ * {@link classifyFragment} predicate. Mirrors the predicate
  * {@link buildAnalysisCoverage} uses to populate
  * `meta.analysisCoverage.fragmentFiles[]` so the file list driving the
  * `coverageConfidenceReason: "fragment-input-no-document-envelope"`
  * per-rule downgrade and the file list the agent sees on the meta
- * surface stay identical — same evidence, same closure path.
+ * surface stay identical — same evidence, same shared classifier, no
+ * cross-surface drift between rule-side suppression and meta-side
+ * telemetry.
  *
  * Returns paths in sorted order so wire output is deterministic across
  * runs. Empty array when no fragment files are present — callers
@@ -681,7 +683,12 @@ export function detectFragmentFiles(files: readonly ParsedFile[]): readonly stri
   const out: string[] = [];
   for (const file of files) {
     if (file.ast.language !== "html") continue;
-    if (isHtmlFragment(file.ast.root as HtmlDocument)) out.push(file.filePath);
+    const { isFragment } = classifyFragment(
+      file.ast.root as HtmlDocument,
+      file.source,
+      file.filePath,
+    );
+    if (isFragment) out.push(file.filePath);
   }
   out.sort();
   return out;

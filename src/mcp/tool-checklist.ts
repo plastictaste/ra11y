@@ -1029,6 +1029,18 @@ export const checklistTool: McpTool = {
       likelyIrrelevant: filteredIrrelevant,
       ...checklistNextStep,
       ...metaField,
+      // Surface analysisCoverage at the top level (mirror of `coverage`)
+      // so the fragment classification, parse-error file lists, and
+      // opaque-component telemetry reach checklist consumers identically
+      // to scan_project / coverage on the same cwd. Cross-surface drift
+      // on the fragment classification was the canonical Q9 closure case
+      // — checklist consumers calling first on a static-site corpus had
+      // zero signal that the corpus was fragment-heavy until the agent
+      // fell back to scan_project. Per
+      // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+      // invariant" — the fragment list on `checklist` must agree with
+      // scan_project / coverage / scan_file on the same input.
+      ...analysisCoverageField,
       ...warningsFragment,
     });
   },
