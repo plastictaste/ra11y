@@ -1447,8 +1447,9 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     // the count carries the full signal so the agent can spot bulk-
     // sourcemap directories without reading every path; topPaths is
     // a head slice large enough to recognize the directory pattern.
-    const fullList = Array.from({ length: 48 }, (_, i) =>
-      `/proj/dist/asset${String(i).padStart(2, "0")}.css.map`,
+    const fullList = Array.from(
+      { length: 48 },
+      (_, i) => `/proj/dist/asset${String(i).padStart(2, "0")}.css.map`,
     );
     const details = computeScanWarningDetails(["sourcemap_files_excluded"], {
       filesScanned: 12,
