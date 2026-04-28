@@ -41,6 +41,7 @@ import {
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import { withTopRules, withViolationsByScanKind } from "./scan-assembly.ts";
+import { GROUP_BY_VALUES, readGroupByParam, withByGroup } from "./scan-group-by.ts";
 import { assembleScanProjectResponse } from "./scan-project-budget.ts";
 import {
   buildScanProjectReviewCandidates,
@@ -149,6 +150,12 @@ export const scanProjectTool: McpTool = {
         },
         includeRuleDetails: includeRuleDetailsSchema,
         skipCriterion: skipCriterionSchema,
+        groupBy: {
+          type: "string",
+          enum: [...GROUP_BY_VALUES],
+          description:
+            "Aggregate findings into a `plan.byGroup` summary keyed by `firstChildDir` (relative-to-cwd first path segment — the high-leverage case for catalog repos with N parallel sub-project subdirectories), `directory` (relative-to-cwd parent directory of each file), or `extension` (file extension without the leading dot). Each group reports `{ violations, filesWithFindings, mostCommonRule?, mostCommonCriterion? }`. The flat `files[]` list still ships in full — `byGroup` is an additive aggregator, not a replacement. Use this on bulk-template repos with parallel sub-projects to get one response with N rows per sub-project rather than N round-trips with `additionalPaths` per sub-project.",
+        },
       },
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
@@ -323,11 +330,17 @@ export const scanProjectTool: McpTool = {
     // ("`explain_rule` on the dominant rule" / "narrow scope" /
     // "propose_config exclude") in one read. Identity-stable when no
     // error/warning findings emerged.
+    const groupByStrategy = readGroupByParam(params["groupBy"]);
     const formattedWithScanKind: ScanFormatted = {
       ...formatted,
-      plan: withTopRules(
-        withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+      plan: withByGroup(
+        withTopRules(
+          withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+          formatted.files,
+        ),
         formatted.files,
+        root,
+        groupByStrategy,
       ),
     };
     // probe the canonical baseline path so agents see whether
