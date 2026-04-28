@@ -268,4 +268,52 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(coverageFires).toBe(scanFires);
     expect(coverageFires).toBe(true);
   });
+
+  it("Q9: scan_project surfaces parseErrorFileCount / partialParseFileCount / fragmentFileCount on a clean scan (always-populate, not ambiguous-absence)", async () => {
+    // An agent reading `scan_project.meta.analysisCoverage` on a clean
+    // codebase must see all three parse-coverage counters as scalar 0,
+    // not absent fields. Per `docs/kb/architecture/ai-first-consumer.md`
+    // "Ambiguous field shapes are dishonest": absence forces the agent
+    // to disambiguate "telemetry collected, value 0" from "telemetry
+    // never collected" — and the wrong guess silently propagates.
+    // The same response shape ships from `coverage` so the cross-
+    // surface count invariant holds (every project-rooted tool exposes
+    // the counters uniformly).
+    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+
+    const session = new McpSession();
+    const scanResult = await findTool("scan_project").handler({ cwd: dir }, session);
+    const coverageResult = await findTool("coverage").handler({ cwd: dir }, session);
+
+    expect(scanResult.isError).toBeUndefined();
+    expect(coverageResult.isError).toBeUndefined();
+
+    const scan = JSON.parse(scanResult.content[0].text) as {
+      readonly meta?: { readonly analysisCoverage?: Record<string, unknown> };
+    };
+    const coverage = parseEnvelope(coverageResult.content[0].text);
+
+    const scanCoverage = scan.meta?.analysisCoverage;
+    expect(scanCoverage).toBeDefined();
+    expect(scanCoverage?.["parseErrorFileCount"]).toBe(0);
+    expect(scanCoverage?.["partialParseFileCount"]).toBe(0);
+    expect(scanCoverage?.["fragmentFileCount"]).toBe(0);
+
+    expect(coverage.analysisCoverage).toBeDefined();
+    expect(coverage.analysisCoverage?.["parseErrorFileCount"]).toBe(0);
+    expect(coverage.analysisCoverage?.["partialParseFileCount"]).toBe(0);
+    expect(coverage.analysisCoverage?.["fragmentFileCount"]).toBe(0);
+
+    // Cross-surface count invariant: identical input must produce
+    // identical counters across the two project-rooted tools.
+    expect(coverage.analysisCoverage?.["parseErrorFileCount"]).toBe(
+      scanCoverage?.["parseErrorFileCount"] as number,
+    );
+    expect(coverage.analysisCoverage?.["partialParseFileCount"]).toBe(
+      scanCoverage?.["partialParseFileCount"] as number,
+    );
+    expect(coverage.analysisCoverage?.["fragmentFileCount"]).toBe(
+      scanCoverage?.["fragmentFileCount"] as number,
+    );
+  });
 });

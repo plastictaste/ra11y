@@ -73,13 +73,16 @@ export const assertions: FixtureAssertions = {
       path: ["analysisCoverage", "partialParseFileCount"],
       predicate: { equals: 1 },
     },
-    // Symmetric: `parseErrorFileCount` must NOT count this file. Once the
-    // file moves to `partialParseFiles`, the count is omitted entirely
-    // (present-when-meaningful per the coverage block doctrine).
+    // Symmetric: `parseErrorFileCount` must NOT count this file. With
+    // the Q9 always-populate fix, the counter is now present-and-zero
+    // (`0`) rather than absent — the agent reads "telemetry was
+    // collected, value is 0" instead of having to disambiguate
+    // "field absent → 0 errors or telemetry skipped?". The honest
+    // classification still holds: this file lives in `partialParseFiles`.
     {
       kind: "meta-field",
       path: ["analysisCoverage", "parseErrorFileCount"],
-      predicate: "absent",
+      predicate: { equals: 0 },
     },
   ],
 };

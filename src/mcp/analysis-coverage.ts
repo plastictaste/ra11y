@@ -505,6 +505,26 @@ export function buildAnalysisCoverage(
   // emit `response_meta_truncated` honestly — "at least one meta
   // path-array was trimmed."
   let metaArrayTruncated = false;
+  // Always-populate the three parse-coverage counters at zero
+  // whenever the caller threaded `findingFilePaths` (the load-bearing
+  // signal that a real scan ran — every project-rooted tool passes it
+  // even when the corpus produced zero output). Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+  // shapes are dishonest": an absent `parseErrorFileCount` reads to
+  // the agent as either "zero parse errors" or "telemetry not
+  // collected" — same response, opposite implications. Pre-setting
+  // them to `0` here makes the field present-when-the-scan-ran; the
+  // accumulator-driven assignments below overwrite the zero with the
+  // real count when entries exist (`parseErrorFileCount`,
+  // `partialParseFileCount`, `fragmentFileCount` are reassigned in
+  // the sub-assemblers, not OR'd). Legacy / fixture call sites that
+  // pass `findingFilePaths: undefined` keep the historical omission
+  // shape so unit tests over the function in isolation stay focused.
+  if (findingFilePaths !== undefined) {
+    coverage.parseErrorFileCount = 0;
+    coverage.partialParseFileCount = 0;
+    coverage.fragmentFileCount = 0;
+  }
   if (acc.opaqueComponents.size > 0) {
     assembleOpaqueComponentBlock(acc.opaqueComponents, verbose, coverage);
     // when autoDetectWrappers: true promotes N PascalCase

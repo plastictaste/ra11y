@@ -1376,6 +1376,78 @@ describe("buildAnalysisCoverage — hints", () => {
       };
     }
 
+    it("always-populates the three parse-coverage counters at zero when findingFilePaths is threaded (Q9 ambiguous-absence closure)", () => {
+      // A clean scan over a corpus with zero parse errors and zero
+      // fragments must STILL surface `parseErrorFileCount: 0`,
+      // `partialParseFileCount: 0`, `fragmentFileCount: 0` so an agent
+      // reading `scan_project.meta.analysisCoverage` (or
+      // `coverage.analysisCoverage`) can distinguish "telemetry was
+      // collected, the value is 0" from "telemetry was never
+      // collected." Per `docs/kb/architecture/ai-first-consumer.md`
+      // "Ambiguous field shapes are dishonest": the absence of a
+      // numeric counter forces the consumer to disambiguate, and the
+      // wrong guess is silently propagated downstream.
+      //
+      // The discriminator is `findingFilePaths`: every project-rooted
+      // tool (`scan_project`, `coverage`, `checklist`) threads it from
+      // the scan output, so the load-bearing always-populate fires
+      // there. Legacy / fixture paths that omit the parameter keep the
+      // historical conditional shape — the function-in-isolation
+      // contract stays focused.
+      const cleanFile = (() => {
+        const source = "<html><body><h1>Hi</h1></body></html>";
+        const parsed = parseHtml(source);
+        return {
+          filePath: "index.html",
+          source,
+          ast: { language: "html", root: parsed.root, errors: parsed.errors },
+        } satisfies ParsedFile;
+      })();
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [cleanFile],
+        [],
+        NO_RULES,
+        false,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      expect(analysisCoverage?.["parseErrorFileCount"]).toBe(0);
+      expect(analysisCoverage?.["partialParseFileCount"]).toBe(0);
+      expect(analysisCoverage?.["fragmentFileCount"]).toBe(0);
+      // Path-list arrays remain absent — they're per-entry detail, not
+      // counter telemetry. The always-populate rule applies only to
+      // the scalar count fields.
+      expect(analysisCoverage?.["parseErrorFiles"]).toBeUndefined();
+      expect(analysisCoverage?.["partialParseFiles"]).toBeUndefined();
+      expect(analysisCoverage?.["fragmentFiles"]).toBeUndefined();
+    });
+
+    it("preserves the historical omission shape on the three counters when findingFilePaths is undefined (legacy / fixture path)", () => {
+      // The function-in-isolation contract: a caller that doesn't
+      // thread `findingFilePaths` is signalling "I'm not a real-scan
+      // surface, don't claim telemetry I haven't collected." The three
+      // counters stay absent in this mode so unit tests over the
+      // function don't accidentally spread coverage when the input
+      // shape is incomplete. Other coverage signals (`parseModeByExtension`,
+      // `rulesEligibleByExtension` under verbose, etc.) follow their
+      // own present-when-meaningful gating and are unaffected here.
+      const cleanFile = (() => {
+        const source = "<html><body><h1>Hi</h1></body></html>";
+        const parsed = parseHtml(source);
+        return {
+          filePath: "index.html",
+          source,
+          ast: { language: "html", root: parsed.root, errors: parsed.errors },
+        } satisfies ParsedFile;
+      })();
+      const { analysisCoverage } = buildAnalysisCoverage([cleanFile], [], NO_RULES, false);
+      expect(analysisCoverage?.["parseErrorFileCount"]).toBeUndefined();
+      expect(analysisCoverage?.["partialParseFileCount"]).toBeUndefined();
+      expect(analysisCoverage?.["fragmentFileCount"]).toBeUndefined();
+    });
+
     it("routes errored files with no findings into parseErrorFiles (invisible-to-rules bucket) with per-entry parserAttempted + reason", () => {
       // Errored file, empty finding set -> lands in the invisible bucket.
       // The `{ path, parserAttempted, naturalParser?, reason }` shape is
@@ -1407,7 +1479,12 @@ describe("buildAnalysisCoverage — hints", () => {
           parsedThroughLine: 1,
         },
       ]);
-      expect(analysisCoverage?.["partialParseFileCount"]).toBeUndefined();
+      // Q9: counter stays present-and-zero (not absent) when the caller
+      // threaded `findingFilePaths` — the agent reads "telemetry was
+      // collected, the value is 0" instead of "field absent (collected
+      // or skipped?)". The path-list array stays absent because no
+      // entries fell in this bucket.
+      expect(analysisCoverage?.["partialParseFileCount"]).toBe(0);
       expect(analysisCoverage?.["partialParseFiles"]).toBeUndefined();
     });
 
@@ -1427,7 +1504,10 @@ describe("buildAnalysisCoverage — hints", () => {
         undefined,
         new Set(["modal.mdx"]),
       );
-      expect(analysisCoverage?.["parseErrorFileCount"]).toBeUndefined();
+      // Q9: counter stays present-and-zero (not absent) when the caller
+      // threaded `findingFilePaths` — see the sibling
+      // `partialParseFileCount` comment in the prior test for rationale.
+      expect(analysisCoverage?.["parseErrorFileCount"]).toBe(0);
       expect(analysisCoverage?.["parseErrorFiles"]).toBeUndefined();
       expect(analysisCoverage?.["partialParseFileCount"]).toBe(1);
       expect(analysisCoverage?.["partialParseFiles"]).toEqual([
