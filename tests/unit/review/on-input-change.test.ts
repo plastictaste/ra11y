@@ -101,6 +101,55 @@ describe("review/on-input-change", () => {
     expect(out[0]?.reason).toContain("low confidence");
   });
 
+  it("populates handlerFunctionName on bare-identifier reference", () => {
+    const source = `const x = <select onChange={navigateToUrl} />;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.handlerFunctionName).toBe("navigateToUrl");
+  });
+
+  it("populates handlerFunctionName on dotted reference (drops `this`)", () => {
+    const source = `const x = <input onChange={this.handleChange} />;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.handlerFunctionName).toBe("handleChange");
+  });
+
+  it("populates handlerFunctionName on .bind(this) chain (drops `bind`)", () => {
+    const source = `const x = <input onChange={obj.handleChange.bind(this)} />;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.handlerFunctionName).toBe("handleChange");
+  });
+
+  it("populates handlerFunctionName on HTML named-call handler", () => {
+    const source = `<select onchange="navigateToUrl(this.value)"></select>`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.handlerFunctionName).toBe("navigateToUrl");
+  });
+
+  it("omits handlerFunctionName on inline arrow handler", () => {
+    const source = `const x = <input onChange={() => router.push("/x")} />;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.handlerFunctionName).toBeUndefined();
+  });
+
+  it("omits handlerFunctionName on inline non-nav arrow handler", () => {
+    const source = `const x = <input onChange={() => setValue(e.target.value)} />;`;
+    const out = runFinder(finder, source);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.handlerFunctionName).toBeUndefined();
+  });
+
+  it("omits handlerFunctionName on inline HTML body without function reference", () => {
+    const source = `<input onfocus="this.dataset.touched = '1'">`;
+    const out = runFinder(finder, source, { filePath: "input.html" });
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]?.handlerFunctionName).toBeUndefined();
+  });
+
   it("reason text stays compact across all three tiers (regression guard on verbosity)", () => {
     // Rationale: a forms-heavy codebase surfaces one candidate per
     // onChange/onFocus/onBlur handler. When every reason was 200+ chars

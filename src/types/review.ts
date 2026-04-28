@@ -361,6 +361,29 @@ export interface ReviewCandidate {
    * fixed-window snippet builder.
    */
   readonly matchLength?: number;
+  /**
+   * Identifier name of a handler that resolves to a named function
+   * reference / call rather than an inline arrow or function expression.
+   * Populated when the finder can statically extract the symbol the
+   * agent's next Read should target — e.g. `onChange={navigateToUrl}`,
+   * `onChange={this.handleChange}`, or HTML `onchange="navigateToUrl(this.value)"`
+   * all surface `handlerFunctionName: "navigateToUrl"` / `"handleChange"`.
+   * Inline arrow / function expressions whose body the finder already
+   * read (`onChange={() => router.push(...)}`) omit the field — the
+   * scanner has the body in source, so naming an outer symbol to grep
+   * for would mislead.
+   *
+   * Pure additive evidence — the candidate's `confidence` and `reason`
+   * are unchanged; the field exists so the agent's next Read targets
+   * the right symbol instead of re-parsing the reason text. Per the
+   * AI-first consumer doctrine "Don't duplicate capability the agent
+   * already has," the finder does NOT attempt cross-file resolution
+   * of the function body — it only points at the symbol; the agent
+   * greps. Per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
+   * the field is present-when-meaningful: omitted on inline-body
+   * handlers and on shapes the extractor cannot resolve cleanly.
+   */
+  readonly handlerFunctionName?: string;
 }
 
 /** Scope for a candidate finder — same semantics as RuleScope minus "project". */

@@ -206,6 +206,18 @@ interface ChecklistCandidateOut {
    * share a pattern stem. Omitted on singletons per CLAUDE.md §1.
    */
   readonly sourceCount?: number;
+  /**
+   * Identifier name passed through from the finder (see
+   * `ReviewCandidate.handlerFunctionName`). Populated when the
+   * candidate's handler resolves to a named function reference / call
+   * the agent can grep for in surrounding source. Omitted when the
+   * handler is an inline arrow / function expression (its body is
+   * already captured in the candidate's reason / source). Same
+   * present-when-meaningful semantics as the review-candidates
+   * surface so a checklist consumer that filters by criterion does
+   * not have to re-call review_candidates to recover the symbol.
+   */
+  readonly handlerFunctionName?: string;
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -1237,47 +1249,66 @@ function mapCandidates(
 ): ChecklistCandidateOut[] {
   return candidates
     .filter((c) => c.criterionId === criterionId)
-    .map((c) => {
-      // Prefer a finder-supplied snippet (cross-file finders sometimes
-      // know the right window better than ±3 lines), else fall back to
-      // a cache-only lookup. Omit the field when neither is available
-      // — empty-string is a dishonest shape per CLAUDE.md §1.
-      const snippet = finderOrBuiltSnippet(c, sources);
-      // `confidence` passes through verbatim from the finder. See
-      // CLAUDE.md §1 — this is identity-like metadata, not an
-      // optional enrichment, so it is always present.
-      return {
-        path: c.location.filePath,
-        line: c.location.line,
-        reason: c.reason,
-        confidence: c.confidence,
-        suppressWith: pragmaFormForExtension(c.location.filePath, criterionId),
-        ...(snippet === undefined ? {} : { snippet }),
-        // Pass aggregated siblingOccurrences through to the checklist
-        // surface so an agent paginating the checklist sees the full
-        // per-sibling trail on a consolidated candidate (whether the
-        // group came from same-parent aggregation or stem-dedup).
-        // Present-when-meaningful per CLAUDE.md §1.
-        ...(c.siblingOccurrences !== undefined &&
-          c.siblingOccurrences.length > 0 && {
-            siblingOccurrences: c.siblingOccurrences,
-          }),
-        // Structured additive evidence — vendor-path-shape boolean
-        // and duration literal/non-literal sentinel. Same semantics
-        // as on the review-candidates surface; surfaced here so a
-        // checklist consumer that filters by criterion does not have
-        // to re-call review_candidates to recover the typed fields.
-        ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
-        ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
-        ...(c.predicateConceded === undefined ? {} : { predicateConceded: c.predicateConceded }),
-        ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
-        ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
-        // sourceCount carries through for stem-deduped candidates so
-        // checklist consumers see the source occurrence count on the
-        // consolidated row. Omitted on singletons.
-        ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
-      };
-    });
+    .map((c) => mapOneCandidate(c, criterionId, sources));
+}
+
+/**
+ * Maps a single {@link ReviewCandidate} onto one row of the checklist
+ * surface — the per-candidate present-when-meaningful spreads (snippet,
+ * siblingOccurrences, vendorPathHint, vendorContext, predicateConceded,
+ * durationLiteralMs, durationExpression, sourceCount, handlerFunctionName)
+ * live here so {@link mapCandidates} stays under the linter's cognitive-
+ * complexity cap. All optional fields conditional-spread per CLAUDE.md §1.
+ */
+function mapOneCandidate(
+  c: ReviewCandidate,
+  criterionId: string,
+  sources: ReadonlyMap<string, SourceEntry>,
+): ChecklistCandidateOut {
+  // Prefer a finder-supplied snippet (cross-file finders sometimes
+  // know the right window better than ±3 lines), else fall back to
+  // a cache-only lookup. Omit the field when neither is available
+  // — empty-string is a dishonest shape per CLAUDE.md §1.
+  const snippet = finderOrBuiltSnippet(c, sources);
+  // `confidence` passes through verbatim from the finder. See
+  // CLAUDE.md §1 — this is identity-like metadata, not an
+  // optional enrichment, so it is always present.
+  return {
+    path: c.location.filePath,
+    line: c.location.line,
+    reason: c.reason,
+    confidence: c.confidence,
+    suppressWith: pragmaFormForExtension(c.location.filePath, criterionId),
+    ...(snippet === undefined ? {} : { snippet }),
+    // Pass aggregated siblingOccurrences through to the checklist
+    // surface so an agent paginating the checklist sees the full
+    // per-sibling trail on a consolidated candidate (whether the
+    // group came from same-parent aggregation or stem-dedup).
+    // Present-when-meaningful per CLAUDE.md §1.
+    ...(c.siblingOccurrences !== undefined &&
+      c.siblingOccurrences.length > 0 && {
+        siblingOccurrences: c.siblingOccurrences,
+      }),
+    // Structured additive evidence — vendor-path-shape boolean
+    // and duration literal/non-literal sentinel. Same semantics
+    // as on the review-candidates surface; surfaced here so a
+    // checklist consumer that filters by criterion does not have
+    // to re-call review_candidates to recover the typed fields.
+    ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+    ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
+    ...(c.predicateConceded === undefined ? {} : { predicateConceded: c.predicateConceded }),
+    ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
+    ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
+    // sourceCount carries through for stem-deduped candidates so
+    // checklist consumers see the source occurrence count on the
+    // consolidated row. Omitted on singletons.
+    ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
+    // handlerFunctionName carries through for on-input/on-focus
+    // candidates whose handler resolves to a named symbol — the
+    // agent's next Read targets the binding directly instead of
+    // re-parsing the reason text. Omitted on inline-body handlers.
+    ...(c.handlerFunctionName === undefined ? {} : { handlerFunctionName: c.handlerFunctionName }),
+  };
 }
 
 /**

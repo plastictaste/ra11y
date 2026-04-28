@@ -130,6 +130,44 @@ function looksLikeFunctionReference(source: string): boolean {
 }
 
 /**
+ * Extracts the handler's identifier name from a reference-shaped or
+ * named-call source — the symbol the agent's next Read should grep
+ * for. Returns the last identifier in the chain before any optional
+ * `(...)` so `this.handleChange` and `navigateToUrl(this.value)`
+ * both resolve to the useful name (`handleChange`, `navigateToUrl`)
+ * rather than the structural-prefix `this`. Skips `bind` / `call` /
+ * `apply` so `obj.handleChange.bind(this)` resolves to `handleChange`,
+ * not `bind`. Returns `undefined` when the predicate has no clean
+ * symbol to surface (empty source, inline arrow / function — those
+ * branches are gated by the caller anyway).
+ */
+function extractHandlerFunctionName(source: string): string | undefined {
+  const trimmed = stripOuterBraces(source);
+  if (trimmed.length === 0) return undefined;
+  // Strip an optional trailing `(...)` so `navigateToUrl(this.value)`
+  // and `obj.fn.bind(this)` both reduce to the dotted chain.
+  const callStripped = trimmed.replace(/\s*\([^)]*\)\s*$/, "");
+  const segments = callStripped
+    .split(".")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (segments.length === 0) return undefined;
+  // Walk segments right-to-left, skipping function-method tails
+  // (`bind` / `call` / `apply`) so the resolved name is the function
+  // the user defined, not the wrapper invocation.
+  const FN_METHOD_TAILS = new Set(["bind", "call", "apply"]);
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    if (seg === undefined) continue;
+    if (FN_METHOD_TAILS.has(seg)) continue;
+    if (seg === "this") continue;
+    if (!/^[$_A-Za-z][\w$]*$/.test(seg)) return undefined;
+    return seg;
+  }
+  return undefined;
+}
+
+/**
  * Strips the outer JSX expression braces the TSX parser captures as
  * part of an attribute's `.raw` (it preserves `{handleChange}` verbatim
  * so downstream tools can see the full slice). HTML handlers are
@@ -160,12 +198,21 @@ function emit(
   // open the handler (low). Per CLAUDE.md §1 we surface every
   // handler; confidence just mirrors what the static signal knows.
   const confidence = detectContextChange(source) === undefined ? "low" : "high";
+  // Named handler reference / call → surface the symbol so the
+  // agent's next Read targets the right binding. Inline arrow /
+  // function expressions omit the field — the body is already in
+  // source (per CLAUDE.md §1 "Ambiguous field shapes are
+  // dishonest" → present-when-meaningful).
+  const handlerFunctionName = looksLikeFunctionReference(source)
+    ? extractHandlerFunctionName(source)
+    : undefined;
   for (const criterionId of criteriaForHandler(handler)) {
     candidates.push({
       criterionId,
       location: { filePath, line: el.loc.start.line, column: el.loc.start.column },
       reason,
       confidence,
+      ...(handlerFunctionName === undefined ? {} : { handlerFunctionName }),
     });
   }
 }

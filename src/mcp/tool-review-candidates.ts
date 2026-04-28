@@ -215,6 +215,7 @@ function mapCandidateOut(
     ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
     ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
     ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
+    ...(c.handlerFunctionName === undefined ? {} : { handlerFunctionName: c.handlerFunctionName }),
   };
 }
 

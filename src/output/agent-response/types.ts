@@ -446,6 +446,17 @@ export interface AgentReviewCandidate {
    * "Ambiguous field shapes are dishonest."
    */
   readonly sourceCount?: number;
+  /**
+   * Identifier name of a handler that resolves to a named function
+   * reference / call rather than an inline arrow / function expression
+   * (mirrors {@link ReviewCandidate#handlerFunctionName}). Populated
+   * when the finder could statically extract the symbol the agent's
+   * next Read should target — e.g. `onChange={navigateToUrl}` →
+   * `handlerFunctionName: "navigateToUrl"`. Omitted on inline-body
+   * handlers, per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest" → present-when-meaningful.
+   */
+  readonly handlerFunctionName?: string;
 }
 
 /**
