@@ -17,7 +17,7 @@ Closing an item = deleting its `- [ ] **<ID>**` line in the same commit that lan
 
 Tracks below are independent. `/continue` picks the next open item from each of up to 3 active tracks per turn and dispatches them in parallel (details in `.claude/skills/continue/SKILL.md`). Within a track, items run in order — some tracks have sequencing; cross-track work is always parallelizable.
 
-Active tracks: **Q4** (static-site-generator field test) · **Q5** (vanilla HTML/CSS/JS field test) · **Q6** (bulk-template field test) · **Q7** (multi-repo OSS field test) · **Q8b** (agent-consumer round, 2026-04-25 second pass) · **Q8c** (agent-consumer round, 2026-04-25 third pass) · **Q9** (multi-corpus AI-first sweep 2026-04-25 evening) · **Q10** (multi-corpus AI-first sweep 2026-04-26) · **Q11** (multi-corpus AI-first sweep 2026-04-26 round 2) · **Q12** (multi-corpus AI-first sweep 2026-04-26 round 3) · **V** (v1.0.0 readiness). Tracks **D**/**M**/**R**/**F**/**S**/**E** retired 2026-04-26 (no open items). Tracks Q (rounds 1-2), Q2, Q3, Q8 closed.
+Active tracks: **Q7** (multi-repo OSS field test) · **Q8c** (agent-consumer round, 2026-04-25 third pass) · **Q9** (multi-corpus AI-first sweep 2026-04-25 evening) · **Q10** (multi-corpus AI-first sweep 2026-04-26) · **Q11** (multi-corpus AI-first sweep 2026-04-26 round 2) · **Q12** (multi-corpus AI-first sweep 2026-04-26 round 3) · **V** (v1.0.0 readiness). Tracks **D**/**M**/**R**/**F**/**S**/**E** retired 2026-04-26. Tracks Q (rounds 1-2), Q2, Q3, Q4, Q5, Q6, Q8 (a/b) closed.
 
 Staged tracks: **C** (conformance-claim gaps — v0.3.0 foundation + v1.0.0 capstone). Tracks S and E were promoted on 2026-04-17 after the user directed "go all the way without releasing until finalized" — M/R/F are complete, so the remaining pre-release work spans S and E. ADR 0005 §Follow-up work still applies to the speculative tool choices inside S; foundation items (sampling.ts, capability, prompt library, KB docs) are safe to build.
 
@@ -27,80 +27,9 @@ Track C was added on 2026-04-17 from a gap analysis on "what's missing to let an
 
 ---
 
-## Track D — Docs & release
-
-Owner: `release-captain` + `doc-writer`. Blocks nothing; can ship independently.
-
-### v0.1.0
-
-
-### v0.2.0
-
-
----
-
-## Track M — MCP hardening
-
-Owner: main session. Internal ordering: baseline first (unlocks scan-diff), then apply-fix, then prompts/resources/capability, then structured errors, then tests last.
-
-### v0.2.0
-
-
----
-
-## Track R — Rules + review-candidate coverage
-
-Owner: `rule-implementer` (rules) + main session (review finders). Rules within the track are independent; dispatch 3 in parallel when you have 3 open items.
-
-### v0.2.0
-
-
-### v0.3.0
-
-
----
-
-## Track F — Real-world fixture corpus
-
-Owner: `fixture-curator` + `test-author`. **Sequenced: ADR → harness prototype → fixture backfill (9 items in parallel).** The 9 fixture cases cannot start until the harness lands.
-
-### v0.2.0
-
-
----
-
-## Track S — MCP sampling
-
-Owner: `parser-author` + main session. Promoted from staged 2026-04-17. Foundation items (sampling.ts, capability plumbing, prompt library, KB docs) land freely; the three speculative LLM-backed tools (`resolve-component`, `verdict-candidate`, `draft-vpat-narrative`) still need a concrete use-case selection per ADR 0005 §Follow-up work — surface them as review candidates before wiring.
-
-### v0.2.0 (foundation)
-
-
----
-
-## Track E — Ecosystem & public benchmark
-
-Owner: `doc-writer` + main session. Promoted from staged 2026-04-17. Items expand the agent-host matrix and establish the public quality story.
-
-### v0.2.0
-
-
----
-
-## Track Q — Agent-consumer feedback
+## Track Q — Agent-consumer feedback (closed)
 
 Owner: main session + general-purpose. Source: 10 independent agent runs against an external React codebase (2026-04-17 eval brief). All accepted items are MCP shape/honesty fixes — none touch detection logic. Dispatch in parallel; each touches a different surface.
-
-### v0.2.0 — accepted (P0/P1)
-
-
-### v0.2.0 — accepted (P2)
-
-
-### v0.2.0 — accepted (round 2 additions)
-
-Net-new items from round 2 of the consumer eval (round 2 explicitly probed edge cases — bogus `cwd`, `changedOnly`, subpath scans, large-directory overflow). 4 unanimous round-2 issues + several single-observer R2 finds; all are correctness or honest-shape, none are heuristic suppression.
-
 
 ### Considered and rejected (per CLAUDE.md §1)
 
@@ -120,18 +49,9 @@ Net-new items from round 2 of the consumer eval (round 2 explicitly probed edge 
 
 ---
 
-## Track Q2 — Agent-consumer feedback (round 3, 10-agent eval)
+## Track Q2 — Agent-consumer feedback (round 3, 10-agent eval) (closed)
 
 Owner: main session + general-purpose. Source: a 10-agent parallel eval against an external React/Vite/TS/Tailwind codebase — each agent exercised a different MCP slice in a "you-find, I-fix" workflow. Round 3 ran after Q (rounds 1-2) closed, on the post-Q shape. All accepted items are shape-honesty, batch-primitive, or workflow-gap fixes — none are heuristic suppression.
-
-### v0.2.0 — accepted (P0)
-
-
-### v0.2.0 — accepted (P1)
-
-
-### v0.2.0 — accepted (P2)
-
 
 ### Considered and rejected (per CLAUDE.md §1)
 
@@ -151,18 +71,6 @@ Owner: main session + general-purpose. Source: a 10-agent parallel eval against 
 
 Source: the 10-agent round-2 eval aggregation (`AGGREGATED.md`). Most items were *not* folded into Track Q (rounds 1-2, closed 2026-04-17) — the round-2 aggregation was produced around the same time but separately. Triage below retriages each item against CLAUDE.md §1 doctrine and existing Q/Q2 shipped work.
 
-#### Accepted (P0 — structural/bug/shape parity)
-
-
-#### Accepted (P1 — load-bearing capability)
-
-
-#### Accepted (P2 — orchestration / DX)
-
-
-#### Accepted (P3 — polish)
-
-
 #### Considered and rejected (round 2 retriage)
 
 - **Glob-ignore `*.stories.tsx` as default** → rejected per §1 "Default-exclude globs are suppression too." Story-file zero-findings is an honest signal (structurally unanalyzable). Fix: the `preset: "storybook"` that scans what stories exercise (Q2R2-STORYBOOK-PRESET above), not a filename carve-out. Severity-downgrade variants fail for the same reason.
@@ -173,30 +81,11 @@ Source: the 10-agent round-2 eval aggregation (`AGGREGATED.md`). Most items were
 
 ---
 
-## Track Q3 — Design-system field test
+## Track Q3 — Design-system field test (closed)
 
 Owner: main session + general-purpose. Source: 10-agent parallel eval against a design-system docs repo. Slices: components MDX (×4 agents), forms MDX, layout/utilities/helpers/content MDX, getting-started/about/customize/extend MDX, Astro pages/layouts/components, raw HTML test fixtures under `js/tests/`, and an MCP surface critique. All findings triaged against CLAUDE.md §1 and the AI-first-consumer doctrine.
 
 A design-system doc-site tree is a useful stress-test because (a) it's the shape ra11y agents see most often; (b) it has genuine a11y content (accessibility.mdx, prose-embedded ARIA patterns); (c) it ships MDX + Astro + raw HTML + SCSS in one tree — four file classes at once.
-
-**Parser-lifecycle discovery (process issue, not code gap):** `dist/cli.js` was rebuilt at 22:30 but the MCP subprocesses were started at 22:13 and kept running the pre-rebuild bundle. All 10 agents saw `.mdx` / `.astro` return `file-unsupported` and `filesAdded: 0` — a behavior that evaporates once the host re-spawns the MCP subprocess against the fresh bundle. The parser code itself (`src/input/parsers/{mdx,astro,scss}.ts` + `src/mcp/session.ts:440-457` dispatch + `src/utils/path.ts` allow-list) is correct. Items below are the findings that remain valid AFTER the MCP is restarted — the stale-process symptom is folded into a single lifecycle item.
-
-### v0.2.0 — accepted (P0)
-
-
-### v0.2.0 — accepted (P1 — shape honesty)
-
-
-### v0.3.0 — accepted (P1 — rule gaps + tightening)
-
-Rule folders with known issues (verified via source-read against /Users/van/dev/ra11y/src/rules/):
-
-
-New rules (ordered by ROI):
-
-
-### v0.3.0 — accepted (P2)
-
 
 ### Considered and rejected (per CLAUDE.md §1)
 
@@ -205,46 +94,11 @@ New rules (ordered by ROI):
 - **Deduplicate `forms/autocomplete-missing` when it fires 28× on one file** (concentrated in `floating-label.html`) → rejected per §1 "Labeled buckets are suppression too." The meta `concentration: {file, count}` already surfaces the density honestly; letting the agent see 28 is correct. A `meta.rulePatternSummary` extension could enrich reason text, but the 28 candidates must stay individually visible.
 - **Restore `<Example code={``}>` parsing via a Starlight-specific extractor** → deferred, not rejected. The Astro parser fix (Q3-MCP-RESTART-HINT unblocking the existing parseAstro wiring) closes the surrounding `.astro` case; a Starlight-specific content-prop extractor for `.mdx` is a separate engineering effort with a narrow scope (only helps docs sites using the `<Example>` pattern). Re-evaluate after a Starlight docs site actually parses end-to-end.
 
-### Additional items
-
-
-### Cross-track shared items
-
-
-### Cross-track shared items (deeper pass)
-
-
-### Cross-track shared items (re-sweep)
-
-
-### Cross-track shared items (later sweep)
-
-
 ---
 
-## Track Q4 — Static-site-generator field test
+## Track Q4 — Static-site-generator field test (closed)
 
-Owner: main session + general-purpose. Source: 10-agent parallel eval against a static-site-generator repo. Slices: `_layouts/`, `_includes/`, `pages/`, `_docs/` (alphabetical split), `_posts/` + `_tutorials/`, CSS/SCSS, raw `test/source/*.html`, `lib/` scaffold templates, Ruby source tree, and an MCP surface critique from a non-React-project angle.
-
-A canonical static-site-generator tree: HTML templates with Liquid (`{% ... %}`, `{{ ... }}`), YAML frontmatter, `.md`/`.markdown` content, SCSS, ERB fixtures, Ruby source. Where Q3 probed the docs-site MDX/Astro axis, Q4 probes the Ruby/SSG/Liquid axis — the failure modes are different. Cross-referenced against Q3 to avoid duplication; items that overlap are tagged as such.
-
-**MCP freshness:** one MCP subprocess spawned post-rebuild (pid 16243, started 23:07 vs dist rebuilt at 22:30), so findings reflect current bundle behavior — the Q3 stale-process confound does not apply here.
-
-### v0.2.0 — accepted (P0 — parser correctness, load-bearing)
-
-
-### v0.2.0 — accepted (P1 — template-awareness and fragment detection)
-
-
-### v0.2.0 — accepted (P1 — MCP shape for non-React projects)
-
-
-### v0.3.0 — accepted (P1 — rule gaps + tightenings)
-
-Deduped against Q3 where applicable. Items marked `[dup-Q3]` overlap and should share implementation.
-
-
-### v0.3.0 — accepted (P2)
+Owner: main session + general-purpose. Source: 10-agent parallel eval against a static-site-generator repo. A canonical static-site-generator tree: HTML templates with Liquid, YAML frontmatter, `.md`/`.markdown` content, SCSS, ERB fixtures, Ruby source. Where Q3 probed the docs-site MDX/Astro axis, Q4 probes the Ruby/SSG/Liquid axis.
 
 ### Considered and rejected (per CLAUDE.md §1)
 
@@ -254,44 +108,17 @@ Deduped against Q3 where applicable. Items marked `[dup-Q3]` overlap and should 
 - **Full markdown CommonMark parser as a P0** → deferred. Q4-MARKDOWN-SUPPORT option (b) — a lightweight HTML-in-markdown extractor — covers 80% of real findings at ~15% of the implementation cost. Revisit full parser after the extractor ships.
 - **Auto-detect and scan `_site/` output when Jekyll is detected** → rejected as "tool should not run build toolchains." The agent reads `_config.yml` + `Gemfile` + knows `bundle exec jekyll build`; ra11y should point at the output, not produce it. Q4-SSG-BUILD-HINT is the right mechanism.
 
-### Additional items
+---
 
+## Track Q5 — Vanilla HTML/CSS/JS field test (closed)
+
+Owner: main session + general-purpose. Source: first pass against a hand-authored vanilla-JS tree — 50 pedagogical vanilla `.html` + `.css` + `.js` bundles, no framework, no build step, no template directives. A vanilla-JS tree is the control — clean, hand-authored, no build pipeline confounds.
 
 ---
 
-## Track Q5 — Vanilla HTML/CSS/JS field test
-
-Owner: main session + general-purpose. Source: first pass against a hand-authored vanilla-JS tree — 50 pedagogical vanilla `.html` + `.css` + `.js` bundles, no framework, no build step, no template directives. Exercises ra11y on the shape most "starter" tutorials propagate to learners; findings that stick here ship to every hobbyist project that copies these patterns. Triaged against CLAUDE.md §1 — all items are rule/finder correctness or new detection on patterns statically provable from the source.
-
-Why this axis matters: most field tests so far (Q3 design-system, Q4 SSG, Q6 bulk templates) exercise framework-heavy or bundled shapes. A vanilla-JS tree is the control — clean, hand-authored, no build pipeline confounds. When a rule misfires here, the miss is on bare markup the author wrote.
-
-### v0.3.0 — accepted (P1)
-
-
-### Additional items
-
-
----
-
-## Track Q6 — Bulk-template catalog field test
+## Track Q6 — Bulk-template catalog field test (closed)
 
 Owner: main session + general-purpose. Source: first pass against a 40+ bulk-template tree. Each template is a pre-built marketing/landing-page bundle shipping jQuery-era vendor CSS/JS (bootstrap.css, font-awesome.css, jquery.fancybox.pack.js) alongside authored HTML. Exercises ra11y at scale — the scan hit the MCP token ceiling, surfaced several rule misfires against vendor bundles, and exposed at-scale quality gaps in the proposed config + build-artifact warning path.
-
-Why this axis matters: a bulk template catalog is the "buy a template kit" shape that a huge fraction of small-business and freelance sites ship. The vendor-CSS noise ratio and jQuery-era link antipatterns (`href="javascript:void(0)"`, icon-only social links) are not framework-authoring problems — they are the default ra11y-on-real-purchased-templates experience. When the token budget overruns, legitimate findings never reach the agent.
-
-Three cross-repo items moved out: `PROPOSE_CONFIG_EMITS_ABSOLUTE_PATHS_AND_TRAILING_COMMA` folds into `Q-SHARED-PROPOSE-CONFIG-RELATIVE-PATHS` (Track Q3 cross-repo section). Two Q6 items consolidate under one roof each: Q6-1 + Q6-13 → `Q6-BUDGET-UNDER-VENDOR-NOISE`; Q6-10 + Q6-11 + SSG-4 share scope with Q4-SCANNED-BUILD-ARTIFACTS-REASON (cross-refs inline).
-
-### v0.3.0 — accepted (P0 — response budget + signal-to-noise)
-
-
-### v0.3.0 — accepted (P1 — rule/finder correctness)
-
-
-### v0.3.0 — accepted (P2 — build-artifact rollup + signal routing)
-
-
-### Additional items
-
 
 ### Considered and rejected (per CLAUDE.md §1)
 
@@ -318,13 +145,6 @@ Cross-cutting themes (≥3-of-4-site recurrence) drive the P0 items below. Items
 
 - [ ] **Q7-RULE-IMG-ALT-REPEATS-PROSE-SC-MISMAP** (2/4) 1.4.5 "Images of Text" finder fires when alt text repeats a sibling label or surrounding prose: `<img alt="fly">` next to `<p>Fly</p>`; sponsor-avatar grids with sequential alt-prefix-plus-index. SC 1.4.5 governs whether the image's PIXELS render text — orthogonal to alt-prose redundancy (which is a 1.1.1 concern). Concrete observations across two targets: 10+ candidates each on pictorial-image clusters and sponsor avatars. The criterion mismatch trains the agent to mistrust 1.4.5 candidates uniformly. Fix: either (a) drop the alt-repeats-prose finder for 1.4.5 entirely — the actual signal (text rendered in pixels) is invisible to static analysis without OCR, and the agent reading the alt+visible-prose pair is the only reliable arbiter; OR (b) keep the finder but reframe the reason as a 1.1.1 "redundant alternative text" candidate suggesting `alt=""` since the visible label already names the image. The 1.4.5 evidence (filename-suggests-text, e.g. `button.png`/`banner-headline.svg`) stays under 1.4.5; alt-repeats-prose moves to 1.1.1. Doctrine: spec-correctness on which criterion a candidate belongs to. Pairs with Q7-CHECKLIST-1.4.5-SR-ONLY-DEDUPE (different lever; that's contiguous-range dedup, this is criterion mapping).
 - [ ] **Q7-RULE-NAME-RESOLUTION-TITLE-FALLBACK-CONSISTENCY** (1/4) Two rules treat the `title` attribute differently: `navigation/link-descriptive-text` accepts `title` as accessible name unconditionally (so icon-only social links with only `<i>` child + `title="Facebook"` silently pass); `tooltip/dismissable` treats the same `title` as supplementary tooltip content (and fires). The rules disagree on the same attribute on the same element. Per ARIA 1.2 `title` is a last-resort name source — many screen readers (NVDA at default verbosity, VoiceOver in some modes) suppress it. Fix: pick one model and apply it across all name-resolution rules: either (a) treat `title` as accessible name only when no other source exists AND emit info-severity "name-via-title-fallback" candidates so the agent can verify SR support, or (b) reject `title` as name and require aria-label / inner text / sr-only span. The current schism produces silent under-fire on the canonical icon-only social-link pattern (the textbook 2.4.4 risk surface). Pairs with Q7-RULE-TOOLTIP-DISMISSABLE-TITLE-IS-ACCNAME (same observation, complementary fix lane).
-### v0.3.0 — accepted (P2 — finder coverage on untargeted-but-groundable criteria)
-
-Cross-cutting theme #18 (4/4 sites). Several criteria currently ship as `untargetedCriteria` (bare-criterion prompts) when the deterministic grounding evidence sits in the parsed source. Each item below promotes one criterion to a grounded finder.
-
-
-### v0.3.0 — accepted (P2 — checklist quality)
-
 ### Considered and rejected (per CLAUDE.md §1)
 
 - **Auto-suppress `motion/pause-stop-hide` on transitions ≤ Xms** → rejected per §1 "Numeric-threshold heuristics are suppression." A 200ms transition might be a hover-effect debounce or might be a fast-flashing annotation; static analysis cannot tell. The spec-correctness fix in Q7-RULE-MOTION-DURATION-AND-TRIGGER-GATE (above) does NOT use a single threshold to suppress — it gates the *criterion choice* (2.2.2 vs 2.3.3) on parsed evidence (infinite loop, auto-play attribute, user-pseudo-class scoping), and encodes the duration as additive reason context. Both lanes still emit candidates.
@@ -354,47 +174,9 @@ These themes were observed on the 2026-04-24 sweep but are fully covered by prio
 
 Owner: main session + `rule-implementer` (rules) + general-purpose. Source: 4 parallel scan agents against four unrelated public codebases — a static-template subproject set, a docs-site fragment tree, a vanilla-JS tutorial-exercise collection, and a bulk-template catalog (≈4k files / 1.8k vendor-JS files). All accepted items are correctness, surface-don't-suppress, or shape-honesty fixes per CLAUDE.md §1 + the AI-first-consumer doctrine; recurring-across-≥2-scans themes drive the P0 priorities.
 
-Cross-cutting themes seen across ≥2 of the 4 scans: response-token-budget overruns even on medium repos; `.js` files routed through the tsx parser flooding `parseErrorFiles` with fake JSX errors; HTML files reported as `partialParseFiles` with "Stray closing tag at top level" on browser-renderable input; heuristic-mislabeled meta sub-fields recurring on `scannedBuildArtifacts[].reason`, `templateDirectivesFound`, and `coverageConfidence` reasons; cross-surface count drift between scan / checklist / coverage; composite-headline strings in checklist summaries.
-
-### v0.2.0 — accepted (P0 — token-budget honesty / silent-failure)
-
-
-### v0.2.0 — accepted (P0 — heuristic-mislabeled meta sub-fields)
-
-
-### v0.2.0 — accepted (P0 — heuristic-emission / reason-severity disagreement)
-
-
-### v0.2.0 — accepted (P1 — rule scope widening)
-
-
-### v0.2.0 — accepted (P1 — new rules)
-
-
-### v0.2.0 — accepted (P2 — finder fix-suggestion polish)
-
 ### v0.2.0 — accepted (Q8b — 2nd-pass field test, 2026-04-25)
 
-Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. Each repo received 5 parallel scout subagents (lenses A=coverage gaps, B=output correctness, C=parser/scanner, D=heuristic-mislabeled meta, E=response-shape drift). Aggregator deduped against existing Q8/V1 items. Net-new items below; Q8 confirmations and doctrine additions captured separately (the latter folded into `docs/kb/architecture/ai-first-consumer.md`).
-
-#### Q8b — accepted (P0 — heuristic-mislabeled meta sub-fields)
-
-
-#### Q8b — accepted (P0 — heuristic-emission / reason-severity disagreement)
-
-
-#### Q8b — accepted (P0 — cross-surface drift)
-
-
-#### Q8b — accepted (P1 — finder reason-text enrichment)
-
-#### Q8b — accepted (P1 — rule scope widening)
-
-
-#### Q8b — accepted (P1 — new rules)
-
-
-#### Q8b — accepted (P2 — finder fix-suggestion polish)
+Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8. Each repo received 5 parallel scout subagents (lenses A=coverage gaps, B=output correctness, C=parser/scanner, D=heuristic-mislabeled meta, E=response-shape drift). Aggregator deduped against existing Q8/V1 items.
 
 #### Q8 confirmations — cross-corpus signal (2nd-pass)
 
@@ -412,16 +194,6 @@ These existing Q8 items reproduced across multiple lenses/corpora in the 2nd-pas
 ### v0.2.0 — accepted (Q8c — 3rd-pass field test, 2026-04-25)
 
 Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8/Q8b. Each scout ran lenses A=coverage gaps, B=output correctness, C=parser/scanner, D=heuristic-mislabeled meta, E=response-shape drift; aggregator deduped against existing Q8/Q8b/V1 entries. Net-new items below; doctrine additions captured separately in `docs/kb/architecture/ai-first-consumer.md`.
-
-Cross-cutting themes seen across ≥2 of the 4 scans this round: minified/build-artifact label leaks onto un-minified vendor distribution sources; per-finding `confidence: high` does not propagate the per-rule cross-file `coverageConfidence: medium` limitation, so `keyboard/handler-missing` ships hundreds of error-severity findings on native `<button>` elements wired up by sibling `.js`; `nextStep` routes the agent into the alphabetically-first finding (often a vendor file or scaffold dir) on truncated-response and bulk-corpus scans; review candidates emit at `priority: high` against files already classified as build-artifacts; the `scanned_build_artifacts_present` + `parse_errors_present` warning pair overlaps when minified vendor files reach the parser before the artifact classifier rules them out; HTML-residue parse classification on `.md` files routes every HTML-document rule across README/docs prose, producing identical "no `<h1>`" / "no `<main>`" findings the agent dismisses by reading the file once.
-
-#### Q8c — accepted (P0 — token-budget honesty / silent-failure)
-
-#### Q8c — accepted (P0 — heuristic-mislabeled meta sub-fields)
-
-#### Q8c — accepted (P0 — heuristic-emission / reason-severity disagreement)
-
-#### Q8c — accepted (P0 — cross-surface drift)
 
 #### Q8c — accepted (P1 — finder reason-text enrichment)
 
@@ -478,9 +250,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 - [ ] **Q9-MINIFIED-LABEL-MISLABELS-LONG-LINE-SCSS** `scannedBuildArtifacts[].reason: "minified"` (or `likely-vendored-data-url-css`) fires on hand-authored 1350-line SCSS files (e.g. `_style.scss` opening with `/* Base */` block and a single inline `data:image/...` marker triggering the data-url heuristic). CSS-framework corpus. Fix: require token-cooccurrence (data-url + line-stats + sourcemap-sibling-presence) instead of any single-marker firing; surface the underlying signals (`dataUrlByteCount`, `medianLineLength`, `sourcemapSiblingExists`) as additive evidence the agent can read without the deterministic-sounding label. Pairs with Q8-SCANNED-BUILD-ARTIFACTS-DATA-URL-GRADIENT-LABEL (open, the gradient-token axis) and Q8b-MINIFIED-LABEL-NEEDS-DISCRIMINATOR-AXIS (open, the discriminator axis).
 - [ ] **Q9-SCANNED-BUILD-ARTIFACTS-TOP-N-WITH-REASONS-AT-DEFAULT** `scanned_build_artifacts_present` ships `{count: 997, topPath: "...jquery-1.10.2.js"}` with no array, no per-file reason at default verbosity; `verboseMeta: true` unlocks the array but default-verbosity callers cannot audit reason tokens. Bulk corpus. Fix: ship top-10 `{path, reason}` inline at default verbosity — sufficient for the agent to dismiss "vendor-and-vendor-only" cases in one read; the long-tail array stays gated behind verboseMeta. Pairs with V1-TOOL-VERBOSE-META-INVERTED-DEFAULT (open, the verbose-default inversion).
 
-### Reason-severity mismatches (recurring)
-
-
 ### Rule predicate gaps (false negatives)
 
 - [ ] **Q9-RULE-ARIA-LIVE-MISSING-ON-INNERHTML-TARGET** No rule pairs `innerHTML` / `textContent` mutations in `setInterval` / `setTimeout` / event handlers with the target element's missing `aria-live` / `role="status"` / `role="alert"`. Vanilla corpus, `insect-catch-game` updates `#score` / `#time` via `innerHTML` in `setInterval` but neither node has live-region semantics. Fix: add a rule targeting `<el id=X>` where sibling JS contains `document.getElementById(X).innerHTML =` (or `.textContent =`) inside a recurring scheduler; require `aria-live` / `role=status` / `<output>` on the target. Satisfies wcag22:4.1.3 (Status Messages). Pairs with Q9-PARSER-INNERHTML-TEMPLATE-LITERAL-ISLANDS-IN-JS (parser-recursion axis required for cross-context resolution).
@@ -495,11 +264,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 ### nextStep routing dishonesty
 
 - [ ] **Q9-TRUNCATED-FILES-DROPPED-COUNT-WARNING** Truncated responses drop file-level findings without a per-rule index of what was dropped. Static-site corpus: `warnings: ["response_meta_truncated"]` ships but no `truncated_files_dropped_count` code names how many files lost coverage; topline counts disagree with returned file findings, forcing scan_file follow-ups. Fix: add a structured `truncated_files_dropped` warning naming `{droppedFileCount, ruleFamiliesAffected: ["..."], topDroppedRules: [{ruleId, droppedCount}]}` so the agent can decide whether to re-scope or re-call with `verboseMeta: true`. Per AI-first doctrine "Oversize-success is ambiguous failure" (file-level analogue).
-
-### Templating-driven false positives
-
-
-### Pragma extension mismatch
 
 ### 2026-04-26 round recurrences (folded onto existing Q9 rows)
 
@@ -564,8 +328,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 - [ ] **Q10-RULE-TABLE-CAPTION-MISSING-FIRES-ON-MD-FENCED-TABLES** `semantics/table-caption-missing` fires on `<table>` elements rendered from markdown table syntax (kramdown / GFM) — markdown source has no caption mechanism in the syntax, so the rule cannot honestly establish that an authoring choice was made. Fix: when the table's source file is `.md`/`.markdown`/`.mkdn`, OR the file is in `fragmentFiles[]`, attach `couldBeWrongBecause: ["markdown_table_no_caption_syntax_in_md"]` AND downgrade per-finding confidence to `medium`. Per AI-first doctrine "Reason text and severity must agree."
 
-### Finding-emission shape bugs
-
 ### scan_file surface gaps
 
 - [ ] **Q10-SCAN-FILE-NO-TRUNCATION-NO-OVERSIZE-PROTECTION** `scan_file` has no `limit`/`offset`/`restrictToPaths` and no oversize-success protection; a single dense HTML file produces 68k–84k character responses that blow the host token cap, returning only a transport error with no `truncated` flag, no warning, no minimum-honest envelope. Same silent failure mode as `scan_project` but worse because there's no scope-down lever. Fix: add `limit`/`offset`/`maxBytes` parameters; pre-serialization size estimator; minimum-honest envelope fallback (drop `findings[]` body, keep `meta + warnings + nextStep`) when the post-clip envelope still exceeds the host cap. Per AI-first doctrine "Oversize-success is ambiguous failure" — extends Q9-OVERSIZE-MITIGATION-DOES-NOT-ENGAGE-PRE-SERIALIZATION to the scan_file surface.
@@ -579,9 +341,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 ## Track Q11 — Multi-corpus AI-first sweep (2026-04-26 round, 4 corpora × 5 angles)
 
 Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static-site generator + vanilla mini-projects + bulk template gallery). Each item below is **net-new** against Q9/Q10; recurrences of already-named items folded as recurrence counts under the existing rows there. Items bucketed by failure class.
-
-### Rule predicate gaps (false positives — parent-walk + multi-rule overlap)
-
 
 ### Missing rules (corpus-driven, recurring across ≥2 corpora)
 
@@ -636,10 +395,6 @@ Each line: `<row id> — N recurrences observed in 2026-04-26 round, evidence su
 
 Field-test follow-ups from a 4-corpus probe (CSS framework + static-site generator + vanilla mini-projects + bulk-template gallery). Each item below is **net-new** against Q9/Q10/Q11; recurrences fold under the existing rows there. Items bucketed by failure class.
 
-### Per-finding confidence drift (file-scope vs corpus-scope)
-
-### Truncation telemetry honesty (minimum-honest envelope shape)
-
 ### Vendor-classification schema split
 
 - [ ] **Q12-SCANNED-BUILD-ARTIFACTS-VENDORLIBRARIES-PARALLEL-SURFACES** `scannedBuildArtifacts` ships TWO concurrent vendor-classification surfaces in the same response: `scannedBuildArtifacts.ungrouped[]` (path/min-infix-based, e.g. `html5shiv.min.js` + `respond.min.js`) AND `scannedBuildArtifacts.vendorLibraries[]` (registry/version-based, e.g. `_normalize.scss` 7.0.0). Both classify "vendor" but the schema splits them, leaving an agent reading `scannedBuildArtifacts` to do its own union. The split is also asymmetric across surfaces — `vendorLibraries` rides only on `scan_project`, not on `coverage` or `checklist`. Closure: merge into a single `scannedBuildArtifacts.classified[]` array with a `classification` discriminator (`min-infix` | `path-prefix` | `vendor-library-version-detected`); deprecate the split via the alias table; populate identically on every surface that emits `scannedBuildArtifacts`. Per AI-first doctrine "Composite headline counts are dishonest" extended to vendor-classification fan-out (one concept = one shape) AND "Cross-surface count invariant" (warning + classification telemetry on identical cwd must agree across project-rooted tools). Pairs with Q9-BULK-WARNINGS-NOT-CROSS-SURFACE on the propagation axis.
@@ -687,21 +442,11 @@ Owner: main session + `spec-researcher` + `doc-writer`. Staged; do not dispatch 
 
 Sequencing (cross-gap, soft): attestations first (unlocks evidence semantics everywhere else), then runtime ingest (wide-reach runtime coverage), then process scope, then conformance capstone. Within each gap items are ordered by the ADR-then-foundation-then-surface pattern.
 
-### v0.3.0 — attestation ledger (foundation)
-
-
 ### Rejected — runtime evidence bridge
 
 A prior plan proposed ingesting vendor runtime results (vendor JSON → normalized shape → ledger) as the path to close runtime-only WCAG criteria. Rejected: vendor-specific ingest adapters duplicate capability agents already have via their own test harnesses, and the tool's job is to point at the source — not at another tool's output. The ingest shape is also fragile to vendor schema drift, and the normalized layer re-buckets findings in ways the reading agent can't re-audit. Agents that run runtime checks bridge their results through the existing `attest` tool — the reason text is the evidence, and the attestation ledger is the durable, vendor-neutral channel.
 
 Items struck: C-RUNTIME-ADR, C-RUNTIME-SCHEMA, C-RUNTIME-INGEST, C-RUNTIME-MAP. C-COVERAGE-MERGE is re-scoped below.
-
-
-### v0.3.0 — process-level scope
-
-
-### v1.0.0 — conformance capstone
-
 
 ### Dependencies + interactions with Track S
 
@@ -721,163 +466,17 @@ Owner: main session + `doc-writer` + `fixture-curator` + `test-author` + special
 
 No item here proposes new rule detection logic — Track V is about honesty surfaces, decision closure, and coverage verification. Items that WOULD add detection get logged as Track R or Track C items.
 
-### v1.0.0 — certification claim blockers
-
-Source: two independent pre-ship subagent sweeps (spec-researcher normative angle + general-purpose tooling/reproducibility angle). Both flagged overlapping blockers that would sink a real WCAG/VPAT/Section 508 certification submission. Each item has a concrete file:line anchor; together these are the gate to `/release 1.0.0`. Dispatch in parallel where non-overlapping; B1 and B6 block on B2's shape work.
-
-
-### v1.0.0 — coverage honesty
-
-
-### v1.0.0 — surface discoverability
-
-
-### v1.0.0 — real-world fixture push
-
-Track F shipped 10 fixtures, all guarding scanner infrastructure (wrappers, templates, TSX generics). Zero fixtures exercise rule-territory behavior in production-like shape. Each item below lands one sanitized fixture under `tests/fixtures/real-world/<case>/` with `source/` + `assertions.ts`, following the ADR 0006 harness. Dispatch in parallel — independent fixtures.
-
-
-### v1.0.0 — deferred-decision closure
-
-Each item closes one deferred ADR or semver-major decision. Acceptance for each: an ADR marked Accepted (or Superseded / Rejected) + the corresponding backlog item flipped.
-
-
-### v1.0.0 — plugin API integrity
-
-Source: 2026-04-20 architectural audit — two independent Explore passes converged on the same finding, verified by grep. `grep -rln "BUILTIN_RULES\|BUILTIN_STANDARDS" src/` returns 33 files; 31 of those are non-barrel leaks past the existing `src/engine/registry/{criteria,rules,standards}.ts` primitives. The leak means CLAUDE.md §3.8 is aspirational, not enforced, and ADR 0019's frozen `defineRule`/`defineStandard`/`defineCandidateFinder` exports function as type-inference helpers only — user-authored rules have no wiring path to `list_rules`, `suggest_fix`, or any scan. ADR 0022 has the full design and 7-commit migration plan. Dispatch sequential within this subsection: stages 1 → 2 → {3, 5} → 4 → 6 → 7, with 3/4/5 parallelizable across agents once 2 lands. Every stage is additive and reversible until V1-REGISTRY-LINT.
-
-
-### v1.0.0 — MCP response-assembly seam
-
-Source: 2026-04-20 architectural audit (Explore-agent survey of `src/mcp/**` + grep verification). Same class of leak as V1-REGISTRY-AGGREGATE but one layer up: the AI-first consumer doctrine in `docs/kb/architecture/ai-first-consumer.md` (conditional-spread on zero counts, `warnings` on zero-output success, split composite headline counters, present-when-meaningful optional fields, honest `fixesByClass` tally) is currently enforced in 24 separate `src/mcp/tool-*.ts` files by convention + the path-scoped rule at `.claude/rules/mcp-response-shapes.md`. Verified counts on 2026-04-20:
-
-| measurement                                                                 | count |
-|-----------------------------------------------------------------------------|------:|
-| `src/mcp/tool-*.ts` files                                                   | 24    |
-| Tool files routing through `runScanAndFormat` (the existing near-assembler) | **2** (`tool-scan-project.ts`, `tool-scan-diff.ts`) |
-| Tool files hand-rolling `meta: {` blocks directly                           | 10    |
-| Tool files calling `buildAgentFinding` or composing `AgentFinding` manually | 8+    |
-| `scan` + `scan_file` tool definitions                                       | inline in `src/mcp/tools.ts` (625 LOC mixing schemas + handlers) |
-| `src/mcp/tools-helpers.ts` current size                                     | 856 LOC (hosts `runScanAndFormat` + fraying) |
-| `scripts/check-response-nullability.ts` allowlist entries                   | 1 (catches a narrow slice; doesn't catch field-presence drift) |
-
-The partial assembler `src/mcp/scan-assembly.ts` (`buildScanPlan` / `buildScanMeta` / `buildAnalysisCoverage` / `suppressionsMetaBlock` / `wrappersMetaBlock`) is already the right shape, but it lives underneath a non-authoritative wrapper (`runScanAndFormat`) and is only consumed by 2 of 24 tools. Every new scan-family field (future sampling outputs, new fix-class lanes, new `warnings` codes, new honest-counter splits) currently requires touching ≤24 sites with no CI gate forcing synchrony — silent cross-surface drift is the waiting failure mode, and the invariants called out in `ai-first-consumer.md` ("`scan` says 21, `checklist` says 4") are exactly what this seam prevents.
-
-Why v1.0 blocker: the MCP response shape is part of the public contract v1.0 freezes (ADR 0019 + the migration table in `docs/migrations/0.1-to-0.2.md`). Freezing the shape before codifying the single-path invariant means third-party tooling pattern-matches on hand-rolled examples; changing the pattern later is a semver-breaking event. This is structurally identical to the Registry aggregate work (ADR 0022) — an internal seam that must be in place before the surface it backs becomes immutable.
-
-Design captured in ADR 0024 (Proposed, 2026-04-20). Dispatch sequential within this subsection: stage 1 (assembler) → 2 (handler extract from `tools.ts`) → {3, 4, 5 parallel} → 6 (lint) → 7 (handler-size budget). Stages 3-5 are parallelizable across agents on separate worktrees (no shared files — each touches a disjoint set of `tool-*.ts`). Every stage is additive and reversible until V1-RESPONSE-LINT. Golden snapshots under `tests/snapshots/mcp/**` must stay byte-identical through every refactor commit — any intentional shape change splits into a separate `feat(mcp):` commit with rationale.
-
-
 ### v1.0.0 — release hygiene
 
 - [~] **V1-CHANGELOG-V1** Draft `## [1.0.0]` entry landed (1d784b7). Date placeholder `YYYY-MM-DD` stays until user says ship. Sections populated: Breaking Changes (exit-code freeze), Added (13 sub-groups), Changed (9 items), Deprecated (2 aliases), Fixed (19 items), Deferred (the four ADR 0018 items). New empty `## [Unreleased]` sits at top. Ready for `/release 1.0.0` when the user triggers.
 
-### v1.0.0 — test coverage gates
-
-MCP surface and several CLI commands have severe coverage deficits that contradict the "find all violations" bar. Every item here lands tests against committed behavior; no behavioral changes.
-
-
-### v1.0.0 — CI + release pipeline gates
-
-
-### v1.0.0 — code-quality polish
-
-
-### v1.0.0 — detection gaps
-
-Source: "find all violations" bar re-raised 2026-04-19. Four-agent gap audit against WCAG 2.2 A+AA surface. Each item widens detection on an existing rule or adds a small new primitive — none reshape the engine. Gaps are where a real violation on common production patterns walks past our rules undetected. Dispatch in parallel — independent files.
-
-
-### v1.0.0 — shape-honesty sweep
-
-Source: same audit. Verified file:line hits on shape-honesty violations that survived Q/Q2/Q2R2. Every item below is a null-sentinel that CLAUDE.md §1 "Ambiguous field shapes are dishonest" calls out directly — forcing agents to disambiguate "field unavailable" vs "field empty."
-
-
-### v1.0.0 — fix-suggestion context-aware sweep
-
-Source: V1-FIX-AUDIT (`[~]` above) enumerates 11 rules with generic fix text. Acceptance requires zero generic rows before v1.0 tag. Each item is sized for one ≤400-LOC commit per CLAUDE.md §9. Plans derived from fix-suggestion-audit.md. Dispatch in parallel — independent rules.
-
-
-### v1.0.0 — criterion KB final sweep
-
-
-### v1.0.0 — external-codebase scan findings
-
-
-### v1.0.0 — external-codebase scan findings (continued)
-
-
-### v1.0.0 — external-codebase scan findings (cont.)
-
-
-### v1.0.0 — external-codebase scan findings (cont.)
-
-
-### v1.0.0 — external-codebase scan findings (cont.)
-
-Composite-headline counts (doctrine: "composite headline counts are dishonest — must count one kind of thing"):
-
-
-Envelope honesty (doctrine: "verbose meta is scan-confidence signal; warnings are the silent-failure channel"):
-
-
-Filter/correctness bugs:
-
-
-Rule-metadata drift against spec (CLAUDE.md §3 invariant 4 — every rule cites every criterion it checks):
-
-
-Review-finder reason-text enrichment:
-
-
-New review finders (detection gaps — zero candidates on strong static evidence):
-
-
-Conformance-claim honesty (the surfaces agents use to decide "should I claim this?"):
-
-
-Generator-script footgun (tooling, surfaced repeatedly by agents running /fix-drift inside worktrees):
-
-
-### v1.0.0 — four-repo field test findings
-
-Parser / language coverage:
-
-
-Rule correctness / detection:
-
-
-Response shape / honesty:
-
-
-Fix-suggestion regressions:
-
-
-Minification / build-artifact classification:
-
-
-Checklist / review-candidate shape:
-
-
-`additionalPaths` / scope:
-
-
-Catalog-scale perf / scoping:
+### v1.0.0 — four-repo field test findings — catalog-scale perf / scoping
 
 - [ ] **V1-BENCH-4K-FILE-VENDOR-HEAVY-SCENARIO** Add a `scripts/bench.ts` scenario that synthesizes a 4000-file vendor-heavy corpus (≥50 near-duplicate vendor CSS copies, mixed HTML + JSX leaf templates) and asserts the CLAUDE.md §11 row (`≤ 25 s` ceiling). Without this fixture, the budget row is aspirational. Pair with V1-BULK-CATALOG-SCAN-PERF-12S so both the warning emission AND the budget enforcement are tested. Budget anchored in 2026-04-26 J-6 research outcome — Biome+ band defensible for a zero-dep static scanner; pushing lower would either drop rules or require parallel workers (out of scope for v1.0).
 - [ ] **V1-LIMITATIONS-EXTERNAL-HANDLER-RESOLUTION** Add the structured limitation code `external_handler_resolution_unavailable` to the `limitations[]` vocabulary on `scan_project` / `scan` / `scan_file` responses. The code surfaces when a finder needs cross-file evidence to confidently resolve a click/change handler binding (separate `.js` modules attaching listeners via `addEventListener`, JSX importing handler identifiers from sibling files). Test coverage: an integration test on a vanilla-JS fixture where a `<div class="btn">` has no inline handler but a sibling `.js` file calls `querySelector('.btn').addEventListener('click', …)` — the response surfaces the limitation code in `limitations[]` even though the rule fires confidently. Doctrine: don't duplicate capability the agent already has; the limitation surfacing is the structured pointer that lets the agent decide when to follow up with Read+Grep. Decision rationale captured in 2026-04-24 J-7 research outcome; gotcha doc lives at `docs/kb/gotchas/cross-file-handler-resolution.md`.
 - [ ] **V1-GROUPKEY-COLLAPSED-RESPONSE-MODE** `groupKey` is emitted on every finding and is cross-file for location-agnostic groupings. No response-shape option compresses `(ruleId, groupKey)` into one entry with the file list. On a template catalog 40k findings likely collapse to <500 unique groups. Fix: add `collapseByGroupKey?: boolean` to `scan_project` (default false, preserves current shape). When true: response emits one entry per unique `(ruleId, groupKey)` with `occurrences: [{path, line, column}]` — same paging/truncation semantics. Additive — callers opt in. Doctrine: one tool call should answer "what next?" on scale. Pairs with Q6-PATTERN-FINGERPRINT-CROSS-TEMPLATE (open, cross-template pattern ID).
 
 ### Additional items
-
-Parser / language coverage:
-
-
-Rule correctness / detection:
-
-
-Fix-suggestion regressions:
-
 
 Response shape / honesty:
 
@@ -893,16 +492,11 @@ Checklist / review-candidate shape:
 
 - [ ] **V1-REVIEW-CANDIDATES-SIBLING-REASON-DEDUP** `reviewCandidates[*].reason` duplicates prose across sibling findings for the same criterion — on `sound-board/index.html` six `<audio>` elements emit 6 identical candidates per criterion for `wcag22:1.2.1`, `1.2.3`, `1.2.5` (18 rows with 3 unique reason strings). The `reviewCandidates.prompts[criterionId].text` dedup already exists for top-level prompts but per-finding `reason` strings are not deduped by `(ruleId, criterionId, reason)` tuple. Fix: hoist the shared reason to `prompts[criterionId].genericReason` alongside existing `.text`, keep per-location `snippet`; OR cap sibling candidates of the same shape at `N=3` + emit `additionalSiblingCount: <rest>`. Doctrine-consistent precedent: the prompt-text dedup is the same move one level up.
 
-Minification / build-artifact classification:
-
 Catalog-scale perf / scoping:
 
 - [ ] **V1-PATTERN-ID-DEAD-INFRASTRUCTURE** Commit `feba3df8` added `patternId` (cross-template fingerprint) to `Violation` with the engine stamping at `src/engine/rule-runner.ts:182` and `src/engine/stamp-project-emission.ts:47` — both gate on `emitted.snippet` being a non-empty string. Grep of `src/rules/` for `snippet:` returns **zero** hits — no in-tree rule populates the `snippet` field that the stamp predicate requires. Verified on a 40,132-finding at-scale scan: `patternId` occurrences in the response = 0. Particularly fatal at this scale: the three biggest-volume rules (`motion/pause-stop-hide`, `contrast/minimum`, `contrast/non-text` — ~43 % of findings combined) are CSS-declaration rules with no natural snippet source, so `patternId` can never reach them under the current design. Fix: decide — either (a) populate `emitted.snippet` on at least one snippet-emitting rule (HTML/JSX shape rules are the realistic candidates: `navigation/href-javascript-void`, `semantics/button-name`, `aria/expanded-on-disclosure`, `media/alt-text-missing`) so `patternId` is non-empty on at least one finding family; OR (b) remove the type field and delete the stamp sites — current state advertises an affordance that no finding carries. Pairs with Q6-PATTERN-FINGERPRINT-CROSS-TEMPLATE (open — proposes the cross-template fingerprint for CSS findings via a different hash path that does not depend on `snippet`). Doctrine: advertising an affordance that never reaches the wire is dishonest.
 - [ ] **V1-CSS-CROSS-TEMPLATE-FINGERPRINT** CSS-declaration rules (`motion/pause-stop-hide` 8956, `contrast/minimum` 5458, `contrast/non-text` 2805) fire tens of thousands of times on a template catalog where 117 near-identical copies of `bootstrap.css` ship across 172 template dirs. `patternId` cannot fingerprint these (see V1-PATTERN-ID-DEAD-INFRASTRUCTURE — it gates on `snippet`) and `groupKey` operates per-file, so 117 identical `.img-thumbnail` transitions collapse to 117 distinct finding groups. Fix: add a CSS-rule-specific fingerprint — `cssPatternId = hash(ruleId + selectorFamily + propertyFamily + valueShape)` — that collapses "same selector + same declaration shape" across files. Likely reduces the 17k CSS-rule findings on this corpus to ~40 canonical patterns. Pairs with Q6-CONTRAST-VENDOR-CSS-CROSS-FILE-DEDUPE (open, same-basename) and Q6-PATTERN-FINGERPRINT-CROSS-TEMPLATE (open, HTML/JSX element-level). This item is the CSS-declaration sibling that neither covers. Doctrine: the agent has no honest way to say "this is one canonical a canonical CSS transition, 117 copies" without such an affordance.
 - [ ] **V1-PROJECT-DIRECTORY-ROLLUP** is a mono-repo of 50 independent mini-projects under one root; `scan_project` treats it as one repo and merges findings. `meta.perRuleCoverage.findingsEmitted` tells per-rule but not per-project / per-directory. An agent triaging a mono-repo-of-demos or a website-template catalog benefits from `plan.topDirectories: [{path, violationCount, topRule}]` — rank-ordered to expose uneven distribution and let the agent pick the sub-tree that matters first. Additive extension of V1-CROSS-FILE-ROLLUP-PRIMITIVE (which proposes `plan.topRules`). Doctrine: one tool call should answer "what next?" — on a 50-project mono-repo, per-project scoping is the first "what next" question.
-
-Rule correctness / detection (false positives + missing scope):
-
 
 Review-finder noise / dedup:
 
