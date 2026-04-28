@@ -27,11 +27,13 @@ function row(
   ruleId: string,
   concentration?: { file: string; count: number; kind?: "vendor" },
 ): PerRuleCoverage {
+  const findingsEmitted = concentration?.count ?? 0;
   return {
     ruleId,
     filesEvaluated: 10,
     filesEligible: 10,
-    findingsEmitted: concentration?.count ?? 0,
+    findingsEmitted,
+    fired: findingsEmitted > 0,
     coverageConfidence: "high",
     ...(concentration === undefined ? {} : { concentration }),
   };

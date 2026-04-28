@@ -24,6 +24,7 @@ function highRow(ruleId: string, eligible = 3): PerRuleCoverage {
     filesEvaluated: eligible,
     filesEligible: eligible,
     findingsEmitted: 0,
+    fired: false,
     coverageConfidence: "high",
   };
 }
@@ -34,6 +35,7 @@ function lowRow(ruleId: string): PerRuleCoverage {
     filesEvaluated: 0,
     filesEligible: 0,
     findingsEmitted: 0,
+    fired: false,
     coverageConfidence: "low",
     reason: "no files matching .css were scanned",
     remediation: "add CSS sources to the scan path",
@@ -55,6 +57,7 @@ function mediumRow(ruleId: string): PerRuleCoverage {
     filesEvaluated: 1,
     filesEligible: 1,
     findingsEmitted: 0,
+    fired: false,
     coverageConfidence: "medium",
     reason: "cross_file_listener_resolution_not_attempted_by_rule",
   };

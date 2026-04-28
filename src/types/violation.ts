@@ -601,6 +601,29 @@ export interface PerRuleCoverage {
    */
   readonly findingsEmitted: number;
   /**
+   * Convenience boolean equal to `findingsEmitted > 0` — `true` when the
+   * rule produced at least one violation on this scan. Always populated.
+   *
+   * Stamped at row construction time so an agent reading
+   * `meta.perRuleCoverage[]` can branch directly on `fired === true`
+   * without re-deriving the predicate from `findingsEmitted`. The
+   * canonical cross-surface invariant
+   * `meta.rulesEvaluated.fired === count(perRuleCoverage[].fired === true)`
+   * stays computable in one pass per surface; before this field, an
+   * agent triaging a "rules that fired" question had to first scan the
+   * array, count `findingsEmitted > 0` rows, and reconcile the result
+   * against the headline counter — silent drift between the two reads
+   * was difficult to detect without bespoke tooling. Adding the
+   * deterministic flag at the row level pins the relationship at
+   * construction time so downstream consumers cannot disagree.
+   *
+   * Schema-required: never omitted, never `null`. The boolean shape is
+   * load-bearing — a sentinel-empty value would re-introduce the
+   * "absent vs zero" ambiguity the AI-first consumer model rules
+   * against.
+   */
+  readonly fired: boolean;
+  /**
    * Scan-confidence discriminator. Three values:
    *
    *   - `"high"` — rule ran on eligible inputs; trust the clean tally.

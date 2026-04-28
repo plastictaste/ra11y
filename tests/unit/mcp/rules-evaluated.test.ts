@@ -29,6 +29,7 @@ function row(ruleId: string, filesEligible: number, findingsEmitted: number): Pe
     filesEvaluated: filesEligible,
     filesEligible,
     findingsEmitted,
+    fired: findingsEmitted > 0,
     coverageConfidence: filesEligible > 0 ? "high" : "low",
     ...(filesEligible === 0
       ? {

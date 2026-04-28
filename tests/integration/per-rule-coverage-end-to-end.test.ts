@@ -372,6 +372,19 @@ describe("per-rule coverage end-to-end", () => {
     const firedFromRows = perRuleCoverage.filter((r) => r.findingsEmitted > 0).length;
     expect(rulesEvaluated.withEligibleInputs).toBe(eligibleFromRows);
     expect(rulesEvaluated.fired).toBe(firedFromRows);
+    // The deterministic `fired` flag on each row must agree with the
+    // headline — the cross-surface invariant the
+    // doctrine "Cross-surface count invariant" pins so an agent reading
+    // the per-rule array branches on the same number the meta headline
+    // reports. Without this, the only way to derive `fired` from the
+    // array is `findingsEmitted > 0`, and the two reads can drift if a
+    // future patch ever splits the predicate on one surface but not the
+    // other.
+    const firedFromFlag = perRuleCoverage.filter((r) => r.fired).length;
+    expect(rulesEvaluated.fired).toBe(firedFromFlag);
+    for (const row of perRuleCoverage) {
+      expect(row.fired).toBe(row.findingsEmitted > 0);
+    }
   });
 
   //. An AAA-only rule (e.g.

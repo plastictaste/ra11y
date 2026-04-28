@@ -394,6 +394,7 @@ describe("assembleScanFamilyResponse", () => {
               filesEvaluated: 1,
               filesEligible: 1,
               findingsEmitted: 5,
+              fired: true,
               coverageConfidence: "high",
             },
           ],

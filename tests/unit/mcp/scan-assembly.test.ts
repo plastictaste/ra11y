@@ -55,6 +55,7 @@ describe("sumFindingsEmitted + sumFindingsAcrossFiles reductions", () => {
         filesEvaluated: 1,
         filesEligible: 1,
         findingsEmitted: 3,
+        fired: true,
         coverageConfidence: "high",
       },
       {
@@ -62,6 +63,7 @@ describe("sumFindingsEmitted + sumFindingsAcrossFiles reductions", () => {
         filesEvaluated: 1,
         filesEligible: 1,
         findingsEmitted: 2,
+        fired: true,
         coverageConfidence: "high",
       },
     ];
@@ -302,6 +304,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 2,
         filesEligible: 2,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -318,6 +321,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 2,
         filesEligible: 2,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -342,6 +346,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 2,
         filesEligible: 2,
         findingsEmitted: 3,
+        fired: true,
         coverageConfidence: "high",
       },
     ];
@@ -364,6 +369,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 1,
         filesEligible: 1,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -385,6 +391,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 2,
         filesEligible: 2,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -406,6 +413,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 5,
         filesEligible: 5,
         findingsEmitted: 12,
+        fired: true,
         coverageConfidence: "high",
         concentration: { file: "/dense.html", count: 12 },
       },
@@ -427,6 +435,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 1,
         filesEligible: 1,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -449,6 +458,7 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
         filesEvaluated: 3,
         filesEligible: 3,
         findingsEmitted: 1,
+        fired: true,
         coverageConfidence: "high",
       },
     ];
@@ -589,6 +599,7 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -603,6 +614,7 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
         filesEvaluated: 1,
         filesEligible: 1,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -626,6 +638,7 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
         filesEvaluated: 5,
         filesEligible: 5,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -649,6 +662,7 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
         filesEvaluated: 0,
         filesEligible: 1,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         coverageConfidenceReason: "file-parse-error",
       },
@@ -671,6 +685,7 @@ describe("applyScssUnresolvedVariablesAdjustment", () => {
         filesEvaluated: 1,
         filesEligible: 1,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
         reason: "previous prose from another axis",
       },
@@ -1025,6 +1040,7 @@ describe("collectExtensionsForSubkindProbe", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
       },
       {
@@ -1032,6 +1048,7 @@ describe("collectExtensionsForSubkindProbe", () => {
         filesEvaluated: 4,
         filesEligible: 4,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -1047,6 +1064,7 @@ describe("collectExtensionsForSubkindProbe", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
       },
     ];
@@ -1062,6 +1080,7 @@ describe("collectExtensionsForSubkindProbe", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
       },
     ];
@@ -1076,6 +1095,7 @@ describe("collectExtensionsForSubkindProbe", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         subkind: "extension-absent",
       },
@@ -1113,6 +1133,7 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         reason: "no files matching .css were scanned",
         remediation: "add CSS source files to the scan path",
@@ -1129,6 +1150,7 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         reason: "no files matching .css were scanned",
         remediation: "add CSS source files to the scan path",
@@ -1148,6 +1170,7 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         reason: "no files matching .css were scanned",
         remediation: "add CSS source files to the scan path",
@@ -1169,6 +1192,7 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         reason: "no files matching .css were scanned",
         remediation: "add CSS source files to the scan path",
@@ -1185,6 +1209,7 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
         filesEvaluated: 5,
         filesEligible: 5,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -1199,6 +1224,7 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         subkind: "extension-absent",
       },
@@ -1214,6 +1240,7 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
         filesEvaluated: 5,
         filesEligible: 5,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];

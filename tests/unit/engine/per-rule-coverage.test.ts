@@ -393,6 +393,59 @@ describe("buildPerRuleCoverage", () => {
     expect(row!.coverageConfidence).toBe("low");
   });
 
+  // `fired` is `findingsEmitted > 0` at every construction branch — the
+  // deterministic boolean lets an agent reading `meta.perRuleCoverage[]`
+  // count "rules that fired" without re-deriving the predicate, and the
+  // cross-surface invariant
+  // `meta.rulesEvaluated.fired === count(perRuleCoverage[].fired === true)`
+  // is computable in one pass per surface. The four branches below
+  // exercise every construction path that emits a row (extension-gated
+  // with eligibility, extension-gated without, project-scoped,
+  // level-gated) so a future regression that drops the field on any
+  // branch fails immediately.
+  it("populates fired on every entry — true iff findingsEmitted > 0 across every branch", () => {
+    const filterWithGate: StandardFilter = {
+      isRuleActive: (rule: { id: string }) => rule.id !== "css-aaa/level-gated",
+      citedCriteria: () => [],
+      citedCriteriaTitles: () => [],
+      levelGateForInactiveRule: () => ({ requiredLevel: "AAA", requestedLevel: "AA" }),
+    };
+    const rules = [
+      mkRule("media/alt-text-missing", [".html", ".tsx"]),
+      mkRule("contrast/minimum", [".css"]),
+      mkRule("project/landmark-main", undefined),
+      mkRule("css-aaa/level-gated", [".css"]),
+    ];
+    const violations: Violation[] = [
+      mkViolation("media/alt-text-missing"),
+      mkViolation("project/landmark-main"),
+    ];
+    const entries = buildPerRuleCoverage(
+      tracker({
+        "media/alt-text-missing": { eligible: 3, evaluated: 3 },
+        "contrast/minimum": { eligible: 0, evaluated: 0 },
+      }),
+      rules,
+      filterWithGate,
+      violations,
+      5,
+    );
+    const byId = new Map(entries.map((e) => [e.ruleId, e]));
+    // Extension-gated, fired.
+    expect(byId.get("media/alt-text-missing")!.fired).toBe(true);
+    // Extension-gated, zero-eligibility.
+    expect(byId.get("contrast/minimum")!.fired).toBe(false);
+    // Project-scoped, fired.
+    expect(byId.get("project/landmark-main")!.fired).toBe(true);
+    // Level-gated.
+    expect(byId.get("css-aaa/level-gated")!.fired).toBe(false);
+    // Schema-required: every row carries the boolean explicitly.
+    for (const row of entries) {
+      expect(typeof row.fired).toBe("boolean");
+      expect(row.fired).toBe(row.findingsEmitted > 0);
+    }
+  });
+
   // per-file concentration hint.
   // Thresholds: > 10 total findings AND > 50% share on the densest
   // file. Optional field — omitted via conditional spread (never null,
@@ -1044,6 +1097,7 @@ describe("partitionPerRuleCoverage", () => {
       filesEvaluated: 0,
       filesEligible: 0,
       findingsEmitted: 0,
+      fired: false,
       coverageConfidence: "low",
       reason: `no files matching .css were scanned`,
       remediation: "add CSS source files to the scan path",
@@ -1064,6 +1118,7 @@ describe("partitionPerRuleCoverage", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         reason: "no files matching .html, .htm were scanned",
         remediation: "add HTML source files to the scan path",
@@ -1079,6 +1134,18 @@ describe("partitionPerRuleCoverage", () => {
       ".css": 2,
       ".html": 1,
     });
+    // `ruleIds` enumerates every collapsed rule in codepoint order so an
+    // agent reading `perRuleCoverage[]` can distinguish "rule did not
+    // load" from "rule loaded but had zero eligible inputs and was
+    // rolled up into the counter." Without this list the rolled-up
+    // rules vanish from the per-rule array entirely; a stale alias or
+    // registry mismatch would read identically to a deliberate input-
+    // type mismatch.
+    expect(partition.notEvaluatedDueToInputType.ruleIds).toEqual([
+      "contrast/enhanced",
+      "contrast/minimum",
+      "forms/autocomplete-missing",
+    ]);
   });
 
   it("retains rows with at least one eligible file (zero-eligibility predicate is strict)", () => {
@@ -1094,6 +1161,7 @@ describe("partitionPerRuleCoverage", () => {
         filesEvaluated: 3,
         filesEligible: 3,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
       mkZeroEligibleRow("contrast/enhanced"),
@@ -1118,6 +1186,7 @@ describe("partitionPerRuleCoverage", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         skipReason: "gated_by_level",
         requiredLevel: "AAA",
@@ -1148,6 +1217,7 @@ describe("partitionPerRuleCoverage", () => {
         filesEvaluated: 0,
         filesEligible: 0,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "low",
         reason: "no files were scanned; project-scoped rule had nothing to evaluate",
         remediation: "check the scan root and include patterns",
@@ -1180,6 +1250,7 @@ describe("partitionPerRuleCoverage", () => {
         filesEvaluated: 2,
         filesEligible: 2,
         findingsEmitted: 0,
+        fired: false,
         coverageConfidence: "high",
       },
     ];
@@ -1200,7 +1271,11 @@ describe("partitionPerRuleCoverage", () => {
     // `RulesNotEvaluatedDueToInputType` doc.
     const partition = partitionPerRuleCoverage([], []);
     expect(partition.retained).toHaveLength(0);
-    expect(partition.notEvaluatedDueToInputType).toEqual({ count: 0, byExtension: {} });
+    expect(partition.notEvaluatedDueToInputType).toEqual({
+      count: 0,
+      byExtension: {},
+      ruleIds: [],
+    });
   });
 });
 
@@ -1222,6 +1297,7 @@ describe("filterPerRuleCoverageForSingleFile", () => {
       filesEvaluated: 1,
       filesEligible: 1,
       findingsEmitted: 0,
+      fired: false,
       coverageConfidence: "high",
     };
   }

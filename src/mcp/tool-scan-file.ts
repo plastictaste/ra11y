@@ -490,6 +490,11 @@ function applySingleFileExtensionFilterToMeta(
       filesEvaluated: 0,
       filesEligible: 0,
       findingsEmitted: 0,
+      // Synthesized placeholder — `fired` is structurally `false` here;
+      // the filter only consumes `ruleId` and the re-emit below carries
+      // only the rule-ID list, but the type contract on PerRuleCoverage
+      // requires the field be populated.
+      fired: false,
       coverageConfidence: "low" as const,
     }));
     const result = filterPerRuleCoverageForSingleFile(synthetic, activeRules, ext);
@@ -526,12 +531,13 @@ function applySingleFileExtensionFilterToMeta(
  * Reads the count out of the assembler's
  * `meta.rulesNotEvaluatedDueToInputType` field. The shared
  * `RulesNotEvaluatedDueToInputType` shape is
- * `{ count: number, byExtension: Record<string, number> }` and rides
- * unconditionally — but at this seam the field arrives as
- * `unknown` (the meta block is keyed by string, value `unknown`), so
- * the read is defensive against a future shape change. Returns 0 on
- * any shape mismatch — honest fallback (the static filter still
- * catches its share) rather than throwing in an MCP request handler.
+ * `{ count: number, byExtension: Record<string, number>,
+ *    ruleIds: readonly string[] }` and rides unconditionally — but at
+ * this seam the field arrives as `unknown` (the meta block is keyed by
+ * string, value `unknown`), so the read is defensive against a future
+ * shape change. Returns 0 on any shape mismatch — honest fallback (the
+ * static filter still catches its share) rather than throwing in an
+ * MCP request handler.
  */
 function readPartitionCount(value: unknown): number {
   if (typeof value !== "object" || value === null) return 0;

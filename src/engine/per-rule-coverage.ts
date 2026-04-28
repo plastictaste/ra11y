@@ -431,12 +431,16 @@ function buildExtensionGatedEntry(
     classPatternConcentration && classPatternConcentration.length > 0
       ? { classPatternConcentration }
       : {};
+  // `fired` is `findingsEmitted > 0` at every construction branch — see
+  // the field doc on `PerRuleCoverage`. Inlined per-return so the
+  // derivation lives on the same literal as `findingsEmitted` itself.
   if (eligible === 0) {
     return {
       ruleId,
       filesEvaluated: evaluated,
       filesEligible: eligible,
       findingsEmitted,
+      fired: findingsEmitted > 0,
       coverageConfidence: "low",
       reason: `no files matching ${extensions.join(", ")} were scanned`,
       remediation: `add ${primaryExtension(extensions)} source files to the scan path, or pass \`additionalPaths\` when the content is compiled output (e.g. \`additionalPaths: ["dist/assets"]\` for Tailwind)`,
@@ -450,6 +454,7 @@ function buildExtensionGatedEntry(
       filesEvaluated: evaluated,
       filesEligible: eligible,
       findingsEmitted,
+      fired: findingsEmitted > 0,
       coverageConfidence: "low",
       reason: "all eligible files were excluded or empty",
       remediation: "check exclude patterns and file contents",
@@ -485,6 +490,7 @@ function buildExtensionGatedEntry(
       filesEvaluated: evaluated,
       filesEligible: eligible,
       findingsEmitted,
+      fired: findingsEmitted > 0,
       coverageConfidence: "medium",
       // The `crossFileCandidates > 0` gate confirms the rule observed
       // at least one candidate token whose resolution would require
@@ -504,6 +510,7 @@ function buildExtensionGatedEntry(
     filesEvaluated: evaluated,
     filesEligible: eligible,
     findingsEmitted,
+    fired: findingsEmitted > 0,
     coverageConfidence: "high",
     ...concentrationSpread,
     ...classPatternSpread,
@@ -538,12 +545,16 @@ function buildProjectScopedEntry(
     classPatternConcentration && classPatternConcentration.length > 0
       ? { classPatternConcentration }
       : {};
+  // `fired` is `findingsEmitted > 0` at every construction branch — see
+  // the field doc on `PerRuleCoverage`. Inlined per-return so the
+  // derivation lives on the same literal as `findingsEmitted` itself.
   if (filesScanned === 0) {
     return {
       ruleId,
       filesEvaluated: 0,
       filesEligible: 0,
       findingsEmitted,
+      fired: findingsEmitted > 0,
       coverageConfidence: "low",
       reason: "no files were scanned; project-scoped rule had nothing to evaluate",
       remediation:
@@ -572,6 +583,7 @@ function buildProjectScopedEntry(
       filesEvaluated: filesScanned,
       filesEligible: filesScanned,
       findingsEmitted,
+      fired: findingsEmitted > 0,
       coverageConfidence: "medium",
       // Project-scoped rules with `crossFileCapable: false` describe a
       // structural rule-design limitation — the rule's whole design is
@@ -590,6 +602,7 @@ function buildProjectScopedEntry(
     filesEvaluated: filesScanned,
     filesEligible: filesScanned,
     findingsEmitted,
+    fired: findingsEmitted > 0,
     coverageConfidence: "high",
     ...concentrationSpread,
     ...classPatternSpread,
@@ -623,6 +636,11 @@ function buildLevelGatedEntry(
     filesEvaluated: 0,
     filesEligible: 0,
     findingsEmitted: 0,
+    // `fired === false` is structurally guaranteed for level-gated rows
+    // — the engine never invoked the rule, so it cannot have emitted
+    // findings. Spelled out alongside the explicit zeros above so the
+    // wire shape stays consistent across every construction branch.
+    fired: false,
     coverageConfidence: "low",
     reason: `gated_by_level: rule requires level ${gate.requiredLevel}; scan requested level ${gate.requestedLevel}`,
     remediation: `re-run with \`level: '${gate.requiredLevel}'\` to evaluate this rule`,
@@ -987,16 +1005,28 @@ const MATERIAL_EXACT_PATTERN_TOKENS: ReadonlySet<string> = new Set([
  * `level: 'AAA'`), and collapsing them would hide the exact remediation
  * a per-rule row carries.
  *
- * `count` is `0` and `byExtension` is `{}` when nothing collapses —
- * always-present so the agent has a deterministic field to read instead
- * of disambiguating "absent" from "zero" (CLAUDE.md §1 "Ambiguous field
- * shapes are dishonest" inverted at the field-presence level: a
- * scan-confidence telemetry field stays present even at zero so the
- * agent can branch on it without re-checking).
+ * `count` is `0`, `byExtension` is `{}`, and `ruleIds` is `[]` when
+ * nothing collapses — always-present so the agent has a deterministic
+ * field to read instead of disambiguating "absent" from "zero"
+ * (CLAUDE.md §1 "Ambiguous field shapes are dishonest" inverted at the
+ * field-presence level: a scan-confidence telemetry field stays present
+ * even at zero so the agent can branch on it without re-checking).
+ *
+ * `ruleIds` lists every rule rolled up into the counter, sorted in
+ * codepoint order for determinism. Without this field, an agent reading
+ * `meta.perRuleCoverage[]` cannot distinguish "rule did not load" from
+ * "rule loaded but had zero eligible inputs and was rolled up" — the
+ * collapsed rules vanish from the per-rule array, and the headline
+ * `byExtension` counter only carries the extension key. The `ruleIds`
+ * sibling makes the rolled-up identity visible so an agent can verify
+ * whether a specific rule (e.g. `navigation/link-target-blank-announcement`)
+ * was loaded and short-circuited on input-type, vs. simply never
+ * registered.
  */
 export interface RulesNotEvaluatedDueToInputType {
   readonly count: number;
   readonly byExtension: Readonly<Record<string, number>>;
+  readonly ruleIds: readonly string[];
 }
 
 /**
@@ -1049,6 +1079,7 @@ export function partitionPerRuleCoverage(
   for (const r of rules) ruleById.set(r.id, r);
   const retained: PerRuleCoverage[] = [];
   const byExtension: Record<string, number> = {};
+  const collapsedRuleIds: string[] = [];
   let count = 0;
   let collapsedAny = false;
   for (const row of rows) {
@@ -1061,6 +1092,7 @@ export function partitionPerRuleCoverage(
       const head = extensions[0];
       if (head !== undefined) {
         byExtension[head] = (byExtension[head] ?? 0) + 1;
+        collapsedRuleIds.push(row.ruleId);
         count += 1;
         collapsedAny = true;
         continue;
@@ -1068,9 +1100,14 @@ export function partitionPerRuleCoverage(
     }
     retained.push(row);
   }
+  // Sort the rolled-up rule IDs in codepoint order so the wire shape is
+  // deterministic across runs — agents diffing scan responses across
+  // sessions cannot distinguish a real registry change from accidental
+  // ordering drift.
+  collapsedRuleIds.sort();
   return {
     retained: collapsedAny ? retained : rows,
-    notEvaluatedDueToInputType: { count, byExtension },
+    notEvaluatedDueToInputType: { count, byExtension, ruleIds: collapsedRuleIds },
   };
 }
 
