@@ -765,6 +765,113 @@ describe("review/timing", () => {
     });
   });
 
+  describe("vendorContext (priority-honesty axis on vendor-pathed candidates)", () => {
+    // Sibling structured payload to vendorPathHint: carries the same
+    // vendor-path-shape evidence plus a stable `redirectTo:
+    // "consumer-override"` enum so the checklist surface's per-item
+    // priority ranker can downgrade attention budget when every
+    // grounded candidate sits on a vendor / build-output file. Per
+    // doctrine "Reason / priority / fix-description must agree" — a
+    // reason that concedes "minified file" cannot ride at `priority:
+    // high`. The candidate stays surfaced (surface-don't-suppress);
+    // the priority axis flexes.
+
+    it("emits vendorContext on a canonical vendor-bundle filename", () => {
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "vendor/jquery-1.10.2.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.vendorContext).toEqual({
+        signal: { kind: "vendor-bundle-basename" },
+        redirectTo: "consumer-override",
+      });
+    });
+
+    it("emits vendorContext on a `.min.` infix filename", () => {
+      // bootstrap.min.js matches BOTH predicates; preference order
+      // mirrors detectVendorContext in suggest-fix-vendor-context.ts —
+      // vendor-bundle-basename wins because naming the library is
+      // more actionable than naming the underlying minification
+      // predicate.
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "vendor/bootstrap.min.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.vendorContext?.signal.kind).toBe("vendor-bundle-basename");
+      expect(hit?.vendorContext?.redirectTo).toBe("consumer-override");
+    });
+
+    it("emits vendorContext with kind=minified-shape on a non-vendor minified file", () => {
+      // Filename is not a recognised vendor-bundle name, but the file
+      // matches the minified-shape predicate (the `.min.` infix in
+      // the basename suffices). The signal kind names the predicate
+      // that fired — the agent reads the same evidence the finder
+      // did, no heuristic mislabel per "Heuristic-mislabeled meta
+      // sub-fields are dishonest."
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "build/app.min.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.vendorContext).toEqual({
+        signal: { kind: "minified-shape" },
+        redirectTo: "consumer-override",
+      });
+    });
+
+    it("omits vendorContext on an authored-source path", () => {
+      // Present-when-meaningful — the field is absent (not `null`)
+      // when no vendor-path-shape predicate fired.
+      const out = runFinder(finder, `setTimeout(() => tick(), 100);`, {
+        filePath: "src/components/Carousel.tsx",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit).toBeDefined();
+      expect(hit?.vendorContext).toBeUndefined();
+    });
+
+    it("does not downgrade confidence — strictly additive", () => {
+      // Doctrine pin: priority-honesty downgrade lives on the item-
+      // level `priority` field at the checklist surface; per-candidate
+      // `confidence` stays at `medium` regardless. The candidate is
+      // still surfaced; the agent dismisses by reading once.
+      const out = runFinder(finder, `setTimeout(function(){},100);`, {
+        filePath: "vendor/bootstrap.min.js",
+      });
+      const hit = out.find(
+        (c) => c.criterionId === "wcag22:2.2.1" && c.reason.includes("setTimeout"),
+      );
+      expect(hit?.confidence).toBe("medium");
+      expect(hit?.vendorContext).toBeDefined();
+    });
+
+    it("populates vendorContext alongside vendorPathHint (sibling fields)", () => {
+      // Both fields ride on the same candidate when a vendor-path
+      // predicate fires — vendorPathHint is the typed boolean signal,
+      // vendorContext adds the structured `redirectTo` enum. Neither
+      // is a substitute for the other; the agent reads either.
+      const out = runFinder(finder, `setTimeout(function(){},2000);`, {
+        filePath: "vendor/jquery-1.10.2.js",
+      });
+      const hit = out.find((c) => c.reason.includes("setTimeout"));
+      expect(hit?.vendorPathHint).toBe(true);
+      expect(hit?.vendorContext?.redirectTo).toBe("consumer-override");
+    });
+
+    it("does not attach vendorContext to <meta http-equiv='refresh'> candidates", () => {
+      // The vendor-path-shape predicates apply to JS setTimeout /
+      // setInterval call sites. Meta-refresh in HTML files is
+      // outside that scope — honest omission rather than emitting
+      // a sentinel signal.
+      const out = runFinder(finder, `<meta http-equiv="refresh" content="30; url=/next">`, {
+        filePath: "vendor/bootstrap.min.js",
+      });
+      expect(out.length).toBeGreaterThan(0);
+      for (const c of out) {
+        expect(c.vendorContext).toBeUndefined();
+      }
+    });
+  });
+
   describe("minified-file locator enrichment", () => {
     // When the cited file is a minified bundle (`.min.` infix OR a
     // single line > 1000 chars), the bare `line:column` pointer is

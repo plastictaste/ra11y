@@ -15,7 +15,11 @@ import {
 } from "../reports/attestation-surface.ts";
 import { buildCoverageReport, type PerStandardCoverage } from "../reports/coverage.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
-import type { ReviewCandidate, ReviewConfidence } from "../types/review.ts";
+import type {
+  ReviewCandidate,
+  ReviewCandidateVendorContext,
+  ReviewConfidence,
+} from "../types/review.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
@@ -138,6 +142,25 @@ interface ChecklistCandidateOut {
    * omitted when the file is an ordinary authored source.
    */
   readonly vendorPathHint?: boolean;
+  /**
+   * Sibling structured payload to `vendorPathHint` — carries the
+   * vendor-path-shape evidence as a discriminated `signal` plus a
+   * stable `redirectTo: "consumer-override"` enum the agent reads
+   * to learn the dismissal direction. Drives the per-item priority
+   * downgrade in `priorityFor()`: when every grounded candidate
+   * carries `vendorContext`, the item priority drops from `"high"`
+   * to `"medium"` so the attention budget matches the framing the
+   * candidate already concedes (a `reason` containing "minified
+   * file — match at byte col …" cannot honestly ride at the same
+   * priority as a candidate pointing at hand-authored source).
+   *
+   * Mirrors the `vendorContext` field on the `suggest_fix` surface
+   * (`src/mcp/suggest-fix-vendor-context.ts`) — same `redirectTo`
+   * enum, same dismissal direction — so the agent reads the same
+   * recommendation across the manual-review and apply-fix lanes.
+   * Present-when-meaningful per CLAUDE.md §1.
+   */
+  readonly vendorContext?: ReviewCandidateVendorContext;
   /**
    * Structured duration evidence for timing-related candidates (see
    * `ReviewCandidate.durationLiteralMs`). Populated only when the
@@ -271,16 +294,48 @@ function wcagPrincipleFor(standardId: string, localId: string): WcagPrinciple | 
  * so the budget signal matches the framing the candidate already
  * carries. Mirrors the conceded-uncertainty branch of "Reason text and
  * severity must agree" on the rule surface.
+ *
+ * Vendor-context downgrade: when every grounded candidate carries a
+ * `vendorContext` payload (the cited file matches a vendor-bundle
+ * basename or a minified-shape predicate — see
+ * `buildVendorContext` in `src/review/finders/timing.ts`), the item
+ * is not work the page author can act on in their own source. The
+ * dismissal direction is "override the failing concern in your own
+ * code" rather than "edit the vendor file." Same doctrine line as
+ * the hedging branch — the priority signal must agree with the
+ * `vendorContext.redirectTo` framing the candidate already carries.
+ * Drop to "medium" so the attention budget matches.
  */
 function priorityFor(
   level: string,
-  candidates: readonly { readonly reason: string }[],
+  candidates: readonly {
+    readonly reason: string;
+    readonly vendorContext?: ReviewCandidateVendorContext;
+  }[],
 ): ChecklistPriority {
   if (candidates.length === 0) return "low";
   const base: ChecklistPriority = level === "A" || level === "AA" ? "high" : "medium";
   if (base !== "high") return base;
   if (everyCandidateHedges(candidates)) return "medium";
+  if (everyCandidateHasVendorContext(candidates)) return "medium";
   return "high";
+}
+
+/**
+ * True when every grounded candidate carries a `vendorContext`
+ * payload — i.e. every cited file matches one of the finder's
+ * vendor-path-shape predicates. The all-or-nothing test mirrors
+ * `everyCandidateHedges`: a single hand-authored sibling on the same
+ * criterion keeps the item at `"high"` so the agent doesn't miss the
+ * actionable case among the vendor-pathed siblings.
+ */
+function everyCandidateHasVendorContext(
+  candidates: readonly { readonly vendorContext?: ReviewCandidateVendorContext }[],
+): boolean {
+  for (const c of candidates) {
+    if (c.vendorContext === undefined) return false;
+  }
+  return true;
 }
 
 /**
@@ -1169,6 +1224,7 @@ function mapCandidates(
         // checklist consumer that filters by criterion does not have
         // to re-call review_candidates to recover the typed fields.
         ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+        ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
         ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
         ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
         // sourceCount carries through for stem-deduped candidates so

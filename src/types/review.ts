@@ -71,6 +71,53 @@ export interface ReviewCandidateSibling {
   readonly href?: string;
 }
 
+/**
+ * Discriminated `signal` payload for {@link ReviewCandidateVendorContext}.
+ * Names the evidence type the finder actually has — every variant must
+ * be deterministic from the (filePath, source) inputs the finder reads,
+ * matching the doctrine bar in
+ * `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest."
+ *
+ *   - `kind: "vendor-bundle-basename"` — the cited file's basename
+ *     matches a canonical vendor library bundle name (`bootstrap.js`,
+ *     `jquery-1.10.2.js`, `popper.js`, etc.). Same predicate as
+ *     `isVendorBundleBasename` in `src/review/finders/timing-vendor.ts`.
+ *   - `kind: "minified-shape"` — the cited file matches the minified
+ *     shape predicate (`.min.` infix in basename OR a single line longer
+ *     than the enrichment threshold). Same predicate as
+ *     `isMinifiedForEnrichment` in `src/review/finders/timing-minified.ts`.
+ *
+ * Both variants drive the same downstream behavior (priority downgrade
+ * + override-in-consumer dismissal direction); the discriminator names
+ * which path-shape predicate fired so the agent reads the same evidence
+ * the finder did. When both predicates would apply (a vendored
+ * `bootstrap.min.js`), the finder picks `vendor-bundle-basename` —
+ * naming the library is more actionable than naming the underlying
+ * minification predicate, mirroring `detectVendorContext` preference
+ * order in `src/mcp/suggest-fix-vendor-context.ts`.
+ */
+export type ReviewCandidateVendorSignal =
+  | { readonly kind: "vendor-bundle-basename" }
+  | { readonly kind: "minified-shape" };
+
+/**
+ * Wire shape for {@link ReviewCandidate#vendorContext}. Carries a
+ * deterministic `signal` plus a stable `redirectTo` enum the agent
+ * reads to learn what dismissal direction the response is recommending.
+ *
+ * `redirectTo: "consumer-override"` mirrors the value used by the
+ * `suggest_fix` surface's `VendorContext` (see
+ * `src/mcp/suggest-fix-vendor-context.ts`) so an agent that has
+ * already learned the term on the suggest_fix lane reads the same
+ * direction here. Currently a single-value enum; future redirects
+ * (e.g. `"upstream-bug-report"`) would extend the union.
+ */
+export interface ReviewCandidateVendorContext {
+  readonly signal: ReviewCandidateVendorSignal;
+  readonly redirectTo: "consumer-override";
+}
+
 /** A location where a human reviewer should verify a manual criterion. */
 export interface ReviewCandidate {
   /** The criterion this candidate is relevant to (e.g., "wcag22:1.2.1"). */
@@ -171,6 +218,42 @@ export interface ReviewCandidate {
    * a heuristic on weaker evidence.
    */
   readonly sourceCount?: number;
+  /**
+   * Structured additive evidence that the cited file is third-party /
+   * build-output code AND that the dismissal path is "override the
+   * failing concern in your own code rather than edit this file."
+   * Present-when-meaningful: the finder emits this field only when its
+   * vendor-path-shape predicates fire (`isVendorBundleBasename` on
+   * canonical bundle filenames, `isMinifiedForEnrichment` on `.min.`
+   * infix or single-line minified shape).
+   *
+   * Sibling — and stronger — to {@link ReviewCandidate#vendorPathHint}:
+   * `vendorPathHint` is the typed boolean signal an agent reads to know
+   * the file is third-party code; `vendorContext` adds the structured
+   * dismissal direction (`redirectTo: "consumer-override"`) so the
+   * agent sees the same recommendation the `suggest_fix` surface
+   * carries on its own `vendorContext` shape (consumer-override over
+   * in-vendor-edit; see `src/mcp/suggest-fix-vendor-context.ts`).
+   *
+   * Surfaced through to the checklist surface, where the per-item
+   * `priorityFor()` ranker downgrades item priority from `"high"` to
+   * `"medium"` when every grounded candidate carries `vendorContext`
+   * — matching the doctrine line in
+   * `docs/kb/architecture/ai-first-consumer.md` "Reason / priority /
+   * fix-description must agree across all three channels" at the
+   * candidate-priority axis: a candidate whose reason concedes the
+   * file is a vendor / build artifact cannot ride at the same
+   * attention budget as a candidate pointing at hand-authored source.
+   *
+   * Strictly additive per the AI-first consumer model: the candidate
+   * still surfaces at the same `confidence` with every WCAG criterion
+   * attached. Suppression is the wrong move on this signal — the agent
+   * dismisses by reading once and the dismissal stays cheap. Omitted
+   * on ordinary authored-source candidates so presence reads as
+   * positive evidence (per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest").
+   */
+  readonly vendorContext?: ReviewCandidateVendorContext;
   /**
    * Byte offset (0-based, into the file's `source` string) of the
    * literal token the finder matched. When present alongside

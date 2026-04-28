@@ -124,6 +124,7 @@ function buildReviewCandidates(
         // (CLI `--format agent`) reads the same dismissal fields
         // an MCP review_candidates caller does.
         ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+        ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
         ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
         ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
         // sourceCount mirrors siblingOccurrences for stem-deduped

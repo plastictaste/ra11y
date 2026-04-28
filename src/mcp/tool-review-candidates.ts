@@ -208,6 +208,7 @@ export const reviewCandidatesTool: McpTool = {
           // adjust confidence; the candidate stays present at the
           // same confidence regardless of the values.
           ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
+          ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
           ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
           ...(c.durationExpression === undefined
             ? {}

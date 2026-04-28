@@ -10,6 +10,7 @@
  * and docs/kb/architecture/ai-first-consumer.md for doctrine.
  */
 
+import type { ReviewCandidateVendorContext } from "../../types/review.ts";
 import type { FixClass } from "../../types/rule.ts";
 import type { Severity } from "../../types/violation.ts";
 
@@ -403,6 +404,18 @@ export interface AgentReviewCandidate {
    * Omitted for ordinary authored sources.
    */
   readonly vendorPathHint?: boolean;
+  /**
+   * Sibling structured payload to {@link AgentReviewCandidate#vendorPathHint}
+   * — carries the vendor-path-shape evidence as a discriminated
+   * `signal` plus a stable `redirectTo: "consumer-override"` enum the
+   * agent reads to learn the dismissal direction. Mirrors
+   * `ReviewCandidate.vendorContext` on the source-of-truth shape and
+   * the field of the same name on the `suggest_fix` response, so an
+   * agent reads the same direction across the manual-review and
+   * apply-fix lanes. Present-when-meaningful — omitted on
+   * authored-source candidates.
+   */
+  readonly vendorContext?: ReviewCandidateVendorContext;
   /**
    * Structured duration evidence for timing-related candidates
    * (`setTimeout` / `setInterval`). Populated only when the duration
