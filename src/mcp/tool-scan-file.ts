@@ -28,7 +28,8 @@ import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
-import { runScanAndCollect } from "./scan-collect.ts";
+import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
+import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { scannedFile } from "./scanned-envelope.ts";
 import { configSearchedFromField } from "./scanner-meta.ts";
 import type { McpSession } from "./session.ts";
@@ -202,9 +203,34 @@ export const scanFileTool: McpTool = {
       { tokenBudget: 0, includeReviewCandidates: true },
     );
 
+    // Cross-surface warning-channel parity: route through the shared
+    // `buildScanTimeWarnings` helper so scan_file emits the same
+    // scan-time warning code set + `meta.scannedBuildArtifacts`
+    // classification that scan_project / coverage / checklist emit on
+    // the identical input. Without this, an agent calling scan_file on
+    // a `.min.css` got `findings: [...]` with no `scanned_minified_file`
+    // / `scanned_build_artifacts_present` warning, while scan_project
+    // on the same file flagged it as a build artifact — silent
+    // cross-surface drift per `docs/kb/architecture/ai-first-consumer.md`
+    // "Cross-surface count invariant" (warning-telemetry analogue).
+    // The helper internally classifies build artifacts off the parsed
+    // file source, so the predicate fires deterministically on the
+    // single-file substrate. Discovery-only codes
+    // (`text_source_skipped`, `binary_assets_skipped`, etc.) stay
+    // omitted: they read off `analysisCoverage.skippedByExtension`,
+    // which scan_file's single-file substrate never populates.
+    const overlayed = applyCrossSurfaceWarnings({
+      assembled,
+      parsed,
+      collected,
+      configSource: projectConfig.sourcePath,
+      configSearchSawProjectMarker,
+      configSearchBase,
+    });
+
     return textResult(
       buildScanFileResponse({
-        assembled,
+        assembled: overlayed,
         parsed,
         projectConfig,
         configSearchBase,
@@ -216,6 +242,95 @@ export const scanFileTool: McpTool = {
     );
   },
 };
+
+/**
+ * Overlays the cross-surface scan-time warning channel onto an
+ * already-assembled `scan_file` response, replacing the assembler-
+ * computed `warnings` / `warningsDetails` with the canonical
+ * {@link buildScanTimeWarnings} output and stamping
+ * `meta.scannedBuildArtifacts` whenever the helper classified the
+ * scanned file.
+ *
+ * Cross-surface invariant per
+ * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant" (warning-telemetry analogue): the same scan basis
+ * (parsed files + violations + config-resolution state) must produce
+ * the same scan-time warning code set on every project-rooted MCP
+ * tool consuming it. The assembler-internal `buildAssemblerWarningsField`
+ * does NOT run the build-artifact classifier, so without this overlay
+ * scan_file on `bootstrap.min.css` returns clean while scan_project
+ * on the same file flags it as a build artifact + emits
+ * `scanned_minified_file`.
+ *
+ * Discovery-only codes (`text_source_skipped`, `binary_assets_skipped`,
+ * `sourcemap_files_excluded`, etc.) stay omitted because their
+ * predicate reads off `analysisCoverage.skippedByExtension`, which
+ * scan_file's single-file substrate never populates — single-file
+ * scans don't run a discovery walk. The scoping is doctrine: a
+ * surface that emits a code without the canonical payload is dishonest.
+ */
+function applyCrossSurfaceWarnings(args: {
+  readonly assembled: ScanFamilyResponse;
+  readonly parsed: ParsedFile;
+  readonly collected: ScanCollected;
+  readonly configSource: string | null;
+  readonly configSearchSawProjectMarker: boolean;
+  readonly configSearchBase: string;
+}): ScanFamilyResponse {
+  const {
+    assembled,
+    parsed,
+    collected,
+    configSource,
+    configSearchSawProjectMarker,
+    configSearchBase,
+  } = args;
+  const analysisCoverage = assembled.meta["analysisCoverage"] as
+    | Record<string, unknown>
+    | undefined;
+  const filesByExtension =
+    (assembled.meta["filesByExtension"] as Record<string, number> | undefined) ?? {};
+  const scanTime = buildScanTimeWarnings({
+    parsedFiles: [parsed],
+    violations: collected.violations,
+    root: configSearchBase,
+    configSource,
+    configSearchSawProjectMarker,
+    rootSource: null,
+    analysisCoverage,
+    filesByExtension,
+    durationMs: collected.durationMs,
+  });
+  // Stamp `meta.scannedBuildArtifacts` from the helper's
+  // single-pass classification so the field shows up on scan_file
+  // exactly the way scan_project surfaces it. Conditional-spread per
+  // CLAUDE.md §1 "Ambiguous field shapes are dishonest" — the field
+  // is absent when the file did not classify as a build artifact.
+  const nextMeta: Record<string, unknown> = {
+    ...assembled.meta,
+    ...scanTime.buildArtifactsMetaField,
+  };
+  // Total replacement of the warnings channel: the shared helper is
+  // a strict superset over the assembler-internal call (it folds in
+  // build-artifact classification, scss-unresolved-variables,
+  // bulk-catalog detection, etc.). Conditional-spread per the
+  // present-when-meaningful contract — codes only appear when at least
+  // one fired. Strip the keys from the rest of the spread so a stale
+  // assembled value can't leak through.
+  const {
+    warnings: _droppedWarnings,
+    warningsDetails: _droppedWarningsDetails,
+    ...assembledWithoutWarnings
+  } = assembled;
+  return {
+    ...assembledWithoutWarnings,
+    meta: nextMeta,
+    ...(scanTime.warnings === undefined ? {} : { warnings: scanTime.warnings }),
+    ...(scanTime.warningsDetails === undefined
+      ? {}
+      : { warningsDetails: scanTime.warningsDetails }),
+  };
+}
 
 /**
  * Structured error for a path that resolves outside its declared

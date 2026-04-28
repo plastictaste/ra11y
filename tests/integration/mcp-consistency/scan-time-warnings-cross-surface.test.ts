@@ -206,3 +206,69 @@ describe("scan-time warning code parity across scan_project / checklist / covera
     expect([...cl].sort()).toEqual([...sp].sort());
   });
 });
+
+describe("scan_file warning-channel parity with scan_project on the same `.min.css` input", () => {
+  it("scan_file emits scanned_build_artifacts_present + scanned_minified_file (matching scan_project)", async () => {
+    // scan_file on a `.min.css` historically returned findings
+    // without surfacing the build-artifact classification or the
+    // `scanned_minified_file` warning that scan_project on the same
+    // file emits — silent cross-surface drift per "Cross-surface count
+    // invariant" (warning-telemetry analogue). This test pins the
+    // invariant: predicates whose evidence is the file's own content
+    // (build-artifact classification, minified-shape detection) must
+    // fire on both surfaces. Discovery-only codes
+    // (`text_source_skipped`, `binary_assets_skipped`,
+    // `sourcemap_files_excluded`) intentionally stay omitted on
+    // scan_file — those read off the discovery walk's
+    // `analysisCoverage.skippedByExtension`, which a single-file scan
+    // never populates.
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-warns-scan-file-"));
+    const minPath = join(dir, "vendor.min.css");
+    await writeFile(
+      minPath,
+      `.a{color:#fff}.b{color:#000}.c{color:red}.d{color:blue}.e{color:#aaa}\n`,
+    );
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "scan_file", { path: minPath }),
+    ]);
+    const scanProj = body<WarningEnvelope>(responses[1]);
+    const scanFile = body<WarningEnvelope>(responses[2]);
+
+    const sp = scanTimeCodeSet(scanProj);
+    const sf = scanTimeCodeSet(scanFile);
+
+    // Sanity: scan_project fires the canonical build-artifact codes.
+    expect(sp.has("scanned_build_artifacts_present")).toBe(true);
+    expect(sp.has("scanned_minified_file")).toBe(true);
+
+    // The two file-content-evidence codes must fire on scan_file too.
+    expect(sf.has("scanned_build_artifacts_present")).toBe(true);
+    expect(sf.has("scanned_minified_file")).toBe(true);
+  });
+
+  it("scan_file ships meta.scannedBuildArtifacts when the input file classifies", async () => {
+    // The classifier's grouped output drives `meta.scannedBuildArtifacts`
+    // on scan_project; scan_file must surface the same evidence on the
+    // identical input so an agent reading the response gets the same
+    // triage signal regardless of which scan tool it called.
+    interface MetaEnvelope {
+      readonly meta?: {
+        readonly scannedBuildArtifacts?: {
+          readonly grouped?: readonly unknown[];
+          readonly ungrouped?: readonly unknown[];
+        };
+      };
+    }
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-build-artifact-meta-"));
+    const minPath = join(dir, "vendor.min.css");
+    await writeFile(
+      minPath,
+      `.a{color:#fff}.b{color:#000}.c{color:red}.d{color:blue}.e{color:#aaa}\n`,
+    );
+    const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: minPath })]);
+    const env = body<MetaEnvelope>(responses[1]);
+    expect(env.meta?.scannedBuildArtifacts).toBeDefined();
+  });
+});
