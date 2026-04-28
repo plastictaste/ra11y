@@ -450,15 +450,19 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(["high", "medium", "low"]).toContain(fix.confidence);
   });
 
-  it("suggest_fix carries verifyCommand + verifyCommandStructured pointing at scan_file on a fix-bearing line", async () => {
+  it("suggest_fix carries verifyCommandStructured pointing at scan_file on a fix-bearing line", async () => {
     // Suggest_fix responses on a real violation line — `kind: "edit"`
-    // or `kind: "guidance"` — carry the prose + structured verify
-    // pair. The structured form names scan_file (not scan_project) so
-    // the re-check is narrow and deterministic, with `verifyRuleId` as
-    // a sibling of `args` so the agent can post-filter the re-scan's
+    // or `kind: "guidance"` — carry the structured verify hint. The
+    // structured form names scan_file (not scan_project) so the
+    // re-check is narrow and deterministic, with `verifyRuleId` as a
+    // sibling of `args` so the agent can post-filter the re-scan's
     // findings to the rule it just fixed. The `kind: "none"` lane
-    // omits the pair — covered
-    // by the sibling test below.
+    // omits the field — covered by the sibling test below.
+    //
+    // The prose `verifyCommand` sibling that previously rode alongside
+    // the structured form was dropped — shipping two channels with the
+    // same content was the canonical "Ambiguous field shapes are
+    // dishonest" / triple-readout failure mode.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "suggest_fix", {
@@ -471,7 +475,6 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const fix = bodyOf(responses[1]) as {
       kind: string;
-      verifyCommand: string;
       verifyCommandStructured: {
         tool: string;
         args: { path: string };
@@ -479,21 +482,20 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       };
     };
     expect(fix.kind).not.toBe("none");
-    expect(typeof fix.verifyCommand).toBe("string");
-    expect(fix.verifyCommand).toContain("scan_file");
     expect(fix.verifyCommandStructured.tool).toBe("scan_file");
     expect(fix.verifyCommandStructured.args.path).toBe(BAD_ALT_FILE);
     expect(fix.verifyCommandStructured.verifyRuleId).toBe("media/alt-text-missing");
     expect(fix.verifyCommandStructured.args).not.toHaveProperty("ruleId");
+    expect(fix as Record<string, unknown>).not.toHaveProperty("verifyCommand");
   });
 
-  it("suggest_fix OMITS verifyCommand on kind: 'none'", async () => {
+  it("suggest_fix OMITS verifyCommandStructured on kind: 'none'", async () => {
     // When no violation exists at the cited line, the response is
-    // `kind: "none"` and OMITS `verifyCommand` +
-    // `verifyCommandStructured`. A populated verify pair next to "no
-    // finding here" is indistinguishable from "you already fixed it
-    // and verified" — the omission keeps the response honest
-    // (CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+    // `kind: "none"` and OMITS `verifyCommandStructured`. A populated
+    // verify hint next to "no finding here" is indistinguishable from
+    // "you already fixed it and verified" — the omission keeps the
+    // response honest (CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest").
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "suggest_fix", {

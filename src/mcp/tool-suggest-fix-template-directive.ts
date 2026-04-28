@@ -49,7 +49,6 @@ export interface BuildTemplateDirectiveOutcomeInputs {
   readonly sourceContext: string;
   readonly snippetField: { readonly snippet?: string };
   readonly verify: {
-    readonly verifyCommand: string;
     readonly verifyCommandStructured: VerifyCommandStructured;
   };
   readonly warningsField: { readonly warnings?: readonly string[] };
@@ -63,7 +62,6 @@ export interface BuildMarkdownHeadingCollisionOutcomeInputs {
   readonly sourceContext: string;
   readonly snippetField: { readonly snippet?: string };
   readonly verify: {
-    readonly verifyCommand: string;
     readonly verifyCommandStructured: VerifyCommandStructured;
   };
   readonly warningsField: { readonly warnings?: readonly string[] };
@@ -80,10 +78,10 @@ export interface BuildMarkdownHeadingCollisionOutcomeInputs {
  * the vendor-reroute lane uses for "right approach, exact phrasing-
  * yours-to-confirm" — see `tool-suggest-fix-vendor.ts`.
  *
- * `verifyCommand` + `verifyCommandStructured` ride at top level: the
- * agent can re-scan after adding a fallback / suppression to confirm
- * the underlying violation no longer fires. The reroute does not
- * invalidate the verify surface (Surface-don't-suppress).
+ * `verifyCommandStructured` rides at top level: the agent can re-scan
+ * after adding a fallback / suppression to confirm the underlying
+ * violation no longer fires. The reroute does not invalidate the
+ * verify surface (Surface-don't-suppress).
  */
 export function buildTemplateDirectiveOutcome(
   inputs: BuildTemplateDirectiveOutcomeInputs,

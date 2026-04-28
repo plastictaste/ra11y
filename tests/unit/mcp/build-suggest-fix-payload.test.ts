@@ -1,12 +1,18 @@
 /**
- * Tests for `buildSuggestFixPayload` — `verifyCommand` (prose) +
- * `verifyCommandStructured` ({ tool: "scan_file", args: { path },
- * verifyRuleId }) plumbing, plus the-
- * SCOPED prose-strip behavior. The verify pair is present-when-
- * meaningful: `kind: "edit"` and `kind: "guidance"` carry it; `kind:
- * "none"` OMITS it (a populated
- * verify on a "no finding here" response is indistinguishable from
- * "you already fixed it and verified").
+ * Tests for `buildSuggestFixPayload` — `verifyCommandStructured`
+ * ({ tool: "scan_file", args: { path }, verifyRuleId }) plumbing,
+ * plus the SCOPED prose-strip behavior. The verify hint is present-
+ * when-meaningful: `kind: "edit"` and `kind: "guidance"` carry it;
+ * `kind: "none"` OMITS it (a populated verify on a "no finding here"
+ * response is indistinguishable from "you already fixed it and
+ * verified").
+ *
+ * The prose `verifyCommand` sibling that previously rode alongside
+ * the structured form was dropped — shipping two channels with the
+ * same content was the canonical "Ambiguous field shapes are
+ * dishonest" / triple-readout failure mode (see
+ * `docs/kb/architecture/ai-first-consumer.md`). Only the structured
+ * form remains.
  *
  * Other shape concerns around this function (mechanical edits, widened
  * anchors, caveats, snippet omission) are covered by
@@ -91,34 +97,34 @@ describe("buildVerifyCommand", () => {
     });
   });
 
-  it("names scan_file (not scan_project) in the prose — narrowest verify surface", () => {
-    const result = buildVerifyCommand(FILE_PATH, RULE_ID);
-    expect(result.verifyCommand).toContain("scan_file");
-    expect(result.verifyCommand).not.toContain("scan_project");
-  });
-
-  it("quotes the file path in the prose so agents copy it verbatim", () => {
-    const result = buildVerifyCommand(FILE_PATH, RULE_ID);
-    expect(result.verifyCommand).toContain(JSON.stringify(FILE_PATH));
-  });
-
-  it("includes the ruleId in the prose so the agent knows what to re-check", () => {
-    const result = buildVerifyCommand(FILE_PATH, RULE_ID);
-    expect(result.verifyCommand).toContain(RULE_ID);
+  it("OMITS the prose verifyCommand sibling — only the structured form is canonical", () => {
+    // Doctrine: shipping a prose string alongside its structured object
+    // form is the canonical "Ambiguous field shapes are dishonest" /
+    // triple-readout failure mode. Drift between the two channels was
+    // silent and the agent could not tell which was canonical. Only
+    // the structured form remains.
+    const result = buildVerifyCommand(FILE_PATH, RULE_ID) as Record<string, unknown>;
+    expect(result).not.toHaveProperty("verifyCommand");
   });
 });
 
 describe("buildSuggestFixPayload — verifyCommand on kind: 'edit'", () => {
-  it("emits both verifyCommand + verifyCommandStructured when a mechanical edit is available", () => {
+  it("emits verifyCommandStructured when a mechanical edit is available", () => {
     const payload = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
     expect(payload["kind"]).toBe("edit");
-    expect(typeof payload["verifyCommand"]).toBe("string");
-    expect((payload["verifyCommand"] as string).length).toBeGreaterThan(0);
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
       args: { path: FILE_PATH },
       verifyRuleId: RULE_ID,
     });
+  });
+
+  it("OMITS the prose verifyCommand sibling on kind: 'edit'", () => {
+    // Doctrine: only the structured form is canonical; the prose
+    // sibling was a triple-readout failure mode.
+    const payload = buildSuggestFixPayload(baseArgs(violationWithFixPaths()));
+    expect(payload["kind"]).toBe("edit");
+    expect(payload).not.toHaveProperty("verifyCommand");
   });
 
   it("verifyCommandStructured.tool is exactly 'scan_file'", () => {
@@ -150,21 +156,22 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'edit'", () => {
 });
 
 describe("buildSuggestFixPayload — verifyCommand on kind: 'guidance'", () => {
-  it("emits both fields when the response is guidance-only (no mechanical edit)", () => {
+  it("emits verifyCommandStructured when the response is guidance-only (no mechanical edit)", () => {
     const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
     expect(payload["kind"]).toBe("guidance");
-    expect(typeof payload["verifyCommand"]).toBe("string");
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
       args: { path: FILE_PATH },
       verifyRuleId: RULE_ID,
     });
+    expect(payload).not.toHaveProperty("verifyCommand");
   });
 
-  it("emits both fields when fixPaths exist but no mechanical primary.edit is present", () => {
+  it("emits the structured form when fixPaths exist but no mechanical primary.edit is present", () => {
     // A fixPaths with labels-only primary should fall into the
     // `kind: "guidance"` branch of the `fixPaths` block — exercise
-    // that the verify fields still attach there.
+    // that the verify field still attaches there and no prose sibling
+    // ships alongside.
     const match = violationWithFixPaths({
       fixPaths: {
         primary: { label: "Review cross-file handler binding" },
@@ -173,24 +180,24 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'guidance'", () => {
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
-    expect(typeof payload["verifyCommand"]).toBe("string");
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
       args: { path: FILE_PATH },
       verifyRuleId: RULE_ID,
     });
+    expect(payload).not.toHaveProperty("verifyCommand");
   });
 });
 
 describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
   // `kind: "none"` OMITS the
-  // verify pair. A populated `verifyCommand` next to "no violation
-  // found" reads as "you already fixed it and verified" —
+  // verify hint. A populated `verifyCommandStructured` next to "no
+  // violation found" reads as "you already fixed it and verified" —
   // indistinguishable from "the finding never existed at this
   // location." Present-when-meaningful (CLAUDE.md §1 "Ambiguous field
   // shapes are dishonest") — the verify hint only belongs on the
   // lanes that actually applied a fix.
-  it("OMITS verifyCommand + verifyCommandStructured when no violation matches at the requested line", () => {
+  it("OMITS verifyCommandStructured when no violation matches at the requested line", () => {
     const payload = buildSuggestFixPayload(baseArgs(undefined));
     expect(payload["kind"]).toBe("none");
     expect(payload).not.toHaveProperty("verifyCommand");
@@ -413,8 +420,7 @@ describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape
   // ranked fix under `primary: { approach, explanation, sourceContext,
   // confidence }` to match the advertised shape. `alternatives` is
   // present-when-meaningful — omitted when only one approach is
-  // reasonable. `verifyCommand` + `verifyCommandStructured` stay at
-  // top level.
+  // reasonable. `verifyCommandStructured` stays at top level.
 
   it("no-fixPaths guidance: nests explanation + sourceContext + confidence under primary", () => {
     const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
@@ -584,10 +590,10 @@ describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape
     expect(pragmaAlt).toBeDefined();
   });
 
-  it("guidance: verifyCommand + verifyCommandStructured stay at top level (not under primary)", () => {
+  it("guidance: verifyCommandStructured stays at top level (not under primary)", () => {
     const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
-    expect(typeof payload["verifyCommand"]).toBe("string");
     expect(payload["verifyCommandStructured"]).toBeDefined();
+    expect(payload).not.toHaveProperty("verifyCommand");
     const primary = payload["primary"] as Record<string, unknown>;
     expect(primary).not.toHaveProperty("verifyCommand");
     expect(primary).not.toHaveProperty("verifyCommandStructured");
@@ -1067,14 +1073,14 @@ describe("buildSuggestFixPayload lanes", () => {
     expect(payload["vendorContext"]).toEqual(BUILD_ARTIFACT_CONTEXT);
   });
 
-  it("vendor-detected: verifyCommand + verifyCommandStructured still ride the response (re-scan after override)", () => {
+  it("vendor-detected: verifyCommandStructured still rides the response (re-scan after override)", () => {
     const payload = buildSuggestFixPayload(vendorBaseArgs(violationWithFixPaths()));
-    expect(typeof payload["verifyCommand"]).toBe("string");
     expect(payload["verifyCommandStructured"]).toEqual({
       tool: "scan_file",
       args: { path: VENDOR_PATH },
       verifyRuleId: RULE_ID,
     });
+    expect(payload).not.toHaveProperty("verifyCommand");
   });
 
   it("vendor-detected + guidance-only match: still restructures (no fixPaths required to trigger reroute)", () => {

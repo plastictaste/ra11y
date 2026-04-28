@@ -24,10 +24,10 @@ export interface BuildSuggestFixPayloadArgs {
   readonly source: string;
   /**
    * Canonical file path from the suggest_fix request. Passed through
-   * to `verifyCommandStructured.args.file` so the verify hint names the
-   * exact same path the fix was computed against — never re-derived
-   * here to avoid shape-drift between the request and the verify
-   * pointer.
+   * to `verifyCommandStructured.args.path` so the verify hint names
+   * the exact same path the fix was computed against — never
+   * re-derived here to avoid shape-drift between the request and the
+   * verify pointer.
    */
   readonly filePath: string;
   /**

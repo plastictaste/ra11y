@@ -38,7 +38,6 @@ import { buildVendorOverrideOutcome } from "./tool-suggest-fix-vendor.ts";
  */
 export interface PayloadSharedFields {
   readonly verify: {
-    readonly verifyCommand: string;
     readonly verifyCommandStructured: VerifyCommandStructured;
   };
   readonly warningsField: { readonly warnings?: readonly string[] };

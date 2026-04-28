@@ -85,14 +85,15 @@ These rules have `fixClass: "guidance"` and never emit `primary.edit`. The `sugg
 - **`pointer/target-size`** — The agent must add or adjust size/padding declarations; the right approach depends on the surrounding layout context.
 - **`wrapper/drift`** — Restoring the native element or updating the config declaration requires understanding the component's intended rendering behavior.
 
-## After applying a fix: `verifyCommand` and `verifyCommandStructured`
+## After applying a fix: `verifyCommandStructured`
 
-Every `suggest_fix` response carries:
+Every `suggest_fix` response on a `kind: "edit"` or `kind: "guidance"` outcome carries:
 
-- `verifyCommand` — prose instruction naming `scan_file` as the re-check step.
-- `verifyCommandStructured` — `{ tool: "scan_file", args: { file, ruleId } }` for programmatic consumption.
+- `verifyCommandStructured` — `{ tool: "scan_file", args: { path }, verifyRuleId }` for programmatic consumption.
 
-Both are always present — a fix without a re-verify is never complete. The structured form's `ruleId` is advisory: `scan_file` does not filter by rule, but the field documents "what you were fixing" so a downstream consumer can post-filter the re-scan's findings to the specific rule.
+The `kind: "none"` outcome omits the field — there is nothing to re-verify when no finding existed at the cited line. The `verifyRuleId` field is advisory: `scan_file` does not filter by rule, but the field documents "what you were fixing" so a downstream consumer can post-filter the re-scan's findings to the specific rule.
+
+The earlier `verifyCommand` prose sibling has been dropped — shipping a prose string alongside the same structured object was the canonical "Ambiguous field shapes are dishonest" / triple-readout failure mode (see [`docs/kb/architecture/ai-first-consumer.md`](../architecture/ai-first-consumer.md)). Drift between the two channels was silent and the agent could not tell which was canonical. Agents that want a prose form synthesize it from `tool` + `args.path` + `verifyRuleId` directly.
 
 After applying a mechanical edit via `apply_fix`, call `scan_file` immediately and confirm the rule no longer fires at the original line. After applying guidance, do the same — guidance responses can miss edge cases the agent catches after reading the source.
 

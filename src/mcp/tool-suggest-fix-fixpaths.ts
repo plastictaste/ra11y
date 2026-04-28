@@ -34,7 +34,6 @@ export interface BuildFixPathsOutcomeInputs {
   readonly confidence: "high" | "medium";
   readonly snippetField: { readonly snippet?: string };
   readonly verify: {
-    readonly verifyCommand: string;
     readonly verifyCommandStructured: VerifyCommandStructured;
   };
   readonly warningsField: { readonly warnings?: readonly string[] };

@@ -54,7 +54,6 @@ export interface BuildVendorOverrideOutcomeInputs {
   readonly tailwindDetected: boolean | undefined;
   readonly snippetField: { readonly snippet?: string };
   readonly verify: {
-    readonly verifyCommand: string;
     readonly verifyCommandStructured: VerifyCommandStructured;
   };
   readonly warningsField: { readonly warnings?: readonly string[] };
@@ -76,12 +75,12 @@ export interface BuildVendorOverrideOutcomeInputs {
  * "right approach, exact phrasing-yours-to-confirm" semantics the
  * rest of the guidance lane uses for `severity: "warning"` findings.
  *
- * `verifyCommand` + `verifyCommandStructured` ride at top level — the
- * agent can re-scan the same vendor file to confirm the underlying
- * violation after the override lands, even though the edit happens
- * elsewhere. Surface-don't-suppress: a populated verify hint lets the
- * agent route a confirmation pass; the override path does not
- * invalidate the verify surface.
+ * `verifyCommandStructured` rides at top level — the agent can
+ * re-scan the same vendor file to confirm the underlying violation
+ * after the override lands, even though the edit happens elsewhere.
+ * Surface-don't-suppress: a populated verify hint lets the agent
+ * route a confirmation pass; the override path does not invalidate
+ * the verify surface.
  */
 export function buildVendorOverrideOutcome(
   inputs: BuildVendorOverrideOutcomeInputs,

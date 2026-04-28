@@ -3,18 +3,17 @@
  *
  * Three outcomes:
  *   - `kind: "none"` — no violation at that line (or unmatched rule).
- *     OMITS `verifyCommand` + `verifyCommandStructured`: a "no finding
- *     here" response with a populated verify hint reads as "you already
- *     fixed it and verified," which is indistinguishable from "the
- *     finding never existed at this location." The verify pair is
- *     present-when-meaningful — only the lanes that actually applied a
- * fix carry it. See +
- *     CLAUDE.md §1 "Ambiguous field shapes are dishonest." When the
+ *     OMITS `verifyCommandStructured`: a "no finding here" response
+ *     with a populated verify hint reads as "you already fixed it and
+ *     verified," which is indistinguishable from "the finding never
+ *     existed at this location." The verify hint is present-when-
+ *     meaningful — only the lanes that actually applied a fix carry it.
+ *     See CLAUDE.md §1 "Ambiguous field shapes are dishonest." When the
  *     per-file finding list carries one or more same-rule findings
  *     within ±NEAREST_FINDING_WINDOW lines of the requested line, the
  *     response gets a `nearestFinding: { ruleId, line }` (single match)
  *     or `didYouMean[]` (multi match) breadcrumb so paginated scans /
- *     line-drift / rule renames don't produce a dead-end response. See
+ *     line-drift / rule renames don't produce a dead-end response.
  *   - `kind: "edit"` — the rule emitted fixPaths with a mechanical
  *     `primary.edit`; the agent can apply it via Edit directly. The
  *     edit is widened to a unique anchor window via `widenToUniqueAnchor`
@@ -28,16 +27,23 @@
  *     `approach` label + `explanation` prose + `sourceContext` +
  *     `confidence`, plus an optional `alternatives` array (omitted when
  *     only one approach is reasonable — CLAUDE.md §1 "Ambiguous field
- *     shapes are dishonest"). `verifyCommand` +
- *     `verifyCommandStructured` stay at top level. See Q-SHARED-SUGGEST-
- *     FIX-GUIDANCE-PRIMARY.
+ *     shapes are dishonest"). `verifyCommandStructured` stays at top
+ *     level.
  *
  * The `kind: "edit"` and `kind: "guidance"` outcomes carry a
- * `verifyCommand` (prose) + `verifyCommandStructured` (`{ tool:
- * "scan_file", args: { path }, verifyRuleId }`) pair naming the
- * canonical re-check the agent should run after applying the fix. The
- * `kind: "none"` outcome OMITS the pair (see above) — there is nothing
- * to re-verify when no finding existed.
+ * `verifyCommandStructured` (`{ tool: "scan_file", args: { path },
+ * verifyRuleId }`) field naming the canonical re-check the agent
+ * should run after applying the fix. The `kind: "none"` outcome OMITS
+ * the field (see above) — there is nothing to re-verify when no
+ * finding existed.
+ *
+ * The prose `verifyCommand` sibling has been dropped — shipping a
+ * prose string alongside its structured object form was the canonical
+ * "Ambiguous field shapes are dishonest" failure mode at the response
+ * level: drift between the two channels was silent and the agent
+ * could not tell which was canonical. Only the structured form
+ * remains; agents synthesize re-check prose from `tool` + `args` +
+ * `verifyRuleId` directly.
  *
  * Pure function, no I/O. Lives in its own file so `tools.ts` stays
  * under the file-size budget; the suggest_fix handler imports this
@@ -66,21 +72,27 @@ export type { BuildSuggestFixPayloadArgs, VerifyCommandStructured };
 // budget. See `suggest-fix-nearest-finding.ts` for the full doc block.
 
 /**
- * Builds the `verifyCommand` prose + `verifyCommandStructured`
- * machine form naming `scan_file` on the fix target. Both are always
- * emitted on every `suggest_fix` response — there is always a way to
- * re-check after applying the fix, so the fields are never ambiguous
- * (no conditional-spread).
+ * Builds the `verifyCommandStructured` machine form naming `scan_file`
+ * on the fix target. Always emitted on every `suggest_fix` `kind:
+ * "edit"` / `kind: "guidance"` response — there is always a way to
+ * re-check after applying the fix, so the field is never ambiguous on
+ * those lanes. The `kind: "none"` lane omits it entirely (see file
+ * doc).
+ *
+ * The prose `verifyCommand` sibling that previously rode alongside
+ * was dropped — shipping two channels with the same content was the
+ * canonical "Ambiguous field shapes are dishonest" / triple-readout
+ * failure mode (`docs/kb/architecture/ai-first-consumer.md`). Agents
+ * that want a prose form synthesize it from `tool` + `args` +
+ * `verifyRuleId`.
  */
 export function buildVerifyCommand(
   filePath: string,
   ruleId: string,
 ): {
-  readonly verifyCommand: string;
   readonly verifyCommandStructured: VerifyCommandStructured;
 } {
   return {
-    verifyCommand: `mcp: scan_file({ path: ${JSON.stringify(filePath)} }) and confirm \`${ruleId}\` no longer fires at this location`,
     verifyCommandStructured: {
       tool: "scan_file",
       args: { path: filePath },
