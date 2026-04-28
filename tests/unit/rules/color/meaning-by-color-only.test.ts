@@ -357,9 +357,252 @@ describe("rule color/meaning-by-color-only", () => {
       expect(rule.satisfies).toContain("wcag21:1.4.1");
     });
 
+    it("satisfies wcag22:4.1.2 and wcag21:4.1.2 (state-class predicate)", () => {
+      expect(rule.satisfies).toContain("wcag22:4.1.2");
+      expect(rule.satisfies).toContain("wcag21:4.1.2");
+    });
+
     it("has a normativeQuote citing WCAG 1.4.1 Use of Color", () => {
       expect(rule.docs.normativeQuote.toLowerCase()).toContain("color");
       expect(rule.docs.references[0]).toContain("use-of-color");
+    });
+  });
+
+  describe("state-class predicate (toggled state without programmatic channel)", () => {
+    // Class-name idiom `.active`, `.selected`, `.checked` (toggled-state
+    // styling) on elements lacking aria-pressed / aria-selected /
+    // aria-checked + no native HTML state attribute + no text-state
+    // sibling is a 1.4.1 + 4.1.2 review candidate — surface as a
+    // warning with the state_class_may_have_text_or_aria_sibling
+    // couldBeWrongBecause code so the agent reading the consumer site
+    // can verify whether a programmatic channel exists at runtime.
+
+    describe("HTML: fires when", () => {
+      it("a <li class='active'> is bare with prose text only", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><ul><li class="active">Dashboard</li><li>Reports</li></ul></body></html>`,
+          { filePath: "nav.html" },
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.severity).toBe("warning");
+        expect(violations[0]?.message).toMatch(/active/);
+        expect(violations[0]?.message).toMatch(/aria-pressed|aria-current/);
+        expect(violations[0]?.couldBeWrongBecause).toContain(
+          "state_class_may_have_text_or_aria_sibling",
+        );
+        expect(violations[0]?.criteria).toContain("wcag22:4.1.2");
+      });
+
+      it("a <button class='selected'> with no aria-* state attribute fires", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><button class="selected">Option A</button></body></html>`,
+          { filePath: "tabs.html" },
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.severity).toBe("warning");
+        expect(violations[0]?.suggestion).toMatch(/aria-selected/);
+      });
+
+      it("a <div class='tab is-active'> (BEM-style) fires", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><div class="tab is-active">Inbox</div></body></html>`,
+          { filePath: "tab.html" },
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.message).toMatch(/is-active/);
+      });
+
+      it("a <span class='checked'> with prose only fires", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><span class="checked">Email me</span></body></html>`,
+          { filePath: "checkbox-shape.html" },
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.suggestion).toMatch(/aria-checked/);
+      });
+    });
+
+    describe("HTML: does not fire when", () => {
+      it("the element carries aria-pressed='true'", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><button class="active" aria-pressed="true">Bold</button></body></html>`,
+          { filePath: "toggle.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("the element carries aria-selected='true'", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><li class="selected" role="tab" aria-selected="true">Tab 1</li></body></html>`,
+          { filePath: "tabs.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("the element carries aria-current='page'", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><a class="active" href="/" aria-current="page">Home</a></body></html>`,
+          { filePath: "nav.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("the element carries the native HTML checked attribute", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><input type="checkbox" class="checked" checked /></body></html>`,
+          { filePath: "input.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("the visible text contains a state word ('Active')", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><li class="active">Dashboard (Active)</li></body></html>`,
+          { filePath: "labelled.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("the visible text contains the word 'selected' as prose", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><div class="selected">Selected: Bold</div></body></html>`,
+          { filePath: "labelled.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("aria-label supplies an accessible name", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><button class="active" aria-label="Currently selected">Bold</button></body></html>`,
+          { filePath: "labelled.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("an ancestor role='status' satisfies the announcement channel", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><div role="status"><li class="active">Tab</li></div></body></html>`,
+          { filePath: "live.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+    });
+
+    describe("JSX: fires when", () => {
+      it("<li className='active'> has bare prose only", () => {
+        const violations = runRule(
+          rule,
+          `export const X = () => <ul><li className="active">Dashboard</li></ul>;`,
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.severity).toBe("warning");
+        expect(violations[0]?.couldBeWrongBecause).toContain(
+          "state_class_may_have_text_or_aria_sibling",
+        );
+      });
+
+      it("<button className='is-selected'> fires (BEM variant)", () => {
+        const violations = runRule(
+          rule,
+          `export const X = () => <button className="is-selected">Tab</button>;`,
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.message).toMatch(/is-selected/);
+      });
+    });
+
+    describe("JSX: does not fire when", () => {
+      it("aria-pressed expression value is present (trusted)", () => {
+        const violations = runRule(
+          rule,
+          `export const X = ({ on }: { on: boolean }) => <button className="active" aria-pressed={on}>Bold</button>;`,
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("aria-current is set on a navigation link", () => {
+        const violations = runRule(
+          rule,
+          `export const X = () => <a className="active" href="/" aria-current="page">Home</a>;`,
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("the native checked attribute is present", () => {
+        const violations = runRule(
+          rule,
+          `export const X = () => <input type="checkbox" className="checked" checked />;`,
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("the visible text already names the state", () => {
+        const violations = runRule(
+          rule,
+          `export const X = () => <li className="active">Dashboard (Active)</li>;`,
+        );
+        expect(violations).toHaveLength(0);
+      });
+    });
+
+    describe("predicate isolation", () => {
+      it("substring 'activate' does NOT match the .active state token (whole-token gate)", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><button class="activate-mode">Activate</button></body></html>`,
+          { filePath: "substring.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("an empty <li class='active'></li> does not fire (no visible text)", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><li class="active"></li></body></html>`,
+          { filePath: "empty.html" },
+        );
+        expect(violations).toHaveLength(0);
+      });
+
+      it("status-color predicate still fires at error severity (state-class is an additional path)", () => {
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><span class="text-danger">Access denied</span></body></html>`,
+          { filePath: "status-color.html" },
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.severity).toBe("error");
+        // No state-class couldBeWrongBecause on the status-color path —
+        // the two predicates emit distinct shapes.
+        expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+      });
+
+      it("an element with both predicates triggers only the status-color (error) emission, not double-counted", () => {
+        // `class="text-danger active"` has both the status-color token
+        // and a state-class token. The status-color predicate is more
+        // specific (asserts a status-message failure at error severity)
+        // and short-circuits before the state-class fallback to avoid
+        // double-counting the same evidence.
+        const violations = runRule(
+          rule,
+          `<!doctype html><html><body><span class="text-danger active">Access denied</span></body></html>`,
+          { filePath: "both.html" },
+        );
+        expect(violations).toHaveLength(1);
+        expect(violations[0]?.severity).toBe("error");
+      });
     });
   });
 });

@@ -1,13 +1,19 @@
 /**
  * Rule: color/meaning-by-color-only
- * Satisfies: wcag22:1.4.1, wcag21:1.4.1
+ * Satisfies: wcag22:1.4.1, wcag21:1.4.1, wcag22:4.1.2, wcag21:4.1.2
  * Spec: https://www.w3.org/TR/WCAG22/#use-of-color
+ * Spec: https://www.w3.org/TR/WCAG22/#name-role-value
  *
  * > Color is not used as the only visual means of conveying information,
  * > indicating an action, prompting a response, or distinguishing a
  * > visual element.
  *
+ * > For all user interface components, the name and role can be
+ * > programmatically determined; states, properties, and values that can
+ * > be set by the user can be programmatically set.
+ *
  * Source: https://www.w3.org/TR/WCAG22/#use-of-color
+ * Source: https://www.w3.org/TR/WCAG22/#name-role-value
  *
  * Flags elements that carry a status-semantic color utility class —
  * `text-danger`, `text-success`, `text-warning`, `text-error`,
@@ -92,6 +98,56 @@
  *   - `.is-invalid` error styling on form controls — `forms/aria-invalid-
  *     missing` already covers that case with a tighter fix.
  *   - Color contrast issues — `contrast/minimum` covers those.
+ *
+ * Second predicate — state-class without programmatic state:
+ *
+ * In addition to the status-color predicate above, the rule also surfaces
+ * a `warning`-severity review candidate when an element carries a
+ * toggled-state class (`.active`, `.selected`, `.checked`, plus the
+ * `is-active` / `is-selected` / `is-checked` variants) AND does not
+ * supply a programmatic state channel. Class-name idioms in this family
+ * are how real-world tabs, segmented controls, list items, and toggle
+ * buttons style their on/off state, and `.active { background-color:
+ * blue; }` against `.tab { background-color: gray; }` is the canonical
+ * 1.4.1 + 4.1.2 failure shape — the rendered state difference reaches
+ * sighted full-color users only, with no announcement to assistive tech.
+ *
+ * Pass conditions for the state-class predicate (any satisfies — second
+ * channel is present):
+ *   1. The element carries one of the state ARIA attributes:
+ *      `aria-pressed`, `aria-selected`, `aria-checked`, `aria-current`,
+ *      `aria-expanded` (any non-empty value). The attribute itself is
+ *      the programmatic state channel.
+ *   2. The element carries the native HTML state attribute corresponding
+ *      to the class name — `checked` (on `<input>` / `<option>`),
+ *      `selected` (on `<option>`), `disabled` (on form controls). The
+ *      browser exposes these directly to assistive tech.
+ *   3. The visible text contains a state word as a whole-word match —
+ *      "active", "selected", "current", "checked", "pressed". Same prose-
+ *      as-second-channel logic the status-color predicate uses.
+ *   4. `aria-label` / `aria-labelledby` / `title` with a non-empty value —
+ *      the accessible name carries the state.
+ *   5. `role="alert"` / `role="status"` (or non-`off` `aria-live`) on the
+ *      element OR any ancestor — the live region announces the state.
+ *
+ * Severity is `warning` (not `error`) because the static predicate cannot
+ * prove the consumer site lacks a programmatic state channel — an
+ * `aria-pressed` set at runtime, a sibling `<input>` whose `checked`
+ * attribute is the truth source, an icon swap driven by JSX state. The
+ * agent reading the consumer site is the correct arbiter; the rule's job
+ * is to point at the class shape that risks color-only differentiation,
+ * not to assert the violation. Per the AI-first doctrine on "Reason text
+ * and severity must agree" + "Heuristic emission is the symmetric twin
+ * of heuristic suppression", the message frames the question and the
+ * `couldBeWrongBecause: ["state_class_may_have_text_or_aria_sibling"]`
+ * code makes the uncertainty machine-readable.
+ *
+ * Pairs with `color/state-class-color-only` (CSS-side). That rule fires
+ * on the stylesheet shape ("the .active rule body declares only color");
+ * this predicate fires on the consumer-site shape ("the element has
+ * .active but no programmatic state attribute"). The two are independent
+ * evidence — a stylesheet may declare a non-color cue while the consumer
+ * site fails to expose the state programmatically, or vice versa.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -218,7 +274,7 @@ function textContainsStatusWord(text: string): boolean {
 
 export const rule = defineRule({
   id: "color/meaning-by-color-only",
-  satisfies: ["wcag22:1.4.1", "wcag21:1.4.1"],
+  satisfies: ["wcag22:1.4.1", "wcag21:1.4.1", "wcag22:4.1.2", "wcag21:4.1.2"],
   severity: "error",
   scope: "node",
   fixClass: "verify-in-source",
@@ -227,7 +283,7 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "Elements that rely on a status-semantic color utility class (text-danger, alert-success, btn-warning, etc.) must also convey the status via an icon, a screen-reader-only label, a prose status prefix, an ARIA live role, or an accessible name — color alone fails WCAG 1.4.1.",
+      "Elements that rely on a status-semantic color utility class (text-danger, alert-success, btn-warning, etc.) must also convey the status via an icon, a screen-reader-only label, a prose status prefix, an ARIA live role, or an accessible name — color alone fails WCAG 1.4.1. Also surfaces a review candidate (severity warning) when an element carries a toggled-state class (.active / .selected / .checked) without an aria-pressed / aria-selected / aria-checked / aria-current / aria-expanded attribute, native checked/selected attribute, or text/label channel — class-name-driven state without a programmatic channel risks 1.4.1 + 4.1.2.",
     rationale:
       'Bootstrap\'s `.text-danger` / `.alert-success` / `.btn-warning` family carries semantic status — red means error, green means success. A sighted user sees the color and understands the meaning; a screen-reader user, a colorblind user, or anyone reading under a color-inverted theme gets nothing unless the status is also conveyed through another channel. Bootstrap\'s own accessibility docs admit this: "assistive technologies will not convey information that is denoted purely with color" — the class ships the color, the author supplies the second channel. The fix is cheap: an icon + an `.visually-hidden` label, or a prose prefix ("Error: invalid email"), or `role="alert"` on a live region. The rule only fires when the class token itself names a status (`-danger`/`-success`/`-warning`/`-error`/`-info`) — theme tokens like `.text-primary` / `.text-muted` do not trigger, because they are not status channels.',
     goodExample: `<span class="text-danger"><i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">Error:</span> Invalid email</span>`,
@@ -236,8 +292,10 @@ export const rule = defineRule({
       "Color is not used as the only visual means of conveying information, indicating an action, prompting a response, or distinguishing a visual element.",
     references: [
       "https://www.w3.org/TR/WCAG22/#use-of-color",
+      "https://www.w3.org/TR/WCAG22/#name-role-value",
       "https://www.w3.org/WAI/WCAG22/Techniques/general/G14",
       "https://www.w3.org/WAI/WCAG22/Techniques/general/G111",
+      "https://www.w3.org/WAI/WCAG22/Techniques/aria/ARIA10",
       "https://getbootstrap.com/docs/5.3/getting-started/accessibility/#color-contrast",
     ],
   },
@@ -260,7 +318,22 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  couldBeWrongBecause?: readonly string[];
 }) => void;
+
+/**
+ * `couldBeWrongBecause` code surfaced on the state-class predicate path.
+ * The static rule cannot prove the consumer site lacks a programmatic
+ * state channel — an `aria-pressed` set at runtime, a sibling element
+ * whose `checked` attribute is the truth source, an icon swap driven by
+ * JSX state. The agent reading the consumer site is the correct arbiter;
+ * this code marks the uncertainty so the agent's per-finding triage can
+ * key on it. Per the AI-first doctrine on "Heuristic emission is the
+ * symmetric twin of heuristic suppression": low-confidence evidence
+ * lives at `severity: warning` paired with a machine-readable reason.
+ */
+export const STATE_CLASS_MAY_HAVE_TEXT_OR_ARIA_SIBLING =
+  "state_class_may_have_text_or_aria_sibling";
 
 // ---------------------------------------------------------------------------
 // HTML
@@ -271,12 +344,45 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     const classAttr = getHtmlAttribute(el, "class");
     if (classAttr === null) continue;
+
+    // Predicate 1: status-color utility class with no second channel.
     const token = firstStatusToken(classAttr);
-    if (token === null) continue;
-    if (htmlHasSecondChannel(el, parentOf)) continue;
+    if (token !== null) {
+      if (!htmlHasSecondChannel(el, parentOf)) {
+        const text = htmlTextContent(el);
+        if (text.length > 0) {
+          emit(
+            buildViolation("html", el.tagName.toLowerCase(), classAttr, token, text, el.loc.start),
+          );
+          // Status-color and state-class predicates are mutually
+          // exclusive on the same element — the status-color emission
+          // already names the color-only failure; firing both would
+          // double-count the same evidence.
+          continue;
+        }
+      }
+    }
+
+    // Predicate 2: toggled-state class without a programmatic state
+    // channel. Fires on `.active` / `.selected` / `.checked` (and the
+    // `is-*` variants) when the element supplies neither an aria-state
+    // attribute, a native HTML state attribute, an accessible name, a
+    // text-state word, nor a live-region ancestor.
+    const stateToken = firstStateToken(classAttr);
+    if (stateToken === null) continue;
+    if (htmlHasStateChannel(el, parentOf)) continue;
     const text = htmlTextContent(el);
     if (text.length === 0) continue;
-    emit(buildViolation("html", el.tagName.toLowerCase(), classAttr, token, text, el.loc.start));
+    emit(
+      buildStateClassViolation(
+        "html",
+        el.tagName.toLowerCase(),
+        classAttr,
+        stateToken,
+        text,
+        el.loc.start,
+      ),
+    );
   }
 }
 
@@ -375,12 +481,29 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const el of walkJsxElements(module)) {
     const classAttr = getJsxAttributeString(el, "className") ?? getJsxAttributeString(el, "class");
     if (classAttr === null) continue;
+
+    // Predicate 1: status-color utility class with no second channel.
     const token = firstStatusToken(classAttr);
-    if (token === null) continue;
-    if (jsxHasSecondChannel(el, parentOf)) continue;
+    if (token !== null) {
+      if (!jsxHasSecondChannel(el, parentOf)) {
+        const text = jsxTextContent(el);
+        if (text.length > 0) {
+          emit(buildViolation("jsx", el.tagName, classAttr, token, text, el.loc.start));
+          continue;
+        }
+      }
+    }
+
+    // Predicate 2: toggled-state class without a programmatic state
+    // channel. JSX analogue of the HTML branch above.
+    const stateToken = firstStateToken(classAttr);
+    if (stateToken === null) continue;
+    if (jsxHasStateChannel(el, parentOf)) continue;
     const text = jsxTextContent(el);
     if (text.length === 0) continue;
-    emit(buildViolation("jsx", el.tagName, classAttr, token, text, el.loc.start));
+    emit(
+      buildStateClassViolation("jsx", el.tagName, classAttr, stateToken, text, el.loc.start),
+    );
   }
 }
 
@@ -603,4 +726,214 @@ function buildMessage(descriptor: string, token: string, statusWord: string, tex
 function buildSuggestion(descriptor: string, token: string, statusWord: string): string {
   const titleWord = statusWord.charAt(0).toUpperCase() + statusWord.slice(1);
   return `Add a second channel for the "${statusWord}" status conveyed by ${token} on ${descriptor}. Any of: (1) prefix the visible text with the status word — e.g., "${titleWord}: <your text>" — so assistive tech reads the status as prose; (2) add an icon + sr-only label inside the element — \`<i class="bi bi-exclamation-circle" aria-hidden="true"></i><span class="visually-hidden">${titleWord}:</span>\`; (3) if this message appears dynamically, wrap with \`role="alert"\` (errors) or \`role="status"\` (success/info) so the status is announced via a live region; (4) set \`aria-label="${titleWord}: <your text>"\` on the element. Pick the one that matches how the message reaches the page.`;
+}
+
+// ---------------------------------------------------------------------------
+// State-class predicate (toggled state without programmatic channel)
+// ---------------------------------------------------------------------------
+
+/**
+ * Class tokens whose presence on an element signals toggled state. The
+ * `is-*` variants ship in BEM / SUIT / Bootstrap-flavored class naming;
+ * the bare forms ship across the same plus jQuery-era idioms. Whole-
+ * token match (whitespace-delimited).
+ */
+const STATE_CLASS_TOKENS: ReadonlySet<string> = new Set([
+  "active",
+  "selected",
+  "checked",
+  "is-active",
+  "is-selected",
+  "is-checked",
+]);
+
+/**
+ * State words that, when present anywhere in the element's visible text
+ * as a whole-word match, satisfy the prose-channel pass condition for
+ * the state-class predicate. Distinct from STATUS_WORDS (above) — those
+ * are status-message words ("error" / "success"); these are state words
+ * ("active" / "selected"). Some overlap is fine — both sets are
+ * conservative.
+ */
+const STATE_WORDS: readonly string[] = [
+  "active",
+  "selected",
+  "current",
+  "checked",
+  "pressed",
+  "expanded",
+  "collapsed",
+];
+
+const STATE_ANYWHERE_RE = new RegExp(`\\b(${STATE_WORDS.join("|")})\\b`, "iu");
+
+/**
+ * ARIA state attributes. When any of these is present (any non-empty
+ * value), the element supplies a programmatic state channel and the
+ * state-class predicate does NOT fire.
+ */
+const ARIA_STATE_ATTRS: readonly string[] = [
+  "aria-pressed",
+  "aria-selected",
+  "aria-checked",
+  "aria-current",
+  "aria-expanded",
+];
+
+/**
+ * Native HTML state attributes paired with the class token they would
+ * mirror. When the class is `.checked` and the element is `<input
+ * checked>`, the browser exposes the checked state directly to AT — no
+ * aria-* needed.
+ */
+const NATIVE_STATE_ATTRS: readonly string[] = ["checked", "selected", "disabled"];
+
+/**
+ * Returns the first state-class token found in `classValue`, or `null`
+ * when none is present. Whole-token match (whitespace-delimited).
+ */
+function firstStateToken(classValue: string): string | null {
+  for (const t of classValue.split(/\s+/u)) {
+    if (STATE_CLASS_TOKENS.has(t)) return t;
+  }
+  return null;
+}
+
+function textContainsStateWord(text: string): boolean {
+  return STATE_ANYWHERE_RE.test(text);
+}
+
+/**
+ * True when the element supplies a programmatic state channel: an aria-
+ * state attribute, a native HTML state attribute, an accessible name, a
+ * text-state word, a status role / live region (self or ancestor), or a
+ * sr-only descendant carrying state text.
+ */
+function htmlHasStateChannel(
+  el: HtmlElement,
+  parentOf: ReadonlyMap<HtmlElement, HtmlElement>,
+): boolean {
+  if (htmlHasAnyAriaStateAttr(el)) return true;
+  if (htmlHasAnyNativeStateAttr(el)) return true;
+  if (htmlHasAccessibleName(el)) return true;
+  if (htmlHasStatusRole(el)) return true;
+  if (htmlAncestorHasStatusRole(el, parentOf)) return true;
+  if (textContainsStateWord(htmlTextContent(el))) return true;
+  for (const descendant of walkHtmlElements(el)) {
+    if (isHtmlSrOnlyWithText(descendant)) return true;
+  }
+  return false;
+}
+
+function htmlHasAnyAriaStateAttr(el: HtmlElement): boolean {
+  for (const attr of ARIA_STATE_ATTRS) {
+    const v = getHtmlAttribute(el, attr);
+    if (v !== null && v.trim().length > 0) return true;
+    // Boolean-attribute form (`<button aria-pressed>`) — `hasAttribute`
+    // alone is enough; the value-check above caught the value-bearing
+    // case. Both shapes count as a programmatic channel.
+    if (hasHtmlAttribute(el, attr)) return true;
+  }
+  return false;
+}
+
+function htmlHasAnyNativeStateAttr(el: HtmlElement): boolean {
+  for (const attr of NATIVE_STATE_ATTRS) {
+    if (hasHtmlAttribute(el, attr)) return true;
+  }
+  return false;
+}
+
+function jsxHasStateChannel(
+  el: JsxElement,
+  parentOf: ReadonlyMap<JsxElement, JsxElement>,
+): boolean {
+  if (jsxHasAnyAriaStateAttr(el)) return true;
+  if (jsxHasAnyNativeStateAttr(el)) return true;
+  if (jsxHasAccessibleName(el)) return true;
+  if (jsxHasStatusRole(el)) return true;
+  if (jsxAncestorHasStatusRole(el, parentOf)) return true;
+  if (textContainsStateWord(jsxTextContent(el))) return true;
+  for (const descendant of walkJsxDescendants(el)) {
+    if (isJsxSrOnlyWithText(descendant)) return true;
+  }
+  return false;
+}
+
+function jsxHasAnyAriaStateAttr(el: JsxElement): boolean {
+  for (const attr of ARIA_STATE_ATTRS) {
+    if (hasJsxAttribute(el, attr)) return true;
+  }
+  return false;
+}
+
+function jsxHasAnyNativeStateAttr(el: JsxElement): boolean {
+  for (const attr of NATIVE_STATE_ATTRS) {
+    if (hasJsxAttribute(el, attr)) return true;
+  }
+  return false;
+}
+
+function buildStateClassViolation(
+  lang: "html" | "jsx",
+  tagName: string,
+  classValue: string,
+  stateToken: string,
+  text: string,
+  loc: Loc,
+): {
+  severity: "warning";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+  couldBeWrongBecause: readonly string[];
+} {
+  const descriptor = buildDescriptor(lang, tagName, classValue);
+  const ariaAttr = ariaAttrForStateToken(stateToken);
+  const message = buildStateClassMessage(descriptor, stateToken, ariaAttr, text);
+  const suggestion = buildStateClassSuggestion(descriptor, stateToken, ariaAttr);
+  return {
+    severity: "warning",
+    location: { filePath: "", line: loc.line, column: loc.column },
+    message,
+    suggestion,
+    couldBeWrongBecause: [STATE_CLASS_MAY_HAVE_TEXT_OR_ARIA_SIBLING],
+  };
+}
+
+/**
+ * Maps a state-class token to the ARIA state attribute that would expose
+ * the same state programmatically. `.active` → `aria-pressed` (toggle
+ * button) or `aria-current` (navigation), `.selected` → `aria-selected`
+ * (listbox / tab), `.checked` → `aria-checked` (custom checkbox /
+ * radio). The suggestion lists both candidates for `.active` since both
+ * are valid depending on the widget shape — the agent picks based on
+ * the element's role.
+ */
+function ariaAttrForStateToken(token: string): string {
+  const stripped = token.replace(/^is-/, "");
+  if (stripped === "selected") return "aria-selected";
+  if (stripped === "checked") return "aria-checked";
+  // `.active` is ambiguous between toggle (aria-pressed) and navigation
+  // (aria-current) — the suggestion text names both.
+  return "aria-pressed";
+}
+
+function buildStateClassMessage(
+  descriptor: string,
+  stateToken: string,
+  ariaAttr: string,
+  text: string,
+): string {
+  const textSample = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+  return `${descriptor} carries the state class "${stateToken}" but exposes no programmatic state channel — no ${ariaAttr} / aria-current / aria-expanded attribute, no native checked/selected attribute, no accessible name, and the visible text "${textSample}" carries no state word. If the class drives only a color difference between this element and its base, sighted full-color users see the state but screen-reader users, colorblind users, and users under color-inverted themes receive no signal that the element is in a different state. Verify the consumer site exposes the state through an aria-* attribute or a non-color visual cue.`;
+}
+
+function buildStateClassSuggestion(
+  descriptor: string,
+  stateToken: string,
+  ariaAttr: string,
+): string {
+  const stripped = stateToken.replace(/^is-/, "");
+  return `Expose the "${stripped}" state programmatically on ${descriptor}. Any of: (1) add ${ariaAttr}="true" (or aria-current="page" / aria-current="true" if this is a navigation/wayfinding cue) so assistive tech announces the state; (2) if the class drives only a color shift, add a non-color visual cue in CSS (\`font-weight: 600\`, \`text-decoration: underline\`, \`border-bottom: 2px solid …\`) so the state reaches users who can't perceive color; (3) include the state in the accessible name — \`aria-label="<label> (${stripped})"\` or a \`.visually-hidden\` span carrying " (${stripped})" — so the prose names the state. Pick the channel that matches how the widget exposes its state at runtime.`;
 }
