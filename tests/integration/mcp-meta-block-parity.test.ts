@@ -159,9 +159,7 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
       // counters are derived together from one shared scanner output,
       // so this pin serves as a defense-in-depth check that future
       // refactors don't recompute one surface's split independently.
-      expect(coverage.meta?.filesWithAnyRuleEvaluated).toBe(
-        scan.meta?.filesWithAnyRuleEvaluated,
-      );
+      expect(coverage.meta?.filesWithAnyRuleEvaluated).toBe(scan.meta?.filesWithAnyRuleEvaluated);
       expect(coverage.meta?.filesWithZeroRuleEvaluation).toBe(
         scan.meta?.filesWithZeroRuleEvaluation,
       );
@@ -170,8 +168,7 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
       // builder, but in practice never negative because the runner
       // can't bump more files than were scanned).
       expect(
-        (scan.meta?.filesWithAnyRuleEvaluated ?? 0) +
-          (scan.meta?.filesWithZeroRuleEvaluation ?? 0),
+        (scan.meta?.filesWithAnyRuleEvaluated ?? 0) + (scan.meta?.filesWithZeroRuleEvaluation ?? 0),
       ).toBe(scan.meta?.filesScanned ?? 0);
       expect(
         (coverage.meta?.filesWithAnyRuleEvaluated ?? 0) +

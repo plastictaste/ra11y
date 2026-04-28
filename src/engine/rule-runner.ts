@@ -107,9 +107,7 @@ export function runRulesForFile(input: RuleRunnerInput): readonly Violation[] {
       // signal the agent reads is "did per-file rule evidence reach
       // this file?". See {@link RuleEvaluationTracker.evaluatedFilePaths}.
       const hasPerFileLifecycle =
-        rule.check !== undefined ||
-        rule.beforeFile !== undefined ||
-        rule.afterFile !== undefined;
+        rule.check !== undefined || rule.beforeFile !== undefined || rule.afterFile !== undefined;
       if (eligible && hasPerFileLifecycle) {
         input.tracker.evaluatedFilePaths.add(input.filePath);
       }
