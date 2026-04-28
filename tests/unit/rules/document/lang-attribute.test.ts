@@ -260,4 +260,83 @@ describe("rule document/lang-attribute", () => {
       expect(v[0]?.fixPaths).toBeUndefined();
     });
   });
+
+  // ── IE conditional comment carries the only <html> opener ──────────
+  // The HTML tokenizer preserves `<!--[if IE]>…<![endif]-->` blocks as
+  // plain comments, so a page whose `<html lang="…">` is sealed inside
+  // a downlevel-hidden conditional looks like a fragment to the rule's
+  // normal AST walk. Bailing silently would drop a real 3.1.1 violation
+  // for non-IE assistive technologies. The rule surfaces the case as a
+  // finding with a structured `couldBeWrongBecause` code so the agent
+  // can investigate and pragma-suppress when the conditional content
+  // already carries a non-empty lang.
+  describe("IE conditional <html> opener", () => {
+    it("fires when the only <html> opener lives inside a downlevel-hidden IE conditional", () => {
+      const source = `<!DOCTYPE html>
+<!--[if IE]><html lang="en"><body></body></html><![endif]-->
+<head><title>x</title></head>
+<body></body>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("IE conditional");
+      expect(v[0]?.couldBeWrongBecause).toContain("html_lang_only_in_ie_conditional");
+    });
+
+    it("fires when the conditional opens <html> for a downlevel-revealed pair", () => {
+      const source = `<!DOCTYPE html>
+<!--[if IE]><html lang="en"><![endif]-->
+<head><title>x</title></head>
+<body></body>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toContain("html_lang_only_in_ie_conditional");
+    });
+
+    it("fires on the version-gated form '[if lt IE 9]'", () => {
+      const source = `<!DOCTYPE html>
+<!--[if lt IE 9]><html lang="en"><![endif]-->
+<head></head><body></body>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toContain("html_lang_only_in_ie_conditional");
+    });
+
+    it("does NOT fire on a fragment with no <html> opener anywhere (no IE conditional)", () => {
+      // Plain fragment — no `<html>` element, no IE conditional. The
+      // existing fragment branch in afterFile bails silently, which is
+      // correct: fragments don't own page language.
+      const v = runRule(rule, `<p>just a fragment</p>`, { filePath: "fragment.html" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT add the IE finding when <html> also exists outside the conditional", () => {
+      // The IE conditional is just defensive markup for legacy IE; the
+      // real `<html>` outside the conditional is the one the rule
+      // inspects normally. The IE-conditional branch never runs because
+      // the AST has a real `<html>` element.
+      const source = `<!DOCTYPE html>
+<!--[if IE]><html lang="en"><![endif]-->
+<!--[if !IE]><!--><html lang="fr"><!--<![endif]-->
+<head></head><body></body>
+</html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      // Real `<html lang="fr">` outside the conditional satisfies 3.1.1;
+      // no findings expected (and crucially no IE-conditional finding).
+      expect(v).toHaveLength(0);
+    });
+
+    it("does NOT match an IE conditional whose body contains no <html opener", () => {
+      // A `[if IE]>` conditional shielding a single `<link>` is common
+      // (the legacy `html5shiv.js` recipe). It doesn't carry an `<html>`
+      // opener so the rule must not surface it.
+      const source = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--[if lt IE 9]><script src="html5shiv.js"></script><![endif]-->
+</head><body></body></html>`;
+      const v = runRule(rule, source, { filePath: "index.html" });
+      expect(v).toHaveLength(0);
+    });
+  });
 });

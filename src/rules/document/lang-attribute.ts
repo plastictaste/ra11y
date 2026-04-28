@@ -16,8 +16,19 @@
 
 import { defineRule } from "../../api/plugin.ts";
 import { findHtmlElementsByTag, getHtmlAttribute } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
+import type { HtmlComment, HtmlDocument, HtmlElement, HtmlNode } from "../../types/ast.ts";
 import type { FixPaths } from "../../types/violation.ts";
+
+/**
+ * Stable `couldBeWrongBecause` code emitted when the only `<html>`
+ * opener in the source sits inside a downlevel-hidden / downlevel-revealed
+ * IE conditional comment (`<!--[if IE]>…<html…>…<![endif]-->`). The HTML
+ * parser tokenizes the conditional as a plain `HtmlComment`, so the
+ * rule's normal walk finds zero `<html>` elements and would otherwise
+ * bail silently — silently dropping a real IE-targeted page from the
+ * 3.1.1 check (cf. AI-first doctrine: "Routing skips that drop content").
+ */
+const HTML_LANG_ONLY_IN_IE_CONDITIONAL = "html_lang_only_in_ie_conditional";
 
 export const rule = defineRule({
   id: "document/lang-attribute",
@@ -63,10 +74,20 @@ export const rule = defineRule({
     if (ctx.language !== "html") return;
     const doc = ctx.ast as HtmlDocument;
     const htmlElements = findHtmlElementsByTag(doc, "html");
-    // If there's no <html> element, we're looking at a fragment — not
-    // our concern. The page-titled rule handles the "no root" case
-    // separately.
-    if (htmlElements.length === 0) return;
+    // If there's no real <html> element in the AST, the page is either
+    // a fragment (page-titled handles the "no root" case) OR the only
+    // <html> opener lives inside an `<!--[if IE]>…<html…>…<![endif]-->`
+    // conditional comment that the HTML parser tokenizes as a plain
+    // comment. Surface the IE-conditional case as a finding with a
+    // structured `couldBeWrongBecause` code so the agent can investigate
+    // — silently bailing here would drop a real 3.1.1 violation on
+    // IE-targeted pages (cf. ai-first-consumer.md "Routing skips that
+    // drop content").
+    if (htmlElements.length === 0) {
+      const ieComment = findIeConditionalHtmlComment(doc);
+      if (ieComment !== null) emitIeConditionalLang(ieComment, (v) => ctx.emit(v));
+      return;
+    }
     const htmlEl = htmlElements[0];
     if (!htmlEl) return;
 
@@ -160,6 +181,105 @@ function emitMissingLang(
     message,
     suggestion: buildSuggestion(doc),
     ...(edit === null ? {} : { fixPaths: buildFixPaths(deterministicLang ?? "", edit) }),
+  });
+}
+
+/**
+ * Walks the document's top-level children for the first IE conditional
+ * comment whose body contains an `<html` opener. The HTML parser
+ * preserves IE conditionals as `HtmlComment` nodes — both the
+ * downlevel-hidden form (`<!--[if IE]>…<![endif]-->` with the entire
+ * conditional content sealed inside one comment) and the
+ * downlevel-revealed form (`<!--[if IE]>…<![endif]-->` paired with a
+ * matching `<!--<![endif]-->` closer that is also tokenized as a
+ * comment).
+ *
+ * Returns the comment node when matched (used by the caller for the
+ * finding's location) or null when no IE-conditional `<html` opener
+ * exists. The detection is intentionally narrow: it only matches when
+ * the conditional's body literally contains `<html` — a lone `<![if
+ * IE]>` block with no `<html` token is not the case this rule cares
+ * about.
+ */
+function findIeConditionalHtmlComment(doc: HtmlDocument): HtmlComment | null {
+  for (const child of doc.children) {
+    if (!isHtmlComment(child)) continue;
+    if (!isIeConditionalOpener(child.value)) continue;
+    if (!commentBodyContainsHtmlOpener(child.value)) continue;
+    return child;
+  }
+  return null;
+}
+
+/** Type predicate narrowing an `HtmlNode` to `HtmlComment`. */
+function isHtmlComment(node: HtmlNode): node is HtmlComment {
+  return node.kind === "HtmlComment";
+}
+
+/**
+ * Returns true when the comment value begins with an IE downlevel
+ * conditional opener — `[if IE]>`, `[if IE 6]>`, `[if lt IE 9]>`,
+ * `[if !IE]><!`, etc. The opener is tolerant of the `<!` prefix used
+ * by downlevel-revealed conditionals because the HTML tokenizer drops
+ * the leading `<!--` before storing `value`.
+ */
+function isIeConditionalOpener(value: string): boolean {
+  // Allow optional whitespace after `[if`, then any word characters /
+  // operators / spaces up to the closing `]>`. Anchored at the start of
+  // the comment value so we don't false-positive on `[if]` substrings
+  // that happen to appear deeper in a comment.
+  return /^\[if\s+[^\]]+\]>/i.test(value);
+}
+
+/**
+ * Returns true when the comment body contains a literal `<html` opener
+ * (followed by whitespace, `/`, or `>` so we don't match `<htmlfoo>`).
+ * The IE conditional may either fully contain the `<html…><![endif]>`
+ * sequence (downlevel-hidden) or just open the tag before a sibling
+ * downlevel-revealed `<!--<![endif]-->` closer; both shapes are
+ * captured here because both leave the same `<html` token inside the
+ * first comment's body.
+ */
+function commentBodyContainsHtmlOpener(value: string): boolean {
+  // Use a regex rather than a simple `indexOf("<html")` so that
+  // `<htmlbody>` (a hypothetical longer tag name) doesn't match.
+  return /<html(?=[\s/>])/i.test(value);
+}
+
+/**
+ * Emits the IE-conditional finding. The location anchors at the
+ * comment's start since that's where the agent should read; the
+ * suggestion explains the parser-level reason the rule cannot inspect
+ * the lang inside the conditional. `couldBeWrongBecause` carries the
+ * structured code so the agent can dismiss-by-reading when the
+ * conditional content already declares a non-empty `lang`.
+ */
+function emitIeConditionalLang(
+  comment: HtmlComment,
+  emit: (v: {
+    readonly severity: "error";
+    readonly location: {
+      readonly filePath: string;
+      readonly line: number;
+      readonly column: number;
+    };
+    readonly message: string;
+    readonly suggestion: string;
+    readonly couldBeWrongBecause: readonly string[];
+  }) => void,
+): void {
+  emit({
+    severity: "error",
+    location: {
+      filePath: "",
+      line: comment.loc.start.line,
+      column: comment.loc.start.column,
+    },
+    message:
+      "<html> opener appears only inside an IE conditional comment — the parser cannot inspect attributes inside conditionals, so this page has no programmatically-determinable language for non-IE assistive technologies.",
+    suggestion:
+      'Move the <html> element outside the <!--[if IE]>…<![endif]--> conditional and declare a non-empty lang attribute on it (e.g. <html lang="en">). IE conditionals only render in legacy IE; modern browsers and assistive technologies see the page without an <html> root and fall back to an unknown language.',
+    couldBeWrongBecause: [HTML_LANG_ONLY_IN_IE_CONDITIONAL],
   });
 }
 
