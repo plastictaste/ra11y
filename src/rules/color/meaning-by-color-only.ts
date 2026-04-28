@@ -169,6 +169,17 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
+import {
+  buildStateClassViolation,
+  firstStateToken,
+  type HtmlPredicateHooks,
+  htmlHasStateChannel,
+  type JsxPredicateHooks,
+  jsxHasStateChannel,
+  STATE_CLASS_MAY_HAVE_TEXT_OR_ARIA_SIBLING,
+} from "./meaning-by-color-only-state-class.ts";
+
+export { STATE_CLASS_MAY_HAVE_TEXT_OR_ARIA_SIBLING };
 
 /**
  * Status-color class tokens that fire the rule. Matching is whole-token
@@ -321,20 +332,6 @@ type Emit = (v: {
   couldBeWrongBecause?: readonly string[];
 }) => void;
 
-/**
- * `couldBeWrongBecause` code surfaced on the state-class predicate path.
- * The static rule cannot prove the consumer site lacks a programmatic
- * state channel — an `aria-pressed` set at runtime, a sibling element
- * whose `checked` attribute is the truth source, an icon swap driven by
- * JSX state. The agent reading the consumer site is the correct arbiter;
- * this code marks the uncertainty so the agent's per-finding triage can
- * key on it. Per the AI-first doctrine on "Heuristic emission is the
- * symmetric twin of heuristic suppression": low-confidence evidence
- * lives at `severity: warning` paired with a machine-readable reason.
- */
-export const STATE_CLASS_MAY_HAVE_TEXT_OR_ARIA_SIBLING =
-  "state_class_may_have_text_or_aria_sibling";
-
 // ---------------------------------------------------------------------------
 // HTML
 // ---------------------------------------------------------------------------
@@ -344,46 +341,52 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     const classAttr = getHtmlAttribute(el, "class");
     if (classAttr === null) continue;
-
-    // Predicate 1: status-color utility class with no second channel.
-    const token = firstStatusToken(classAttr);
-    if (token !== null) {
-      if (!htmlHasSecondChannel(el, parentOf)) {
-        const text = htmlTextContent(el);
-        if (text.length > 0) {
-          emit(
-            buildViolation("html", el.tagName.toLowerCase(), classAttr, token, text, el.loc.start),
-          );
-          // Status-color and state-class predicates are mutually
-          // exclusive on the same element — the status-color emission
-          // already names the color-only failure; firing both would
-          // double-count the same evidence.
-          continue;
-        }
-      }
-    }
-
-    // Predicate 2: toggled-state class without a programmatic state
-    // channel. Fires on `.active` / `.selected` / `.checked` (and the
-    // `is-*` variants) when the element supplies neither an aria-state
-    // attribute, a native HTML state attribute, an accessible name, a
-    // text-state word, nor a live-region ancestor.
-    const stateToken = firstStateToken(classAttr);
-    if (stateToken === null) continue;
-    if (htmlHasStateChannel(el, parentOf)) continue;
-    const text = htmlTextContent(el);
-    if (text.length === 0) continue;
-    emit(
-      buildStateClassViolation(
-        "html",
-        el.tagName.toLowerCase(),
-        classAttr,
-        stateToken,
-        text,
-        el.loc.start,
-      ),
-    );
+    if (tryEmitHtmlStatusColor(el, classAttr, parentOf, emit)) continue;
+    tryEmitHtmlStateClass(el, classAttr, parentOf, emit);
   }
+}
+
+/**
+ * Tries the status-color predicate on `el`. Returns true when the
+ * predicate emitted (signaling the caller to skip the state-class
+ * predicate — the two are mutually exclusive on the same element so
+ * the same evidence is not double-counted).
+ */
+function tryEmitHtmlStatusColor(
+  el: HtmlElement,
+  classAttr: string,
+  parentOf: ReadonlyMap<HtmlElement, HtmlElement>,
+  emit: Emit,
+): boolean {
+  const token = firstStatusToken(classAttr);
+  if (token === null) return false;
+  if (htmlHasSecondChannel(el, parentOf)) return false;
+  const text = htmlTextContent(el);
+  if (text.length === 0) return false;
+  emit(buildViolation("html", el.tagName.toLowerCase(), classAttr, token, text, el.loc.start));
+  return true;
+}
+
+/**
+ * Tries the state-class predicate on `el`. Fires on `.active` /
+ * `.selected` / `.checked` (and the `is-*` variants) when the element
+ * supplies neither an aria-state attribute, a native HTML state
+ * attribute, an accessible name, a text-state word, nor a live-region
+ * ancestor.
+ */
+function tryEmitHtmlStateClass(
+  el: HtmlElement,
+  classAttr: string,
+  parentOf: ReadonlyMap<HtmlElement, HtmlElement>,
+  emit: Emit,
+): void {
+  const stateToken = firstStateToken(classAttr);
+  if (stateToken === null) return;
+  if (htmlHasStateChannel(el, parentOf, HTML_PREDICATE_HOOKS)) return;
+  const text = htmlTextContent(el);
+  if (text.length === 0) return;
+  const descriptor = buildDescriptor("html", el.tagName.toLowerCase(), classAttr);
+  emit(buildStateClassViolation(descriptor, stateToken, text, el.loc.start));
 }
 
 function htmlHasSecondChannel(
@@ -481,30 +484,41 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const el of walkJsxElements(module)) {
     const classAttr = getJsxAttributeString(el, "className") ?? getJsxAttributeString(el, "class");
     if (classAttr === null) continue;
-
-    // Predicate 1: status-color utility class with no second channel.
-    const token = firstStatusToken(classAttr);
-    if (token !== null) {
-      if (!jsxHasSecondChannel(el, parentOf)) {
-        const text = jsxTextContent(el);
-        if (text.length > 0) {
-          emit(buildViolation("jsx", el.tagName, classAttr, token, text, el.loc.start));
-          continue;
-        }
-      }
-    }
-
-    // Predicate 2: toggled-state class without a programmatic state
-    // channel. JSX analogue of the HTML branch above.
-    const stateToken = firstStateToken(classAttr);
-    if (stateToken === null) continue;
-    if (jsxHasStateChannel(el, parentOf)) continue;
-    const text = jsxTextContent(el);
-    if (text.length === 0) continue;
-    emit(
-      buildStateClassViolation("jsx", el.tagName, classAttr, stateToken, text, el.loc.start),
-    );
+    if (tryEmitJsxStatusColor(el, classAttr, parentOf, emit)) continue;
+    tryEmitJsxStateClass(el, classAttr, parentOf, emit);
   }
+}
+
+/** JSX analogue of `tryEmitHtmlStatusColor`. */
+function tryEmitJsxStatusColor(
+  el: JsxElement,
+  classAttr: string,
+  parentOf: ReadonlyMap<JsxElement, JsxElement>,
+  emit: Emit,
+): boolean {
+  const token = firstStatusToken(classAttr);
+  if (token === null) return false;
+  if (jsxHasSecondChannel(el, parentOf)) return false;
+  const text = jsxTextContent(el);
+  if (text.length === 0) return false;
+  emit(buildViolation("jsx", el.tagName, classAttr, token, text, el.loc.start));
+  return true;
+}
+
+/** JSX analogue of `tryEmitHtmlStateClass`. */
+function tryEmitJsxStateClass(
+  el: JsxElement,
+  classAttr: string,
+  parentOf: ReadonlyMap<JsxElement, JsxElement>,
+  emit: Emit,
+): void {
+  const stateToken = firstStateToken(classAttr);
+  if (stateToken === null) return;
+  if (jsxHasStateChannel(el, parentOf, JSX_PREDICATE_HOOKS)) return;
+  const text = jsxTextContent(el);
+  if (text.length === 0) return;
+  const descriptor = buildDescriptor("jsx", el.tagName, classAttr);
+  emit(buildStateClassViolation(descriptor, stateToken, text, el.loc.start));
 }
 
 function jsxHasSecondChannel(
@@ -729,211 +743,26 @@ function buildSuggestion(descriptor: string, token: string, statusWord: string):
 }
 
 // ---------------------------------------------------------------------------
-// State-class predicate (toggled state without programmatic channel)
+// State-class predicate hooks (predicate body lives in a sibling file)
 // ---------------------------------------------------------------------------
 
 /**
- * Class tokens whose presence on an element signals toggled state. The
- * `is-*` variants ship in BEM / SUIT / Bootstrap-flavored class naming;
- * the bare forms ship across the same plus jQuery-era idioms. Whole-
- * token match (whitespace-delimited).
+ * Hooks the state-class predicate calls back into the rule file for
+ * shared accessible-name / status-role / sr-only / live-region detection
+ * (the same checks the status-color predicate uses). Defined here so the
+ * predicate file does not need to duplicate the helper bodies.
  */
-const STATE_CLASS_TOKENS: ReadonlySet<string> = new Set([
-  "active",
-  "selected",
-  "checked",
-  "is-active",
-  "is-selected",
-  "is-checked",
-]);
+const HTML_PREDICATE_HOOKS: HtmlPredicateHooks = {
+  hasAccessibleName: htmlHasAccessibleName,
+  hasStatusRole: htmlHasStatusRole,
+  ancestorHasStatusRole: htmlAncestorHasStatusRole,
+  isSrOnlyWithText: isHtmlSrOnlyWithText,
+};
 
-/**
- * State words that, when present anywhere in the element's visible text
- * as a whole-word match, satisfy the prose-channel pass condition for
- * the state-class predicate. Distinct from STATUS_WORDS (above) — those
- * are status-message words ("error" / "success"); these are state words
- * ("active" / "selected"). Some overlap is fine — both sets are
- * conservative.
- */
-const STATE_WORDS: readonly string[] = [
-  "active",
-  "selected",
-  "current",
-  "checked",
-  "pressed",
-  "expanded",
-  "collapsed",
-];
-
-const STATE_ANYWHERE_RE = new RegExp(`\\b(${STATE_WORDS.join("|")})\\b`, "iu");
-
-/**
- * ARIA state attributes. When any of these is present (any non-empty
- * value), the element supplies a programmatic state channel and the
- * state-class predicate does NOT fire.
- */
-const ARIA_STATE_ATTRS: readonly string[] = [
-  "aria-pressed",
-  "aria-selected",
-  "aria-checked",
-  "aria-current",
-  "aria-expanded",
-];
-
-/**
- * Native HTML state attributes paired with the class token they would
- * mirror. When the class is `.checked` and the element is `<input
- * checked>`, the browser exposes the checked state directly to AT — no
- * aria-* needed.
- */
-const NATIVE_STATE_ATTRS: readonly string[] = ["checked", "selected", "disabled"];
-
-/**
- * Returns the first state-class token found in `classValue`, or `null`
- * when none is present. Whole-token match (whitespace-delimited).
- */
-function firstStateToken(classValue: string): string | null {
-  for (const t of classValue.split(/\s+/u)) {
-    if (STATE_CLASS_TOKENS.has(t)) return t;
-  }
-  return null;
-}
-
-function textContainsStateWord(text: string): boolean {
-  return STATE_ANYWHERE_RE.test(text);
-}
-
-/**
- * True when the element supplies a programmatic state channel: an aria-
- * state attribute, a native HTML state attribute, an accessible name, a
- * text-state word, a status role / live region (self or ancestor), or a
- * sr-only descendant carrying state text.
- */
-function htmlHasStateChannel(
-  el: HtmlElement,
-  parentOf: ReadonlyMap<HtmlElement, HtmlElement>,
-): boolean {
-  if (htmlHasAnyAriaStateAttr(el)) return true;
-  if (htmlHasAnyNativeStateAttr(el)) return true;
-  if (htmlHasAccessibleName(el)) return true;
-  if (htmlHasStatusRole(el)) return true;
-  if (htmlAncestorHasStatusRole(el, parentOf)) return true;
-  if (textContainsStateWord(htmlTextContent(el))) return true;
-  for (const descendant of walkHtmlElements(el)) {
-    if (isHtmlSrOnlyWithText(descendant)) return true;
-  }
-  return false;
-}
-
-function htmlHasAnyAriaStateAttr(el: HtmlElement): boolean {
-  for (const attr of ARIA_STATE_ATTRS) {
-    const v = getHtmlAttribute(el, attr);
-    if (v !== null && v.trim().length > 0) return true;
-    // Boolean-attribute form (`<button aria-pressed>`) — `hasAttribute`
-    // alone is enough; the value-check above caught the value-bearing
-    // case. Both shapes count as a programmatic channel.
-    if (hasHtmlAttribute(el, attr)) return true;
-  }
-  return false;
-}
-
-function htmlHasAnyNativeStateAttr(el: HtmlElement): boolean {
-  for (const attr of NATIVE_STATE_ATTRS) {
-    if (hasHtmlAttribute(el, attr)) return true;
-  }
-  return false;
-}
-
-function jsxHasStateChannel(
-  el: JsxElement,
-  parentOf: ReadonlyMap<JsxElement, JsxElement>,
-): boolean {
-  if (jsxHasAnyAriaStateAttr(el)) return true;
-  if (jsxHasAnyNativeStateAttr(el)) return true;
-  if (jsxHasAccessibleName(el)) return true;
-  if (jsxHasStatusRole(el)) return true;
-  if (jsxAncestorHasStatusRole(el, parentOf)) return true;
-  if (textContainsStateWord(jsxTextContent(el))) return true;
-  for (const descendant of walkJsxDescendants(el)) {
-    if (isJsxSrOnlyWithText(descendant)) return true;
-  }
-  return false;
-}
-
-function jsxHasAnyAriaStateAttr(el: JsxElement): boolean {
-  for (const attr of ARIA_STATE_ATTRS) {
-    if (hasJsxAttribute(el, attr)) return true;
-  }
-  return false;
-}
-
-function jsxHasAnyNativeStateAttr(el: JsxElement): boolean {
-  for (const attr of NATIVE_STATE_ATTRS) {
-    if (hasJsxAttribute(el, attr)) return true;
-  }
-  return false;
-}
-
-function buildStateClassViolation(
-  lang: "html" | "jsx",
-  tagName: string,
-  classValue: string,
-  stateToken: string,
-  text: string,
-  loc: Loc,
-): {
-  severity: "warning";
-  location: { filePath: string; line: number; column: number };
-  message: string;
-  suggestion: string;
-  couldBeWrongBecause: readonly string[];
-} {
-  const descriptor = buildDescriptor(lang, tagName, classValue);
-  const ariaAttr = ariaAttrForStateToken(stateToken);
-  const message = buildStateClassMessage(descriptor, stateToken, ariaAttr, text);
-  const suggestion = buildStateClassSuggestion(descriptor, stateToken, ariaAttr);
-  return {
-    severity: "warning",
-    location: { filePath: "", line: loc.line, column: loc.column },
-    message,
-    suggestion,
-    couldBeWrongBecause: [STATE_CLASS_MAY_HAVE_TEXT_OR_ARIA_SIBLING],
-  };
-}
-
-/**
- * Maps a state-class token to the ARIA state attribute that would expose
- * the same state programmatically. `.active` → `aria-pressed` (toggle
- * button) or `aria-current` (navigation), `.selected` → `aria-selected`
- * (listbox / tab), `.checked` → `aria-checked` (custom checkbox /
- * radio). The suggestion lists both candidates for `.active` since both
- * are valid depending on the widget shape — the agent picks based on
- * the element's role.
- */
-function ariaAttrForStateToken(token: string): string {
-  const stripped = token.replace(/^is-/, "");
-  if (stripped === "selected") return "aria-selected";
-  if (stripped === "checked") return "aria-checked";
-  // `.active` is ambiguous between toggle (aria-pressed) and navigation
-  // (aria-current) — the suggestion text names both.
-  return "aria-pressed";
-}
-
-function buildStateClassMessage(
-  descriptor: string,
-  stateToken: string,
-  ariaAttr: string,
-  text: string,
-): string {
-  const textSample = text.length > 80 ? `${text.slice(0, 80)}…` : text;
-  return `${descriptor} carries the state class "${stateToken}" but exposes no programmatic state channel — no ${ariaAttr} / aria-current / aria-expanded attribute, no native checked/selected attribute, no accessible name, and the visible text "${textSample}" carries no state word. If the class drives only a color difference between this element and its base, sighted full-color users see the state but screen-reader users, colorblind users, and users under color-inverted themes receive no signal that the element is in a different state. Verify the consumer site exposes the state through an aria-* attribute or a non-color visual cue.`;
-}
-
-function buildStateClassSuggestion(
-  descriptor: string,
-  stateToken: string,
-  ariaAttr: string,
-): string {
-  const stripped = stateToken.replace(/^is-/, "");
-  return `Expose the "${stripped}" state programmatically on ${descriptor}. Any of: (1) add ${ariaAttr}="true" (or aria-current="page" / aria-current="true" if this is a navigation/wayfinding cue) so assistive tech announces the state; (2) if the class drives only a color shift, add a non-color visual cue in CSS (\`font-weight: 600\`, \`text-decoration: underline\`, \`border-bottom: 2px solid …\`) so the state reaches users who can't perceive color; (3) include the state in the accessible name — \`aria-label="<label> (${stripped})"\` or a \`.visually-hidden\` span carrying " (${stripped})" — so the prose names the state. Pick the channel that matches how the widget exposes its state at runtime.`;
-}
+const JSX_PREDICATE_HOOKS: JsxPredicateHooks = {
+  hasAccessibleName: jsxHasAccessibleName,
+  hasStatusRole: jsxHasStatusRole,
+  ancestorHasStatusRole: jsxAncestorHasStatusRole,
+  isSrOnlyWithText: isJsxSrOnlyWithText,
+  walkDescendants: walkJsxDescendants,
+};
