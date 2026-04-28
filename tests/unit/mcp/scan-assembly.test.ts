@@ -25,9 +25,11 @@ import {
 import {
   applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
+  buildScanMeta,
   computeTopRules,
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
+  PER_RULE_COVERAGE_CAP,
   splitViolationsByScanKind,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
@@ -243,6 +245,170 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
       // doesn't subtract the file.
       expect(row.filesEvaluated).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("buildScanMeta — perRuleCoverage head-slice under verboseMeta", () => {
+  // The in-place sentinel doctrine ("Truncated containers must rename
+  // or sentinel, not retain") for `meta.perRuleCoverage[]`. Under
+  // `verboseMeta: true`, the array can carry one row per active rule —
+  // on a registry that exceeds {@link META_ARRAY_CAP}, the wire-size
+  // budget the cap regime exists to bound is breached. The fragment
+  // builder head-slices to {@link META_ARRAY_CAP} entries and stamps a
+  // sibling `perRuleCoverageTruncated: { shown, total }` summary on
+  // `meta` so an agent reading the response can distinguish "rule set
+  // is small" from "the array was clipped." The dotted path
+  // "perRuleCoverage" rides on the response-level warning's
+  // `warningsDetails.response_meta_truncated.fields[]` payload via the
+  // membership table in `meta-array-cap.ts`.
+  it("head-slices perRuleCoverage[] when row count exceeds PER_RULE_COVERAGE_CAP and stamps the sibling summary", () => {
+    // Synthesize one rule per row with a non-extension-gated
+    // (project-scoped) shape so `partitionPerRuleCoverage` doesn't
+    // collapse them into the `rulesNotEvaluatedDueToInputType` bucket
+    // (which only fires for extension-gated rows with zero eligible
+    // files). filesEvaluated > 0 keeps every row in `retained`.
+    const overflow = PER_RULE_COVERAGE_CAP + 25;
+    const rules = Array.from({ length: overflow }, (_, i) => ({
+      id: `synthetic/rule-${String(i).padStart(3, "0")}`,
+      satisfies: [],
+      severity: "warning" as const,
+      scope: "project" as const,
+      fixClass: "guidance" as const,
+      docs: { title: "synthetic", rationale: "", goodExample: "", badExample: "" },
+    })) as unknown as readonly Rule[];
+    const rows: readonly PerRuleCoverage[] = rules.map((r) => ({
+      ruleId: r.id,
+      filesEvaluated: 1,
+      filesEligible: 1,
+      findingsEmitted: 0,
+      fired: false,
+      coverageConfidence: "high" as const,
+    }));
+    const meta = buildScanMeta({
+      filesScanned: 1,
+      files: [htmlFile("/dummy.html", "<html><body></body></html>")],
+      activeRules: rules,
+      durationMs: 0,
+      enabledStandards: ["wcag22"],
+      wrappers: [],
+      sessionOnly: [],
+      unusedWrappers: [],
+      wrapperProvenance: {
+        fromConfig: [],
+        fromSession: [],
+        fromAutoDetect: { confirmed: [], assumed: [] },
+      },
+      wrapperElements: {},
+      verboseMeta: true,
+      preset: undefined,
+      suppressions: [],
+      perRuleCoverage: rows,
+    });
+    const perRuleCoverage = meta["perRuleCoverage"] as readonly PerRuleCoverage[] | undefined;
+    expect(perRuleCoverage).toBeDefined();
+    expect(perRuleCoverage?.length).toBe(PER_RULE_COVERAGE_CAP);
+    // Sibling summary names what was clipped — the in-place sentinel.
+    expect(meta["perRuleCoverageTruncated"]).toEqual({
+      shown: PER_RULE_COVERAGE_CAP,
+      total: overflow,
+    });
+  });
+
+  it("places confidence-degraded rows ahead of high-confidence rows when the cap fires (priority preserves the rows an agent acts on)", () => {
+    // Mix of low + high confidence rows synthesized so the cap fires.
+    // The head-slice must keep the low-confidence row even when the
+    // input order placed it after a sea of high-confidence rows.
+    const overflow = PER_RULE_COVERAGE_CAP + 5;
+    const rules = Array.from({ length: overflow }, (_, i) => ({
+      id: `synthetic/rule-${String(i).padStart(3, "0")}`,
+      satisfies: [],
+      severity: "warning" as const,
+      scope: "project" as const,
+      fixClass: "guidance" as const,
+      docs: { title: "synthetic", rationale: "", goodExample: "", badExample: "" },
+    })) as unknown as readonly Rule[];
+    const rows: PerRuleCoverage[] = rules.map((r, i) => ({
+      ruleId: r.id,
+      filesEvaluated: 1,
+      filesEligible: 1,
+      findingsEmitted: 0,
+      fired: false,
+      // Last 3 rows are low-confidence; everything earlier is high.
+      // Without prioritization the head-slice would drop them.
+      coverageConfidence: i >= overflow - 3 ? "low" : "high",
+    }));
+    const meta = buildScanMeta({
+      filesScanned: 1,
+      files: [htmlFile("/dummy.html", "<html><body></body></html>")],
+      activeRules: rules,
+      durationMs: 0,
+      enabledStandards: ["wcag22"],
+      wrappers: [],
+      sessionOnly: [],
+      unusedWrappers: [],
+      wrapperProvenance: {
+        fromConfig: [],
+        fromSession: [],
+        fromAutoDetect: { confirmed: [], assumed: [] },
+      },
+      wrapperElements: {},
+      verboseMeta: true,
+      preset: undefined,
+      suppressions: [],
+      perRuleCoverage: rows,
+    });
+    const surfaced = meta["perRuleCoverage"] as readonly PerRuleCoverage[];
+    expect(surfaced.length).toBe(PER_RULE_COVERAGE_CAP);
+    // The 3 low-confidence rows survived even though they were the
+    // last entries in input order — prioritization kept them ahead of
+    // the high-confidence tail.
+    const lowRowIds = new Set(
+      rows.filter((r) => r.coverageConfidence === "low").map((r) => r.ruleId),
+    );
+    const surfacedLowRows = surfaced.filter((r) => lowRowIds.has(r.ruleId));
+    expect(surfacedLowRows.length).toBe(3);
+  });
+
+  it("does not stamp perRuleCoverageTruncated when row count fits under the cap", () => {
+    const fit = 5;
+    const rules = Array.from({ length: fit }, (_, i) => ({
+      id: `synthetic/rule-${i}`,
+      satisfies: [],
+      severity: "warning" as const,
+      scope: "project" as const,
+      fixClass: "guidance" as const,
+      docs: { title: "synthetic", rationale: "", goodExample: "", badExample: "" },
+    })) as unknown as readonly Rule[];
+    const rows: readonly PerRuleCoverage[] = rules.map((r) => ({
+      ruleId: r.id,
+      filesEvaluated: 1,
+      filesEligible: 1,
+      findingsEmitted: 0,
+      fired: false,
+      coverageConfidence: "high" as const,
+    }));
+    const meta = buildScanMeta({
+      filesScanned: 1,
+      files: [htmlFile("/dummy.html", "<html><body></body></html>")],
+      activeRules: rules,
+      durationMs: 0,
+      enabledStandards: ["wcag22"],
+      wrappers: [],
+      sessionOnly: [],
+      unusedWrappers: [],
+      wrapperProvenance: {
+        fromConfig: [],
+        fromSession: [],
+        fromAutoDetect: { confirmed: [], assumed: [] },
+      },
+      wrapperElements: {},
+      verboseMeta: true,
+      preset: undefined,
+      suppressions: [],
+      perRuleCoverage: rows,
+    });
+    expect((meta["perRuleCoverage"] as readonly PerRuleCoverage[]).length).toBe(fit);
+    expect(meta["perRuleCoverageTruncated"]).toBeUndefined();
   });
 });
 

@@ -108,6 +108,15 @@ describe("hasMetaArrayTruncation", () => {
     ).toBe(true);
   });
 
+  it("returns true when meta carries root-level perRuleCoverageTruncated sibling", () => {
+    expect(
+      hasMetaArrayTruncation({
+        perRuleCoverage: [],
+        perRuleCoverageTruncated: { shown: 50, total: 130 },
+      }),
+    ).toBe(true);
+  });
+
   it("returns false when no truncation summary exists on either container", () => {
     expect(
       hasMetaArrayTruncation({
@@ -170,6 +179,40 @@ describe("getTruncatedMetaArrayFields", () => {
         },
       }),
     ).toEqual(["analysisCoverage.fragmentFiles", "scannedBuildArtifacts.ungrouped"]);
+  });
+
+  it("returns the bare path 'perRuleCoverage' for root-level perRuleCoverageTruncated sibling", () => {
+    // The in-place sentinel doctrine ("Truncated containers must
+    // rename or sentinel, not retain") for the root-level
+    // perRuleCoverage array — when verboseMeta produces > META_ARRAY_CAP
+    // rows the head-slice fires and the dotted path appears in the
+    // warning's `fields[]` payload so an agent reading
+    // `response_meta_truncated` can name the array that clipped.
+    expect(
+      getTruncatedMetaArrayFields({
+        perRuleCoverage: [],
+        perRuleCoverageTruncated: { shown: 50, total: 130 },
+      }),
+    ).toEqual(["perRuleCoverage"]);
+  });
+
+  it("interleaves root-level and nested entries in table-declared order", () => {
+    expect(
+      getTruncatedMetaArrayFields({
+        analysisCoverage: { fragmentFilesTruncated: { shown: 50, total: 75 } },
+        scannedBuildArtifacts: {
+          grouped: [],
+          ungrouped: [],
+          ungroupedTruncated: { shown: 50, total: 120 },
+        },
+        perRuleCoverage: [],
+        perRuleCoverageTruncated: { shown: 50, total: 130 },
+      }),
+    ).toEqual([
+      "analysisCoverage.fragmentFiles",
+      "scannedBuildArtifacts.ungrouped",
+      "perRuleCoverage",
+    ]);
   });
 
   it("returns an empty array when no truncation summaries are present", () => {

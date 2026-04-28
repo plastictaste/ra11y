@@ -224,7 +224,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 ### Per-rule / per-finding confidence drift
 
 - [ ] **Q9-PERRULECOVERAGE-PARSE-ERROR-PER-FILE-NOT-CORPUSWIDE** A single parse-error file (1 of 429 in static-site corpus, 0.23%) blanket-degrades EVERY rule's per-rule confidence to `"low"` with `reason: "file-parse-error"`, regardless of which file each rule actually ran on; per-finding confidence on emitted rules stays `"high"/"error"`. The corpus-wide degradation is dishonest in two directions at once — over-pessimistic on rules that didn't touch the bad file, under-honest on rules that did. Fix: per-rule confidence must be per-rule-per-file (`perRuleCoverage[r].byFile[path].confidence`), not corpus-aggregated; the response-level scalar should fold from those.
-- [ ] **Q9-META-PERRULECOVERAGE-DROPPED-NO-SENTINEL** When `meta.perRuleCoverage[]` is silently dropped under `response_meta_truncated`, the agent cannot distinguish "no per-rule coverage exists" from "meta was clipped." CSS-framework corpus observed. Fix: when a meta sub-field is dropped under truncation, replace it with a sentinel (`{truncated: true, fieldDroppedReason: "..."}` or pair with `warningsDetails.response_meta_truncated.fields: ["perRuleCoverage[]"]`) so absence is visible. Pairs with Q8-RESPONSE-META-TRUNCATED-FIELD-DETAIL (the warning-detail axis is open already; this is the in-place sentinel axis).
 
 ### Cross-surface count + warning drift
 

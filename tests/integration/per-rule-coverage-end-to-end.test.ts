@@ -595,8 +595,17 @@ describe("per-rule coverage end-to-end", () => {
     // testable-criteria — must still see every row).
     expect(perRuleCoverage.length).toBeGreaterThan(surfaced.length);
     // Reduction is meaningful — the collapse must have folded enough
-    // rows that the surfaced array is materially smaller.
-    expect(collapsed.count + surfaced.length).toBe(perRuleCoverage.length);
+    // rows that the surfaced array is materially smaller. When the
+    // post-collapse retained rows exceed META_ARRAY_CAP, the head-slice
+    // contributes the rest of the gap; the sibling
+    // `perRuleCoverageTruncated: { shown, total }` summary names
+    // exactly how many rows didn't fit so the agent (and this test)
+    // can reconstruct the engine's full count without re-fetching.
+    const truncated = meta["perRuleCoverageTruncated"] as
+      | { readonly shown: number; readonly total: number }
+      | undefined;
+    const droppedByCap = truncated === undefined ? 0 : truncated.total - truncated.shown;
+    expect(collapsed.count + surfaced.length + droppedByCap).toBe(perRuleCoverage.length);
   });
 
   // rules sharing the

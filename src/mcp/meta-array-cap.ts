@@ -105,14 +105,16 @@ export function capMetaArray<T>(
 }
 
 /**
- * Map of `{ container, truncationKey, fieldPath }` for every meta
+ * Map of `{ container?, truncationKey, fieldPath }` for every meta
  * sibling array that participates in the cap regime. The
- * `truncationKey` is the wire field stamped on `meta.<container>` when
- * the sibling array was head-sliced; the `fieldPath` is the dotted
- * path the `warningsDetails.response_meta_truncated.fields` payload
- * surfaces so an agent reading the warning can name the array to
- * re-fetch under `verboseMeta: true` (or scope down) without descending
- * into `meta` to figure out which array trimmed.
+ * `truncationKey` is the wire field stamped on `meta.<container>`
+ * (when nested) or on `meta` directly (when `container` is omitted —
+ * root-level array case) when the sibling array was head-sliced; the
+ * `fieldPath` is the dotted path the
+ * `warningsDetails.response_meta_truncated.fields` payload surfaces
+ * so an agent reading the warning can name the array to re-fetch
+ * under `verboseMeta: true` (or scope down) without descending into
+ * `meta` to figure out which array trimmed.
  *
  * Add new entries here whenever a fresh meta array enters the cap
  * regime — the {@link getTruncatedMetaArrayFields} predicate, its
@@ -122,7 +124,12 @@ export function capMetaArray<T>(
  * downstream consumers.
  */
 const META_ARRAY_TRUNCATION_ENTRIES: ReadonlyArray<{
-  readonly container: string;
+  /**
+   * Sub-object key under `meta` containing the truncation sibling.
+   * Omit for root-level arrays whose `*Truncated` sibling lives
+   * directly on `meta` (e.g. `meta.perRuleCoverageTruncated`).
+   */
+  readonly container?: string;
   readonly truncationKey: string;
   readonly fieldPath: string;
 }> = [
@@ -145,6 +152,29 @@ const META_ARRAY_TRUNCATION_ENTRIES: ReadonlyArray<{
     container: "scannedBuildArtifacts",
     truncationKey: "ungroupedTruncated",
     fieldPath: "scannedBuildArtifacts.ungrouped",
+  },
+  // `meta.perRuleCoverage[]` — root-level array (no enclosing
+  // container). Under `verboseMeta: true` the per-rule-coverage rows
+  // ride uncompacted at ~250 chars/row × N rules; on plugin-heavy
+  // configurations where the active rule set spans hundreds of
+  // rules, the array crosses the wire-size threshold the cap regime
+  // exists to bound. Head-sliced (with a domain-specific cap of 200
+  // — see {@link import("./scan-assembly.ts").PER_RULE_COVERAGE_CAP},
+  // not the shared {@link META_ARRAY_CAP}=50 since per-rule rows are
+  // scan-confidence telemetry where over-capping hurts the AI-first
+  // consumer more than the wire-size cost it saves) with a sibling
+  // `meta.perRuleCoverageTruncated: { shown, total }` summary so
+  // agents reading the warning's
+  // `warningsDetails.response_meta_truncated.fields` payload see the
+  // dotted path "perRuleCoverage" and can decide whether to re-fetch
+  // the full array (e.g. via `scan_file` on a tighter scope) rather
+  // than confusing "no per-rule coverage exists" with "the array was
+  // clipped." Closes the in-place sentinel axis the doctrine bullet
+  // "Truncated containers must rename or sentinel, not retain" names
+  // for the per-rule-coverage block.
+  {
+    truncationKey: "perRuleCoverageTruncated",
+    fieldPath: "perRuleCoverage",
   },
 ];
 
@@ -173,6 +203,14 @@ const META_ARRAY_TRUNCATION_ENTRIES: ReadonlyArray<{
 export function getTruncatedMetaArrayFields(meta: Record<string, unknown>): readonly string[] {
   const out: string[] = [];
   for (const entry of META_ARRAY_TRUNCATION_ENTRIES) {
+    if (entry.container === undefined) {
+      // Root-level entry — look up the truncation sibling directly on
+      // `meta`. Path is the field name only (no dotted prefix).
+      if (entry.truncationKey in meta) {
+        out.push(entry.fieldPath);
+      }
+      continue;
+    }
     const container = meta[entry.container];
     if (container === null || typeof container !== "object") continue;
     if (entry.truncationKey in (container as Record<string, unknown>)) {

@@ -24,6 +24,7 @@ import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { isBuildArtifact } from "./build-artifacts.ts";
+import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
@@ -449,12 +450,66 @@ export function buildScanMeta(args: {
  * `perRuleCoverageSummary` mirrors that presence so the two surfaces
  * agree on emptiness.
  */
+/**
+ * Domain-specific cap for `meta.perRuleCoverage[]`. The shared
+ * {@link META_ARRAY_CAP}=50 fits path-only entries (`fragmentFiles` at
+ * ~60 chars/entry, `scannedBuildArtifacts.ungrouped` at ~110
+ * chars/entry); per-rule coverage rows are heterogeneous (~150-400
+ * chars/row, averaging ~250) but they ARE the scan-confidence
+ * telemetry an agent needs to triage which rules ran on which
+ * substrates. A 50-row cap on a 100+-rule registry truncates more
+ * than half the registry — the size-vs-signal balance flips against
+ * the cap. 200 keeps the full registry visible for the typical
+ * project rule fan-out (108 HTML-eligible rules; full registry
+ * ~130) while still bounding the worst-case wire impact (200 × 250
+ * chars ≈ 50KB) and triggering the head-slice on plugin-heavy
+ * configurations that load thousands of rules. Per `docs/kb/
+ * architecture/ai-first-consumer.md` "Verbose meta is signal, not
+ * clutter" — over-capping per-rule coverage hurts the AI-first
+ * consumer more than the wire-size cost it saves.
+ */
+export const PER_RULE_COVERAGE_CAP = 200;
+
+/**
+ * Stable-sort {@link PerRuleCoverage} rows so confidence-degraded rows
+ * (low / medium) come before high-confidence rows. Used as the
+ * pre-cap step in {@link perRuleCoverageMetaFragment} so the
+ * head-slice preserves the rows an agent acts on when the registry
+ * exceeds {@link PER_RULE_COVERAGE_CAP}. Within each priority band rows
+ * stay in their input order — the engine's per-rule-coverage walk
+ * fixes the `list_rules` ⊇ `perRuleCoverage` registry-equivalence
+ * invariant on the small-corpus path, and stable sort keeps that
+ * invariant intact for the rows that survive the head-slice.
+ *
+ * Priority ordering (lowest number wins, sorts first):
+ *   - 0: `coverageConfidence === "low"` (rule ran but the evidence
+ *     horizon was bounded — `parse_failed`, `partial_parse`,
+ *     `extension-absent`, `extension-present-but-out-of-scope`).
+ *   - 1: `coverageConfidence === "medium"` (rule ran but at a
+ *     reduced-confidence band — `scss-unresolved-variables`,
+ *     `fragment-input-no-document-envelope`,
+ *     `cross_file_*_not_attempted_by_rule`).
+ *   - 2: `coverageConfidence === "high"` (rule ran on full evidence —
+ *     the canonical "ran clean" row, least informative).
+ */
+function prioritizePerRuleCoverageForCap(
+  rows: readonly PerRuleCoverage[],
+): readonly PerRuleCoverage[] {
+  const priorityOf = (row: PerRuleCoverage): number => {
+    if (row.coverageConfidence === "low") return 0;
+    if (row.coverageConfidence === "medium") return 1;
+    return 2;
+  };
+  return [...rows].sort((a, b) => priorityOf(a) - priorityOf(b));
+}
+
 function perRuleCoverageMetaFragment(
   rows: readonly PerRuleCoverage[],
   activeRules: readonly Rule[],
   verboseMeta: boolean,
 ): {
   readonly perRuleCoverage?: readonly PerRuleCoverage[];
+  readonly perRuleCoverageTruncated?: MetaArrayTruncationSummary;
   readonly perRuleCoverageSummary?: {
     readonly ruleCount: number;
     readonly ruleIds: readonly string[];
@@ -466,8 +521,36 @@ function perRuleCoverageMetaFragment(
     return { rulesNotEvaluatedDueToInputType: notEvaluatedDueToInputType };
   }
   if (verboseMeta) {
+    // Head-slice when the row count crosses the shared meta-array cap.
+    // The sibling `perRuleCoverageTruncated: { shown, total }` summary
+    // is the in-place sentinel doctrine
+    // ("Truncated containers must rename or sentinel, not retain")
+    // names — without it, an agent reading a 50-entry array on a
+    // corpus whose registry has 130 active rules cannot tell "rule
+    // set is 50" from "rule set was clipped to 50." The sibling rides
+    // alongside the trimmed array and pairs with the
+    // `getTruncatedMetaArrayFields` table entry so
+    // `response_meta_truncated` fires AND its
+    // `warningsDetails.response_meta_truncated.fields` payload names
+    // the dotted path "perRuleCoverage."
+    //
+    // Prioritization: when the row count exceeds the cap, place
+    // confidence-degraded rows (low / medium with a documented reason)
+    // before high-confidence rows so the head-slice preserves the
+    // signal an agent acts on. A high-confidence row only says "rule
+    // ran clean"; a row with `coverageConfidenceReason: "partial-parse"`
+    // or `"fragment-input-no-document-envelope"` carries the structured
+    // limitation an agent uses to triage whether to scope down. Within
+    // each band rows stay in their input order so cross-surface
+    // identity (e.g. the order `list_rules` ⊇ `perRuleCoverage` invariant
+    // walks) holds when the corpus fits under the cap. Stable sort
+    // (Array.prototype.sort in V8/JSC since ES2019) is load-bearing
+    // here.
+    const prioritized = prioritizePerRuleCoverageForCap(retained);
+    const capped = capMetaArray(prioritized, PER_RULE_COVERAGE_CAP);
     return {
-      perRuleCoverage: retained,
+      perRuleCoverage: capped.values,
+      ...(capped.truncated === undefined ? {} : { perRuleCoverageTruncated: capped.truncated }),
       rulesNotEvaluatedDueToInputType: notEvaluatedDueToInputType,
     };
   }
