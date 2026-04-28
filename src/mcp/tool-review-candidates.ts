@@ -181,8 +181,8 @@ export const reviewCandidatesTool: McpTool = {
  * Maps one engine-emitted {@link ReviewCandidate} onto the
  * `review_candidates` wire shape. Extracted from the tool's main
  * handler so the per-candidate present-when-meaningful spreads
- * (siblingOccurrences, vendorPathHint, vendorContext, durationLiteralMs,
- * durationExpression, sourceCount) live in one place rather than
+ * (siblingOccurrences, vendorPathHint, vendorContext, predicateConceded,
+ * durationLiteralMs, durationExpression, sourceCount) live in one place rather than
  * inflating the handler's cognitive complexity above the linter's
  * cap. `confidence` is required on every grounded candidate;
  * `title` / `level` come from the standard's criterion record and
@@ -211,6 +211,7 @@ function mapCandidateOut(
       }),
     ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
     ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
+    ...(c.predicateConceded === undefined ? {} : { predicateConceded: c.predicateConceded }),
     ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
     ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
     ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),

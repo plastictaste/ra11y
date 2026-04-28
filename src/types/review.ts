@@ -118,6 +118,49 @@ export interface ReviewCandidateVendorContext {
   readonly redirectTo: "consumer-override";
 }
 
+/**
+ * Discriminated `signal` payload for {@link ReviewCandidatePredicateConceded}.
+ * Names the spec-exemption shape the finder's own static evidence
+ * concedes — every variant must be deterministic from the (filePath,
+ * source) inputs the finder reads, matching the doctrine bar in
+ * `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest."
+ *
+ *   - `kind: "logotype-pattern"` — the cited `<img>`'s alt text,
+ *     class name, or src filename contains `logo` / `logotype` /
+ *     `brand` / `trademark`. WCAG 1.4.5 (and the Section 508 / EN
+ *     301 549 equivalents) carries a logotype exemption — text
+ *     that is part of a logo or brand name is permitted as an
+ *     image. The candidate still surfaces; the signal lets the
+ *     priority surface match the framing.
+ *
+ * Future variants (process-page exemption, essential-presentation,
+ * etc.) would extend the union.
+ */
+export type ReviewCandidatePredicateConcededSignal = {
+  readonly kind: "logotype-pattern";
+};
+
+/**
+ * Wire shape for {@link ReviewCandidate#predicateConceded}. Carries a
+ * deterministic `signal` plus a short `evidence` string naming the
+ * verbatim token the finder matched (`alt="Acme logo"`, class token
+ * `brand-mark`, src basename `logotype.svg`). The `evidence` is the
+ * agent's one-read receipt: the agent sees the priority downgrade,
+ * reads the evidence, and decides whether to confirm the exemption
+ * via a source-level `ra11y-disable` pragma.
+ *
+ * Strictly additive — never gates suppression, never alters
+ * confidence. Per CLAUDE.md §1 "Ambiguous field shapes are
+ * dishonest" the field is present-when-meaningful; finders that
+ * do not have evidence the predicate is conceded must omit the
+ * field rather than emit a sentinel.
+ */
+export interface ReviewCandidatePredicateConceded {
+  readonly signal: ReviewCandidatePredicateConcededSignal;
+  readonly evidence: string;
+}
+
 /** A location where a human reviewer should verify a manual criterion. */
 export interface ReviewCandidate {
   /** The criterion this candidate is relevant to (e.g., "wcag22:1.2.1"). */
@@ -254,6 +297,42 @@ export interface ReviewCandidate {
    * dishonest").
    */
   readonly vendorContext?: ReviewCandidateVendorContext;
+  /**
+   * Additive structured evidence that the finder's predicate has
+   * conceded — the candidate's own evidence supports the spec
+   * exemption that would resolve the criterion. Canonical case:
+   * a `wcag22:1.4.5` `<img>` candidate whose alt text or filename
+   * contains `logo` / `logotype` / `brand` / `trademark`. WCAG 1.4.5
+   * carries a logotype exemption, so a candidate whose evidence
+   * itself names that exemption cannot honestly ride at `priority:
+   * "high"` on the checklist; the candidate is still surfaced (per
+   * AI-first doctrine "Surface, don't suppress") so the agent can
+   * verify the dismissal in one read, but the priority signal must
+   * agree with the framing the candidate already carries.
+   *
+   * Mirrors the `vendorContext` payload pattern. Surfaced through to
+   * the checklist surface, where `priorityFor()` downgrades item
+   * priority from `"high"` to `"medium"` when every grounded
+   * candidate carries `predicateConceded` — matching the doctrine
+   * line "Reason / priority / fix-description must agree across all
+   * three channels" at the candidate-priority axis.
+   *
+   * Strictly additive: confidence and criterion attachment never
+   * change. Per the AI-first consumer model the deterministic escape
+   * hatch is the source-level disable pragma — the agent investigates
+   * the cited file, decides whether the exemption applies, and pins
+   * the dismissal at the source. This field is the priority-honesty
+   * signal that lets the agent budget against the work, NOT a
+   * suppression mechanism.
+   *
+   * Omitted on candidates whose evidence does not support a spec
+   * exemption (per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest"). Reserved for criteria that actually carry a spec-
+   * level exemption — 1.4.5 has the logotype carve-out; 1.4.9 (AAA
+   * "no exception") does NOT, so finders must not populate the field
+   * on the AAA criterion even when the same alt-text shape fires.
+   */
+  readonly predicateConceded?: ReviewCandidatePredicateConceded;
   /**
    * Byte offset (0-based, into the file's `source` string) of the
    * literal token the finder matched. When present alongside

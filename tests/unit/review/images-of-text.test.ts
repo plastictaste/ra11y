@@ -125,6 +125,96 @@ describe("review/images-of-text", () => {
     });
   });
 
+  describe("predicateConceded — priority-honesty signal for the logotype exemption", () => {
+    // Per docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+    // fix-description must agree across all three channels": when the
+    // candidate's own static evidence (alt text, class, src filename)
+    // names the WCAG 1.4.5 logotype exemption, the structured
+    // `predicateConceded` payload lets the checklist surface drop the
+    // priority from "high" to "medium" so the budget signal matches
+    // the framing the candidate already concedes. Surface, don't
+    // suppress — the candidate still emits at the same confidence.
+
+    it("populates predicateConceded when the alt text contains a logotype token", () => {
+      const out = runFinder(finder, `<img src="/header.png" alt="Acme logo">`, {
+        filePath: "x.html",
+      });
+      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa?.predicateConceded).toBeDefined();
+      expect(aa?.predicateConceded?.signal.kind).toBe("logotype-pattern");
+      expect(aa?.predicateConceded?.evidence).toContain("Acme logo");
+    });
+
+    it("populates predicateConceded when the class names a brand mark", () => {
+      // The class token "brand" doesn't match the keywordHint regex
+      // (logo|banner|heading|title|header), so the finder needs the
+      // surrounding-text signal to fire. The class token still feeds
+      // the predicateConceded probe — the priority-honesty signal is
+      // independent of which signal source emitted the candidate.
+      const source = `const x = <div><img className="brand-mark" src="/h.png" alt="Acme" /><span>Acme</span></div>;`;
+      const out = runFinder(finder, source);
+      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa?.predicateConceded).toBeDefined();
+      expect(aa?.predicateConceded?.signal.kind).toBe("logotype-pattern");
+      expect(aa?.predicateConceded?.evidence).toContain("brand");
+    });
+
+    it("populates predicateConceded when the src basename contains 'logotype'", () => {
+      // The "logotype" token isn't in the keywordHint regex; the
+      // candidate needs a sibling-text echo to fire. The src basename
+      // still feeds the predicateConceded probe.
+      const out = runFinder(
+        finder,
+        `<div><img src="/assets/site-logotype.svg" alt="Acme"><span>Acme</span></div>`,
+        { filePath: "x.html" },
+      );
+      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa?.predicateConceded).toBeDefined();
+      expect(aa?.predicateConceded?.evidence).toContain("logotype");
+    });
+
+    it("does NOT populate predicateConceded on the AAA 1.4.9 variant — logos still apply at AAA", () => {
+      // AAA "no exception" — the spec exemption does NOT apply, so
+      // the priority-honesty signal must not flow to that criterion
+      // even when the same alt-text pattern fires on the AA variant.
+      const out = runFinder(finder, `<img src="/header.png" alt="Acme logo">`, {
+        filePath: "x.html",
+      });
+      const aaa = out.find((c) => c.criterionId === "wcag22:1.4.9");
+      expect(aaa).toBeDefined();
+      expect(aaa?.predicateConceded).toBeUndefined();
+    });
+
+    it("omits predicateConceded when the alt text is ambiguous about logotype evidence", () => {
+      // "Image showing text overlay" describes a generic image-of-
+      // text pattern with no logotype concession. The candidate
+      // surfaces at the same confidence, but the priority-honesty
+      // signal must NOT fire — this is exactly the actionable case
+      // the checklist budget should rank as high.
+      const out = runFinder(
+        finder,
+        `<div><img src="/poster.png" alt="Image showing text overlay">Image showing text overlay</div>`,
+        { filePath: "x.html" },
+      );
+      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa).toBeDefined();
+      expect(aa?.predicateConceded).toBeUndefined();
+    });
+
+    it("does not suppress — the candidate still surfaces with predicateConceded set", () => {
+      // Surface-don't-suppress floor: the priority-honesty signal is
+      // additive evidence the agent reads, NOT a filter. Every
+      // criterion must still ship a candidate.
+      const out = runFinder(finder, `<img src="/header.png" alt="Acme logo">`, {
+        filePath: "x.html",
+      });
+      expect(out.length).toBeGreaterThan(0);
+      const ids = new Set(out.map((c) => c.criterionId));
+      expect(ids.has("wcag22:1.4.5")).toBe(true);
+      expect(ids.has("wcag22:1.4.9")).toBe(true);
+    });
+  });
+
   describe("svg data URI text-free annotation", () => {
     // Purely additive reason-text enrichment: when the src is a
     // `data:image/svg+xml,...` URI whose decoded payload has no

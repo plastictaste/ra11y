@@ -38,7 +38,11 @@ import type {
   JsxNode,
   TsxModule,
 } from "../../types/ast.ts";
-import type { ReviewCandidate, ReviewCandidateSibling } from "../../types/review.ts";
+import type {
+  ReviewCandidate,
+  ReviewCandidatePredicateConceded,
+  ReviewCandidateSibling,
+} from "../../types/review.ts";
 import {
   type AggregationGroup,
   type AggregationShapeKind,
@@ -62,6 +66,89 @@ const CRITERION_IDS = [
 ] as const;
 
 const IMAGE_OF_TEXT_HINT = /\b(logo|banner|heading|title|header)\b/;
+
+/**
+ * Tokens whose presence on the cited `<img>`'s alt text, class, or
+ * src filename concede the WCAG 1.4.5 logotype exemption. Drives the
+ * structured `predicateConceded` payload the finder attaches per
+ * criterion (see {@link buildPredicateConceded}). Narrower than
+ * {@link IMAGE_OF_TEXT_HINT} on purpose — `banner` / `heading` /
+ * `title` / `header` are NOT logotype-shaped tokens and must keep
+ * the priority signal at `high` so an actual page banner with baked-
+ * in text isn't budgeted as a dismissable logo.
+ */
+const LOGOTYPE_PATTERN_TOKEN = /\b(logo|logotype|brand|trademark)\b/i;
+
+/**
+ * Criteria that carry the WCAG 1.4.5 logotype exemption and therefore
+ * accept the structured `predicateConceded` payload when the candidate's
+ * own evidence names the exemption. 1.4.9 is the AAA "No Exception"
+ * variant — logos still apply at AAA — so the field is omitted there
+ * even when the same alt-text/class/src signal fires. Mirrors the gate
+ * {@link criterionAllowsLogotypeExemption} uses for the reason-text
+ * hint so both surfaces agree on which criteria the exemption framing
+ * is honest for.
+ */
+function criterionAcceptsLogotypePredicateConceded(criterionId: string): boolean {
+  return criterionId !== "wcag22:1.4.9" && criterionId !== "wcag21:1.4.9";
+}
+
+/**
+ * Returns the `predicateConceded` payload when the candidate's own
+ * evidence — alt text, class name, or src filename — names a
+ * logotype-shaped token. Returns null otherwise. The `evidence` string
+ * is the verbatim token-bearing field the finder matched; the agent
+ * reads it as the dismissal receipt. Per the AI-first consumer model
+ * (`Surface, don't suppress` + `Reason / priority / fix-description
+ * must agree across all three channels`), this is the candidate-
+ * priority axis: a candidate whose own evidence concedes the
+ * predicate may be satisfied cannot honestly ride at `priority: high`.
+ *
+ * Detection inverts the usual surface-don't-suppress reflex (more
+ * surface, more annotate). Here we do not suppress — the candidate
+ * still emits at the same confidence, every WCAG criterion stays
+ * attached. The signal is additive evidence that lets the checklist
+ * surface drop the priority from `high` to `medium` when every
+ * grounded candidate ships it. The agent investigates and pins the
+ * dismissal via a source-level pragma.
+ */
+function buildPredicateConceded(
+  altRaw: string | null,
+  classValue: string | null,
+  srcValue: string | null,
+): ReviewCandidatePredicateConceded | null {
+  if (altRaw !== null) {
+    const match = LOGOTYPE_PATTERN_TOKEN.exec(altRaw);
+    if (match) {
+      return {
+        signal: { kind: "logotype-pattern" },
+        evidence: `alt="${altRaw}"`,
+      };
+    }
+  }
+  if (classValue !== null) {
+    const match = LOGOTYPE_PATTERN_TOKEN.exec(classValue);
+    if (match) {
+      return {
+        signal: { kind: "logotype-pattern" },
+        evidence: `class token "${match[1] ?? match[0]}"`,
+      };
+    }
+  }
+  if (srcValue !== null) {
+    const basename = fileNameFromPath(srcValue);
+    if (basename !== null) {
+      const match = LOGOTYPE_PATTERN_TOKEN.exec(basename);
+      if (match) {
+        return {
+          signal: { kind: "logotype-pattern" },
+          evidence: `src basename "${basename}"`,
+        };
+      }
+    }
+  }
+  return null;
+}
 
 export const finder = defineCandidateFinder({
   id: "review/images-of-text",
@@ -520,6 +607,7 @@ function emitHtmlImageCandidate(
     htmlSrOnlySiblingHint(siblings, index, parentElement),
     undefined,
     alt?.raw ?? null,
+    buildPredicateConceded(alt?.raw ?? null, classVal, srcVal),
   );
 }
 
@@ -572,6 +660,7 @@ function emitHtmlAggregationGroup(
   const anchorImg = imgsForGroup[0]!;
   const classVal = getHtmlAttribute(anchorImg, "class");
   const srcVal = getHtmlAttribute(anchorImg, "src");
+  const anchorAltRaw = shortImageText(getHtmlAttribute(anchorImg, "alt"))?.raw ?? null;
   const keywordSignal = keywordHint(classVal, srcVal);
   const reason = renderAggregatedReason(keywordSignal, group);
   pushForAllCriteria(
@@ -589,6 +678,12 @@ function emitHtmlAggregationGroup(
     // candidates with siblingOccurrences set, so passing `null` here
     // is a no-op for stem grouping but keeps the signature uniform.
     null,
+    // The aggregated candidate carries its anchor's alt as the
+    // logotype-pattern probe input — every member of the group shares
+    // the same parent/class by group precondition (see
+    // images-of-text-aggregate.ts), so the anchor's alt is
+    // representative of the group's evidence.
+    buildPredicateConceded(anchorAltRaw, classVal, srcVal),
   );
 }
 
@@ -799,6 +894,7 @@ function emitJsxImageCandidate(
     jsxSrOnlySiblingHint(siblings, index, parentElement),
     undefined,
     alt?.raw ?? null,
+    buildPredicateConceded(alt?.raw ?? null, classVal, srcVal),
   );
 }
 
@@ -841,6 +937,7 @@ function emitJsxAggregationGroup(
   const classVal =
     literalJsxAttribute(anchorImg, "className") ?? literalJsxAttribute(anchorImg, "class");
   const srcVal = literalJsxAttribute(anchorImg, "src");
+  const anchorAltRaw = shortImageText(literalJsxAttribute(anchorImg, "alt"))?.raw ?? null;
   const keywordSignal = keywordHint(classVal, srcVal);
   const reason = renderAggregatedReason(keywordSignal, group);
   pushForAllCriteria(
@@ -857,6 +954,10 @@ function emitJsxAggregationGroup(
     // post-emit stem-dedup pass skips candidates with siblingOccurrences
     // set, so the alt is not needed for grouping here.
     null,
+    // The aggregated candidate carries its anchor's alt as the
+    // logotype-pattern probe input — every member of the group shares
+    // the same parent/class by group precondition.
+    buildPredicateConceded(anchorAltRaw, classVal, srcVal),
   );
 }
 
@@ -1153,6 +1254,30 @@ function renderReason(signals: readonly string[]): string {
   return `<img> ${signals.join("; ")} — verify text is not baked into the image when equivalent styled HTML text could be used`;
 }
 
+/**
+ * Build the per-criterion `reason` text by layering the additive
+ * dismissal hints on top of the base reason. The order is fixed so
+ * the textual signal is stable across emissions: logotype exemption
+ * (when applicable) → svg-data-URI text-free hint → sr-only sibling
+ * hint. Each hint is the per-criterion one the agent reads as a
+ * one-shot dismissal receipt; per AI-first doctrine the candidate
+ * still surfaces at the same confidence — only the reason text grows.
+ */
+function renderPerCriterionReason(
+  criterionId: string,
+  baseReason: string,
+  logoLikelyExempt: boolean,
+  svgDataUriHint: string | null,
+  srOnlySiblingHint: string | null,
+): string {
+  const withLogoHint =
+    logoLikelyExempt && criterionAllowsLogotypeExemption(criterionId)
+      ? `${baseReason} — if this is a logo or brand mark, WCAG 1.4.5 has a logotype exemption (essential presentation); the AAA "no exception" variant (1.4.9) still applies`
+      : baseReason;
+  const withSvgHint = svgDataUriHint ? `${withLogoHint} ${svgDataUriHint}` : withLogoHint;
+  return srOnlySiblingHint ? `${withSvgHint} ${srOnlySiblingHint}` : withSvgHint;
+}
+
 function pushForAllCriteria(
   candidates: ReviewCandidate[],
   filePath: string,
@@ -1164,25 +1289,32 @@ function pushForAllCriteria(
   srOnlySiblingHint: string | null,
   siblingOccurrences: readonly ReviewCandidateSibling[] | undefined,
   altRaw: string | null,
+  predicateConceded: ReviewCandidatePredicateConceded | null,
 ): void {
+  // Confidence "low": alt/className/src pattern matching on
+  // "logo"/"banner"/"heading" tokens and short-alt-duplicated-in-text
+  // heuristics. Biased toward false positives by design (see
+  // docstring); the finder is a prompt to confirm, not a failure
+  // claim.
+  //
+  // `predicateConceded` is gated by `criterionAcceptsLogotypePredicateConceded`
+  // so the AAA "no exception" variants (1.4.9) never receive the
+  // payload — the spec exemption only applies at AA. Per the
+  // AI-first consumer model the gate matches the reason-text gate
+  // above; both surfaces agree on which criteria the exemption
+  // framing is honest for.
   for (const criterionId of CRITERION_IDS) {
-    const withLogoHint =
-      logoLikelyExempt && criterionAllowsLogotypeExemption(criterionId)
-        ? `${reason} — if this is a logo or brand mark, WCAG 1.4.5 has a logotype exemption (essential presentation); the AAA "no exception" variant (1.4.9) still applies`
-        : reason;
-    const withSvgHint = svgDataUriHint ? `${withLogoHint} ${svgDataUriHint}` : withLogoHint;
-    // The sr-only hint follows the svg-data hint so both additive
-    // signals accumulate on the tail of the reason. The hint is per-
-    // candidate additive context, not a suppression signal — per
-    // AI-first doctrine, every criterion still surfaces its candidate
-    // at the same confidence and location; only the reason text grows
-    // so an agent can dismiss without reading the file.
-    const augmented = srOnlySiblingHint ? `${withSvgHint} ${srOnlySiblingHint}` : withSvgHint;
-    // Confidence "low": alt/className/src pattern matching on
-    // "logo"/"banner"/"heading" tokens and short-alt-duplicated-in-text
-    // heuristics. Biased toward false positives by design (see
-    // docstring); the finder is a prompt to confirm, not a failure
-    // claim.
+    const augmented = renderPerCriterionReason(
+      criterionId,
+      reason,
+      logoLikelyExempt,
+      svgDataUriHint,
+      srOnlySiblingHint,
+    );
+    const conceded =
+      predicateConceded !== null && criterionAcceptsLogotypePredicateConceded(criterionId)
+        ? predicateConceded
+        : null;
     const candidate: ReviewCandidate = {
       criterionId,
       location: { filePath, line, column },
@@ -1193,6 +1325,7 @@ function pushForAllCriteria(
       ...(siblingOccurrences !== undefined && siblingOccurrences.length > 0
         ? { siblingOccurrences }
         : {}),
+      ...(conceded === null ? {} : { predicateConceded: conceded }),
     };
     candidates.push(candidate);
     // Stash the raw alt against the candidate identity for the post-

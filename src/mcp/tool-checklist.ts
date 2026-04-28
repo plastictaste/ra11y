@@ -17,6 +17,7 @@ import { buildCoverageReport, type PerStandardCoverage } from "../reports/covera
 import type { AttestationRecord } from "../types/evidence.ts";
 import type {
   ReviewCandidate,
+  ReviewCandidatePredicateConceded,
   ReviewCandidateVendorContext,
   ReviewConfidence,
 } from "../types/review.ts";
@@ -161,6 +162,19 @@ interface ChecklistCandidateOut {
    * Present-when-meaningful per CLAUDE.md §1.
    */
   readonly vendorContext?: ReviewCandidateVendorContext;
+  /**
+   * Structured additive evidence that the candidate's own static
+   * input concedes the WCAG 1.4.5 logotype exemption — `<img>` whose
+   * alt text, class name, or src filename contains `logo` /
+   * `logotype` / `brand` / `trademark`. Drives the priority
+   * downgrade in `priorityFor()`: when every grounded candidate
+   * carries `predicateConceded`, the item priority drops from
+   * `"high"` to `"medium"` so the budget signal matches the framing
+   * the candidate already concedes. Mirrors `vendorContext` —
+   * present-when-meaningful per CLAUDE.md §1, surfaces verbatim from
+   * the finder, and never gates suppression.
+   */
+  readonly predicateConceded?: ReviewCandidatePredicateConceded;
   /**
    * Structured duration evidence for timing-related candidates (see
    * `ReviewCandidate.durationLiteralMs`). Populated only when the
@@ -311,6 +325,7 @@ function priorityFor(
   candidates: readonly {
     readonly reason: string;
     readonly vendorContext?: ReviewCandidateVendorContext;
+    readonly predicateConceded?: ReviewCandidatePredicateConceded;
   }[],
 ): ChecklistPriority {
   if (candidates.length === 0) return "low";
@@ -318,7 +333,36 @@ function priorityFor(
   if (base !== "high") return base;
   if (everyCandidateHedges(candidates)) return "medium";
   if (everyCandidateHasVendorContext(candidates)) return "medium";
+  if (everyCandidateHasPredicateConceded(candidates)) return "medium";
   return "high";
+}
+
+/**
+ * True when every grounded candidate carries a `predicateConceded`
+ * payload — i.e. every candidate's own static evidence (alt text,
+ * class name, src filename) concedes the WCAG 1.4.5 logotype
+ * exemption may apply. The all-or-nothing test mirrors
+ * `everyCandidateHasVendorContext` and `everyCandidateHedges`: a
+ * single candidate without the exemption-shaped evidence keeps the
+ * item at `"high"` so the agent doesn't miss the actionable case
+ * among the logotype-pathed siblings.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Reason / priority /
+ * fix-description must agree across all three channels": a candidate
+ * whose evidence concedes the predicate may be satisfied cannot ride
+ * at the same attention budget as a candidate pointing at hand-
+ * authored source whose static evidence does not name the exemption.
+ * The candidate still surfaces (the spec exemption is a verification
+ * question only the agent can answer with file context), just at a
+ * priority that matches the framing.
+ */
+function everyCandidateHasPredicateConceded(
+  candidates: readonly { readonly predicateConceded?: ReviewCandidatePredicateConceded }[],
+): boolean {
+  for (const c of candidates) {
+    if (c.predicateConceded === undefined) return false;
+  }
+  return true;
 }
 
 /**
@@ -1225,6 +1269,7 @@ function mapCandidates(
         // to re-call review_candidates to recover the typed fields.
         ...(c.vendorPathHint ? { vendorPathHint: c.vendorPathHint } : {}),
         ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
+        ...(c.predicateConceded === undefined ? {} : { predicateConceded: c.predicateConceded }),
         ...(c.durationLiteralMs === undefined ? {} : { durationLiteralMs: c.durationLiteralMs }),
         ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
         // sourceCount carries through for stem-deduped candidates so
