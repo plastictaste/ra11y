@@ -291,7 +291,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Cross-surface count + warning drift
 
-- [ ] **Q10-DEPRECATION-WARNING-ASYMMETRIC-ACROSS-SURFACES** `deprecated_field_id_renamed_criterionId` ships on `coverage` but not on `checklist` despite both surfaces emitting the renamed field; the same rename should be narrated identically on every surface that touches the field. Fix: emit deprecation warnings from the shared field-emission helper, not at the surface boundary; integration test pinning warning-set parity across project-rooted tools for any field touched by `rule-aliases.ts`. Per AI-first doctrine "Cross-surface count invariant."
 - [ ] **Q10-YML-SKIPPED-BUT-TEMPLATE-LITERAL-CO-FIRES-NO-DETAIL** `extensions_skipped_no_parser` reports `.yml` as topExtension while `template_files_parsed_as_literal` ALSO fires; the two warnings co-fire on the same files but mean different things. The `template_files_parsed_as_literal` warning has no `files[]` / `extensions[]` detail to disambiguate. Fix: ship `warningsDetails.template_files_parsed_as_literal: {files: [...], extensions: [...]}` so the agent can tell which `.yml` was skipped vs parsed-as-literal. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
 
 ### suggest_fix shape + correctness bugs
