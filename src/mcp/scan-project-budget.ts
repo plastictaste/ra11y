@@ -622,6 +622,15 @@ function readWarningsDetails(original: Record<string, unknown>): ScanWarningDeta
  *   - `scanned` — root + extras envelope (paths, scan kind). Lets
  *     the agent re-issue a narrower call against the same root.
  *   - `rootSource`, `scanMode` — additional routing context.
+ *   - `hostDeclaredRoots`, `rootsOverlapNote` — MCP-protocol routing
+ *     telemetry stamped by the host's `roots` capability. Tiny scalar
+ *     list / scalar string respectively; keeping them on slim lets the
+ *     agent see "the host declared these roots, which is why my call
+ *     fell through to <root>" even when the per-file detail had to
+ *     drop. Bulk-corpus slim responses without these would leave the
+ *     agent guessing why the scope landed where it did, which is the
+ *     "Truncated containers must rename or sentinel, not retain" silent-
+ *     miss failure mode.
  *
  * Everything else (perRuleCoverage, scannedBuildArtifacts,
  * analysisCoverage, scope, additionalPathsScanned, …) is dropped on
@@ -649,6 +658,8 @@ const SLIM_META_KEYS: readonly string[] = [
   "scanned",
   "rootSource",
   "scanMode",
+  "hostDeclaredRoots",
+  "rootsOverlapNote",
 ];
 
 /**

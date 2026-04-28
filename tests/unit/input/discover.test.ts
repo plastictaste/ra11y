@@ -289,14 +289,14 @@ describe("discoverFilesWithDiagnostics", () => {
   });
 
   it("does not count files rejected by default excludes or gitignore", async () => {
-    // test.* pattern rejects via DEFAULT_EXCLUDED_PATTERNS (user
-    // exclude), not via the extension check — must not surface in
+    // __mocks__/ rejects via DEFAULT_EXCLUDED_PATTERNS (user exclude),
+    // not via the extension check — must not surface in
     // skippedByExtension, otherwise the warning fires on intentional
     // suppression.
     markGitRoot(dir);
     write(join(dir, ".gitignore"), "bundle.tsx\n");
     write(join(dir, "page.tsx"));
-    write(join(dir, "page.test.tsx"));
+    write(join(dir, "__mocks__", "fs.ts"));
     write(join(dir, "bundle.tsx"));
     // Still count a true extension skip so we know the filter
     // distinguishes the two paths.
@@ -304,6 +304,58 @@ describe("discoverFilesWithDiagnostics", () => {
 
     const result = await discoverFilesWithDiagnostics([dir]);
     expect(result.diagnostics.skippedByExtension).toEqual({ ".svelte": 1 });
+  });
+
+  it("includes test/spec/story/dev-tools files in discovery by default", async () => {
+    // Per the AI-first consumer doctrine (Default-exclude globs are
+    // suppression too), only `__mocks__/` clears the
+    // definitionally-wrong-for-any-consumer bar. Test fixtures, spec
+    // files, Storybook stories, and dev-tools / devtools directories
+    // all surface to the scanner so an agent can dismiss false
+    // positives in one read; a real a11y bug in test JSX (which gets
+    // copy-pasted into production routinely) reaches the agent rather
+    // than being silently filtered.
+    write(join(dir, "page.tsx"));
+    write(join(dir, "page.test.tsx"));
+    write(join(dir, "page.spec.ts"));
+    write(join(dir, "page.stories.tsx"));
+    write(join(dir, "page.story.jsx"));
+    write(join(dir, "__tests__", "Form.tsx"));
+    write(join(dir, "stories", "Button.tsx"));
+    write(join(dir, "dev-tools", "panel.tsx"));
+    write(join(dir, "devtools", "inspector.tsx"));
+    // __mocks__ remains excluded by default — it's a Jest-runtime
+    // injection mechanism and never reaches a user's browser.
+    write(join(dir, "__mocks__", "fs.ts"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    const rel = result.files.map((p) => p.slice(dir.length + 1)).sort();
+    expect(rel).toEqual([
+      "__tests__/Form.tsx",
+      "dev-tools/panel.tsx",
+      "devtools/inspector.tsx",
+      "page.spec.ts",
+      "page.stories.tsx",
+      "page.story.jsx",
+      "page.test.tsx",
+      "page.tsx",
+      "stories/Button.tsx",
+    ]);
+  });
+
+  it("includeTests:true drops the __mocks__ default exclusion too", async () => {
+    // The opt-out flag widens what the scanner sees: it disables every
+    // default exclusion, including the lone surviving `__mocks__/` rule.
+    write(join(dir, "page.tsx"));
+    write(join(dir, "__mocks__", "fs.ts"));
+
+    const defaultRun = await discoverFiles([dir]);
+    const defaultRel = defaultRun.map((p) => p.slice(dir.length + 1)).sort();
+    expect(defaultRel).toEqual(["page.tsx"]);
+
+    const includeRun = await discoverFiles([dir], { includeTests: true });
+    const includeRel = includeRun.map((p) => p.slice(dir.length + 1)).sort();
+    expect(includeRel).toEqual(["__mocks__/fs.ts", "page.tsx"]);
   });
 
   it("routes `.map` sourcemap files into a dedicated bucket rather than skippedByExtension", async () => {

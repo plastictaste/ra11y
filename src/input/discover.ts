@@ -51,37 +51,39 @@ export interface DiscoverOptions {
   readonly respectGitignore?: boolean;
 }
 
-/**
- * File patterns excluded by default. Test files, Storybook stories, and
- * mock fixtures aren't shipped UI — scanning them produces noise
- * (onChange on filter bars, render assertions, sample copy that happens
- * to contain "click below"). Users can re-include with `includeTests`.
- */
-const DEFAULT_EXCLUDED_PATTERNS: readonly string[] = [
-  "**/*.test.*",
-  "**/*.spec.*",
-  "**/*.stories.*",
-  "**/*.story.*",
-  "**/__tests__/**",
-  "**/__mocks__/**",
-  "**/stories/**",
-  "**/dev-tools/**",
-  "**/devtools/**",
-];
+// The bar for entries in DEFAULT_EXCLUDED_PATTERNS is high: findings in
+// the matched path tree must be *definitionally wrong for any consumer*,
+// not merely "noisy for a human reviewer," per the AI-first consumer
+// doctrine in docs/kb/architecture/ai-first-consumer.md (Default-exclude
+// globs are suppression too).
+//
+// `**\/__mocks__\/**` clears the bar because Jest's `__mocks__` directory
+// is a test-runtime injection mechanism — files in it are never loaded
+// by the application bundle and never reach a user's browser. A finding
+// there is a finding on a file no consumer will ever render. (The
+// neighbouring `__tests__` directory does NOT clear the bar — fixture
+// JSX and snapshot copy gets copy-pasted into production routinely, and
+// an agent reading a `<button>`-without-name finding under `__tests__`
+// can dismiss it in one read if it really is test-only. Same for
+// `*.test.*`, `*.spec.*`, `*.stories.*`, `stories/`, `dev-tools/`,
+// `devtools/` — all dropped in the AI-first-doctrine pass.)
+//
+// Users can drop the `__mocks__` exclusion via `includeTests: true` —
+// that flag is the doctrinally-correct opt-out shape (it widens what
+// the scanner sees rather than narrowing what it reports).
+const DEFAULT_EXCLUDED_PATTERNS: readonly string[] = ["**/__mocks__/**"];
 
-/**
- * Subset of {@link DEFAULT_EXCLUDED_PATTERNS} that covers Storybook
- * story files and the conventional `stories/` directory. When
- * `preset: "storybook"` is active these come OUT of the exclude list
- * so the scanner walks them — the preset then takes care of treating
- * Storybook primitives transparently so the result is signal, not
- * noise.
- */
-const STORY_FILE_PATTERNS: ReadonlySet<string> = new Set([
-  "**/*.stories.*",
-  "**/*.story.*",
-  "**/stories/**",
-]);
+// Storybook story patterns. Empty after the AI-first-doctrine pass
+// dropped story files from the default-excluded list — story files now
+// reach the scanner unconditionally, and the `preset: "storybook"`
+// machinery still handles framework-aware transparency (Storybook
+// primitives like `Meta`, `StoryObj`, `StoryFn`, `Story` render as
+// transparent wrappers in `analysis-coverage.ts` so they don't inflate
+// the opaque-component count). Retained as an empty set so the
+// `includeStoryFiles` plumbing in `buildDirExcludes` and downstream
+// MCP tools (`scan_project`, `tools-helpers.ts`) keeps its existing
+// shape; the filter is now a no-op.
+const STORY_FILE_PATTERNS: ReadonlySet<string> = new Set([]);
 
 /**
  * Opt-in discovery that treats each path as an explicit "please scan
