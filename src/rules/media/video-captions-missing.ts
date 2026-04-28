@@ -63,6 +63,7 @@ import {
   truncateForEcho,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import { isDomOriginExtension } from "../../utils/path.ts";
 import { type MediaEmbedPlatform, mediaEmbedHost } from "../../utils/video-embed-hosts.ts";
 
 export const rule = defineRule({
@@ -97,6 +98,20 @@ export const rule = defineRule({
       ctx.language === "ts" ||
       ctx.language === "js"
     ) {
+      // Belt-and-braces DOM-origin gate (mirrors document/iframe-title).
+      // The `appliesTo.fileExtensions` alias upstream lets `.js`/`.ts` through
+      // so Next.js-style JSX-in-`.js` corpora keep scanning, but a bare
+      // `.js` / `.ts` file routinely contains string-literal HTML
+      // (`var html = '<iframe src="…">'`, runtime DOM-builder libraries,
+      // packed plugins) that the parser surfaces as JSX-shaped substrings.
+      // The captions rule fires on `<video>` and `<iframe src=hostedVideo>`
+      // — both only have meaning when they refer to a real rendered
+      // element. Restrict to DOM-origin extensions; per AI-first doctrine
+      // (docs/kb/architecture/ai-first-consumer.md "Routing skips that
+      // drop content are the symmetric twin of suppression"), this is a
+      // deterministic skip on the rule's per-file gate, not a heuristic
+      // suppression of findings the agent would otherwise see.
+      if (!isDomOriginExtension(ctx.filePath)) return;
       checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
     }
   },

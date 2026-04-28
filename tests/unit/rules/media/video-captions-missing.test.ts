@@ -284,6 +284,36 @@ describe("rule media/video-captions-missing", () => {
     });
   });
 
+  // Belt-and-braces DOM-origin gate: the `appliesTo.fileExtensions`
+  // check upstream aliases `.js → .jsx` so Next.js-style JSX-in-`.js`
+  // corpora keep scanning, but bare `.js` / `.ts` files routinely carry
+  // string-literal HTML (runtime DOM-builders, packed plugins) that the
+  // parser surfaces as JSX-shaped substrings. The rule must not act on
+  // <video> or hosted-video <iframe> nodes surfaced from a bare
+  // `.js` / `.ts` file.
+  describe("non-JSX JS gate", () => {
+    it("does not fire on a bare .js file containing a hosted-video iframe string literal", () => {
+      const source = `var html = '<iframe src="https://www.youtube.com/embed/xyz"></iframe>';`;
+      const violations = runRule(rule, source, { filePath: "vendor.js" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("does not fire on a bare .ts file containing a video-shaped substring", () => {
+      const source = `const tpl = \`<video src="x.mp4"></video>\`;`;
+      const violations = runRule(rule, source, { filePath: "build.ts" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("still fires on a .tsx file containing the same hosted-video iframe", () => {
+      const violations = runRule(
+        rule,
+        `function F(){return <iframe src="https://www.youtube.com/embed/xyz" />}`,
+        { filePath: "Embed.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:1.2.2 and wcag21:1.2.2", () => {
       expect(rule.satisfies).toContain("wcag22:1.2.2");
