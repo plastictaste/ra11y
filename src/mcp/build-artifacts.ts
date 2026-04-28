@@ -52,6 +52,18 @@
  * SVG output still classify on the path-anchored predicates that
  * survive the doctrine bar.
  *
+ * Data-URL deduction on the long-line corroborator: a hand-authored
+ * design-system stylesheet (icons / token / mask SCSS) inlining
+ * several base64 `data:` URL payloads can hit the long-line ratio
+ * (4/14 ≈ 28.6%) on authored content alone. Per the doctrine bar,
+ * long lines whose >threshold reach is dominated by an inline
+ * `data:` URL are deducted from the count-floor / ratio inputs and
+ * replaced by their residual length in the median input — files
+ * that legitimately are minified bundles inlining a few data-URL
+ * assets still classify because the residual non-data-URL line
+ * content is bundle-shape long. See {@link
+ * longestDataUrlPayloadLength} in `build-artifacts-data-url.ts`.
+ *
  * Classifications, in classifier evaluation order (first-match wins;
  * the comment block at {@link classifyBuildArtifactDetailed}
  * restates the order inline so future edits keep predicate ↔
@@ -136,21 +148,22 @@
  *      fires: either the median line length itself exceeds the
  *      threshold OR the file carries ≥
  *      {@link MINIFIED_LONG_LINE_MIN_COUNT} long lines AND ≥25% of
- *      lines exceed the threshold. The standalone long-line probe
- *      used to be enough but mis-labeled authored files (Astro
- *      `<Example code={`…`}/>` template literals, Google-Maps
- *      iframe URLs, SCSS type-signature function bodies) that cross
- *      500 chars on exactly one authored line. Even with the count-
- *      floor + ratio + median tightening, the predicate remains a
- *      heuristic over content shape — the `likely-` prefix names
- *      the residual uncertainty. Additionally gated to skip `.svg`
- *      sources entirely: single-line is the canonical SVG authoring
- *      shape (a hand-authored brand SVG is one well-formed `<svg>`
- *      element), so the long-line probe is structurally inapplicable
- *      and would silently mis-label authored brand assets as
- *      minified bundles. SVGs caught by the path predicates above
- *      (1–3, 5) still classify; content-shape alone does not earn a
- *      label.
+ *      lines exceed the threshold, *after* deducting long lines
+ *      whose >threshold reach is dominated by an inline `data:`
+ *      URL payload. The standalone long-line probe used to be enough
+ *      but mis-labeled authored files (Astro template literals, Google-
+ *      Maps iframe URLs, SCSS type signatures, design-system base64
+ *      icons) that cross 500 chars on exactly one authored line; the
+ *      count-floor + ratio + median tightening + data-URL deduction
+ *      together close those shapes. Even with these tightenings the
+ *      predicate remains a heuristic over content shape — the
+ *      `likely-` prefix names the residual uncertainty. Additionally
+ *      gated to skip `.svg` sources entirely: single-line is the
+ *      canonical SVG authoring shape, so the long-line probe is
+ *      structurally inapplicable and would mis-label authored brand
+ *      assets as minified bundles. SVGs caught by the path predicates
+ *      above (1–3, 5) still classify; content-shape alone does not
+ *      earn a label.
  *
  * What is NOT a classification (predicates retired): a CSS source
  * containing `url(data:image/...)` used to land as
@@ -188,6 +201,7 @@
  * without re-running our classifier.
  */
 
+import { computeLineStats } from "./build-artifacts-line-stats.ts";
 import { isAuthoredSvgFont, isSvgPath } from "./build-artifacts-svg-font.ts";
 import {
   detectSourcemapPointerToMin,
@@ -748,117 +762,6 @@ export function hasLongMinifiedLine(source: string): boolean {
 }
 
 /**
- * One contiguous line-statistics scan returning both corroboration
- * predicates in a single pass: the count of long lines (over
- * {@link MINIFIED_LINE_THRESHOLD}), the total line count, the
- * median line length, and the maximum line length observed.
- * Splitting into separate loops would double the hot-path work on
- * every parsed file; folding them here keeps the helper O(N) with
- * one pass (median is computed on a single line-length array
- * allocated only when we actually need the stats, i.e. only once
- * the single-long-line probe already fired).
- *
- * `maxLineLength` rides along (zero extra work — it's a running max
- * over the same lengths) so {@link detectLongMinifiedLine} can
- * stamp it into the structured signal as the deterministic
- * `value`: the agent reading `value: 712, threshold: 500` knows
- * exactly which line shape carried the verdict.
- *
- * Line semantics match {@link hasLongMinifiedLine}: a trailing line
- * without a terminator counts as one line; CRLF / LF are treated
- * identically. Empty input returns zeroed stats (total = 0, median =
- * 0, longLines = 0, max = 0) — the caller must treat a zero-line
- * file as "no corroboration" to avoid a degenerate median.
- */
-function computeLineStats(source: string): {
-  readonly totalLines: number;
-  readonly longLineCount: number;
-  readonly medianLineLength: number;
-  readonly maxLineLength: number;
-} {
-  if (source.length === 0) {
-    return { totalLines: 0, longLineCount: 0, medianLineLength: 0, maxLineLength: 0 };
-  }
-  const lengths = collectLineLengths(source);
-  let longLineCount = 0;
-  let maxLineLength = 0;
-  for (const l of lengths) {
-    if (l > MINIFIED_LINE_THRESHOLD) longLineCount += 1;
-    if (l > maxLineLength) maxLineLength = l;
-  }
-  return {
-    totalLines: lengths.length,
-    longLineCount,
-    medianLineLength: medianOfUnsortedLengths(lengths),
-    maxLineLength,
-  };
-}
-
-/**
- * Walks `source` once and returns one entry per line with its
- * character length. CRLF sequences fold to a single line break so
- * Windows-authored or Windows-checked-out files report the same line
- * count as POSIX ones. A trailing line without a terminator still
- * counts as one line. A trailing line break does NOT spawn a phantom
- * zero-length line entry — `wc -l + 1` semantics for unterminated
- * input, `wc -l` semantics for terminated. (Without this skip, a
- * `.js` minified bundle that ends with a Windows-style trailing
- * `\r\n` after one 700-char run would report `[700, 0]`, dragging
- * the median to 350 and silently dropping the corroborator's median
- * conjunct on the file. The skip-trailing-empty rule keeps the line
- * stats faithful to the source's actual line count regardless of
- * terminator habits.) The helper allocates exactly the returned
- * array — no intermediate splits.
- */
-function collectLineLengths(source: string): readonly number[] {
-  const lengths: number[] = [];
-  let runLength = 0;
-  let lastWasCR = false;
-  let lastWasTerminator = false;
-  for (let i = 0; i < source.length; i++) {
-    const ch = source.charCodeAt(i);
-    if (ch === 10 || ch === 13) {
-      // CRLF collapses to one line break: the `\r` records the line,
-      // and the following `\n` sees `lastWasCR === true` so it skips
-      // recording a zero-length line.
-      if (ch === 10 && lastWasCR) {
-        lastWasCR = false;
-        lastWasTerminator = true;
-        continue;
-      }
-      lengths.push(runLength);
-      runLength = 0;
-      lastWasCR = ch === 13;
-      lastWasTerminator = true;
-      continue;
-    }
-    runLength++;
-    lastWasCR = false;
-    lastWasTerminator = false;
-  }
-  // Flush only the final unterminated line — a terminator at end of
-  // input has already pushed its line, and re-emitting a zero-length
-  // entry here would inflate `totalLines` and pull `medianLineLength`
-  // toward zero on otherwise-bundle-shaped files.
-  if (!lastWasTerminator) lengths.push(runLength);
-  return lengths;
-}
-
-/**
- * Median of `lengths` by sorting a COPY (the caller owns the scratch
- * array, we don't mutate it). Empty input → 0; even lengths average
- * the middle two (floored — medians of integer line lengths stay
- * integer for easy comparison against the threshold).
- */
-function medianOfUnsortedLengths(lengths: readonly number[]): number {
-  if (lengths.length === 0) return 0;
-  const sorted = [...lengths].sort((a, b) => a - b);
-  const mid = sorted.length >>> 1;
-  if (sorted.length % 2 === 1) return sorted[mid] ?? 0;
-  return Math.floor(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
-}
-
-/**
  * Returns the structured `max-line-length-exceeds-threshold` signal
  * when both the single-long-line probe AND a second-tier
  * corroborator also fire; `null` otherwise. The two corroborators
@@ -888,6 +791,22 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
  * cases (vanilla-JS SRI preloads, inline SVG paths, design-system
  * `calc()` token modules, SCSS function signatures).
  *
+ * Both branches consume a *data-URL-deducted* view of the line
+ * distribution: long lines whose >threshold reach is dominated by an
+ * inline `data:` URL payload (residual length after stripping the
+ * payload drops below {@link MINIFIED_LINE_THRESHOLD}) are deducted
+ * from the count-floor / ratio inputs and replaced by their residual
+ * length in the median input. Those lines are authored content
+ * (design-system base64 icons, mask-icon SVG data URIs,
+ * `<img src="data:...">` landing-page images), not minified bytes —
+ * counting them as evidence of minification is the canonical Q9
+ * false-positive shape (a 14-line authored design-system SCSS with
+ * 4 inline icon lines hits the 25% ratio on payload alone). Real
+ * minified bundles are unaffected: their per-line residual after
+ * stripping any inlined data-URL payload is still bundle-shape long,
+ * so both corroborators continue to fire. See
+ * {@link longestDataUrlPayloadLength} for the deduction predicate.
+ *
  * The `.min.` infix, hashed filenames, bundler-output path ancestry,
  * and `.map` sibling signals are already deterministic standalone
  * labels upstream of this call (see {@link classifyBuildArtifact} and
@@ -897,8 +816,19 @@ function medianOfUnsortedLengths(lengths: readonly number[]): number {
  */
 function detectLongMinifiedLine(source: string): BuildArtifactSignal | null {
   if (!hasLongMinifiedLine(source)) return null;
-  const { totalLines, longLineCount, medianLineLength, maxLineLength } = computeLineStats(source);
+  const stats = computeLineStats(source, MINIFIED_LINE_THRESHOLD);
+  const { totalLines, longLineCount, medianLineLength, maxLineLength } = stats;
   if (totalLines === 0) return null;
+  // Deduct long lines whose >threshold reach is dominated by an inline
+  // `data:` URL payload. Those lines are authored content (CSS
+  // background icons, HTML inline data-URIs, SVG mask gradients), not
+  // minified bytes. The median branch already consumes the deducted
+  // distribution via `effectiveLengths` inside `computeLineStats`; the
+  // count-floor / ratio branches deduct here. After deduction, the
+  // residual long lines must independently satisfy the corroborator
+  // — a 1350-line authored design-system SCSS with a few inline icon
+  // lines no longer mislabels (canonical Q9 false-positive shape).
+  const residualLongLineCount = longLineCount - stats.dataUrlDominatedLongLineCount;
   if (medianLineLength > MINIFIED_LINE_THRESHOLD) {
     return {
       kind: "max-line-length-exceeds-threshold",
@@ -907,8 +837,8 @@ function detectLongMinifiedLine(source: string): BuildArtifactSignal | null {
       corroborator: "median",
     };
   }
-  if (longLineCount < MINIFIED_LONG_LINE_MIN_COUNT) return null;
-  if (longLineCount / totalLines >= MINIFIED_LONG_LINE_RATIO) {
+  if (residualLongLineCount < MINIFIED_LONG_LINE_MIN_COUNT) return null;
+  if (residualLongLineCount / totalLines >= MINIFIED_LONG_LINE_RATIO) {
     return {
       kind: "max-line-length-exceeds-threshold",
       value: maxLineLength,

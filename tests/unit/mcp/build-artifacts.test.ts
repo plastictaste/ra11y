@@ -478,6 +478,109 @@ describe("classifyBuildArtifact — data-URL CSS predicate retired (regression g
   });
 });
 
+describe("classifyBuildArtifact — data-URL-dominated long-line dedupct (regression guard)", () => {
+  // Long lines whose >threshold reach is dominated by an inline `data:`
+  // URL payload are authored content (CSS background icons, HTML
+  // `src="data:..."` attributes, SVG mask gradients) — not minified
+  // bytes. The corroborated long-line probe deducts these lines from
+  // its count before applying the count floor / ratio / median checks,
+  // so a hand-authored design-system SCSS sprinkling several inline
+  // base64 icons across a small file no longer trips `likely-
+  // minified-by-line-stats` on authored payload alone. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+  // meta sub-fields are dishonest": when content evidence shows the
+  // long line is authored payload, the corroborator's verdict ("this
+  // file is minified bytes") contradicts the source shape.
+  it("does NOT classify a small design-system SCSS where the only long lines are inline data-URL icons", () => {
+    // Canonical Q9 false-positive shape: ~8 short authored rules + 3
+    // inline base64 PNG icons whose lines cross the 500-char threshold
+    // because of the data-URL payload. Without dedupct: longLineCount
+    // = 3, totalLines = 11, ratio = 27% (above 25% floor), count floor
+    // satisfied at 3 — would mislabel. With dedupct: residual long
+    // lines = 0, neither corroborator fires, file stays unlabeled.
+    const lines = ["/* Icons */"];
+    for (let i = 0; i < 7; i++) lines.push(`.token-${i} { color: red; }`);
+    for (let i = 0; i < 3; i++) {
+      lines.push(`.icon-${i} { background: url(data:image/png;base64,${"A".repeat(700)}); }`);
+    }
+    const source = lines.join("\n");
+    expect(classifyBuildArtifact("scss/_icons.scss", source)).toBe(null);
+  });
+
+  it("does NOT classify a 1350-line authored SCSS with a single inline data-URL marker", () => {
+    // Canonical 1350-line authored design-system SCSS shape: `/* Base */`
+    // opener, hundreds of short hand-written rules, one inline base64
+    // PNG icon whose line crosses the long-line threshold. Even before
+    // the dedupct landed this shape already returned null (1-of-1342
+    // long-line ratio is well below 25%); this test pins the invariant
+    // so a future tightening of the count floor can't silently re-
+    // introduce the mislabeling.
+    const lines = ["/* Base */", ""];
+    for (let i = 0; i < 1340; i++) {
+      lines.push(`.token-${i} { color: red; padding: 0.5rem; }`);
+    }
+    lines.push(`.icon-bg { background: url(data:image/png;base64,${"A".repeat(700)}); }`);
+    const source = lines.join("\n");
+    expect(classifyBuildArtifact("scss/_style.scss", source)).toBe(null);
+  });
+
+  it("does NOT classify a small file whose long lines are dominated by URL-encoded SVG data URIs", () => {
+    // SVG mask icon shape — `data:image/svg+xml,%3Csvg…%3C/svg%3E` is
+    // URL-encoded rather than base64, but the deduction predicate
+    // covers both forms (`data:<mediatype>[;base64],<payload>` regex
+    // captures the comma-separated payload regardless of encoding).
+    const lines = [".tokens {"];
+    for (let i = 0; i < 8; i++) lines.push(`  --color-${i}: oklch(0.5 0.1 0);`);
+    for (let i = 0; i < 3; i++) {
+      lines.push(
+        `  --mask-${i}: url(data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E${"%3Cpath%20d%3D%22M0%2C0%22%2F%3E".repeat(20)}%3C%2Fsvg%3E);`,
+      );
+    }
+    lines.push("}");
+    const source = lines.join("\n");
+    expect(classifyBuildArtifact("scss/_masks.scss", source)).toBe(null);
+  });
+
+  it("does NOT classify a 1-line HTML where the only long-line content is an inline data: image", () => {
+    // Vanilla landing-page shape: one short HTML line whose `<img>`
+    // src embeds a base64 PNG. Without dedupct the median corroborator
+    // fires trivially (totalLines = 1, median = entire line length).
+    // With dedupct the residual non-data-URL length is well below the
+    // threshold, the median drops, and the file stays unlabeled.
+    const source = `<img src="data:image/png;base64,${"A".repeat(700)}" alt="hero"/>`;
+    expect(source.length).toBeGreaterThan(500);
+    expect(classifyBuildArtifact("hero.html", source)).toBe(null);
+  });
+
+  it("classifies a real minified bundle even when one of its lines inlines a data-URL", () => {
+    // Sanity: dedupct only affects lines whose >threshold reach is
+    // dominated by the data-URL payload. A minified CSS bundle whose
+    // residual non-data-URL line content still crosses the threshold
+    // (real minified rules concatenated alongside the inline asset)
+    // continues to classify — the dedupct is conservative by design.
+    const minifiedRule = `.a{color:red;}`.repeat(50); // ~700 chars of bundle rules
+    const inlineDataUrl = `.b{background:url(data:image/png;base64,${"A".repeat(400)});}${"x".repeat(400)}`;
+    const source = [minifiedRule, inlineDataUrl, minifiedRule].join("\n");
+    // The middle line has both data-URL payload AND ~400 chars of
+    // residual bundle content; len - longestPayload > 500, so it does
+    // NOT count as data-URL-dominated and the corroborator still fires.
+    expect(classifyBuildArtifact("vendor/bundle.css", source)).toBe(
+      "likely-minified-by-line-stats",
+    );
+  });
+
+  it("classifies a real minified bundle whose median is one enormous data-URL-free line", () => {
+    // Sanity: the canonical minified-JS-bundle shape (one ~700-char
+    // line, no data-URLs anywhere) is unaffected by the dedupct — no
+    // line is data-URL-dominated, so longLineCount and median are
+    // unchanged from the pre-dedupct baseline.
+    const source = `(function(){${"a=1;".repeat(200)}})();`;
+    expect(classifyBuildArtifact("vendor/app.bundle.js", source)).toBe(
+      "likely-minified-by-line-stats",
+    );
+  });
+});
+
 describe("classifyBuildArtifact — SVG single-line authoring norm (regression guard)", () => {
   // Single-line is the canonical SVG authoring shape: a hand-authored
   // brand SVG is one well-formed `<svg ...>...</svg>` element, often
