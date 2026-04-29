@@ -776,7 +776,8 @@ describe("category never contradicts fixClass", () => {
       ruleId: "keyboard/handler-missing",
       fixClass: "verify-in-source",
       location: { filePath: "a.tsx", line: 1, column: 1 },
-      suggestion: "Read the surrounding component to decide which element should carry the handler.",
+      suggestion:
+        "Read the surrounding component to decide which element should carry the handler.",
     });
     const finding = buildAgentFinding(v);
     expect(finding.fixClass).toBe("verify-in-source");
