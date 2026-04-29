@@ -24,8 +24,8 @@
  *     originating tool's own envelope construction. Belong to the
  *     originating tool only and DO NOT propagate. Examples:
  *     `response_meta_truncated`, `response_token_budget_truncated`,
- *     `response_dropped_files_oversize` (scan_project),
- *     `max_candidates_per_criterion_clamped`,
+ *     `response_dropped_files_oversize`, `truncated_files_dropped`
+ *     (scan_project), `max_candidates_per_criterion_clamped`,
  *     `results_truncated_use_nextcursor` (checklist).
  *
  * The fixture stays small enough that the duration-dependent path of
@@ -100,6 +100,7 @@ const RESPONSE_INSTANCE_CODES: ReadonlySet<string> = new Set([
   "response_meta_truncated",
   "response_token_budget_truncated",
   "response_dropped_files_oversize",
+  "truncated_files_dropped",
   "max_candidates_per_criterion_clamped",
   "results_truncated_use_nextcursor",
 ]);

@@ -189,6 +189,30 @@ export type ScanWarningCode =
   // sentinel that triggered the fallback so the agent knows how
   // aggressive the over-budget was.
   | "response_dropped_files_oversize"
+  // a response-instance truncation
+  // pass (the density cap in `mergeBudgetedFields` OR the slim
+  // envelope in `buildSlimScanProjectEnvelope`) discarded one or
+  // more files-with-findings from the wire `files[]` to fit under
+  // the host-token wall. Pairs with — but does not subsume —
+  // `response_token_budget_truncated` and `response_dropped_files_oversize`,
+  // which name the BYTE arithmetic of the clip pass; this code
+  // names the RULE-LEVEL impact so the agent can decide whether to
+  // re-scope (the dropped findings are dominated by one rule the
+  // agent can address with a single fix or exclude) or re-call with
+  // a tighter `restrictToPaths`. Without this code, an agent seeing
+  // the byte-level warnings knows files were dropped but has zero
+  // signal about which rule families fired on the dropped subset,
+  // so it cannot tell "a single dominant rule's noise was clipped"
+  // from "the cross-rule signal was uniformly clipped" — two
+  // recoveries differ. Paired payload:
+  // `warningsDetails.truncated_files_dropped` carries
+  // `{ droppedFileCount, ruleFamiliesAffected, topDroppedRules }`
+  // so the agent reads the per-rule impact directly off the warning
+  // channel without descending into the dropped-file inventory
+  // (which is gone from `files[]`). Surface-don't-suppress: this is
+  // additive telemetry on top of the byte-level codes, not a
+  // suppression channel.
+  | "truncated_files_dropped"
   // Session wrappers were registered against one cwd and the current
   // scan's resolved root differs. Session state is connection-wide, so
   // the wrappers still apply — the warning tells the agent the
@@ -1804,6 +1828,58 @@ export interface ScanWarningDetails {
     }[];
   };
   /**
+   * payload for `truncated_files_dropped`. Names the
+   * rule-level impact of the truncation pass so the agent reads the
+   * per-rule arithmetic directly off the warning channel, without
+   * having to call back with a wider `limit` to inspect the dropped
+   * subset (which is gone from this response's `files[]`).
+   *
+   * - `droppedFileCount` — number of files-with-findings the
+   *   truncation pass discarded. Pairs with the byte-level
+   *   `response_token_budget_truncated.requestedLimit/effectiveLimit`
+   *   and `response_dropped_files_oversize.droppedFileCountFromRequestedLimit`
+   *   on the same response: the byte counters answer "how many
+   *   entries did the cap drop"; this counter answers the same
+   *   question on the rule-impact axis (always equal to the byte
+   *   counter when both fire on the same pass; carried separately so
+   *   downstream consumers don't have to cross-read).
+   * - `ruleFamiliesAffected` — unique rule-family prefixes (the
+   *   token before `/` in `ruleId`, e.g. `keyboard`, `aria`,
+   *   `forms`) across every finding on every dropped file. Sorted
+   *   alphabetically so the wire shape stays deterministic across
+   *   runs. The "family" axis is the coarse-grained pivot the agent
+   *   uses to decide between recoveries: a single-family drop
+   *   (`["keyboard"]`) means "narrowing to `keyboard/*` rules will
+   *   capture what was lost"; a many-family drop means "the wave is
+   *   cross-cutting, scope down via `restrictToPaths` instead."
+   * - `topDroppedRules` — top {@link TRUNCATED_FILES_TOP_DROPPED_RULES_CAP}
+   *   `(ruleId, droppedCount)` entries by `droppedCount`, sorted
+   *   descending with alphabetical tie-break for determinism.
+   *   `droppedCount` is the count of finding instances of that rule
+   *   across the dropped file set (NOT the file count) so an agent
+   *   reading `{ ruleId: "keyboard/handler-missing", droppedCount: 80 }`
+   *   knows the magnitude of the rule's impact on this corpus
+   *   directly. Bounded so the wire shape stays under budget on
+   *   bulk-vendor corpora; the dropped tail past the cap is
+   *   recoverable via a re-call with a tighter scope.
+   *
+   * Always present when this warning fires; the truncation pass
+   * always knows the dropped finding set's per-rule arithmetic at
+   * the moment it decides to drop. Per the AI-first doctrine
+   * "Oversize-success is ambiguous failure" (file-level analogue):
+   * an agent reading the byte-level warnings alone cannot tell which
+   * rule families' findings just disappeared from this response;
+   * the rule-level payload closes the silent-miss gap.
+   */
+  readonly truncated_files_dropped?: {
+    readonly droppedFileCount: number;
+    readonly ruleFamiliesAffected: readonly string[];
+    readonly topDroppedRules: readonly {
+      readonly ruleId: string;
+      readonly droppedCount: number;
+    }[];
+  };
+  /**
    * payload for `bulk_catalog_detected`.
    * Carries the trigger discriminator (`slow_and_vendor_heavy` vs.
    * `bulk_and_vendor_heavy` — see {@link import("./bulk-catalog.ts").BulkCatalogTrigger})
@@ -2198,6 +2274,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "parse_errors_present",
   "response_token_budget_truncated",
   "response_dropped_files_oversize",
+  "truncated_files_dropped",
   "session_wrappers_configured_for_different_cwd",
   "content_files_skipped",
   "source_language_unsupported",
@@ -4192,6 +4269,81 @@ export function tokenBudgetTruncatedDetailsField(args: {
           : { dominantContributor: contributor.dominantContributor }),
       },
     },
+  };
+}
+
+/**
+ * Top-N cap for the `topDroppedRules` array on
+ * `warningsDetails.truncated_files_dropped`. Bounded so the wire
+ * shape stays under budget on bulk-vendor corpora where the dropped
+ * file set may carry findings across dozens of rules; the dropped
+ * tail past the cap is recoverable via a re-call with a tighter
+ * scope, and the agent's first-read priority is the densest few
+ * rules anyway. Exported so unit tests pin the cap and detect silent
+ * drift.
+ */
+export const TRUNCATED_FILES_TOP_DROPPED_RULES_CAP = 10;
+
+/**
+ * Builds the structured payload for the `truncated_files_dropped`
+ * warning code. Pure shape-builder over the dropped-file findings
+ * — caller has already decided which files are being dropped from
+ * the wire `files[]`; this helper aggregates the per-rule
+ * arithmetic so the warning channel surfaces rule-level impact
+ * alongside the byte-level codes (`response_token_budget_truncated`,
+ * `response_dropped_files_oversize`) the same truncation pass also
+ * stamps.
+ *
+ * The dropped-file shape is per-finding `{ ruleId }` — extracted by
+ * the caller from `AgentFinding[]` on the dropped subset. Returns
+ * `undefined` when the dropped subset carried zero findings (e.g.
+ * a synthetic empty-findings file made it onto `files[]` and got
+ * trimmed): the warning predicate is "files-with-findings dropped,"
+ * so an empty per-rule arithmetic is the signal not to fire the
+ * code at all. Caller conditional-spreads on the return value.
+ *
+ * @param droppedFileFindings — flat list of `{ ruleId }` records
+ *   across every dropped file's findings. Order doesn't matter; the
+ *   helper aggregates by rule and re-sorts deterministically.
+ * @param droppedFileCount — count of files whose findings the
+ *   helper just ate. Stamped on the payload as the file-count
+ *   denominator so the agent doesn't have to re-derive it; pairs
+ *   with the per-pass byte-level counters on the same wire.
+ *
+ * Returns `undefined` when no rule-bearing findings were dropped —
+ * the caller suppresses both the code and the payload via
+ * conditional spread, consistent with "Ambiguous field shapes are
+ * dishonest" (don't ship an empty payload alongside a fired code).
+ */
+export function truncatedFilesDroppedDetailsField(args: {
+  readonly droppedFileFindings: readonly { readonly ruleId: string }[];
+  readonly droppedFileCount: number;
+}): NonNullable<ScanWarningDetails["truncated_files_dropped"]> | undefined {
+  const { droppedFileFindings, droppedFileCount } = args;
+  if (droppedFileFindings.length === 0) return undefined;
+  const perRuleCounts = new Map<string, number>();
+  const families = new Set<string>();
+  for (const f of droppedFileFindings) {
+    perRuleCounts.set(f.ruleId, (perRuleCounts.get(f.ruleId) ?? 0) + 1);
+    const slashIdx = f.ruleId.indexOf("/");
+    const family = slashIdx === -1 ? f.ruleId : f.ruleId.slice(0, slashIdx);
+    families.add(family);
+  }
+  // Determinism: sort by count desc, alphabetical tie-break. The
+  // agent reads the densest rules first; ties are stable across
+  // runs so a re-scan of the same corpus produces the same head
+  // slice.
+  const sorted = [...perRuleCounts.entries()].sort(
+    ([aRule, aCount], [bRule, bCount]) => bCount - aCount || aRule.localeCompare(bRule),
+  );
+  const topDroppedRules = sorted
+    .slice(0, TRUNCATED_FILES_TOP_DROPPED_RULES_CAP)
+    .map(([ruleId, droppedCount]) => ({ ruleId, droppedCount }));
+  const ruleFamiliesAffected = [...families].sort((a, b) => a.localeCompare(b));
+  return {
+    droppedFileCount,
+    ruleFamiliesAffected,
+    topDroppedRules,
   };
 }
 

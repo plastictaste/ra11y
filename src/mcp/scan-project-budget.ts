@@ -29,6 +29,10 @@ import { applyTokenBudget } from "./token-budget.ts";
 import { analyzeTopContributor } from "./token-budget-contributor.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
 import {
+  computeTruncatedFilesDroppedWarning,
+  spliceTruncatedFilesDropped,
+} from "./truncated-files-dropped.ts";
+import {
   fillMissingWarningDetails,
   type ScanWarningCode,
   type ScanWarningDetails,
@@ -319,6 +323,16 @@ function mergeBudgetedFields(args: {
     effectiveLimit: densityEffectiveLimit,
     topContributor,
   }).warningsDetails;
+  // Q9 rule-level impact of the density-cap drop —
+  // the dropped subset is the tail past `budgeted.files.length`
+  // (applyTokenBudget pops from the tail). See
+  // `truncated-files-dropped.ts` for the helper rationale.
+  const droppedTailFiles = filesForAnalysis.slice(budgeted.files.length);
+  const truncatedFilesDroppedPayload =
+    computeTruncatedFilesDroppedWarning(droppedTailFiles).payload;
+  if (truncatedFilesDroppedPayload !== undefined && !warnings.includes("truncated_files_dropped")) {
+    warnings.push("truncated_files_dropped");
+  }
   // Merge the density-cap payload with the pre-existing
   // `baseWarningsDetails` so codes like
   // `vendor_css_dominates_findings` that rode in from the scan
@@ -332,6 +346,9 @@ function mergeBudgetedFields(args: {
   const mergedDetails: ScanWarningDetails = fillMissingWarningDetails(warnings, {
     ...(baseWarningsDetails ?? {}),
     ...densityDetails,
+    ...(truncatedFilesDroppedPayload === undefined
+      ? {}
+      : { truncated_files_dropped: truncatedFilesDroppedPayload }),
   });
   // when the density cap clipped
   // the page to ≤ 2 files AND the project carries > 100 files-with-
@@ -532,6 +549,10 @@ function buildSlimScanProjectEnvelope(args: {
     ...slimmedPlan.truncations,
     ...slimmedDetails.truncations,
   ];
+  // Q9 rule-level impact of the slim path's drop — slim ships
+  // `files: []`, dropping the entire `formatted.files` set. See
+  // `truncated-files-dropped.ts` for the helper rationale.
+  const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(formatted.files).payload;
   const merged = oversizeEnvelopeWarningsField({
     reason,
     ...(baseWarnings === undefined ? {} : { baseWarnings }),
@@ -541,6 +562,12 @@ function buildSlimScanProjectEnvelope(args: {
     ...(metaFieldsDropped.length > 0 ? { metaFieldsDropped } : {}),
     ...(slimTruncations.length > 0 ? { slimTruncations } : {}),
   });
+  // Splice the rule-level warning + payload onto the byte-level
+  // result returned by `oversizeEnvelopeWarningsField`. Keys never
+  // overlap with the codes that helper just stamped, so the merge
+  // is safe — see `spliceTruncatedFilesDropped` for the details.
+  const { warnings: finalWarnings, warningsDetails: finalWarningsDetails } =
+    spliceTruncatedFilesDropped(merged, truncatedFilesDroppedPayload);
   return {
     plan: slimmedPlan.plan,
     files: [],
@@ -587,8 +614,8 @@ function buildSlimScanProjectEnvelope(args: {
       formatted,
       fullMeta,
     }),
-    warnings: merged.warnings,
-    warningsDetails: merged.warningsDetails,
+    warnings: finalWarnings,
+    warningsDetails: finalWarningsDetails,
     meta: applyMetaCacheMode({ toolName: "scan_project", params, fullMeta: slimMeta, session }),
   };
 }

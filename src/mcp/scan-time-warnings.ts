@@ -33,7 +33,8 @@
  *     produced here. Each tool merges these onto the shared scan-time
  *     codes at its own assembly seam: `response_meta_truncated`,
  *     `response_token_budget_truncated`, `response_dropped_files_oversize`,
- *     `max_candidates_per_criterion_clamped`, `results_truncated_use_nextcursor`.
+ *     `truncated_files_dropped`, `max_candidates_per_criterion_clamped`,
+ *     `results_truncated_use_nextcursor`.
  *     They belong to the originating tool only and DO NOT propagate.
  *
  * The `bulk_catalog_detected` predicate has a duration component that

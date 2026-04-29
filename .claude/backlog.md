@@ -238,8 +238,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### nextStep routing dishonesty
 
-- [ ] **Q9-TRUNCATED-FILES-DROPPED-COUNT-WARNING** Truncated responses drop file-level findings without a per-rule index of what was dropped. Static-site corpus: `warnings: ["response_meta_truncated"]` ships but no `truncated_files_dropped_count` code names how many files lost coverage; topline counts disagree with returned file findings, forcing scan_file follow-ups. Fix: add a structured `truncated_files_dropped` warning naming `{droppedFileCount, ruleFamiliesAffected: ["..."], topDroppedRules: [{ruleId, droppedCount}]}` so the agent can decide whether to re-scope or re-call with `verboseMeta: true`. Per AI-first doctrine "Oversize-success is ambiguous failure" (file-level analogue).
-
 ### 2026-04-26 round recurrences (folded onto existing Q9 rows)
 
 Each line: `Q9 row id — N recurrences observed in 2026-04-26 round, evidence summary`. The 2026-04-26 sweep replayed the 4-corpora × 5-angles probe; items below recurred without behavior change against the same Q9 closure framing, so this round folds them as recurrence counts rather than new rows.

@@ -670,4 +670,250 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     // no truncation engaged.
     expect(response.filesArrayDropped).toBeUndefined();
   });
+
+  it("emits `truncated_files_dropped` with rule-level arithmetic on the slim envelope path when files-with-findings get dropped", () => {
+    // Q9 — the slim envelope ships
+    // `files: []`, dropping the entire `formatted.files` set from the
+    // wire. The agent reading the byte-level
+    // `response_dropped_files_oversize` payload knows files were
+    // dropped but has zero signal about which rule families just
+    // disappeared. The new code closes the silent-miss gap with a
+    // per-rule tally.
+    const session = new McpSession();
+    const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
+      plan: {
+        notes: 0,
+        fixesByClass: { mechanical: 4, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        reviewNeeded: 0,
+        manualOnly: 0,
+        estimatedEffort: "small",
+        summary: "4 findings",
+      },
+      files: [
+        {
+          path: "src/a.tsx",
+          findings: [
+            { ruleId: "keyboard/handler-missing" } as never,
+            { ruleId: "keyboard/handler-missing" } as never,
+          ],
+        },
+        {
+          path: "src/b.tsx",
+          findings: [{ ruleId: "aria/icon-child-missing-aria-hidden" } as never],
+        },
+        {
+          path: "src/c.tsx",
+          findings: [{ ruleId: "forms/labels-required" } as never],
+        },
+      ],
+      meta: {},
+    };
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: { files: formatted.files, referenceGuide: undefined },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: formatted.files.length,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 3,
+        durationMs: 5,
+        configSource: null,
+        bloatedField: hugePayload,
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    // Slim envelope engaged.
+    expect(response.files).toEqual([]);
+    expect(response.filesArrayDropped).toBe(true);
+
+    const warnings = response.warnings as readonly string[];
+    expect(warnings).toContain("response_dropped_files_oversize");
+    expect(warnings).toContain("truncated_files_dropped");
+
+    const details = response.warningsDetails as Record<string, Record<string, unknown>>;
+    const tfdPayload = details.truncated_files_dropped as {
+      droppedFileCount: number;
+      ruleFamiliesAffected: readonly string[];
+      topDroppedRules: readonly { ruleId: string; droppedCount: number }[];
+    };
+    expect(tfdPayload.droppedFileCount).toBe(3);
+    // Sorted alphabetically.
+    expect(tfdPayload.ruleFamiliesAffected).toEqual(["aria", "forms", "keyboard"]);
+    // Top by count, alphabetical tie-break.
+    expect(tfdPayload.topDroppedRules).toEqual([
+      { ruleId: "keyboard/handler-missing", droppedCount: 2 },
+      { ruleId: "aria/icon-child-missing-aria-hidden", droppedCount: 1 },
+      { ruleId: "forms/labels-required", droppedCount: 1 },
+    ]);
+  });
+
+  it("emits `truncated_files_dropped` on the density-cap path with rule-level arithmetic of the dropped tail", () => {
+    // Q9 — the density cap drops trailing
+    // files when the assembled response crosses
+    // `DEFAULT_TOKEN_BUDGET_CHARS`. The dropped tail's per-rule
+    // arithmetic ships alongside the byte-level
+    // `response_token_budget_truncated` payload so the agent can
+    // decide whether to widen `limit` or scope down based on which
+    // rule families just disappeared from the wire.
+    //
+    // Synthetic bloat strategy: each file carries one finding with a
+    // long-string `message` that pushes the per-file payload to ~10
+    // KB, and ten files in the inventory. The assembled response
+    // crosses 88 KB, the density cap drops the tail, and the
+    // surviving head plus the dropped tail give the assertion fixtures
+    // a deterministic shape to read.
+    const session = new McpSession();
+    // ~10 KB of bloat per finding — enough to ensure dropped tail
+    // crosses the budget when the inventory is large enough.
+    const bloat = "x".repeat(10_000);
+    const buildFinding = (ruleId: string, line: number) => ({
+      findingId: `${ruleId}@${line}`,
+      groupKey: ruleId,
+      ruleId,
+      fixClass: "guidance",
+      criteria: ["wcag22:2.1.1"],
+      severity: "error",
+      confidence: "high",
+      line,
+      column: 1,
+      message: `${bloat} ${ruleId}`,
+    });
+    // Files alphabetical-by-path so the density cap drops tail (z*)
+    // before head (a*) — matches `discoverFiles` ordering.
+    const files: Parameters<typeof assembleScanProjectResponse>[0]["formatted"]["files"] =
+      Array.from({ length: 10 }, (_, i) => ({
+        path: `src/${String.fromCharCode(97 + i)}.tsx`,
+        findings: [
+          buildFinding(
+            i < 5 ? "keyboard/handler-missing" : "aria/icon-child-missing-aria-hidden",
+            i + 1,
+          ) as never,
+        ],
+      }));
+    const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
+      plan: {
+        notes: 0,
+        fixesByClass: { mechanical: 0, guidance: 10, runtimeOnly: 0, verifyInSource: 0 },
+        reviewNeeded: 0,
+        manualOnly: 0,
+        estimatedEffort: "small",
+        summary: "10 findings",
+      },
+      files,
+      meta: {},
+    };
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: { files: formatted.files, referenceGuide: undefined },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: formatted.files.length,
+          requestedLimit: 10,
+          effectiveLimit: 10,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 10,
+        durationMs: 5,
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    // The density cap fired (some files dropped); the slim envelope
+    // did NOT fire (post-density envelope fits under the host
+    // ceiling). Both warnings ride together.
+    const warnings = response.warnings as readonly string[];
+    expect(warnings).toContain("response_token_budget_truncated");
+    expect(warnings).toContain("truncated_files_dropped");
+    // Slim path NOT engaged on this fixture — files[] still carries
+    // the surviving head, not the dropped-everything sentinel.
+    const survivingFiles = response.files as readonly unknown[];
+    expect(survivingFiles.length).toBeGreaterThan(0);
+    expect(survivingFiles.length).toBeLessThan(formatted.files.length);
+    expect(response.filesArrayDropped).toBeUndefined();
+
+    const details = response.warningsDetails as Record<string, Record<string, unknown>>;
+    const tfdPayload = details.truncated_files_dropped as {
+      droppedFileCount: number;
+      ruleFamiliesAffected: readonly string[];
+      topDroppedRules: readonly { ruleId: string; droppedCount: number }[];
+    };
+    expect(tfdPayload).toBeDefined();
+    // The dropped count equals the number of files trimmed off the
+    // tail (alphabetical-by-path order). Survivor count + dropped
+    // count = full inventory.
+    expect(tfdPayload.droppedFileCount).toBe(formatted.files.length - survivingFiles.length);
+    // The dropped tail is z..f (0-indexed positions 5..9 in the
+    // alphabetical inventory) — those are the `aria/*` rule, matching
+    // the fixture's split. Assertion is on family membership rather
+    // than exact count because the density cap's drop count is a
+    // function of `applyTokenBudget`'s greedy trim regime.
+    expect(tfdPayload.ruleFamiliesAffected).toContain("aria");
+    expect(tfdPayload.topDroppedRules.length).toBeGreaterThan(0);
+    expect(tfdPayload.topDroppedRules[0]?.ruleId).toBe("aria/icon-child-missing-aria-hidden");
+  });
+
+  it("does not emit `truncated_files_dropped` when the slim envelope drops zero files-with-findings (synthetic empty-findings inventory)", () => {
+    // Defensive: when the dropped subset carries zero findings (the
+    // single file in the inventory had `findings: []`), the warning
+    // is suppressed alongside its payload — "Ambiguous field shapes
+    // are dishonest" applied to the rule-level surface.
+    const session = new McpSession();
+    const formatted = buildMinimalFormatted();
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: { files: formatted.files, referenceGuide: undefined },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: 1,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 1,
+        durationMs: 5,
+        bloatedField: hugePayload,
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    // Slim envelope engaged.
+    expect(response.filesArrayDropped).toBe(true);
+    const warnings = response.warnings as readonly string[];
+    expect(warnings).toContain("response_dropped_files_oversize");
+    expect(warnings).not.toContain("truncated_files_dropped");
+    const details = response.warningsDetails as Record<string, unknown>;
+    expect(details.truncated_files_dropped).toBeUndefined();
+  });
 });

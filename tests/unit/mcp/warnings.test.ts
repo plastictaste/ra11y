@@ -16,7 +16,9 @@ import { describe, expect, it } from "bun:test";
 import {
   computeScanWarningDetails,
   computeScanWarnings,
+  TRUNCATED_FILES_TOP_DROPPED_RULES_CAP,
   tokenBudgetTruncatedDetailsField,
+  truncatedFilesDroppedDetailsField,
   warningsField,
   warningsFieldFromScanMeta,
   warningsFromScanMeta,
@@ -3131,5 +3133,101 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
     expect(detail?.count).toBe(28);
     expect(detail?.htmlFiles?.length).toBe(2);
     expect(detail?.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
+  });
+});
+
+describe("truncatedFilesDroppedDetailsField — Q9 rule-level truncation impact", () => {
+  it("aggregates per-rule arithmetic and unique families across the dropped finding set", () => {
+    // The dropped subset carries findings from three rules across two
+    // families. The helper sums each rule's finding count
+    // (NOT the file count — the agent reads "rule X had N findings on
+    // the dropped set"), groups families by the prefix before `/`, and
+    // returns a deterministic shape sorted by count desc with
+    // alphabetical tie-break.
+    const out = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [
+        { ruleId: "keyboard/handler-missing" },
+        { ruleId: "keyboard/handler-missing" },
+        { ruleId: "keyboard/handler-missing" },
+        { ruleId: "aria/icon-child-missing-aria-hidden" },
+        { ruleId: "aria/icon-child-missing-aria-hidden" },
+        { ruleId: "keyboard/focus-visible" },
+      ],
+      droppedFileCount: 4,
+    });
+    expect(out).toBeDefined();
+    expect(out?.droppedFileCount).toBe(4);
+    expect(out?.ruleFamiliesAffected).toEqual(["aria", "keyboard"]);
+    expect(out?.topDroppedRules).toEqual([
+      { ruleId: "keyboard/handler-missing", droppedCount: 3 },
+      { ruleId: "aria/icon-child-missing-aria-hidden", droppedCount: 2 },
+      { ruleId: "keyboard/focus-visible", droppedCount: 1 },
+    ]);
+  });
+
+  it("returns undefined when the dropped subset carried zero findings (caller suppresses both code and payload)", () => {
+    // Defensive — synthetic empty-findings file made it onto `files[]`
+    // and got trimmed. The warning predicate is "files-with-findings
+    // dropped" so the helper signals "do not fire" via `undefined`
+    // rather than ship a payload with empty arrays
+    // ("Ambiguous field shapes are dishonest").
+    const out = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [],
+      droppedFileCount: 0,
+    });
+    expect(out).toBeUndefined();
+  });
+
+  it("caps `topDroppedRules` at TRUNCATED_FILES_TOP_DROPPED_RULES_CAP entries — recovery via re-scope handles the dropped tail", () => {
+    // Bulk-vendor corpus regime: the dropped subset spans more rules
+    // than the agent needs in one read. The cap keeps the wire shape
+    // bounded; the dropped tail past the cap is recoverable via a
+    // re-call with a tighter scope. Synthesize 2× the cap entries so
+    // the head-slice is the load-bearing assertion.
+    const droppedFileFindings = Array.from(
+      { length: TRUNCATED_FILES_TOP_DROPPED_RULES_CAP * 2 },
+      (_, i) => ({ ruleId: `family-${i.toString().padStart(2, "0")}/rule-name` }),
+    );
+    const out = truncatedFilesDroppedDetailsField({
+      droppedFileFindings,
+      droppedFileCount: TRUNCATED_FILES_TOP_DROPPED_RULES_CAP * 2,
+    });
+    expect(out?.topDroppedRules.length).toBe(TRUNCATED_FILES_TOP_DROPPED_RULES_CAP);
+    // Family axis is independent of the rule cap — every unique
+    // family appears regardless of where its rule landed in the
+    // count-sorted head slice.
+    expect(out?.ruleFamiliesAffected.length).toBe(TRUNCATED_FILES_TOP_DROPPED_RULES_CAP * 2);
+  });
+
+  it("uses a deterministic alphabetical tie-break when rule counts are equal", () => {
+    // Without a tie-break, two runs over the same corpus could
+    // produce different head slices on count-tied rules. The agent
+    // reading `topDroppedRules[0]` first must see the same ruleId on
+    // every run; alphabetical-by-ruleId is the durable order.
+    const out = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [
+        { ruleId: "zzz/last" },
+        { ruleId: "aaa/first" },
+        { ruleId: "mmm/middle" },
+      ],
+      droppedFileCount: 3,
+    });
+    expect(out?.topDroppedRules.map((r) => r.ruleId)).toEqual([
+      "aaa/first",
+      "mmm/middle",
+      "zzz/last",
+    ]);
+  });
+
+  it("treats ruleIds without a `/` separator as their own single-token family", () => {
+    // Defensive — third-party rules registered without the
+    // family/<rule> convention. The agent reading the family axis
+    // shouldn't see an empty string; treat the whole ruleId as the
+    // family token so the wire shape stays consistent.
+    const out = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [{ ruleId: "single-token-rule" }, { ruleId: "another-no-slash" }],
+      droppedFileCount: 2,
+    });
+    expect(out?.ruleFamiliesAffected).toEqual(["another-no-slash", "single-token-rule"]);
   });
 });
