@@ -13,6 +13,7 @@ import { logger } from "../utils/logger.ts";
 import { additionalPathsScannedField } from "./additional-paths-classifier.ts";
 import { baselineStatusField, probeBaselineStatus } from "./baseline-status.ts";
 import {
+  type BuildArtifactClassification,
   type BuildArtifactsGrouped,
   collectBuildArtifacts,
   detectVendorLibraries,
@@ -723,6 +724,52 @@ function attachPerFileLimitations(
 }
 
 /**
+ * Builds the `scanned_build_artifacts_present` warning summary —
+ * `{count, topPath?, top?}` — from the classifier's per-entry
+ * verdicts. The agent uses the inline `top` head-slice (up to
+ * {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}) to dismiss
+ * vendor-and-vendor-only scans in one read by inspecting path +
+ * classifier verdict together; without it, an agent reading the
+ * bare code can't tell whether the scan included one stray
+ * `dist/foo.min.css` or a 200-file vendor dump — two distinct
+ * triage regimes with identical top-level shape. The full
+ * per-path detail still lives in `meta.scannedBuildArtifacts`
+ * (grouped + ungrouped) for entries beyond the top-N, gated
+ * through the existing
+ * {@link import("./meta-array-cap.ts").META_ARRAY_CAP} regime.
+ * The `reason` is the per-entry classifier verdict
+ * (`definite-min-infix`, `likely-vendor-distribution`, etc.)
+ * lifted verbatim — no heuristic synthesis at the warnings seam
+ * (per AI-first "Heuristic-mislabeled meta sub-fields are
+ * dishonest"). Returns `undefined` when no entries were
+ * classified; the warning code can still fire off the binary
+ * `present` flag without a payload mirror.
+ *
+ * Extracted from {@link buildBaseWarningsForScanProject} so its
+ * cognitive complexity stays inside the lint budget.
+ */
+function buildScannedBuildArtifactsSummary(entries: readonly ScannedBuildArtifact[]):
+  | {
+      readonly count: number;
+      readonly topPath?: string;
+      readonly top?: readonly {
+        readonly path: string;
+        readonly reason: BuildArtifactClassification;
+      }[];
+    }
+  | undefined {
+  if (entries.length === 0) return undefined;
+  const top = entries
+    .slice(0, SCANNED_BUILD_ARTIFACTS_TOP_CAP)
+    .map((e) => ({ path: e.path, reason: e.classification }));
+  return {
+    count: entries.length,
+    ...(entries[0]?.path === undefined ? {} : { topPath: entries[0].path }),
+    ...(top.length === 0 ? {} : { top }),
+  };
+}
+
+/**
  * assembly seam. Cross-references
  * the build-artifact labels with `formatted.files` to detect the
  * vendor-CSS dominance regime, then emits the spreadable
@@ -813,35 +860,7 @@ function buildBaseWarningsForScanProject(args: {
     formatted.meta["analysisCoverage"] as Record<string, unknown> | undefined,
     templateOverlapResult.overlapFiles,
   );
-  // derive the
-  // `scanned_build_artifacts_present` payload here so the warning code
-  // ships with quantitative signal (count + first-pivot path + top-N
-  // `{path, reason}` records). Without the payload, an agent reading
-  // the bare code can't tell whether the scan included one stray
-  // `dist/foo.min.css` or a 200-file vendor dump — two distinct triage
-  // regimes with identical top-level shape. The inline `top` head-slice
-  // (up to {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}) lets the agent
-  // dismiss vendor-and-vendor-only scans in one read by inspecting
-  // path + classifier verdict together; the full per-path detail still
-  // lives in `meta.scannedBuildArtifacts` (grouped + ungrouped) for
-  // entries beyond the top-N, gated through the existing
-  // {@link import("./meta-array-cap.ts").META_ARRAY_CAP} regime. The
-  // `reason` is the per-entry classifier verdict (`definite-min-infix`,
-  // `likely-vendor-distribution`, etc.) lifted verbatim — no heuristic
-  // synthesis at the warnings seam.
-  const scannedBuildArtifactsTop = buildArtifacts.entries
-    .slice(0, SCANNED_BUILD_ARTIFACTS_TOP_CAP)
-    .map((e) => ({ path: e.path, reason: e.classification }));
-  const scannedBuildArtifactsSummary =
-    buildArtifacts.entries.length > 0
-      ? {
-          count: buildArtifacts.entries.length,
-          ...(buildArtifacts.entries[0]?.path === undefined
-            ? {}
-            : { topPath: buildArtifacts.entries[0].path }),
-          ...(scannedBuildArtifactsTop.length === 0 ? {} : { top: scannedBuildArtifactsTop }),
-        }
-      : undefined;
+  const scannedBuildArtifactsSummary = buildScannedBuildArtifactsSummary(buildArtifacts.entries);
   // narrow the build-artifact
   // entries to the minified subset specifically. The classifier emits
   // two minified-shaped classifications (`definite-min-infix` for
