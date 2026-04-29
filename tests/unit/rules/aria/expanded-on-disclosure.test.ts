@@ -817,7 +817,7 @@ describe("rule aria/expanded-on-disclosure", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it('emits the predicate-uncertainty token on a class-only collapsed match', () => {
+    it("emits the predicate-uncertainty token on a class-only collapsed match", () => {
       // The class-only path is the weakest predicate branch; every emit
       // must carry the same `couldBeWrongBecause` signal as the other
       // class-token matches so an agent triaging by uncertainty axis
