@@ -53,6 +53,101 @@ describe("detectApplicability", () => {
     expect(detectApplicability([makeFile("a.html", "<audio />")]).hasMedia).toBe(true);
   });
 
+  it("detects <iframe> embeds of known video hosts as media presence", () => {
+    // Doctrine: `likelyIrrelevant` for 1.2.x must be provable from
+    // code. A YouTube/Vimeo/etc. embed iframe is the same predicate
+    // strength as a literal <video> tag — the host allowlist names
+    // hosts whose URL shape unambiguously identifies video. Without
+    // this branch the bucket silently hides 1.2.x candidates on docs
+    // sites whose only A/V is a host-embedded clip.
+    const youtube = makeFile(
+      "docs/_tutorials/video-walkthroughs.md",
+      `<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="Walkthrough"></iframe>`,
+    );
+    expect(detectApplicability([youtube]).hasMedia).toBe(true);
+
+    const vimeo = makeFile(
+      "tutorial.html",
+      `<iframe src="https://player.vimeo.com/video/12345" title="Demo"></iframe>`,
+    );
+    expect(detectApplicability([vimeo]).hasMedia).toBe(true);
+
+    const wistia = makeFile(
+      "embed.html",
+      `<iframe src="https://fast.wistia.net/embed/iframe/abc123"></iframe>`,
+    );
+    expect(detectApplicability([wistia]).hasMedia).toBe(true);
+
+    const brightcove = makeFile(
+      "embed.html",
+      `<iframe src="https://players.brightcove.net/12345/default_default/index.html?videoId=abc"></iframe>`,
+    );
+    expect(detectApplicability([brightcove]).hasMedia).toBe(true);
+
+    const loom = makeFile(
+      "embed.html",
+      `<iframe src="https://www.loom.com/embed/abc123"></iframe>`,
+    );
+    expect(detectApplicability([loom]).hasMedia).toBe(true);
+  });
+
+  it("does not flip hasMedia for iframes pointing at non-video hosts", () => {
+    // Bare CMS embeds, payment widgets, Google Maps — these are NOT
+    // provable evidence of A/V. The bucket must stay
+    // `likelyIrrelevant` here so the 1.2.x criteria don't get
+    // promoted on every site that embeds a calendar widget.
+    const maps = makeFile(
+      "contact.html",
+      `<iframe src="https://www.google.com/maps/embed?pb=..." title="Map"></iframe>`,
+    );
+    expect(detectApplicability([maps]).hasMedia).toBe(false);
+
+    const stripe = makeFile(
+      "checkout.html",
+      `<iframe src="https://js.stripe.com/v3/elements" title="Payment"></iframe>`,
+    );
+    expect(detectApplicability([stripe]).hasMedia).toBe(false);
+  });
+
+  it("ignores iframes without a parseable src attribute", () => {
+    // Empty src, missing src, or relative-path src — none are
+    // evidence of host-embedded video. The `<iframe>` substring is
+    // present but the regex finds no host match.
+    const noSrc = makeFile("a.html", `<iframe title="placeholder"></iframe>`);
+    expect(detectApplicability([noSrc]).hasMedia).toBe(false);
+
+    const relSrc = makeFile("a.html", `<iframe src="/local/preview"></iframe>`);
+    expect(detectApplicability([relSrc]).hasMedia).toBe(false);
+  });
+
+  it("detects YouTube iframes alongside non-media iframes in the same file", () => {
+    // Mixed corpus — a tutorial page may carry a Maps embed and a
+    // YouTube embed; the YouTube one is enough to flip hasMedia.
+    const mixed = makeFile(
+      "tutorial.md",
+      `<iframe src="https://www.google.com/maps/embed?pb=..."></iframe>\n` +
+        `<iframe src="https://youtu.be/dQw4w9WgXcQ"></iframe>`,
+    );
+    expect(detectApplicability([mixed]).hasMedia).toBe(true);
+  });
+
+  it("tolerates single-quoted and case-varied iframe attribute shapes", () => {
+    // CMS exports often produce `SRC='…'` or `<IFRAME>` casing; the
+    // predicate must catch them since the eventual rule emission
+    // (media/video-captions-missing) does too.
+    const singleQuoted = makeFile(
+      "a.html",
+      `<iframe src='https://www.youtube.com/embed/abc'></iframe>`,
+    );
+    expect(detectApplicability([singleQuoted]).hasMedia).toBe(true);
+
+    const upperCase = makeFile(
+      "a.html",
+      `<IFRAME SRC="https://www.youtube.com/embed/abc"></IFRAME>`,
+    );
+    expect(detectApplicability([upperCase]).hasMedia).toBe(true);
+  });
+
   it("ignores non-content extensions in skippedByExtension", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".scss": 50, ".astro": 10, ".vue": 5 },
@@ -186,6 +281,54 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
     // .scss doesn't embed inline media tags — no caveat should fire.
     const reason = irrelevanceReason("wcag22:1.2.1", applicability);
     expect(reason).toBe("No <video> or <audio> elements detected in the scanned files.");
+  });
+});
+
+describe("isLikelyIrrelevant — iframe-embedded media demotes from likelyIrrelevant", () => {
+  it("does NOT classify 1.2.x criteria as likelyIrrelevant when a YouTube iframe is present", () => {
+    // Real-world bug: docs sites whose only A/V is a YouTube embed
+    // iframe in markdown silently shipped 1.2.x criteria in the
+    // `likelyIrrelevant` bucket while
+    // `media/video-captions-missing` was simultaneously emitting at
+    // warning severity for the same iframes — the labeled-bucket
+    // contract requires the predicate to be provable from code, and
+    // a known-host iframe IS provable evidence.
+    const applicability = detectApplicability([
+      makeFile(
+        "docs/_tutorials/video-walkthroughs.md",
+        `<iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ" title="Walkthrough"></iframe>`,
+      ),
+    ]);
+    for (const id of MEDIA_CRITERIA) {
+      expect(isLikelyIrrelevant(id, applicability)).toBe(false);
+    }
+  });
+
+  it("does NOT classify 1.2.x criteria as likelyIrrelevant when a Vimeo iframe is present", () => {
+    const applicability = detectApplicability([
+      makeFile(
+        "tutorial.html",
+        `<iframe src="https://player.vimeo.com/video/12345" title="Demo"></iframe>`,
+      ),
+    ]);
+    expect(isLikelyIrrelevant("wcag22:1.2.1", applicability)).toBe(false);
+    expect(isLikelyIrrelevant("wcag22:1.2.3", applicability)).toBe(false);
+    expect(isLikelyIrrelevant("wcag22:1.2.5", applicability)).toBe(false);
+  });
+
+  it("keeps 1.2.x criteria in likelyIrrelevant when only non-video iframes are present", () => {
+    // Counter-case: a Google Maps embed is NOT evidence of A/V; the
+    // bucket must stay `likelyIrrelevant` so we don't promote 1.2.x
+    // on every site that embeds a calendar or map widget.
+    const applicability = detectApplicability([
+      makeFile(
+        "contact.html",
+        `<iframe src="https://www.google.com/maps/embed?pb=..."></iframe>`,
+      ),
+    ]);
+    for (const id of MEDIA_CRITERIA) {
+      expect(isLikelyIrrelevant(id, applicability)).toBe(true);
+    }
   });
 });
 

@@ -16,6 +16,7 @@
 
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { DiscoveryDiagnostics } from "../input/discover.ts";
+import { mediaEmbedHost } from "../utils/video-embed-hosts.ts";
 
 /**
  * WCAG criteria that only apply when the scanned files contain
@@ -77,6 +78,29 @@ const CONTENT_MEDIA_BEARING_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 export interface Applicability {
+  /**
+   * True when the parseable file set contains deterministic evidence of
+   * prerecorded or live A/V content the 1.2.x criteria scope:
+   *
+   *   - a `<video>` or `<audio>` element (string-scan match), OR
+   *   - an `<iframe>` whose `src` resolves to one of the known
+   *     video-embed hosts (`MEDIA_EMBED_PLATFORMS` —
+   *     YouTube/Vimeo/Wistia/Brightcove/Loom).
+   *
+   * The iframe branch is part of the same "labeled buckets must be
+   * provable from code" contract: the host allowlist names hosts whose
+   * URL shape unambiguously identifies video content, so a YouTube
+   * embed iframe is provable evidence of media presence — same
+   * predicate strength as a literal `<video>` tag. Without this
+   * branch, a docs site whose only A/V is a YouTube tutorial iframe
+   * silently lands every 1.2.x criterion in `likelyIrrelevant`, which
+   * is a false claim — those criteria DO apply to host-embedded video
+   * (`media/video-captions-missing` already fires on the same
+   * iframes). Per the AI-first doctrine "Labeled buckets are
+   * suppression too", a `likelyIrrelevant` label that hides a real
+   * 1.2.x candidate is the silent-miss failure mode the bucket exists
+   * to avoid.
+   */
   readonly hasMedia: boolean;
   /**
    * Map of content-bearing extensions (`.md`, `.markdown`, `.mdx`,
@@ -93,8 +117,24 @@ export interface Applicability {
 }
 
 /**
- * Scans file sources once for `<video>`/`<audio>` markers. When
- * `discoveryDiagnostics` is threaded through, also collects the
+ * Scans file sources once for media-presence evidence. Three predicates
+ * trip `hasMedia: true`:
+ *
+ *   1. A literal `<video` or `<audio` substring (string-scan match) —
+ *      the canonical inline-A/V case.
+ *   2. An `<iframe>` element whose `src` attribute resolves to one of
+ *      the known video-embed hosts (YouTube, Vimeo, Wistia, Brightcove,
+ *      Loom — see `src/utils/video-embed-hosts.ts`). Host-embedded
+ *      video carries the same 1.2.x scope obligations as inline
+ *      `<video>`; the captions rule already fires deterministic
+ *      warnings on the same allowlist, so the bucket-decision predicate
+ *      must agree or the 1.2.x criteria silently land in
+ *      `likelyIrrelevant` while `media/video-captions-missing` is
+ *      simultaneously emitting at warning severity for the same scan
+ *      — the dual-signal inconsistency the labeled-buckets rule
+ *      forbids.
+ *
+ * When `discoveryDiagnostics` is threaded through, also collects the
  * counts of authored-content extensions (`.md`, `.markdown`, `.rst`,
  * `.adoc`, …) that discovery skipped — those files could have inlined
  * `<video>` / `<audio>` via raw HTML or shortcodes but the parser set
@@ -112,9 +152,45 @@ export function detectApplicability(
       hasMedia = true;
       break;
     }
+    if (lower.includes("<iframe") && hasMediaEmbedIframe(f.source)) {
+      hasMedia = true;
+      break;
+    }
   }
   const skippedContentExtensions = pickContentExtensions(discoveryDiagnostics);
   return { hasMedia, skippedContentExtensions };
+}
+
+/**
+ * Regex on the raw source for `<iframe ... src="…">` (or single-quoted)
+ * matches, then runs each src through `mediaEmbedHost` to test whether
+ * it points at a known video host. The text-scan approach mirrors the
+ * `<video>` / `<audio>` substring test above — `manual-applicability`
+ * is a fast, AST-free predicate consumed by every project-rooted MCP
+ * surface, so a per-file AST walk would re-pay parse cost. The regex
+ * tolerates attribute order, extra whitespace, and template/build
+ * directives (Liquid, Handlebars) inside the iframe tag because
+ * `<iframe ... src="…">` is the only shape that matters; anything
+ * else in the tag is irrelevant to the predicate.
+ *
+ * Returns true on the first known-host match — short-circuits to keep
+ * the scan O(files) on the dominant clean case. Inputs without any
+ * `<iframe` substring don't reach this function (the caller gates on
+ * the substring first).
+ */
+function hasMediaEmbedIframe(source: string): boolean {
+  // Match `<iframe` followed by attributes (any order), then `src="…"`
+  // (or single-quoted). Case-insensitive to handle `<IFRAME>` /
+  // `SRC="…"` shapes seen in CMS exports. `[^>]*?` is lazy so we don't
+  // accidentally cross into a sibling tag's src attribute.
+  const iframeSrcRe = /<iframe\b[^>]*?\ssrc\s*=\s*(['"])([^'"]*)\1/gi;
+  let m: RegExpExecArray | null = iframeSrcRe.exec(source);
+  while (m !== null) {
+    const src = m[2] ?? "";
+    if (mediaEmbedHost(src) !== null) return true;
+    m = iframeSrcRe.exec(source);
+  }
+  return false;
 }
 
 /**
