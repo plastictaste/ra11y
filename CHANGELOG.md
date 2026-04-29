@@ -2,7 +2,7 @@
 
 All notable changes to ra11y are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — see `CLAUDE.md` section 14 for the ra11y-specific semver policy.
 
-## [1.0.0] - 2026-04-29
+## [1.0.0-beta.1] - 2026-04-29
 
 Public API stability freeze: [ADR 0019](./docs/adr/0019-v1-api-stability.md)
 
