@@ -30,8 +30,32 @@
 import { findHtmlElementsByTag, getHtmlAttribute } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument } from "../../types/ast.ts";
 
-/** Structured `couldBeWrongBecause` code for the cross-file ambiguity. */
-export const CROSS_FILE_LISTENER_RESOLUTION_LIMITED = "cross_file_listener_resolution_limited";
+/**
+ * Structured `couldBeWrongBecause` code for the cross-file ambiguity.
+ *
+ * Suffix framing — `_not_attempted_by_rule` (per
+ * docs/kb/architecture/ai-first-consumer.md "Reason-token suffixes must
+ * name the actual predicate, not an input-specific hiccup"): the host
+ * rule declares `crossFileCapable: false`, which is the rule's design
+ * declaring "we do not attempt cross-file resolution at all." The
+ * `_limited_on_this_input` framing would lie — it reads as "we tried
+ * this input and were limited," which agents could mis-interpret as
+ * "maybe a different input would resolve it" and waste a re-scan.
+ *
+ * The code value here intentionally matches the per-rule reason in
+ * `src/engine/per-rule-coverage.ts` `CROSS_FILE_BOUND_REASONS` for
+ * `keyboard/handler-missing`. The MCP per-finding propagation helper
+ * (`src/mcp/per-finding-confidence-parity.ts`) appends the per-rule
+ * reason to every finding's `couldBeWrongBecause` for degraded rules;
+ * matching the value here means the propagation helper's dedup gate
+ * (`existing?.includes(code)`) collapses the two paths to a single
+ * code rather than shipping two contradictory variants on the same
+ * finding (`_limited_on_this_input` from the rule and
+ * `_not_attempted_by_rule` from the propagator side-by-side claimed
+ * different predicates about the same rule).
+ */
+export const CROSS_FILE_LISTENER_RESOLUTION_NOT_ATTEMPTED =
+  "cross_file_listener_resolution_not_attempted_by_rule";
 
 /**
  * Returns the first `src` attribute value among the document's
@@ -118,13 +142,13 @@ export function enrichForCrossFileScript<V extends CrossFileEnrichable>(
     severity: downgradeIfError(v.severity),
     suggestion: `${v.suggestion}${enrichmentSuffix}`,
     confidence: "medium",
-    couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
+    couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_NOT_ATTEMPTED],
   };
 }
 
 /**
  * Stamps `confidence: "medium"` + `couldBeWrongBecause:
- * ["cross_file_listener_resolution_limited"]` on an external-JS
+ * ["cross_file_listener_resolution_not_attempted_by_rule"]` on an external-JS
  * finding unconditionally — and, when a sibling-module import was
  * detected, additionally appends the cross-file follow-up sentence to
  * the suggestion. The unconditional downgrade reflects a structural
@@ -172,7 +196,7 @@ export function enrichExternalJsFinding<V extends CrossFileEnrichable>(
       ...v,
       severity: downgradeIfError(v.severity),
       confidence: "medium",
-      couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
+      couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_NOT_ATTEMPTED],
     };
   }
   const enrichmentSuffix = ` Cross-file follow-up: this file has no inline keyboard handler, but the binding may live in an external script (\`${siblingImport}\`) — verify the keyboard wiring there before treating this finding as live.`;
@@ -181,7 +205,7 @@ export function enrichExternalJsFinding<V extends CrossFileEnrichable>(
     severity: downgradeIfError(v.severity),
     suggestion: `${v.suggestion}${enrichmentSuffix}`,
     confidence: "medium",
-    couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_LIMITED],
+    couldBeWrongBecause: [CROSS_FILE_LISTENER_RESOLUTION_NOT_ATTEMPTED],
   };
 }
 

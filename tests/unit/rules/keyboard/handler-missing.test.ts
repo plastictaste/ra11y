@@ -738,8 +738,16 @@ el.onclick = toggle;`;
   // surfaces the finding (surface-don't-suppress) but enriches the
   // suggestion with the cross-file follow-up, degrades per-finding
   // `confidence` to `"medium"`, and stamps the structured
-  // `cross_file_listener_resolution_limited` code so the per-finding
-  // label mirrors the per-rule `coverageConfidence`.
+  // `cross_file_listener_resolution_not_attempted_by_rule` code so the
+  // per-finding label mirrors the per-rule `coverageConfidence` reason.
+  // The code value matches the per-rule reason exactly (rather than the
+  // earlier bare `cross_file_listener_resolution_limited` token) so the
+  // MCP per-finding propagator's dedup gate collapses the rule-emitted
+  // code and the per-rule-propagated code into a single entry — never
+  // shipping `_limited_on_this_input` and `_not_attempted_by_rule`
+  // side-by-side on the same finding (per
+  // docs/kb/architecture/ai-first-consumer.md "Reason-token suffixes
+  // must name the actual predicate, not an input-specific hiccup").
   // ---------------------------------------------------------------------------
   describe("cross-file handler enrichment", () => {
     it("HTML: enriches when document has <script src=…>", () => {
@@ -750,7 +758,9 @@ el.onclick = toggle;`;
       const v = runRule(rule, source, { filePath: "index.html" });
       expect(v).toHaveLength(1);
       expect(v[0]?.confidence).toBe("medium");
-      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "cross_file_listener_resolution_not_attempted_by_rule",
+      ]);
       expect(v[0]?.suggestion).toContain("app.js");
       expect(v[0]?.suggestion).toContain("external script");
     });
@@ -792,7 +802,9 @@ const X = <div onClick={wireHandlers}>Click</div>;`;
       const v = runRule(rule, source);
       expect(v).toHaveLength(1);
       expect(v[0]?.confidence).toBe("medium");
-      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "cross_file_listener_resolution_not_attempted_by_rule",
+      ]);
       expect(v[0]?.suggestion).toContain("./handlers.js");
     });
 
@@ -837,7 +849,9 @@ btn.addEventListener('click', () => save());`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
       expect(v[0]?.confidence).toBe("medium");
-      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "cross_file_listener_resolution_not_attempted_by_rule",
+      ]);
     });
 
     it("external-JS branch: .onclick assignment without imports still carries confidence=medium", () => {
@@ -846,7 +860,9 @@ tile.onclick = () => activate();`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
       expect(v[0]?.confidence).toBe("medium");
-      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "cross_file_listener_resolution_not_attempted_by_rule",
+      ]);
     });
 
     it("external-JS branch: function-parameter target without selector resolution still carries confidence=medium", () => {
@@ -856,7 +872,9 @@ tile.onclick = () => activate();`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
       expect(v[0]?.confidence).toBe("medium");
-      expect(v[0]?.couldBeWrongBecause).toEqual(["cross_file_listener_resolution_limited"]);
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "cross_file_listener_resolution_not_attempted_by_rule",
+      ]);
     });
 
     // JSX-walk findings (i.e. `<div onClick={…}>` in source) without
@@ -868,6 +886,66 @@ tile.onclick = () => activate();`;
       const v = runRule(rule, source);
       expect(v).toHaveLength(1);
       expect(v[0]?.confidence).toBeUndefined();
+    });
+
+    // Suffix-agreement invariant — doctrine source:
+    // docs/kb/architecture/ai-first-consumer.md "Reason-token suffixes
+    // must name the actual predicate, not an input-specific hiccup."
+    // The host rule declares `crossFileCapable: false`, so its
+    // cross-file limitation is a permanent rule-design fact, not an
+    // input-specific hiccup. Two suffix shapes are doctrine-defined:
+    //   - `_limited_on_this_input` — "we tried this input and were
+    //      bounded" (reserved for `crossFileCapable: true` rules).
+    //   - `_not_attempted_by_rule` — "the rule's design does not
+    //      attempt cross-file resolution at all."
+    // Shipping both on the same finding is the canonical contradiction
+    // the doctrine guards against: an agent reading the
+    // `_limited_on_this_input` half infers "maybe a different input
+    // would resolve it" and wastes a re-scan, while the
+    // `_not_attempted_by_rule` half says "no input would resolve it."
+    // This invariant pins that the rule emits at most one of the two
+    // codes — `_not_attempted_by_rule` (matching the per-rule reason
+    // in `src/engine/per-rule-coverage.ts`) — and never both.
+    it("never ships both _limited_on_this_input and _not_attempted_by_rule on the same finding", () => {
+      const cases: ReadonlyArray<{ readonly source: string; readonly filePath?: string }> = [
+        // HTML branch with external <script src>.
+        {
+          source: `<!DOCTYPE html><html><body>
+<script src="app.js"></script>
+<div onclick="doThing()">Click</div>
+</body></html>`,
+          filePath: "index.html",
+        },
+        // JSX branch with sibling-module import.
+        {
+          source: `import { wireHandlers } from "./handlers.js";
+const X = <div onClick={wireHandlers}>Click</div>;`,
+        },
+        // External-JS branch with sibling import.
+        {
+          source: `import { keyboardWiring } from "./keyboard.ts";
+const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`,
+          filePath: "app.js",
+        },
+        // External-JS branch without imports (unconditional downgrade).
+        {
+          source: `const btn = document.getElementById('save');
+btn.addEventListener('click', () => save());`,
+          filePath: "app.js",
+        },
+      ];
+      for (const c of cases) {
+        const v = runRule(rule, c.source, c.filePath === undefined ? {} : { filePath: c.filePath });
+        expect(v.length).toBeGreaterThan(0);
+        for (const finding of v) {
+          const codes = finding.couldBeWrongBecause ?? [];
+          const limitedOnInput = codes.filter((c2) => c2.endsWith("_limited_on_this_input")).length;
+          const notAttempted = codes.filter((c2) => c2.endsWith("_not_attempted_by_rule")).length;
+          // At most one of the two suffix shapes; never both.
+          expect(limitedOnInput + notAttempted).toBeLessThanOrEqual(1);
+        }
+      }
     });
   });
 
