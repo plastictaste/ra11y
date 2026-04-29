@@ -61,6 +61,7 @@ import {
 import {
   ANIMATION_LIB_GUARD_FINDING_FLOOR,
   computeTemplateDirectiveOverlap,
+  SCANNED_BUILD_ARTIFACTS_TOP_CAP,
   type ScanWarningCode,
   type ScanWarningDetails,
   type WarningInputs,
@@ -246,6 +247,15 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
   const totalFindings = inputs.violations.length;
   const filesScanned = inputs.parsedFiles.length;
 
+  // Inline top-N `{path, reason}` records — sufficient for an agent
+  // to dismiss vendor-and-vendor-only scans in one read without
+  // descending into `meta.scannedBuildArtifacts` (the long-tail
+  // grouped + ungrouped envelope). Mirror of the `tool-scan-project`
+  // emission path so cross-surface tools (`checklist`, `coverage`,
+  // `scan_file`) ship the same payload shape on identical inputs.
+  const scannedBuildArtifactsTop = buildArtifactEntries
+    .slice(0, SCANNED_BUILD_ARTIFACTS_TOP_CAP)
+    .map((e) => ({ path: e.path, reason: e.classification }));
   const scannedBuildArtifactsSummary =
     buildArtifactEntries.length > 0
       ? {
@@ -253,6 +263,7 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
           ...(buildArtifactEntries[0]?.path === undefined
             ? {}
             : { topPath: buildArtifactEntries[0].path }),
+          ...(scannedBuildArtifactsTop.length === 0 ? {} : { top: scannedBuildArtifactsTop }),
         }
       : undefined;
 

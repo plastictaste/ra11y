@@ -2194,6 +2194,81 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     );
   });
 
+  it("`scanned_build_artifacts_present.top` ships the inline `{path, reason}` head-slice when the caller threads it", () => {
+    // The `top` field is the dismissal-triage surface — the agent reads
+    // path + classifier verdict together and decides "vendor-and-vendor-
+    // only, scope down" without descending into `meta.scannedBuildArtifacts`.
+    // Each `reason` is the per-entry `BuildArtifactClassification` lifted
+    // verbatim from the classifier, so the field is provable from the
+    // scan's evidence (no heuristic synthesis at the warnings seam).
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsSummary: {
+        count: 17,
+        topPath: "vendor/bootstrap/bootstrap.min.css",
+        top: [
+          { path: "vendor/bootstrap/bootstrap.min.css", reason: "definite-min-infix" },
+          { path: "vendor/bootstrap/bootstrap.css", reason: "likely-vendor-distribution" },
+          { path: "dist/app.a1b2c3d4.js", reason: "likely-hashed-bundle" },
+        ],
+      },
+    });
+    expect(out.warnings).toContain("scanned_build_artifacts_present");
+    const payload = out.warningsDetails?.scanned_build_artifacts_present;
+    expect(payload?.top).toEqual([
+      { path: "vendor/bootstrap/bootstrap.min.css", reason: "definite-min-infix" },
+      { path: "vendor/bootstrap/bootstrap.css", reason: "likely-vendor-distribution" },
+      { path: "dist/app.a1b2c3d4.js", reason: "likely-hashed-bundle" },
+    ]);
+  });
+
+  it("`scanned_build_artifacts_present.top` is omitted when the caller did not supply a head-slice (present-when-meaningful)", () => {
+    // Conditional-spread doctrine: the `top` field appears only when
+    // the caller materialized a non-empty head-slice. A summary with
+    // `count` + `topPath` but no `top` ships the historic shape so
+    // the wire stays compatible with derivative tools that compute
+    // count + topPath but don't have classifier verdicts on hand.
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsSummary: {
+        count: 17,
+        topPath: "vendor/bootstrap/bootstrap.css",
+      },
+    });
+    const payload = out.warningsDetails?.scanned_build_artifacts_present;
+    expect(payload).toBeDefined();
+    expect((payload as Record<string, unknown>).top).toBeUndefined();
+  });
+
+  it("`scanned_build_artifacts_present.top` is omitted when the caller supplied an empty array (defensive)", () => {
+    const out = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 4 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsSummary: {
+        count: 17,
+        topPath: "vendor/bootstrap/bootstrap.css",
+        top: [],
+      },
+    });
+    const payload = out.warningsDetails?.scanned_build_artifacts_present;
+    expect(payload).toBeDefined();
+    expect((payload as Record<string, unknown>).top).toBeUndefined();
+  });
+
   it("`scanned_build_artifacts_present` fires with the truncation sentinel when only the binary flag is supplied (caller can't compute the count)", () => {
     // Derivative tools that know "at least one artifact was scanned"
     // but didn't materialize the entries list still emit the bare

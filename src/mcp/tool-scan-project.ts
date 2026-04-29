@@ -77,6 +77,7 @@ import {
 import { enrichPerRuleCoverageWithVendorConcentration } from "./vendor-concentration.ts";
 import {
   computeTemplateDirectiveOverlap,
+  SCANNED_BUILD_ARTIFACTS_TOP_CAP,
   warningsField,
   warningsFieldFromScanMeta,
 } from "./warnings.ts";
@@ -814,12 +815,23 @@ function buildBaseWarningsForScanProject(args: {
   );
   // derive the
   // `scanned_build_artifacts_present` payload here so the warning code
-  // ships with quantitative signal (count + first-pivot path). Without
-  // the payload, an agent reading the bare code can't tell whether the
-  // scan included one stray `dist/foo.min.css` or a 200-file vendor
-  // dump — two distinct triage regimes with identical top-level shape.
-  // The full per-path detail still lives in `meta.scannedBuildArtifacts`
-  // (grouped + ungrouped); this summary is the dense top-level pivot.
+  // ships with quantitative signal (count + first-pivot path + top-N
+  // `{path, reason}` records). Without the payload, an agent reading
+  // the bare code can't tell whether the scan included one stray
+  // `dist/foo.min.css` or a 200-file vendor dump — two distinct triage
+  // regimes with identical top-level shape. The inline `top` head-slice
+  // (up to {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}) lets the agent
+  // dismiss vendor-and-vendor-only scans in one read by inspecting
+  // path + classifier verdict together; the full per-path detail still
+  // lives in `meta.scannedBuildArtifacts` (grouped + ungrouped) for
+  // entries beyond the top-N, gated through the existing
+  // {@link import("./meta-array-cap.ts").META_ARRAY_CAP} regime. The
+  // `reason` is the per-entry classifier verdict (`definite-min-infix`,
+  // `likely-vendor-distribution`, etc.) lifted verbatim — no heuristic
+  // synthesis at the warnings seam.
+  const scannedBuildArtifactsTop = buildArtifacts.entries
+    .slice(0, SCANNED_BUILD_ARTIFACTS_TOP_CAP)
+    .map((e) => ({ path: e.path, reason: e.classification }));
   const scannedBuildArtifactsSummary =
     buildArtifacts.entries.length > 0
       ? {
@@ -827,6 +839,7 @@ function buildBaseWarningsForScanProject(args: {
           ...(buildArtifacts.entries[0]?.path === undefined
             ? {}
             : { topPath: buildArtifacts.entries[0].path }),
+          ...(scannedBuildArtifactsTop.length === 0 ? {} : { top: scannedBuildArtifactsTop }),
         }
       : undefined;
   // narrow the build-artifact

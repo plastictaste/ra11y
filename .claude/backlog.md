@@ -225,7 +225,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Heuristic-mislabeled meta sub-fields
 
-- [ ] **Q9-SCANNED-BUILD-ARTIFACTS-TOP-N-WITH-REASONS-AT-DEFAULT** `scanned_build_artifacts_present` ships `{count: 997, topPath: "...jquery-1.10.2.js"}` with no array, no per-file reason at default verbosity; `verboseMeta: true` unlocks the array but default-verbosity callers cannot audit reason tokens. Bulk corpus. Fix: ship top-10 `{path, reason}` inline at default verbosity — sufficient for the agent to dismiss "vendor-and-vendor-only" cases in one read; the long-tail array stays gated behind verboseMeta. Pairs with V1-TOOL-VERBOSE-META-INVERTED-DEFAULT (open, the verbose-default inversion).
 
 ### Rule predicate gaps (false negatives)
 

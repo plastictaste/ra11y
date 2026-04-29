@@ -660,14 +660,27 @@ export interface WarningInputs {
    * on without descending into `meta.scannedBuildArtifacts`. `count`
    * is the total entry count across grouped + ungrouped buckets;
    * `topPath` (when present) is the densest single artifact path the
-   * agent can use as a first triage pivot. Omit when the caller does
-   * not run the build-artifact detector — the bare presence label
-   * still fires off `scannedBuildArtifactsPresent`, just without the
-   * payload mirror.
+   * agent can use as a first triage pivot; `top` (when present) is
+   * the head-slice of up to {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}
+   * `{ path, reason }` records — `reason` is the per-entry
+   * {@link import("./build-artifacts.ts").BuildArtifactClassification}
+   * (`definite-min-infix`, `likely-vendor-distribution`, etc.) lifted
+   * verbatim from the classifier so the field is provable from the
+   * scan's evidence (no heuristic synthesis at the warnings seam). The
+   * agent uses the inline top-N to dismiss vendor-and-vendor-only
+   * scans in one read; the long-tail array still rides on
+   * `meta.scannedBuildArtifacts` (grouped + ungrouped). Omit when the
+   * caller does not run the build-artifact detector — the bare
+   * presence label still fires off `scannedBuildArtifactsPresent`,
+   * just without the payload mirror.
    */
   readonly scannedBuildArtifactsSummary?: {
     readonly count: number;
     readonly topPath?: string;
+    readonly top?: readonly {
+      readonly path: string;
+      readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+    }[];
   };
   /**
    * True when the resolved project config has `preset: "storybook"`.
@@ -1619,18 +1632,32 @@ export interface ScanWarningDetails {
    * surfaced under `meta.scannedBuildArtifacts`; `topPath` (when
    * present) names the densest single artifact path the agent can
    * use as a first triage pivot for vendor filtering (exclude glob,
-   * pragma, additionalPaths re-target). Without this payload, an
-   * agent reading the bare code cannot tell whether `files[]` carries
-   * one inadvertently-included `dist/foo.min.css` or a 200-file
-   * vendor dump — two distinct triage regimes with identical
-   * top-level shape. Pairs with `vendor_css_dominates_findings` when
-   * the artifact mass is also dominating the finding budget; either
-   * code can fire alone (a vendored stylesheet with zero findings
-   * still trips this code without dominance).
+   * pragma, additionalPaths re-target); `top` (when present) is the
+   * head-slice of up to {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}
+   * `{ path, reason }` records — `reason` is the per-entry
+   * {@link import("./build-artifacts.ts").BuildArtifactClassification}
+   * (`definite-min-infix`, `likely-vendor-distribution`, etc.) lifted
+   * verbatim from the classifier so the agent can dismiss the
+   * "vendor-and-vendor-only" regime in one read without descending
+   * into `meta.scannedBuildArtifacts`. The long-tail entries (>10)
+   * still ride on `meta.scannedBuildArtifacts.{grouped,ungrouped}` —
+   * the inline top-N is sufficient triage evidence at default
+   * verbosity. Without this payload, an agent reading the bare code
+   * cannot tell whether `files[]` carries one inadvertently-included
+   * `dist/foo.min.css` or a 200-file vendor dump — two distinct
+   * triage regimes with identical top-level shape. Pairs with
+   * `vendor_css_dominates_findings` when the artifact mass is also
+   * dominating the finding budget; either code can fire alone (a
+   * vendored stylesheet with zero findings still trips this code
+   * without dominance).
    */
   readonly scanned_build_artifacts_present?: {
     readonly count: number;
     readonly topPath?: string;
+    readonly top?: readonly {
+      readonly path: string;
+      readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+    }[];
   };
   /**
    * Payload for `scss_unresolved_variables`. Carries the deterministic
@@ -3449,6 +3476,25 @@ function readNonEmptyParserMap(
 }
 
 /**
+ * Maximum number of `{ path, reason }` records the
+ * `scanned_build_artifacts_present` payload ships inline at default
+ * verbosity. Picked by working backward from the per-entry density
+ * (~85 chars/record on absolute-paths corpora — `path` averages ~70,
+ * `reason` is a fixed-vocabulary classification token) against the
+ * single-read triage need named in the spec: enough rows for the
+ * agent to dismiss vendor-and-vendor-only scans without descending
+ * into `meta.scannedBuildArtifacts`. Beyond the cap, the long-tail
+ * grouped + ungrouped envelope under `meta.scannedBuildArtifacts`
+ * carries the full identity (with the existing
+ * {@link import("./meta-array-cap.ts").META_ARRAY_CAP} regime gating
+ * the ungrouped tail). At 10 entries the payload adds ~850 chars to
+ * the warnings channel — well below the per-payload ceiling other
+ * codes already exercise (`scanned_minified_file.files`,
+ * `scss_unresolved_variables.files`).
+ */
+export const SCANNED_BUILD_ARTIFACTS_TOP_CAP = 10;
+
+/**
  * Builds the `scanned_build_artifacts_present` payload from the
  * caller-supplied summary. Returns `undefined` when the input is
  * omitted (caller didn't run the build-artifact detector — the bare
@@ -3458,12 +3504,25 @@ function readNonEmptyParserMap(
  * the code shouldn't have triggered, so the payload would be a
  * degenerate shape). `topPath` is included only when supplied — a
  * payload without a concrete pivot is still useful because the
- * `count` carries the dominant-noise signal on its own.
+ * `count` carries the dominant-noise signal on its own. `top` is
+ * included only when supplied — the head-slice of up to
+ * {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP} `{ path, reason }` records
+ * the agent reads to dismiss vendor-and-vendor-only scans in one
+ * pass without descending into `meta.scannedBuildArtifacts`. Each
+ * `reason` is the per-entry classifier verdict lifted verbatim from
+ * {@link import("./build-artifacts.ts").BuildArtifactClassification},
+ * so the field is provable from the scan's evidence (no heuristic
+ * synthesis at the warnings seam — per the AI-first
+ * "Heuristic-mislabeled meta sub-fields are dishonest" doctrine).
  */
 function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArtifactsSummary"]):
   | {
       readonly count: number;
       readonly topPath?: string;
+      readonly top?: readonly {
+        readonly path: string;
+        readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+      }[];
     }
   | undefined {
   if (summary === undefined) return undefined;
@@ -3471,6 +3530,7 @@ function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArti
   return {
     count: summary.count,
     ...(summary.topPath === undefined ? {} : { topPath: summary.topPath }),
+    ...(summary.top === undefined || summary.top.length === 0 ? {} : { top: summary.top }),
   };
 }
 
