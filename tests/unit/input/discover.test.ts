@@ -404,4 +404,61 @@ describe("discoverFilesWithDiagnostics", () => {
     const result = await discoverFilesWithDiagnostics([dir]);
     expect(result.diagnostics.sourcemapFiles).toEqual([]);
   });
+
+  it("surfaces every default-excluded build-artifact directory that contained a parseable file", async () => {
+    // The walker silently skips `dist/`, `build/`, `.next/`, etc.
+    // (per DEFAULT_IGNORED_DIRS). Without the diagnostic, an agent
+    // calling scan_project against a Next.js / Vite repo gets
+    // `findings: []` with no signal that the compiled output was
+    // dropped at the directory level — the canonical "Default-exclude
+    // globs are suppression too" silent-miss shape. The diagnostic
+    // surfaces every matched directory carrying ≥ 1 parseable file
+    // with a deterministic `{path, fileCount, sampleFiles}` shape.
+    write(join(dir, "src", "page.tsx"));
+    write(join(dir, "dist", "bundle.js"));
+    write(join(dir, "dist", "page.html"));
+    write(join(dir, ".next", "static", "chunk.js"));
+    // node_modules is in DEFAULT_IGNORED_DIRS but is intentionally
+    // NOT in the surfaced subset — agents already expect it dropped.
+    write(join(dir, "node_modules", "lib", "index.js"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    const paths = result.diagnostics.defaultExcludedArtifactPaths;
+    expect(paths.map((e) => e.path)).toEqual([join(dir, ".next"), join(dir, "dist")]);
+    const distEntry = paths.find((e) => e.path === join(dir, "dist"));
+    expect(distEntry?.fileCount).toBe(2);
+    expect(distEntry?.sampleFiles.length).toBeGreaterThan(0);
+    expect(distEntry?.sampleFiles.length).toBeLessThanOrEqual(3);
+    for (const sample of distEntry?.sampleFiles ?? []) {
+      expect(sample.startsWith(join(dir, "dist"))).toBe(true);
+    }
+    // Universal cache dirs stay out of the surfaced subset by design.
+    expect(paths.find((e) => e.path === join(dir, "node_modules"))).toBeUndefined();
+  });
+
+  it("drops default-excluded directories that contain no parseable files", async () => {
+    // An empty `dist/` (or one containing only binary-asset files
+    // that don't match PARSEABLE_EXTENSIONS) shouldn't fire the
+    // warning — the silent miss only applies when the scanner
+    // dropped plausibly authorable a11y surface. Sourcemap-only
+    // directories drop too because `.map` isn't a parseable
+    // extension.
+    write(join(dir, "src", "page.tsx"));
+    write(join(dir, "dist", "logo.png"));
+    write(join(dir, "build", "bundle.js.map"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.defaultExcludedArtifactPaths).toEqual([]);
+  });
+
+  it("returns defaultExcludedArtifactPaths sorted by directory path", async () => {
+    write(join(dir, "src", "page.tsx"));
+    write(join(dir, "out", "bundle.js"));
+    write(join(dir, "build", "bundle.js"));
+    write(join(dir, "dist", "bundle.js"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    const paths = result.diagnostics.defaultExcludedArtifactPaths.map((e) => e.path);
+    expect(paths).toEqual([join(dir, "build"), join(dir, "dist"), join(dir, "out")]);
+  });
 });

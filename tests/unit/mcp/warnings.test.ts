@@ -492,6 +492,56 @@ describe("computeScanWarnings", () => {
     expect(absent).not.toContain("sourcemap_files_excluded");
   });
 
+  it("fires `default_excluded_artifact_paths` when discovery records non-empty build-artifact directories", () => {
+    // The discovery walker silently filters `dist/`, `.next/`, `build/`,
+    // etc. via DEFAULT_IGNORED_DIRS — a canonical "Default-exclude
+    // globs are suppression too" silent-miss vector. The diagnostic
+    // routes matched directories carrying ≥1 parseable file into a
+    // dedicated coverage field; the warning fires off list-presence so
+    // an agent calling scan_project against a Next.js / Vite repo gets
+    // the silent-skip signal without descending into meta.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        defaultExcludedArtifactPaths: [
+          {
+            path: "/proj/dist",
+            fileCount: 12,
+            sampleFiles: ["/proj/dist/page.html", "/proj/dist/app.js"],
+          },
+          {
+            path: "/proj/.next",
+            fileCount: 87,
+            sampleFiles: ["/proj/.next/static/chunk.js"],
+          },
+        ],
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("default_excluded_artifact_paths");
+  });
+
+  it("does NOT fire `default_excluded_artifact_paths` when the list is empty or absent", () => {
+    const empty = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { defaultExcludedArtifactPaths: [] },
+      filesByExtension: { ".tsx": 50 },
+    });
+    const absent = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(empty).not.toContain("default_excluded_artifact_paths");
+    expect(absent).not.toContain("default_excluded_artifact_paths");
+  });
+
   it("does NOT fire `binary_assets_skipped` when the map is text-source only", () => {
     // Symmetric to the binary-only case: a pure text-source skip map
     // (Vue / Astro / SCSS components) trips `text_source_skipped`
@@ -1625,6 +1675,59 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     // First 10 entries — list is sorted ascending at the discovery
     // seam, so the head slice is deterministic across runs.
     expect(details.sourcemap_files_excluded?.topPaths).toEqual(fullList.slice(0, 10));
+  });
+
+  it("emits a `default_excluded_artifact_paths` payload with count + per-directory `{path, fileCount, sampleFiles}` entries", () => {
+    // Discovery walker silently filters `dist/`, `.next/`, `build/`,
+    // etc. via DEFAULT_IGNORED_DIRS — the canonical "Default-exclude
+    // globs are suppression too" silent-miss vector. The diagnostic
+    // surfaces every matched directory carrying ≥1 parseable file
+    // with an absolute path, capped fileCount, and ≤3 sampleFiles
+    // the agent can use to recognize the directory shape (canonical
+    // bundler output vs. cached HTML vs. minified bundle). Sorted
+    // by directory path at the discovery seam so the wire is
+    // deterministic.
+    const details = computeScanWarningDetails(["default_excluded_artifact_paths"], {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        defaultExcludedArtifactPaths: [
+          {
+            path: "/proj/.next",
+            fileCount: 87,
+            sampleFiles: [
+              "/proj/.next/static/chunk-a.js",
+              "/proj/.next/static/chunk-b.js",
+              "/proj/.next/static/chunk-c.js",
+            ],
+          },
+          {
+            path: "/proj/dist",
+            fileCount: 12,
+            sampleFiles: ["/proj/dist/page.html", "/proj/dist/app.js"],
+          },
+        ],
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(details.default_excluded_artifact_paths?.count).toBe(2);
+    expect(details.default_excluded_artifact_paths?.paths).toEqual([
+      {
+        path: "/proj/.next",
+        fileCount: 87,
+        sampleFiles: [
+          "/proj/.next/static/chunk-a.js",
+          "/proj/.next/static/chunk-b.js",
+          "/proj/.next/static/chunk-c.js",
+        ],
+      },
+      {
+        path: "/proj/dist",
+        fileCount: 12,
+        sampleFiles: ["/proj/dist/page.html", "/proj/dist/app.js"],
+      },
+    ]);
   });
 
   it("emits both payloads with disjoint extension sets when both codes fire on a heterogeneous corpus", () => {
