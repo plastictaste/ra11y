@@ -62,6 +62,31 @@
  *     color-sole-indicator check, not admonition-widget-specific.
  *   - Image-based severity icons — those are already covered by
  *     alt-text rules.
+ *
+ * Conceded-uncertainty refinement (fragment+template host file):
+ * the rule's emission asserts a deterministic AT-stripping claim — "the
+ * inner text reaches assistive tech with the severity signal stripped."
+ * That claim depends on the surrounding document envelope being the
+ * actual rendered page: if the host file is a Jekyll/Hugo `_includes/`
+ * partial that injects `<%= severity %>` / `{{ severity }}` content
+ * from the parent layout, the rendered page may carry a programmatic
+ * severity marker the static scanner cannot see, and the rule's
+ * confident message ("severity is invisible to AT") concedes its
+ * predicate may not hold. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Reason / priority / fix-description must agree across all three
+ * channels" + "Parser-failure invalidates per-file confidence", when
+ * the host HTML file is fragment-classified (no `<html>` opener, no
+ * layout directive, not under a `_layouts/` segment) AND any text node
+ * in the file carries a stripped Liquid/Jinja/ERB directive, the rule
+ * still surfaces (per "Surface, don't suppress") but the per-finding
+ * `confidence` downgrades to `"low"` and the finding carries
+ * `couldBeWrongBecause: ["fragment_input_no_document_envelope",
+ * "template_directives_present"]`. Severity stays at `warning` for
+ * full-conceded cases / `info` for the heading-as-label refinement —
+ * the concession is in the predicate-strength axis (confidence), not
+ * the budget axis (severity). The agent reads the cited file, follows
+ * the include chain to the composed parent, and dismisses with a
+ * source-level pragma when confirmed.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -73,7 +98,14 @@ import {
   walkHtmlElements,
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
-import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
+import { isFragmentFile } from "../../engine/layout-partial.ts";
+import type {
+  HtmlDocument,
+  HtmlElement,
+  HtmlNode,
+  JsxElement,
+  TsxModule,
+} from "../../types/ast.ts";
 
 /**
  * Admonition class names. Whole-word match, case-insensitive. `info` is
@@ -170,6 +202,52 @@ const SEVERITY_PREFIX =
 const SEVERITY_LEADING_WORD =
   /^\s*(note|warning|alert|tip|info|caution|danger|important|success)\b/iu;
 
+/**
+ * Structured `couldBeWrongBecause` codes attached to fragment+template
+ * host-file emits. Both codes pair on the same finding because the
+ * predicate-uncertainty has two distinct sources — the missing document
+ * envelope (the file is composed elsewhere) AND the unparsed template
+ * expressions (the rendered text the predicate examined was
+ * post-strip). Each code is independently meaningful: an agent
+ * dismissing because it confirmed the parent layout supplies the role
+ * keys on the first; an agent dismissing because the stripped
+ * `{{ severity }}` resolves to a programmatic tag at render time keys
+ * on the second. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Per-finding confidence must reflect per-rule coverage limitations"
+ * + "Parser-failure invalidates per-file confidence."
+ */
+const FRAGMENT_INPUT_NO_DOCUMENT_ENVELOPE = "fragment_input_no_document_envelope";
+const TEMPLATE_DIRECTIVES_PRESENT = "template_directives_present";
+
+/**
+ * True when any text node anywhere in the document had a Liquid/Jinja/ERB
+ * directive stripped during parsing. Mirrors the per-subtree predicate
+ * `htmlSubtreeHasStrippedDirective` (`src/input/parsers/html-template-directives.ts`)
+ * but operates over the whole document — the fragment+template gate is
+ * a file-level claim, not a per-element claim. The flag is set by the
+ * HTML parser's text-node path
+ * (`src/input/parsers/html.ts`'s `containsTemplateDirective: true`)
+ * whenever `stripTemplateDirectives` removed a span, so a positive
+ * answer here is deterministic evidence the file authored at least one
+ * `{{ … }}` / `{% … %}` / `<% … %>` directive.
+ */
+function htmlDocumentHasTemplateDirective(doc: HtmlDocument): boolean {
+  for (const child of doc.children) {
+    if (visitForDirective(child)) return true;
+  }
+  return false;
+}
+
+function visitForDirective(node: HtmlNode): boolean {
+  if (node.kind === "HtmlText") return node.containsTemplateDirective === true;
+  if (node.kind === "HtmlElement") {
+    for (const c of node.children) {
+      if (visitForDirective(c)) return true;
+    }
+  }
+  return false;
+}
+
 export const rule = defineRule({
   id: "aria/role-from-class-only",
   satisfies: [
@@ -208,7 +286,22 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      const doc = ctx.ast as HtmlDocument;
+      // Fragment+template conceded-uncertainty gate: when the host HTML
+      // file is fragment-classified AND any text node carries a stripped
+      // template directive, the rule's deterministic AT-stripping claim
+      // depends on a document envelope and an unparsed expression chain
+      // the static scanner cannot see. The emit still surfaces (per
+      // "Surface, don't suppress"), but per-finding confidence drops to
+      // "low" and the finding carries the two-axis `couldBeWrongBecause`
+      // codes so the agent triages the conceded-uncertainty rather than
+      // budgeting against a `confidence: "medium"` claim that contradicts
+      // the rule-design limitation. JSX modules are file-scoped by design
+      // (no document-envelope concept), so this gate only applies on the
+      // HTML branch.
+      const concededUncertainty =
+        isFragmentFile(doc, ctx.source, ctx.filePath) && htmlDocumentHasTemplateDirective(doc);
+      checkHtml(doc, concededUncertainty, (v) => ctx.emit(v));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
@@ -227,13 +320,15 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  confidence?: "high" | "medium" | "low" | "inherited";
+  couldBeWrongBecause?: readonly string[];
 }) => void;
 
 // ---------------------------------------------------------------------------
 // HTML
 // ---------------------------------------------------------------------------
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
+function checkHtml(doc: HtmlDocument, concededUncertainty: boolean, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     const classAttr = getHtmlAttribute(el, "class");
     if (classAttr === null) continue;
@@ -246,7 +341,17 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     const headingSeverity = headingFirst === null ? null : severityFromHeadingText(headingFirst);
     const text = htmlTextContent(el);
     if (headingSeverity === null && hasSeveritySignalInText(text, hits)) continue;
-    emit(buildViolation(el.tagName, el.loc.start, hits, role, text, headingSeverity));
+    emit(
+      buildViolation(
+        el.tagName,
+        el.loc.start,
+        hits,
+        role,
+        text,
+        headingSeverity,
+        concededUncertainty,
+      ),
+    );
   }
 }
 
@@ -281,6 +386,11 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const el of walkJsxElements(module)) {
     const candidate = prepareJsxCandidate(el);
     if (candidate === null) continue;
+    // JSX modules are file-scoped by design — there is no
+    // document-envelope concept for the fragment classifier to consume,
+    // so the conceded-uncertainty gate stays off on this branch. JSX
+    // bindings that interpolate severity at render time are a separate
+    // axis the JSX-side rule logic does not currently model.
     emit(
       buildViolation(
         el.tagName,
@@ -289,6 +399,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
         candidate.role,
         candidate.text,
         candidate.headingSeverity,
+        false,
       ),
     );
   }
@@ -433,16 +544,44 @@ function buildViolation(
   role: string | null,
   text: string,
   headingSeverity: string | null,
+  concededUncertainty: boolean,
 ): {
   severity: "warning" | "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  confidence?: "high" | "medium" | "low" | "inherited";
+  couldBeWrongBecause?: readonly string[];
 } {
   const hitList = hits.map((h) => `"${h}"`).join(", ");
   const primary = primaryHit(hits);
   const suggestedRole = suggestRole(primary);
   const suggestedPrefix = suggestPrefix(primary);
+  // Conceded-uncertainty enrichment: when the host file is a
+  // fragment+template HTML file, the rule's deterministic
+  // AT-stripping claim concedes its predicate may not hold (the
+  // composed parent layout may inject the severity role; the stripped
+  // template directive may resolve to a programmatic marker at render
+  // time). Per `docs/kb/architecture/ai-first-consumer.md`
+  // "Per-finding confidence must reflect per-rule coverage limitations,"
+  // attach `confidence: "low"` and the two-axis `couldBeWrongBecause`
+  // codes so an agent reading this finding triages the conceded
+  // uncertainty rather than budgeting against a contradictory
+  // confidence/severity pair. Severity stays unchanged — confidence is
+  // the predicate-strength axis; severity is the budget axis. Per
+  // "Surface, don't suppress" the finding still surfaces.
+  const concession = concededUncertainty
+    ? {
+        confidence: "low" as const,
+        couldBeWrongBecause: [
+          FRAGMENT_INPUT_NO_DOCUMENT_ENVELOPE,
+          TEMPLATE_DIRECTIVES_PRESENT,
+        ] as const,
+      }
+    : null;
+  const concededSuffix = concededUncertainty
+    ? " Host file is fragment-classified (no document envelope) AND carries template directives — the composed parent may inject role/severity content the static scanner cannot see; verify the rendered shape before fixing."
+    : "";
   if (headingSeverity !== null) {
     // Heading-as-label refinement: the wrapper's first child is a
     // heading whose text is itself a severity word. AT announces
@@ -454,8 +593,14 @@ function buildViolation(
     return {
       severity: "info",
       location: { filePath: "", line: loc.line, column: loc.column },
-      message: `<${tagName}> uses admonition class ${hitList} and the first child heading reads "${headingSeverity}" — assistive tech announces "heading level N: ${headingSeverity}", which carries the severity label. Verify the visual/AT mapping rather than reflexively adding a role.`,
+      message: `<${tagName}> uses admonition class ${hitList} and the first child heading reads "${headingSeverity}" — assistive tech announces "heading level N: ${headingSeverity}", which carries the severity label. Verify the visual/AT mapping rather than reflexively adding a role.${concededSuffix}`,
       suggestion: `The first child heading's text "${headingSeverity}" matches a severity-word dictionary, so the wrapper's accessible label is likely already announced via the heading. If the visual treatment matches the announced word, no change is needed. If you want belt-and-braces, add role="${suggestedRole}" so the live-region behaviour is also exposed.`,
+      ...(concession === null
+        ? {}
+        : {
+            confidence: concession.confidence,
+            couldBeWrongBecause: concession.couldBeWrongBecause,
+          }),
     };
   }
   const textPreview = previewText(text);
@@ -467,8 +612,11 @@ function buildViolation(
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> uses admonition class ${hitList} but has ${rolePhrase} and the ${textPhrase} — assistive tech users receive the content with the severity signal stripped.`,
+    message: `<${tagName}> uses admonition class ${hitList} but has ${rolePhrase} and the ${textPhrase} — assistive tech users receive the content with the severity signal stripped.${concededSuffix}`,
     suggestion: `Either add role="${suggestedRole}" so screen readers announce the severity, or begin the visible text with "${suggestedPrefix}" (e.g. "${suggestedPrefix} ${exampleBody(text)}") so the label is part of the accessible name. Styling alone is invisible to assistive tech.`,
+    ...(concession === null
+      ? {}
+      : { confidence: concession.confidence, couldBeWrongBecause: concession.couldBeWrongBecause }),
   };
 }
 

@@ -344,6 +344,110 @@ describe("rule aria/role-from-class-only", () => {
     });
   });
 
+  describe("HTML: fragment+template conceded-uncertainty", () => {
+    // Per docs/kb/architecture/ai-first-consumer.md "Per-finding
+    // confidence must reflect per-rule coverage limitations" + "Parser-
+    // failure invalidates per-file confidence": when the host HTML
+    // file is fragment-classified (no <html>/<body>, no layout
+    // directive, not under _layouts/) AND any text node carries a
+    // stripped Liquid/Jinja/ERB directive, the rule's deterministic
+    // AT-stripping claim concedes its predicate may not hold and the
+    // emit must downgrade per-finding `confidence` to "low" + populate
+    // `couldBeWrongBecause` with both axes.
+    it("downgrades confidence to low and attaches both reason codes on a fragment+template host file", () => {
+      const v = runRule(
+        rule,
+        `<div class="note warning">{{ severity_text }} restart required.</div>`,
+        { filePath: "_includes/admonition.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("low");
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "fragment_input_no_document_envelope",
+        "template_directives_present",
+      ]);
+    });
+
+    it("annotates the message with the conceded-uncertainty suffix", () => {
+      const v = runRule(
+        rule,
+        `<div class="warning">{% if user.admin %}Restart required.{% endif %}</div>`,
+        { filePath: "_includes/admonition.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.message).toContain("fragment-classified");
+      expect(v[0]?.message).toContain("template directives");
+    });
+
+    it("severity stays unchanged on the conceded-uncertainty branch (warning, not error)", () => {
+      // Severity is the budget axis; confidence is the predicate-strength
+      // axis. The conceded-uncertainty downgrade lives on the confidence
+      // axis only — severity stays at the rule's normal "warning."
+      const v = runRule(rule, `<div class="warning">{{ msg }}</div>`, {
+        filePath: "_partials/note.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.confidence).toBe("low");
+    });
+
+    it("heading-as-label refinement on a fragment+template host also propagates the conceded-uncertainty codes", () => {
+      // Even on the soft-fire `info` branch, the fragment+template host
+      // means the heading text we read may be replaced or wrapped at
+      // render time — propagate the same two-axis codes.
+      const v = runRule(rule, `<div class="warning"><h3>Warning</h3><p>{{ details }}</p></div>`, {
+        filePath: "_includes/admonition.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.confidence).toBe("low");
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "fragment_input_no_document_envelope",
+        "template_directives_present",
+      ]);
+    });
+
+    it("does NOT downgrade when the file has template directives but is NOT fragment-classified (e.g. layout file with <html>)", () => {
+      // <html>/<body> opener vetoes fragment classification — the file
+      // owns the document envelope, so the AT-stripping claim is honest.
+      // The conceded-uncertainty gate does not fire even though the
+      // document carries a {% … %} directive.
+      const v = runRule(
+        rule,
+        `<!DOCTYPE html><html><body><div class="warning">{{ msg }} body content.</div></body></html>`,
+        { filePath: "_layouts/page.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBeUndefined();
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT downgrade when the file is fragment-classified but has NO template directives", () => {
+      // Plain fragment without any `{{ … }}` / `{% … %}` / `<% … %>` —
+      // the rule's predicate is honest because the rendered text is
+      // fully observable. The fragment-only branch alone is not enough
+      // to gate the downgrade; both axes must hold.
+      const v = runRule(rule, `<div class="warning">Plain text body.</div>`, {
+        filePath: "_includes/admonition.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBeUndefined();
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("ERB directives also trigger the gate (template-language agnostic)", () => {
+      // `<%= severity %>` is the ERB equivalent of `{{ severity }}` —
+      // the parser strips both, so the gate fires on the same text-node
+      // signal regardless of which template engine produced the input.
+      const v = runRule(rule, `<div class="warning"><%= details %> — restart required.</div>`, {
+        filePath: "_includes/admonition.html",
+      });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.confidence).toBe("low");
+      expect(v[0]?.couldBeWrongBecause).toContain("template_directives_present");
+    });
+  });
+
   describe("rule metadata", () => {
     it("satisfies WCAG 1.3.3, 1.4.1, and 4.1.2 across 2.1 and 2.2", () => {
       expect(rule.satisfies).toContain("wcag22:1.3.3");

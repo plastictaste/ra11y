@@ -285,8 +285,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Reason-severity mismatches
 
-- [ ] **Q10-ROLE-FROM-CLASS-ONLY-FRAGMENT-FILE-CONCEDED-UNCERTAINTY** `aria/role-from-class-only` fires at `severity: "warning"` `confidence: "medium"` on fragment markdown files containing component-library-style admonition divs (`<div class="note info">`); message asserts deterministic AT-stripping while host file is fragment+template (rendered output may carry role-via-CSS, ARIA injection, or theme wrapper). Reason concedes uncertainty (file is fragment+template); severity does not match. Fix: when host file is fragment-classified AND template directives are present, downgrade to a review candidate OR populate per-finding `couldBeWrongBecause: ["fragment_input_no_document_envelope", "template_directives_present"]`. Per AI-first doctrine "Reason text and severity must agree" (conceded-uncertainty extension).
-
 ### Rule predicate gaps (false negatives)
 
 ### Rule predicate too-broad (false positives)
