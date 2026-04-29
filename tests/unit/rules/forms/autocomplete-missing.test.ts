@@ -243,6 +243,116 @@ describe("rule forms/autocomplete-missing", () => {
     });
   });
 
+  // Sibling-collapse: when ≥3 direct-child <input> siblings under one
+  // parent share the same `(tagName, attributes-modulo-id)` fingerprint
+  // and all fail the purpose-vs-autocomplete predicate, collapse the N
+  // near-identical findings into ONE canonical finding carrying
+  // `siblingInstances`. Mirrors `forms/labels-required` /
+  // `forms/placeholder-as-label` — the line-text-keyed `findingId` recipe
+  // collapses bytes-identical line text by design, so without collapse a
+  // visually-grouped cluster of identical inputs ships N entries that
+  // share one `findingId` (the silent-merge failure mode the helper was
+  // introduced to fix).
+  describe("HTML: sibling collapse", () => {
+    it("collapses 4 identical type=email <input> siblings into one finding with siblingInstances", () => {
+      // The canonical case from the backlog — 4 entries on identical
+      // `<input type="email" placeholder="Email">` siblings shared one
+      // `findingId` before the helper was applied here. After collapse,
+      // ONE finding ships with the per-sibling trail enumerable on
+      // `siblingInstances`.
+      const source = `<form>
+        <input type="email" placeholder="Email" id="e1">
+        <input type="email" placeholder="Email" id="e2">
+        <input type="email" placeholder="Email" id="e3">
+        <input type="email" placeholder="Email" id="e4">
+      </form>`;
+      const violations = runRule(rule, source, { filePath: "signup.html" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.siblingInstances).toBeDefined();
+      expect(violations[0]?.siblingInstances?.length).toBe(4);
+      expect(violations[0]?.siblingInstances?.[0]?.id).toBe("e1");
+      expect(violations[0]?.siblingInstances?.[3]?.id).toBe("e4");
+      // Message names the rollup so an agent reading the message alone
+      // knows it is one finding standing in for N siblings.
+      expect(violations[0]?.message).toContain("siblingInstances");
+      expect(violations[0]?.message).toContain("3 adjacent sibling");
+      // The collapsed finding still names the resolved autocomplete
+      // token so the agent gets the fix shape from one read.
+      expect(violations[0]?.message).toContain(`autocomplete="email"`);
+    });
+
+    it("emits per-element when 2 sibling inputs share a fingerprint (below threshold)", () => {
+      // Two siblings is below SIBLING_COLLAPSE_THRESHOLD = 3 — both
+      // emit individually and neither carries `siblingInstances`. Each
+      // finding's `findingId` is still distinct because the inputs
+      // differ in their unique `id` attribute (which the line-text-keyed
+      // recipe captures as part of the line bytes).
+      const source = `<form>
+        <input type="email" name="email" id="e1">
+        <input type="email" name="email" id="e2">
+      </form>`;
+      const violations = runRule(rule, source, { filePath: "pair.html" });
+      expect(violations).toHaveLength(2);
+      expect(violations[0]?.siblingInstances).toBeUndefined();
+      expect(violations[1]?.siblingInstances).toBeUndefined();
+    });
+
+    it("does not collapse siblings under different parents", () => {
+      // Same fingerprint but two different parents — neither parent has
+      // ≥3 failing siblings, so per-element emission stays.
+      const source = `<form>
+        <input type="email" name="email" id="a1">
+        <input type="email" name="email" id="a2">
+      </form>
+      <form>
+        <input type="email" name="email" id="b1">
+        <input type="email" name="email" id="b2">
+      </form>`;
+      const violations = runRule(rule, source, { filePath: "two-forms.html" });
+      expect(violations).toHaveLength(4);
+      for (const finding of violations) {
+        expect(finding.siblingInstances).toBeUndefined();
+      }
+    });
+
+    it("findingIds across all surfaced findings stay unique post-collapse", () => {
+      // The headline invariant the backlog item names. Per AI-first
+      // doctrine "ambiguous field shapes are dishonest" — id collisions
+      // are the worst case because downstream dedupe / suppression flows
+      // silently merge them. After collapse, every emitted finding's id
+      // must be distinct.
+      const source = `<form>
+        <input type="email" placeholder="Email" id="e1">
+        <input type="email" placeholder="Email" id="e2">
+        <input type="email" placeholder="Email" id="e3">
+        <input type="email" placeholder="Email" id="e4">
+        <input type="tel" name="phone" id="p1">
+      </form>`;
+      const violations = runRule(rule, source, { filePath: "signup.html" });
+      const ids = violations.map((v) => v.findingId);
+      expect(ids.length).toBe(new Set(ids).size);
+    });
+  });
+
+  describe("JSX: sibling collapse", () => {
+    it("collapses 4 identical type=email JSX <input> siblings into one finding", () => {
+      const source = `const X = (
+        <form>
+          <input type="email" placeholder="Email" id="e1" />
+          <input type="email" placeholder="Email" id="e2" />
+          <input type="email" placeholder="Email" id="e3" />
+          <input type="email" placeholder="Email" id="e4" />
+        </form>
+      );`;
+      const violations = runRule(rule, source, { filePath: "signup.tsx" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.siblingInstances?.length).toBe(4);
+      expect(violations[0]?.siblingInstances?.[0]?.id).toBe("e1");
+      expect(violations[0]?.siblingInstances?.[3]?.id).toBe("e4");
+      expect(violations[0]?.message).toContain("siblingInstances");
+    });
+  });
+
   // The label interpolation lets the agent dismiss recipient-email
   // vs user-email cases (and similar) in one read without cracking
   // the rule definition open. Without a resolved label, every

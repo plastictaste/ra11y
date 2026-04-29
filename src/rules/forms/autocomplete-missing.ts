@@ -33,6 +33,20 @@ import {
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { FixPaths } from "../../types/violation.ts";
+import {
+  collectFailingHtmlControls,
+  computeHtmlCollapseDecisions,
+  computeJsxCollapseDecisions,
+  type SiblingInstance,
+} from "./_label-sibling-collapse.ts";
+
+/**
+ * Tags this rule emits on. Only `<input>` — `<select>` / `<textarea>`
+ * carry their own purpose semantics (Input Purposes 1.3.5 enumerates
+ * input-typed values); the rule does not flag those today, so the
+ * sibling-collapse helper is restricted to the same surface.
+ */
+const COLLAPSIBLE_TAGS: ReadonlySet<string> = new Set(["input"]);
 
 /**
  * Maps a lowercase input `type` to the autocomplete token we expect.
@@ -127,44 +141,118 @@ type Emit = (v: {
   message: string;
   suggestion: string;
   fixPaths: FixPaths;
+  siblingInstances?: readonly SiblingInstance[];
 }) => void;
 
 function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
+  // Sibling-collapse: when ≥3 direct-child `<input>` siblings under one
+  // parent share the same `(tagName, attributes-modulo-id)` fingerprint
+  // AND all fail the purpose-vs-autocomplete predicate, emit ONE
+  // canonical finding carrying `siblingInstances` instead of N near-
+  // identical findings. Mirrors `forms/labels-required` /
+  // `forms/placeholder-as-label` so a sign-up form with six
+  // `<input type="email">` siblings reads as one row instead of six
+  // entries colliding under one `findingId` (the line-text-keyed id
+  // recipe collapses bytes-identical line text by design — collapse at
+  // emit time keeps the per-cluster id unique and surfaces the per-
+  // sibling trail).
+  const isFailingHtml = (el: HtmlElement): boolean => htmlInputViolates(el);
+  const failingByParent = collectFailingHtmlControls(
+    doc,
+    COLLAPSIBLE_TAGS,
+    isFailingHtml,
+    walkHtmlElements,
+  );
+  const { primary, consumed } = computeHtmlCollapseDecisions(failingByParent);
+
   for (const input of findHtmlElementsByTag(doc, "input")) {
-    if (hasHtmlAttribute(input, "autocomplete")) continue;
+    if (!htmlInputViolates(input)) continue;
+    if (consumed.has(input)) continue;
+    // Re-derive the trigger + edit + label at emit time. Cheap on
+    // realistic forms (one regex slice + one descendant scan per input)
+    // and keeps the predicate path bytes-identical to the emit path.
     const type = (getHtmlAttribute(input, "type") ?? "text").toLowerCase();
     const nameAttr = getHtmlAttribute(input, "name");
     const idAttr = getHtmlAttribute(input, "id");
-    const roleAttr = getHtmlAttribute(input, "role");
-    const ariaLabel = getHtmlAttribute(input, "aria-label");
-    if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) continue;
     const match = matchPurpose(type, nameAttr, idAttr);
     if (!match) continue;
     const edit = buildAutocompleteInsertEditHtml(input, match.expected, source);
     const label = resolveHtmlInputLabel(doc, input);
-    emit(buildViolation("input", match, input.loc.start, edit, label));
+    emit(buildViolation("input", match, input.loc.start, edit, label, primary.get(input)));
   }
+}
+
+/**
+ * Predicate the sibling-collapse helper consumes: would the rule emit a
+ * finding on this HTML `<input>`? Mirrors the per-element gating in
+ * {@link checkHtml} exactly so the collapse pass and the emit pass agree
+ * on which inputs are "failing."
+ */
+function htmlInputViolates(el: HtmlElement): boolean {
+  if (el.tagName.toLowerCase() !== "input") return false;
+  if (hasHtmlAttribute(el, "autocomplete")) return false;
+  const type = (getHtmlAttribute(el, "type") ?? "text").toLowerCase();
+  const nameAttr = getHtmlAttribute(el, "name");
+  const idAttr = getHtmlAttribute(el, "id");
+  const roleAttr = getHtmlAttribute(el, "role");
+  const ariaLabel = getHtmlAttribute(el, "aria-label");
+  if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) return false;
+  return matchPurpose(type, nameAttr, idAttr) !== null;
 }
 
 function checkJsx(module: TsxModule, source: string, emit: Emit): void {
+  // Sibling-collapse: same shape as the HTML branch — when ≥3 direct-
+  // child intrinsic `<input>` siblings share a `(tagName, attributes-
+  // modulo-id)` fingerprint AND all fail the purpose-vs-autocomplete
+  // predicate, emit ONE canonical finding carrying `siblingInstances`
+  // instead of N. Wrappers and polymorphic `<Tag as="input">`
+  // resolutions stay out of collapse (the helper opts them out —
+  // clusters of those are rare and the fingerprint is less stable
+  // across the resolution boundary; per-element emit on those is the
+  // safer default).
+  const { primary, consumed } = computeJsxCollapseDecisions(module, COLLAPSIBLE_TAGS, (el) =>
+    jsxInputViolates(el),
+  );
+
   for (const input of findJsxElementsByTag(module, "input")) {
-    checkJsxInput(input, source, emit);
+    if (consumed.has(input)) continue;
+    checkJsxInput(input, source, primary.get(input), emit);
   }
 }
 
-function checkJsxInput(input: JsxElement, source: string, emit: Emit): void {
-  if (hasJsxAttribute(input, "autoComplete") || hasJsxAttribute(input, "autocomplete")) return;
+function checkJsxInput(
+  input: JsxElement,
+  source: string,
+  siblings: readonly SiblingInstance[] | undefined,
+  emit: Emit,
+): void {
+  if (!jsxInputViolates(input)) return;
   const type = (getJsxAttributeString(input, "type") ?? "text").toLowerCase();
   const nameAttr = getJsxAttributeString(input, "name");
   const idAttr = getJsxAttributeString(input, "id");
-  const roleAttr = getJsxAttributeString(input, "role");
-  const ariaLabel = getJsxAttributeString(input, "aria-label");
-  if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) return;
   const match = matchPurpose(type, nameAttr, idAttr);
   if (!match) return;
   const edit = buildAutocompleteInsertEditJsx(input, match.expected, source);
   const label = resolveJsxInputLabel(input);
-  emit(buildViolation("input", match, input.loc.start, edit, label));
+  emit(buildViolation("input", match, input.loc.start, edit, label, siblings));
+}
+
+/**
+ * Predicate the sibling-collapse helper consumes: would the rule emit a
+ * finding on this JSX `<input>`? Mirrors {@link htmlInputViolates} on the
+ * JSX attribute shape (camelCase `autoComplete` accepted alongside the
+ * HTML-spec lowercase `autocomplete`).
+ */
+function jsxInputViolates(el: JsxElement): boolean {
+  if (el.tagName.toLowerCase() !== "input") return false;
+  if (hasJsxAttribute(el, "autoComplete") || hasJsxAttribute(el, "autocomplete")) return false;
+  const type = (getJsxAttributeString(el, "type") ?? "text").toLowerCase();
+  const nameAttr = getJsxAttributeString(el, "name");
+  const idAttr = getJsxAttributeString(el, "id");
+  const roleAttr = getJsxAttributeString(el, "role");
+  const ariaLabel = getJsxAttributeString(el, "aria-label");
+  if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) return false;
+  return matchPurpose(type, nameAttr, idAttr) !== null;
 }
 
 /**
@@ -596,18 +684,23 @@ function buildViolation(
   loc: { line: number; column: number },
   edit: { readonly oldText: string; readonly newText: string } | null,
   label: InputLabelEvidence | null,
+  siblings: readonly SiblingInstance[] | undefined,
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
   fixPaths: FixPaths;
+  siblingInstances?: readonly SiblingInstance[];
 } {
   // emit `fixPaths.primary.edit`
   // whenever the open-tag regex resolved cleanly so `suggest_fix`
   // returns `kind: "edit"` with a concrete oldText/newText pair. The
   // expected autocomplete token is fully resolved at this point (see
-  // `matchPurpose`), so the edit is deterministic.
+  // `matchPurpose`), so the edit is deterministic. The edit targets the
+  // canonical (anchor) sibling on a collapsed finding; the per-sibling
+  // line trail on `siblingInstances` tells the agent the same edit
+  // shape applies to every other sibling in the cluster.
   const fixPaths: FixPaths = {
     primary: {
       label: `add autocomplete="${match.expected}" to <${tagName}>`,
@@ -628,11 +721,51 @@ function buildViolation(
     match.trigger.kind === "type" && match.trigger.value === "email"
       ? ` autocomplete="${match.expected}" applies if this collects the user's own email; if it collects someone else's (e.g. a recipient address), use autocomplete="off" instead.`
       : "";
+  const message =
+    siblings === undefined
+      ? `<${tagName}> appears to collect information about the user but has no autocomplete attribute — ${describeTrigger(match.trigger)}${labelClause}. WCAG 2.2 SC 1.3.5 (AA) requires an autocomplete value drawn from the 53 input-purpose tokens so the field's purpose can be programmatically determined.`
+      : buildAutocompleteSiblingCollapsedMessage(tagName, match, siblings.length);
   return {
     severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
-    message: `<${tagName}> appears to collect information about the user but has no autocomplete attribute — ${describeTrigger(match.trigger)}${labelClause}. WCAG 2.2 SC 1.3.5 (AA) requires an autocomplete value drawn from the 53 input-purpose tokens so the field's purpose can be programmatically determined.`,
+    message,
     suggestion: `Add autocomplete="${match.expected}" so the field's purpose is programmatically determinable per SC 1.3.5.${recipientHint} See https://www.w3.org/TR/WCAG21/#input-purposes for the full list of 53 tokens.`,
     fixPaths,
+    ...(siblings === undefined ? {} : { siblingInstances: siblings }),
   };
+}
+
+/**
+ * Message for the canonical sibling-rollup finding when ≥3 direct-
+ * child `<input>` siblings under one parent share a fingerprint and
+ * all fail the purpose-vs-autocomplete predicate. Names the cluster
+ * shape and the rollup count so an agent reading the message alone
+ * knows it is one finding standing in for N siblings — and knows to
+ * read `siblingInstances` for the per-sibling line/id trail.
+ *
+ * The shared `_label-sibling-collapse.ts` helper ships its own
+ * collapsed-message builder for `forms/labels-required` (the "no
+ * accessible name" framing); this one is rule-specific because the
+ * autocomplete antipattern names the resolved purpose token and
+ * concedes that the same per-input edit applies to every sibling
+ * (unlike labels-required, where a single group-level `<fieldset>` /
+ * `role="group"` sometimes covers the whole cluster — autocomplete
+ * tokens are always per-input).
+ */
+function buildAutocompleteSiblingCollapsedMessage(
+  tagName: string,
+  match: PurposeMatch,
+  count: number,
+): string {
+  const others = count - 1;
+  return (
+    `<${tagName}> appears to collect information about the user but has no autocomplete attribute` +
+    ` — ${describeTrigger(match.trigger)} — and ${others} adjacent sibling ${tagName}` +
+    ` element${others === 1 ? "" : "s"} sharing the same parent and the same` +
+    ` (tag, attributes-modulo-id) shape are also missing autocomplete (collapsed into one` +
+    ` finding; see siblingInstances for the per-sibling line/id trail). WCAG 2.2 SC 1.3.5 (AA)` +
+    ` requires an autocomplete value drawn from the 53 input-purpose tokens on every input` +
+    ` collecting user information; the same per-input edit (autocomplete="${match.expected}")` +
+    ` applies to every sibling in the cluster.`
+  );
 }
