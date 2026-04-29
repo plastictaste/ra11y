@@ -176,6 +176,149 @@ const x: string = "<Button/>";
   });
 });
 
+describe("parseMdx — indented code block strip", () => {
+  it("strips a 4-space-indented code block so embedded JSX does not surface as a real element", () => {
+    // Real-world docs idiom: hand-authored JSX example without fences,
+    // sitting after a blank line at 4-space indent. The illustrative
+    // <Card> must not reach the TSX scanner as authored DOM.
+    const src = `# Docs
+
+Here is an example:
+
+    <Card title="illustrative">
+      <CardBody>example markup</CardBody>
+    </Card>
+
+<Card title="real" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    // Only the un-indented <Card> at column 0 is real residue; the
+    // indented one is illustrative and was stripped.
+    const cards = root.jsxElements.filter((e) => e.tagName === "Card");
+    expect(cards).toHaveLength(1);
+    const titleAttr = getAttr(cards[0]!, "title");
+    if (titleAttr?.value?.kind === "StringLiteral") {
+      expect(titleAttr.value.value).toBe("real");
+    }
+    expect(findElement(root.jsxElements, "CardBody")).toBeUndefined();
+  });
+
+  it("strips a tab-indented code block (CommonMark treats one tab as four columns)", () => {
+    const src = `# Title
+
+Code follows:
+
+\t<img alt="should-be-hidden" src="/x.png" />
+
+<img alt="real" src="/y.png" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const imgs = root.jsxElements.filter((e) => e.tagName === "img");
+    expect(imgs).toHaveLength(1);
+    const altAttr = getAttr(imgs[0]!, "alt");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("real");
+    }
+  });
+
+  it("strips a fenced code block sitting inside a list item past the 3-space fence-indent ceiling", () => {
+    // The fence opener at column 6 is not detected by the fence-strip
+    // pass (CommonMark's ≤3-space fence-indent ceiling); the
+    // indented-code-block strip catches the same content via the
+    // indent path so the illustrative <img> never surfaces.
+    const src = `# List
+
+- Item one
+- Item two with code:
+
+      \`\`\`jsx
+      <img alt="inside-nested-fence" src="/x.png" />
+      \`\`\`
+
+<img alt="outside" src="/y.png" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const imgs = root.jsxElements.filter((e) => e.tagName === "img");
+    expect(imgs).toHaveLength(1);
+    const altAttr = getAttr(imgs[0]!, "alt");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("outside");
+    }
+  });
+
+  it("does NOT strip a 4-space-indented continuation line after a non-blank prose paragraph", () => {
+    // The "previous line is blank" guard implements CommonMark's
+    // "an indented code block cannot interrupt a paragraph" rule —
+    // a 4-space-indented continuation line after non-blank prose
+    // remains paragraph text. A JSX tag on that continuation line
+    // must still be recognized.
+    const src = `# Title
+
+Some paragraph that continues
+    <img alt="real" src="/wrapped.png" /> after the wrap.
+
+End.
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const img = findElement(root.jsxElements, "img");
+    expect(img).toBeDefined();
+    const altAttr = getAttr(img!, "alt");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("real");
+    }
+  });
+
+  it("preserves line numbers for JSX following an indented code block", () => {
+    // Stripping must blank with whitespace so subsequent line numbers
+    // do not shift. The <img> on line 8 must still report line 8.
+    const src = `# Title
+
+Indented block:
+
+    <img alt="hidden-1" src="/x.png" />
+    <img alt="hidden-2" src="/y.png" />
+
+<img alt="visible" src="/z.png" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const imgs = root.jsxElements.filter((e) => e.tagName === "img");
+    expect(imgs).toHaveLength(1);
+    const altAttr = getAttr(imgs[0]!, "alt");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("visible");
+    }
+    expect(imgs[0]?.loc.start.line).toBe(8);
+  });
+
+  it("extends an indented block across blank interior lines (CommonMark lazy continuation)", () => {
+    // The blank line in the middle of the block is part of the block.
+    // Both indented JSX lines must be stripped.
+    const src = `# Title
+
+Code:
+
+    <img alt="line-one" src="/a.png" />
+
+    <img alt="line-three-after-blank" src="/b.png" />
+
+<img alt="real" src="/c.png" />
+`;
+    const { root, errors } = parseMdx(src);
+    expect(errors).toHaveLength(0);
+    const imgs = root.jsxElements.filter((e) => e.tagName === "img");
+    expect(imgs).toHaveLength(1);
+    const altAttr = getAttr(imgs[0]!, "alt");
+    if (altAttr?.value?.kind === "StringLiteral") {
+      expect(altAttr.value.value).toBe("real");
+    }
+  });
+});
+
 describe("parseMdx — inline code span strip", () => {
   it("strips balanced single-backtick spans in prose", () => {
     // Markdown inline code spans wrap a token like `<iframe>` so it

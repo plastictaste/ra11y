@@ -23,20 +23,33 @@
  *   2. Strip fenced code blocks (``` or ~~~). Their content is
  *      illustrative, not rendered; stripping prevents accidental JSX
  *      detection inside prose examples like ```` ```jsx\n<img/>\n``` ````.
- *   3. Strip inline code spans (`` `…` ``). Same rationale at the
+ *   3. Strip indented code blocks (4-space- or tab-indented blocks
+ *      following a blank line). Same rationale as fenced — these are
+ *      illustrative HTML/JSX samples in MDX docs, and CommonMark also
+ *      uses this form when a fence sits inside a list item past the
+ *      3-space fence-indent ceiling (the fence is then unrecognized
+ *      and the surrounding lines act as plain indented code). The
+ *      "must follow a blank line" guard protects authored JSX whose
+ *      children are 4-space-indented (e.g. a `<Card>` at column 0
+ *      with `<CardBody>` at column 4 — those rows are part of the
+ *      JSX block, not a code block).
+ *      Spec: https://spec.commonmark.org/0.31.2/#indented-code-blocks
+ *      Symmetry with `parseMarkdown`'s pass 3: both `.md` and `.mdx`
+ *      pipelines strip the same three code forms (fenced + indented +
+ *      inline) so downstream consumers cannot drift on whether
+ *      illustrative samples bleed through.
+ *   4. Strip inline code spans (`` `…` ``). Same rationale at the
  *      paragraph-inline scale — `` `<iframe>` `` in prose is a
  *      formatted code mention, not a rendered element. Symmetry with
- *      `parseMarkdown`'s pass 3: both `.md` and `.mdx` pipelines
- *      expose the same residual shape so downstream consumers (the
- *      TSX scanner today, any future token-walking finder) cannot
- *      drift on whether prose backticks are visible. Mirrors the
- * Q6/Q7 iframe-finder lineage (-
- *      BACKTICKS).
- *   4. Strip top-level `import` / `export` statements. These are ESM
+ *      `parseMarkdown`'s inline-code pass: both `.md` and `.mdx`
+ *      pipelines expose the same residual shape so downstream
+ *      consumers (the TSX scanner today, any future token-walking
+ *      finder) cannot drift on whether prose backticks are visible.
+ *   5. Strip top-level `import` / `export` statements. These are ESM
  *      module wiring — they can contain `<` characters (`Array<T>` in
  *      TS-style exports) that would confuse the TSX scanner. They also
  *      don't contribute authored DOM.
- *   5. Hand the residual to `parseTsx`. Its top-level scanner skips
+ *   6. Hand the residual to `parseTsx`. Its top-level scanner skips
  *      arbitrary prose between JSX tags via `#scanToJsx`, so naked
  *      markdown (headings, paragraphs, lists, bold/italic) just flows
  *      past until the next `<TagName` is found.
@@ -62,9 +75,6 @@
  *     stripped with the rest of the `export` line; any JSX inside a
  *     multi-line export is lost. Single-line exports are the common
  *     case in Astro/Docusaurus/Next.js MDX.
- *   - Indented code blocks (four-space convention). Uncommon in MDX
- *     pipelines (fenced is the norm); rely on the TSX tolerance pass
- *     for any `<` that slips through.
  */
 
 import type { ParseError, TsxModule } from "../../types/ast.ts";
@@ -98,6 +108,12 @@ export function parseMdx(source: string, options: MdxParseOptions = {}): TsxPars
   const buf = source.split("");
   stripFrontmatter(source, buf);
   stripFencedCodeBlocks(source, buf);
+  // Indented-code-block strip runs AFTER fenced strip so a fence's
+  // own 4-space-indented content lines aren't subjected to the
+  // indented-code rules; runs BEFORE inline-code so an indented
+  // block's backticks don't trip the inline pass. Mirrors the order
+  // in `parseMarkdown`.
+  stripIndentedCodeBlocks(source, buf);
   stripInlineCodeSpans(source, buf);
   stripImportExportLines(source, buf);
   const transformed = buf.join("");
@@ -282,7 +298,128 @@ function isClosingFence(line: string, open: CodeFenceInfo): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Pass 3 — inline code span strip
+// Pass 3 — indented code block strip
+// ---------------------------------------------------------------------------
+
+/**
+ * Blanks CommonMark indented code blocks: runs of lines that begin
+ * with at least four spaces (or a tab) and follow a blank line. The
+ * "follows a blank line" guard is the load-bearing protection for
+ * authored JSX residue — when a `<Card>` at column 0 contains
+ * `<CardBody>` lines indented four or more spaces, those rows belong
+ * to the JSX block, NOT to a code block, because the preceding
+ * `<Card>` line is non-blank.
+ *
+ * Why this matters in real-world MDX:
+ *
+ *   1. Authors write indented HTML/JSX examples without fences in
+ *      Starlight / Docusaurus / Next MDX docs:
+ *
+ *          <div className="alert">
+ *            <p>example markup</p>
+ *          </div>
+ *
+ *   2. Authors put a fenced code block inside a list item past the
+ *      3-space fence-indent ceiling. CommonMark requires the fence
+ *      itself be indented ≤3 spaces; once it sits at 4+ spaces, the
+ *      fence isn't recognized and the surrounding lines fall back to
+ *      indented-code-block semantics.
+ *
+ * The block extends until a non-blank line that is NOT indented ≥4
+ * spaces. Blank lines INSIDE the block (CommonMark's "lazy
+ * continuation") are tolerated. Reads `buf` rather than `source` for
+ * the blank-line and indent checks so already-blanked regions
+ * (frontmatter, fences) act as blank for the purposes of starting a
+ * new indented code block.
+ *
+ * Spec: https://spec.commonmark.org/0.31.2/#indented-code-blocks
+ */
+function stripIndentedCodeBlocks(source: string, buf: string[]): void {
+  let p = 0;
+  let prevLineWasBlank = true; // start-of-file counts as blank
+  while (p < source.length) {
+    const lineEnd = findLineEnd(source, p);
+    const isBlank = isBlankLineInBuf(buf, p, lineEnd);
+    if (isBlank) {
+      prevLineWasBlank = true;
+      p = advancePastNewline(source, lineEnd);
+      continue;
+    }
+    if (prevLineWasBlank && isIndentedCodeLine(buf, p, lineEnd)) {
+      const blockEnd = findIndentedCodeBlockEnd(source, buf, lineEnd);
+      blankRange(source, buf, p, blockEnd);
+      p = blockEnd;
+      prevLineWasBlank = false;
+      continue;
+    }
+    prevLineWasBlank = false;
+    p = advancePastNewline(source, lineEnd);
+  }
+}
+
+/**
+ * Returns true when `[start, end)` in `buf` contains only spaces,
+ * tabs, and carriage returns. Reads from `buf` so already-blanked
+ * regions count as blank.
+ */
+function isBlankLineInBuf(buf: string[], start: number, end: number): boolean {
+  for (let i = start; i < end; i += 1) {
+    const ch = buf[i];
+    if (ch !== " " && ch !== "\t" && ch !== "\r") return false;
+  }
+  return true;
+}
+
+/**
+ * Returns true when the `buf` slice `[start, end)` starts with at
+ * least 4 spaces or a single tab AND has at least one non-whitespace
+ * character past the indent. Reads from `buf` so that lines blanked
+ * by an earlier pass don't qualify.
+ */
+function isIndentedCodeLine(buf: string[], start: number, end: number): boolean {
+  if (buf[start] === "\t") {
+    return hasNonWhitespaceInRange(buf, start + 1, end);
+  }
+  let spaces = 0;
+  while (spaces < 4 && start + spaces < end && buf[start + spaces] === " ") spaces += 1;
+  if (spaces < 4) return false;
+  return hasNonWhitespaceInRange(buf, start + spaces, end);
+}
+
+function hasNonWhitespaceInRange(buf: string[], start: number, end: number): boolean {
+  for (let i = start; i < end; i += 1) {
+    const ch = buf[i];
+    if (ch !== " " && ch !== "\t" && ch !== "\r") return true;
+  }
+  return false;
+}
+
+/**
+ * Walks forward from `startLineEnd` (the `\n` ending the opening
+ * indented line) extending the block over indented and blank lines
+ * until a non-indented non-blank line. Trailing blank lines are NOT
+ * part of the block.
+ */
+function findIndentedCodeBlockEnd(source: string, buf: string[], startLineEnd: number): number {
+  let lastIndentedLineEnd = advancePastNewline(source, startLineEnd);
+  let p = lastIndentedLineEnd;
+  while (p < source.length) {
+    const lineEnd = findLineEnd(source, p);
+    if (isBlankLineInBuf(buf, p, lineEnd)) {
+      p = advancePastNewline(source, lineEnd);
+      continue;
+    }
+    if (!isIndentedCodeLine(buf, p, lineEnd)) {
+      return lastIndentedLineEnd;
+    }
+    p = advancePastNewline(source, lineEnd);
+    lastIndentedLineEnd = p;
+  }
+  return lastIndentedLineEnd;
+}
+
+// ---------------------------------------------------------------------------
+// Pass 4 — inline code span strip
 // ---------------------------------------------------------------------------
 
 /**
@@ -421,7 +558,7 @@ function findMatchingBacktickClose(source: string, startPos: number, runLen: num
 }
 
 // ---------------------------------------------------------------------------
-// Pass 4 — import / export line strip
+// Pass 5 — import / export line strip
 // ---------------------------------------------------------------------------
 
 /**
