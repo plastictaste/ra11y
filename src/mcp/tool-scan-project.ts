@@ -580,14 +580,12 @@ export const scanProjectTool: McpTool = {
           // for files where the routed parser produced zero findings —
           // the routing-skip failure mode the AI-first doctrine names.
           jsInnerHtmlPatternSamples,
-          // adjusted per-rule coverage rows surfaced under
-          // `meta.perRuleCoverage`. Drives the
-          // `coverage_confidence_uniformly_high_with_parse_errors`
-          // cross-check so an agent reading per-rule coverage as
-          // scan-confidence telemetry isn't silently misled when the
-          // adjustment chain leaves every row at uniform `"high"`
-          // despite parse errors.
-          adjustedPerRuleCoverage,
+          // pre-computed cross-check
+          // for `coverage_confidence_uniformly_high_with_parse_errors`.
+          // The warnings module pairs this boolean with the parse-error
+          // count from `meta.analysisCoverage.parseErrorFileCount` for
+          // the emission gate.
+          perRuleCoverageUniformlyHigh: isPerRuleCoverageUniformlyHigh(adjustedPerRuleCoverage),
         }),
       }),
     );
@@ -827,16 +825,14 @@ function buildBaseWarningsForScanProject(args: {
     readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
   >;
   /**
-   * Adjusted `perRuleCoverage` rows surfaced under
-   * `formatted.meta.perRuleCoverage`. Used here to drive the
-   * `coverage_confidence_uniformly_high_with_parse_errors` cross-check
-   * — the warnings module pairs the result with the parse-error count
-   * from `meta.analysisCoverage.parseErrorFileCount` for the emission
-   * gate, so the consistency gap between the parse-error surface and
-   * the per-rule coverage surface is named explicitly when both
-   * conditions co-occur.
+   * Pre-computed cross-check for
+   * `coverage_confidence_uniformly_high_with_parse_errors` (`true` when
+   * every adjusted `perRuleCoverage` row is high confidence with no
+   * `byFile` overrides). The warnings module pairs the boolean with the
+   * parse-error count from `meta.analysisCoverage.parseErrorFileCount`
+   * for the emission gate.
    */
-  readonly adjustedPerRuleCoverage: readonly import("../types/violation.ts").PerRuleCoverage[];
+  readonly perRuleCoverageUniformlyHigh: boolean;
 }): {
   readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
@@ -857,17 +853,8 @@ function buildBaseWarningsForScanProject(args: {
     bulkCatalogDetection,
     jsInnerHtmlDeclinedCount,
     jsInnerHtmlPatternSamples,
-    adjustedPerRuleCoverage,
+    perRuleCoverageUniformlyHigh,
   } = args;
-  // Cross-check for `coverage_confidence_uniformly_high_with_parse_errors`.
-  // The boolean is the predicate's per-rule axis (every adjusted row at
-  // `coverageConfidence: "high"` with no `byFile` overrides). The
-  // warnings module pairs it with the parse-error count axis (read from
-  // `meta.analysisCoverage.parseErrorFileCount`) for the emission gate
-  // so the code only fires when both axes co-occur on the same response.
-  const perRuleCoverageUniformlyHighWithParseErrors = isPerRuleCoverageUniformlyHigh(
-    adjustedPerRuleCoverage,
-  );
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
   // gate the `template_files_parsed_as_literal`
   // code on actual overlap between findings and directive lines —
@@ -1029,13 +1016,11 @@ function buildBaseWarningsForScanProject(args: {
     jsRoutedThroughTsxSucceededCount,
     // pre-computed cross-check for
     // `coverage_confidence_uniformly_high_with_parse_errors`. The
-    // warning fires only when both this boolean is `true` AND
+    // warning fires only when this boolean is `true` AND
     // `meta.analysisCoverage.parseErrorFileCount > 0` — names the
     // consistency gap between the parse-error surface and the per-rule
     // coverage surface.
-    ...(perRuleCoverageUniformlyHighWithParseErrors
-      ? { perRuleCoverageUniformlyHighWithParseErrors: true }
-      : {}),
+    ...(perRuleCoverageUniformlyHigh ? { perRuleCoverageUniformlyHighWithParseErrors: true } : {}),
   });
   return warningsFieldsForAssembler(warningsFromMeta);
 }

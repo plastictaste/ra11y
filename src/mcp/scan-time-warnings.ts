@@ -514,10 +514,21 @@ function buildWarningsFieldInputs(
     ...(derived.jsRoutedThroughTsxSucceededCount === 0
       ? {}
       : { jsRoutedThroughTsxSucceededCount: derived.jsRoutedThroughTsxSucceededCount }),
-    ...(inputs.perRuleCoverageUniformlyHighWithParseErrors === true
-      ? { perRuleCoverageUniformlyHighWithParseErrors: true }
-      : {}),
+    ...uniformlyHighInput(inputs.perRuleCoverageUniformlyHighWithParseErrors),
   };
+}
+
+/**
+ * Builds the spreadable cross-check subset of {@link WarningInputs}
+ * driving `coverage_confidence_uniformly_high_with_parse_errors`.
+ * Conditional-spread per the present-when-meaningful contract: only
+ * `true` carries the field through; both `false` and `undefined` drop
+ * the input so the warnings module's predicate falls through
+ * conservatively. Extracted from {@link buildWarningsFieldInputs} so
+ * the orchestrator stays under the cognitive-complexity cap.
+ */
+function uniformlyHighInput(value: boolean | undefined): Partial<WarningInputs> {
+  return value === true ? { perRuleCoverageUniformlyHighWithParseErrors: true } : {};
 }
 
 /**

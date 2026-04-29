@@ -551,15 +551,11 @@ export async function runScanAndFormat(
    */
   readonly scssUnresolvedVariableFiles: readonly string[];
   /**
-   * Adjusted `perRuleCoverage` rows — the same view that lands in
+   * Adjusted `perRuleCoverage` rows — same view as
    * `meta.perRuleCoverage` after every parse-error / SCSS / fragment /
-   * extension-subkind adjustment has run. Exposed so the caller (e.g.
-   * `tool-scan-project.ts`) can run the
+   * extension-subkind adjustment. Exposed so callers can run the
    * `coverage_confidence_uniformly_high_with_parse_errors` cross-check
-   * without re-walking the adjustment chain. Same identity as the rows
-   * surfaced under `formatted.meta.perRuleCoverage` (when
-   * `verboseMeta`) — the wire shape and this view share a single
-   * source.
+   * without re-walking the adjustment chain.
    */
   readonly adjustedPerRuleCoverage: readonly PerRuleCoverage[];
 }> {
@@ -751,18 +747,6 @@ export async function runScanAndFormat(
   // when at least one matching file parsed as a fragment (no
   // `<html>`/`<body>`).
   const fragmentFiles = detectFragmentFiles(files);
-  const parseErrorAdjusted = applyParseErrorAdjustment(
-    perRuleCoverage,
-    files,
-    activeRules,
-    violationFilePaths,
-  );
-  const scssAdjusted = applyScssUnresolvedVariablesAdjustment(
-    parseErrorAdjusted,
-    files,
-    activeRules,
-    new Set(scssUnresolvedFiles),
-  );
   // Disambiguate `eligible === 0` extension-gated rows by probing
   // whether the gated extensions exist anywhere under cwd. Two cases
   // route to different remediations: (a) `extension-absent` — the cwd
@@ -772,7 +756,17 @@ export async function runScanAndFormat(
   // build-dir skips, in which case the agent should broaden scope
   // rather than narrow `additionalPaths` further.
   const adjustedPerRuleCoverage = await applyExtensionSubkindFromRoot(
-    applyFragmentInputAdjustment(scssAdjusted, files, activeRules, new Set(fragmentFiles)),
+    applyFragmentInputAdjustment(
+      applyScssUnresolvedVariablesAdjustment(
+        applyParseErrorAdjustment(perRuleCoverage, files, activeRules, violationFilePaths),
+        files,
+        activeRules,
+        new Set(scssUnresolvedFiles),
+      ),
+      files,
+      activeRules,
+      new Set(fragmentFiles),
+    ),
     activeRules,
     cwd,
   );

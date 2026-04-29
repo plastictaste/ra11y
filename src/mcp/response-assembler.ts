@@ -323,14 +323,12 @@ function buildAssemblerWarningsField(args: {
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
   /**
    * Pre-computed cross-check for
-   * `coverage_confidence_uniformly_high_with_parse_errors`. The
-   * predicate is true when every assembled `perRuleCoverage` row is
-   * `coverageConfidence: "high"` with no `byFile` overrides; the
-   * warnings module pairs it with the parse-error count for the
-   * emission gate. Pass `false` (or omit) when the cross-check did not
-   * fire — the code drops conservatively in that case.
+   * `coverage_confidence_uniformly_high_with_parse_errors`. `true` when
+   * every assembled `perRuleCoverage` row is `coverageConfidence: "high"`
+   * with no `byFile` overrides; the warnings module pairs it with the
+   * parse-error count for the emission gate.
    */
-  readonly perRuleCoverageUniformlyHighWithParseErrors?: boolean;
+  readonly perRuleCoverageUniformlyHighWithParseErrors: boolean;
 }): {
   readonly warnings?: readonly ScanWarningCode[];
   readonly warningsDetails?: ScanWarningDetails;
@@ -402,8 +400,11 @@ function buildAssemblerWarningsField(args: {
       : {
           linkedStylesheetsUnresolvedForContrast: args.linkedStylesheetsUnresolvedForContrast,
         }),
-    ...(args.perRuleCoverageUniformlyHighWithParseErrors === true
-      ? { perRuleCoverageUniformlyHighWithParseErrors: true }
+    // present-when-meaningful; only fire the warning when the per-rule
+    // axis pre-check resolved true (the warnings module then pairs it
+    // with the parse-error count axis for the emission gate).
+    ...(args.perRuleCoverageUniformlyHighWithParseErrors
+      ? { perRuleCoverageUniformlyHighWithParseErrors: true as const }
       : {}),
   });
 }
@@ -654,16 +655,6 @@ export function assembleScanFamilyResponse(
   // the symmetric twin of suppression" doctrine.
   const linkedStylesheetsUnresolvedForContrast =
     detectLinkedStylesheetsNotResolvedForContrast(parsedFiles);
-  // Cross-check for `coverage_confidence_uniformly_high_with_parse_errors`.
-  // The pre-computed boolean is the predicate's per-rule axis (every
-  // adjusted row at `coverageConfidence: "high"` with no `byFile`
-  // overrides). The warnings module pairs it with the parse-error count
-  // axis (read from `analysisCoverage.parseErrorFileCount`) for the
-  // emission gate so the code only fires when both axes co-occur on
-  // the same response — the consistency gap the doctrine names.
-  const perRuleCoverageUniformlyHighWithParseErrors = isPerRuleCoverageUniformlyHigh(
-    adjustedPerRuleCoverage,
-  );
   const warnFields = buildAssemblerWarningsField({
     meta,
     violations,
@@ -679,9 +670,12 @@ export function assembleScanFamilyResponse(
     ...(linkedStylesheetsUnresolvedForContrast.count === 0
       ? {}
       : { linkedStylesheetsUnresolvedForContrast }),
-    ...(perRuleCoverageUniformlyHighWithParseErrors
-      ? { perRuleCoverageUniformlyHighWithParseErrors: true }
-      : {}),
+    // Cross-check for the
+    // `coverage_confidence_uniformly_high_with_parse_errors` warning;
+    // the warnings module pairs the boolean with the parse-error count
+    // for the emission gate.
+    perRuleCoverageUniformlyHighWithParseErrors:
+      isPerRuleCoverageUniformlyHigh(adjustedPerRuleCoverage),
   });
 
   // The three-totals `meta.countsBySurface` tripwire was dropped per

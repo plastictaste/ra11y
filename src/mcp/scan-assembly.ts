@@ -930,9 +930,7 @@ export function sumFindingsEmitted(rows: readonly PerRuleCoverage[]): number {
  * to an agent reading the coverage block. Either degradation axis
  * (aggregate `medium`/`low` OR per-file `byFile`) clears the predicate.
  */
-export function isPerRuleCoverageUniformlyHigh(
-  rows: readonly PerRuleCoverage[],
-): boolean {
+export function isPerRuleCoverageUniformlyHigh(rows: readonly PerRuleCoverage[]): boolean {
   for (const row of rows) {
     if (row.coverageConfidence !== "high") return false;
     if (row.byFile !== undefined && row.byFile.length > 0) return false;
