@@ -231,7 +231,13 @@ describe("formatter: agent — plan", () => {
     expect(plan.fixesByClass.guidance).toBe(0);
     expect(plan.fixesByClass.runtimeOnly).toBe(0);
     expect(plan.fixesByClass.verifyInSource).toBe(3);
-    expect(plan.reviewNeeded).toBe(0);
+    // After V1-FINDING-CATEGORY-VS-FIXCLASS-CONTRADICTION: `category: "auto-fix"` now
+    // requires a mechanical edit (`fixPaths.primary.edit`). The synthetic RESULT
+    // violations carry no `fixPaths`, so all 4 route to `category: "review"`.
+    // Real scan violations from rules that emit `fixPaths` will land in `category:
+    // "auto-fix"` and reduce this count; the synthetic fixture deliberately uses
+    // bare violations to test the plan shape.
+    expect(plan.reviewNeeded).toBe(4);
   });
 
   // plan.summary parenthetical breaks down by fixClass lane.
