@@ -36,30 +36,24 @@
  * complementary single-long-line predicate on the same doctrine —
  * `scannedBuildArtifacts` labels must be provable from file shape, not
  * a heuristic on weak evidence (ai-first-consumer.md §labeled-buckets).
- *
- * The fixture is `.tsx` rather than `.astro` because the harness's
- * `parseForExtension` does not register `.astro`; the structural
- * pattern the label-classifier reads — authored multi-line TSX plus
- * one prop-value line over 500 chars — carries over identically.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
 
 export const assertions: FixtureAssertions = {
   description:
-    "An authored TSX file modeled on Astro/Starlight `<Example code={`…`}/>` template " +
-    "prop shape — one line over 500 chars, surrounded by ~47 short authored lines — must " +
-    "NOT receive a `scannedBuildArtifacts` label. The single-long-line probe requires " +
-    "second-tier corroboration; without it, the authored file stays unlabeled.",
+    "An authored Astro file modeled on the Bootstrap docs `<Example code={`…`}/>` " +
+    "template-prop shape — one line over 500 chars, surrounded by short authored lines " +
+    "— must NOT receive a `scannedBuildArtifacts` label. The single-long-line probe " +
+    "requires second-tier corroboration; without it, the authored file stays unlabeled.",
   origin: {
     notes:
       "Sanitized from the Bootstrap docs site's Astro/Starlight example-preview pattern " +
       "(`site/src/assets/examples/blog-rtl/index.astro` and ~53 siblings). Upstream " +
       "embeds a preview HTML inside a `<Example code={`…`}/>` prop whose value crosses " +
-      "500 characters on one authored line. This reproduction uses `.tsx` (the harness " +
-      "does not register `.astro`) and preserves the line-length shape: one 808-char " +
-      "prop line, 47 short lines around it, no `.min.` / dist-path / hashed / sibling-" +
-      "sourcemap signals, so only the single-long-line probe can fire.",
+      "500 characters on one authored line. This reproduction preserves the line-length " +
+      "shape: one ~808-char prop line, ~30 short lines around it, no `.min.` / dist-path " +
+      "/ hashed / sibling-sourcemap signals, so only the single-long-line probe can fire.",
   },
   expectations: [
     // The file must parse cleanly — sanity check that the fixture
@@ -75,6 +69,6 @@ export const assertions: FixtureAssertions = {
     // line ratio, median line length, filename markers, path ancestry,
     // sibling sourcemap) all evaluate false, so `collectBuildArtifacts`
     // returns no entry for this path.
-    { kind: "no-build-artifact-label", path: "blog-rtl.tsx" },
+    { kind: "no-build-artifact-label", path: "blog-rtl.astro" },
   ],
 };

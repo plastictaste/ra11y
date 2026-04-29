@@ -34,10 +34,15 @@ import { extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type ParsedFile, runScan } from "../../../src/engine/scanner.ts";
 import {
+  parseAstro,
   parseCss,
   parseHtml,
+  parseLess,
   parseMarkdown,
   parseMdx,
+  parsePhp,
+  parseScss,
+  parseSvg,
   parseTsx,
 } from "../../../src/input/parsers/index.ts";
 import { collectBuildArtifacts } from "../../../src/mcp/build-artifacts.ts";
@@ -421,8 +426,16 @@ function parseFixtureSource(dir: string): readonly ParsedFile[] {
 }
 
 function parseForExtension(filePath: string, source: string): Ast | null {
+  // Mirrors the production parser-route table in
+  // `src/mcp/session.ts::parseForExtension`. Every extension in
+  // {@link PARSEABLE_EXTENSIONS} (`src/utils/path.ts`) must route
+  // through the same adapter the live scanner uses, otherwise
+  // real-world fixtures silently skip files whose extensions the
+  // runner doesn't register — the unit-test layer becomes the only
+  // safety net for parser-routing decisions on those extensions, and
+  // routing regressions land without the fixture-harness alarm.
   const ext = extname(filePath).toLowerCase();
-  if (ext === ".html" || ext === ".htm") {
+  if (ext === ".html" || ext === ".htm" || ext === ".xhtml" || ext === ".erb") {
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
@@ -430,17 +443,37 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     const r = parseCss(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (ext === ".tsx" || ext === ".jsx" || ext === ".ts" || ext === ".js") {
-    const r = parseTsx(source, { filePath });
-    return { language: "tsx", root: r.root, errors: r.errors };
+  if (ext === ".scss") {
+    const r = parseScss(source);
+    return { language: "css", root: r.root, errors: r.errors };
+  }
+  if (ext === ".less") {
+    const r = parseLess(source);
+    return { language: "css", root: r.root, errors: r.errors };
   }
   if (ext === ".mdx") {
     const r = parseMdx(source);
     return { language: "tsx", root: r.root, errors: r.errors };
   }
-  if (ext === ".md" || ext === ".markdown") {
+  if (ext === ".astro") {
+    const r = parseAstro(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (ext === ".svg") {
+    const r = parseSvg(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (ext === ".php" || ext === ".phtml") {
+    const r = parsePhp(source);
+    return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (ext === ".md" || ext === ".markdown" || ext === ".mkdn") {
     const r = parseMarkdown(source);
     return { language: "html", root: r.root, errors: r.errors };
+  }
+  if (ext === ".tsx" || ext === ".jsx" || ext === ".ts" || ext === ".js") {
+    const r = parseTsx(source, { filePath });
+    return { language: "tsx", root: r.root, errors: r.errors };
   }
   return null;
 }
@@ -485,6 +518,13 @@ function safeStat(abs: string): ReturnType<typeof statSync> | null {
   }
 }
 
+// Mirrors `PARSEABLE_EXTENSIONS` in `src/utils/path.ts` — every
+// extension the production parser-route table accepts must walk into
+// the fixture harness so real-world fixtures can regression-guard
+// parser routing for their own extensions. Without this mirror, files
+// with extensions absent from the set are silently skipped during
+// fixture discovery and the unit-test layer becomes the only safety
+// net for routing decisions on those extensions.
 const SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   ".tsx",
   ".jsx",
@@ -492,10 +532,19 @@ const SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   ".js",
   ".html",
   ".htm",
+  ".xhtml",
   ".css",
+  ".scss",
+  ".less",
   ".mdx",
+  ".astro",
   ".md",
   ".markdown",
+  ".mkdn",
+  ".svg",
+  ".erb",
+  ".php",
+  ".phtml",
 ]);
 
 // ---------------------------------------------------------------------------
