@@ -220,17 +220,37 @@ const VISIBILITY_CLASS_TOKENS: readonly string[] = [
  *   - `collapse-toggle` — common collapse trigger naming
  *   - `accordion` — generic accordion-header naming
  *   - `disclosure` — APG-aligned naming
+ *   - `collapsed` — Bootstrap-style state token: triggers carry
+ *     `.collapsed` while the panel is hidden and the framework removes
+ *     the token when it expands. Hand-rolled disclosure widgets follow
+ *     the same idiom. The class describes the *current state* of the
+ *     control rather than its type, but its presence on a `<button>` /
+ *     `<a>` (with no `aria-expanded`) is reliable evidence the element
+ *     is a disclosure trigger toggling a sibling region.
+ *   - `expanded` — symmetric counterpart of `collapsed`: many
+ *     disclosure widgets toggle between `.expanded` / `.collapsed` (or
+ *     one of the two depending on the initial state), and either token
+ *     alone is evidence of disclosure shape on an interactive element.
  *
  * Matched as an EXACT whitespace-split token (case-insensitive). A
- * class like `toggle-button-group` does NOT match `toggle`. The
- * conservative bias is intentional: the predicate already fires on
- * stronger signals (data-*-toggle, aria-controls, onclick classList),
- * so the class-only branch only earns its keep when the naming is a
- * recognized disclosure idiom — not on any element that happens to
- * carry a class containing "toggle".
+ * class like `toggle-button-group` does NOT match `toggle`; a class
+ * like `collapsed-content` does NOT match `collapsed`. The conservative
+ * bias is intentional: the predicate already fires on stronger signals
+ * (data-*-toggle, aria-controls, onclick classList), so the class-only
+ * branch only earns its keep when the naming is a recognized
+ * disclosure idiom — not on any element that happens to carry a class
+ * containing one of these substrings.
  *
  * Per CLAUDE.md §14 we detect the shape, not the framework — the
  * tokens here are conventions independent of any one library.
+ *
+ * Predicate strength: every match here flows through the
+ * `disclosure-class` branch, which is the weakest of the rule's four
+ * predicate branches. Severity stays at `warning` (per the rule-level
+ * downgrade) and every emit ships
+ * `couldBeWrongBecause: ["disclosure_predicate_relies_on_class_token"]`,
+ * so the agent reading severity, reason, and the structured uncertainty
+ * code sees the same low-confidence signal across all channels.
  */
 const DISCLOSURE_CLASS_TOKENS: readonly string[] = [
   "toggle",
@@ -238,6 +258,8 @@ const DISCLOSURE_CLASS_TOKENS: readonly string[] = [
   "collapse-toggle",
   "accordion",
   "disclosure",
+  "collapsed",
+  "expanded",
 ];
 
 /** classList method names used to toggle visibility classes. */

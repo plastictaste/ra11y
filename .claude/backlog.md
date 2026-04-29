@@ -200,7 +200,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8/Q
 #### Q8c — accepted (P1 — rule scope widening)
 
 - [ ] **Q8c-RULE-INTERACTIVE-DIV-ROLE-MISSING-CROSS-FILE** When a `.js` file binds a click handler to a `<div>` / `<span>` / `<li>` / `<img>` resolved by selector, AND the target element in HTML has no `role` / `tabindex` / `aria-label`, emit a rule-side finding (not just a candidate). Observed pattern: a non-interactive element with a state-class receives a `dblclick` or `onclick` handler from a sibling script. Predicate is static-deterministic when the AST resolves the selector to a non-interactive tag. WCAG 4.1.2 + 2.1.1. Pairs with Q8-RULE-CROSS-FILE-CLICK-HANDLER-NON-INTERACTIVE (open, finder axis) — this is the rule-emission upgrade for the deterministic resolved-selector case.
-- [ ] **Q8c-RULE-EXPANDED-DISCLOSURE-CLASS-COLLAPSED-PREDICATE** `aria/expanded-on-disclosure` fires on elements with framework `data-*-toggle="collapse"` attributes but misses class-only signal (`.collapsed` class without any data-* attribute) — common pattern in template catalogs. Fix: extend the rule predicate to recognize class-name `collapsed` / `expanded` toggling on `<button>` / `<a>` as disclosure evidence (additive to the data-* path), surface as candidate if not already a rule fire. WCAG 4.1.2. Pairs with V1-RULE-ARIA-EXPANDED-DISCLOSURE (closed, predicate axis) — this is the class-only widening.
 
 #### Q8c — accepted (P1 — new rules)
 

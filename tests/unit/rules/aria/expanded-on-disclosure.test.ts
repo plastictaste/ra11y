@@ -713,6 +713,133 @@ describe("rule aria/expanded-on-disclosure", () => {
       expect(violations[0]?.message).toMatch(/missing aria-controls/);
       expect(violations[0]?.message).toMatch(/disclosure-pattern token "dropdown-toggle"/);
     });
+
+    it('fires on <button class="collapsed">…</button> with no aria-expanded (Bootstrap-style state token)', () => {
+      // Bootstrap-style disclosure: the trigger carries `.collapsed` while
+      // the controlled region is hidden, and the framework removes the
+      // token when the region expands. Even with no `data-*-toggle`
+      // attribute, this is reliable evidence of disclosure shape — and
+      // because the trigger has no `aria-expanded`, AT cannot announce
+      // the open/closed state.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="collapsed">Section 1</button>
+        </body></html>`,
+        { filePath: "collapsed.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "collapsed"/);
+      expect(violations[0]?.suggestion).toMatch(/aria-expanded="false"/);
+    });
+
+    it('fires on <a class="expanded">…</a> with no aria-expanded (symmetric state token)', () => {
+      // The `expanded` state token mirrors `collapsed`: hand-rolled and
+      // framework-driven disclosure widgets often toggle between the two.
+      // Either token alone is shape evidence on an interactive element.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <a href="#x" class="expanded">Open section</a>
+        </body></html>`,
+        { filePath: "expanded.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "expanded"/);
+    });
+
+    it('fires on JSX <button className="collapsed"> with no aria-expanded', () => {
+      const violations = runRule(
+        rule,
+        `function Section() {
+           return <button className="collapsed">Section 1</button>;
+         }`,
+        { filePath: "Section.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "collapsed"/);
+    });
+
+    it('still fires on <button class="accordion-button collapsed"> when collapsed sits among other classes', () => {
+      // Bootstrap 5 accordion buttons typically carry both
+      // `.accordion-button` and `.collapsed` while the panel is closed.
+      // Either token would match the disclosure-class branch on its own;
+      // the rule's behavior is identical regardless of which match wins
+      // first (the suggestion cites a single disclosure-pattern token).
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="accordion-button collapsed">Item</button>
+        </body></html>`,
+        { filePath: "accordion-collapsed.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token/);
+    });
+
+    it('does not fire on <button class="collapsed-content"> (substring, not token-exact)', () => {
+      // Token-exact match: a class containing "collapsed" as a substring
+      // (e.g. `.collapsed-content`, `.collapsed-row`) does not match.
+      // Stronger evidence is required to fire on substring overlap.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="collapsed-content">Region</button>
+        </body></html>`,
+        { filePath: "substr-collapsed.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('matches the collapsed class token case-insensitively (<button class="Collapsed">)', () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="Collapsed">Section</button>
+        </body></html>`,
+        { filePath: "case-collapsed.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/disclosure-pattern token "collapsed"/);
+    });
+
+    it('does not fire on <div class="collapsed">…</div> (non-interactive element, class-token alone is not enough)', () => {
+      // The disclosure rule only fires on interactive elements (button,
+      // a, role=button). A `<div>` carrying `.collapsed` without any
+      // interactive surface is a content region, not a trigger.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <div class="collapsed">Hidden content</div>
+        </body></html>`,
+        { filePath: "div-collapsed.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it('emits the predicate-uncertainty token on a class-only collapsed match', () => {
+      // The class-only path is the weakest predicate branch; every emit
+      // must carry the same `couldBeWrongBecause` signal as the other
+      // class-token matches so an agent triaging by uncertainty axis
+      // sees a uniform code regardless of which token matched.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button class="collapsed">Section</button>
+        </body></html>`,
+        { filePath: "uncertainty-collapsed.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("warning");
+      expect(violations[0]?.couldBeWrongBecause).toContain(
+        "disclosure_predicate_relies_on_class_token",
+      );
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "disclosure-class",
+        findingKind: "missing-expanded",
+      });
+    });
   });
 
   describe("tab-widget toggle values are not disclosure (APG tabs uses aria-selected)", () => {
