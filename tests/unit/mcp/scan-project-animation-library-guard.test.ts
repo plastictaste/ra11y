@@ -28,7 +28,10 @@ function finding(ruleId: string, severity = "error") {
     column: 1,
     message: "synthetic for test",
     effort: "trivial" as const,
-    category: "auto-fix" as const,
+    // `category: "review"` is the honest pairing for `fixClass:
+    // "guidance"` — no mechanical edit, so no auto-fix. See
+    // {@link categorize} in src/output/agent-response/build-finding.ts.
+    category: "review" as const,
     suppressWith: "ra11y-disable",
   };
 }

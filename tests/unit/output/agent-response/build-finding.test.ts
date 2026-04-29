@@ -713,3 +713,104 @@ describe("buildAgentFinding — fix.oldText widens to a unique anchor when sourc
     expect(finding.fix?.newText).toBe(primary.edit.newText);
   });
 });
+
+/**
+ * The doctrinal invariant: `fixClass` and `category` must never
+ * contradict on the same finding. `fixClass: "runtime-only"` declares
+ * that no static edit is available — only runtime verification (DOM,
+ * QA) can decide; `category: "auto-fix"` reads as "an automatic fix is
+ * available." Shipping both on the same finding is a silent
+ * contradiction — agents budget against the headline category before
+ * reading `fixClass`, so the contradiction wastes attention budget on
+ * a pseudo-actionable lane. Canonical case: every
+ * `motion/pause-stop-hide` emission carries a prose `suggestion`, so
+ * the pre-fix categorize() upgraded `runtime-only` findings to
+ * `category: "auto-fix"` despite the rule's own `fixClass`
+ * declaration that no static edit is available.
+ *
+ * Doctrine reference: docs/kb/architecture/ai-first-consumer.md
+ * "Reason / priority / fix-description must agree across all three
+ * channels."
+ *
+ * Closure: `category: "auto-fix"` is reserved for findings that ship a
+ * mechanical edit (`fixPaths.primary.edit`); guidance-only suggestions
+ * (no edit) route to `category: "review"` regardless of severity. The
+ * prose `suggestion` is still surfaced via `fix.description`, so signal
+ * is preserved.
+ */
+describe("category never contradicts fixClass", () => {
+  it("runtime-only finding with prose suggestion is review, not auto-fix", () => {
+    // Canonical regression: motion/pause-stop-hide ships fixClass:
+    // "runtime-only" with a prose suggestion that names the
+    // prefers-reduced-motion remediation. Pre-fix, the prose-only
+    // branch of categorize() upgraded such findings to "auto-fix",
+    // contradicting fixClass.
+    const v = violation({
+      ruleId: "motion/pause-stop-hide",
+      fixClass: "runtime-only",
+      location: { filePath: "a.css", line: 1, column: 1 },
+      suggestion:
+        "Wrap the animation in @media (prefers-reduced-motion: reduce) { … } or move the entire rule inside a prefers-reduced-motion query.",
+    });
+    const finding = buildAgentFinding(v);
+    expect(finding.fixClass).toBe("runtime-only");
+    expect(finding.category).toBe("review");
+    // The prose suggestion is still surfaced — signal preserved.
+    expect(finding.fix?.description).toContain("prefers-reduced-motion");
+  });
+
+  it("guidance finding with prose suggestion (no edit) is review, not auto-fix", () => {
+    const v = violation({
+      ruleId: "contrast/minimum",
+      fixClass: "guidance",
+      location: { filePath: "a.css", line: 1, column: 1 },
+      suggestion: "Choose a darker foreground color.",
+    });
+    const finding = buildAgentFinding(v);
+    expect(finding.fixClass).toBe("guidance");
+    expect(finding.category).toBe("review");
+  });
+
+  it("verify-in-source finding without a mechanical edit is review, not auto-fix", () => {
+    const v = violation({
+      ruleId: "keyboard/handler-missing",
+      fixClass: "verify-in-source",
+      location: { filePath: "a.tsx", line: 1, column: 1 },
+      suggestion: "Read the surrounding component to decide which element should carry the handler.",
+    });
+    const finding = buildAgentFinding(v);
+    expect(finding.fixClass).toBe("verify-in-source");
+    expect(finding.category).toBe("review");
+  });
+
+  it("mechanical finding with a real edit is auto-fix (the only honest case)", () => {
+    const v = violation({
+      ruleId: "aria/invalid-role",
+      fixClass: "mechanical",
+      location: { filePath: "a.tsx", line: 1, column: 1 },
+      suggestion: "Replace the typo with the canonical role.",
+      fixPaths: {
+        primary: {
+          label: "fix typo",
+          edit: { oldText: 'role="buttn"', newText: 'role="button"' },
+        },
+        alternatives: [],
+      },
+    });
+    const finding = buildAgentFinding(v);
+    expect(finding.fixClass).toBe("mechanical");
+    expect(finding.category).toBe("auto-fix");
+  });
+
+  it("info-severity finding without an edit is review", () => {
+    const v = violation({
+      ruleId: "test/info-rule",
+      fixClass: "guidance",
+      severity: "info",
+      location: { filePath: "a.tsx", line: 1, column: 1 },
+      suggestion: "Additive context.",
+    });
+    const finding = buildAgentFinding(v);
+    expect(finding.category).toBe("review");
+  });
+});

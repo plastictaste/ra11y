@@ -206,19 +206,42 @@ export interface BuildAgentFindingOptions {
   readonly source?: string;
 }
 
+/**
+ * Resolves the agent-facing {@link Category} for a Violation.
+ *
+ * `"auto-fix"` is reserved for findings that ship a mechanical edit
+ * (`fixPaths?.primary.edit`). Everything else — guidance-only prose
+ * suggestions, runtime-only checks, verify-in-source rules without a
+ * mechanical edit — routes to `"review"` because no static edit is
+ * available for the agent to apply verbatim.
+ *
+ * Doctrine: per `docs/kb/architecture/ai-first-consumer.md` "Reason /
+ * priority / fix-description must agree across all three channels," a
+ * finding with `fixClass: "runtime-only"` (the rule's own declaration
+ * that no static edit exists) cannot honestly carry `category:
+ * "auto-fix"`. Before this fix, any prose `suggestion` string upgraded
+ * the category — including on `runtime-only` rules — and shipped a
+ * silent contradiction with the sibling `fixClass` on the same finding
+ * (canonical case: `motion/pause-stop-hide` shipped `fixClass:
+ * "runtime-only"` AND `category: "auto-fix"` simultaneously, because
+ * every emission carries a prose `suggestion`). Anchoring `auto-fix`
+ * to the presence of a mechanical edit removes the contradiction
+ * without dropping signal — the prose suggestion is still surfaced
+ * via `fix.description`.
+ */
 function categorize(v: Violation): Category {
   if (v.fixPaths?.primary.edit !== undefined) return "auto-fix";
-  if (v.severity === "info") return "review";
-  if (typeof v.suggestion === "string" && v.suggestion.length > 0) return "auto-fix";
   return "review";
 }
 
 /**
  * Convert a single {@link Violation} into an {@link AgentFinding}.
  *
- * The `category` field uses `"auto-fix"` when there is a mechanical edit,
- * `"review"` for guidance-only or no-suggestion findings at non-info severity,
- * and `"review"` for info-severity findings.
+ * The `category` field uses `"auto-fix"` only when the violation ships a
+ * mechanical edit (`fixPaths?.primary.edit`); every other finding —
+ * guidance-only prose, runtime-only checks, verify-in-source without an
+ * edit, info-severity additive context — routes to `"review"`. See
+ * {@link categorize} for the doctrine.
  */
 export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions): AgentFinding {
   const category = categorize(v);
