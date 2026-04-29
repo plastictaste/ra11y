@@ -50,7 +50,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag22:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +28 | otp-input-cluster | **rule** |
+| `wcag22:1.3.1` | Info and Relationships | A | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +29 | otp-input-cluster | **rule** |
 | `wcag22:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag22:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag22:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -124,7 +124,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha, password-inputs | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +43 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
 
 ## WCAG 2.1
@@ -145,7 +145,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:1.2.7` | Extended Audio Description (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.8` | Media Alternative (Prerecorded) | AAA | manual | — | media-variants | **finder** |
 | `wcag21:1.2.9` | Audio-only (Live) | AAA | manual | — | media-variants | **finder** |
-| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +28 | otp-input-cluster | **rule** |
+| `wcag21:1.3.1` | Info and Relationships | A | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +29 | otp-input-cluster | **rule** |
 | `wcag21:1.3.2` | Meaningful Sequence | A | manual | — | meaningful-sequence | **finder** |
 | `wcag21:1.3.3` | Sensory Characteristics | A | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `wcag21:1.3.4` | Orientation | AA | partial | layout/orientation-lock | — | **rule** |
@@ -211,7 +211,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +2 | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +43 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -228,7 +228,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `section508:1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `section508:1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +28 | otp-input-cluster | **rule** |
+| `section508:1.3.1` | Info and Relationships | base | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +29 | otp-input-cluster | **rule** |
 | `section508:1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `section508:1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `section508:1.4.1` | Use of Color | base | manual | aria/role-from-class-only, color/meaning-by-color-only +2 | color-class-crossref, use-of-color | **rule** |
@@ -259,7 +259,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +43 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
 
 ## EN 301 549
 
@@ -275,7 +275,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.2.3` | Audio Description or Media Alternative (Prerecorded) | base | manual | — | media-alternatives | **finder** |
 | `en301549:9.1.2.4` | Captions (Live) | base | manual | — | media-variants | **finder** |
 | `en301549:9.1.2.5` | Audio Description (Prerecorded) | base | manual | — | media-alternatives | **finder** |
-| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +28 | otp-input-cluster | **rule** |
+| `en301549:9.1.3.1` | Info and Relationships | base | partial | aria/icon-child-missing-aria-hidden, aria/icon-font-hidden +29 | otp-input-cluster | **rule** |
 | `en301549:9.1.3.2` | Meaningful Sequence | base | manual | — | meaningful-sequence | **finder** |
 | `en301549:9.1.3.3` | Sensory Characteristics | base | manual | aria/role-from-class-only | sensory-characteristics | **rule** |
 | `en301549:9.1.3.4` | Orientation | base | partial | layout/orientation-lock | — | **rule** |
@@ -317,5 +317,5 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +43 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-valid, forms/aria-invalid-missing | live-region-pre-existence, live-region-runtime-mutation-missing | **rule** |

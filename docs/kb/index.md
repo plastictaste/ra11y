@@ -148,6 +148,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [forms/required-marker-without-required-attr](./rules/forms__required-marker-without-required-attr.md)
 - [forms/select-onchange-context-change](./rules/forms__select-onchange-context-change.md)
 - [forms/submit-not-button-or-input](./rules/forms__submit-not-button-or-input.md)
+- [forms/value-as-label](./rules/forms__value-as-label.md)
 - [keyboard/accesskey-duplicate](./rules/keyboard__accesskey-duplicate.md)
 - [keyboard/anchor-button-not-focusable](./rules/keyboard__anchor-button-not-focusable.md)
 - [keyboard/character-shortcuts](./rules/keyboard__character-shortcuts.md)
