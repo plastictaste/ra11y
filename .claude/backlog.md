@@ -204,8 +204,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8/Q
 
 #### Q8c — accepted (P1 — new rules)
 
-- [ ] **Q8c-RULE-ALL-FORMS-LANDMARK-NAME** Cousin to `semantics/duplicate-landmark-unlabeled` (which fires speculatively per Q8-DUPLICATE-LANDMARK-UNLABELED-EMITS-ON-SPECULATION). Once the speculative composite is gated on confirmed sibling evidence, the genuine "every form on this page is unlabeled" case becomes a real finding worth a deterministic rule. Fix: surface `semantics/all-forms-unlabeled` rule for the in-file count ≥ 2 + zero `aria-label`/`aria-labelledby` deterministic case. WCAG 1.3.1 + 4.1.2. Pairs with Q8-DUPLICATE-LANDMARK-UNLABELED-EMITS-ON-SPECULATION (closure target) — this is the deterministic-emission cousin.
-
 #### Q8c — accepted (P2 — finder fix-suggestion polish)
 
 
