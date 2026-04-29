@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Live clock — compliant fixture</title>
+  </head>
+  <body>
+    <!-- aria-live="polite" tells assistive tech to announce the new
+         text whenever the host's content changes. role="timer" /
+         role="status" / <output> are equivalent shapes. -->
+    <div id="clock" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>
