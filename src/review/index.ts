@@ -12,6 +12,7 @@ import { finder as consistentNavigation } from "./finders/consistent-navigation.
 import { finder as crossFileClickHandler } from "./finders/cross-file-click-handler.ts";
 import { finder as dataBgImage } from "./finders/data-bg-image.ts";
 import { finder as decorativeImgWithAdjacentMeaning } from "./finders/decorative-img-with-adjacent-meaning.ts";
+import { finder as dragEvents } from "./finders/drag-events.ts";
 import { finder as errorIdentification } from "./finders/error-identification.ts";
 import { finder as errorPrevention } from "./finders/error-prevention.ts";
 import { finder as errorSuggestion } from "./finders/error-suggestion.ts";
@@ -55,6 +56,7 @@ export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   crossFileClickHandler,
   dataBgImage,
   decorativeImgWithAdjacentMeaning,
+  dragEvents,
   errorIdentification,
   errorPrevention,
   errorSuggestion,
