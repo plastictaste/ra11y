@@ -93,6 +93,13 @@ const CHECKS: readonly Check[] = [
     affectedBy: hasAnyTsChange,
   },
   {
+    name: "staged-format",
+    cmd: ["bun", "scripts/check-staged-format.ts"],
+    precommit: true,
+    full: false,
+    affectedBy: hasAnyTsChange,
+  },
+  {
     name: "test",
     cmd: ["bun", "test"],
     precommit: true,
