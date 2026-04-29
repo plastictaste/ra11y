@@ -63,7 +63,8 @@ interface CoverageEnvelope {
     readonly scanned_zero_files?: Record<string, never>;
   };
   readonly automatedCriteriaPassRate?: number;
-  readonly criteriaTotal?: number;
+  readonly criteriaTotalForProfile?: number;
+  readonly criteriaByLevel?: Record<string, number>;
   readonly summary?: string;
 }
 
@@ -180,11 +181,11 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(data).not.toHaveProperty("automatedCriteriaPassRate");
     expect(typeof data.summary).toBe("string");
     expect(data.summary).not.toMatch(/\(\d+%\)/);
-    // Structural signal the agent can still read — criteriaTotal
-    // stays populated so the shape of what *would* have been evaluated
-    // is visible (clamps only the
+    // Structural signal the agent can still read —
+    // criteriaTotalForProfile stays populated so the shape of what
+    // *would* have been evaluated is visible (clamps only the
     // dishonest scalar, not the per-criterion split).
-    expect(typeof data.criteriaTotal).toBe("number");
+    expect(typeof data.criteriaTotalForProfile).toBe("number");
   });
 
   it("preserves `automatedCriteriaPassRate` on a populated scan", async () => {

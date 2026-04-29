@@ -74,6 +74,21 @@ export interface PerStandardCoverage {
   readonly standardName: string;
   readonly version: string;
   readonly total: number;
+  /**
+   * Per-level breakdown of the criteria captured by `total`. Keys are
+   * present only for levels the standard actually defines (e.g. WCAG
+   * uses `A` / `AA` / `AAA`; Section 508 has no level qualifier and
+   * surfaces under `base`). The numeric values sum to `total` exactly —
+   * the field anchors the otherwise-bare `total` count to its
+   * conformance-level shape so an MCP consumer can verify that an
+   * `AA` coverage scope didn't silently include `AAA` rows.
+   *
+   * Per `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+   * shapes are dishonest": a bare `total` without level context could be
+   * over-counted or under-counted relative to the active conformance
+   * profile, with the agent unable to tell which.
+   */
+  readonly criteriaByLevel: Readonly<Record<string, number>>;
   readonly automatable: number;
   readonly manual: number;
   readonly passing: number;
@@ -240,6 +255,14 @@ function buildOne(
   const manualCriteria: string[] = [];
   const untestableCriteria: string[] = [];
   const criteria: CoverageCriterion[] = [];
+  // Per-level tally keyed by the criterion's declared level — anchors
+  // `total` to the conformance-level shape so consumers can verify the
+  // count agrees with the active profile (`A` / `AA` / `AAA` for WCAG;
+  // `base` for level-less standards). Values sum to
+  // `standard.criteria.length` exactly by construction (every criterion
+  // contributes to exactly one bucket). See PerStandardCoverage.criteriaByLevel
+  // doctrine note.
+  const byLevel: Record<string, number> = {};
   // Opt-in split: absent testableCriteria collapses to "every
   // automatable non-failing criterion counts as clean" so legacy
   // callers see identical numbers. Present set drives the
@@ -250,6 +273,7 @@ function buildOne(
   const splitOn = testableCriteria !== undefined;
 
   for (const criterion of standard.criteria) {
+    byLevel[criterion.level] = (byLevel[criterion.level] ?? 0) + 1;
     // A rule satisfying a metadata-"manual" criterion can still emit
     // automated violations (e.g. `color/meaning-by-color-only`
     // satisfies wcag22:1.4.1 "Use of Color" whose metadata flag is
@@ -309,6 +333,7 @@ function buildOne(
     standardName: standard.name,
     version: standard.version,
     total: standard.criteria.length,
+    criteriaByLevel: byLevel,
     automatable,
     manual,
     passing,

@@ -186,7 +186,27 @@ export const coverageTool: McpTool = {
         // the denominator so the headline names one concept: "of the
         // criteria we actually evaluated, how many were clean?"
         ...(passRateMeaningful ? { automatedCriteriaPassRate: c.automatedPassRate } : {}),
-        criteriaTotal: c.total,
+        // Renamed from `criteriaTotal` — the bare counter was unanchored
+        // from the active conformance-level qualifier, so an agent
+        // running `coverage({ level: "AA" })` couldn't tell from the
+        // response alone whether `total` reflected the AA-scoped shape
+        // or the full `AAA` row count. The new name makes the profile
+        // explicit; the sibling `criteriaByLevel` carries the per-level
+        // breakdown so the total is verifiable against its parts. Per
+        // `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+        // shapes are dishonest." Pre-1.0 in-place rename — no alias
+        // dual-emission window (same precedent as the `id` →
+        // `criterionId` rename on these entries; ADR 0028 records the
+        // doctrine for pre-release shape changes).
+        criteriaTotalForProfile: c.total,
+        // Per-level breakdown — values sum to `criteriaTotalForProfile`
+        // exactly. WCAG-shaped standards surface `A` / `AA` / `AAA`
+        // keys (filtered down to the requested `level`); level-less
+        // standards (Section 508, EN 301 549) surface a single `base`
+        // key. Keys are present only for levels the filtered standard
+        // actually populates — present-when-meaningful (no
+        // `{ A: 0, AA: 0, AAA: 0 }` sentinel maps).
+        criteriaByLevel: c.criteriaByLevel,
         criteriaAutomatable: c.automatable,
         criteriaAutomatablePassing: c.passing,
         // Four-counter split for the automatable lane. Each counts one
@@ -321,7 +341,8 @@ export const coverageTool: McpTool = {
     // tiny scratch-dir scans stay quiet on every surface.
     //
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
-    // a coverage response with `criteriaAutomatable: 0` etc. is
+    // a coverage response with `criteriaTotalForProfile: 0` /
+    // `criteriaAutomatable: 0` etc. is
     // indistinguishable from "tool never ran" unless we surface the
     // honest scan-confidence codes — same input → same labels.
     const configSearchSawProjectMarker =

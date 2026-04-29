@@ -2647,15 +2647,21 @@ describe("MCP tool: coverage", () => {
     const data = JSON.parse(result.content[0].text) as {
       standardId: string;
       automatedCriteriaPassRate: number;
-      criteriaTotal: number;
+      criteriaTotalForProfile: number;
+      criteriaByLevel: Record<string, number>;
       criteriaAutomatable: number;
       criteriaManualReviewRequired: number;
       summary: string;
     };
     expect(data.standardId).toBe("wcag22");
     expect(typeof data.automatedCriteriaPassRate).toBe("number");
-    expect(data.criteriaTotal).toBeGreaterThan(0);
-    expect(data.criteriaAutomatable).toBeLessThanOrEqual(data.criteriaTotal);
+    expect(data.criteriaTotalForProfile).toBeGreaterThan(0);
+    expect(data.criteriaAutomatable).toBeLessThanOrEqual(data.criteriaTotalForProfile);
+    // Level breakdown sums to the headline — anchors the otherwise-bare
+    // count to its conformance shape (default level "AA" includes both
+    // A and AA criteria).
+    const levelSum = Object.values(data.criteriaByLevel).reduce((a, b) => a + b, 0);
+    expect(levelSum).toBe(data.criteriaTotalForProfile);
     expect(data.criteriaManualReviewRequired).toBeGreaterThan(0);
     expect(data.summary).toContain("manual");
     // Must NOT expose overallAutomatedCoverage — that ratio reads as failure

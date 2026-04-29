@@ -58,8 +58,9 @@ through to drive the review session.
 1. **`coverage` never emits `candidates[]`** (file:line review pointers).
    Adding them would recreate `checklist`.
 2. **`checklist` never emits `failingAutomatedCriteria`,
-   `warningAutomatedCriteria`, `criteriaTotal`, `criteriaAutomatable`,
-   or `criteriaAutomatablePassing`.** Those are compliance-dashboard
+   `warningAutomatedCriteria`, `criteriaTotalForProfile`,
+   `criteriaByLevel`, `criteriaAutomatable`, or
+   `criteriaAutomatablePassing`.** Those are compliance-dashboard
    fields; the agent reads them from `coverage`.
 3. **`checklist.summary.automatedCoverage` drops to a structured-split
    gloss**: `{ standardId, criteriaWithRulesAllClean,
@@ -71,9 +72,9 @@ through to drive the review session.
    inputs" (`untestable`) with "rule found violations"
    (`withFindings`) into a single ratio, the doctrine's "Composite
    headline counts are dishonest" failure mode. The full per-standard
-   block (`criteriaTotal`, `criteriaAutomatable`, `criteriaEvaluated`,
-   `criteriaWithFindings`, `automatedCriteriaPassRate`) stays canonical
-   in `coverage` only.
+   block (`criteriaTotalForProfile`, `criteriaByLevel`,
+   `criteriaAutomatable`, `criteriaEvaluated`, `criteriaWithFindings`,
+   `automatedCriteriaPassRate`) stays canonical in `coverage` only.
 4. **Both tools keep `untargetedCriteria: number`** and
    `likelyIrrelevant: …[]`. Those are the manual-review axis; both tools
    need them to frame their output honestly. They must be computed from
@@ -119,8 +120,9 @@ pairs following the P1-K contract.
 ### Semver
 
 Minor bump — `nextStep` fields are additive; the drop of
-`criteriaTotal` / `criteriaAutomatable` / `criteriaAutomatablePassing` /
-`failingAutomatedCriteria` from `checklist.summary.automatedCoverage` is
+`criteriaTotalForProfile` / `criteriaAutomatable` /
+`criteriaAutomatablePassing` / `failingAutomatedCriteria` from
+`checklist.summary.automatedCoverage` is
 a narrow output-shape break. Called out in CHANGELOG under Changed. The
 field still exists; it just carries one key instead of four.
 

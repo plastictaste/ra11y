@@ -310,7 +310,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 ### Response-shape: ambiguous / type-polymorphic / dangling fields
 
 - [ ] **Q11-REFERENCEGUIDE-DANGLING-POINTER-ON-TRUNCATION** `findings[].fix.descriptionRef.hash` references a top-level `referenceGuide.fixDescriptions[hash]` entry; when truncation drops `referenceGuide` (or clips its body) but findings retain `descriptionRef`, the agent gets dangling pointers that resolve to undefined. Recurring shape in oversize bulk responses. Fix: response-assembly site must pin the invariant — when a `descriptionRef` is emitted, the matching `referenceGuide.fixDescriptions[hash]` must be retained. Either hoist used references AHEAD of the truncation pass, or inline the description string under each finding when truncation forces dropping the guide. Per AI-first doctrine "Truncated containers must rename or sentinel, not retain" extended to cross-field reference invariants.
-- [ ] **Q11-COVERAGE-CRITERIATOTAL-NO-LEVEL-QUALIFIER** `coverage.criteriaTotal: 55` is unanchored from the conformance-level qualifier (55 = WCAG 2.2 A+AA cumulative). Same field name shipped alongside `--profile wcag22-a` (30) and `--profile wcag22-aaa` (87) varies — the field's denominator changes silently. Fix: rename to `criteriaTotalForProfile` AND ship a sibling `criteriaByLevel: {A: N, AA: N, AAA: N}` map so the total never disagrees with the level breakdown. Per AI-first doctrine "Ambiguous field shapes are dishonest."
 
 ### Cross-surface drift / counter splits
 

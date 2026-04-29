@@ -824,8 +824,9 @@ export const checklistTool: McpTool = {
     //     canonical Tailwind-pre-build / vendor-bundle shape. Maps to
     //     coverage report's `untestable`. The agent reads both and
     //     decides; never sums them into a single rate.
-    // The full per-standard block (`criteriaTotal`,
-    // `criteriaAutomatable`, `criteriaAutomatablePassing`,
+    // The full per-standard block (`criteriaTotalForProfile`,
+    // `criteriaByLevel`, `criteriaAutomatable`,
+    // `criteriaAutomatablePassing`,
     // `failingAutomatedCriteria`, `criteriaEvaluated`) stays canonical
     // in `coverage` — emitting them here would re-create the
     // "three-places-reporting-the-same-shape" drift ADR 0010 closed.

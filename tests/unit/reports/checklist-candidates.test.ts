@@ -59,6 +59,7 @@ const TEST_COVERAGE: readonly PerStandardCoverage[] = [
     standardName: "WCAG 2.2",
     version: "2.2",
     total: 3,
+    criteriaByLevel: { A: 3 },
     automatable: 1,
     manual: 2,
     passing: 1,

@@ -666,13 +666,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: BAD_ALT_DIR })]);
     const body = bodyOf(responses[1]) as {
       standardId: string;
-      criteriaTotal: number;
+      criteriaTotalForProfile: number;
+      criteriaByLevel: Record<string, number>;
       automatedCriteriaPassRate: number;
       untargetedCriteria: number;
       untargetedCriteriaList?: unknown;
     };
     expect(body.standardId).toBe("wcag22");
-    expect(body.criteriaTotal).toBeGreaterThan(0);
+    expect(body.criteriaTotalForProfile).toBeGreaterThan(0);
     expect(typeof body.automatedCriteriaPassRate).toBe("number");
     // Count always present; list gated behind showUntargeted (mirrors
     // checklist tool so default responses stay compact).
