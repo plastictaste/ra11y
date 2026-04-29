@@ -204,7 +204,6 @@ Source: 5-lens × 4-corpus replication pass over the same four codebases as Q8/Q
 
 #### Q8c — accepted (P1 — new rules)
 
-- [ ] **Q8c-RULE-SVG-USE-XLINK-HREF-ICON-NAME** New rule `aria/svg-use-decorative-or-named`. Inline `<svg><use xlink:href="#icon-id" /></svg>` (or `<use href>`) with neither `aria-hidden="true"` nor accessible name (`<title>`, `aria-label`, `aria-labelledby`). Currently `semantics/svg-title-missing` only fires on standalone `.svg` files; inline `<svg><use>` icons in HTML are silently missed. Multiple corpora carry dozens. WCAG 1.1.1 + 4.1.2. Pairs with Q8-RULE-SVG-TITLE-INLINE-MARKUP (open, inline-svg axis) — this is the `<use>` element specialization.
 - [ ] **Q8c-RULE-ALL-FORMS-LANDMARK-NAME** Cousin to `semantics/duplicate-landmark-unlabeled` (which fires speculatively per Q8-DUPLICATE-LANDMARK-UNLABELED-EMITS-ON-SPECULATION). Once the speculative composite is gated on confirmed sibling evidence, the genuine "every form on this page is unlabeled" case becomes a real finding worth a deterministic rule. Fix: surface `semantics/all-forms-unlabeled` rule for the in-file count ≥ 2 + zero `aria-label`/`aria-labelledby` deterministic case. WCAG 1.3.1 + 4.1.2. Pairs with Q8-DUPLICATE-LANDMARK-UNLABELED-EMITS-ON-SPECULATION (closure target) — this is the deterministic-emission cousin.
 
 #### Q8c — accepted (P2 — finder fix-suggestion polish)
