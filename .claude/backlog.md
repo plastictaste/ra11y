@@ -213,7 +213,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Parser routing + coverage gaps
 
-- [ ] **Q9-MIN-LINE-HEURISTIC-MISSES-MIN-JS-BUNDLES** `.min.js` single-line megabundles (e.g. `bootstrap.bundle.min.js` shipped in a CSS-framework corpus' `dist/`) escape `scannedBuildArtifacts` classification because the min-line predicate appears scoped to text/SVG only. Fix: extend the single-long-line classifier to `.js` files (one-long-line + size threshold + `.min.` filename token). Pairs with Q9-VENDOR-COPYRIGHT-BANNER-CLASSIFICATION (sibling vendor-detection axis).
 
 ### Per-rule / per-finding confidence drift
 
