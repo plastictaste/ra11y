@@ -557,7 +557,31 @@ export type ScanWarningCode =
   // carries `{ count, htmlFiles, topUnresolvedHrefs }` so the agent
   // branches on identity (which pages, which hrefs?) without re-walking
   // the per-file AST.
-  | "linked_stylesheet_not_resolved_for_contrast";
+  | "linked_stylesheet_not_resolved_for_contrast"
+  // at least one `.js` file in the
+  // scan was successfully routed through the in-house TSX parser.
+  // Telemetry-only — no behavioral change. The dispatcher in
+  // `src/mcp/session.ts::parseForExtension` aliases `.js` (and `.ts`)
+  // to the TSX parser because the JavaScript/TypeScript family shares
+  // one parser; that aliasing is invisible to a caller reading the
+  // response and the canonical content-drop hazard the doctrine
+  // names: the parser bails on relational expressions read as JSX
+  // (`r.length<b.length`), so a clean parse on a `.js` file may have
+  // silently dropped findings without recording a parse error. This
+  // code names the routing decision regardless of outcome — it fires
+  // whenever a `.js` file successfully parsed via the tsx route, so
+  // the agent can decide whether to spot-check the file or scope a
+  // follow-up via `additionalPaths`. Distinct from
+  // `parser_bailed_zero_findings` (which names "every parse erred AND
+  // total findings is zero" — the after-the-fact silent regime); this
+  // code names the routing decision itself, before outcome. Per the
+  // AI-first doctrine "Routing skips that drop content are the
+  // symmetric twin of suppression" — under-parsing is the same silent-
+  // miss failure mode as under-emitting; both warrant explicit
+  // telemetry so the agent can do its own triage. Binary-presence: the
+  // per-file count of `.js` files lives in `meta.filesByExtension`
+  // already; the wire is the entire signal.
+  | "parser_bailed_on_non_jsx_in_tsx_route";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -938,6 +962,22 @@ export interface WarningInputs {
    * to `undefined`.
    */
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
+  /**
+   * Count of `.js` files in the scan that successfully parsed via the
+   * in-house TSX parser (i.e. the dispatcher routed `.js` → tsx and the
+   * parser produced an AST without recording any `ParseError`s on that
+   * file). Drives the `parser_bailed_on_non_jsx_in_tsx_route` warning
+   * code — fires when the count is > 0. Pass `0` or omit when no `.js`
+   * files were scanned or every routed `.js` file recorded a parse
+   * error (the failure case is captured by the broader
+   * `parse_errors_present` family + `parser_bailed_zero_findings`).
+   * Telemetry-only; the warning surfaces the routing decision so the
+   * agent can decide whether to spot-check or scope a follow-up.
+   * Sourced from the parsed-file list at the scan-time-warnings seam
+   * (extension match + `ast.errors.length === 0`); the warnings module
+   * stays pure over its inputs.
+   */
+  readonly jsRoutedThroughTsxSucceededCount?: number;
 }
 
 // MARKER_PROBE_002
@@ -1892,6 +1932,7 @@ export interface ScanWarningDetails {
     readonly htmlFiles: readonly string[];
     readonly topUnresolvedHrefs: readonly string[];
   };
+  readonly parser_bailed_on_non_jsx_in_tsx_route?: BinaryPresenceMarker;
 }
 
 /**
@@ -2005,6 +2046,7 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
   "dist_only_scan_detected",
+  "parser_bailed_on_non_jsx_in_tsx_route",
 ]);
 
 /**
@@ -2071,6 +2113,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "cwd_appears_misrooted",
   "js_innerhtml_template_literal_unparsed",
   "linked_stylesheet_not_resolved_for_contrast",
+  "parser_bailed_on_non_jsx_in_tsx_route",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -2423,19 +2466,56 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // least one dynamic innerHTML/insertAdjacentHTML/document.write
   // template literal — see `inlineHtmlCodes`.
   out.push(...inlineHtmlCodes(inputs));
+  // Routing-telemetry code family — see `routingTelemetryCodes`. The
+  // two codes name parser-routing decisions whose silent-miss failure
+  // mode is the doctrine's "Routing skips that drop content are the
+  // symmetric twin of suppression": linked stylesheets the contrast
+  // rule did not consult, and `.js` files routed through the TSX
+  // parser. Extracted into a helper so the main function's cognitive
+  // complexity stays under the lint cap (same pattern as
+  // `contentDistributionCodes` / `parseErrorCodes` / `scanShapeCodes`);
+  // declaration order on `ScanWarningCode` preserved.
+  out.push(...routingTelemetryCodes(inputs));
+  return out;
+}
+
+/**
+ * Routing-telemetry code family extracted from {@link computeScanWarnings}
+ * so the main function's cognitive complexity stays under the lint cap.
+ * Both codes name parser-routing decisions whose silent-miss failure
+ * mode is the AI-first doctrine's "Routing skips that drop content are
+ * the symmetric twin of suppression":
+ *
+ *   - `linked_stylesheet_not_resolved_for_contrast` — at least one
+ *     scanned HTML file declared a `<link rel="stylesheet" href="…">`
+ *     whose target the contrast rule did not consult during resolution.
+ *     Detector lives at the assembly seam (`scan-assembly.ts`) so this
+ *     module stays pure over its inputs; the warning is additive
+ *     routing telemetry the agent reads to decide whether to scope a
+ *     follow-up via `additionalPaths`, `propose_config`, or a separate
+ *     `scan` against the linked CSS. Findings unchanged.
+ *   - `parser_bailed_on_non_jsx_in_tsx_route` — at least one `.js` file
+ *     in the scan was successfully routed through the in-house TSX
+ *     parser (the dispatcher in `src/mcp/session.ts::parseForExtension`
+ *     aliases `.js` → tsx). Telemetry-only — no behavioral change. The
+ *     doctrine names the routing decision as the canonical content-drop
+ *     hazard ("the parser bails on relational expressions read as JSX");
+ *     a clean parse on a `.js` file may have silently dropped findings
+ *     without recording a parse error. Distinct from
+ *     `parser_bailed_zero_findings` (which names the after-the-fact
+ *     silent regime where every parse erred AND zero findings surfaced);
+ *     this code names the routing decision itself.
+ *
+ * Order matches declaration order on `ScanWarningCode` for stable
+ * `warnings[]` sequencing across runs.
+ */
+function routingTelemetryCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
   if (hasLinkedStylesheetsUnresolvedForContrast(inputs.linkedStylesheetsUnresolvedForContrast)) {
-    // at least one scanned HTML file declared
-    // a `<link rel="stylesheet" href="…">` whose target the contrast
-    // rule did not consult during resolution. Per the AI-first
-    // "Routing skips that drop content are the symmetric twin of
-    // suppression" doctrine, the silent omission is exactly the
-    // failure mode the warning channel exists to surface — the
-    // detector lives at the assembly seam (`scan-assembly.ts`) so
-    // this module stays pure over its inputs. Findings are unchanged;
-    // the warning is additive routing telemetry the agent reads to
-    // decide whether to scope a follow-up via `additionalPaths`,
-    // `propose_config`, or a separate `scan` against the linked CSS.
     out.push("linked_stylesheet_not_resolved_for_contrast");
+  }
+  if (jsRoutedThroughTsxSucceeded(inputs)) {
+    out.push("parser_bailed_on_non_jsx_in_tsx_route");
   }
   return out;
 }
@@ -2478,6 +2558,20 @@ function hasLinkedStylesheetsUnresolvedForContrast(
   if (detection === undefined) return false;
   if (detection.count <= 0) return false;
   return detection.htmlFiles.length > 0;
+}
+
+/**
+ * Predicate for `parser_bailed_on_non_jsx_in_tsx_route`. Returns `true`
+ * when the caller-supplied count of `.js` files that successfully
+ * parsed via the TSX parser is > 0. Drops conservatively when the
+ * field is absent (derivative tools that don't enumerate parsed files
+ * never speculatively fire the code). Pure over its input; the
+ * extension-and-parse-success cross-reference lives at the scan-time-
+ * warnings seam where the parsed-file list is available.
+ */
+function jsRoutedThroughTsxSucceeded(inputs: WarningInputs): boolean {
+  const count = inputs.jsRoutedThroughTsxSucceededCount;
+  return typeof count === "number" && count > 0;
 }
 
 /**
@@ -2970,6 +3064,16 @@ type ScanMetaWarningArgs = {
    * source for the predicate.
    */
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
+  /**
+   * Pass-through for the count of `.js` files successfully parsed via
+   * the TSX parser. See
+   * {@link WarningInputs.jsRoutedThroughTsxSucceededCount}. Threaded
+   * explicitly because the predicate requires per-file inspection of
+   * the parsed-file list (extension match + zero-error AST), which
+   * lives at the scan-time-warnings seam — the warnings module stays
+   * pure over its inputs.
+   */
+  readonly jsRoutedThroughTsxSucceededCount?: number;
 };
 
 /**
@@ -3007,6 +3111,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "jsInnerHtmlDeclinedCount",
   "jsInnerHtmlFileSamples",
   "linkedStylesheetsUnresolvedForContrast",
+  "jsRoutedThroughTsxSucceededCount",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**

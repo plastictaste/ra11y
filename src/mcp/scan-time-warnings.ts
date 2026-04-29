@@ -215,6 +215,7 @@ interface DerivedBuildArtifactSignals {
     readonly pattern: string;
   }[];
   readonly linkedStylesheetsUnresolvedForContrast: LinkedStylesheetsUnresolvedForContrast;
+  readonly jsRoutedThroughTsxSucceededCount: number;
 }
 
 function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuildArtifactSignals {
@@ -298,6 +299,14 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     inputs.parsedFiles,
   );
 
+  // Count `.js` files successfully routed through the TSX parser —
+  // canonical content-drop hazard the AI-first doctrine names ("the
+  // parser bails on relational expressions read as JSX"). The `.js` →
+  // tsx aliasing is invisible to a caller reading the response, so
+  // surfacing the routing decision lets the agent decide whether to
+  // spot-check the file or scope around it.
+  const jsRoutedThroughTsxSucceededCount = countJsRoutedThroughTsxSucceeded(inputs.parsedFiles);
+
   return {
     buildArtifactEntries,
     buildArtifactsMetaField,
@@ -314,7 +323,37 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     totalFindings,
     jsInnerHtmlFileSamples,
     linkedStylesheetsUnresolvedForContrast,
+    jsRoutedThroughTsxSucceededCount,
   };
+}
+
+/**
+ * Counts files in the parsed-file list whose extension is `.js` (case-
+ * insensitive) AND whose AST recorded zero parse errors. The `.js`
+ * extension is the only `.js`-family extension routed by
+ * {@link import("./session.ts").McpSession.parseFile} through the TSX
+ * parser today (`.mjs` / `.cjs` are not in
+ * {@link import("../utils/path.ts").PARSEABLE_EXTENSIONS}); broadening
+ * the predicate to those would silently fire the warning on file shapes
+ * that never reach the parser. Pure over its input — the per-tool
+ * caller threads `parsedFiles` and the count is computed once at the
+ * aggregator seam.
+ *
+ * The `errors.length === 0` filter narrows the predicate to
+ * "successfully parsed" — files in the parse-error / partial-parse
+ * buckets are already covered by `parse_errors_present` and
+ * `parser_bailed_zero_findings`. The doctrine framing is "the routing
+ * decision is itself the silent-miss hazard"; a clean parse on a `.js`
+ * file is the case the existing parse-error codes can't surface.
+ */
+function countJsRoutedThroughTsxSucceeded(parsedFiles: readonly ParsedFile[]): number {
+  let count = 0;
+  for (const file of parsedFiles) {
+    if (!file.filePath.toLowerCase().endsWith(".js")) continue;
+    if (file.ast.errors.length > 0) continue;
+    count += 1;
+  }
+  return count;
 }
 
 /**
@@ -403,6 +442,9 @@ function buildWarningsFieldInputs(
       : {
           linkedStylesheetsUnresolvedForContrast: derived.linkedStylesheetsUnresolvedForContrast,
         }),
+    ...(derived.jsRoutedThroughTsxSucceededCount === 0
+      ? {}
+      : { jsRoutedThroughTsxSucceededCount: derived.jsRoutedThroughTsxSucceededCount }),
   };
 }
 

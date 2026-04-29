@@ -596,6 +596,28 @@ function readMetaNumber(meta: Record<string, unknown>, key: string): number {
 }
 
 /**
+ * Counts `.js` files in `parsedFiles` that recorded zero parse errors
+ * after routing through the TSX parser — canonical content-drop hazard
+ * the AI-first doctrine names ("the parser bails on relational
+ * expressions read as JSX"). Drives the
+ * `parser_bailed_on_non_jsx_in_tsx_route` warning code on the
+ * `scan_project` surface; same predicate as the shared scan-time-
+ * warnings aggregator in `scan-time-warnings.ts` so the cross-surface
+ * count invariant holds. Extracted as a helper so
+ * `buildBaseWarningsForScanProject` stays under the cognitive-
+ * complexity cap.
+ */
+function countJsRoutedThroughTsxSucceeded(parsedFiles: readonly ParsedFile[]): number {
+  let count = 0;
+  for (const file of parsedFiles) {
+    if (!file.filePath.toLowerCase().endsWith(".js")) continue;
+    if (file.ast.errors.length > 0) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/**
  * Cross-references the per-file inline-HTML pattern detector map with
  * the post-scan finding-bearing path set, returning one representative
  * `{ path, line, pattern }` sample per file the routed parser produced
@@ -846,6 +868,13 @@ function buildBaseWarningsForScanProject(args: {
   // twin of suppression" doctrine.
   const linkedStylesheetsUnresolvedForContrast =
     detectLinkedStylesheetsNotResolvedForContrast(parsedFiles);
+  // Count `.js` files successfully routed through the TSX parser —
+  // canonical content-drop hazard the doctrine names. Drives
+  // `parser_bailed_on_non_jsx_in_tsx_route`. Same predicate as the
+  // shared scan-time-warnings aggregator (extension match +
+  // `ast.errors.length === 0`); extracted into a helper so the
+  // orchestrator's cognitive complexity stays under the lint cap.
+  const jsRoutedThroughTsxSucceededCount = countJsRoutedThroughTsxSucceeded(parsedFiles);
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -916,6 +945,13 @@ function buildBaseWarningsForScanProject(args: {
     // headline doctrine) so the value is not on `meta` and we
     // accumulate locally instead.
     totalFindings: formatted.files.reduce((acc, f) => acc + f.findings.length, 0),
+    // Surface the `.js` → tsx routing decision so an agent reading
+    // the response can decide whether to spot-check the routed files
+    // (see `parser_bailed_on_non_jsx_in_tsx_route` on the warnings
+    // union for the doctrine framing). Pass the raw count regardless;
+    // the warning predicate gates emission on `count > 0` so a zero
+    // value naturally drops without an additional ternary here.
+    jsRoutedThroughTsxSucceededCount,
   });
   return warningsFieldsForAssembler(warningsFromMeta);
 }

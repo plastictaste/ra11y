@@ -633,6 +633,48 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("parser_bailed_zero_findings");
   });
 
+  it("fires `parser_bailed_on_non_jsx_in_tsx_route` when at least one `.js` file successfully parsed via the tsx route", () => {
+    // The doctrine names the routing decision itself (regardless of
+    // outcome) as the canonical content-drop hazard — a clean parse on
+    // a `.js` file may have silently dropped findings via the parser's
+    // "JSX-or-comparison" gate without recording a parse error.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 5, ".tsx": 37 },
+      jsRoutedThroughTsxSucceededCount: 5,
+    });
+    expect(codes).toContain("parser_bailed_on_non_jsx_in_tsx_route");
+  });
+
+  it("does NOT fire `parser_bailed_on_non_jsx_in_tsx_route` when the count is zero", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".tsx": 42 },
+      jsRoutedThroughTsxSucceededCount: 0,
+    });
+    expect(codes).not.toContain("parser_bailed_on_non_jsx_in_tsx_route");
+  });
+
+  it("does NOT fire `parser_bailed_on_non_jsx_in_tsx_route` when the count is undefined (drops conservatively without evidence)", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 5 },
+      // no jsRoutedThroughTsxSucceededCount — derivative tools that
+      // don't enumerate the parsed-file list should never speculatively
+      // fire the routing-telemetry code.
+    });
+    expect(codes).not.toContain("parser_bailed_on_non_jsx_in_tsx_route");
+  });
+
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
     // `no_config_found` now requires filesScanned >= 10 AND the probe
     // to have seen a project marker (Q-SHARED-NO-CONFIG-WARNING-TINY-REPO).
