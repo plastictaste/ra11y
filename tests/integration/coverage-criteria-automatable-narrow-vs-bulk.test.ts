@@ -93,7 +93,7 @@ async function makeFixture(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-criteria-automatable-"));
   await writeFile(
     join(dir, "clean.html"),
-    "<!doctype html><html lang=\"en\"><head><title>Clean</title></head>" +
+    '<!doctype html><html lang="en"><head><title>Clean</title></head>' +
       "<body><main><h1>Hello</h1><p>No violations here.</p></main></body></html>",
   );
   // `color/meaning-by-color-only` satisfies wcag22:1.4.1 — a
@@ -105,9 +105,9 @@ async function makeFixture(): Promise<string> {
   // registered against the criterion regardless of whether it fired.
   await writeFile(
     join(dir, "color-meaning.html"),
-    "<!doctype html><html lang=\"en\"><head><title>Color</title></head>" +
+    '<!doctype html><html lang="en"><head><title>Color</title></head>' +
       "<body><main><h1>Status</h1>" +
-      "<button class=\"btn-danger\">Danger</button>" +
+      '<button class="btn-danger">Danger</button>' +
       "</main></body></html>",
   );
   return dir;
